@@ -11,21 +11,21 @@ import {
 } from "./diffFileTree.logic";
 
 function file(type: FileDiffMetadata["type"], name: string, prevName = name): FileDiffMetadata {
-  return { type, name: `b/${name}`, prevName: `a/${prevName}` } as FileDiffMetadata;
+  return { type, name, prevName } as FileDiffMetadata;
 }
 
 describe("diffFileTreeEntries", () => {
   it("maps each change type to its git status under the file's current path", () => {
     expect(
       diffFileTreeEntries([
-        file("new", "src/a.ts"),
+        file("new", "a/src/a.ts"),
         file("deleted", "src/b.ts"),
         file("rename-pure", "src/c.ts", "src/old-c.ts"),
         file("rename-changed", "src/d.ts", "src/old-d.ts"),
         file("change", "README.md"),
       ]),
     ).toEqual([
-      { path: "src/a.ts", status: "added" },
+      { path: "a/src/a.ts", status: "added" },
       { path: "src/b.ts", status: "deleted" },
       { path: "src/c.ts", status: "renamed" },
       { path: "src/d.ts", status: "renamed" },

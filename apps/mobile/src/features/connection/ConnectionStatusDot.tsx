@@ -18,7 +18,10 @@ function statusDotTone(state: ConnectionStatusDotState): {
   readonly haloColor: string;
 } {
   switch (state) {
+    // Unsupported is not a failure: the machine is fine, this build just
+    // cannot talk to it, so it wears the same neutral dot as "available".
     case "available":
+    case "unsupported":
       return {
         dotColor: "#9ca3af",
         haloColor: "rgba(156,163,175,0.42)",
@@ -35,7 +38,6 @@ function statusDotTone(state: ConnectionStatusDotState): {
         haloColor: "rgba(245,158,11,0.5)",
       };
     case "offline":
-    case "unsupported":
     case "error":
       return {
         dotColor: "#ef4444",

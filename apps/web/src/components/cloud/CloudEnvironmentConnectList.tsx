@@ -9,7 +9,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  resolveEnvironmentMachineKind,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
@@ -23,6 +27,7 @@ import { relayEnvironmentDiscovery } from "~/state/relay";
 import { useRelayEnvironmentDiscovery } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "../settings/itemRows";
 import { Checkbox } from "../ui/checkbox";
 import { Button } from "../ui/button";
@@ -43,6 +48,8 @@ function discoveredCompatibilityError(
 export interface SavedCloudEnvironmentConnection {
   readonly environmentId: EnvironmentId;
   readonly connection: EnvironmentConnectionPresentation;
+  /** Present once connected; carries the user's icon override. */
+  readonly serverConfig?: ServerConfig | null;
 }
 
 function RemoteEnvironmentRowsSkeleton() {
@@ -296,15 +303,25 @@ export function CloudEnvironmentConnectRows({
     const compatibilityError = discoveredCompatibilityError(status);
     const unsupported =
       compatibilityError !== null || savedEnvironment?.connection.phase === "unsupported";
+    const unsupportedDetail =
+      compatibilityError?.message ?? savedEnvironment?.connection.error ?? null;
     const savedConnection = unsupported
       ? presentSavedCloudEnvironmentConnection({
           phase: "unsupported",
-          error: compatibilityError?.message ?? savedEnvironment?.connection.error ?? null,
+          error: unsupportedDetail,
           traceId: null,
         })
       : savedEnvironment
         ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
         : null;
+    // A connected machine's own config (with the user's icon pick) wins. Before
+    // that, the relay's health probe already carries the server's descriptor, so
+    // a machine can wear its detected glyph before this device ever connects.
+    const descriptor = status === undefined ? undefined : Option.getOrNull(status)?.descriptor;
+    const machineKind = resolveEnvironmentMachineKind(
+      savedEnvironment?.serverConfig ??
+        (descriptor === undefined ? null : { environment: descriptor }),
+    );
     const dotClassName = savedConnection
       ? savedConnection.tone === "connected"
         ? "bg-success"
@@ -320,16 +337,19 @@ export function CloudEnvironmentConnectRows({
           : availability === "checking"
             ? "bg-warning"
             : "bg-muted-foreground/35";
-    const statusText = savedConnection
-      ? savedConnection.statusText
-      : availability === "online"
-        ? "T3 Connect · Not added · Relay online"
-        : availability === "offline"
-          ? "T3 Connect · Not added · Relay offline"
-          : availability === "checking"
-            ? "T3 Connect · Not added · Checking relay status…"
-            : (Option.getOrNull(error)?.message ??
-              "T3 Connect · Not added · Relay status unavailable");
+    const statusText =
+      unsupported && !savedEnvironment
+        ? "T3 Connect · Not added · Client not supported"
+        : savedConnection
+          ? savedConnection.statusText
+          : availability === "online"
+            ? "T3 Connect · Not added · Relay online"
+            : availability === "offline"
+              ? "T3 Connect · Not added · Relay offline"
+              : availability === "checking"
+                ? "T3 Connect · Not added · Checking relay status…"
+                : (Option.getOrNull(error)?.message ??
+                  "T3 Connect · Not added · Relay status unavailable");
     if (selection) {
       return (
         <label
@@ -347,6 +367,11 @@ export function CloudEnvironmentConnectRows({
                 if (!connected) selection.onChange(environment.environmentId, false);
               }
             }}
+          />
+          <EnvironmentMachineIcon
+            aria-hidden
+            kind={machineKind}
+            className="size-4 shrink-0 text-muted-foreground"
           />
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{environment.label}</span>
           <Tooltip>
@@ -368,7 +393,9 @@ export function CloudEnvironmentConnectRows({
                         ? "Unavailable"
                         : "Checking…"))}
             </TooltipTrigger>
-            <TooltipPopup className="max-w-80 break-words">{statusText}</TooltipPopup>
+            <TooltipPopup className="max-w-80 break-words">
+              {unsupportedDetail ?? statusText}
+            </TooltipPopup>
           </Tooltip>
         </label>
       );
@@ -387,16 +414,23 @@ export function CloudEnvironmentConnectRows({
                     : null
                 }
                 tooltipText={
-                  savedConnection
-                    ? savedConnection.statusText
-                    : availability === "online"
-                      ? "Relay online"
-                      : availability === "offline"
-                        ? "Relay offline"
-                        : availability === "checking"
-                          ? "Checking relay status"
-                          : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
+                  unsupportedDetail !== null
+                    ? unsupportedDetail
+                    : savedConnection
+                      ? savedConnection.statusText
+                      : availability === "online"
+                        ? "Relay online"
+                        : availability === "offline"
+                          ? "Relay offline"
+                          : availability === "checking"
+                            ? "Checking relay status"
+                            : (Option.getOrNull(error)?.message ?? "Relay status unavailable")
                 }
+              />
+              <EnvironmentMachineIcon
+                aria-hidden
+                kind={machineKind}
+                className="size-4 shrink-0 text-muted-foreground"
               />
               <p className="truncate text-sm font-medium">{environment.label}</p>
             </div>
@@ -413,7 +447,18 @@ export function CloudEnvironmentConnectRows({
               {statusText}
             </p>
           </div>
-          {savedConnection ? (
+          {unsupported && !savedEnvironment ? (
+            <Tooltip>
+              <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
+                <Button size="sm" disabled>
+                  Add
+                </Button>
+              </TooltipTrigger>
+              <TooltipPopup className="max-w-80 break-words">
+                {unsupportedDetail ?? "Client not supported"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : savedConnection ? (
             <Button size="sm" variant="outline" disabled>
               {savedConnection.buttonLabel}
             </Button>
