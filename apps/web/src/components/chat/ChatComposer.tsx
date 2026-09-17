@@ -2529,7 +2529,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const isComposerMenuLoading =
-    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (composerTriggerKind === "path" && workspaceEntries.isPending) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
       pullRequestRepository !== null &&
