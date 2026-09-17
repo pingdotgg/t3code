@@ -322,12 +322,6 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
-// Trailing provider glyphs for a row. A thread that has been handed off
-// between providers draws its earlier owners behind the current one, so the
-// list shows where the thread has been without widening the row. Rendered
-// back to front so DOM order matches visual layering. No separator ring: row
-// surfaces vary (active, selected, draft, hover), so earlier glyphs are
-// shrunk and dimmed instead, which reads as depth on any background.
 function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
@@ -357,7 +351,7 @@ function SidebarProviderStack(props: {
     return <span className="inline-flex shrink-0 items-center">{current}</span>;
   }
   return (
-    <span className="inline-flex shrink-0 items-center -space-x-1">
+    <span className="inline-flex shrink-0 items-center gap-1.5">
       {stack.slice(0, -1).map((instanceId) => {
         const entry = props.providerEntryByInstanceId.get(instanceId);
         if (entry === undefined) return null;
