@@ -151,6 +151,8 @@ import {
 } from "./SnapShotAttachmentDetails";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
+import { useFileContextMenuHandler } from "../../fileContextMenu";
+import { useProject, useThread } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
@@ -269,6 +271,9 @@ interface TimelineRowSharedState {
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
   routeThreadKey: string;
+  // The thread whose rows are currently painted — differs from routeThreadKey
+  // while a held snapshot of the previous thread fills the loading gap.
+  paintedThreadKey: string;
   threadRef: ScopedThreadRef | null;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
@@ -1129,6 +1134,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       listRef,
       timestampFormat,
       routeThreadKey,
+      paintedThreadKey: listIdentityKey,
       // Keep Markdown callbacks memoized during unrelated activity updates.
       threadRef: citationThreadRef,
       markdownCwd,
@@ -1165,6 +1171,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       listRef,
       timestampFormat,
       routeThreadKey,
+      listIdentityKey,
       citationThreadRef,
       markdownCwd,
       resolvedTheme,
@@ -2379,7 +2386,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         </AssistantCitationSource>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
-          routeThreadKey={ctx.routeThreadKey}
+          threadKey={ctx.paintedThreadKey}
           resolvedTheme={ctx.resolvedTheme}
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
@@ -3296,12 +3303,12 @@ function WorkGroupToggleTimelineRow({
  *  so toggling re-renders only this component — not the entire list. */
 const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection({
   turnSummary,
-  routeThreadKey,
+  threadKey,
   resolvedTheme,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary | undefined;
-  routeThreadKey: string;
+  threadKey: string;
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
@@ -3313,7 +3320,7 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
     <AssistantChangedFilesSectionInner
       turnSummary={turnSummary}
       checkpointFiles={checkpointFiles}
-      routeThreadKey={routeThreadKey}
+      threadKey={threadKey}
       resolvedTheme={resolvedTheme}
       onOpenTurnDiff={onOpenTurnDiff}
     />
@@ -3325,21 +3332,37 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
 function AssistantChangedFilesSectionInner({
   turnSummary,
   checkpointFiles,
-  routeThreadKey,
+  threadKey,
   resolvedTheme,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary;
   checkpointFiles: TurnDiffSummary["files"];
-  routeThreadKey: string;
+  threadKey: string;
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
+  const ctx = use(TimelineRowCtx);
   const persistedExpanded = useUiStateStore(
-    (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.turnId],
+    (store) => store.threadChangedFilesExpandedById[threadKey]?.[turnSummary.turnId],
   );
   const setExpanded = useUiStateStore((store) => store.setThreadChangedFilesExpanded);
   const allDirectoriesExpanded = persistedExpanded ?? false;
+
+  // Rows can belong to a held snapshot of the previous thread while the list
+  // settles; bind file actions and expansion state to the painted thread.
+  const paintedThreadRef = useMemo(
+    () => parseScopedThreadKey(threadKey) ?? ctx.threadRef,
+    [threadKey, ctx.threadRef],
+  );
+  const thread = useThread(paintedThreadRef);
+  const project = useProject(
+    thread && thread.projectId
+      ? { environmentId: thread.environmentId, projectId: thread.projectId }
+      : null,
+  );
+  const environmentId = paintedThreadRef?.environmentId ?? ctx.activeThreadEnvironmentId;
+  const onFileContextMenu = useFileContextMenuHandler(environmentId);
 
   return (
     <ChangedFilesCard
@@ -3348,9 +3371,21 @@ function AssistantChangedFilesSectionInner({
       allDirectoriesExpanded={allDirectoriesExpanded}
       resolvedTheme={resolvedTheme}
       onToggleAllDirectories={() =>
-        setExpanded(routeThreadKey, turnSummary.turnId, !allDirectoriesExpanded)
+        setExpanded(threadKey, turnSummary.turnId, !allDirectoriesExpanded)
       }
       onOpenTurnDiff={onOpenTurnDiff}
+      onFileContextMenu={(filePath, event) =>
+        onFileContextMenu(
+          {
+            environmentId,
+            filePath,
+            workspaceRoot: project?.workspaceRoot ?? ctx.workspaceRoot,
+            repositoryRoot:
+              thread?.worktreePath == null ? project?.repositoryIdentity?.rootPath : undefined,
+          },
+          event,
+        )
+      }
     />
   );
 }
