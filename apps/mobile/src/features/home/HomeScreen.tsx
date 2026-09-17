@@ -115,6 +115,7 @@ interface HomeScreenProps {
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
   /** Resolves true iff the settle was dispatched and succeeded. */
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly onPauseThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (
     thread: EnvironmentThreadShell,
     snoozedUntil: string,
@@ -509,6 +510,12 @@ export function HomeScreen(props: HomeScreenProps) {
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
   const handleSettleThread = props.onSettleThread;
+  const handlePauseThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      void props.onPauseThread(thread);
+    },
+    [props.onPauseThread],
+  );
   const handleSnoozeThread = useCallback(
     (thread: EnvironmentThreadShell, snoozedUntil: string) => {
       void props.onSnoozeThread(thread, snoozedUntil);
@@ -896,6 +903,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
+          onPauseThread={handlePauseThread}
           onPinThread={handlePinThread}
           onUnpinThread={handleUnpinThread}
           onMoveThread={handleMoveThread}
@@ -906,6 +914,7 @@ export function HomeScreen(props: HomeScreenProps) {
     },
     [
       handleDeleteThread,
+      handlePauseThread,
       activeReorderEnvironmentIds,
       threadMovePlanners,
       pendingOrder,

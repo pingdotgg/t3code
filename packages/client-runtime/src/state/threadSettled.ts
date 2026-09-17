@@ -309,3 +309,29 @@ export function localSnoozeDate(date: Date): string {
 export function localSnoozeTime(date: Date): string {
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
+
+/**
+ * Manual pause ("park the provider to save RAM") rides on the existing
+ * `thread.session.stop` command: the provider subprocess is torn down while
+ * the thread stays active, and the next turn recreates the session
+ * (`ensureSessionForThread` treats `stopped` as absent). Resume is therefore
+ * "send a message", not a second command — no contract change needed.
+ *
+ * A paused session is `session != null && status === "stopped"`. A null
+ * session (never started) is not "paused", it is just idle.
+ */
+export function isSessionPaused(shell: Pick<OrchestrationThreadShell, "session">): boolean {
+  return shell.session != null && shell.session.status === "stopped";
+}
+
+/**
+ * Pause mirrors the archive guard: never yank a thread mid-turn. Interrupt
+ * first, then pause. Idle sessions (ready / error / no active turn) are
+ * pausable; already-paused or never-started threads are not.
+ */
+export function canPauseSession(shell: Pick<OrchestrationThreadShell, "session">): boolean {
+  const session = shell.session;
+  if (session == null || session.status === "stopped") return false;
+  if (session.status === "running" && session.activeTurnId != null) return false;
+  return true;
+}
