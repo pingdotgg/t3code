@@ -1,3 +1,7 @@
+import {
+  makeProviderTextDeltaCoalescer,
+  type ProviderTextDeltaUpdate,
+} from "./ProviderTextDeltaCoalescer.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -59,10 +63,8 @@ import {
   codexFileChangeApprovalPrompt,
   codexProviderTurnTokenUsage,
   codexThreadRuntimeParams,
-  type CodexAgentMessageDeltaUpdate,
   type CodexAppServerClientFactoryShape,
   makeCodexAdapterV2,
-  makeCodexAgentMessageDeltaCoalescer,
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
   projectCodexDynamicToolItem,
@@ -176,7 +178,7 @@ describe("CodexAdapterV2 assistant message streaming", () => {
           readonly completed: boolean;
         }>
       >([]);
-      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
         flushIntervalMs: 50,
         emit: (update) => Ref.update(updates, (current) => [...current, update]),
       });
@@ -200,8 +202,8 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 
   it.effect("coalesces multiple token deltas into one assistant update per interval", () =>
     Effect.gen(function* () {
-      const updates = yield* Ref.make<ReadonlyArray<CodexAgentMessageDeltaUpdate>>([]);
-      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+      const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
         flushIntervalMs: 50,
         emit: (update) => Ref.update(updates, (current) => [...current, update]),
       });
@@ -226,8 +228,8 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 
   it.effect("flushes buffered text synchronously before item and turn completion", () =>
     Effect.gen(function* () {
-      const updates = yield* Ref.make<ReadonlyArray<CodexAgentMessageDeltaUpdate>>([]);
-      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+      const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
         flushIntervalMs: 50,
         emit: (update) => Ref.update(updates, (current) => [...current, update]),
       });
@@ -254,9 +256,9 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 
   it.effect("retains buffered text until completion updates are emitted", () =>
     Effect.gen(function* () {
-      const updates = yield* Ref.make<ReadonlyArray<CodexAgentMessageDeltaUpdate>>([]);
+      const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
       const failNext = yield* Ref.make(true);
-      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
         flushIntervalMs: 50,
         emit: (update) =>
           Ref.getAndSet(failNext, false).pipe(
@@ -294,8 +296,8 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 
   it.effect("can discard an empty completion without emitting an assistant update", () =>
     Effect.gen(function* () {
-      const updates = yield* Ref.make<ReadonlyArray<CodexAgentMessageDeltaUpdate>>([]);
-      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+      const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
         flushIntervalMs: 50,
         emit: (update) => Ref.update(updates, (current) => [...current, update]),
       });
@@ -336,8 +338,8 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 
   it.effect("treats explicit empty final text as authoritative over buffered deltas", () =>
     Effect.gen(function* () {
-      const updates = yield* Ref.make<ReadonlyArray<CodexAgentMessageDeltaUpdate>>([]);
-      const coalescer = yield* makeCodexAgentMessageDeltaCoalescer({
+      const updates = yield* Ref.make<ReadonlyArray<ProviderTextDeltaUpdate>>([]);
+      const coalescer = yield* makeProviderTextDeltaCoalescer({
         flushIntervalMs: 50,
         emit: (update) => Ref.update(updates, (current) => [...current, update]),
       });
@@ -1380,6 +1382,7 @@ function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
+          summary: "detailed",
         },
       },
     },
@@ -2022,7 +2025,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("continues an interrupted native thread with empty Codex turn input", () =>
+  it.effect("continues an interrupted native thread with empty input and reasoning summaries", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const scenario = "codex-restart-promptless";
@@ -2065,6 +2068,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   approvalPolicy: "never",
                   approvalsReviewer: "user",
                   sandboxPolicy: { type: "dangerFullAccess" },
+                  summary: "detailed",
                 },
               },
             },
