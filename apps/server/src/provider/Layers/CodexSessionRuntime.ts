@@ -41,6 +41,7 @@ import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import {
   buildCodexDeveloperInstructions,
+  buildCodexWorkStateDeveloperInstructions,
   type T3CodeToolAvailability,
 } from "../CodexDeveloperInstructions.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
@@ -73,10 +74,16 @@ function configuredMcpToolAvailability(
   appServerArgs: ReadonlyArray<string> | undefined,
   mcpCapabilities: ReadonlySet<string> | undefined,
 ): T3CodeToolAvailability {
-  if (!hasConfiguredMcpServer(appServerArgs)) return { browser: false, device: false };
+  if (!hasConfiguredMcpServer(appServerArgs)) {
+    return { browser: false, device: false, workState: false };
+  }
   // Callers predating the capability set attached the browser toolkit only.
-  if (mcpCapabilities === undefined) return { browser: true, device: false };
-  return { browser: mcpCapabilities.has("preview"), device: mcpCapabilities.has("device") };
+  if (mcpCapabilities === undefined) return { browser: true, device: false, workState: false };
+  return {
+    browser: mcpCapabilities.has("preview"),
+    device: mcpCapabilities.has("device"),
+    workState: mcpCapabilities.has("work_state"),
+  };
 }
 
 export const CodexResumeCursorSchema = Schema.Struct({
@@ -547,13 +554,18 @@ function buildThreadStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
+  readonly workStateToolsAvailable?: boolean;
 }): EffectCodexSchema.V2ThreadStartParams {
   const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const developerInstructions = input.workStateToolsAvailable
+    ? buildCodexWorkStateDeveloperInstructions()
+    : undefined;
   return {
     cwd: input.cwd,
     approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox,
     approvalsReviewer: config.approvalsReviewer,
+    ...(developerInstructions ? { developerInstructions } : {}),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
   };
@@ -728,6 +740,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly workStateToolsAvailable?: boolean;
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -735,6 +748,7 @@ export const openCodexThread = (input: {
     runtimeMode: input.runtimeMode,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
+    workStateToolsAvailable: input.workStateToolsAvailable ?? false,
   });
 
   if (resumeThreadId === undefined) {
@@ -2444,6 +2458,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        workStateToolsAvailable: options.mcpCapabilities?.has("work_state") ?? false,
       });
 
       const providerThreadId = opened.thread.id;

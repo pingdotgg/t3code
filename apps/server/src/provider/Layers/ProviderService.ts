@@ -30,7 +30,7 @@ import {
   TurnId,
   type ProjectId,
   type ProviderInstanceId,
-  type ProviderDriverKind,
+  ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ServerSettings as ServerSettingsValue,
@@ -87,6 +87,7 @@ import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 const isModelSelection = Schema.is(ModelSelection);
+const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const encodePromptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 interface SnapShotPromptAccessibilityNode {
@@ -905,8 +906,10 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
     threadId: ThreadId,
+    provider: ProviderDriverKind,
   ) {
     const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
+    if (provider === CODEX_PROVIDER) capabilities.add("work_state");
     const access = yield* agentAccessSettings(threadId);
     if (access.browser) capabilities.add("preview");
     if (access.device) capabilities.add("device");
@@ -940,9 +943,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     } satisfies Record<string, string>;
   });
 
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+  const prepareMcpSession = (
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+    provider: ProviderDriverKind,
+  ) =>
     Effect.gen(function* () {
-      const capabilities = yield* agentAccessCapabilities(threadId);
+      const capabilities = yield* agentAccessCapabilities(threadId, provider);
       const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
@@ -1269,7 +1276,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
-      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
+      yield* prepareMcpSession(input.binding.threadId, bindingInstanceId, adapter.provider);
       const resumed = yield* adapter
         .startSession({
           threadId: input.binding.threadId,
@@ -1500,7 +1507,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
-        yield* prepareMcpSession(threadId, resolvedInstanceId);
+        yield* prepareMcpSession(threadId, resolvedInstanceId, adapter.provider);
         const session = yield* adapter
           .startSession({
             ...input,

@@ -17,6 +17,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as HydeAgentWorkState from "../roy/autonomy/HydeAgentWorkState.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -31,6 +32,8 @@ import {
 } from "./toolkits/preview/tools.ts";
 import { PullRequestsToolkitHandlersLive } from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
+import { HydeWorkStateToolkitHandlersLive } from "./toolkits/hyde-work-state/handlers.ts";
+import { HydeWorkStateToolkit } from "./toolkits/hyde-work-state/tools.ts";
 import {
   DeviceScreenshotToolkitHandlersLive,
   DeviceStandardToolkitHandlersLive,
@@ -621,15 +624,54 @@ export const DeviceToolkitRegistrationLive = Layer.mergeAll(
   DeviceScreenshotRegistrationLive,
 );
 
-const McpTransportLive = McpServer.layerHttp({
-  name: "T3 Code",
-  version: packageJson.version,
-  path: "/mcp",
-  protocols: [McpProtocol.v2025_06_18],
-}).pipe(Layer.provide(McpAuthMiddlewareLive));
+export const HydeWorkStateToolkitRegistrationLive = McpServer.toolkit(HydeWorkStateToolkit).pipe(
+  Layer.provide(HydeWorkStateToolkitHandlersLive),
+);
 
-export const layer = Layer.mergeAll(
+type McpTransportPath =
+  | "/mcp"
+  | "/mcp/preview"
+  | "/mcp/pull-requests"
+  | "/mcp/device"
+  | "/mcp/work-state";
+
+const mcpTransport = (name: string, path: McpTransportPath) =>
+  Layer.fresh(
+    McpServer.layerHttp({
+      name,
+      version: packageJson.version,
+      path,
+      protocols: [McpProtocol.v2025_06_18],
+    }),
+  ).pipe(Layer.provide(McpAuthMiddlewareLive));
+
+const LegacyMcpLayer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
-).pipe(Layer.provideMerge(McpTransportLive));
+).pipe(Layer.provideMerge(mcpTransport("T3 Code", "/mcp")));
+
+const PreviewMcpLayer = Layer.fresh(PreviewToolkitRegistrationLive).pipe(
+  Layer.provideMerge(mcpTransport("T3 Preview", "/mcp/preview")),
+);
+
+const PullRequestsMcpLayer = Layer.fresh(PullRequestsToolkitRegistrationLive).pipe(
+  Layer.provideMerge(mcpTransport("T3 Pull Requests", "/mcp/pull-requests")),
+);
+
+const DeviceMcpLayer = Layer.fresh(DeviceToolkitRegistrationLive).pipe(
+  Layer.provideMerge(mcpTransport("T3 Device", "/mcp/device")),
+);
+
+const WorkStateMcpLayer = HydeWorkStateToolkitRegistrationLive.pipe(
+  Layer.provide(HydeAgentWorkState.HydeAgentWorkStateLive),
+  Layer.provideMerge(mcpTransport("HYDE Work State", "/mcp/work-state")),
+);
+
+export const layer = Layer.mergeAll(
+  LegacyMcpLayer,
+  PreviewMcpLayer,
+  PullRequestsMcpLayer,
+  DeviceMcpLayer,
+  WorkStateMcpLayer,
+);

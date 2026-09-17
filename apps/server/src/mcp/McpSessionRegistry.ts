@@ -99,6 +99,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const endpoint = NetAddress.isInetAddress(httpServer.address)
     ? `http://${getHttpMcpEndpointHost(httpServer.address.address)}:${httpServer.address.port}/mcp`
     : "http://127.0.0.1/mcp";
+  const previewEndpoint = endpoint.replace(/\/mcp$/u, "/mcp/preview");
+  const deviceEndpoint = endpoint.replace(/\/mcp$/u, "/mcp/device");
+  const pullRequestsEndpoint = endpoint.replace(/\/mcp$/u, "/mcp/pull-requests");
+  const workStateEndpoint = endpoint.replace(/\/mcp$/u, "/mcp/work-state");
 
   const hashToken = (token: string) =>
     crypto
@@ -143,6 +147,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: scope.providerInstanceId,
           endpoint,
+          ...(scope.capabilities.has("preview") ? { previewEndpoint } : {}),
+          ...(scope.capabilities.has("device") ? { deviceEndpoint } : {}),
+          ...(scope.capabilities.has("pull-requests") ? { pullRequestsEndpoint } : {}),
+          ...(scope.capabilities.has("work_state") ? { workStateEndpoint } : {}),
           authorizationHeader: `Bearer ${rawToken}`,
           capabilities: scope.capabilities,
         },

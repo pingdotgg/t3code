@@ -22,12 +22,15 @@ The \`t3-code\` MCP server also exposes \`device_*\` tools for iOS Simulators an
 export interface T3CodeToolAvailability {
   readonly browser: boolean;
   readonly device: boolean;
+  readonly workState?: boolean;
 }
 
 const normalizeAvailability = (
   availability: boolean | T3CodeToolAvailability,
 ): T3CodeToolAvailability =>
-  typeof availability === "boolean" ? { browser: availability, device: false } : availability;
+  typeof availability === "boolean"
+    ? { browser: availability, device: false, workState: false }
+    : availability;
 
 /**
  * Each block is omitted entirely when its tools aren't attached. Describing
@@ -42,6 +45,25 @@ const browserToolInstructions = (availability: boolean | T3CodeToolAvailability)
     tools.device ? T3_CODE_DEVICE_TOOL_INSTRUCTIONS : ""
   }`;
 };
+
+const T3_CODE_WORK_STATE_INSTRUCTIONS = `
+
+## HYDE durable work state
+
+When \`hyde_work_state_*\` tools are available in a Default-mode turn, they are mandatory continuity controls. The first tool action of every such turn MUST be \`hyde_work_state_read\` with the empty JSON object \`{}\`. This applies even when the user asks for a small, single-stage, or file-only operation. Do not call shell, file, repository, or other mutation tools, make a consequential decision, or send a final response until that read succeeds. Treat the result as continuity context only: live source, tests, runtime state, and external coordination outrank it. After any material workspace/repository mutation, Codex MUST verify the work and call \`hyde_work_state_checkpoint\` as the last tool action before the final assistant response, with a complete replacement state and the revision from the latest read. If checkpoint returns a revision conflict, Codex must reread and reconcile rather than overwriting. A final response after material progress without attempting the checkpoint is prohibited unless the checkpoint tool returned a non-recoverable error; in that case, the final response must report that exact bounded failure. Do not checkpoint trivial turns. Plan mode remains read-only and must not checkpoint. Never store secrets, credentials, tokens, private keys, raw customer data, or large source contents in work state.
+`;
+
+export function buildCodexWorkStateDeveloperInstructions(): string {
+  return T3_CODE_WORK_STATE_INSTRUCTIONS;
+}
+
+const workStateInstructions = (availability: boolean | T3CodeToolAvailability): string =>
+  normalizeAvailability(availability).workState ? buildCodexWorkStateDeveloperInstructions() : "";
+
+const workStatePlanInstructions = (availability: boolean | T3CodeToolAvailability): string =>
+  normalizeAvailability(availability).workState
+    ? "\nWhen work-state tools are available, use `hyde_work_state_read` only to recover continuity. Do not call `hyde_work_state_checkpoint` in Plan Mode."
+    : "";
 
 const codexPlanModeDeveloperInstructions = (
   browserToolsAvailable: boolean | T3CodeToolAvailability,
@@ -174,6 +196,7 @@ Only produce at most one \`<proposed_plan>\` block per turn, and only when you a
 
 If the user stays in Plan mode and asks for revisions after a prior \`<proposed_plan>\`, any new \`<proposed_plan>\` must be a complete replacement. If the user indicates that the prior plan is not acceptable but does not provide enough information to produce a complete replacement, address the concern and continue planning without producing a \`<proposed_plan>\` block. If the follow-up neither requires changes nor calls the plan into question (e.g. clarifying question), answer it before the block, then reproduce the prior \`<proposed_plan>\` unchanged.
 ${browserToolInstructions(browserToolsAvailable)}
+${workStatePlanInstructions(browserToolsAvailable)}
 </collaboration_mode>`;
 
 const codexDefaultModeDeveloperInstructions = (
@@ -190,6 +213,7 @@ Use the \`request_user_input\` tool only when it is listed in the available tool
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
 ${browserToolInstructions(browserToolsAvailable)}
+${workStateInstructions(browserToolsAvailable)}
 </collaboration_mode>`;
 
 export interface CodexRuntimeInfo {
