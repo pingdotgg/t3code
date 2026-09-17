@@ -72,7 +72,7 @@ function addBlock(
 }
 
 export function buildThreadActivityInspector(
-  activity: ThreadFeedActivity,
+  activity: Pick<ThreadFeedActivity, "projectedItem">,
   support: V2ItemSupport,
   currentThreadId: ThreadId,
 ): ThreadActivityInspectorModel {

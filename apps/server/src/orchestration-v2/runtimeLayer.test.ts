@@ -1765,6 +1765,102 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("keeps the branch pull request when linking another pull request", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const projects = yield* ProjectionProjectRepository;
+      const threadId = ThreadId.make("branch-pr-link");
+      const projectId = ProjectId.make("branch-pr-project");
+      yield* projects.upsert({
+        projectId,
+        title: "PR links",
+        workspaceRoot: "/workspace/pr-links",
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+        autoPull: false,
+        scripts: [],
+        createdAt: "2026-09-17T00:00:00.000Z",
+        updatedAt: "2026-09-17T00:00:00.000Z",
+        deletedAt: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("branch-pr-create"),
+        threadId,
+        projectId,
+        title: "PR links",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature/pr-links",
+        worktreePath: null,
+      });
+      const snapshot = yield* orchestrator.getShellSnapshot();
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.sync",
+        commandId: CommandId.make("branch-pr-discover"),
+        threadId,
+        projectId,
+        snapshotSequence: snapshot.snapshotSequence,
+        expected: {
+          workspaceRoot: "/workspace/pr-links",
+          branch: "feature/pr-links",
+          worktreePath: null,
+          linkedPullRequest: null,
+          branchPullRequest: null,
+        },
+        branchPullRequest: {
+          projectId,
+          repository: "pingdotgg/t3code",
+          number: 1,
+          url: "https://github.com/pingdotgg/t3code/pull/1",
+        },
+      });
+      for (const [index, number] of [2, 2, 1, 3].entries()) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`branch-pr-link-${index}`),
+          threadId,
+          host: "GitHub.com",
+          repository: "Pingdotgg/T3code",
+          number,
+          url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+          source: "manual",
+        });
+        assert.deepEqual(
+          (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.map((link) => link.number),
+          number === 3 ? [1, 2, 3] : [1, 2],
+        );
+      }
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.unlink",
+        commandId: CommandId.make("branch-pr-unlink"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 1,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("branch-pr-link-after-unlink"),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 4,
+        url: "https://github.com/pingdotgg/t3code/pull/4",
+        source: "manual",
+      });
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.map((link) => link.number),
+        [2, 3, 4],
+      );
+    }),
+  );
+
   it.effect("retains multiple pull requests and dismissed stack members through rebuilds", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
