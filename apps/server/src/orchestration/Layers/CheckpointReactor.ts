@@ -102,7 +102,6 @@ const make = Effect.gen(function* () {
           ? Effect.failCause(cause)
           : Effect.logWarning("failed to refresh checkpoint workspace entries", {
               cwd,
-              cause: Cause.pretty(cause),
             }),
       ),
     ),
@@ -649,7 +648,6 @@ const make = Effect.gen(function* () {
             ? Effect.failCause(cause)
             : Effect.logWarning("failed to refresh git status after turn completion", {
                 threadId: event.threadId,
-                cause: Cause.pretty(cause),
               }),
         ),
       ),
