@@ -75,6 +75,14 @@ export function resolveSpeechPresentation(
         confirmEnabled: false,
         showsSend: false,
       };
+    case "post-processing":
+      return {
+        status: "Post-processing transcription",
+        showsCancel: true,
+        showsConfirm: true,
+        confirmEnabled: false,
+        showsSend: false,
+      };
   }
 }
 
@@ -255,6 +263,7 @@ export function ComposerSpeechRecordingPill(props: {
   level: number;
   onStop(): void;
   onCancel(): void;
+  onSkipPostProcessing(): void;
 }) {
   const presentation = resolveSpeechPresentation(props.state, props.progress);
   if (!presentation.showsConfirm) return null;
@@ -267,24 +276,37 @@ export function ComposerSpeechRecordingPill(props: {
     <div className="flex h-10 w-48 min-w-0 items-center gap-2 rounded-full border border-border/50 bg-background/80 p-1 sm:h-9 sm:w-64">
       <ComposerSpeechCancelButton state={props.state} onCancel={props.onCancel} />
       <ComposerSpeechStatus state={props.state} progress={props.progress} level={props.level} />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              size="icon-sm"
-              aria-label={label}
-              disabled={!presentation.confirmEnabled}
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={props.onStop}
-              className="shrink-0 rounded-full"
-            >
-              {presentation.confirmEnabled ? <CheckIcon /> : <Spinner aria-hidden />}
-            </Button>
-          }
-        />
-        <TooltipPopup side="top">{label}</TooltipPopup>
-      </Tooltip>
+      {props.state.phase === "post-processing" ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={props.onSkipPostProcessing}
+          className="shrink-0 rounded-full px-2.5"
+        >
+          Skip
+        </Button>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-sm"
+                aria-label={label}
+                disabled={!presentation.confirmEnabled}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={props.onStop}
+                className="shrink-0 rounded-full"
+              >
+                {presentation.confirmEnabled ? <CheckIcon /> : <Spinner aria-hidden />}
+              </Button>
+            }
+          />
+          <TooltipPopup side="top">{label}</TooltipPopup>
+        </Tooltip>
+      )}
     </div>
   );
 }

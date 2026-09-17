@@ -1,21 +1,27 @@
 import {
   getEnvironmentSpeechStatus,
+  postProcessEnvironmentTranscript,
   VoiceInputController,
   voiceInputBlocksSubmission,
   voiceInputFreezesEditor,
   type VoiceDraftSnapshot,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
-import type { EnvironmentSpeechStatus, SpeechStreamText } from "@t3tools/contracts";
+import type { EnvironmentId, EnvironmentSpeechStatus, SpeechStreamText } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useClientSettingsHydrated,
+  useEnvironmentSettings,
+} from "../hooks/useSettings";
 import { ensureLocalApi } from "../localApi";
 import { usePreparedConnection } from "../state/session";
 import { runtime } from "../lib/runtime";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import { toastManager } from "../components/ui/toast";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 
@@ -25,6 +31,7 @@ type DraftInput = {
 };
 
 type HookInput = {
+  readonly environmentId: EnvironmentId;
   readonly ownerKey: string;
   readonly draftText: string;
   readonly readDraft: () => DraftInput;
@@ -44,6 +51,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     ? (configuredEnvironmentId ?? primaryEnvironmentId)
     : null;
   const prepared = Option.getOrNull(usePreparedConnection(transcriptionEnvironmentId));
+  const postProcessingPrepared = Option.getOrNull(usePreparedConnection(input.environmentId));
+  const postProcessingEnabled = useEnvironmentSettings(
+    input.environmentId,
+    (settings) => settings.speechPostProcessingEnabled,
+  );
   const microphoneId = useClientSettings((settings) => settings.voiceMicrophone);
   const [status, setStatus] = useState<{
     readonly prepared: NonNullable<typeof prepared>;
@@ -121,6 +133,23 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       configureRecording: async () => undefined,
       releaseRecording: async () => platform.cancelRecording(),
       deleteRecording: platform.deleteRecording,
+      ...(postProcessingEnabled && postProcessingPrepared
+        ? {
+            postProcess: async (transcript: string, options: { readonly signal: AbortSignal }) => {
+              const result = await runtime.runPromise(
+                postProcessEnvironmentTranscript(postProcessingPrepared, transcript),
+                options,
+              );
+              return result.text;
+            },
+            onPostProcessingError: () =>
+              toastManager.add({
+                type: "warning",
+                title: "Post-processing failed",
+                description: "The original transcription was added.",
+              }),
+          }
+        : {}),
       readDraft,
       commitDraft: (text, selection) => latestInputRef.current.commitDraft(text, selection),
       onStateChange: (value) => {
@@ -136,7 +165,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, [prepared]);
+  }, [postProcessingEnabled, postProcessingPrepared, prepared]);
 
   useEffect(() => {
     if (!prepared) return;
@@ -197,5 +226,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     start,
     stop: useCallback(() => controllerRef.current?.stop() ?? Promise.resolve(), []),
     cancel: useCallback(() => controllerRef.current?.cancel(), []),
+    skipPostProcessing: useCallback(() => controllerRef.current?.skipPostProcessing(), []),
   };
 }

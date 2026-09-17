@@ -149,6 +149,69 @@ describe("streaming voice input", () => {
   });
 });
 
+describe("voice post-processing", () => {
+  beforeEach(resetVoiceInputGlobalsForTests);
+
+  it("commits the processed transcript", async () => {
+    const phases: string[] = [];
+    const harness = createHarness({
+      postProcess: async () => "polished text",
+      onStateChange: (state) => phases.push(state.phase),
+    });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(phases).toContain("post-processing");
+    expect(harness.commits).toEqual([
+      { text: "hello polished text", selection: { start: 19, end: 19 } },
+    ]);
+  });
+
+  it("skips post-processing and commits the raw transcript", async () => {
+    const started = deferred<void>();
+    const processed = deferred<string>();
+    const harness = createHarness({
+      postProcess: async () => {
+        started.resolve();
+        return processed.promise;
+      },
+    });
+
+    await harness.controller.start();
+    const stopping = harness.controller.stop();
+    await started.promise;
+    expect(harness.controller.currentState.phase).toBe("post-processing");
+    harness.controller.skipPostProcessing();
+    await stopping;
+
+    expect(harness.commits).toEqual([
+      { text: "hello new text", selection: { start: 14, end: 14 } },
+    ]);
+    processed.resolve("late text");
+    await processed.promise;
+    expect(harness.commits).toHaveLength(1);
+  });
+
+  it("falls back to raw text and reports provider failures", async () => {
+    const onPostProcessingError = vi.fn();
+    const harness = createHarness({
+      postProcess: async () => {
+        throw new Error("provider failed");
+      },
+      onPostProcessingError,
+    });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(harness.commits).toEqual([
+      { text: "hello new text", selection: { start: 14, end: 14 } },
+    ]);
+    expect(onPostProcessingError).toHaveBeenCalledOnce();
+  });
+});
+
 describe("resolveTranscriptCommit", () => {
   it("replaces the recorded UTF-16 selection around emoji and composer tokens", () => {
     const text = "Fix 🧪 then $review please";

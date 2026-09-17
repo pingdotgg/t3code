@@ -2,7 +2,7 @@ import { expect, it } from "vite-plus/test";
 
 import { resolveSpeechPresentation, shouldShowComposerFooter } from "./ComposerSpeechButton";
 
-it.each(["preparing", "recording", "transcribing", "error"] as const)(
+it.each(["preparing", "recording", "transcribing", "post-processing", "error"] as const)(
   "keeps voice controls visible in a collapsed composer during %s",
   (phase) => {
     expect(shouldShowComposerFooter(true, false, phase)).toBe(true);
@@ -36,6 +36,14 @@ it("maps voice input phases to composer actions", () => {
     resolveSpeechPresentation({ phase: "transcribing", error: null, errorAction: null }, null),
   ).toMatchObject({
     status: "Transcribing",
+    showsCancel: true,
+    confirmEnabled: false,
+    showsSend: false,
+  });
+  expect(
+    resolveSpeechPresentation({ phase: "post-processing", error: null, errorAction: null }, null),
+  ).toMatchObject({
+    status: "Post-processing transcription",
     showsCancel: true,
     confirmEnabled: false,
     showsSend: false,

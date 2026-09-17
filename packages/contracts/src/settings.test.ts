@@ -534,5 +534,13 @@ describe("ServerSettings speech model", () => {
   it("starts with no custom transcription words", () => {
     expect(DEFAULT_SERVER_SETTINGS.speechCustomWords).toEqual([]);
     expect(DEFAULT_SERVER_SETTINGS.speechRemoveFillerWords).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingEnabled).toBe(false);
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).not.toBe(
+      DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+    );
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingPrompts).toHaveLength(1);
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingSelectedPromptId).toBe(
+      "improve-transcription",
+    );
   });
 });

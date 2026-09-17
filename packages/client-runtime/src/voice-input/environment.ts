@@ -141,6 +141,18 @@ export const transcribeEnvironmentPcm = (prepared: PreparedConnection, pcm: Uint
     run: ({ client, headers }) => client.transcribe({ headers, payload: pcm }),
   });
 
+export const postProcessEnvironmentTranscript = (
+  prepared: PreparedConnection,
+  transcript: string,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.postProcess(),
+    run: ({ client, headers }) => client.postProcess({ headers, payload: { transcript } }),
+  });
+
 export const updateEnvironmentSpeechCustomWords = (
   prepared: PreparedConnection,
   words: readonly string[],

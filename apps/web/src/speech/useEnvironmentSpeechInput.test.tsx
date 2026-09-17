@@ -12,12 +12,14 @@ const mocks = vi.hoisted(() => ({
   busy: false,
   prepared: {} as PreparedConnection,
   preparedEnvironmentId: null as EnvironmentId | null,
+  preparedEnvironmentIds: [] as Array<EnvironmentId | null>,
   primaryEnvironmentId: "primary-environment" as EnvironmentId,
   transcriptionEnvironmentId: null as EnvironmentId | null,
 }));
 vi.mock("../state/session", () => ({
   usePreparedConnection: (environmentId: EnvironmentId | null) => {
     mocks.preparedEnvironmentId = environmentId;
+    mocks.preparedEnvironmentIds.push(environmentId);
     return Option.some(mocks.prepared);
   },
 }));
@@ -31,6 +33,7 @@ vi.mock("../hooks/useSettings", () => ({
       ...DEFAULT_CLIENT_SETTINGS,
       voiceTranscriptionEnvironmentId: mocks.transcriptionEnvironmentId,
     }),
+  useEnvironmentSettings: () => false,
 }));
 vi.mock("../lib/runtime", () => ({ runtime: { runPromise: Effect.runPromise } }));
 vi.mock("../localApi", () => ({ ensureLocalApi: () => ({}) }));
@@ -63,6 +66,7 @@ let root: Root | undefined;
 let voice: ReturnType<typeof useEnvironmentSpeechInput>;
 function Probe() {
   const value = useEnvironmentSpeechInput({
+    environmentId: "project-environment" as EnvironmentId,
     ownerKey: "draft",
     draftText: "",
     readDraft: () => ({ text: "", selection: { start: 0, end: 0 } }),
@@ -99,6 +103,7 @@ afterEach(async () => {
   mocks.busy = false;
   mocks.transcriptionEnvironmentId = null;
   mocks.preparedEnvironmentId = null;
+  mocks.preparedEnvironmentIds = [];
   vi.unstubAllGlobals();
 });
 it("does not capture audio while the environment is transcribing", async () => {
@@ -109,11 +114,11 @@ it("does not capture audio while the environment is transcribing", async () => {
 });
 it("uses the primary environment for transcription by default", async () => {
   await mountProbe();
-  expect(mocks.preparedEnvironmentId).toBe(mocks.primaryEnvironmentId);
+  expect(mocks.preparedEnvironmentIds).toContain(mocks.primaryEnvironmentId);
 
   mocks.transcriptionEnvironmentId = "voice-environment" as EnvironmentId;
   await act(() => root!.render(<Probe />));
-  expect(mocks.preparedEnvironmentId).toBe(mocks.transcriptionEnvironmentId);
+  expect(mocks.preparedEnvironmentIds).toContain(mocks.transcriptionEnvironmentId);
 });
 it("clears the previous connection's recording error when replacing the controller", async () => {
   await mountProbe();

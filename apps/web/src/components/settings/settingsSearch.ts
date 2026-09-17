@@ -769,6 +769,27 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["OTel OTLP telemetry export endpoints logs traces metrics Grafana"],
   },
   {
+    id: "speech-post-processing",
+    title: "Voice post-processing",
+    to: "/settings/general",
+    searchTerms: ["speech transcription polish clean provider"],
+    desktopOnly: true,
+  },
+  {
+    id: "speech-post-processing-model",
+    title: "Voice post-processing model",
+    to: "/settings/general",
+    searchTerms: ["speech transcription provider model"],
+    desktopOnly: true,
+  },
+  {
+    id: "speech-post-processing-prompt",
+    title: "Voice post-processing prompt",
+    to: "/settings/general",
+    searchTerms: ["speech transcription instructions cleanup"],
+    desktopOnly: true,
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/maintenance",

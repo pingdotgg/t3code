@@ -16,6 +16,9 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as SpeechService from "./SpeechService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { postProcessTranscript } from "./postProcessing.ts";
 
 const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
   Effect.gen(function* () {
@@ -139,6 +142,32 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           return yield* speech
             .updateFillerWordRemoval(args.payload.enabled)
             .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+        }),
+      )
+      .handle(
+        "postProcess",
+        Effect.fn("environment.voice.postProcess")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          const settingsService = yield* ServerSettings.ServerSettingsService;
+          const textGeneration = yield* TextGeneration.TextGeneration;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const settings = yield* settingsService.getSettings;
+          const text = yield* Effect.gen(function* () {
+            const cwd = yield* fileSystem.makeTempDirectoryScoped({
+              prefix: "t3-voice-post-processing-",
+            });
+            return yield* postProcessTranscript({
+              transcript: args.payload.transcript,
+              cwd,
+              settings,
+              textGeneration,
+            });
+          }).pipe(
+            Effect.scoped,
+            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
+          );
+          return { text };
         }),
       )
       .handle(

@@ -67,6 +67,20 @@ export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
 
 export const EnvironmentSpeechCustomWordsRequest = Schema.Struct({ words: SpeechCustomWords });
 export const EnvironmentSpeechFillerWordsRequest = Schema.Struct({ enabled: Schema.Boolean });
+export const SpeechPostProcessingPrompt = Schema.Struct({
+  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+  name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+  prompt: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(10_000)),
+});
+export type SpeechPostProcessingPrompt = typeof SpeechPostProcessingPrompt.Type;
+export const SpeechPostProcessingPrompts = Schema.Array(SpeechPostProcessingPrompt).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(20),
+);
+export const EnvironmentSpeechPostProcessingRequest = Schema.Struct({
+  transcript: Schema.String.check(Schema.isMaxLength(100_000)),
+});
+export const EnvironmentSpeechPostProcessingResult = Schema.Struct({ text: Schema.String });
 export type EnvironmentSpeechTranscriptionResult = typeof EnvironmentSpeechTranscriptionResult.Type;
 
 export const SPEECH_STREAM_PATH = "/ws/voice";
