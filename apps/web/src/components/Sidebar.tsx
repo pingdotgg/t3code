@@ -1,5 +1,5 @@
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
-import { SidebarSubagents } from "./SidebarSubagents";
+import { useSidebarSubagents } from "./SidebarSubagents";
 import { setThreadChangeRequestSnapshot } from "./ThreadStatusIndicators";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
@@ -1085,6 +1085,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     snapshot: ThreadChangeRequestSnapshot | null,
   ) => void;
 }) {
+  const subagents = useSidebarSubagents(props.thread, props.variant === "slim");
   const {
     isRenaming,
     changeRequestSnapshot,
@@ -1676,6 +1677,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             </span>
             {draftIndicator}
             {title}
+            {subagents.toggle}
             {pinIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -1782,7 +1784,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
-        <SidebarSubagents thread={thread} />
+        {subagents.tree}
       </li>
     );
   }
@@ -1979,6 +1981,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : null}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+              {subagents.toggle}
               {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
@@ -2024,7 +2027,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
-      <SidebarSubagents thread={thread} />
+      {subagents.tree}
     </li>
   );
 });
