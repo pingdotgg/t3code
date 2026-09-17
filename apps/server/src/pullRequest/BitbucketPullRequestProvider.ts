@@ -113,7 +113,10 @@ export const make = Effect.gen(function* () {
         ...bitbucketProviderFailure(error),
         // Every Bitbucket failure states its own fact; this names the operation around it, so
         // the two do not stack into "failed in x: failed in y: ...".
-        detail: error.detail,
+        detail:
+          operation === "getViewerPermissions"
+            ? `Could not check your Bitbucket repository permissions. ${error.detail}`
+            : error.detail,
         cause: error,
       });
 
