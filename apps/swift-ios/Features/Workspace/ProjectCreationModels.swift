@@ -266,7 +266,7 @@ enum ProjectCreationPath {
         return isWindowsAbsolutePath(path)
     }
 
-    private static func isWindowsAbsolutePath(_ path: String) -> Bool {
+    static func isWindowsAbsolutePath(_ path: String) -> Bool {
         if path.hasPrefix("\\\\") || path.hasPrefix("//") { return true }
         let scalars = Array(path.unicodeScalars.prefix(3))
         return scalars.count == 3
