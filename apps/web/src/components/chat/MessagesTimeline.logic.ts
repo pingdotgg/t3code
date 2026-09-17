@@ -1505,7 +1505,7 @@ export function deriveMessagesTimelineRows(input: {
 }
 
 /** Adjacent work stays one visual list even when virtualization splits its groups. */
-export function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
+function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
   return (
     row !== undefined &&
     (row.kind === "work" ||
