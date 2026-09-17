@@ -1837,31 +1837,36 @@ describe("resolveBackgroundDraftWorkspaceOptions", () => {
 });
 
 describe("proactive completed diff guard", () => {
-  it("opens a completed turn diff only for changed files", () => {
-    const changedCheckpoint = {
-      status: "ready",
-      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
-    } satisfies Pick<TurnDiffSummary, "status" | "files">;
-    const unchangedCheckpoint = {
-      status: "ready",
-      files: [],
-    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+  it.each([
+    { files: 0, additions: 0, deletions: 0, action: "ignore" },
+    { files: 1, additions: 1, deletions: 0, action: "ignore" },
+    { files: 2, additions: 12, deletions: 12, action: "ignore" },
+    { files: 1, additions: 25, deletions: 24, action: "ignore" },
+    { files: 1, additions: 25, deletions: 25, action: "open" },
+    { files: 1, additions: 0, deletions: 50, action: "open" },
+    { files: 3, additions: 1, deletions: 0, action: "open" },
+  ])(
+    "uses change size for automatic diffs: $files files, +$additions/-$deletions",
+    ({ files, additions, deletions, action }) => {
+      const changedCheckpoint = {
+        status: "ready",
+        files: Array.from({ length: files }, (_, index) => ({
+          path: `src/app-${index}.ts`,
+          kind: "modified" as const,
+          additions,
+          deletions,
+        })),
+      } satisfies Pick<TurnDiffSummary, "status" | "files">;
 
-    expect(
-      resolveProactiveTurnDiffAction({
-        checkpoint: changedCheckpoint,
-        isGitRepo: true,
-        activeSurfaceKind: null,
-      }),
-    ).toBe("open");
-    expect(
-      resolveProactiveTurnDiffAction({
-        checkpoint: unchangedCheckpoint,
-        isGitRepo: true,
-        activeSurfaceKind: null,
-      }),
-    ).toBe("ignore");
-  });
+      expect(
+        resolveProactiveTurnDiffAction({
+          checkpoint: changedCheckpoint,
+          isGitRepo: true,
+          activeSurfaceKind: null,
+        }),
+      ).toBe(action);
+    },
+  );
 
   it("waits for definitive checkpoint and repository state", () => {
     const missingCheckpoint = {

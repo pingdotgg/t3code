@@ -151,6 +151,8 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  readTimelinePosition,
+  rememberTimelinePosition,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -515,32 +517,58 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
-  const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(new Set());
-  const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
-    new Set(),
-  );
-  const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
-  const previousLatestRunRef = useRef(latestRun);
+  const rememberedPosition = useMemo(
+    () => readTimelinePosition(listIdentityKey),
+    [listIdentityKey],
+  );
+  const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(
+    () => rememberedPosition?.disclosures?.runs ?? new Set(),
+  );
+  const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
+    () => rememberedPosition?.disclosures?.workGroups ?? new Set(),
+  );
+  const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
+    () => rememberedPosition?.disclosures?.attempts ?? new Set(),
+  );
+  const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(() =>
+    rememberedPosition?.atEnd === false ? null : listIdentityKey,
+  );
+  const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(listIdentityKey);
-  const [expansionThreadKey, setExpansionThreadKey] = useState(listIdentityKey);
-  if (expansionThreadKey !== listIdentityKey) {
-    setExpansionThreadKey(listIdentityKey);
+  const listIdentityRef = useRef(listIdentityKey);
+  const previousLatestRunRef = useRef(latestRun);
+  // The list stays mounted across thread switches. Its first end pins on the
+  // new thread must snap, not glide, even if that thread is mid-turn.
+  const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
+  let paintedExpandedRunIds = expandedRunIds;
+  let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
+  let paintedExpandedAttemptIds = expandedAttemptIds;
+  if (listIdentityRef.current !== listIdentityKey) {
+    listIdentityRef.current = listIdentityKey;
+    setPositionedThreadKey(null);
+    previousLatestRunRef.current = latestRun;
     setSettlingListIdentity(listIdentityKey);
-    setExpandedRunIds(new Set());
-    setExpandedAttemptIds(new Set());
-    setExpandedWorkGroupIds(new Set());
+    paintedExpandedRunIds = rememberedPosition?.disclosures?.runs ?? new Set();
+    paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
+    paintedExpandedAttemptIds = rememberedPosition?.disclosures?.attempts ?? new Set();
+    setExpandedRunIds(paintedExpandedRunIds);
+    setExpandedWorkGroupIds(paintedExpandedWorkGroupIds);
+    setExpandedAttemptIds(paintedExpandedAttemptIds);
   }
   const citationThreadRef = useMemo(() => parseScopedThreadKey(routeThreadKey), [routeThreadKey]);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
   const expandCitedRun = useCallback((runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   }, []);
-  // Scroll/disclosure state outlives virtualized rows, but never the current thread.
+  // Nested tool state shares the bounded thread-position cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
-    () => ({ scrollPositions: new Map(), expandedEntries: new Set() }),
-    [listIdentityKey],
+    () =>
+      rememberedPosition?.disclosures?.workGroupState ?? {
+        scrollPositions: new Map(),
+        expandedEntries: new Set(),
+      },
+    [listIdentityKey, rememberedPosition],
   );
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -953,7 +981,29 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
+    if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
+    const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
+    if (position && state && isAtEnd !== undefined) {
+      const index = state.indexByKey(position.rowId);
+      const row = index === undefined ? undefined : state.elementAtIndex(index);
+      const element = listRef.current?.getScrollableNode();
+      if (row && element) {
+        rememberTimelinePosition(listIdentityKey, {
+          ...position,
+          // DOM geometry includes the header and the virtualizer's layout adjustment.
+          offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
+          scrollOffset: element.scrollTop,
+          atEnd: isAtEnd,
+          disclosures: {
+            runs: paintedExpandedRunIds,
+            workGroups: paintedExpandedWorkGroupIds,
+            attempts: paintedExpandedAttemptIds,
+            workGroupState: workGroupViewState,
+          },
+        });
+      }
+    }
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
     }
@@ -997,6 +1047,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }, [
     citationPositioning,
+    paintedExpandedRunIds,
+    paintedExpandedWorkGroupIds,
+    paintedExpandedAttemptIds,
+    workGroupViewState,
+    rows,
+    listIdentityKey,
+    restoringThreadPosition,
     listRef,
     minimapItems,
     minimapStripMap,
@@ -1217,15 +1274,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             getItemType={getItemType}
             renderItem={renderItem}
             estimatedItemSize={90}
-            initialScrollAtEnd={citationRequest === null}
+            initialScrollAtEnd={citationRequest === null && rememberedPosition?.atEnd !== false}
             // Legend needs a data refresh to mount new pins without a scroll event.
-            {...(readyCitationRequest ? { dataVersion: readyCitationRequest.key } : {})}
-            {...(citationAlwaysRender ? { alwaysRender: citationAlwaysRender } : {})}
+            dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+            {...(alwaysRender ? { alwaysRender } : {})}
             onLoad={onCitationListLoad}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
             maintainScrollAtEnd={
               citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
               anchoredEndSpace ||
               !liveFollowEnabled ||
               disclosureToggleSettling
@@ -1235,7 +1293,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   : TIMELINE_MAINTAIN_SCROLL_AT_END
             }
             maintainVisibleContentPosition={
-              citationPositioning ? false : maintainVisibleContentPosition
+              citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                ? false
+                : maintainVisibleContentPosition
             }
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
@@ -2253,8 +2314,8 @@ function RevertUserMessageButton({
  * carries `group/timeline-row`; hover or focus on an existing control reveals
  * the time without adding a tab stop. Hidden timestamps stay outside the row
  * layout. Visibility changes immediately so leaving flow cannot overlap text
- * during a fade-out. Render it as the row's rightmost flex child so the
- * revealed time lands at the right edge, clear of disclosure controls.
+ * during a fade-out. Place it before any trailing disclosure control so
+ * revealing the time does not move the chevron.
  */
 function TimelineRowTimestamp({
   createdAt,
@@ -2821,19 +2882,21 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
 /** Renders standalone activity or one bounded, virtualized expanded tool group. */
 const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
+  disclosureAnchorKey = anchorKey,
   groupedEntries,
   isExpandedToolGroup,
   displayLabel,
 }: {
   anchorKey: string;
+  disclosureAnchorKey?: string;
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
   const { workspaceRoot, routeThreadKey, onToggleWorkEntry } = use(TimelineRowCtx);
   const onToggleStandaloneEntry = useCallback(
-    (collapsed: boolean) => onToggleWorkEntry(anchorKey, collapsed),
-    [anchorKey, onToggleWorkEntry],
+    (collapsed: boolean) => onToggleWorkEntry(disclosureAnchorKey, collapsed),
+    [disclosureAnchorKey, onToggleWorkEntry],
   );
   const nonEmptyEntries = useMemo(
     () => groupedEntries.filter((entry) => workEntryIsVisibleInGroup(entry, isExpandedToolGroup)),
@@ -2846,6 +2909,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
       <ExpandedWorkGroupEntries
         key={`${routeThreadKey}:${anchorKey}`}
         anchorKey={anchorKey}
+        disclosureAnchorKey={disclosureAnchorKey}
         entries={nonEmptyEntries}
         workspaceRoot={workspaceRoot}
       />
@@ -2913,10 +2977,12 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
 
 function ExpandedWorkGroupEntries({
   anchorKey,
+  disclosureAnchorKey,
   entries,
   workspaceRoot,
 }: {
   anchorKey: string;
+  disclosureAnchorKey: string;
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
@@ -2942,9 +3008,9 @@ function ExpandedWorkGroupEntries({
   const groupView = useMemo(
     () => ({
       state: viewState,
-      onToggleEntry: (collapsed: boolean) => onToggleWorkEntry(anchorKey, collapsed),
+      onToggleEntry: (collapsed: boolean) => onToggleWorkEntry(disclosureAnchorKey, collapsed),
     }),
-    [anchorKey, onToggleWorkEntry, viewState],
+    [disclosureAnchorKey, onToggleWorkEntry, viewState],
   );
   const updateScrollFades = useCallback(() => {
     const element = listRef.current?.getScrollableNode();
@@ -4811,6 +4877,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
+          <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
           <span
             className={cn(
               "flex size-4 shrink-0 items-center justify-center",
@@ -4825,7 +4892,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
               )}
             />
           </span>
-          <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
         </div>
       </div>
       {expanded && viewedImage && threadRef ? (

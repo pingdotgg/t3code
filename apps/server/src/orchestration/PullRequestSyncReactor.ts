@@ -150,7 +150,7 @@ export const make = Effect.gen(function* () {
     <E>(cause: Cause.Cause<E>): Effect.Effect<void, E> =>
       Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.logWarning(message, fields);
 
-  const sweep = Effect.fn("PullRequestSyncReactor.sweep")(function* () {
+  const sweep = Effect.fn("PullRequestSyncReactor.sweep")(function* (requestedKey?: string) {
     const snapshot = yield* engine.getShellSnapshot();
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
@@ -314,11 +314,19 @@ export const make = Effect.gen(function* () {
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
   )(function* () {
-    const events = yield* engine.subscribeDomainEvents;
+    const events = engine.streamDomainEvents;
     yield* forkParked(
       Stream.runForEach(events, (event) =>
-        event.type === "thread.pull-request-linked" ? requestSync(event.payload.link) : Effect.void,
-      ),
+        event.type === "thread.pull-request-synced"
+          ? Effect.forEach(
+              visibleThreadPullRequests(event.payload.pullRequests ?? []).filter(
+                (link) => link.snapshot === null,
+              ),
+              requestSync,
+              { discard: true },
+            )
+          : Effect.void,
+      ).pipe(Effect.catchCause(logSkipped("pull request sync event stream failed", {}))),
     );
     yield* forkParked(
       Effect.gen(function* () {

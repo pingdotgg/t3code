@@ -771,3 +771,33 @@ it.each([
     "Implementation",
   ]);
 });
+
+describe("filterCommandPaletteGroups", () => {
+  it("sorts secondary settings results after other matches", () => {
+    const item = (value: string, title: string, secondary?: boolean) =>
+      ({
+        kind: "action",
+        value,
+        title,
+        searchTerms: [title, "General"],
+        icon: null,
+        run: async () => undefined,
+        ...(secondary ? { secondary } : {}),
+      }) satisfies CommandPaletteActionItem;
+    const [group] = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "model",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [
+        item("setting:keybinding-modelPicker.toggle", "Model Picker: Toggle", true),
+        item("setting:default-model", "Default model"),
+      ],
+      threadSearchItems: [],
+    });
+    expect(group?.items.map((entry) => entry.value)).toEqual([
+      "setting:default-model",
+      "setting:keybinding-modelPicker.toggle",
+    ]);
+  });
+});

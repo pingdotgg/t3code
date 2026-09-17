@@ -500,6 +500,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
         ),
     }),
     Layer.mock(OrchestratorV2)({
+      streamDomainEvents: Stream.empty,
       dispatch,
     }),
     Layer.mock(GitManager)({
