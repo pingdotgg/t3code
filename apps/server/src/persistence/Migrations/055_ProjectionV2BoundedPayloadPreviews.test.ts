@@ -46,7 +46,7 @@ layer("055_ProjectionV2BoundedPayloadPreviews", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 53 });
+      yield* runMigrations({ toMigrationInclusive: 54 });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       const oversizedPayload = JSON.stringify({
