@@ -220,12 +220,13 @@ it.effect("checkpoint recovery refuses excessive candidates before probing", () 
         },
       }),
     );
-    const error = yield* captureDriver.checkpoints
-      .captureCheckpoint({ cwd, checkpointRef })
-      .pipe(Effect.flip);
-    assert.strictEqual(error, stageError);
-    assert.strictEqual(stageAttempts, 1);
+    const result = yield* Effect.result(
+      captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+    );
     assert.strictEqual(nestedProbes, 0);
+    assert.strictEqual(stageAttempts, 1);
+    assert.strictEqual(result._tag, "Failure");
+    if (result._tag === "Failure") assert.strictEqual(result.failure, stageError);
     assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
     assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git", "index")), originalIndex);
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
