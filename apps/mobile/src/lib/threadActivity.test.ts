@@ -894,6 +894,21 @@ describe("buildThreadFeed", () => {
     });
   });
 
+  it("waits for workspace preparation before showing provider activity", () => {
+    const startedAt = "2026-04-01T00:00:01.000Z";
+    const run = { runId, status: "preparing" as const, startedAt: null, completedAt: null };
+    expect(deriveThreadFeedPresentation([], run, new Set(), new Set(), startedAt)).toEqual([]);
+    expect(
+      deriveThreadFeedPresentation(
+        [],
+        { ...run, status: "running", startedAt },
+        new Set(),
+        new Set(),
+        startedAt,
+      ),
+    ).toEqual([{ type: "thinking", id: "live-activity-row", createdAt: startedAt, runId }]);
+  });
+
   it("uses a stable Thinking row while work has started without a projected item", () => {
     const startedAt = "2026-04-01T00:00:01.000Z";
     const presented = deriveThreadFeedPresentation([], null, new Set(), new Set(), startedAt);
