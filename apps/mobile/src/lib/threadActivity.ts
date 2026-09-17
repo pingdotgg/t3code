@@ -937,7 +937,7 @@ export function deriveThreadFeedPresentation(
   const activeTailGroup = sourceFeed.at(-1);
   const foldsByAnchorId = deriveThreadFeedRunFolds(sourceFeed, latestRun);
   const activeRunId = unsettledRunId(latestRun);
-  const isWorking = activeWorkStartedAt !== null;
+  const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
     if (!expandedRunIds.has(fold.runId)) {
@@ -990,6 +990,7 @@ export function deriveThreadFeedPresentation(
   // Keep exactly one live slot while a run is working. When no tool row can
   // carry it yet (or the latest call failed), the slot reads "Thinking".
   if (
+    isWorking &&
     activeWorkStartedAt !== null &&
     !result.some(
       (row) =>

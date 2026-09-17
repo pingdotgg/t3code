@@ -42,6 +42,7 @@ import {
   resolveComposerProviderSelection,
   resolveProactiveTurnDiffAction,
   resolveDraftHeroState,
+  resolveWorktreeSetupProgress,
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
   peekRememberedThreadTimeline,
@@ -279,7 +280,7 @@ describe("resolveDraftPromotionNavigationTarget", () => {
     completedAt: null,
   };
 
-  it("stays on the draft while the workspace is still preparing", () => {
+  it("stays on the draft until the server owns the send", () => {
     expect(
       resolveDraftPromotionNavigationTarget({
         serverThreadRef,
@@ -292,6 +293,24 @@ describe("resolveDraftPromotionNavigationTarget", () => {
         serverThreadRef,
         serverThread: makeThread(),
         backgroundSubmissionPending: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("promotes a persisted send while its worktree is still preparing", () => {
+    const serverThread = makeThread({ latestRun: preparingRun, latestUserMessageAt: now });
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef,
+        serverThread,
+        backgroundSubmissionPending: false,
+      }),
+    ).toBe(serverThreadRef);
+    expect(
+      resolveDraftPromotionNavigationTarget({
+        serverThreadRef,
+        serverThread,
+        backgroundSubmissionPending: true,
       }),
     ).toBeNull();
   });
@@ -2087,6 +2106,64 @@ describe("worktree setup visibility", () => {
     endedAt: now,
     stages: [stage("checkout", "done"), stage("setup-script", "done"), stage("agent", "done")],
   };
+
+  it("keeps setup presentation continuous until the provider handoff", () => {
+    const progress = (
+      localPreparing: boolean,
+      runStatus: NonNullable<Thread["latestRun"]>["status"] | undefined,
+      latest: WorktreeSetupSnapshot | null,
+      held: WorktreeSetupSnapshot | null = null,
+    ) => resolveWorktreeSetupProgress({ threadId, localPreparing, runStatus, latest, held });
+
+    // The local send, its durable acknowledgement, and the stream arrive separately.
+    expect(progress(true, undefined, null).isPreparingWorktree).toBe(true);
+    expect(progress(false, "preparing", null).isPreparingWorktree).toBe(true);
+    expect(progress(false, "preparing", base).snapshot).toBe(base);
+    // Releasing the prepared run precedes the tracker marking the agent started.
+    expect(progress(false, "starting", base).isPreparingWorktree).toBe(true);
+    const handedOff = {
+      ...base,
+      sequence: 2,
+      stages: [stage("setup-script", "running"), stage("agent", "done")],
+    };
+    expect(progress(false, "starting", handedOff, base)).toEqual({
+      snapshot: handedOff,
+      isPreparingWorktree: false,
+    });
+    expect(progress(false, "running", null, handedOff).snapshot).toBe(handedOff);
+  });
+
+  it("uses streamed setup progress immediately without reverting to an older held snapshot", () => {
+    const newest = { ...settledDone, sequence: 9 };
+    const resolve = (latest: WorktreeSetupSnapshot | null, held: WorktreeSetupSnapshot | null) =>
+      resolveWorktreeSetupProgress({
+        threadId,
+        localPreparing: false,
+        runStatus: "running",
+        latest,
+        held,
+      });
+    expect(resolve(newest, base)).toEqual({ snapshot: newest, isPreparingWorktree: false });
+    expect(resolve(base, newest)).toEqual({ snapshot: newest, isPreparingWorktree: false });
+    const other = { ...base, threadId: ThreadId.make("another-thread") };
+    expect(resolve(other, other)).toEqual({ snapshot: null, isPreparingWorktree: false });
+  });
+
+  it.each(["failed", "cancelled"] as const)(
+    "does not keep %s setup in the preparing state",
+    (phase) => {
+      const snapshot = { ...base, phase };
+      expect(
+        resolveWorktreeSetupProgress({
+          threadId,
+          localPreparing: false,
+          runStatus: "failed",
+          latest: snapshot,
+          held: base,
+        }),
+      ).toEqual({ snapshot, isPreparingWorktree: false });
+    },
+  );
 
   it("reads the settled snapshot back from the thread's activities", () => {
     const activities = [
