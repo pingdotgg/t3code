@@ -1872,6 +1872,9 @@ const makeWsRpcLayer = (
                             : { messageId: input.initialMessage.messageId }),
                           text: input.initialMessage.text,
                           attachments: input.initialMessage.attachments,
+                          ...(input.initialMessage.context === undefined
+                            ? {}
+                            : { context: input.initialMessage.context }),
                         },
                       }),
                   createdBy: "user",
