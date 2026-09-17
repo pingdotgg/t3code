@@ -359,6 +359,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         current: true,
         installedVersion: "1.2.3",
       });
+      // A started install that reached the end removes its own marker.
+      const path = yield* Path.Path;
+      expect(
+        yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
+      ).toBe(false);
       // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned test document.
       const pendingState = JSON.stringify({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
@@ -799,6 +804,40 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       control.failCommand = "launchctl bootout --wait gui/501/com.t3tools.t3code.service";
 
       yield* service.install();
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("keeps a launch agent install that failed to start out of the current state", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, control } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const plan = yield* service.install();
+      const markerPath = path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE);
+      expect(yield* fs.exists(markerPath)).toBe(false);
+      control.failCommand = `launchctl bootstrap gui/501 ${plan.unitPath}`;
+
+      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+
+      // A failed bootstrap leaves nothing else on disk to tell the difference
+      // from a healthy install, so without the marker `t3 service install`
+      // would call itself already installed and never retry.
+      expect(yield* fs.readFileString(markerPath)).toBe("1.2.3\n");
+      const failed = yield* service.status;
+      expect(failed.problems).toEqual(["restart-pending"]);
+      expect(failed.current).toBe(false);
+
+      // What `reconcileService` does with a status that is not current: install again.
+      control.failCommand = undefined;
+      commands.length = 0;
+      yield* service.install();
+
+      expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([
+        "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
+        "launchctl enable gui/501/com.t3tools.t3code.service",
+        `launchctl bootstrap gui/501 ${plan.unitPath}`,
+      ]);
+      expect(yield* fs.exists(markerPath)).toBe(false);
       expect((yield* service.status).current).toBe(true);
     }),
   );
