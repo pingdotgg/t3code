@@ -57,12 +57,14 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
   return JSON.stringify([
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
+    settings.sidebarAutoSettleScope,
     // Only entries that touch settlement, in a stable order, so a project
     // override on an unrelated key does not queue a sweep. JSON drops
     // undefined, so inherit (absent) and never (null) need distinct marks.
     Object.entries(settings.projectSettingsOverrides)
       .filter(
         ([, entry]) =>
+          entry.sidebarAutoSettleScope !== undefined ||
           entry.sidebarAutoSettleOnMerge !== undefined ||
           entry.sidebarAutoSettleAfterDays !== undefined,
       )
@@ -70,6 +72,7 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
       .map(([projectId, entry]) => [
         projectId,
         entry.sidebarAutoSettleOnMerge ?? "inherit",
+        entry.sidebarAutoSettleScope ?? "inherit",
         entry.sidebarAutoSettleAfterDays === undefined
           ? "inherit"
           : entry.sidebarAutoSettleAfterDays,
@@ -121,6 +124,7 @@ export const make = Effect.gen(function* () {
           now: decisionNow,
           autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
           autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
+          autoSettleScope: settings.sidebarAutoSettleScope,
         });
         if (settledAt === null) {
           return thread;
@@ -148,8 +152,8 @@ export const make = Effect.gen(function* () {
         ),
     );
 
-    // Inactivity needs no host state. Finish these decisions before any lookup
-    // can fail or wait on the network, including lookups shared by recent threads.
+    // Inactivity uses saved PR links, so it needs no host lookup. Threads
+    // excluded from inactivity can still settle through the merge/close rules.
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
       (thread) => settleThread(thread, null),

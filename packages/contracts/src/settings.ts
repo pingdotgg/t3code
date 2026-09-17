@@ -1003,6 +1003,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
+  "sidebarAutoSettleScope",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
 ] as const;
@@ -1029,6 +1030,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettleScope: Schema.optionalKey(Schema.Literals(["all", "without-pr"])),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
@@ -1130,6 +1132,9 @@ export const ServerSettings = Schema.Struct({
   deviceHosts: SshDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
+  ),
+  sidebarAutoSettleScope: Schema.Literals(["all", "without-pr"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("all")),
   ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
@@ -1451,6 +1456,7 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettleScope: Schema.optionalKey(Schema.Literals(["all", "without-pr"])),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({

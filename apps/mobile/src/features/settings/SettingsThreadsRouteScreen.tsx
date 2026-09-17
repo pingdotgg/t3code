@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -109,12 +110,14 @@ function AutoSettleSettingsRows() {
       environmentId: reference.environment.environmentId,
       projectId: reference.projectId,
       settings: referenceSettings,
+      supportsScope: reference.environment.serverConfig.environment.capabilities.threadAutoSettlementScope === true,
     },
     displayTargets.map((target) => ({
       environmentId: target.environment.environmentId,
       projectId: target.projectId,
       label: target.environment.label,
       settings: target.settings,
+      supportsScope: target.environment.serverConfig.environment.capabilities.threadAutoSettlementScope === true,
     })),
   );
 
@@ -128,13 +131,15 @@ function AutoSettleSettingsRows() {
     syncTargets.some(
       (target) =>
         target.sources.sidebarAutoSettleOnMerge === "project" ||
-        target.sources.sidebarAutoSettleAfterDays === "project",
+        target.sources.sidebarAutoSettleAfterDays === "project" ||
+        target.sources.sidebarAutoSettleScope === "project",
     );
   const clearProjectOverrides = () => {
     if (writeInFlight.current) return;
     const writes = planMobileScopedSettingsClear(syncTargets, [
       "sidebarAutoSettleOnMerge",
       "sidebarAutoSettleAfterDays",
+      "sidebarAutoSettleScope",
     ]);
     if (writes.length === 0) return;
     writeInFlight.current = true;
@@ -172,15 +177,53 @@ function AutoSettleSettingsRows() {
           disabled={disabled}
           onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
         />
-        <SettingsSwitchRow
-          icon="clock"
-          label="Auto-settle inactive threads"
-          value={afterDays !== null}
-          disabled={disabled}
-          onValueChange={(value) =>
-            writeToAll({ sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null })
-          }
-        />
+      <ControlPillMenu
+        disabled={disabled}
+        accessibilityLabel="Auto-settle inactive threads"
+        actions={[
+          { id: "off", title: "Off", state: afterDays === null ? "on" : "off" },
+          {
+            id: "all",
+            title: "All threads",
+            state:
+              afterDays !== null && referenceSettings.sidebarAutoSettleScope === "all"
+                ? "on"
+                : "off",
+          },
+          {
+            id: "without-pr",
+            title: "Threads without a PR",
+            state:
+              afterDays !== null && referenceSettings.sidebarAutoSettleScope === "without-pr"
+                ? "on"
+                : "off",
+            attributes: {
+              disabled:
+                syncTargets.some((target) => target.environment.serverConfig.environment.capabilities.threadAutoSettlementScope !== true),
+            },
+          },
+        ]}
+        onPressAction={({ nativeEvent }) => {
+          const value = nativeEvent.event;
+          if (value !== "off" && value !== "all" && value !== "without-pr") return;
+          writeToAll({
+            sidebarAutoSettleAfterDays:
+              value === "off" ? null : (afterDays ?? AUTO_SETTLE_DEFAULT_DAYS),
+            ...(value !== "off" ? { sidebarAutoSettleScope: value } : {}),
+          });
+        }}
+      >
+        <View className="gap-1 p-4">
+          <Text className="text-lg text-foreground">Auto-settle inactive threads</Text>
+          <Text className="text-sm text-foreground-muted">
+            {afterDays === null
+              ? "Off"
+              : referenceSettings.sidebarAutoSettleScope === "all"
+                ? "All threads"
+                : "Threads without a PR"}
+          </Text>
+        </View>
+      </ControlPillMenu>
         {afterDays !== null ? (
           <View
             className={cn(

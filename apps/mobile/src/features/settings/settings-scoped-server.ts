@@ -12,6 +12,7 @@ import {
 } from "@t3tools/shared/projectSettings";
 
 import type { SettingsTarget } from "./settings-environment-filter";
+import * as Struct from "effect/Struct";
 
 export interface ScopedMobileSettingsTarget {
   readonly environment: SettingsTarget;
@@ -50,8 +51,15 @@ export function planMobileScopedSettingsPatch(
   projectSelected: boolean,
   patch: ServerSettingsPatch,
 ) {
+  const supportedPatch = (target: ScopedMobileSettingsTarget) =>
+    target.environment.serverConfig.environment.capabilities.threadAutoSettlementScope === true
+      ? patch
+      : Struct.omit(patch, ["sidebarAutoSettleScope"]);
   if (!projectSelected) {
-    return targets.map((target) => ({ environmentId: target.environment.environmentId, patch }));
+    return targets.map((target) => ({
+      environmentId: target.environment.environmentId,
+      patch: supportedPatch(target),
+    }));
   }
   const keys = Object.keys(patch);
   if (
@@ -69,7 +77,7 @@ export function planMobileScopedSettingsPatch(
       continue;
     const current =
       target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
-    const next = { ...current, ...patch };
+    const next = { ...current, ...supportedPatch(target) };
     const overrides = writes.get(target.environment.environmentId) ?? {};
     overrides[target.projectId] = next;
     writes.set(target.environment.environmentId, overrides);

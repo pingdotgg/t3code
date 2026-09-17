@@ -72,6 +72,7 @@ export function resolveAutoSettlementAt(input: {
   readonly now: string;
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
+  readonly autoSettleScope?: "all" | "without-pr";
 }): string | null {
   const { thread } = input;
   let pullRequest = input.pullRequest;
@@ -108,6 +109,11 @@ export function resolveAutoSettlementAt(input: {
       return activityAt ?? thread.createdAt;
     }
   }
+  if (
+    input.autoSettleScope === "without-pr" &&
+    (links.length > 0 || thread.linkedPullRequest != null || thread.branchPullRequest != null)
+  )
+    return null;
   if (input.autoSettleAfterDays === null || activityAt === null) return null;
   return Date.parse(activityAt) < Date.parse(input.now) - input.autoSettleAfterDays * DAY_MS
     ? activityAt

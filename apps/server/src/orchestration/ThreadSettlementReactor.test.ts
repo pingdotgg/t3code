@@ -336,6 +336,15 @@ describe("ThreadSettlementReactor", () => {
     assert.notStrictEqual(inherits, never);
   });
 
+  it("includes project inactivity scope in the settlement settings key", () => {
+    const base = ThreadSettlementReactor.autoSettlementSettingsKey(DEFAULT_SERVER_SETTINGS);
+    const scoped = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleScope: "without-pr" } },
+    });
+    assert.notStrictEqual(base, scoped);
+  });
+
   it("ignores project overrides that do not touch settlement", () => {
     const base = ThreadSettlementReactor.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
@@ -1068,6 +1077,69 @@ describe("ThreadSettlementReactor", () => {
             [ThreadId.make("inactive-without-pr")],
           );
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("excludes saved PR links from inactivity and rechecks when scope changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleScope: "without-pr" },
+          snapshot: makeSnapshot([
+            makeThread("open-linked", {
+              linkedPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+              },
+            }),
+            makeThread("open-branch", {
+              branch: "open",
+              branchPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+              },
+            }),
+            makeThread("failed-lookup", {
+              linkedPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 43,
+                url: "https://example.test/owner/repository/pull/43",
+              },
+            }),
+            makeThread("no-pr-branch", { branch: "unlinked" }),
+            makeThread("exploration"),
+          ]),
+          pullRequestSummary: (reference) =>
+            reference.number === 43
+              ? Effect.die(new Error("host unavailable"))
+              : Effect.succeed(makePullRequestSummary({ ...reference, state: "open" })),
+          branchPullRequest: () =>
+            Effect.die(new Error("inactivity should not look up unlinked branches")),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId).sort(),
+            [ThreadId.make("exploration"), ThreadId.make("no-pr-branch")],
+          );
+          yield* fixture.updateSettings({ sidebarAutoSettleScope: "all" });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.ok(
+            (yield* Ref.get(fixture.commands)).some(({ threadId }) => threadId === "open-linked"),
+          );
+          assert.ok(
+            (yield* Ref.get(fixture.commands)).some(({ threadId }) => threadId === "failed-lookup"),
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
