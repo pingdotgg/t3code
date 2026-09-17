@@ -13,6 +13,10 @@ import {
 const FALLBACK_COOLDOWN = Duration.seconds(30);
 const MAX_FALLBACK_COOLDOWN = Duration.minutes(15);
 
+export const CredentialScope = Context.Reference<string>("t3/sourceControl/CredentialScope", {
+  defaultValue: () => "",
+});
+
 interface RateLimitKey {
   readonly provider: SourceControlProviderKind;
   readonly host: string;
@@ -59,8 +63,8 @@ export class SourceControlRateLimit extends Context.Service<
   }
 >()("t3/sourceControl/SourceControlRateLimit") {}
 
-function normalizedKey(key: RateLimitKey): string {
-  return `${key.provider}\0${key.host.trim().toLowerCase()}`;
+function normalizedKey(key: RateLimitKey, scope: string): string {
+  return `${key.provider}\0${key.host.trim().toLowerCase()}\0${scope}`;
 }
 
 function fallbackCooldownMs(attempt: number): number {
@@ -90,7 +94,8 @@ export const make = Effect.gen(function* () {
     "SourceControlRateLimit.check",
   )(function* (input, options) {
     const now = yield* Clock.currentTimeMillis;
-    const entry = (yield* Ref.get(entries)).get(normalizedKey(input));
+    const key = normalizedKey(input, yield* CredentialScope);
+    const entry = (yield* Ref.get(entries)).get(key);
     if (entry !== undefined && entry.retryAt > now && options?.allowPaused !== true) {
       return yield* new SourceControlRateLimitPausedError({
         provider: input.provider,
@@ -105,8 +110,8 @@ export const make = Effect.gen(function* () {
     "SourceControlRateLimit.recordRateLimit",
   )(function* (input) {
     const now = yield* Clock.currentTimeMillis;
+    const key = normalizedKey(input, yield* CredentialScope);
     yield* Ref.update(entries, (current) => {
-      const key = normalizedKey(input);
       const previous = current.get(key);
       if (previous !== undefined && previous.generation > input.lease) {
         if (previous.retryAt <= now && (input.retryAt === undefined || input.retryAt <= now)) {
@@ -145,8 +150,8 @@ export const make = Effect.gen(function* () {
     "SourceControlRateLimit.recordSuccess",
   )(function* (input) {
     const now = yield* Clock.currentTimeMillis;
+    const key = normalizedKey(input, yield* CredentialScope);
     yield* Ref.update(entries, (current) => {
-      const key = normalizedKey(input);
       const previous = current.get(key);
       if (previous === undefined || previous.generation !== input.lease || previous.retryAt > now) {
         return current;

@@ -319,7 +319,7 @@ function appendRun(
 }
 
 const SKILL_TOKEN_REGEX =
-  /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
 function formatSkillLabel(skill: SelectableMarkdownSkill): string {
   const displayName = skill.displayName?.trim();
@@ -359,7 +359,7 @@ function decorateSkillRuns(
         continue;
       }
       const start = (match.index ?? 0) + prefix.length;
-      const end = start + name.length + 1;
+      const end = (match.index ?? 0) + match[0].length;
       if (start > cursor) {
         decorated.push({ ...run, text: run.text.slice(cursor, start) });
       }

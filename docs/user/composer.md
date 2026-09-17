@@ -31,11 +31,20 @@ See [images and videos](#images-and-videos-in-messages) for previewing and savin
 
 ## Send while the agent is working
 
-A message sent during a running turn waits at the end of the conversation as a
+On web and desktop, a message sent during a running turn waits at the end of the conversation as a
 dashed bubble. It goes out on its own when the agent finishes its next tool
 call, or when the turn ends. Use the arrow under the bubble to send it right
 away, or the X to move it back into the composer. Stop returns every queued
 message to the composer.
+
+In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
+behavior or **Steer** to send new messages immediately. This setting applies to
+the current client. Messages already queued keep their place.
+
+Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
+the oldest queued message now. Change `thread.steerQueuedMessage` in
+**Settings → Keybindings** to use another shortcut. It leaves the current draft
+in the composer and waits if the agent needs an approval or an answer.
 
 ## Queue messages offline on mobile
 
@@ -122,7 +131,8 @@ recording started, ready for you to review and edit before sending.
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five
 minutes long. Canceling, leaving the screen, or an audio interruption discards the
-recording and preserves your existing draft.
+recording and preserves your existing draft. While recording, the screen stays
+awake; it can sleep normally once recording stops.
 
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.

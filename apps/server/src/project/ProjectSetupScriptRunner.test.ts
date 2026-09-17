@@ -33,6 +33,7 @@ const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () => Effect.die("unused"),
+    getDeletedWorktreeThreads: () => Effect.die("unused"),
     getArchivedShellSnapshot: () => Effect.die("unused"),
     getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
     getCounts: () => Effect.die("unused"),
@@ -307,7 +308,9 @@ describe("ProjectSetupScriptRunner", () => {
         // control sequences are stripped, and the echoed wrapper is hidden.
         yield* emit(`( bun install\r\n> ); printf '\\n${sentinel}%s\\n' "$?"\r\n`);
         yield* emit("\u001b[32mResolving");
-        yield* emit(" deps\u001b[0m\r\nDone in 2s\r\n");
+        yield* emit(" deps\u001b[0m\r\n");
+        // Progress redraws separated by bare carriage returns are their own lines.
+        yield* emit("Progress: 1/3\rProgress: 2/3\rProgress: 3/3\r\nDone in 2s\r\n");
         // A spoofed sentinel from the script itself must not settle completion.
         yield* emit("__T3_SETUP_DONE__:0\r\n");
         yield* emit(`__T3_SETUP_DONE___${"0".repeat(32)}:0\r\n`);
@@ -317,6 +320,9 @@ describe("ProjectSetupScriptRunner", () => {
         expect(completion.exitCode).toBe(3);
         expect(seen).toEqual([
           "Resolving deps",
+          "Progress: 1/3",
+          "Progress: 2/3",
+          "Progress: 3/3",
           "Done in 2s",
           "__T3_SETUP_DONE__:0",
           `__T3_SETUP_DONE___${"0".repeat(32)}:0`,
