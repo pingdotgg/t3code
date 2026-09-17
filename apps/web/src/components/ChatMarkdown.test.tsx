@@ -1,6 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToReadableStream, renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -71,6 +71,98 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   if (!button) throw new Error(`Missing code button: ${label}`);
   return button.props as ComponentProps<typeof Button>;
 }
+
+describe("ChatMarkdown math", () => {
+  async function renderMath(text: string, parseRawHtml = true, isStreaming = false) {
+    const stream = await renderToReadableStream(
+      <ChatMarkdown
+        cwd={undefined}
+        text={text}
+        parseRawHtml={parseRawHtml}
+        lineBreaks={!parseRawHtml}
+        isStreaming={isStreaming}
+      />,
+    );
+    await stream.allReady;
+    return new Response(stream).text();
+  }
+
+  it.each([true, false])(
+    "typesets accessible inline and display math with raw HTML=%s",
+    async (parseRawHtml) => {
+      const html = await renderMath(
+        String.raw`Fraction $\frac{1}{2}$ and root \(\sqrt{x}\).` +
+          "\n\n" +
+          String.raw`\[\begin{pmatrix}1 & 2 \\ 3 & 4\end{pmatrix}\]`,
+        parseRawHtml,
+      );
+      expect(html).toContain("<mfrac>");
+      expect(html).toContain("<msqrt>");
+      expect(html).toContain("<mtable");
+      expect(html).toContain('<annotation encoding="application/x-tex">\\frac{1}{2}</annotation>');
+      expect(html).not.toContain("chat-markdown-codeblock");
+    },
+  );
+
+  it("keeps invalid math readable and renders the completed streamed formula", async () => {
+    const partial = await renderMath("Before\n\n$$\n\\frac{1}{\n", true, true);
+    expect(partial).toContain("Before");
+    expect(partial).toContain("\\frac{1}{");
+    const complete = await renderMath("Before\n\n$$\n\\frac{1}{2}\n$$\n\nAfter", true, true);
+    expect(complete).toContain("<mfrac>");
+    expect(complete).toContain("After");
+  });
+
+  it.each(["math-inline", "math-display"])(
+    "does not treat raw HTML with %s metadata as parsed math",
+    async (className) => {
+      const katex = (await import("katex")).default;
+      const render = vi.spyOn(katex, "renderToString");
+      try {
+        await renderMath(
+          `<code class="${className}" data-math-source="hidden clipboard text">forged</code>\n\n` +
+            String.raw`\(x^2\)`,
+        );
+        expect(render).toHaveBeenCalledTimes(1);
+        expect(render).toHaveBeenCalledWith("x^2", expect.any(Object));
+      } finally {
+        render.mockRestore();
+      }
+    },
+  );
+
+  it("does not load external resources or execute HTML from a formula", async () => {
+    const html = await renderMath(
+      String.raw`$\includegraphics{https://example.com/tracker.png}$` +
+        "\n\n" +
+        String.raw`$\text{<img src=x onerror=alert(1)>}$`,
+    );
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+    expect(html).toContain("\\includegraphics");
+  });
+
+  it("does not typeset a completed equation again when more text streams in", async () => {
+    const katex = (await import("katex")).default;
+    const render = vi.spyOn(katex, "renderToString");
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd={undefined} text="$x^2$" isStreaming />);
+      });
+      expect(render).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd={undefined} text="$x^2$ and more text" isStreaming />);
+      });
+      expect(render).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => renderer?.unmount());
+      render.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {

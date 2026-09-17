@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  chatMarkdownClipboardPayload,
+  serializeRenderedMarkdownFragment,
+} from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -131,6 +134,40 @@ describe("serializeRenderedMarkdownFragment", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
+
+  it.each([String.raw`$\frac{1}{2}$`, "\\[\n\\frac{1}{2}\n\\]"])(
+    "copies the LaTeX when the selection is entirely inside an equation: %s",
+    (source) => {
+      const math = Object.assign(new FakeElement("SPAN", [], { "data-markdown-copy": source }), {
+        cloneNode: () => math,
+      }).append(new FakeText("1212"));
+      const fragment = new FakeElement("DIV");
+      const container = Object.assign(fragment, {
+        innerHTML: "",
+        appendChild(child: FakeText) {
+          fragment.append(child);
+        },
+        replaceChildren(child: FakeElement) {
+          fragment.childNodes.splice(0, fragment.childNodes.length, child);
+        },
+        querySelectorAll: () => [],
+      });
+      vi.stubGlobal("document", { createElement: () => container });
+      const selection = {
+        rangeCount: 1,
+        getRangeAt: () => ({
+          collapsed: false,
+          cloneContents: () => new FakeText("1"),
+          commonAncestorContainer: {
+            nodeType: ELEMENT_NODE,
+            closest: (selector: string) => (selector === "pre" ? null : math),
+          },
+        }),
+      } as unknown as Selection;
+
+      expect(chatMarkdownClipboardPayload(selection)?.text).toBe(source);
+    },
+  );
 
   it("wraps inline code in backticks", () => {
     const paragraph = new FakeElement("P").append(

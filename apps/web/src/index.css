@@ -1665,6 +1665,29 @@ code {
   margin-bottom: 0;
 }
 
+.chat-markdown-math-display {
+  display: block;
+  max-width: 100%;
+  margin-block: 0.75rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.25rem;
+}
+
+.chat-markdown-math-display .katex-display {
+  margin: 0;
+}
+
+.chat-markdown-math-display .katex-display > .katex {
+  width: max-content;
+  min-width: 100%;
+}
+
+.chat-markdown .katex {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .chat-markdown p,
 .chat-markdown ul,
 .chat-markdown ol,

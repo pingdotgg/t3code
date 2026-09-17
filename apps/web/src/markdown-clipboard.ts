@@ -378,6 +378,7 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+/** Serialize selected content as Markdown and HTML, preserving whole code blocks and math sources. */
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -399,6 +400,12 @@ export function chatMarkdownClipboardPayload(
       }
       continue;
     }
+    // A selection entirely inside KaTeX omits the wrapper that owns the TeX
+    // source. Copy the equation once instead of its duplicated visual glyphs.
+    const math = ancestorElement?.closest(
+      ".chat-markdown-math-inline, .chat-markdown-math-display",
+    );
+    if (math) container.replaceChildren(math.cloneNode(true));
     const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);
