@@ -31,7 +31,7 @@ interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
-  /** File currently open in the preview pane; revealed and selected in the tree. */
+  /** Entry currently open in the surface; revealed and selected in the tree. A directory is expanded. */
   selectedPath: string | null;
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
@@ -376,7 +376,10 @@ export default function FileBrowserPanel({
       handledRevealRef.current = null;
       return;
     }
-    if (entryKinds.get(selectedPath) !== "file") {
+    const selectedKind = entryKinds.get(selectedPath);
+    // An unloaded entry has no row to reveal yet; folders do, and chat links can
+    // point at them.
+    if (selectedKind === undefined) {
       handledRevealRef.current = null;
       return;
     }
@@ -390,7 +393,9 @@ export default function FileBrowserPanel({
     ) {
       return;
     }
-    const selectedItem = model.getItem(selectedPath);
+    // Directory rows are registered with a trailing slash (see treePath).
+    const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
+    const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
 
     // A selection that originated inside the tree (clicking a row, possibly
@@ -425,8 +430,12 @@ export default function FileBrowserPanel({
       if (item && "expand" in item) item.expand();
     }
 
+    if ("expand" in selectedItem) selectedItem.expand();
     selectedItem.select();
-    model.scrollToPath(selectedPath, { focus: true, offset: "center" });
+    model.scrollToPath(selectedTreePath, {
+      focus: true,
+      offset: "center",
+    });
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
