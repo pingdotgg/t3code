@@ -174,6 +174,7 @@ vi.mock("../uiStateStore", () => ({
 vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
 
 import { useNewThreadHandler } from "./useHandleNewThread";
+import { startNewThreadInCurrentCheckout } from "../lib/chatThreadActions";
 
 describe.each([
   ["new", null],
@@ -187,6 +188,44 @@ describe.each([
     },
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
+  it.each([
+    { source: "thread", branch: "feature", worktreePath: "/remote/worktrees/feature" },
+    { source: "draft", branch: "feature", worktreePath: "/remote/worktrees/feature" },
+    { source: "thread", branch: null, worktreePath: null },
+    { source: "draft", branch: "main", worktreePath: null },
+    { source: "none", branch: null, worktreePath: null },
+  ] as const)(
+    "Cmd+T preserves the $source checkout with new-worktree defaults enabled",
+    async ({ source, branch, worktreePath }) => {
+      testState.reset(draft, { envMode: "worktree", startFromOrigin: true });
+      const projectRef = {
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as Parameters<ReturnType<typeof useNewThreadHandler>>[0];
+      const current = { ...projectRef, branch, worktreePath };
+      await startNewThreadInCurrentCheckout({
+        activeThread: source === "thread" ? current : undefined,
+        activeDraftThread: source === "draft" ? current : null,
+        defaultProjectRef: projectRef,
+        handleNewThread: useNewThreadHandler(),
+      });
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        projectRef,
+        draft?.draftId ?? "draft-delayed",
+        expect.objectContaining({
+          branch,
+          worktreePath,
+          envMode: worktreePath === null ? "local" : "worktree",
+          startFromOrigin: false,
+        }),
+      );
+      expect(testState.router.state.location.href).toBe(
+        `/draft/${draft?.draftId ?? "draft-delayed"}`,
+      );
+    },
+  );
+
   it.each(["approval-required", "auto-accept-edits", "auto", "full-access"] as const)(
     "uses the target environment's %s permissions for new threads",
     async (runtimeMode) => {

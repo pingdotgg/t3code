@@ -83,6 +83,31 @@ export function resolveThreadActionProjectRef(
   return context.defaultProjectRef;
 }
 
+interface CheckoutThreadContext extends ThreadContextLike {
+  branch: string | null;
+  worktreePath: string | null;
+}
+
+/** Joins the current checkout, including an unsent draft, without consulting workspace defaults. */
+export async function startNewThreadInCurrentCheckout(
+  context: Omit<ChatThreadActionContext, "activeThread" | "activeDraftThread"> & {
+    readonly activeThread: CheckoutThreadContext | undefined;
+    readonly activeDraftThread: CheckoutThreadContext | null;
+  },
+): Promise<boolean> {
+  const projectRef = resolveThreadActionProjectRef(context);
+  if (!projectRef) return false;
+  const source = context.activeThread ?? context.activeDraftThread;
+  const worktreePath = source?.worktreePath ?? null;
+  await context.handleNewThread(projectRef, {
+    branch: source?.branch ?? null,
+    worktreePath,
+    envMode: worktreePath !== null ? "worktree" : "local",
+    startFromOrigin: false,
+  });
+  return true;
+}
+
 // New threads inherit only the *project* from the current context. Branch,
 // worktree, and env mode always come from the user's configured defaults —
 // carrying them over from the viewed thread meant "new thread" silently
