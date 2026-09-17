@@ -2158,7 +2158,7 @@ export function GeneralSettingsPanel() {
     if (value === null) return;
     const sidebarAutoSettleAfterDays =
       value === "off" ? null : (autoSettleAfterDays ?? AUTO_SETTLE_DEFAULT_DAYS);
-    if (value === "off" || !supportsAutoSettleScope) {
+    if (value === "off") {
       updateSettings({ sidebarAutoSettleAfterDays });
       return;
     }
