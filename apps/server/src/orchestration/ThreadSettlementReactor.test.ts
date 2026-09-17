@@ -1,10 +1,12 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EventId,
   ProjectId,
   ProviderInstanceId,
   PullRequestOperationError,
   ThreadId,
   type OrchestrationCommand,
+  type OrchestrationEvent,
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
@@ -171,6 +173,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const settingsReads = yield* Queue.unbounded<ServerSettings>();
   const settingsChanges = yield* PubSub.unbounded<ServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestMergeEvent>();
+  const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
   const branchCalls = yield* Ref.make<
     ReadonlyArray<{ readonly cwd: string; readonly branch: string }>
@@ -258,6 +261,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       readEvents: () => Stream.empty,
       dispatch,
       streamDomainEvents: Stream.empty,
+      subscribeDomainEvents: PubSub.subscribe(domainEvents).pipe(
+        Effect.map((subscription) => Stream.fromSubscription(subscription)),
+      ),
       latestSequence: Effect.succeed(0),
     }),
     Layer.succeed(ServerSettingsService, serverSettings),
@@ -280,6 +286,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     summaryRecovery,
     invalidatedCwds,
     updateSettings,
+    publishEvent: (event: OrchestrationEvent) => PubSub.publish(domainEvents, event),
     publishMerge: PubSub.publish(mergedPullRequests, {
       projectId: PROJECT_ID,
       repository: "owner/repository",
@@ -332,12 +339,12 @@ describe("ThreadSettlementReactor", () => {
   });
 
   it.effect(
-    "settles all-terminal links from snapshots and keeps open or unsynced links active",
+    "settles synced terminal links immediately while open, unsynced, or running threads wait",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(NOW));
-          const link = (number: number, state: "open" | "merged" | null) => ({
+          const link = (number: number, state: "open" | "closed" | "merged" | null) => ({
             host: "example.test",
             repository: "owner/repository",
             number,
@@ -357,14 +364,30 @@ describe("ThreadSettlementReactor", () => {
                     updatedAt: NOW,
                     syncedAt: NOW,
                     mergedAt: state === "merged" ? NOW : null,
+                    closedAt: state === "closed" ? NOW : null,
                   },
           });
+          const runningSession = {
+            threadId: ThreadId.make("running"),
+            status: "running" as const,
+            providerName: "Codex",
+            runtimeMode: "full-access" as const,
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: NOW,
+          };
+          const threads = [
+            makeThread("merged", { pullRequests: [link(1, "open"), link(2, "merged")] }),
+            makeThread("closed", { pullRequests: [link(1, "open")] }),
+            makeThread("open", { pullRequests: [link(1, "open"), link(2, "open")] }),
+            makeThread("unsynced", { pullRequests: [link(1, "open"), link(2, null)] }),
+            makeThread("running", {
+              pullRequests: [link(1, "open")],
+              session: runningSession,
+            }),
+          ];
           const fixture = yield* makeHarness({
-            snapshot: makeSnapshot([
-              makeThread("merged", { pullRequests: [link(1, "merged"), link(2, "merged")] }),
-              makeThread("open", { pullRequests: [link(1, "merged"), link(2, "open")] }),
-              makeThread("unsynced", { pullRequests: [link(1, "merged"), link(2, null)] }),
-            ]),
+            snapshot: makeSnapshot(threads),
             settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleOnMerge: true },
             branchPullRequest: () => Effect.die("linked threads must not query the branch"),
             pullRequestSummary: () => Effect.die("linked threads must use their snapshots"),
@@ -372,9 +395,66 @@ describe("ThreadSettlementReactor", () => {
           yield* Effect.gen(function* () {
             const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
             yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+            assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+            const eventBase = {
+              sequence: 2,
+              eventId: EventId.make("pull-request-synced"),
+              aggregateKind: "thread" as const,
+              occurredAt: NOW,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+            };
+            for (const thread of threads) {
+              const terminalLink = link(1, thread.id === "closed" ? "closed" : "merged");
+              yield* Ref.update(fixture.snapshots, (snapshot) => ({
+                ...snapshot,
+                threads: snapshot.threads.map((current) =>
+                  current.id === thread.id
+                    ? { ...current, pullRequests: [terminalLink, ...current.pullRequests.slice(1)] }
+                    : current,
+                ),
+              }));
+              yield* fixture.publishEvent({
+                ...eventBase,
+                type: "thread.pull-request-synced",
+                aggregateId: thread.id,
+                payload: {
+                  threadId: thread.id,
+                  host: terminalLink.host,
+                  repository: terminalLink.repository,
+                  number: terminalLink.number,
+                  snapshot: terminalLink.snapshot!,
+                  stack: null,
+                  updatedAt: NOW,
+                },
+              });
+              yield* Queue.take(fixture.snapshotReads);
+              yield* reactor.drain;
+            }
             assert.deepStrictEqual(
               (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId),
-              [ThreadId.make("merged")],
+              [ThreadId.make("merged"), ThreadId.make("closed")],
+            );
+            const readySession = { ...runningSession, status: "ready" as const };
+            yield* Ref.update(fixture.snapshots, (snapshot) => ({
+              ...snapshot,
+              threads: snapshot.threads.map((thread) =>
+                thread.id === readySession.threadId ? { ...thread, session: readySession } : thread,
+              ),
+            }));
+            yield* fixture.publishEvent({
+              ...eventBase,
+              type: "thread.session-set",
+              aggregateId: readySession.threadId,
+              payload: { threadId: readySession.threadId, session: readySession },
+            });
+            yield* Queue.take(fixture.snapshotReads);
+            yield* reactor.drain;
+            assert.deepStrictEqual(
+              (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId),
+              [ThreadId.make("merged"), ThreadId.make("closed"), ThreadId.make("running")],
             );
             assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
             assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);

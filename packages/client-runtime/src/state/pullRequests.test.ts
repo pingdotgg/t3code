@@ -34,6 +34,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
+  createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
 } from "./pullRequests.ts";
@@ -804,6 +805,108 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
         { _tag: "Success", value: { newContents: "github.example.com" } },
       ]);
       expect(calls).toEqual(["github.com", "github.example.com"]);
+    }),
+  ),
+);
+
+it.effect("shares close, reopen, and merge with an untouched client's mounted PR readers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const revision = yield* SubscriptionRef.make(0);
+      let state: "open" | "closed" | "merged" = "open";
+      const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => SubscriptionRef.changes(revision),
+        [WS_METHODS.pullRequestsSummary]: () => Effect.sync(() => ({ state })),
+        [WS_METHODS.pullRequestsDetail]: () => Effect.sync(() => ({ state })),
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.sync(() => ({ entries: [{ number: 1, state }] })),
+        [WS_METHODS.pullRequestsRunAction]: (input: {
+          readonly action: "close" | "reopen" | "merge";
+        }) =>
+          Effect.gen(function* () {
+            state =
+              input.action === "close" ? "closed" : input.action === "merge" ? "merged" : "open";
+            yield* SubscriptionRef.update(revision, (value) => value + 1);
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const writer = yield* makeTestRuntime(client);
+      const reader = yield* makeTestRuntime(client);
+      const target = {
+        environmentId: TARGET.environmentId,
+        input: {
+          projectId: ProjectId.make("project-1"),
+          host: "github.example.com",
+          repository: "acme/web",
+          number: 1,
+        },
+      };
+      const detail = reader.atoms.detail(target);
+      const summary = createLinkedPullRequestSummaryAtomFamily(
+        reader.runtime,
+        reader.atoms.refreshes,
+      )(target);
+      const list = reader.atoms.list({
+        environmentId: TARGET.environmentId,
+        input: { state: "all" },
+      });
+      const unmountDetail = reader.registry.mount(detail);
+      const unmountSummary = reader.registry.mount(summary);
+      const unmountList = reader.registry.mount(list);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          unmountDetail();
+          unmountSummary();
+          unmountList();
+        }),
+      );
+      expect((yield* AtomRegistry.getResult(reader.registry, detail)).state).toBe("open");
+      expect((yield* AtomRegistry.getResult(reader.registry, summary)).state).toBe("open");
+      expect((yield* AtomRegistry.getResult(reader.registry, list)).entries[0]?.state).toBe("open");
+
+      for (const [action, expected] of [
+        ["close", "closed"],
+        ["reopen", "open"],
+        ["merge", "merged"],
+      ] as const) {
+        const detailChanged = Latch.makeUnsafe();
+        const summaryChanged = Latch.makeUnsafe();
+        const listChanged = Latch.makeUnsafe();
+        const stops = [
+          reader.registry.subscribe(detail, (result) => {
+            if (AsyncResult.isSuccess(result) && result.value.state === expected) {
+              detailChanged.openUnsafe();
+            }
+          }),
+          reader.registry.subscribe(summary, (result) => {
+            if (AsyncResult.isSuccess(result) && result.value.state === expected) {
+              summaryChanged.openUnsafe();
+            }
+          }),
+          reader.registry.subscribe(list, (result) => {
+            if (AsyncResult.isSuccess(result) && result.value.entries[0]?.state === expected) {
+              listChanged.openUnsafe();
+            }
+          }),
+        ];
+        yield* Effect.addFinalizer(() => Effect.sync(() => stops.forEach((stop) => stop())));
+        const result = yield* Effect.promise(() =>
+          writer.atoms.runAction.run(writer.registry, {
+            ...target,
+            input: { ...target.input, action },
+          }),
+        );
+        expect(AsyncResult.isSuccess(result)).toBe(true);
+        // The second client receives only the server push: no local refresh or timer tick.
+        yield* detailChanged.await;
+        yield* summaryChanged.await;
+        yield* listChanged.await;
+        expect((yield* AtomRegistry.getResult(reader.registry, detail)).state).toBe(expected);
+        expect((yield* AtomRegistry.getResult(reader.registry, summary)).state).toBe(expected);
+        expect((yield* AtomRegistry.getResult(reader.registry, list)).entries[0]?.state).toBe(
+          expected,
+        );
+        stops.forEach((stop) => stop());
+      }
     }),
   ),
 );

@@ -232,7 +232,10 @@ export class PullRequestService extends Context.Service<
     readonly setLabels: (
       input: PullRequestLabelChangeInput,
     ) => Effect.Effect<void, PullRequestError>;
-    readonly invalidate: (input: PullRequestInvalidateInput) => Effect.Effect<void>;
+    readonly invalidate: (
+      input: PullRequestInvalidateInput,
+      options?: { readonly notifyReaders?: boolean },
+    ) => Effect.Effect<void>;
   }
 >()("t3/pullRequest/PullRequestService") {}
 
@@ -2839,10 +2842,12 @@ export const make = Effect.gen(function* () {
     return { stats: [...held, ...result.stats] };
   });
 
-  const invalidate: PullRequestService["Service"]["invalidate"] = (input) => {
+  const invalidate: PullRequestService["Service"]["invalidate"] = Effect.fn(
+    "PullRequestService.invalidate",
+  )(function* (input, options) {
     const reference = input.reference;
     if (reference !== undefined) {
-      return canonicalRef(reference).pipe(
+      yield* canonicalRef(reference).pipe(
         Effect.flatMap((ref) =>
           readCache
             .invalidate(refScope(ref))
@@ -2850,12 +2855,15 @@ export const make = Effect.gen(function* () {
         ),
         Effect.ignore,
       );
-    }
-    return Effect.sync(() => {
+    } else {
       listingsEpoch = ++epochCounter;
       viewersByHost.clear();
-    }).pipe(Effect.andThen(Cache.invalidateAll(viewerFlights)));
-  };
+      yield* Cache.invalidateAll(viewerFlights);
+    }
+    if (options?.notifyReaders) {
+      yield* SubscriptionRef.set(pullRequestRefreshes, ++epochCounter);
+    }
+  });
 
   const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (projectId) =>
     Effect.suspend(() => {
@@ -2874,9 +2882,7 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.andThen(SubscriptionRef.set(pullRequestRefreshes, listingsEpoch)));
     });
 
-  // A mutation's own client re-reads right after it, and every other client's next read must
-  // see the action too — so a write forgets the change request it touched and the listings its
-  // state change reorders, for everyone, without any client asking.
+  // Invalidate before notifying every client so mounted readers immediately fetch the edit.
   const invalidatedByMutation =
     <I extends PullRequestRef>(
       method: (input: I) => Effect.Effect<void, PullRequestError>,
@@ -2894,6 +2900,7 @@ export const make = Effect.gen(function* () {
             }),
           ),
         );
+        yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
       });
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
@@ -2905,6 +2912,7 @@ export const make = Effect.gen(function* () {
     );
     bumpRefEpoch({ ...ref, repository });
     listingsEpoch = ++epochCounter;
+    yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
     if (input.action === "merge") {
       // A successful merge action can merely enqueue the PR or enable auto-merge.
       const confirmed = yield* summaryUncached({ ...input, repository }).pipe(
