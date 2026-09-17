@@ -96,6 +96,7 @@ function makeDesktopWindowLayer(
     prepareCaptureReveal: Effect.void,
     dispatchMenuAction: () => Effect.void,
     dispatchSnapShotEvent: () => Effect.void,
+    dispatchPairingLink: () => Effect.void,
     zoomMain: () => Effect.void,
     syncAppearance: Effect.void,
   });

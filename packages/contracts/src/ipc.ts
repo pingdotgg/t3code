@@ -1338,6 +1338,15 @@ export interface DesktopBridge {
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
   };
   /**
+   * Present when the desktop shell forwards `t3code://pair` deep links. The
+   * renderer marks itself ready once a listener can act; a link that arrived
+   * before then (cold start) is delivered at that point.
+   */
+  pairingLink?: {
+    setReady: (ready: boolean) => Promise<void>;
+    onLink: (listener: (url: string) => void) => () => void;
+  };
+  /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.
    */
