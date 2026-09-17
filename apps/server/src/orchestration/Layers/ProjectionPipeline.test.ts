@@ -2497,7 +2497,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
-  it.effect("settles a superseded running turn when a new turn becomes active", () =>
+  it.effect("marks a superseded running turn interrupted when a new turn becomes active", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
@@ -2576,7 +2576,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         ORDER BY requested_at
       `;
       assert.deepEqual(rows, [
-        { turnId: oldTurnId, state: "completed", completedAt: "2026-01-01T00:00:30.000Z" },
+        { turnId: oldTurnId, state: "interrupted", completedAt: "2026-01-01T00:00:30.000Z" },
         { turnId: newTurnId, state: "running", completedAt: null },
       ]);
     }),
