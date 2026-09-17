@@ -1002,6 +1002,21 @@ describe("orchestration v2 provider switching", () => {
         );
         assert.lengthOf(projection.contextHandoffs, 1);
         assert.equal(projection.contextHandoffs[0]?.targetRunId, projection.runs[3]?.id);
+        const handoffItem = projection.turnItems.find(
+          (item) => item.type === "handoff" && item.runId === projection.runs[3]?.id,
+        );
+        assert.equal(
+          handoffItem?.type === "handoff" ? handoffItem.contextHandoffId : null,
+          projection.contextHandoffs[0]?.id,
+        );
+        const queuedUserItem = projection.turnItems.find(
+          (item) => item.type === "user_message" && item.runId === projection.runs[3]?.id,
+        );
+        assert.isBelow(handoffItem?.ordinal ?? Infinity, queuedUserItem?.ordinal ?? -Infinity);
+        assert.include(
+          handoffItem?.type === "handoff" ? handoffItem.summary : "",
+          "Codex second queued turn complete",
+        );
         assert.include(turns[3]?.text ?? "", "Codex current turn complete");
         assert.include(turns[3]?.text ?? "", "Codex first queued turn complete");
         assert.include(turns[3]?.text ?? "", "Codex second queued turn complete");
@@ -1195,6 +1210,14 @@ describe("orchestration v2 provider switching", () => {
           ["completed", "failed", "completed"],
         );
         assert.equal(projection.runs[1]?.queuePosition, null);
+        assert.equal(
+          projection.attempts.find((attempt) => attempt.runId === projection.runs[1]?.id)?.status,
+          "failed",
+        );
+        assert.equal(
+          projection.nodes.find((node) => node.runId === projection.runs[1]?.id)?.status,
+          "failed",
+        );
         assert.equal(projection.thread.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
         assert.lengthOf(projection.contextHandoffs, 0);
         const failureItem = projection.turnItems.find(
@@ -1461,6 +1484,19 @@ describe("orchestration v2 provider switching", () => {
           ],
         );
         assert.equal(projection.runs[1]?.contextHandoffId, projection.contextHandoffs[1]?.id);
+        if (queueBeforeFailure) {
+          const handoffItem = projection.turnItems.find(
+            (item) => item.type === "handoff" && item.runId === projection.runs[1]?.id,
+          );
+          assert.equal(
+            handoffItem?.type === "handoff" ? handoffItem.contextHandoffId : null,
+            projection.contextHandoffs[1]?.id,
+          );
+          assert.include(
+            handoffItem?.type === "handoff" ? handoffItem.summary : "",
+            "imported release marker is violet",
+          );
+        }
         assert.include(turns[1]?.text ?? "", "Context handoff (manual_context):");
         assert.include(turns[1]?.text ?? "", "imported release marker is violet");
         assert.include(turns[1]?.text ?? "", "I will remember violet.");

@@ -1310,6 +1310,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         completedAt: now,
         updatedAt: now,
       };
+      const handoffTurnItem: OrchestrationV2TurnItem | null =
+        activeHandoff === null
+          ? null
+          : {
+              id: idAllocator.derive.runSignalTurnItem({
+                runId: queuedRun.id,
+                signal: `context-handoff:${activeHandoff.id}`,
+              }),
+              threadId,
+              runId: queuedRun.id,
+              nodeId: rootNodeId,
+              providerThreadId: queuedProviderThread.id,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: queuedRun.ordinal * 100 - 1,
+              status: "completed",
+              title: handoff === null ? "Imported context" : "Provider handoff",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "handoff",
+              contextHandoffId: activeHandoff.id,
+              fromProviderThreadIds: activeHandoff.fromProviderThreadIds,
+              toProviderThreadId: activeHandoff.toProviderThreadId,
+              fromProviderInstanceIds: Array.from(
+                new Set(coveredRuns.map((run) => run.providerInstanceId)),
+              ),
+              toProviderInstanceId: queuedRun.providerInstanceId,
+              fromModelSelections: Array.from(
+                new Map(
+                  coveredRuns.map((run) => [
+                    `${run.modelSelection.instanceId}\0${run.modelSelection.model}`,
+                    run.modelSelection,
+                  ]),
+                ).values(),
+              ),
+              toModel: queuedRun.modelSelection.model,
+              strategy: activeHandoff.strategy,
+              summary: activeHandoff.summaryText,
+            };
       const checkpointEvents: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> =
         storedCheckpointScope === undefined
           ? [
@@ -1415,6 +1456,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   providerInstanceId: queuedRun.providerInstanceId,
                   occurredAt: now,
                   payload: legacyImportRecoveryHandoff,
+                },
+              ]),
+          ...(handoffTurnItem === null
+            ? []
+            : [
+                {
+                  type: "turn-item.updated" as const,
+                  threadId,
+                  runId: queuedRun.id,
+                  nodeId: rootNodeId,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: handoffTurnItem,
                 },
               ]),
           ...sessionsToDetach.map((session) => ({
