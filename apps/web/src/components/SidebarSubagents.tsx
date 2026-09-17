@@ -1,12 +1,12 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
-import { environmentThreadShells } from "../state/threads";
 import { THREAD_SUBAGENT_STATUS_LABELS } from "@t3tools/client-runtime/state/thread-subagents";
-import { BotIcon, ChevronDownIcon } from "lucide-react";
-import { memo, useId, useState } from "react";
+import { BotIcon, CheckIcon, ChevronDownIcon, CircleDotIcon } from "lucide-react";
+import { useId, useState } from "react";
+import { environmentThreadShells } from "../state/threads";
 import { cn } from "~/lib/utils";
+import { InlineButton } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { Button } from "./ui/button";
 
 function statusClass(status: keyof typeof THREAD_SUBAGENT_STATUS_LABELS) {
   if (
@@ -22,12 +22,11 @@ function statusClass(status: keyof typeof THREAD_SUBAGENT_STATUS_LABELS) {
   return "text-muted-foreground";
 }
 
-export const SidebarSubagents = memo(function SidebarSubagents({
-  thread,
-}: {
-  thread: EnvironmentThreadShell;
-}) {
-  const [expanded, setExpanded] = useState(false);
+/** Place the toggle inside the thread row and its tree immediately after the row. */
+export function useSidebarSubagents(thread: EnvironmentThreadShell, compact = false) {
+  const [expandedThread, setExpandedThread] = useState<string | null>(null);
+  const key = `${thread.environmentId}:${thread.id}`;
+  const expanded = expandedThread === key;
   const treeId = useId();
   const model = useAtomValue(
     environmentThreadShells.subagentTreeAtom({
@@ -35,60 +34,60 @@ export const SidebarSubagents = memo(function SidebarSubagents({
       threadId: thread.id,
     }),
   );
-  const threadTitle = thread.title;
-  if (model.rows.length === 0) return null;
+  if (model.rows.length === 0) return { toggle: null, tree: null };
 
-  return (
-    <div
-      data-thread-selection-safe
-      className="px-[var(--sidebar-row-content-inset,0.625rem)] pb-1"
-      onPointerDown={(event) => event.stopPropagation()}
-      onClick={(event) => event.stopPropagation()}
-      onDoubleClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-      }}
-    >
-      <Button
-        variant="sidebar-disclosure"
-        size="sm-multiline"
+  return {
+    toggle: (
+      <InlineButton
+        data-thread-selection-safe
         aria-expanded={expanded}
         aria-controls={treeId}
-        aria-label={`Subagents for ${threadTitle}: ${model.label}`}
-        onClick={() => setExpanded((value) => !value)}
-        className="grid w-full grid-cols-[auto_1fr_auto] gap-x-1.5 gap-y-0.5 text-left text-[11px] sm:text-[11px]"
+        aria-label={`Subagents for ${thread.title}: ${model.label}`}
+        title={`Subagents: ${model.label}`}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          setExpandedThread(expanded ? null : key);
+        }}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+        }}
+        className="gap-1 text-[11px] tabular-nums text-muted-foreground hover:text-foreground"
       >
-        <BotIcon aria-hidden className="row-span-2 size-3.5 text-muted-foreground" />
-        <span className="font-medium text-secondary-label">Subagents</span>
-        <span className="col-start-2 row-start-2 flex flex-wrap items-center gap-x-1 text-muted-foreground tabular-nums">
-          <span className={model.running > 0 ? "text-info" : undefined}>
-            {model.running} running
-          </span>
-          <span aria-hidden>·</span>
-          <span>{model.finished} finished</span>
-          {model.waiting > 0 ? <span>· {model.waiting} waiting</span> : null}
-          {model.idle > 0 ? <span>· {model.idle} idle</span> : null}
-        </span>
-        <ChevronDownIcon
-          aria-hidden
-          className={cn(
-            "col-start-3 row-span-2 row-start-1 size-3 text-muted-foreground",
-            expanded && "rotate-180",
-          )}
-        />
-      </Button>
+        <BotIcon aria-hidden className="size-3" />
+        {compact ? (
+          <>
+            <CircleDotIcon aria-hidden className="size-2.5 text-info" />
+            <span>{model.running}</span>
+            <CheckIcon aria-hidden className="size-2.5" />
+            <span>{model.finished}</span>
+          </>
+        ) : (
+          <>
+            <span className={model.running > 0 ? "text-info" : undefined}>
+              {model.running} running
+            </span>
+            <span aria-hidden>·</span>
+            <span>{model.finished} finished</span>
+          </>
+        )}
+        <ChevronDownIcon aria-hidden className={cn("size-3", expanded && "rotate-180")} />
+      </InlineButton>
+    ),
+    tree: (
       <ul
         id={treeId}
-        aria-label={`Subagents for ${threadTitle}`}
+        aria-label={`Subagents for ${thread.title}`}
         hidden={!expanded}
-        className="ml-2 mt-1 border-l border-border/60 pl-2"
+        className="mx-[var(--sidebar-row-content-inset,0.625rem)] mb-1 border-l border-border/60"
       >
         {expanded
           ? model.rows.map(({ thread: agent, depth, status }) => (
               <li
                 key={agent.id}
-                className="flex min-w-0 items-center gap-1.5 py-1 text-xs"
-                style={{ paddingLeft: Math.min(depth, 4) * 10 }}
+                className="relative flex min-w-0 items-center gap-1.5 py-1 text-xs before:absolute before:top-1/2 before:left-0 before:w-2 before:border-t before:border-border/60"
+                style={{ paddingLeft: (Math.min(depth, 4) + 1) * 12 }}
               >
                 <span
                   aria-hidden
@@ -109,6 +108,6 @@ export const SidebarSubagents = memo(function SidebarSubagents({
             ))
           : null}
       </ul>
-    </div>
-  );
-});
+    ),
+  };
+}
