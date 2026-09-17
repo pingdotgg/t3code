@@ -158,7 +158,7 @@ export function previewAnnotationContextReference(
 }
 
 /** One record per thread: attaching the same thread twice reuses the chip. */
-export function threadContextId(threadId: ThreadId): ComposerContextId {
+function threadContextId(threadId: ThreadId): ComposerContextId {
   return toKindScopedComposerContextId("thread", threadId);
 }
 
