@@ -157,6 +157,7 @@ export function PullRequestComposer({
             <PullRequestReviewForm
               environmentId={environmentId}
               reference={reference}
+              provider={detail.provider}
               verdicts={verdicts}
               requestChangesSummaryRequired={detail.provider === "forgejo"}
               textareaRef={reviewRef}

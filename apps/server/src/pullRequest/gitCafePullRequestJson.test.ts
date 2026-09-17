@@ -139,6 +139,76 @@ describe("deployed GitCafe PR normalization", () => {
       expect(activity.reviewThreads[0]?.comments).toHaveLength(2);
     },
   );
+  it("preserves per-comment edit and current thread resolution permissions", () => {
+    const capabilities = {
+      edit: false,
+      hide: false,
+      unhide: false,
+      delete: false,
+      resolve: true,
+      unresolve: false,
+    };
+    const activity = toActivity(
+      decodeComments({
+        items: [
+          {
+            id: "root",
+            threadId: "root",
+            author: actor,
+            body: "Review",
+            path: "file.ts",
+            line: 3,
+            side: "right",
+            createdAt: timestamp,
+            commitOid: "abcdef",
+            resolvedAt: null,
+            capabilities,
+          },
+        ],
+        nextAfter: null,
+      }),
+      { items: [], nextAfter: null },
+      { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+      "abcdef",
+    );
+    expect(activity.comments[0]).toMatchObject({ canEdit: false });
+    expect(activity.reviewThreads[0]).toMatchObject({
+      canResolve: true,
+      comments: [{ canEdit: false }],
+    });
+  });
+  it("uses unresolve permission for an already resolved thread", () => {
+    const activity = toActivity(
+      decodeComments({
+        items: [
+          {
+            id: "root",
+            threadId: "root",
+            author: actor,
+            body: "Review",
+            path: "file.ts",
+            line: 3,
+            side: "right",
+            createdAt: timestamp,
+            commitOid: "abcdef",
+            resolvedAt: timestamp,
+            capabilities: {
+              edit: true,
+              hide: false,
+              unhide: false,
+              delete: false,
+              resolve: true,
+              unresolve: false,
+            },
+          },
+        ],
+        nextAfter: null,
+      }),
+      { items: [], nextAfter: null },
+      { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+    );
+    expect(activity.reviewThreads[0]?.canResolve).toBe(false);
+  });
   it("maps supported reactions to the pull request and matching comments in both views", () => {
     const base = {
       author: actor,
@@ -256,10 +326,13 @@ describe("deployed GitCafe PR normalization", () => {
         ],
       },
     });
-    expect(toStack(stack!, "owner/repo").layers).toMatchObject([
-      { number: 6, state: "merged" },
-      { number: 7, state: "open", isDraft: true },
-    ]);
+    expect(toStack(stack!, "owner/repo")).toMatchObject({
+      revision: 1,
+      layers: [
+        { number: 6, state: "merged" },
+        { number: 7, state: "open", isDraft: true },
+      ],
+    });
   });
   it("converts numeric hunk coordinates into a unified patch", () => {
     const diff = decodeDiff({

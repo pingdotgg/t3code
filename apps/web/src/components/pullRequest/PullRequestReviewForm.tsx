@@ -5,7 +5,13 @@ import { useAtomCommand } from "~/state/use-atom-command";
  * trigger and mode toggle, and each pending card can be dropped from the diff, so neither is
  * repeated here. The popover around it belongs to PullRequestComposer.
  */
-import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestRef,
+  PullRequestReviewVerdict,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useState, type ReactNode, type RefObject } from "react";
 
@@ -50,6 +56,7 @@ const VERDICTS: ReadonlyArray<{
 export function PullRequestReviewForm({
   environmentId,
   reference,
+  provider,
   verdicts,
   requestChangesSummaryRequired,
   textareaRef,
@@ -59,6 +66,7 @@ export function PullRequestReviewForm({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  provider: SourceControlProviderKind;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   requestChangesSummaryRequired: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -76,24 +84,53 @@ export function PullRequestReviewForm({
   const removeComments = usePullRequestReviewStore((store) => store.removeComments);
   const setSummary = usePullRequestReviewStore((store) => store.setSummary);
   const clearSummary = usePullRequestReviewStore((store) => store.clearSummary);
+  const draftRevision = usePullRequestReviewStore((store) => store.revisions[reviewKey]);
+  // The diff the Code tab last showed, which is what a review without line comments approves.
+  const displayedRevision = usePullRequestReviewStore(
+    (store) => store.displayedRevisions[reviewKey],
+  );
+  const unsettled = usePullRequestReviewStore((store) => store.submissions[reviewKey]);
+  const startSubmission = usePullRequestReviewStore((store) => store.startSubmission);
+  const finishSubmissionAttempt = usePullRequestReviewStore(
+    (store) => store.finishSubmissionAttempt,
+  );
+  const clearSubmission = usePullRequestReviewStore((store) => store.clearSubmission);
   const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
     reportFailure: false,
   });
 
   const offered = VERDICTS.filter((verdict) => verdicts.includes(verdict.value));
   const selectedVerdict =
-    offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
+    offered.find((verdict) => verdict.value === (unsettled?.verdict ?? requestedVerdict)) ??
+    offered[0];
 
   const submit = async (verdict: (typeof VERDICTS)[number]) => {
     if (pending) return;
-    const submittedBody = body;
-    const submittedComments = comments;
+    const proposed = {
+      verdict: verdict.value,
+      body,
+      comments,
+      ...((comments.length > 0 ? draftRevision : displayedRevision) === undefined
+        ? {}
+        : { revision: comments.length > 0 ? draftRevision! : displayedRevision! }),
+    };
+    // GitCafe reviews carry a stable request id, so a submission whose outcome is unknown is
+    // held and only ever retried as-is rather than replaced by an edited one.
+    const started = provider === "gitcafe" ? startSubmission(reviewKey, proposed) : undefined;
+    if (provider === "gitcafe" && started === undefined) return;
+    const submission = started?.submission ?? { ...proposed, id: undefined };
+    const submittedBody = submission.body;
+    const submittedComments = submission.comments;
+    const reviewRevision = submission.revision;
+    const requestId = submission.id;
     onPendingChange(true);
     const result = await submitReview({
       environmentId,
       input: {
         ...reference,
-        verdict: verdict.value,
+        ...(provider === "gitcafe" && reviewRevision !== undefined ? { reviewRevision } : {}),
+        ...(requestId === undefined ? {} : { requestId }),
+        verdict: submission.verdict,
         body: submittedBody,
         comments: submittedComments,
       },
@@ -101,7 +138,29 @@ export function PullRequestReviewForm({
     onPendingChange(false);
     if (result._tag === "Failure") {
       // The draft is kept: whatever went wrong, retyping the review is not the answer.
-      toastManager.add({ type: "error", title: "The review could not be submitted" });
+      const failure = squashAtomCommandFailure(result);
+      if (requestId !== undefined) {
+        finishSubmissionAttempt(reviewKey, requestId);
+        if (
+          started?.firstAttempt === true &&
+          typeof failure === "object" &&
+          failure !== null &&
+          "notDispatched" in failure &&
+          failure.notDispatched === true
+        )
+          clearSubmission(reviewKey, requestId);
+      }
+      const detail =
+        failure instanceof Error
+          ? failure.message
+          : typeof failure === "string"
+            ? failure
+            : "Retry the preserved submission or follow the provider's recovery instructions.";
+      toastManager.add({
+        type: "error",
+        title: "The review could not be submitted",
+        description: detail,
+      });
       return;
     }
     // More remarks may have been added while the host was accepting this snapshot. Leave those,
@@ -111,7 +170,11 @@ export function PullRequestReviewForm({
       submittedComments.map((comment) => comment.id),
     );
     clearSummary(reviewKey, submittedBody);
-    toastManager.add({ type: "success", title: verdict.sent });
+    if (requestId !== undefined) clearSubmission(reviewKey, requestId);
+    toastManager.add({
+      type: "success",
+      title: VERDICTS.find((candidate) => candidate.value === submission.verdict)?.sent,
+    });
     onSubmitted();
   };
 
@@ -138,7 +201,7 @@ export function PullRequestReviewForm({
       <div className="mt-2 flex justify-between gap-2">
         <Select
           value={selectedVerdict?.value ?? null}
-          disabled={pending}
+          disabled={pending || unsettled !== undefined}
           onValueChange={(value) => {
             if (value !== null) setRequestedVerdict(value);
           }}
@@ -160,15 +223,27 @@ export function PullRequestReviewForm({
             ))}
           </SelectPopup>
         </Select>
-        <Button
-          size="xs"
-          disabled={pending || selectedVerdict === undefined || !canSubmit(selectedVerdict.value)}
-          onClick={() => {
-            if (selectedVerdict !== undefined) void submit(selectedVerdict);
-          }}
-        >
-          {pending ? "Submitting..." : "Submit review"}
-        </Button>
+        {unsettled !== undefined ? (
+          <Button
+            size="xs"
+            disabled={pending}
+            onClick={() =>
+              void submit(VERDICTS.find((candidate) => candidate.value === unsettled.verdict)!)
+            }
+          >
+            {pending ? "Submitting..." : "Retry previous submission"}
+          </Button>
+        ) : (
+          <Button
+            size="xs"
+            disabled={pending || selectedVerdict === undefined || !canSubmit(selectedVerdict.value)}
+            onClick={() => {
+              if (selectedVerdict !== undefined) void submit(selectedVerdict);
+            }}
+          >
+            {pending ? "Submitting..." : "Submit review"}
+          </Button>
+        )}
       </div>
     </>
   );

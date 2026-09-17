@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;

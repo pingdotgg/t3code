@@ -29,6 +29,7 @@ import {
   type ProjectId,
   type PullRequestAction,
   type PullRequestActionInput,
+  type PullRequestActionOutcome,
   type PullRequestActivity,
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
@@ -279,7 +280,9 @@ export class PullRequestService extends Context.Service<
     readonly setFilesViewed: (
       input: PullRequestSetFilesViewedInput,
     ) => Effect.Effect<void, PullRequestError>;
-    readonly runAction: (input: PullRequestActionInput) => Effect.Effect<void, PullRequestError>;
+    readonly runAction: (
+      input: PullRequestActionInput,
+    ) => Effect.Effect<void | PullRequestActionOutcome, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
     readonly updateComment: (
@@ -527,6 +530,7 @@ function toPullRequestError(
           operation,
           detail: error.detail,
           ...(error.reason === "not-found" ? { reason: "not-found" as const } : {}),
+          ...(error.notDispatched === true ? { notDispatched: true } : {}),
           cause: error,
         });
 }
@@ -1707,6 +1711,7 @@ export const make = Effect.gen(function* () {
                   number: stack.number,
                   url: stack.url,
                   base: stack.base,
+                  ...(stack.revision === undefined ? {} : { revision: stack.revision }),
                   layers: stack.layers.map((layer) => ({
                     ...layer,
                     number: layer.number,
@@ -1909,6 +1914,9 @@ export const make = Effect.gen(function* () {
               host: project.host,
               number: input.number,
               ...(input.commit === undefined ? {} : { commit: input.commit }),
+              ...(input.reviewRevision === undefined
+                ? {}
+                : { reviewRevision: input.reviewRevision }),
               changeType: input.changeType,
               oldPath: input.oldPath,
               newPath: input.newPath,
@@ -1959,151 +1967,215 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
+  const runAction = (
+    input: PullRequestActionInput,
+  ): Effect.Effect<
+    { repository: string; outcome: void | PullRequestActionOutcome },
+    PullRequestError
+  > =>
     requireProject(input).pipe(
-      Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
-        if (
-          input.stackNumber !== undefined &&
-          (project.api.capabilities.stackActions !== true ||
-            !["merge", "update-branch"].includes(input.action) ||
-            input.expectedStackHeads === undefined ||
-            (input.action === "update-branch" && input.updateMethod !== "rebase"))
-        ) {
-          return Effect.fail(
-            new PullRequestOperationError({
-              operation: "runAction",
-              detail: "This stack action is not supported or has no expected head revision.",
-            }),
-          );
-        }
-        // The surface hides what a host cannot do, and this refuses it as well: a request that
-        // reached here anyway must not be handed to a provider that never claimed the action.
-        if (!project.api.capabilities.actions.includes(input.action)) {
-          return Effect.fail(
-            new PullRequestOperationError({
-              operation: "runAction",
-              detail: `This host cannot ${input.action} a change request.`,
-            }),
-          );
-        }
-        // A strategy the host does not offer must be refused rather than passed on: every
-        // provider maps an unrecognised method to its own default, so asking Azure DevOps to
-        // rebase would quietly merge instead of failing.
-        if (
-          input.mergeMethod !== undefined &&
-          !project.api.capabilities.mergeMethods.includes(input.mergeMethod)
-        ) {
-          return Effect.fail(
-            new PullRequestOperationError({
-              operation: "runAction",
-              detail: `This host cannot merge with the ${input.mergeMethod} strategy.`,
-            }),
-          );
-        }
-        // The same for the way a stale branch is brought up to date: a host that only merges
-        // must not be asked to rebase and left to pick something else.
-        if (
-          input.updateMethod !== undefined &&
-          !(project.api.capabilities.updateMethods ?? []).includes(input.updateMethod)
-        ) {
-          return Effect.fail(
-            new PullRequestOperationError({
-              operation: "runAction",
-              detail: `This host cannot update a branch by ${input.updateMethod}.`,
-            }),
-          );
-        }
-        // What the host can do and what this account may ask of it are two questions, and both
-        // have to say yes. The second is asked last, because it costs a request and the checks
-        // above do not.
-        return viewerPermissionsOf(
+      Effect.flatMap(
+        (
           project,
-          input,
-          "runAction",
-          input.action === "update-branch",
-        ).pipe(
-          Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
-            const stackRebase = input.stackNumber !== undefined && input.action === "update-branch";
-            if (
-              stackRebase ? viewer.stackRebase !== true : !viewer.actions.includes(input.action)
-            ) {
+        ): Effect.Effect<
+          { repository: string; outcome: void | PullRequestActionOutcome },
+          PullRequestError
+        > => {
+          // Existing work is inspection-only. Any continuation of newly admitted native stack
+          // work is owned by the GitCafe adapter that admitted it.
+          if (input.operation !== undefined) {
+            if (project.api.kind !== "gitcafe")
               return Effect.fail(
                 new PullRequestOperationError({
                   operation: "runAction",
-                  detail: ACTION_ACCESS_REFUSALS[input.action],
+                  detail: "This host does not expose action operations.",
                 }),
               );
-            }
-            if (
-              !stackRebase &&
-              input.updateMethod !== undefined &&
-              !(viewer.updateMethods ?? []).includes(input.updateMethod)
-            ) {
-              return Effect.fail(
-                new PullRequestOperationError({
-                  operation: "runAction",
-                  detail: ACTION_ACCESS_REFUSALS["update-branch"],
-                }),
+            return project.api
+              .runAction({
+                cwd: project.project.workspaceRoot,
+                repository: project.repository,
+                host: project.host,
+                number: input.number,
+                action: input.action,
+                operation: input.operation,
+                ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
+              })
+              .pipe(
+                Effect.mapError(toPullRequestError("runAction")),
+                Effect.map((outcome) => ({ repository: project.repository, outcome })),
               );
-            }
-            const mergeSettings =
-              project.api.kind === "github" &&
-              input.stackNumber === undefined &&
-              (input.action === "merge" || input.action === "enable-auto-merge")
-                ? serverSettings.getSettings.pipe(
-                    Effect.map(
-                      (settings) =>
-                        resolveProjectSettings(settings, project.project.id).settings
-                          .removeAgentCreditsOnMerge,
-                    ),
-                    Effect.mapError(
-                      () =>
-                        new PullRequestOperationError({
-                          operation: "runAction",
-                          detail: "Could not read merge settings.",
-                        }),
-                    ),
-                  )
-                : Effect.succeed(false);
-            return mergeSettings.pipe(
-              Effect.flatMap((removeAgentCreditsOnMerge) =>
-                project.api
-                  .runAction({
-                    cwd: project.project.workspaceRoot,
-                    repository: project.repository,
-                    host: project.host,
-                    number: input.number,
-                    action: input.action,
-                    ...(removeAgentCreditsOnMerge ? { removeAgentCreditsOnMerge: true } : {}),
-                    ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
-                    ...(input.expectedStackHeads === undefined
-                      ? {}
-                      : { expectedStackHeads: input.expectedStackHeads }),
-                    ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
-                    ...(input.updateMethod === undefined
-                      ? {}
-                      : { updateMethod: input.updateMethod }),
-                  })
-                  .pipe(
-                    // Once the authorized provider action starts, a failure may leave partial
-                    // remote updates. Validation and permission failures above changed nothing.
-                    Effect.ensuring(
-                      input.stackNumber === undefined
-                        ? Effect.void
-                        : refreshAfterTurn(project.project.id),
-                    ),
-                    Effect.mapError(toPullRequestError("runAction")),
-                    Effect.as(
-                      project.api.kind === "azure-devops"
-                        ? input.repository.trim()
-                        : project.repository,
-                    ),
-                  ),
-              ),
+          }
+          if (
+            input.stackNumber !== undefined &&
+            (project.api.capabilities.stackActions !== true ||
+              !["merge", "update-branch"].includes(input.action) ||
+              (project.api.kind === "gitcafe"
+                ? input.expectedStackRevision === undefined
+                : input.expectedStackHeads === undefined) ||
+              (input.action === "update-branch" && input.updateMethod !== "rebase"))
+          ) {
+            return Effect.fail(
+              new PullRequestOperationError({
+                operation: "runAction",
+                detail: "This stack action is not supported or has no expected revision.",
+                notDispatched: true,
+              }),
             );
-          }),
-        );
-      }),
+          }
+          // The surface hides what a host cannot do, and this refuses it as well: a request that
+          // reached here anyway must not be handed to a provider that never claimed the action.
+          if (!project.api.capabilities.actions.includes(input.action)) {
+            return Effect.fail(
+              new PullRequestOperationError({
+                operation: "runAction",
+                detail: `This host cannot ${input.action} a change request.`,
+                notDispatched: true,
+              }),
+            );
+          }
+          // A strategy the host does not offer must be refused rather than passed on: every
+          // provider maps an unrecognised method to its own default, so asking Azure DevOps to
+          // rebase would quietly merge instead of failing.
+          if (
+            input.mergeMethod !== undefined &&
+            !project.api.capabilities.mergeMethods.includes(input.mergeMethod)
+          ) {
+            return Effect.fail(
+              new PullRequestOperationError({
+                operation: "runAction",
+                detail: `This host cannot merge with the ${input.mergeMethod} strategy.`,
+                notDispatched: true,
+              }),
+            );
+          }
+          // The same for the way a stale branch is brought up to date: a host that only merges
+          // must not be asked to rebase and left to pick something else.
+          if (
+            input.updateMethod !== undefined &&
+            !(project.api.capabilities.updateMethods ?? []).includes(input.updateMethod)
+          ) {
+            return Effect.fail(
+              new PullRequestOperationError({
+                operation: "runAction",
+                detail: `This host cannot update a branch by ${input.updateMethod}.`,
+                notDispatched: true,
+              }),
+            );
+          }
+          // What the host can do and what this account may ask of it are two questions, and both
+          // have to say yes. The second is asked last, because it costs a request and the checks
+          // above do not.
+          return viewerPermissionsOf(
+            project,
+            input,
+            "runAction",
+            input.action === "update-branch",
+          ).pipe(
+            Effect.flatMap(
+              (
+                viewer,
+              ): Effect.Effect<
+                { repository: string; outcome: void | PullRequestActionOutcome },
+                PullRequestError
+              > => {
+                const stackRebase =
+                  input.stackNumber !== undefined && input.action === "update-branch";
+                if (
+                  stackRebase ? viewer.stackRebase !== true : !viewer.actions.includes(input.action)
+                ) {
+                  return Effect.fail(
+                    new PullRequestOperationError({
+                      operation: "runAction",
+                      detail: ACTION_ACCESS_REFUSALS[input.action],
+                      notDispatched: true,
+                    }),
+                  );
+                }
+                if (
+                  !stackRebase &&
+                  input.updateMethod !== undefined &&
+                  !(viewer.updateMethods ?? []).includes(input.updateMethod)
+                ) {
+                  return Effect.fail(
+                    new PullRequestOperationError({
+                      operation: "runAction",
+                      detail: ACTION_ACCESS_REFUSALS["update-branch"],
+                      notDispatched: true,
+                    }),
+                  );
+                }
+                const mergeSettings =
+                  project.api.kind === "github" &&
+                  input.stackNumber === undefined &&
+                  (input.action === "merge" || input.action === "enable-auto-merge")
+                    ? serverSettings.getSettings.pipe(
+                        Effect.map(
+                          (settings) =>
+                            resolveProjectSettings(settings, project.project.id).settings
+                              .removeAgentCreditsOnMerge,
+                        ),
+                        Effect.mapError(
+                          () =>
+                            new PullRequestOperationError({
+                              operation: "runAction",
+                              detail: "Could not read merge settings.",
+                              notDispatched: true,
+                            }),
+                        ),
+                      )
+                    : Effect.succeed(false);
+                return mergeSettings.pipe(
+                  Effect.flatMap((removeAgentCreditsOnMerge) =>
+                    project.api
+                      .runAction({
+                        cwd: project.project.workspaceRoot,
+                        repository: project.repository,
+                        host: project.host,
+                        number: input.number,
+                        action: input.action,
+                        ...(removeAgentCreditsOnMerge ? { removeAgentCreditsOnMerge: true } : {}),
+                        ...(input.stackNumber === undefined
+                          ? {}
+                          : { stackNumber: input.stackNumber }),
+                        ...(input.expectedStackHeads === undefined
+                          ? {}
+                          : { expectedStackHeads: input.expectedStackHeads }),
+                        ...(input.mergeMethod === undefined
+                          ? {}
+                          : { mergeMethod: input.mergeMethod }),
+                        ...(input.updateMethod === undefined
+                          ? {}
+                          : { updateMethod: input.updateMethod }),
+                        ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+                        ...(input.expectedStackRevision === undefined
+                          ? {}
+                          : { expectedStackRevision: input.expectedStackRevision }),
+                      })
+                      .pipe(
+                        // Once the authorized provider action starts, a failure may leave partial
+                        // remote updates. Validation and permission failures above changed nothing.
+                        Effect.ensuring(
+                          input.stackNumber === undefined
+                            ? Effect.void
+                            : refreshAfterTurn(project.project.id),
+                        ),
+                        Effect.mapError(toPullRequestError("runAction")),
+                        Effect.map((outcome) => ({
+                          outcome,
+                          repository:
+                            project.api.kind === "azure-devops"
+                              ? input.repository.trim()
+                              : project.repository,
+                        })),
+                      ),
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      ),
     );
 
   const comment: PullRequestService["Service"]["comment"] = (input) =>
@@ -2227,7 +2299,13 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
         const review = project.api.capabilities.review;
         const refuse = (detail: string) =>
-          Effect.fail(new PullRequestOperationError({ operation: "submitReview", detail }));
+          Effect.fail(
+            new PullRequestOperationError({
+              operation: "submitReview",
+              detail,
+              notDispatched: true,
+            }),
+          );
         // The surface hides what a host cannot do, and this refuses it as well: a request that
         // reached here anyway must not be handed to a provider that never claimed it.
         if (!review.verdicts.includes(input.verdict)) {
@@ -2268,6 +2346,10 @@ export const make = Effect.gen(function* () {
                 verdict: input.verdict,
                 body: input.body,
                 comments: input.comments,
+                ...(input.reviewRevision === undefined
+                  ? {}
+                  : { reviewRevision: input.reviewRevision }),
+                ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
               })
               .pipe(Effect.mapError(toPullRequestError("submitReview")));
           }),
@@ -2333,7 +2415,8 @@ export const make = Effect.gen(function* () {
         }
         return viewerPermissionsOf(project, input, "setThreadResolution").pipe(
           Effect.flatMap((viewer): Effect.Effect<void, PullRequestError> => {
-            if (!viewer.resolve) {
+            // GitCafe authorizes each thread root; its adapter checks that resource's capability.
+            if (!viewer.resolve && project.api.kind !== "gitcafe") {
               return Effect.fail(
                 new PullRequestOperationError({
                   operation: "setThreadResolution",
@@ -3370,12 +3453,14 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const ref = yield* canonicalRef(input);
     yield* readCache.invalidate(refScope(ref));
-    const repository = yield* runAction(input).pipe(
+    const { repository, outcome } = yield* runAction(input).pipe(
       Effect.ensuring(readCache.invalidate(refScope(ref))),
     );
     bumpRefEpoch({ ...ref, repository });
     listingsEpoch = ++epochCounter;
     yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
+    // Unfinished host operations are reported as they are; only a completed one is confirmed.
+    if (outcome !== undefined && outcome.state !== "completed") return outcome;
     if (input.action === "merge") {
       // A successful merge action can merely enqueue the PR or enable auto-merge.
       const confirmed = yield* summaryUncached({ ...input, repository }).pipe(
@@ -3385,7 +3470,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
       );
-      if (confirmed?.state !== "merged") return;
+      if (confirmed?.state !== "merged") return outcome;
       yield* PubSub.publish(mergedPullRequests, {
         projectId: input.projectId,
         repository,
@@ -3393,6 +3478,7 @@ export const make = Effect.gen(function* () {
         mergedAt: DateTime.formatIso(yield* DateTime.now),
       });
     }
+    return outcome;
   });
 
   const credentialCached =

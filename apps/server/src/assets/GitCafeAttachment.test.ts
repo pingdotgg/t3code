@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import { downloadGitCafeAttachment, sniffRasterImageMimeType } from "./GitCafeAttachment.ts";
 
 const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255, 128]);

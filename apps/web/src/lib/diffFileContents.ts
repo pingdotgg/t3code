@@ -29,6 +29,7 @@ interface PullRequestDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly commit: string | null;
+  readonly reviewRevision?: PullRequestDiffFileContentsInput["reviewRevision"];
   readonly cacheKey: string;
 }
 
@@ -111,6 +112,7 @@ export function createPullRequestDiffFileContentsLoader<E>(
       input: {
         ...source.reference,
         ...(source.commit === null ? {} : { commit: source.commit }),
+        ...(source.reviewRevision === undefined ? {} : { reviewRevision: source.reviewRevision }),
         changeType,
         oldPath,
         newPath,

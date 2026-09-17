@@ -13,7 +13,14 @@ function comment(id: string, body = id): PendingReviewComment {
 
 describe("pull request review drafts", () => {
   beforeEach(() => {
-    usePullRequestReviewStore.setState({ drafts: {}, summaries: {} });
+    usePullRequestReviewStore.setState({
+      drafts: {},
+      summaries: {},
+      revisions: {},
+      submissions: {},
+      submissionAttempts: {},
+      inFlight: {},
+    });
   });
 
   it("removes only the line comments included in a submitted snapshot", () => {
@@ -72,5 +79,52 @@ describe("pull request review drafts", () => {
     usePullRequestReviewStore.getState().clearSummary("review-a", "Submitted body");
 
     expect(usePullRequestReviewStore.getState().summaries["review-a"]).toBe("Revised body");
+  });
+
+  it("keeps the original diff revision and rejects comments from a moved head", () => {
+    const store = usePullRequestReviewStore.getState();
+    const original = { version: 1 as const, headOid: "head-a", baseOid: "base" };
+    const moved = { version: 1 as const, headOid: "head-b", baseOid: "base" };
+
+    expect(store.addComment("review-a", comment("first"), original)).toBe(true);
+    expect(store.addComment("review-a", comment("stale"), moved)).toBe(false);
+
+    expect(usePullRequestReviewStore.getState().drafts["review-a"]).toEqual([comment("first")]);
+    expect(usePullRequestReviewStore.getState().revisions["review-a"]).toEqual(original);
+  });
+
+  it("retains the exact unsettled A submission across edited B and retry A", () => {
+    const store = usePullRequestReviewStore.getState();
+    const revisionA = { version: 1 as const, headOid: "head-a", baseOid: "base-a" };
+    const first = store.startSubmission("review-a", {
+      verdict: "comment",
+      body: "A",
+      comments: [comment("a")],
+      revision: revisionA,
+    });
+    const concurrent = store.startSubmission("review-a", {
+      verdict: "approve",
+      body: "B",
+      comments: [comment("b")],
+      revision: { version: 2, headOid: "head-b", baseOid: "base-b" },
+    });
+
+    expect(concurrent).toBeUndefined();
+    expect(first?.submission).toMatchObject({
+      body: "A",
+      comments: [comment("a")],
+      revision: revisionA,
+    });
+    store.finishSubmissionAttempt("review-a", first!.submission.id);
+    const attemptedB = store.startSubmission("review-a", {
+      verdict: "approve",
+      body: "B",
+      comments: [comment("b")],
+    });
+    expect(attemptedB?.submission).toEqual(first?.submission);
+    expect(attemptedB?.firstAttempt).toBe(false);
+    store.clearSubmission("review-a", "not-the-original-id");
+    store.clearSubmission("review-a", first!.submission.id);
+    expect(usePullRequestReviewStore.getState().submissions["review-a"]).toBeUndefined();
   });
 });

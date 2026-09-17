@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as GitCafeCli from "../sourceControl/GitCafeCli.ts";
-import { make } from "./GitCafePullRequestProvider.ts";
+import { gitCafeViewerPermissions, make } from "./GitCafePullRequestProvider.ts";
 
 const target = { cwd: "/work", host: "git.cafe", repository: "owner/repo", number: 7 };
 const time = "2026-09-12T12:00:00.000Z";
@@ -33,6 +33,8 @@ const detail = {
   ...pull,
   description: "Body",
   sourceRepo: null,
+  observedBaseOid: "baseabcdef",
+  mergeRoute: "native",
   closedAt: null,
   mergedAt: null,
   capabilities: { comment: false, review: true, merge: true, edit: true, moderate: true },
@@ -43,6 +45,34 @@ const withApi = (respond: (input: Request) => unknown) =>
   Layer.mock(GitCafeCli.GitCafeCli)({ api: (input) => Effect.sync(() => json(respond(input))) });
 
 describe("deployed GitCafe PR API", () => {
+  it("maps merge permission to stack rebases without enabling standalone branch updates", () => {
+    const permissions = gitCafeViewerPermissions({
+      ...detail,
+      state: "open" as const,
+      author: { ...detail.author, kind: "local" as const },
+      mergeRoute: "native" as const,
+      capabilities: { comment: false, review: true, merge: true, edit: true, moderate: false },
+    });
+    expect(permissions.editChangeRequest).toBe(true);
+    expect(permissions.requestReviewers).toBe(false);
+    expect(permissions.labels).toBe(false);
+    expect(permissions.actions).not.toContain("update-branch");
+    expect(permissions.stackRebase).toBe(true);
+  });
+
+  it("offers independently authorized comments without granting review verdicts", () => {
+    const permissions = gitCafeViewerPermissions({
+      ...detail,
+      state: "open",
+      author: { ...detail.author, kind: "local" },
+      mergeRoute: "native",
+      capabilities: { comment: false, review: false, merge: false, edit: false, moderate: false },
+    });
+    expect(permissions.comment).toBe(true);
+    expect(permissions.verdicts).toEqual([]);
+    expect(permissions.actions).toEqual([]);
+  });
+
   for (const [state, status, succeeds] of [
     ["merged", 404, true],
     ["closed", 404, true],
@@ -82,6 +112,7 @@ describe("deployed GitCafe PR API", () => {
                 );
               if (input.endpoint.includes("/reviewers?"))
                 return Effect.succeed(json({ items: [], nextAfter: null }));
+              if (input.endpoint.includes("/labels?")) return Effect.succeed(json({ items: [] }));
               if (input.endpoint.includes("/commits/")) return Effect.succeed(json({ items: [] }));
               if (input.endpoint.endsWith("/status"))
                 return Effect.succeed(
@@ -241,7 +272,10 @@ describe("deployed GitCafe PR API", () => {
       expect(result.additions).toBe(7);
       expect(result.deletions).toBe(2);
       expect(result.mergeability).toBe("unknown");
-      expect(result.viewerPermissions.actions).toEqual([]);
+      expect(result.viewerPermissions.actions).toEqual(["draft", "close", "merge"]);
+      // The detail fixture reports comment=false, as production does for CLI grants even
+      // when their independent conversation-comment scope authorizes the write.
+      expect(result.viewerPermissions.comment).toBe(true);
       expect(result.checks).toEqual([
         { name: "CI", status: "failure", description: "Failed", url: "https://ci.example/run" },
         { name: "Lint", status: "success", description: null, url: null },
@@ -254,6 +288,7 @@ describe("deployed GitCafe PR API", () => {
         withApi((input) => {
           calls.push(input);
           if (input.endpoint.includes("/reviewers?")) return { items: [], nextAfter: null };
+          if (input.endpoint.includes("/labels?")) return { items: [] };
           if (input.endpoint.includes("/diff?")) {
             expect(input.endpoint).toContain("expectedVersion=1&limit=500");
             return { items: [{ additions: 7, deletions: 2 }], truncated: false };
@@ -303,6 +338,34 @@ describe("deployed GitCafe PR API", () => {
               checks: { pending: 0, failing: 1, successful: 0, total: 1 },
             };
           return detail;
+        }),
+      ),
+    );
+  });
+  it.effect("loads detail labels from the dedicated bounded endpoint", () => {
+    const calls: Request[] = [];
+    return Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getChangeRequest(target);
+      expect(result.labels).toEqual([{ name: "detail-label", color: "#123456" }]);
+      expect(calls.filter((call) => call.endpoint.includes("/labels?"))).toEqual([
+        expect.objectContaining({ endpoint: "/repos/owner/repo/pulls/7/labels?limit=100" }),
+      ]);
+    }).pipe(
+      Effect.provide(
+        withApi((input) => {
+          calls.push(input);
+          if (input.endpoint.includes("/reviewers?")) return { items: [], nextAfter: null };
+          if (input.endpoint.includes("/labels?"))
+            return { items: [{ name: "detail-label", color: "#123456" }] };
+          if (input.endpoint.includes("/diff?")) return { items: [], truncated: false };
+          if (input.endpoint.includes("/commits/")) return { items: [] };
+          if (input.endpoint.endsWith("/status"))
+            return {
+              merge: { conflicts: "unknown", fastForward: null, strategies: [] },
+              checks: { pending: 0, failing: 0, successful: 0, total: 0 },
+            };
+          return { ...detail, labels: [{ name: "summary-label", color: "#ffffff" }] };
         }),
       ),
     );
@@ -442,7 +505,7 @@ describe("deployed GitCafe PR API", () => {
             ? undefined
             : [{ content: "thumbs-up", count: 3, actors: [], viewerHasReacted: true }],
         );
-        expect(provider.capabilities.reactions).toBe(false);
+        expect(provider.capabilities.reactions).toBe(true);
       }).pipe(
         Effect.provide(
           Layer.mock(GitCafeCli.GitCafeCli)({
@@ -494,11 +557,16 @@ describe("deployed GitCafe PR API", () => {
       ),
     ),
   );
-  it.effect("reads plain diff and preserves provider omissions", () =>
+  it.effect("uses the rendered comparison base for review anchors", () =>
     Effect.gen(function* () {
       const provider = yield* make;
       const result = yield* provider.getDiff(target);
       expect(result.truncated).toBe(true);
+      expect(result.reviewRevision).toEqual({
+        version: 1,
+        headOid: "renderedhead",
+        baseOid: "mergebase",
+      });
       expect(result.nextCursor).toBeNull();
       expect(result.omittedFileStats).toEqual([{ path: "large.ts", additions: 0, deletions: 0 }]);
     }).pipe(
@@ -521,6 +589,8 @@ describe("deployed GitCafe PR API", () => {
             ],
             truncated: false,
             version: 1,
+            headOid: "renderedhead",
+            comparisonBaseOid: "mergebase",
             nextAfter: null,
           };
         }),
@@ -533,6 +603,7 @@ describe("deployed GitCafe PR API", () => {
       const provider = yield* make;
       const first = yield* provider.getDiff(target);
       expect(first.nextCursor).not.toBeNull();
+      expect(first.reviewRevision).toBeUndefined();
       expect(first.patch).toContain("a/src/a.ts b/src/a.ts");
       const second = yield* provider.getDiff({ ...target, cursor: first.nextCursor! });
       expect(second.nextCursor).toBeNull();
@@ -558,6 +629,47 @@ describe("deployed GitCafe PR API", () => {
       ),
     );
   });
+  it.effect("rejects a diff page whose returned revision differs from the requested revision", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getDiff(target).pipe(Effect.flip);
+      expect(result.detail).toContain("different diff snapshot");
+      expect(result.detail).toContain("revision 1");
+    }).pipe(
+      Effect.provide(
+        withApi((input) =>
+          input.endpoint.includes("/diff?")
+            ? { items: [], truncated: false, version: 5, nextAfter: null }
+            : detail,
+        ),
+      ),
+    ),
+  );
+  it.effect("rejects a continued diff page when the head changes at the same version", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const first = yield* provider.getDiff(target);
+      const result = yield* provider
+        .getDiff({ ...target, cursor: first.nextCursor! })
+        .pipe(Effect.flip);
+      expect(result.detail).toContain("different diff snapshot");
+    }).pipe(
+      Effect.provide(
+        withApi((input) => {
+          if (!input.endpoint.includes("/diff?")) return detail;
+          const continued = new URL(input.endpoint, "https://git.cafe").searchParams.has("after");
+          return {
+            items: [],
+            truncated: false,
+            version: 1,
+            headOid: continued ? "advanced-head" : "reviewed-head",
+            comparisonBaseOid: "reviewed-base",
+            nextAfter: continued ? null : "src/a.ts",
+          };
+        }),
+      ),
+    ),
+  );
   it.effect("rejects malformed diff cursors before calling GitCafe", () => {
     const calls: Request[] = [];
     return Effect.gen(function* () {
@@ -594,6 +706,62 @@ describe("deployed GitCafe PR API", () => {
             );
             return { version: 9, file: { oldContent, newContent } };
           }),
+        ),
+      ),
+    );
+  }
+  it.effect("expands an old displayed revision without substituting the latest pull", () => {
+    const calls: Request[] = [];
+    return Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getDiffFileContents!({
+        ...target,
+        changeType: "change",
+        oldPath: "old.ts",
+        newPath: "new.ts",
+        reviewRevision: { version: 3, headOid: "displayed-head", baseOid: "displayed-base" },
+      });
+      expect(result).toEqual({ oldContents: "old snapshot", newContents: "new snapshot" });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.endpoint).toContain("expectedVersion=3");
+    }).pipe(
+      Effect.provide(
+        withApi((input) => {
+          calls.push(input);
+          if (!input.endpoint.includes("/diff-file?")) return { ...detail, version: 9 };
+          expect(input.endpoint).toContain("expectedVersion=3");
+          return {
+            version: 3,
+            headOid: "displayed-head",
+            comparisonBaseOid: "displayed-base",
+            file: { oldContent: "old snapshot", newContent: "new snapshot" },
+          };
+        }),
+      ),
+    );
+  });
+  for (const [mismatch, response] of [
+    ["version", { version: 4, headOid: "displayed-head", comparisonBaseOid: "displayed-base" }],
+    ["head", { version: 3, headOid: "other-head", comparisonBaseOid: "displayed-base" }],
+    ["base", { version: 3, headOid: "displayed-head", comparisonBaseOid: "other-base" }],
+  ] as const) {
+    it.effect(`rejects diff-file contents with a mismatched response ${mismatch}`, () =>
+      Effect.gen(function* () {
+        const provider = yield* make;
+        const result = yield* provider.getDiffFileContents!({
+          ...target,
+          changeType: "change",
+          oldPath: "file.ts",
+          newPath: "file.ts",
+          reviewRevision: { version: 3, headOid: "displayed-head", baseOid: "displayed-base" },
+        }).pipe(Effect.flip);
+        expect(result.detail).toContain("different diff snapshot");
+      }).pipe(
+        Effect.provide(
+          withApi(() => ({
+            ...response,
+            file: { oldContent: "old", newContent: "new" },
+          })),
         ),
       ),
     );
@@ -665,28 +833,53 @@ describe("deployed GitCafe PR API", () => {
       expect(yield* provider.getChangeRequestStack!(target)).toBeNull();
     }).pipe(Effect.provide(withApi(() => ({ stack: null })))),
   );
-  it.effect("gates every unqualified write capability", () =>
+  it.effect("returns stack members without inventing unavailable heads", () =>
     Effect.gen(function* () {
       const provider = yield* make;
-      expect(provider.capabilities).toMatchObject({
-        comment: false,
-        actions: [],
-        stackActions: false,
-        edit: { changeRequest: false, comment: false },
+      const stack = yield* provider.getChangeRequestStack!(target);
+      expect(stack).toMatchObject({
+        revision: 3,
+        layers: [{ number: 7 }],
       });
-      expect(
-        (yield* provider.runAction({ ...target, action: "merge" }).pipe(Effect.result))._tag,
-      ).toBe("Failure");
-      expect(
-        (yield* provider.comment({ ...target, body: "No mutation" }).pipe(Effect.result))._tag,
-      ).toBe("Failure");
+      expect(stack?.layers[0]).not.toHaveProperty("headSha");
     }).pipe(
       Effect.provide(
-        withApi(() => {
-          throw new Error("Unexpected request");
+        withApi((input) => {
+          expect(input.endpoint).toBe("/repos/owner/repo/pulls/7/stack");
+          return {
+            stack: {
+              id: "stack",
+              number: 2,
+              revision: 3,
+              landingBase: "main",
+              members: [
+                {
+                  pullRequestNumber: 7,
+                  title: "Change",
+                  state: "open",
+                  draft: false,
+                  sourceBranch: "feature",
+                  position: 1,
+                },
+              ],
+            },
+          };
         }),
       ),
     ),
+  );
+  it.effect("enables mapped write capabilities", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      expect(provider.capabilities).toMatchObject({
+        comment: true,
+        actions: ["ready", "draft", "close", "reopen", "merge", "update-branch"],
+        stackActions: true,
+        reactions: true,
+        labels: true,
+        edit: { changeRequest: true, comment: true },
+      });
+    }).pipe(Effect.provide(withApi(() => detail))),
   );
   it.effect("preserves rate-limit failures instead of substituting empty reads", () =>
     Effect.gen(function* () {

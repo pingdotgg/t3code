@@ -89,6 +89,22 @@ describe("canEditPullRequestChangeRequest", () => {
     ).toBe(true);
   });
 
+  it("respects an explicit change request edit permission", () => {
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({
+          author: actor("someone-else"),
+          viewerPermissions: permissions({ editChangeRequest: true }),
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      canEditPullRequestChangeRequest(
+        subject({ viewerPermissions: permissions({ editChangeRequest: false }) }),
+      ),
+    ).toBe(false);
+  });
+
   it("refuses a reader who neither wrote it nor may merge it", () => {
     expect(
       canEditPullRequestChangeRequest(
@@ -144,6 +160,13 @@ describe("canEditPullRequestComment", () => {
     expect(canEditPullRequestComment(subject(), comment({ author: actor("someone-else") }))).toBe(
       false,
     );
+  });
+
+  it("uses a host's per-comment permission before author fallback", () => {
+    expect(canEditPullRequestComment(subject(), comment({ canEdit: false }))).toBe(false);
+    expect(
+      canEditPullRequestComment(subject({ viewer: "someone-else" }), comment({ canEdit: true })),
+    ).toBe(true);
   });
 
   it("refuses a remark the host attributes to nobody", () => {

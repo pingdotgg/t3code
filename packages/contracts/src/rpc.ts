@@ -161,6 +161,7 @@ import {
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   PullRequestActionInput,
+  PullRequestActionOutcome,
   PullRequestActivity,
   PullRequestCommentInput,
   PullRequestCommentUpdateInput,
@@ -1014,7 +1015,8 @@ const WsPullRequestsSetFilesViewedRpc = Rpc.make(WS_METHODS.pullRequestsSetFiles
 
 const WsPullRequestsRunActionRpc = Rpc.make(WS_METHODS.pullRequestsRunAction, {
   payload: PullRequestActionInput,
-  success: Schema.Void,
+  // Void accepts and discards any value, so durable outcomes must match first.
+  success: Schema.Union([PullRequestActionOutcome, Schema.Void]),
   error: PullRequestRpcError,
 });
 

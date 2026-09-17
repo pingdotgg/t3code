@@ -193,11 +193,10 @@ for (const scenario of [
           action: "merge" as const,
         };
         const route = createPullRequestRouter();
-        const result = yield* (
-          reading
-            ? route(WS_METHODS.pullRequestsSummary, input)
-            : route(WS_METHODS.pullRequestsRunAction, input)
-        ).pipe(
+        const request = reading
+          ? route(WS_METHODS.pullRequestsSummary, input).pipe(Effect.asVoid)
+          : route(WS_METHODS.pullRequestsRunAction, input).pipe(Effect.asVoid);
+        const result = yield* request.pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
           Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.provideService(GitHubRoutingPermissions, {
@@ -1496,6 +1495,61 @@ it.effect("shares close, reopen, and merge with an untouched client's mounted PR
         );
         stops.forEach((stop) => stop());
       }
+    }),
+  ),
+);
+
+it.effect("keys concurrent diff file reads by the complete review revision", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const startedA = yield* Deferred.make<void>();
+      const startedB = yield* Deferred.make<void>();
+      const responseA = yield* Deferred.make<{ oldContents: string; newContents: string }>();
+      const responseB = yield* Deferred.make<{ oldContents: string; newContents: string }>();
+      const calls: string[] = [];
+      const client = {
+        [WS_METHODS.pullRequestsDiffFileContents]: (input: {
+          readonly reviewRevision: { readonly headOid: string };
+        }) =>
+          Effect.gen(function* () {
+            const revision = input.reviewRevision.headOid;
+            calls.push(revision);
+            yield* Deferred.succeed(revision === "head-a" ? startedA : startedB, undefined);
+            return yield* Deferred.await(revision === "head-a" ? responseA : responseB);
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const input = {
+        projectId: ProjectId.make("project-1"),
+        repository: "acme/web",
+        number: 1,
+        changeType: "change",
+        oldPath: "src/app.ts",
+        newPath: "src/app.ts",
+      } as const;
+      const revisionA = { version: 1, headOid: "head-a", baseOid: "base-a" } as const;
+      const revisionB = { version: 1, headOid: "head-b", baseOid: "base-b" } as const;
+      const run = (reviewRevision: typeof revisionA | typeof revisionB) =>
+        atoms.diffFileContents.run(registry, {
+          environmentId: TARGET.environmentId,
+          input: { ...input, reviewRevision },
+        });
+
+      const firstA = run(revisionA);
+      yield* Deferred.await(startedA);
+      const firstB = run(revisionB);
+      yield* Deferred.await(startedB);
+      const secondB = run(revisionB);
+      yield* Deferred.succeed(responseB, { oldContents: "old-b", newContents: "new-b" });
+      yield* Deferred.succeed(responseA, { oldContents: "old-a", newContents: "new-a" });
+
+      const results = yield* Effect.promise(() => Promise.all([firstA, firstB, secondB]));
+      expect(results).toMatchObject([
+        { _tag: "Success", value: { newContents: "new-a" } },
+        { _tag: "Success", value: { newContents: "new-b" } },
+        { _tag: "Success", value: { newContents: "new-b" } },
+      ]);
+      expect(calls).toEqual(["head-a", "head-b"]);
     }),
   ),
 );

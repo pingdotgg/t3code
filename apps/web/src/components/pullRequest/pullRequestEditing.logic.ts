@@ -20,6 +20,9 @@ function sameLogin(one: string | null | undefined, other: string | null | undefi
  */
 export function canEditPullRequestChangeRequest(detail: EditingSubject): boolean {
   if (detail.capabilities.edit?.changeRequest !== true) return false;
+  if (detail.viewerPermissions.editChangeRequest !== undefined) {
+    return detail.viewerPermissions.editChangeRequest;
+  }
   return (
     sameLogin(detail.viewer, detail.author?.login) ||
     detail.viewerPermissions.actions.includes("merge")
@@ -33,9 +36,10 @@ export function canEditPullRequestChangeRequest(detail: EditingSubject): boolean
  */
 export function canEditPullRequestComment(
   detail: EditingSubject,
-  comment: Pick<PullRequestComment, "author" | "kind">,
+  comment: Pick<PullRequestComment, "author" | "canEdit" | "kind">,
 ): boolean {
   if (detail.capabilities.edit?.comment !== true) return false;
   if (comment.kind !== "issue-comment" && comment.kind !== "review-comment") return false;
+  if (comment.canEdit !== undefined) return comment.canEdit;
   return sameLogin(detail.viewer, comment.author?.login);
 }
