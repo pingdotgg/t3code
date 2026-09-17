@@ -14,6 +14,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
+  type ServerProviderSkill,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
@@ -21,6 +22,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { resolveEffectiveSkills } from "@t3tools/shared/providerSkills";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -144,7 +146,9 @@ interface CursorSessionContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   lastPlanFingerprint: string | undefined;
   activeTurnId: TurnId | undefined;
-  cursorSkillNames: ReadonlySet<string> | undefined;
+  /** Cursor's discovered skills, scanned once per session. Cached unfolded so
+   * a `disabledSkills` change applies on the next send without a rescan. */
+  cursorSkills: ReadonlyArray<ServerProviderSkill> | undefined;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
@@ -799,7 +803,7 @@ export function makeCursorAdapter(
             turns: [],
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
-            cursorSkillNames: undefined,
+            cursorSkills: undefined,
             promptsInFlight: 0,
             assistantReply: new CursorTransportFailure(),
             stopped: false,
@@ -1000,29 +1004,32 @@ export function makeCursorAdapter(
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           const rawPrompt = input.input?.trim() ?? "";
           if (rawPrompt) {
-            // `input.disabledSkills` is not supported here yet, and unlike the
-            // other non-Claude adapters this one does rewrite `$name`, so a
-            // skill switched off in T3 Code still dispatches on Cursor. Folding
-            // it needs this per-session `cursorSkillNames` cache invalidated on
-            // a settings change; ClaudeAdapter rescans per send and has no cache.
-            let cursorSkillNames = ctx.cursorSkillNames;
-            if (hasCursorSkillMention(rawPrompt) && cursorSkillNames === undefined) {
-              const skills = yield* discoverCursorSkills(
+            // A skill the user switched off in T3 Code is left as prose, so the
+            // switch stops an accidental dispatch and not just the picker row.
+            // The scan is cached per session but the fold runs per send, so a
+            // settings change lands on the next send. A skill reserved for the
+            // agent with `user-invocable: false` is left as prose too.
+            if (hasCursorSkillMention(rawPrompt) && ctx.cursorSkills === undefined) {
+              ctx.cursorSkills = yield* discoverCursorSkills(
                 ctx.session.cwd,
                 options?.environment,
               ).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
               );
-              cursorSkillNames = new Set(
-                skills
-                  .filter((skill) => skill.enabled && skill.userInvocable !== false)
-                  .map((skill) => skill.name),
-              );
-              ctx.cursorSkillNames = cursorSkillNames;
             }
-            const prompt = cursorSkillNames
-              ? rewriteCursorSkillMentions(rawPrompt, cursorSkillNames)
+            const prompt = ctx.cursorSkills
+              ? rewriteCursorSkillMentions(
+                  rawPrompt,
+                  new Set(
+                    resolveEffectiveSkills({
+                      skills: ctx.cursorSkills,
+                      disabledSkills: input.disabledSkills ?? [],
+                    })
+                      .filter((skill) => skill.enabled && skill.userInvocable !== false)
+                      .map((skill) => skill.name),
+                  ),
+                )
               : rawPrompt;
             promptParts.push({ type: "text", text: prompt });
           }
