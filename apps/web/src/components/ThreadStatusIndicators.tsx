@@ -204,6 +204,7 @@ export function resolveThreadPullRequestBadgePresentation({
 export function ThreadPullRequestBadgeControl({
   variant,
   badge,
+  pullRequests,
   number,
   url,
   status,
@@ -212,6 +213,7 @@ export function ThreadPullRequestBadgeControl({
 }: {
   variant: "underline" | "ghost";
   badge: ThreadPullRequestBadge | null;
+  pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   number?: number | undefined;
   url?: string | undefined;
   status: PrStatusIndicator | null;
@@ -221,6 +223,7 @@ export function ThreadPullRequestBadgeControl({
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
   if (presentation === null) return null;
   const isStack = badge?.kind === "stack";
+  const showList = isStack || (badge?.kind === "pull-request" && badge.others > 0);
   const className = cn(
     variant === "ghost"
       ? buttonVariants({ variant: "ghost", size: "xs" })
@@ -266,7 +269,15 @@ export function ThreadPullRequestBadgeControl({
       >
         {content}
       </TooltipTrigger>
-      <TooltipPopup side="top">{presentation.label}</TooltipPopup>
+      <TooltipPopup
+        side="top"
+        variant={showList ? "glass" : "default"}
+        className={
+          showList ? "w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal" : undefined
+        }
+      >
+        {showList ? <ThreadPullRequestsMiniList pullRequests={pullRequests} /> : presentation.label}
+      </TooltipPopup>
     </Tooltip>
   );
 }
