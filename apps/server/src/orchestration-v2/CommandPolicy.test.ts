@@ -105,6 +105,21 @@ it("resolves automatic message delivery from authoritative provider capabilities
   );
 });
 
+it.each(["preparing", "starting"] as const)(
+  "queues an automatic message while the handoff run is %s",
+  (status) => {
+    const projection = dispatchProjection(baseCapabilities);
+    assert.deepEqual(
+      resolveMessageDispatchIntent(
+        { ...projection, runs: projection.runs.map((run) => ({ ...run, status })) },
+        { type: "start_immediately" },
+        "auto",
+      ),
+      { type: "queue_after_active" },
+    );
+  },
+);
+
 it("targets the latest active run for explicit steer and restart intent", () => {
   const projection = dispatchProjection(baseCapabilities);
   assert.deepEqual(
