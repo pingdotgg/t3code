@@ -1,6 +1,12 @@
+import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 import { scopedThreadKey, scopeThreadRef } from "../environment/index.ts";
 import type { EnvironmentThreadShell } from "./models.ts";
-import { resolveSettledThreadTimestamp, toSortableTimestamp } from "./threadSort.ts";
+import {
+  resolveSettledThreadTimestamp,
+  toSortableTimestamp,
+  pinOrderKeyBetween,
+  generateSpreadPinOrderKeys,
+} from "./threadSort.ts";
 import { worktreeScopeKey } from "@t3tools/shared/worktreeResource";
 function firstValidTimestampMs(...values: Array<string | null | undefined>): number {
   for (const value of values) {
@@ -213,4 +219,184 @@ export function pickWorktreeGroupRepresentative(
       ? thread
       : newest,
   );
+}
+
+/** Shared checkout chrome uses every member's links, newest snapshot first. */
+export function resolveWorktreeMetadata(threads: ReadonlyArray<EnvironmentThreadShell>) {
+  const newestFirst = [...threads].sort(
+    (left, right) => firstValidTimestampMs(right.updatedAt) - firstValidTimestampMs(left.updatedAt),
+  );
+  const thread = newestFirst[0]!;
+  const links = new Map<string, EnvironmentThreadShell["pullRequests"][number]>();
+  for (const member of newestFirst) {
+    for (const link of member.pullRequests) {
+      if (link.source === "stack-dismissed") continue;
+      const key = JSON.stringify([link.host, link.repository, link.number]);
+      const previous = links.get(key);
+      if (
+        previous === undefined ||
+        (link.snapshot !== null &&
+          (previous.snapshot === null ||
+            firstValidTimestampMs(link.snapshot.syncedAt) >
+              firstValidTimestampMs(previous.snapshot.syncedAt)))
+      ) {
+        links.set(key, link);
+      }
+    }
+  }
+  return {
+    thread,
+    pullRequests: [...links.values()],
+    linkedPullRequest:
+      newestFirst.find((member) => member.linkedPullRequest != null)?.linkedPullRequest ?? null,
+    branchPullRequest:
+      newestFirst.find((member) => member.branchPullRequest != null)?.branchPullRequest ?? null,
+  };
+}
+
+/** Pinned checkouts stay in the pinned block; parked checkouts retain their time order. */
+export function worktreeReorderSection(group: WorktreeThreadGroup): "pinned" | "active" | null {
+  if (group.section !== "active") return null;
+  return group.threads.some(
+    (thread, index) => group.classifications[index] === "active" && thread.pinnedAt != null,
+  )
+    ? "pinned"
+    : "active";
+}
+
+/** Persist a checkout move through its members' existing order keys, without lifecycle changes. */
+export function planWorktreeGroupReorder(input: {
+  readonly groups: ReadonlyArray<WorktreeThreadGroup>;
+  readonly activeKey: string;
+  readonly overKey: string;
+  readonly keysById: ReadonlyMap<string, string | null | undefined>;
+  readonly reorderableKeys: ReadonlySet<string>;
+}) {
+  const from = input.groups.findIndex((group) => group.key === input.activeKey);
+  const to = input.groups.findIndex((group) => group.key === input.overKey);
+  if (from < 0 || to < 0 || from === to) return null;
+  const moved = input.groups[from]!;
+  const section = worktreeReorderSection(moved);
+  if (section === null || worktreeReorderSection(input.groups[to]!) !== section) return null;
+  const ordered = [...input.groups];
+  ordered.splice(from, 1);
+  ordered.splice(to, 0, moved);
+  const members = (group: WorktreeThreadGroup) =>
+    group.threads.flatMap((thread, index) =>
+      group.classifications[index] === "active" &&
+      (section === "pinned" ? thread.pinnedAt != null : thread.pinnedAt == null)
+        ? [sidebarThreadKey(thread)]
+        : [],
+    );
+  const orderedIds = ordered
+    .filter((group) => worktreeReorderSection(group) === section)
+    .flatMap(members);
+  const movedIds = members(moved);
+  const movedSet = new Set(movedIds);
+  const visibleIds = new Set(orderedIds);
+  const reserved = new Set(
+    [...input.keysById].flatMap(([id, key]) => (!visibleIds.has(id) && key != null ? [key] : [])),
+  );
+  const remainingKeys = orderedIds
+    .filter((id) => !movedSet.has(id))
+    .map((id) => input.keysById.get(id) ?? null);
+  let assignments: Array<{ id: string; orderKey: string }> = [];
+  // Once materialized, a move only writes the picked-up checkout's members.
+  if (
+    remainingKeys.every(
+      (key, index) => key !== null && (index === 0 || key > remainingKeys[index - 1]!),
+    )
+  ) {
+    const start = orderedIds.indexOf(movedIds[0]!);
+    const before = start === 0 ? null : (input.keysById.get(orderedIds[start - 1]!) ?? null);
+    const after = input.keysById.get(orderedIds[start + movedIds.length]!) ?? null;
+    let previous = before;
+    for (const id of movedIds) {
+      let key = pinOrderKeyBetween(previous, after);
+      while (key !== null && reserved.has(key)) key = pinOrderKeyBetween(key, after);
+      if (key === null) {
+        assignments = [];
+        break;
+      }
+      assignments.push({ id, orderKey: key });
+      previous = key;
+    }
+  }
+  if (assignments.length !== movedIds.length) {
+    const keys = generateSpreadPinOrderKeys(orderedIds.length + reserved.size).filter(
+      (key) => !reserved.has(key),
+    );
+    assignments = orderedIds.flatMap((id, index) =>
+      input.keysById.get(id) === keys[index] ? [] : [{ id, orderKey: keys[index]! }],
+    );
+  }
+  if (assignments.some(({ id }) => !input.reorderableKeys.has(id))) return null;
+  return { section, order: ordered.map((group) => group.key), assignments };
+}
+
+export type WorktreeLifecycleAction =
+  | "pin"
+  | "unpin"
+  | "settle"
+  | "unsettle"
+  | "snooze"
+  | "unsnooze";
+
+/** Index all live members, including siblings hidden by search or shelf paging. */
+export function indexWorktreeThreads(threads: ReadonlyArray<EnvironmentThreadShell>) {
+  const groups = new Map<string, EnvironmentThreadShell[]>();
+  for (const thread of threads) {
+    if (thread.archivedAt != null) continue;
+    const key = worktreeScopeKey(thread.environmentId, thread.projectId, thread.worktreePath);
+    const members = groups.get(key) ?? [];
+    members.push(thread);
+    groups.set(key, members);
+  }
+  return new Map(
+    [...groups.values()].flatMap((members) =>
+      members.map((thread) => [sidebarThreadKey(thread), members] as const),
+    ),
+  );
+}
+
+export function resolveWorktreeLifecycle(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+  now: string,
+) {
+  return {
+    isPinned: threads.some((thread) => thread.pinnedAt != null),
+    isSettled:
+      threads.length > 0 && threads.every((thread) => thread.settledOverride === "settled"),
+    isSnoozed: threads.some((thread) => effectiveSnoozed(thread, { now })),
+    canSnoozeNow: threads.length > 0 && threads.every((thread) => canSnooze(thread, { now })),
+  };
+}
+
+/** Skip completed transitions so mixed groups can converge without duplicate commands. */
+export function worktreeLifecycleTargets(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+  action: WorktreeLifecycleAction,
+  now: string,
+) {
+  return threads.filter((thread) => {
+    if (thread.archivedAt != null) return false;
+    switch (action) {
+      case "pin":
+        return thread.pinnedAt == null;
+      case "unpin":
+        return thread.pinnedAt != null;
+      case "settle":
+        return (
+          thread.settledOverride !== "settled" ||
+          thread.pinnedAt != null ||
+          effectiveSnoozed(thread, { now })
+        );
+      case "unsettle":
+        return thread.settledOverride === "settled";
+      case "snooze":
+        return canSnooze(thread, { now });
+      case "unsnooze":
+        return effectiveSnoozed(thread, { now });
+    }
+  });
 }

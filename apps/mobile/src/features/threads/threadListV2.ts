@@ -325,6 +325,7 @@ export interface ThreadListV2SettledShelfListItem {
 
 export interface ThreadListV2WorktreeListItem {
   readonly type: "v2-worktree";
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly key: string;
   readonly thread: EnvironmentThreadShell;
   readonly count: number;
@@ -395,12 +396,14 @@ export function buildThreadListV2ListItems(input: {
     result.push(...threadItems.slice(settledShelfHeaderIndex));
   }
   if (!input.groupWorktrees) return result;
-  const counts = new Map<string, number>();
+  const members = new Map<string, EnvironmentThreadShell[]>();
   for (const entry of threadItems) {
     if (entry.type !== "v2-thread") continue;
     const thread = entry.item.thread;
     const key = worktreeScopeKey(thread.environmentId, thread.projectId, thread.worktreePath);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    const group = members.get(key) ?? [];
+    group.push(thread);
+    members.set(key, group);
   }
   const seen = new Set<string>();
   return result.flatMap((entry): ThreadListV2ListItem[] => {
@@ -410,7 +413,13 @@ export function buildThreadListV2ListItems(input: {
     if (seen.has(key)) return [entry];
     seen.add(key);
     return [
-      { type: "v2-worktree", key: `worktree:${key}`, thread, count: counts.get(key)! },
+      {
+        type: "v2-worktree",
+        key: `worktree:${key}`,
+        thread,
+        threads: members.get(key)!,
+        count: members.get(key)!.length,
+      },
       entry,
     ];
   });
