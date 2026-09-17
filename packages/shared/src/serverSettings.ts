@@ -270,6 +270,7 @@ export function applyServerSettingsPatch(
     providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
+    worktreeCleanup: worktreeCleanupPatch,
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
@@ -320,6 +321,26 @@ export function applyServerSettingsPatch(
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacementsBase = {
     ...next,
+    ...(worktreeCleanupPatch === undefined
+      ? {}
+      : {
+          worktreeCleanup:
+            worktreeCleanupPatch?.mode === "custom"
+              ? {
+                  mode: "custom" as const,
+                  rules: {
+                    worktreeAfterDays: next.storageCleanup.worktreeAfterDays,
+                    worktreeOnMerge: next.storageCleanup.worktreeOnMerge,
+                    worktreeOnDelete: next.storageCleanup.worktreeOnDelete,
+                    worktreeUnchanged: next.storageCleanup.worktreeUnchanged,
+                    ...(current.worktreeCleanup?.mode === "custom"
+                      ? current.worktreeCleanup.rules
+                      : {}),
+                    ...worktreeCleanupPatch.rules,
+                  },
+                }
+              : worktreeCleanupPatch,
+        }),
     ...(backgroundActivity !== undefined
       ? {
           backgroundActivity: {

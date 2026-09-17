@@ -13,6 +13,7 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import {
   clearProjectSettingsOverrides,
   resolveProjectSettings,
+  resolveWorktreeCleanup,
   type ProjectSettingSource,
 } from "@t3tools/shared/projectSettings";
 import * as Equal from "effect/Equal";
@@ -223,6 +224,16 @@ export function planScopedSettingsPatch(
               const effective = resolveProjectSettings(settings, projectId).settings;
               const next: Record<string, unknown> = { ...current };
               for (const [key, value] of Object.entries(serverPatch)) {
+                if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
+                  next[key] = {
+                    mode: "custom",
+                    rules: {
+                      ...resolveWorktreeCleanup(settings, projectId),
+                      ...serverPatch.worktreeCleanup.rules,
+                    },
+                  };
+                  continue;
+                }
                 const base = effective[key as keyof ServerSettings];
                 next[key] =
                   isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
@@ -233,7 +244,25 @@ export function planScopedSettingsPatch(
           ? connectedEnvironments.map((environment) => ({
               environmentId: environment.environmentId,
               label: environment.label,
-              patch: serverPatch,
+              patch:
+                environment.serverConfig?.settings.worktreeCleanup != null &&
+                serverPatch.storageCleanup &&
+                Object.keys(serverPatch.storageCleanup).some((key) => key.startsWith("worktree"))
+                  ? {
+                      ...serverPatch,
+                      worktreeCleanup: {
+                        mode: "custom",
+                        rules: {
+                          ...resolveWorktreeCleanup(environment.serverConfig.settings, null),
+                          ...Object.fromEntries(
+                            Object.entries(serverPatch.storageCleanup).filter(([key]) =>
+                              key.startsWith("worktree"),
+                            ),
+                          ),
+                        },
+                      },
+                    }
+                  : serverPatch,
             }))
           : [];
   const hasClientWrite = Object.keys(clientPatch).length > 0;
