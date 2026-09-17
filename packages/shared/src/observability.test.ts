@@ -263,11 +263,11 @@ describe("observability", () => {
           );
 
           assert.equal(
-            matchingFiles.some((entry) => entry === "shared.trace.ndjson.1"),
+            matchingFiles.some((entry) => entry === "shared.trace.ndjson.1.gz"),
             true,
           );
           assert.equal(
-            matchingFiles.some((entry) => entry === "shared.trace.ndjson.3"),
+            matchingFiles.some((entry) => entry === "shared.trace.ndjson.3.gz"),
             false,
           );
         }),
@@ -298,7 +298,7 @@ describe("observability", () => {
           const matchingFiles = (yield* fileSystem.readDirectory(tempDir)).filter(
             (entry) => entry === "shared.trace.ndjson" || entry.startsWith("shared.trace.ndjson."),
           );
-          assert.include(matchingFiles, "shared.trace.ndjson.1");
+          assert.include(matchingFiles, "shared.trace.ndjson.1.gz");
           for (const entry of matchingFiles) {
             const stat = yield* fileSystem.stat(path.join(tempDir, entry));
             assert.isAtMost(Number(stat.size), maxBytes, entry);

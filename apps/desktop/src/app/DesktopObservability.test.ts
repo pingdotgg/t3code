@@ -1,3 +1,4 @@
+import * as NodeZlib from "node:zlib";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -127,6 +128,41 @@ describe("DesktopObservability", () => {
         true,
       );
       assert.isFalse(yield* fileSystem.exists(logPath));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),
+    ),
+  );
+
+  it.effect("compresses rotated backend failure output and drains compression on shutdown", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-log-rotation-",
+      });
+      const environmentLayer = makeEnvironmentLayer(baseDir, false);
+      const environment = yield* DesktopEnvironment.DesktopEnvironment.pipe(
+        Effect.provide(environmentLayer),
+      );
+      const logPath = environment.path.join(environment.logDir, "server-child.log");
+      yield* fileSystem.makeDirectory(environment.logDir, { recursive: true });
+      const previousOutput = "previous output\n".repeat(700_000);
+      yield* fileSystem.writeFileString(logPath, previousOutput);
+      yield* Effect.gen(function* () {
+        const factory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
+        const outputLog = yield* factory.forInstance("primary");
+        yield* outputLog.beginSession({ details: "test" });
+        yield* outputLog.writeOutputChunk("stderr", new TextEncoder().encode("failure details\n"));
+        yield* outputLog.persistFailure({ details: "code=1" });
+      }).pipe(
+        Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
+      );
+      assert.equal(
+        NodeZlib.gunzipSync(yield* fileSystem.readFile(`${logPath}.1.gz`)).toString(),
+        previousOutput,
+      );
+      assert.include(yield* fileSystem.readFileString(logPath), "failure details");
+      assert.isFalse(yield* fileSystem.exists(`${logPath}.1`));
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),

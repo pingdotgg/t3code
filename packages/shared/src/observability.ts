@@ -416,7 +416,8 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     Effect.withTracerEnabled(false),
   );
 
-  yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
+  const close = flush.pipe(Effect.andThen(Effect.promise(() => sink.flushCompression())));
+  yield* Effect.addFinalizer(() => close.pipe(Effect.ignore));
   yield* Effect.forkScoped(
     Effect.sleep(`${options.batchWindowMs} millis`).pipe(Effect.andThen(flush), Effect.forever),
   );
@@ -434,7 +435,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       }
     },
     flush,
-    close: () => flush,
+    close: () => close,
   } satisfies TraceSink;
 });
 

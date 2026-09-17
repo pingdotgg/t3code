@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeZlib from "node:zlib";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -528,17 +529,55 @@ describe("EventNdjsonLogger", () => {
           .filter((entry) => entry === fileStem || entry.startsWith(`${fileStem}.`))
           .toSorted();
 
+        assert.include(
+          NodeZlib.gunzipSync(
+            NodeFS.readFileSync(NodePath.join(tempDir, `${fileStem}.1.gz`)),
+          ).toString(),
+          "evt-8",
+        );
         assert.equal(
-          matchingFiles.some((entry) => entry === `${fileStem}.1`),
+          matchingFiles.some((entry) => entry === `${fileStem}.1.gz`),
           true,
         );
         assert.equal(
-          matchingFiles.some((entry) => entry === fileStem || entry === `${fileStem}.2`),
+          matchingFiles.some((entry) => entry === fileStem || entry === `${fileStem}.2.gz`),
           true,
         );
         assert.equal(
-          matchingFiles.some((entry) => entry === `${fileStem}.3`),
+          matchingFiles.some((entry) => entry === `${fileStem}.3.gz`),
           false,
+        );
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("counts gzip archives toward age and byte retention", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      try {
+        yield* TestClock.setTime(1_800_000_000_000);
+        const now = yield* Clock.currentTimeMillis;
+        const basePath = NodePath.join(tempDir, "events.log");
+        const expired = `${ownedLogPath(basePath, "expired")}.1.gz`;
+        const oldest = `${ownedLogPath(basePath, "oldest")}.1.gz`;
+        const newest = `${ownedLogPath(basePath, "newest")}.1.gz`;
+        const unrelated = NodePath.join(tempDir, "unrelated.log.1.gz");
+        const archive = NodeZlib.gzipSync("provider event");
+        for (const path of [expired, oldest, newest, unrelated])
+          NodeFS.writeFileSync(path, archive);
+        NodeFS.utimesSync(expired, (now - 20_000) / 1_000, (now - 20_000) / 1_000);
+        NodeFS.utimesSync(oldest, (now - 5_000) / 1_000, (now - 5_000) / 1_000);
+        NodeFS.utimesSync(newest, now / 1_000, now / 1_000);
+        const store = yield* makeEventNdjsonLogStore(basePath, {
+          maxAgeMs: 10_000,
+          maxTotalBytes: archive.byteLength,
+        });
+        yield* store.close();
+        assert.deepEqual(
+          NodeFS.readdirSync(tempDir).sort(),
+          [NodePath.basename(newest), NodePath.basename(unrelated)].sort(),
         );
       } finally {
         NodeFS.rmSync(tempDir, { recursive: true, force: true });

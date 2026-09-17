@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeZlib from "node:zlib";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -93,6 +94,90 @@ describe("RotatingFileSink", () => {
     sink.write("entry");
 
     expect(NodeFS.readFileSync(filePath, "utf8")).toBe("entry");
+  });
+
+  it("gzips backups while keeping the active file plain and retention bounded", async () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    const sink = new RotatingFileSink({ filePath, maxBytes: 5, maxFiles: 2 });
+    for (const line of ["one\n", "two\n", "three", "four"]) sink.write(line);
+    await sink.flushCompression();
+
+    expect(NodeFS.readdirSync(directory).sort()).toEqual([
+      "log.ndjson",
+      "log.ndjson.1.gz",
+      "log.ndjson.2.gz",
+    ]);
+    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("four");
+    expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${filePath}.1.gz`)).toString()).toBe("three");
+    expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${filePath}.2.gz`)).toString()).toBe("two\n");
+  });
+
+  it("handles rotations and eviction while compression is in flight", async () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    const sink = new RotatingFileSink({ filePath, maxBytes: 1, maxFiles: 2 });
+    sink.write("a");
+    sink.write("b");
+    // Start the asynchronous stream, then rotate before its completion callback.
+    await Promise.resolve();
+    for (const line of ["c", "d", "e"]) sink.write(line);
+    await sink.flushCompression();
+    expect(NodeFS.readdirSync(directory).sort()).toEqual([
+      "log.ndjson",
+      "log.ndjson.1.gz",
+      "log.ndjson.2.gz",
+    ]);
+    expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${filePath}.1.gz`)).toString()).toBe("d");
+    expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${filePath}.2.gz`)).toString()).toBe("c");
+    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("e");
+  });
+
+  it("compresses legacy backups on restart, preserves their age, and prunes both formats", async () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    NodeFS.writeFileSync(`${filePath}.1`, "previous");
+    NodeFS.utimesSync(`${filePath}.1`, 1000, 1000);
+    NodeFS.writeFileSync(`${filePath}.2.gz`, NodeZlib.gzipSync("older"));
+    NodeFS.writeFileSync(`${filePath}.3`, "overflow");
+    NodeFS.writeFileSync(`${filePath}.4.gz`, NodeZlib.gzipSync("overflow"));
+    NodeFS.writeFileSync(`${filePath}.notes`, "unrelated");
+    NodeFS.writeFileSync(`${filePath}.gzip-00000000-0000-0000-0000-000000000000.tmp`, "incomplete");
+    const sink = new RotatingFileSink({ filePath, maxBytes: 5, maxFiles: 2 });
+    await sink.flushCompression();
+    expect(NodeFS.statSync(`${filePath}.1.gz`).mtimeMs).toBe(1_000_000);
+    expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${filePath}.1.gz`)).toString()).toBe(
+      "previous",
+    );
+    sink.write("first");
+    sink.write("next");
+    await sink.flushCompression();
+    expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${filePath}.2.gz`)).toString()).toBe(
+      "previous",
+    );
+    expect(NodeFS.readdirSync(directory).sort()).toEqual([
+      "log.ndjson",
+      "log.ndjson.1.gz",
+      "log.ndjson.2.gz",
+      "log.ndjson.notes",
+    ]);
+  });
+
+  it("retains the plain backup when compression cannot publish and retries on rotation", async () => {
+    const directory = makeTempDirectory();
+    const filePath = NodePath.join(directory, "log.ndjson");
+    const sink = new RotatingFileSink({ filePath, maxBytes: 1, maxFiles: 2 });
+    sink.write("a");
+    sink.write("b");
+    NodeFS.mkdirSync(`${filePath}.1.gz`);
+    await sink.flushCompression();
+    expect(NodeFS.readFileSync(`${filePath}.1`, "utf8")).toBe("a");
+    expect(NodeFS.readFileSync(filePath, "utf8")).toBe("b");
+    expect(NodeFS.readdirSync(directory).some((name) => name.endsWith(".tmp"))).toBe(false);
+    NodeFS.rmdirSync(`${filePath}.1.gz`);
+    sink.write("c");
+    await sink.flushCompression();
+    expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${filePath}.2.gz`)).toString()).toBe("a");
   });
 
   it("preserves write failures", () => {

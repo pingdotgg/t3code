@@ -278,8 +278,9 @@ export function writeBatchedMessages(
 }
 
 function isProviderLogFile(filePath: string, fileName: string, filePrefix: string): boolean {
-  if (!/\.log(?:\.\d+)?$/u.test(fileName)) return false;
+  if (!/\.log(?:\.\d+(?:\.gz)?)?$/u.test(fileName)) return false;
   if (fileName.startsWith(filePrefix)) return true;
+  if (fileName.endsWith(".gz")) return false;
 
   const descriptor = NodeFS.openSync(filePath, "r");
   try {
@@ -604,6 +605,10 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   const close = Effect.fnUntraced(function* () {
     yield* flush(false, true);
     yield* Scope.close(timerScope, Exit.void);
+    const state = yield* SynchronizedRef.get(stateRef);
+    yield* Effect.forEach(state.sinks.values(), (sink) =>
+      Effect.promise(() => sink.flushCompression()),
+    );
   });
 
   const loggerViews = new Map<EventNdjsonStream, EventNdjsonLogger>();

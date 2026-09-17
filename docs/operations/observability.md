@@ -55,6 +55,32 @@ far in the future for the environment server's allowed window. It can point to
 a date or time problem on either device, but it can also result from a delayed
 request.
 
+### Rotation and compressed archives
+
+The active trace file stays plain NDJSON. After it reaches `T3CODE_TRACE_MAX_BYTES`
+(default 10 MiB), the server rotates it and compresses the closed backup with gzip.
+Backups are named `server.trace.ndjson.1.gz`, `.2.gz`, and so on, with `.1.gz` the
+newest. `T3CODE_TRACE_MAX_FILES` limits the number of backups (default 10), in
+addition to the active file. Compression reduces disk use; it does not increase
+that backup count or guarantee a particular time window.
+
+Compression streams in the background, one file at a time per writer. During
+compression a numbered backup may still be plain, and a temporary `.gzip-*.tmp`
+file may exist. If compression fails, the plain backup remains readable and is
+retried on a later rotation. Existing plain numbered backups are compressed when
+their writer opens. The original modification time is preserved for age retention.
+
+Desktop traces and desktop backend failure logs use the same rotation and
+compression. Provider event logs also use it, and count the compressed file sizes
+toward their aggregate retention limit. In-app terminal scrollback and stdout
+captured by a shell or service manager have separate lifecycles.
+
+Read an archive with `gzip -dc` and pipe it into the same tools as the active file:
+
+```bash
+gzip -dc ~/.t3/userdata/logs/server.trace.ndjson.1.gz | jq -c 'select(.exit._tag == "Failure")'
+```
+
 ### Metrics
 
 Metrics are not written to a local file.
