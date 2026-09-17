@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
+import { ghosttyConsumedMods, ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
 
 describe("ghosttyKeyForCode", () => {
   it("keeps the tail of the pinned Ghostty key enum in order", () => {
@@ -8,6 +8,18 @@ describe("ghosttyKeyForCode", () => {
     expect(ghosttyKeyForCode("PrintScreen")).toBe(ghosttyKeyForCode("FnLock") + 1);
     expect(ghosttyKeyForCode("Pause")).toBe(ghosttyKeyForCode("ScrollLock") + 1);
     expect(ghosttyKeyForCode("Paste")).toBe(ghosttyKeyForCode("Cut") + 1);
+  });
+});
+
+describe("ghosttyConsumedMods", () => {
+  const shifted = { altKey: false, ctrlKey: false, key: "@", metaKey: false, shiftKey: true };
+
+  it("only consumes a lone Shift producing a character", () => {
+    expect(ghosttyConsumedMods(shifted)).toBe(1);
+    expect(ghosttyConsumedMods({ ...shifted, ctrlKey: true })).toBe(0);
+    expect(ghosttyConsumedMods({ ...shifted, key: "Tab" })).toBe(0);
+    // Deliberate: Shift+Space collapses to Space so it still types one.
+    expect(ghosttyConsumedMods({ ...shifted, key: " " })).toBe(1);
   });
 });
 

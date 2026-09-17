@@ -54,18 +54,41 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
-        const idleDurationMs = now - lastSeenMs;
-        if (idleDurationMs < inactivityThresholdMs) {
+        if (now - lastSeenMs < inactivityThresholdMs) {
           continue;
         }
 
         const thread = yield* projectionSnapshotQuery
           .getThreadShellById(binding.threadId)
           .pipe(Effect.map(Option.getOrUndefined));
+        // Ingestion updates this timestamp alongside activeTurnId when a turn
+        // settles. Long turns must get a full idle window after that transition,
+        // even though the binding was last touched when the turn was sent.
+        const lastActivityMs = Math.max(
+          lastSeenMs,
+          Date.parse(thread?.session?.updatedAt ?? binding.lastSeenAt),
+        );
+        const idleDurationMs = now - lastActivityMs;
+        if (idleDurationMs < inactivityThresholdMs) {
+          continue;
+        }
         if (thread?.session?.activeTurnId != null) {
           yield* Effect.logDebug("provider.session.reaper.skipped-active-turn", {
             threadId: binding.threadId,
             activeTurnId: thread.session.activeTurnId,
+            idleDurationMs,
+          });
+          continue;
+        }
+
+        // The turn can settle while background work runs on (subagent
+        // fleets, workflow runs, Monitor watch loops). Those live inside the
+        // provider process, so stopping the session would kill them silently,
+        // and nothing bumps lastSeenAt between turns.
+        if (thread?.backgroundLiveness != null) {
+          yield* Effect.logDebug("provider.session.reaper.skipped-background-work", {
+            threadId: binding.threadId,
+            backgroundLiveness: thread.backgroundLiveness,
             idleDurationMs,
           });
           continue;

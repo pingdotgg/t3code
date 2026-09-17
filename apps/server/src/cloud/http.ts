@@ -46,7 +46,9 @@ import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -56,8 +58,14 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { requireEnvironmentScope } from "../auth/http.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+import {
+  SERVICE_STATE_FILE,
+  SERVICE_STOP_MARKER_FILE,
+  serviceStateHasPendingUpdate,
+} from "./serviceProtocol.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
@@ -77,6 +85,7 @@ import {
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
+import { filterRelayResponse, relayRequestError } from "./relayResponse.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -518,14 +527,9 @@ const relayClientRequest = <A>(
     HttpClientRequest.bearerToken(input.token),
     HttpClientRequest.bodyJson(input.payload),
     Effect.flatMap(dependencies.httpClient.execute),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(filterRelayResponse),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(input.schema)),
-    Effect.mapError(
-      (cause) =>
-        new EnvironmentHttpInternalServerError({
-          message: `T3 Connect relay request failed: ${String(cause)}`,
-        }),
-    ),
+    Effect.mapError(relayRequestError),
     withRelayClientTracing,
   );
 
@@ -627,6 +631,38 @@ export const reconcileDesiredCloudLink = Effect.fn("environment.cloud.reconcileD
   },
 );
 
+// The launcher owns this durable state, so read it directly both when a trial
+// decides whether it owns pre-activation cleanup and while a server tears down.
+export const pendingServiceUpdateExists = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runtimeDir = path.join(config.baseDir, "runtime");
+  const stateText = yield* fs
+    .readFileString(path.join(runtimeDir, SERVICE_STATE_FILE))
+    .pipe(Effect.option);
+  return Option.isSome(stateText) && serviceStateHasPendingUpdate(stateText.value);
+});
+
+// A pending update alone is not proof a replacement server is coming: an
+// explicit launcher stop (`t3 service uninstall`, `systemctl stop`,
+// `launchctl bootout`) during
+// the pending window also tears this server down. The launcher marks that case
+// just before it signals the child, so pending + no marker is the handoff.
+const pendingUpdateHandoffExists = Effect.gen(function* () {
+  if (!(yield* pendingServiceUpdateExists)) {
+    return false;
+  }
+  const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runtimeDir = path.join(config.baseDir, "runtime");
+  const stopping = yield* fs
+    .exists(path.join(runtimeDir, SERVICE_STOP_MARKER_FILE))
+    .pipe(Effect.orElseSucceed(() => false));
+  return !stopping;
+});
+
 // Cloudflare bills per provisioned tunnel, so an environment that goes offline
 // must not leave its tunnel behind. Releasing deletes only the tunnel — the
 // relay keeps the link and its hostname reservation, and the next startup's
@@ -649,6 +685,19 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
   if (!(yield* readCliDesiredCloudLink) || (yield* readCliDesiredLinkMode) !== "managed") {
     return false;
   }
+  // A shutdown that hands off to a pending remote update is not the
+  // environment going offline: the launcher immediately brings a server back
+  // (the new version, or the old one after a rollback). Deleting the tunnel
+  // here forces that server to provision a replacement UUID, and the public
+  // hostname's route to the new tunnel takes 1-2 minutes to propagate — the
+  // dominant cost of an update restart. Keep the tunnel instead: the next
+  // boot respawns the connector from the stored config and is reachable as
+  // soon as it connects, and the reconcile confirms the still-live tunnel
+  // without replacing it.
+  if (yield* pendingUpdateHandoffExists) {
+    yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
+    return false;
+  }
   const token = yield* dependencies.cliTokenManager.getExisting;
   if (Option.isNone(token)) {
     return false;
@@ -667,7 +716,7 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
   ).pipe(
     HttpClientRequest.bearerToken(token.value.accessToken),
     dependencies.httpClient.execute,
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(filterRelayResponse),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
     withRelayClientTracing,
   );

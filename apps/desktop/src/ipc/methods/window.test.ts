@@ -2,13 +2,31 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { vi } from "vite-plus/test";
 
 import type * as Electron from "electron";
 
+const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
+  focusedWebContents: vi.fn(),
+  ownerWindow: vi.fn(),
+}));
+vi.mock("electron", () => ({
+  webContents: { getFocusedWebContents: focusedWebContents },
+  BrowserWindow: { fromWebContents: ownerWindow },
+}));
+
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import { getLocalEnvironmentBootstraps, getWindowFullscreenState } from "./window.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import type { DesktopSettings } from "../../settings/DesktopAppSettings.ts";
+import {
+  getLocalEnvironmentBootstraps,
+  getWindowFullscreenState,
+  pasteAsText,
+  pickProjectFavicon,
+} from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "wsl.exe",
@@ -145,4 +163,102 @@ describe("getWindowFullscreenState", () => {
       ),
     );
   });
+});
+
+describe("pasteAsText", () => {
+  it.effect(
+    "pastes into the focused guest only after the main renderer acknowledges the menu action",
+    () => {
+      const paste = vi.fn();
+      const mainPaste = vi.fn();
+      const window = {
+        webContents: { id: 42, paste: mainPaste },
+        isDestroyed: () => false,
+      } as unknown as Electron.BrowserWindow;
+      focusedWebContents.mockReturnValue({ paste, isDestroyed: () => false });
+      ownerWindow.mockReturnValue(window);
+
+      return Effect.gen(function* () {
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        assert.equal(mainPaste.mock.calls.length, 0);
+
+        yield* pasteAsText.handler(undefined, { sender: { id: 99 } });
+        assert.equal(paste.mock.calls.length, 1);
+        ownerWindow.mockReturnValue({}); // A focused PiP/other BrowserWindow.
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        ownerWindow.mockReturnValue(null); // Detached contents.
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        ownerWindow.mockReturnValue(window);
+        focusedWebContents.mockReturnValue({ paste, isDestroyed: () => true });
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+        focusedWebContents.mockReturnValue(null);
+        yield* pasteAsText.handler(undefined, { sender: { id: 42 } });
+        assert.equal(paste.mock.calls.length, 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            main: Effect.succeed(Option.some(window)),
+          }),
+        ),
+      );
+    },
+  );
+});
+
+describe("pickProjectFavicon", () => {
+  const pickerLayer = (pickFiles: () => Effect.Effect<Array<string>>, settings?: DesktopSettings) =>
+    Layer.mergeAll(
+      Layer.mock(ElectronDialog.ElectronDialog)({ pickFiles }),
+      Layer.mock(ElectronWindow.ElectronWindow)({
+        focusedMainOrFirst: Effect.succeed(Option.none()),
+      }),
+      DesktopAppSettings.layerTest(settings),
+    );
+
+  it.effect("opens a single-image picker from the project directory", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
+      const result = yield* pickProjectFavicon
+        .handler("/project")
+        .pipe(Effect.provide(pickerLayer(pickFiles)));
+
+      assert.strictEqual(result, "/pictures/icon.png");
+      assert.deepEqual(pickFiles.mock.calls, [
+        [
+          {
+            owner: Option.none(),
+            defaultPath: Option.some("/project"),
+            multiple: false,
+            filters: [
+              {
+                name: "Images",
+                extensions: ["avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"],
+              },
+            ],
+          },
+        ],
+      ]);
+    }),
+  );
+
+  it.effect("does not open a picker while the local environment is off", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
+      const result = yield* pickProjectFavicon.handler("/project").pipe(
+        Effect.provide(
+          pickerLayer(pickFiles, {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: false,
+          }),
+        ),
+      );
+
+      assert.strictEqual(result, null);
+      assert.strictEqual(pickFiles.mock.calls.length, 0);
+    }),
+  );
 });

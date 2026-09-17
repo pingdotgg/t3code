@@ -15,24 +15,28 @@ Inspect the host and the affected code before launching processes:
 
 - On macOS with Xcode, prefer one representative iOS Simulator when the change is cross-platform so the user can watch through serve-sim. Load and follow [`ios-debugger-agent`](../ios-debugger-agent/SKILL.md), and load [`ios-simulator-browser`](../ios-simulator-browser/SKILL.md) when live streaming is available.
 - On macOS, Linux, or Windows with the Android SDK, use one Android Emulator when Android is the affected surface or iOS tooling is unavailable.
-- When the change is platform-specific, test that platform. When neither platform is viable, report the missing SDK, emulator, or dev-client prerequisite rather than claiming verification.
+- When the change is platform-specific, test that platform. When neither platform is viable, report the missing SDK or emulator prerequisite rather than claiming verification. A missing development client is a build step, not a blocker.
 
 Do not treat unavailable iOS tooling as a blocker when Android is a valid representative target.
 
-## Choose the lightest valid launch path
+## Ensure a compatible native client
 
-- For JavaScript, TypeScript, or asset-only changes, reuse a compatible installed development client and start Metro. Do not rebuild native code merely to load a new bundle.
-- For native source, native dependencies, entitlements, config plugins, or generated project changes, rebuild the affected platform.
-- Use `vp run ios:dev` or `vp run android:dev` only when an Expo clean prebuild is actually required; both commands regenerate the native project.
-- If the user requested no native rebuild and no compatible app is installed, reuse an existing compatible `.app` or `.apk` artifact when available. Otherwise report the missing dev client instead of silently rebuilding.
+Authorized mobile verification includes building and installing a development client. A missing, stale, or unknown native client is not a reason to skip verification or leave a PR in draft. Build and install it, then continue. Respect an explicit user instruction not to rebuild; otherwise do not ask for separate permission.
 
-The development identity on both platforms is:
+Run this from the checkout being tested, on the machine that hosts the selected simulator or emulator. Select and boot one explicit iOS UDID or Android emulator serial first:
 
-- App: `T3 Code Dev`
-- Bundle/package identifier: `com.t3tools.t3code.dev`
-- URL scheme: `t3code-dev`
+```bash
+node scripts/mobile-native-client.ts ensure ios <simulator-udid>
+node scripts/mobile-native-client.ts ensure android <emulator-serial>
+```
 
-Bundle or package presence proves the correct variant, not native compatibility. Reuse it only when the current changes did not alter its Expo SDK, native dependencies, config plugins, entitlements, generated project, or native source.
+`ensure` compares the checkout's local Expo development fingerprint and the installed app's binary contents against the last successful build record. It reuses a matching client; otherwise it runs a clean prebuild, builds and installs the development app, and records the successful result. It does not start Metro. Start Metro below after it succeeds. On hosts with an `agent-job` requirement, run the entire `ensure` command through that queue.
+
+For a read-only decision, use `check` in place of `ensure`. Exit 0 means compatible, 2 means build required, and 1 means an operational error. An app installed outside this helper is initially unknown and gets rebuilt once. Records are local to the simulator host under `~/.cache/t3code/native-clients` and work across checkouts. Do not copy records between machines or write them manually.
+
+A JavaScript-only diff, bundle identifier, app version, or recent install date does not prove native compatibility. Always check the whole checkout. Expo fingerprints are computed locally with `APP_VARIANT=development`; no EAS credentials or cloud build are required. Generated `ios/` and `android/` directories are excluded by `.fingerprintignore`, so edit native source modules or config plugins rather than generated output.
+
+The development identity is `T3 Code Dev`, bundle/package `com.t3tools.t3code.dev`, scheme `t3code-dev`. If a build fails, investigate the build error and fix the local prerequisites. Report the concrete failure if it cannot be resolved, not “no compatible client.”
 
 ## Start one disposable T3 environment
 
@@ -80,7 +84,6 @@ Run Metro from `apps/mobile`.
    APP_VARIANT=development vp exec expo start \
      --dev-client \
      --scheme t3code-dev \
-     --clear \
      --lan \
      --port <metro-port>
    ```
@@ -99,10 +102,9 @@ Use `ios-debugger-agent` to select one UDID and set these XcodeBuildMCP session 
 - Simulator ID: the selected UDID
 - Bundle ID: `com.t3tools.t3code.dev`
 
-Check the installed client with:
+After `ensure` succeeds, open the Metro URL:
 
 ```bash
-xcrun simctl get_app_container <simulator-udid> com.t3tools.t3code.dev app
 xcrun simctl openurl <simulator-udid> <printed-dev-client-url>
 ```
 
@@ -110,10 +112,9 @@ Accept the iOS confirmation prompt and dismiss the developer menu when it obscur
 
 ### Android launch
 
-Select one running emulator serial from `adb devices` and check the installed client:
+Use the emulator serial already checked by `ensure`:
 
 ```bash
-adb -s <emulator-serial> shell pm path com.t3tools.t3code.dev
 adb -s <emulator-serial> reverse tcp:<metro-port> tcp:<metro-port>
 adb -s <emulator-serial> shell am start -W \
   -a android.intent.action.VIEW \
@@ -125,31 +126,29 @@ Do not start, stop, erase, or reconfigure an emulator owned by another task. Tra
 
 ## Pair each client once
 
-Issue a fresh credential against the running backend's exact base directory:
+Use the bundled helper from the repository root. It issues a fresh credential against the running backend's exact base directory, opens the existing Add Environment route with the credential in an encoded query parameter, and asks that route to connect once:
 
 ```bash
-T3CODE_PORT=<server-port> node apps/server/src/bin.ts auth pairing create \
-  --base-dir <base-dir> \
-  --base-url <mobile-origin> \
-  --ttl 15m \
-  --label agent-mobile-<short-device-id>
+.agents/skills/test-t3-mobile/scripts/pair-client.sh \
+  ios <simulator-udid> <server-port> <base-dir>
+
+.agents/skills/test-t3-mobile/scripts/pair-client.sh \
+  android <emulator-serial> <server-port> <base-dir>
 ```
 
-In PowerShell, set `$env:T3CODE_PORT = "<server-port>"` first and run the `node ... auth pairing create` command without the leading assignment.
+Run only the command for the selected platform. The helper uses `http://127.0.0.1:<server-port>` for iOS and `http://10.0.2.2:<server-port>` for Android. Pass a fifth argument only when testing a non-development URL scheme.
 
-If the visible Add Environment action is not exposed as a semantic target, open the app's registered route instead of guessing coordinates:
+The helper opens this registered route:
 
-```bash
-xcrun simctl openurl <simulator-udid> 't3code-dev://connections/new'
-adb -s <emulator-serial> shell am start -W \
-  -a android.intent.action.VIEW \
-  -d 't3code-dev://connections/new' \
-  com.t3tools.t3code.dev
+```text
+t3code-dev://connections/new?pairingUrl=<encoded-pairing-url>&autoConnect=1
 ```
 
-Run only the command for the selected platform.
+The Add Environment route owns the behavior: `pairingUrl` prefills its normal host and token inputs, while `autoConnect=1` submits once in development builds and returns to Home after success. Without `autoConnect`, the same route only prefills the form for manual inspection.
 
-In T3 Code Dev, open Add Environment and enter the complete `<mobile-origin>` and newly printed `Token`. Verify the expected seeded projects appear before exercising the affected flow.
+Do not enter pairing hosts or tokens through simulator keyboard automation. Xcode's semantic typer sends HID-style key events through the simulator's active keyboard state, which can corrupt uppercase tokens and punctuation even when the host Mac uses a U.S. input source. The one-shot route is the deterministic pairing path. Use the visible form only as a fallback, and paste credentials rather than typing them character by character.
+
+Verify the expected seeded projects appear before exercising the affected flow.
 
 Pairing credentials are secret, short-lived, and single-use. Create a different credential for every simulator, emulator, physical device, or browser. If an attempt fails, issue a new credential rather than retrying the old one. Do not expose tokens in screenshots, commits, or final responses.
 
@@ -181,8 +180,11 @@ Keep local verification focused. Do not turn this workflow into a full repositor
 ## Troubleshoot predictable failures
 
 - **Old UI or an old error appears:** verify Metro's worktree, variant, URL, and port before diagnosing the app.
+- **Metro serves stale or invalid transforms after those checks:** stop the owned Metro process and run `vp run dev:client:reset` once on the standard port. For a custom port, add `--clear` to the complete explicit `expo start` command above.
 - **The environment remains empty:** verify the platform-specific HTTP origin, use a fresh token, and confirm project seeding used the identical base directory.
 - **A second client cannot pair:** pairing tokens are single-use; issue another token.
+- **The pairing form opens but does not connect:** confirm the deep link uses the existing `connections/new` route, includes `autoConnect=1`, and carries a freshly minted encoded `pairingUrl`.
+- **Pairing text changes case or punctuation:** do not retry semantic typing. Use `scripts/pair-client.sh`; the simulator keyboard layout and HID input path are not reliable for credentials.
 - **iOS semantic actions fail:** set explicit XcodeBuildMCP defaults and refresh with `snapshot_ui`.
 - **Android cannot reach Metro:** verify `adb reverse` for the exact Metro port and relaunch the development-client URL.
 - **Android cannot reach the backend:** use `10.0.2.2`, not `127.0.0.1`, for the Android Emulator.

@@ -21,9 +21,8 @@ export interface GetConsoleOutputRequest extends Omit<
  * checks. Pass `Latest: true` for the most recent output on supported
  * instance types. Provide the implementation with
  * `Effect.provide(AWS.EC2.GetConsoleOutputHttp)`.
- * @binding
- * @section Diagnostics
- * @example Capture the instance's console output
+ * ### Diagnostics
+ * **Example:** Capture the instance's console output
  * ```typescript
  * // init — bind the operation to the instance
  * const getConsoleOutput = yield* AWS.EC2.GetConsoleOutput(instance);
@@ -32,6 +31,8 @@ export interface GetConsoleOutputRequest extends Omit<
  * const result = yield* getConsoleOutput({ Latest: true });
  * const log = Buffer.from(result.Output ?? "", "base64").toString("utf8");
  * ```
+ *
+ * @binding
  */
 export interface GetConsoleOutput extends Binding.Service<
   GetConsoleOutput,

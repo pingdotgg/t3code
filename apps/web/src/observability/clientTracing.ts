@@ -41,15 +41,6 @@ export interface ClientTracingConfig {
   readonly exportIntervalMs?: number;
 }
 
-export const ClientTracingLive = Layer.succeed(
-  Tracer.Tracer,
-  Tracer.make({
-    span(options) {
-      return activeDelegate?.span(options) ?? new Tracer.NativeSpan(options);
-    },
-  }),
-);
-
 export function configureClientTracing(config: ClientTracingConfig = {}): Promise<void> {
   if (config.exportIntervalMs === undefined && activeConfigKey !== null) {
     return pendingConfiguration;
@@ -130,18 +121,4 @@ async function disposeTracerRuntime(
 
   await settleAsyncResult(() => runtime.runPromiseExit(Scope.close(scope, Exit.void)));
   runtime.dispose();
-}
-
-export async function __resetClientTracingForTests() {
-  configurationGeneration++;
-  activeConfigKey = null;
-  activeDelegate = null;
-  pendingConfiguration = Promise.resolve();
-
-  const runtime = activeRuntime;
-  const scope = activeScope;
-  activeRuntime = null;
-  activeScope = null;
-
-  await disposeTracerRuntime(runtime, scope);
 }

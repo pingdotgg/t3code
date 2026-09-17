@@ -20,9 +20,8 @@ export type GetSessionEndpointInput = Omit<
  * the response is `Redacted` — unwrap it with `Redacted.value` only at the
  * point of use. Provide the implementation with
  * `Effect.provide(AWS.EMRServerless.GetSessionEndpointHttp)`.
- * @binding
- * @section Interactive Sessions
- * @example Connect To A Session
+ * ### Interactive Sessions
+ * **Example:** Connect To A Session
  * ```typescript
  * // init
  * const getSessionEndpoint = yield* AWS.EMRServerless.GetSessionEndpoint(app);
@@ -30,6 +29,8 @@ export type GetSessionEndpointInput = Omit<
  * // runtime
  * const { endpoint, authToken } = yield* getSessionEndpoint({ sessionId });
  * ```
+ *
+ * @binding
  */
 export interface GetSessionEndpoint extends Binding.Service<
   GetSessionEndpoint,

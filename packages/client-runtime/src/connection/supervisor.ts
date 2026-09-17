@@ -5,7 +5,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -27,9 +26,10 @@ import {
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
-const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
+const RETRY_DELAYS_MS = [3_000, 4_000, 8_000, 16_000] as const;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
@@ -220,6 +220,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   | ConnectionWakeups.ConnectionWakeups
 > {
   const target = entry.target;
+  const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
+    target._tag === "RelayConnectionTarget" ? ` ${NETWORK_BLOCKING_HINT}` : ""
+  }`;
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;
@@ -232,6 +235,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const intent = yield* Ref.make(initialIntent);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
   const resetRetryState = yield* Ref.make(false);
+  // Set when a foreground wake probe fails or times out: the user is actively
+  // returning to the app on a dead transport, so the follow-up reconnect skips
+  // the first backoff rung instead of sleeping.
+  const wakeProbeFailed = yield* Ref.make(false);
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
     !initialIntent.desired
       ? availableState(initialIntent, 0)
@@ -312,12 +319,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }),
       });
       const lease = yield* effect.pipe(
-        Effect.mapError(
-          (error): TracedAttemptFailure => ({
-            error,
-            attemptSpan: Option.some(attemptSpan),
-          }),
-        ),
+        Effect.mapError((error): TracedAttemptFailure => ({
+          error,
+          attemptSpan: Option.some(attemptSpan),
+        })),
       );
       return { attemptSpan: Option.some(attemptSpan), lease };
     }).pipe(Effect.withSpan("relay.connection.attempt", { root: true }));
@@ -353,12 +358,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         attemptSpan: Option.none<Tracer.Span>(),
         lease,
       })),
-      Effect.mapError(
-        (error): TracedAttemptFailure => ({
-          error,
-          attemptSpan: Option.none(),
-        }),
-      ),
+      Effect.mapError((error): TracedAttemptFailure => ({
+        error,
+        attemptSpan: Option.none(),
+      })),
     );
   });
 
@@ -441,6 +444,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
                 ),
               );
               if (probeEvent._tag === "ProbeCompleted") {
+                if (Exit.isFailure(probeEvent.exit)) {
+                  yield* Ref.set(wakeProbeFailed, true);
+                }
                 yield* probeEvent.exit;
                 break;
               }
@@ -491,20 +497,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       exitUnlessInterrupted(
         establishTracedConnection(attempt, generation, lastFailure, pendingRetry),
       ).pipe(
-        Effect.map(
-          (exit): EstablishmentEvent => ({
-            _tag: "Completed",
-            exit,
-          }),
-        ),
+        Effect.map((exit): EstablishmentEvent => ({
+          _tag: "Completed",
+          exit,
+        })),
       ),
       waitForEstablishmentInterrupt().pipe(
-        Effect.map(
-          (resetRetry): EstablishmentEvent => ({
-            _tag: "Interrupted",
-            resetRetry,
-          }),
-        ),
+        Effect.map((resetRetry): EstablishmentEvent => ({
+          _tag: "Interrupted",
+          resetRetry,
+        })),
       ),
       Effect.sleep(CONNECTION_ESTABLISHMENT_TIMEOUT).pipe(
         Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),
@@ -527,7 +529,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         failure: {
           error: new ConnectionTransientError({
             reason: "timeout",
-            detail: `${target.label} did not respond during connection setup.`,
+            detail: setupTimeoutDetail,
           }),
           attemptSpan: Option.none(),
         },
@@ -579,20 +581,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
     const connectedExit = yield* Effect.raceFirst(
       active.lease.session.closed.pipe(
-        Effect.mapError(
-          (error): TracedAttemptFailure => ({
-            error,
-            attemptSpan: active.attemptSpan,
-          }),
-        ),
+        Effect.mapError((error): TracedAttemptFailure => ({
+          error,
+          attemptSpan: active.attemptSpan,
+        })),
       ),
       monitorConnectedLease(active.lease).pipe(
-        Effect.mapError(
-          (error): TracedAttemptFailure => ({
-            error,
-            attemptSpan: active.attemptSpan,
-          }),
-        ),
+        Effect.mapError((error): TracedAttemptFailure => ({
+          error,
+          attemptSpan: active.attemptSpan,
+        })),
       ),
     ).pipe(exitUnlessInterrupted);
     const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
@@ -673,6 +671,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const outcome: AttemptOutcome = yield* Effect.scoped(
         runAttempt(attempt, nextGeneration, latestFailure, pendingRetry),
       );
+      // Consumed on every iteration so a stale marker can never leak into a
+      // later, unrelated failure.
+      const failedWakeProbe = yield* Ref.getAndSet(wakeProbeFailed, false);
       if (outcome.established) {
         generation = nextGeneration;
         if (outcome.stable) {
@@ -706,6 +707,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         if (applicationActivated) {
           resetRetryLadder();
         }
+        continue;
+      }
+
+      if (failedWakeProbe) {
+        // The wake probe found a dead transport while the user is returning to
+        // the app, so reconnect immediately instead of sleeping the first
+        // backoff rung. Only this first attempt skips the ladder; if it fails
+        // too, normal backoff resumes.
+        resetRetryLadder();
+        yield* setState(connectingState(yield* Ref.get(intent), generation, 1, error));
         continue;
       }
 
@@ -786,14 +797,3 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     retryNow,
   });
 });
-
-export const layer = (
-  entry: ConnectionCatalogEntry,
-  options?: EnvironmentSupervisorOptions,
-): Layer.Layer<
-  EnvironmentSupervisor,
-  never,
-  | Connectivity.Connectivity
-  | ConnectionDriver.ConnectionDriver
-  | ConnectionWakeups.ConnectionWakeups
-> => Layer.effect(EnvironmentSupervisor, make(entry, options));

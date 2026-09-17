@@ -14,9 +14,8 @@ export interface GetSavingsPlansPurchaseRecommendationRequest
  * Retrieve Savings Plans purchase recommendations. Generate a fresh
  * set first with {@link StartSavingsPlansPurchaseRecommendationGeneration}. Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetSavingsPlansPurchaseRecommendationHttp)`.
- * @binding
- * @section Savings Plans
- * @example Get Savings Plans Recommendations
+ * ### Savings Plans
+ * **Example:** Get Savings Plans Recommendations
  * ```typescript
  * // init — account-level binding takes no resource
  * const getSavingsPlansPurchaseRecommendation = yield* AWS.CostExplorer.GetSavingsPlansPurchaseRecommendation();
@@ -29,6 +28,8 @@ export interface GetSavingsPlansPurchaseRecommendationRequest
  *   LookbackPeriodInDays: "THIRTY_DAYS",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetSavingsPlansPurchaseRecommendation extends Binding.Service<
   GetSavingsPlansPurchaseRecommendation,

@@ -17,7 +17,7 @@ export class ObservabilityAdminBindingsFunction extends Lambda.Function<Lambda.F
 export default ObservabilityAdminBindingsFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

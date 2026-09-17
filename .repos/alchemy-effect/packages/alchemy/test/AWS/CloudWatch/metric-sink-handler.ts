@@ -24,7 +24,7 @@ export class MetricSinkFunction extends AWS.Lambda.Function<AWS.Lambda.Function>
 export const MetricSinkFunctionLive = MetricSinkFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // Streaming >1000 datums makes 2 sequential PutMetricData calls; give
     // cold starts + both calls comfortable headroom over Lambda's 3s default.
     timeout: Duration.seconds(30),

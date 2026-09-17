@@ -6,16 +6,23 @@ import {
   ConnectionTargetStore,
   EMPTY_CONNECTION_CATALOG_DOCUMENT,
   EnvironmentCacheStore,
+  putRemoteDpopTokenInCatalog,
   registerConnectionInCatalog,
   removeCatalogValue,
   removeConnectionFromCatalog,
+  setConnectionEnabledInCatalog,
   replaceCatalogValue,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
   ConnectionTransientError,
+  ConnectionBlockedError,
   CredentialStore,
   ProfileStore,
+  GitHubRoutingPermissions,
+  StoredGitHubRoutingPermission,
+  gitHubRoutingConnectionKey,
+  gitHubRoutingPermissionFor,
 } from "@t3tools/client-runtime/connection";
 import {
   EnvironmentId,
@@ -30,8 +37,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import { projectFaviconCache } from "../assets/projectFaviconCache";
 
 const DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 4;
@@ -51,9 +61,14 @@ const StoredShellSnapshot = Schema.Struct({
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 // v2 stores the snapshot sequence alongside the thread so a warm cache can
 // resume via `afterSequence` instead of re-downloading the full thread body.
-// Older v1 entries (no sequence) fail to decode and are treated as a cold cache.
+// v3 adds windowed (paginated) snapshots carrying `page` metadata. The bump
+// exists for rollback safety: a pre-pagination client would decode a windowed
+// v2 record, silently drop the unknown `page` field, and treat the partial
+// thread as complete forever. Older entries fail to decode → cold cache.
+// v4 reloads pre-thinking caches: their fallback system roles cannot recover
+// settled reasoning messages by resuming afterSequence.
 const StoredThreadSnapshot = Schema.Struct({
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(4),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   snapshot: OrchestrationThreadDetailSnapshot,
@@ -94,8 +109,10 @@ function catalogError(operation: string, cause: unknown) {
 function persistenceError(
   operation:
     | "list-targets"
+    | "list-disabled-targets"
     | "register-connection"
     | "remove-connection"
+    | "set-connection-enabled"
     | "load-shell"
     | "save-shell"
     | "load-thread"
@@ -360,17 +377,123 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   return { read, update } satisfies CatalogStore;
 });
 
+const GITHUB_ROUTING_KEY_PREFIX = "t3code:github-routing:";
+const GITHUB_ROUTING_CHANGED = "t3code:github-routing-changed";
+const isStoredGitHubRoutingPermission = Schema.is(StoredGitHubRoutingPermission);
+const encodeStoredGitHubRoutingPermission = Schema.encodeSync(
+  Schema.fromJsonString(StoredGitHubRoutingPermission),
+);
+
+/** Each grant has its own key so stale tabs and unrelated catalog saves cannot restore trust. */
+export function makeBrowserGitHubRoutingPermissions(
+  browser: Pick<Window, "localStorage"> & EventTarget = window,
+) {
+  const read = (key: string): StoredGitHubRoutingPermission | null => {
+    try {
+      const raw = browser.localStorage.getItem(key);
+      const value: unknown = raw === null ? null : JSON.parse(raw);
+      return isStoredGitHubRoutingPermission(value) &&
+        key === `${GITHUB_ROUTING_KEY_PREFIX}${value.environmentId}`
+        ? value
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const readAll = (): ReadonlyArray<StoredGitHubRoutingPermission> => {
+    try {
+      const values: StoredGitHubRoutingPermission[] = [];
+      const storage = browser.localStorage;
+      for (let index = 0; index < storage.length; index++) {
+        const key = storage.key(index);
+        if (key?.startsWith(GITHUB_ROUTING_KEY_PREFIX)) {
+          const value = read(key);
+          if (value !== null) values.push(value);
+        }
+      }
+      return values;
+    } catch {
+      return [];
+    }
+  };
+  const write = (environmentId: EnvironmentId, value: StoredGitHubRoutingPermission | null) =>
+    Effect.try({
+      try: () => {
+        const key = `${GITHUB_ROUTING_KEY_PREFIX}${environmentId}`;
+        if (value === null) browser.localStorage.removeItem(key);
+        else browser.localStorage.setItem(key, encodeStoredGitHubRoutingPermission(value));
+        browser.dispatchEvent(new Event(GITHUB_ROUTING_CHANGED));
+      },
+      catch: (cause) => catalogError("save GitHub routing permissions in", cause),
+    });
+  return GitHubRoutingPermissions.of({
+    get: (entry) =>
+      Effect.sync(() => {
+        const value = read(`${GITHUB_ROUTING_KEY_PREFIX}${entry.target.environmentId}`);
+        return gitHubRoutingPermissionFor(entry, value === null ? [] : [value]);
+      }),
+    changes: Stream.callback<ReadonlyArray<StoredGitHubRoutingPermission>>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const listener = (event: Event) => {
+            if (event.type === "storage") {
+              const key = (event as StorageEvent).key;
+              if (key !== null && !key?.startsWith(GITHUB_ROUTING_KEY_PREFIX)) return;
+            }
+            Queue.offerUnsafe(queue, readAll());
+          };
+          browser.addEventListener("storage", listener);
+          browser.addEventListener(GITHUB_ROUTING_CHANGED, listener);
+          Queue.offerUnsafe(queue, readAll());
+          return listener;
+        }),
+        (listener) =>
+          Effect.sync(() => {
+            browser.removeEventListener("storage", listener);
+            browser.removeEventListener(GITHUB_ROUTING_CHANGED, listener);
+          }),
+      ).pipe(Effect.asVoid),
+    ),
+    set: (entry, permission) => {
+      const connectionKey = gitHubRoutingConnectionKey(entry);
+      if (connectionKey === null)
+        return Effect.fail(
+          new ConnectionBlockedError({
+            reason: "configuration",
+            detail: "This environment does not have a saved connection endpoint.",
+          }),
+        );
+      return write(
+        entry.target.environmentId,
+        permission === "off"
+          ? null
+          : {
+              environmentId: entry.target.environmentId,
+              connectionKey,
+              permission,
+            },
+      );
+    },
+    forget: (environmentId) => write(environmentId, null),
+  });
+}
+
 export const connectionStorageLayer = Layer.effectContext(
   Effect.gen(function* () {
     const database = yield* Effect.acquireRelease(openDatabase(), (database) =>
       Effect.sync(() => database.close()),
     );
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
+    const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
 
     const targetStore = ConnectionTargetStore.of({
       list: catalog.read.pipe(
         Effect.map((document) => document.targets),
         Effect.mapError((cause) => persistenceError("list-targets", cause)),
+      ),
+      listDisabled: catalog.read.pipe(
+        Effect.map((document) => document.disabledEnvironmentIds),
+        Effect.mapError((cause) => persistenceError("list-disabled-targets", cause)),
       ),
     });
     const registrationStore = ConnectionRegistrationStore.of({
@@ -382,6 +505,10 @@ export const connectionStorageLayer = Layer.effectContext(
         catalog
           .update((document) => removeConnectionFromCatalog(document, target))
           .pipe(Effect.mapError((cause) => persistenceError("remove-connection", cause))),
+      setEnabled: (environmentId, enabled) =>
+        catalog
+          .update((document) => setConnectionEnabledInCatalog(document, environmentId, enabled))
+          .pipe(Effect.mapError((cause) => persistenceError("set-connection-enabled", cause))),
     });
     const profileStore = ProfileStore.make({
       get: (connectionId) =>
@@ -443,15 +570,7 @@ export const connectionStorageLayer = Layer.effectContext(
             ),
           ),
         ),
-      put: (token) =>
-        catalog.update((document) => ({
-          ...document,
-          remoteDpopTokens: replaceCatalogValue(
-            document.remoteDpopTokens,
-            (value) => value.environmentId,
-            token,
-          ),
-        })),
+      put: (token) => catalog.update((document) => putRemoteDpopTokenInCatalog(document, token)),
       remove: (environmentId) =>
         catalog.update((document) => ({
           ...document,
@@ -465,6 +584,7 @@ export const connectionStorageLayer = Layer.effectContext(
     const cacheStore = EnvironmentCacheStore.of({
       loadShell: (environmentId) =>
         readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
+          Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
               return Effect.succeed(Option.none());
@@ -561,7 +681,7 @@ export const connectionStorageLayer = Layer.effectContext(
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: 2,
+            schemaVersion: 4,
             environmentId,
             threadId: snapshot.thread.id,
             snapshot,
@@ -642,6 +762,7 @@ export const connectionStorageLayer = Layer.effectContext(
       clear: (environmentId) =>
         Effect.all(
           [
+            Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)),
             removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
             removeDatabaseValuesInRange(
               database,
@@ -660,6 +781,7 @@ export const connectionStorageLayer = Layer.effectContext(
     });
 
     return Context.make(ConnectionTargetStore, targetStore).pipe(
+      Context.add(GitHubRoutingPermissions, githubRoutingPermissions),
       Context.add(ConnectionRegistrationStore, registrationStore),
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),

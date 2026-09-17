@@ -30,15 +30,12 @@ const toFlagType = (single: Param.Single<"flag", unknown>): Completions.FlagType
       const keys = Primitive.getChoiceKeys(single.primitiveType)
       return { _tag: "Choice", values: keys ?? [] }
     }
-    case "Path": {
-      const typeName = single.typeName
-      const pathType: "file" | "directory" | "either" = typeName === "file"
-        ? "file"
-        : typeName === "directory"
-        ? "directory"
-        : "either"
-      return { _tag: "Path", pathType }
-    }
+    case "Path":
+      return { _tag: "Path", pathType: Primitive.getPathType(single.primitiveType) ?? "either" }
+    case "FileText":
+    case "FileParse":
+    case "FileSchema":
+      return { _tag: "Path", pathType: "file" }
     default:
       return { _tag: "String" }
   }
@@ -57,15 +54,12 @@ const toArgumentType = (single: Param.Single<"argument", unknown>): Completions.
       const keys = Primitive.getChoiceKeys(single.primitiveType)
       return { _tag: "Choice", values: keys ?? [] }
     }
-    case "Path": {
-      const typeName = single.typeName
-      const pathType: "file" | "directory" | "either" = typeName === "file"
-        ? "file"
-        : typeName === "directory"
-        ? "directory"
-        : "either"
-      return { _tag: "Path", pathType }
-    }
+    case "Path":
+      return { _tag: "Path", pathType: Primitive.getPathType(single.primitiveType) ?? "either" }
+    case "FileText":
+    case "FileParse":
+    case "FileSchema":
+      return { _tag: "Path", pathType: "file" }
     default:
       return { _tag: "String" }
   }
@@ -116,9 +110,9 @@ export const fromCommand = (cmd: Command.Any): Completions.CommandDescriptor => 
   const subcommands: Array<Completions.CommandDescriptor> = []
   for (const group of cmd.subcommands) {
     for (const subcommand of group.commands) {
-      // Omit hidden subcommands from completion scripts so tab-completion in
+      // Omit unlisted subcommands from completion scripts so tab-completion in
       // the shell does not advertise commands that are absent from --help.
-      if (subcommand.hidden) continue
+      if (subcommand.unlisted) continue
       subcommands.push(fromCommand(subcommand))
     }
   }

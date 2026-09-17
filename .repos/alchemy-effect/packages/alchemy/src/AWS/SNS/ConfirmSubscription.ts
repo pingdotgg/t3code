@@ -17,9 +17,8 @@ export interface ConfirmSubscriptionRequest extends Omit<
  * binding grants the host function `sns:ConfirmSubscription` on the topic.
  * Provide the `ConfirmSubscriptionHttp` layer on the Function to implement
  * the binding.
- * @binding
- * @section Confirming Subscriptions
- * @example Confirm with a Delivered Token
+ * ### Confirming Subscriptions
+ * **Example:** Confirm with a Delivered Token
  * ```typescript
  * // init (provide SNS.ConfirmSubscriptionHttp on the Function)
  * const confirmSubscription = yield* SNS.ConfirmSubscription(subscription);
@@ -28,6 +27,8 @@ export interface ConfirmSubscriptionRequest extends Omit<
  * const response = yield* confirmSubscription({ Token: token });
  * // response.SubscriptionArn
  * ```
+ *
+ * @binding
  */
 export interface ConfirmSubscription extends Binding.Service<
   ConfirmSubscription,

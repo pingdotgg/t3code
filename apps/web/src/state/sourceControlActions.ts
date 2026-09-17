@@ -218,6 +218,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       commitMessage?: string;
       featureBranch?: boolean;
       filePaths?: string[];
+      threadId?: ThreadId;
       onProgress?: (event: GitActionProgressEvent) => void;
     }) => {
       if (resolveScope(scope) === null) {
@@ -237,6 +238,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
         ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
         ...(input.featureBranch ? { featureBranch: true } : {}),
         ...(input.filePaths?.length ? { filePaths: input.filePaths } : {}),
+        ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
         ...(input.onProgress ? { onProgress: input.onProgress } : {}),
       });
     },
@@ -267,7 +269,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
   );
   const action = useCallback(
     async (input: {
-      provider: "github" | "gitlab" | "bitbucket" | "azure-devops";
+      provider: "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops";
       repository: string;
       visibility: SourceControlRepositoryVisibility;
       remoteName: string;

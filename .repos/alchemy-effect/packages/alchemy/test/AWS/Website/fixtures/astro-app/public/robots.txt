@@ -1,0 +1,3 @@
+# astro-aws-robots-marker
+User-agent: *
+Allow: /

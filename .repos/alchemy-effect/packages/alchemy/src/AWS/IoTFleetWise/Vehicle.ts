@@ -85,9 +85,8 @@ export interface Vehicle extends Resource<
  * An AWS IoT FleetWise vehicle — the digital twin of a physical vehicle,
  * created from an `ACTIVE` {@link ModelManifest} and
  * {@link DecoderManifest} pair and backed by an AWS IoT thing.
- * @resource
- * @section Creating a Vehicle
- * @example Vehicle with an Auto-Created IoT Thing
+ * ### Creating a Vehicle
+ * **Example:** Vehicle with an Auto-Created IoT Thing
  * ```typescript
  * const vehicle = yield* Vehicle("TestVehicle", {
  *   modelManifestArn: model.modelManifestArn,
@@ -95,7 +94,7 @@ export interface Vehicle extends Resource<
  * });
  * ```
  *
- * @example Vehicle with Attributes
+ * **Example:** Vehicle with Attributes
  * ```typescript
  * const vehicle = yield* Vehicle("TestVehicle", {
  *   modelManifestArn: model.modelManifestArn,
@@ -104,6 +103,8 @@ export interface Vehicle extends Resource<
  *   tags: { plant: "fremont" },
  * });
  * ```
+ *
+ * @resource
  */
 export const Vehicle = Resource<Vehicle>("AWS.IoTFleetWise.Vehicle");
 

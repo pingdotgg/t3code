@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import {
   HttpClient,
   HttpClientError,
@@ -569,6 +570,24 @@ it.effect("keeps Bitbucket response bodies out of checkout diagnostics", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("keeps a 429 Retry-After time on the response error", () => {
+  const { layer } = makeLayer({
+    response: () => new Response("busy", { status: 429, headers: { "Retry-After": "120" } }),
+  });
+
+  return Effect.gen(function* () {
+    yield* TestClock.setTime(1_000);
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const error = yield* bitbucket
+      .request({ method: "GET", url: "/repositories/acme/web" })
+      .pipe(Effect.flip);
+
+    assert.instanceOf(error, BitbucketApi.BitbucketResponseError);
+    assert.strictEqual(error.status, 429);
+    assert.strictEqual(error.retryAt, 121_000);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("preserves Bitbucket response body read failures as their immediate cause", () => {
   const cause = new Error("response stream failed");
   const { layer } = makeLayer({
@@ -756,3 +775,113 @@ it.effect("checks out fork pull requests through an ensured fork remote", () => 
     });
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("refuses a url that points away from the configured Bitbucket", () => {
+  // A whole url reaches `request` from inside a response — a pagination cursor, say — so
+  // following one off-host would hand the account's credentials to whoever wrote it.
+  const { layer, execute } = makeLayer({ response: () => new Response("{}", { status: 200 }) });
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+
+    const error = yield* Effect.flip(
+      bitbucket.request({ method: "GET", url: "https://attacker.example/2.0/repositories" }),
+    );
+
+    assert.strictEqual(error._tag, "BitbucketUntrustedUrlError");
+    // Nothing was sent at all, so no header travelled anywhere.
+    assert.strictEqual(execute.mock.calls.length, 0);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("keeps only the host of a url it refuses, never its query", () =>
+  Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+
+    const error = yield* Effect.flip(
+      bitbucket.request({
+        method: "GET",
+        // A signed link, whose query is the credential.
+        url: "https://attacker.example/asset?signature=secret-token",
+      }),
+    );
+
+    assert.strictEqual(error._tag, "BitbucketUntrustedUrlError");
+    assert.strictEqual(
+      error._tag === "BitbucketUntrustedUrlError" ? error.host : "",
+      "https://attacker.example",
+    );
+    assert.notInclude(error.message, "secret-token");
+  }).pipe(Effect.provide(makeLayer({ response: () => new Response("{}", { status: 200 }) }).layer)),
+);
+
+it.effect("does not follow a redirect off the configured Bitbucket", () =>
+  Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+
+    const error = yield* Effect.flip(
+      bitbucket.request({ method: "GET", url: "/repositories/acme/web/pullrequests/1/diff" }),
+    );
+
+    // The client would carry every header to the new host, so the hop is checked here instead.
+    assert.strictEqual(error._tag, "BitbucketUntrustedUrlError");
+  }).pipe(
+    Effect.provide(
+      makeLayer({
+        response: () =>
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://attacker.example/stolen" },
+          }),
+      }).layer,
+    ),
+  ),
+);
+
+it.effect("follows a redirect that stays on the configured Bitbucket", () =>
+  Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+
+    const result = yield* bitbucket.request({
+      method: "GET",
+      url: "/repositories/acme/web/pullrequests/1/diff",
+    });
+
+    // Bitbucket serves a diff as a redirect to a commit range, so the hop has to be followed.
+    assert.strictEqual(result.body, "diff --git a/a.ts b/a.ts");
+    assert.isFalse(result.truncated);
+  }).pipe(
+    Effect.provide(
+      makeLayer({
+        response: (request) =>
+          request.url.endsWith("/pullrequests/1/diff")
+            ? new Response(null, {
+                status: 302,
+                // The same host the harness configures, which is not bitbucket.org: a
+                // self-hosted base url has to be trusted on its own terms.
+                headers: { location: "https://api.test.local/2.0/repositories/acme/web/diff/abc" },
+              })
+            : new Response("diff --git a/a.ts b/a.ts", { status: 200 }),
+      }).layer,
+    ),
+  ),
+);
+
+it.effect("cuts a response short rather than reading an unbounded diff into memory", () =>
+  Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+
+    const result = yield* bitbucket.request({
+      method: "GET",
+      url: "/repositories/acme/web/pullrequests/1/diff",
+      maxBytes: 8,
+    });
+
+    assert.strictEqual(result.body, "12345678");
+    assert.isTrue(result.truncated);
+    // Bounded as the body arrives, so an oversized diff is never held whole.
+  }).pipe(
+    Effect.provide(
+      makeLayer({ response: () => new Response("1234567890", { status: 200 }) }).layer,
+    ),
+  ),
+);

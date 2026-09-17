@@ -39,7 +39,7 @@ export const StoreIdTypeId: StoreIdTypeId = "effect/eventlog/EventLog/StoreId"
 /**
  * Branded string identifying a logical event-log store.
  *
- * @category StoreId
+ * @category models
  * @since 4.0.0
  */
 export type StoreId = string & Brand<StoreIdTypeId>
@@ -47,7 +47,7 @@ export type StoreId = string & Brand<StoreIdTypeId>
 /**
  * Schema for branded event-log store ids.
  *
- * @category StoreId
+ * @category schemas
  * @since 4.0.0
  */
 export const StoreId = Schema.String.pipe(Schema.brand(StoreIdTypeId))
@@ -63,7 +63,7 @@ export const StoreId = Schema.String.pipe(Schema.brand(StoreIdTypeId))
  * @category protocols
  * @since 4.0.0
  */
-export class EventLogProtocolError extends Schema.TaggedErrorClass<EventLogProtocolError>(
+export class EventLogProtocolError extends Schema.TaggedError<EventLogProtocolError>(
   "effect/eventlog/EventLogRemote/ProtocolError"
 )("EventLogProtocolError", {
   requestTag: Schema.String,
@@ -261,8 +261,8 @@ export class WriteChunkedRpc extends Rpc.make("EventLog.WriteChunked", {
  *
  * **Details**
  *
- * It includes the client public key, target store id, AES-GCM initialization
- * vector, and encrypted entries.
+ * It includes the client public key, target store id, and encrypted entries
+ * with their AES-GCM initialization vectors.
  *
  * @category protocols
  * @since 4.0.0
@@ -270,7 +270,6 @@ export class WriteChunkedRpc extends Rpc.make("EventLog.WriteChunked", {
 export class WriteEntries extends Schema.Class<WriteEntries>("effect/eventlog/EventLogRemote/WriteEntries")({
   publicKey: Schema.String,
   storeId: StoreId,
-  iv: Transferable.Uint8Array,
   encryptedEntries: Schema.Array(EncryptedEntry)
 }) {
   static FromMsgpack = Msgpack.schema(WriteEntries)

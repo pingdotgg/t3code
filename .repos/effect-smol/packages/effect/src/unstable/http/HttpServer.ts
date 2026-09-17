@@ -32,7 +32,7 @@ import type { HttpServerResponse } from "./HttpServerResponse.ts"
  * The service can serve an HTTP response effect and exposes the address where the
  * server is listening.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export class HttpServer extends Context.Service<HttpServer, {
@@ -62,7 +62,7 @@ export class HttpServer extends Context.Service<HttpServer, {
  *
  * The address is either a TCP host and port or a Unix domain socket path.
  *
- * @category address
+ * @category models
  * @since 4.0.0
  */
 export type Address = UnixAddress | TcpAddress
@@ -70,7 +70,7 @@ export type Address = UnixAddress | TcpAddress
 /**
  * TCP address for an HTTP server, identified by hostname and port.
  *
- * @category address
+ * @category models
  * @since 4.0.0
  */
 export interface TcpAddress {
@@ -82,7 +82,7 @@ export interface TcpAddress {
 /**
  * Unix domain socket address for an HTTP server.
  *
- * @category address
+ * @category models
  * @since 4.0.0
  */
 export interface UnixAddress {
@@ -117,7 +117,7 @@ export const make = (
  * layer still requires the server, a scope, and any non-request dependencies of
  * the response effect or middleware.
  *
- * @category accessors
+ * @category layers
  * @since 4.0.0
  */
 export const serve: {
@@ -210,7 +210,7 @@ export const serveEffect: {
  * TCP addresses are formatted as `http://host:port`; Unix socket addresses are
  * formatted as `unix://path`.
  *
- * @category address
+ * @category converting
  * @since 4.0.0
  */
 export const formatAddress = (address: Address): string => {
@@ -226,7 +226,7 @@ export const formatAddress = (address: Address): string => {
  * Reads the current server address, formats it with `formatAddress`, and passes
  * the formatted address to the supplied effectful function.
  *
- * @category address
+ * @category accessors
  * @since 4.0.0
  */
 export const addressFormattedWith = <A, E, R>(
@@ -240,7 +240,7 @@ export const addressFormattedWith = <A, E, R>(
 /**
  * Logs the formatted address of the current HTTP server.
  *
- * @category address
+ * @category logging
  * @since 4.0.0
  */
 export const logAddress: Effect.Effect<void, never, HttpServer> = addressFormattedWith((_) =>
@@ -250,7 +250,7 @@ export const logAddress: Effect.Effect<void, never, HttpServer> = addressFormatt
 /**
  * Adds address logging to a layer that provides an `HttpServer`.
  *
- * @category address
+ * @category layers
  * @since 4.0.0
  */
 export const withLogAddress = <A, E, R>(

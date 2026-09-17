@@ -6,7 +6,11 @@ import {
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
-import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
+import {
+  normalizeCliError,
+  sanitizeThreadTitle,
+  toJsonSchemaObject,
+} from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
@@ -146,7 +150,15 @@ describe("buildBranchNamePrompt", () => {
 });
 
 describe("buildThreadTitlePrompt", () => {
-  it("includes the user message in the prompt", () => {
+  it("requires each generated field in the strict response schema", () => {
+    const { outputSchema } = buildThreadTitlePrompt({ message: "Fix this" });
+    expect(toJsonSchemaObject(outputSchema)).toMatchObject({
+      required: ["title", "needsRefinement"],
+      properties: { title: { type: "string" }, needsRefinement: { type: "boolean" } },
+    });
+  });
+
+  it("includes the user message without absent attachment metadata", () => {
     const result = buildThreadTitlePrompt({
       message: "Investigate reconnect regressions after session restore",
     });
@@ -183,13 +195,9 @@ describe("buildThreadTitlePrompt", () => {
     });
 
     expect(result.prompt).toContain(
-      "The user requested a new title based on the contents of this thread.",
+      "Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.",
     );
     expect(result.prompt).toContain('The previous title was "Investigate reconnect regressions".');
-    expect(result.prompt).toContain("better represents the current state of the thread");
-    expect(result.prompt).toContain(
-      "Capture the thread's intent, not a PR number or other superficial detail.",
-    );
     expect(result.prompt).toContain("Thread contents:");
     expect(result.prompt).toContain("The remaining issue is stale session state");
   });
@@ -220,12 +228,48 @@ describe("buildThreadTitlePrompt", () => {
 });
 
 describe("sanitizeThreadTitle", () => {
-  it("truncates long titles with the shared sidebar-safe limit", () => {
+  it.each([
+    '{"title": "Refresh ev-stg APP ASG instances"}',
+    '{\n  "title": "Refresh ev-stg APP ASG instances"\n}',
+  ])("unwraps a JSON title before normalizing: %s", (raw) => {
+    expect(sanitizeThreadTitle(raw)).toBe("Refresh ev-stg APP ASG instances");
+  });
+
+  it.each([
+    "Rolling ES Refresh ev-stg",
+    "Fix {title} interpolation",
+    '{"title": 42}',
+    '{"subject": "Fix parsing"}',
+    '{"title": "unfinished}',
+  ])("preserves text that is not a JSON title: %s", (raw) => {
+    expect(sanitizeThreadTitle(raw)).toBe(raw);
+  });
+
+  it("normalizes the extracted title", () => {
+    expect(sanitizeThreadTitle('{"title": "  Fix   reconnect failures  "}')).toBe(
+      "Fix reconnect failures",
+    );
+    expect(sanitizeThreadTitle('{"title": "  "}')).toBe("New thread");
+    expect(
+      sanitizeThreadTitle(
+        '{"title": "Reconnect failures after restart because the session state does not recover"}',
+      ),
+    ).toBe("Reconnect failures after restart because the session state does not recover");
+  });
+
+  it("keeps complete titles for client display truncation", () => {
     expect(
       sanitizeThreadTitle(
         '  "Reconnect failures after restart because the session state does not recover"  ',
       ),
-    ).toBe("Reconnect failures after restart because the se...");
+    ).toBe("Reconnect failures after restart because the session state does not recover");
+  });
+
+  it("caps runaway titles so a paragraph cannot reach the sidebar", () => {
+    const words = Array.from({ length: 40 }, (_, index) => `word${index}`).join(" ");
+    const title = sanitizeThreadTitle(words);
+    expect(title.length).toBeLessThanOrEqual(120);
+    expect(title.endsWith("...")).toBe(true);
   });
 });
 

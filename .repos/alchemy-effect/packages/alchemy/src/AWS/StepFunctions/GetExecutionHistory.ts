@@ -13,9 +13,8 @@ export interface GetExecutionHistoryRequest
  * to page through an execution's event history (state transitions, task
  * results, failures). IAM access is scoped to executions of the bound
  * state machine. Not supported by `EXPRESS` state machines.
- * @binding
- * @section Polling Executions
- * @example Inspect why an execution failed
+ * ### Polling Executions
+ * **Example:** Inspect why an execution failed
  * ```typescript
  * const getExecutionHistory =
  *   yield* StepFunctions.GetExecutionHistory(machine);
@@ -27,6 +26,8 @@ export interface GetExecutionHistoryRequest
  * });
  * // events[0].type === "ExecutionFailed" carries the error details
  * ```
+ *
+ * @binding
  */
 export interface GetExecutionHistory extends Binding.Service<
   GetExecutionHistory,

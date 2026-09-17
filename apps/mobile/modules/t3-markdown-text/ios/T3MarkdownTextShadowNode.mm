@@ -1,5 +1,6 @@
 #include "T3MarkdownTextShadowNode.h"
 #include "T3MarkdownTextRunShadowNode.h"
+#import "T3ContextChip.h"
 #include <react/renderer/components/view/ViewShadowNode.h>
 #import <react/renderer/textlayoutmanager/RCTAttributedTextUtils.h>
 
@@ -11,6 +12,7 @@ namespace facebook::react {
 static constexpr Float ParagraphStyleEncodingOffset = 1000;
 static constexpr auto FileAttachmentNativeIdPrefix = "t3-file:";
 static constexpr auto SkillAttachmentNativeIdPrefix = "t3-skill:";
+static constexpr auto LinkAttachmentNativeIdPrefix = "t3-link:";
 
 static void applyParagraphStyles(
     NSMutableAttributedString *attributedString,
@@ -63,12 +65,18 @@ static void applyAttachments(
         T3MarkdownTextAttachmentBaselineOffset(attachmentRange),
         attachmentSize,
         attachmentSize);
+    NSDictionary *runAttributes =
+        [attributedString attributesAtIndex:attachmentRange.location effectiveRange:nil];
+    if (attachmentRange.chipWidth > 0) {
+      attachment.bounds = T3ContextChipBounds(
+          runAttributes[NSFontAttributeName],
+          CGSizeMake(attachmentRange.chipWidth, attachmentRange.chipHeight));
+    }
     const NSRange range = NSMakeRange(
         attachmentRange.location,
         MIN(attachmentRange.length, attributedString.length - attachmentRange.location));
-    NSAttributedString *attachmentString =
-        [NSAttributedString attributedStringWithAttachment:attachment];
-    [attributedString replaceCharactersInRange:range withAttributedString:attachmentString];
+    [attributedString replaceCharactersInRange:range
+                          withAttributedString:T3MarkdownTextAttachmentString(attachment, runAttributes)];
   }
 }
 
@@ -187,11 +195,29 @@ Size T3MarkdownTextShadowNode::measureContent(
               props.shadowRadius - ParagraphStyleEncodingOffset,
           });
         }
-        if (props.nativeId.rfind(FileAttachmentNativeIdPrefix, 0) == 0 && fragmentLength > 0) {
+        if (props.nativeId.rfind("t3-chip:", 0) == 0 && fragmentLength > 0) {
+          const std::string uri = props.nativeId.substr(3);
+          NSMutableDictionary *payload =
+              [T3ContextChipPayload([NSString stringWithUTF8String:uri.c_str()]) mutableCopy];
+          // Chips must scale with the paragraph or smaller Dynamic Type sizes clip them.
+          // Store the scaled payload so measurement and the rendered bitmap use the same font.
+          payload[@"fontSizeMultiplier"] = @(fontSizeMultiplier);
+          NSData *data = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+          NSString *scaledUri = [@"chip:" stringByAppendingString:
+              [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]];
+          const CGFloat maxWidth = std::isfinite(layoutConstraints.maximumSize.width)
+              ? layoutConstraints.maximumSize.width : 320;
+          const CGSize size = T3ContextChipSize(payload, maxWidth);
+          attachmentRanges.push_back(T3MarkdownTextAttachmentRange{
+              utf16Offset, 1, std::string(scaledUri.UTF8String), false,
+              static_cast<Float>(size.width), static_cast<Float>(size.height),
+          });
+        } else if (props.nativeId.rfind(FileAttachmentNativeIdPrefix, 0) == 0 && fragmentLength > 0) {
           attachmentRanges.push_back(T3MarkdownTextAttachmentRange{
               utf16Offset,
               1,
               props.nativeId.substr(std::char_traits<char>::length(FileAttachmentNativeIdPrefix)),
+              false,
           });
         } else if (
             props.nativeId.rfind(SkillAttachmentNativeIdPrefix, 0) == 0 && fragmentLength > 0) {
@@ -200,6 +226,15 @@ Size T3MarkdownTextShadowNode::measureContent(
               1,
               props.nativeId.substr(
                   std::char_traits<char>::length(SkillAttachmentNativeIdPrefix)),
+              false,
+          });
+        } else if (
+            props.nativeId.rfind(LinkAttachmentNativeIdPrefix, 0) == 0 && fragmentLength > 0) {
+          attachmentRanges.push_back(T3MarkdownTextAttachmentRange{
+              utf16Offset,
+              1,
+              props.nativeId.substr(std::char_traits<char>::length(LinkAttachmentNativeIdPrefix)),
+              true,
           });
         }
         utf16Offset += fragmentLength;
@@ -215,6 +250,10 @@ Size T3MarkdownTextShadowNode::measureContent(
         [RCTNSAttributedStringFromAttributedString(baseAttributedString) mutableCopy];
     applyParagraphStyles(convertedAttributedString, paragraphStyleRanges);
     applyAttachments(convertedAttributedString, attachmentRanges);
+    // TextKit stacks a paragraph's extra line height above the glyphs. React Native's own
+    // layout manager centres them with a baseline offset; do the same, after attachments
+    // so chips shift with the words.
+    RCTApplyBaselineOffset(convertedAttributedString);
 
     const CGFloat maximumWidth = std::isfinite(layoutConstraints.maximumSize.width)
         ? layoutConstraints.maximumSize.width

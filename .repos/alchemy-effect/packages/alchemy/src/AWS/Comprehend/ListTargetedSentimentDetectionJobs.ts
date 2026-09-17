@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * The binding takes no arguments and grants the action on `*` (job APIs
  * have no resource-level IAM).
  *
- * @binding
- * @section Monitoring Analysis Jobs
- * @example List Recent TargetedSentimentDetection Jobs
+ * ### Monitoring Analysis Jobs
+ * **Example:** List Recent TargetedSentimentDetection Jobs
  * ```typescript
  * // init
  * const listTargetedSentimentDetectionJobs = yield* AWS.Comprehend.ListTargetedSentimentDetectionJobs();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // page.TargetedSentimentDetectionJobPropertiesList
  * ```
+ *
+ * @binding
  */
 export interface ListTargetedSentimentDetectionJobs extends Binding.Service<
   ListTargetedSentimentDetectionJobs,

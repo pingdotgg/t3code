@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,8 +12,6 @@ import * as Path from "effect/Path";
 import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
 import * as Context from "effect/Context";
 
-const PATH_CAPTURE_START = "__T3CODE_PATH_START__";
-const PATH_CAPTURE_END = "__T3CODE_PATH_END__";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
@@ -176,18 +175,6 @@ export function listLoginShellCandidates(
   }
 
   return candidates;
-}
-
-export function extractPathFromShellOutput(output: string): string | null {
-  const startIndex = output.indexOf(PATH_CAPTURE_START);
-  if (startIndex === -1) return null;
-
-  const valueStartIndex = startIndex + PATH_CAPTURE_START.length;
-  const endIndex = output.indexOf(PATH_CAPTURE_END, valueStartIndex);
-  if (endIndex === -1) return null;
-
-  const pathValue = output.slice(valueStartIndex, endIndex).trim();
-  return pathValue.length > 0 ? pathValue : null;
 }
 
 export function readPathFromLoginShell(
@@ -413,6 +400,10 @@ function normalizePathEntryForComparison(entry: string, platform: NodeJS.Platfor
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
+function sanitizePathEntry(entry: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? entry.replaceAll('"', "") : entry;
+}
+
 export function mergePathValues(
   preferredPath: string | undefined,
   inheritedPath: string | undefined,
@@ -426,14 +417,14 @@ export function mergePathValues(
     if (!rawValue) continue;
 
     for (const entry of rawValue.split(delimiter)) {
-      const trimmed = entry.trim();
-      if (trimmed.length === 0) continue;
+      const sanitized = sanitizePathEntry(entry.trim(), platform);
+      if (sanitized.length === 0) continue;
 
-      const normalized = normalizePathEntryForComparison(trimmed, platform);
+      const normalized = normalizePathEntryForComparison(sanitized, platform);
       if (normalized.length === 0 || seen.has(normalized)) continue;
 
       seen.add(normalized);
-      merged.push(trimmed);
+      merged.push(sanitized);
     }
   }
 
@@ -491,7 +482,56 @@ function resolveCommandCandidates(
   return Array.from(new Set(candidates));
 }
 
-const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
+// Session bootstrap resolves the same commands over and over, each PATH scan
+// costing hundreds of 'shell.isExecutableFile' filesystem probes (tens of
+// thousands per connect). Memoize the scan outcome per
+// (platform, PATH, PATHEXT, command) for a short window: repeat scans hit the
+// cache while any change to the search environment invalidates immediately.
+// Explicit-path resolution is never cached - callers probe paths they have
+// just written (e.g. managed binary installs). A "not-found" outcome is also
+// cached for the TTL, so a just-installed binary can stay invisible for up to
+// 30s unless resolved by explicit path.
+// TTL expiry uses the monotonic clock (Clock.currentTimeNanos) so backward
+// wall-clock adjustments cannot keep expired entries alive.
+const COMMAND_RESOLUTION_CACHE_TTL_NANOS = 30_000_000_000n;
+const COMMAND_RESOLUTION_CACHE_MAX_ENTRIES = 512;
+const COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR = String.fromCharCode(0);
+
+interface CommandResolutionCacheEntry {
+  readonly resolvedPath: string | null;
+  readonly expiresAtNanos: bigint;
+}
+
+// The cache lives in the Effect environment (like HostProcessPlatform above)
+// so tests and embedders can provide an isolated instance; the default is a
+// single process-wide map shared by all consumers.
+export const CommandResolutionCache = Context.Reference<Map<string, CommandResolutionCacheEntry>>(
+  "@t3tools/shared/shell/CommandResolutionCache",
+  {
+    defaultValue: () => new Map(),
+  },
+);
+
+function cacheCommandResolution(
+  cache: Map<string, CommandResolutionCacheEntry>,
+  cacheKey: string,
+  resolvedPath: string | null,
+  nowNanos: bigint,
+): void {
+  if (cache.size >= COMMAND_RESOLUTION_CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) {
+      cache.delete(oldestKey);
+    }
+  }
+  cache.set(cacheKey, {
+    resolvedPath,
+    expiresAtNanos: nowNanos + COMMAND_RESOLUTION_CACHE_TTL_NANOS,
+  });
+}
+
+// Trace each command lookup, not every candidate file it probes.
+const isExecutableFile = Effect.fnUntraced(function* (
   filePath: string,
   platform: NodeJS.Platform,
   windowsPathExtensions: ReadonlyArray<string>,
@@ -538,22 +578,41 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   if (pathValue.length === 0) {
     return yield* new CommandResolutionError({ command, reason: "not-found" });
   }
+
+  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
+    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
+  );
+  const cache = yield* CommandResolutionCache;
+  const nowNanos = yield* Clock.currentTimeNanos;
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+    if (cached.resolvedPath === null) {
+      return yield* new CommandResolutionError({ command, reason: "not-found" });
+    }
+    return cached.resolvedPath;
+  }
+
+  // Keep case variants: Windows can make PATH directories case-sensitive.
   const pathEntries: string[] = [];
+  const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
     const pathEntry = stripWrappingQuotes(entry.trim());
-    if (pathEntry.length > 0) {
-      pathEntries.push(pathEntry);
-    }
+    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
+
+    seenPathEntries.add(pathEntry);
+    pathEntries.push(pathEntry);
   }
 
   for (const pathEntry of pathEntries) {
     for (const candidate of commandCandidates) {
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
+        cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
         return candidatePath;
       }
     }
   }
+  cacheCommandResolution(cache, cacheKey, null, nowNanos);
   return yield* new CommandResolutionError({ command, reason: "not-found" });
 });
 
@@ -617,7 +676,9 @@ export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArra
     ...(appData ? [`${appData}\\npm`] : []),
     ...(localAppData ? [`${localAppData}\\Programs\\nodejs`, `${localAppData}\\Volta\\bin`] : []),
     ...(localAppData ? [`${localAppData}\\pnpm`] : []),
-    ...(userProfile ? [`${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`] : []),
+    ...(userProfile
+      ? [`${userProfile}\\.local\\bin`, `${userProfile}\\.bun\\bin`, `${userProfile}\\scoop\\shims`]
+      : []),
   ];
 }
 
@@ -657,7 +718,9 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
   }).PATH;
   const mergedPath = mergePathValues(shellPath, inheritedPath, "win32");
   const knownCliPath = resolveKnownWindowsCliDirs(env).join(WINDOWS_PATH_DELIMITER);
-  const baselinePath = mergePathValues(knownCliPath, mergedPath, "win32");
+  // Preserve the order a user's shell uses. These directories fill gaps when
+  // desktop apps launch without the full interactive-shell PATH.
+  const baselinePath = mergePathValues(mergedPath, knownCliPath, "win32");
   const baselinePatch: Partial<NodeJS.ProcessEnv> = baselinePath ? { PATH: baselinePath } : {};
   const baselineEnv = mergeWindowsEnv(env, baselinePatch);
 

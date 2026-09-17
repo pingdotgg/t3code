@@ -62,7 +62,7 @@ export class AccessAnalyzerTestFunction extends Lambda.Function<Lambda.Function>
 export default AccessAnalyzerTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const analyzer = yield* AccessAnalyzer.Analyzer("BindingsAnalyzer", {

@@ -1,10 +1,7 @@
-import { GitPullRequestIcon } from "lucide-react";
 import type { ElementType } from "react";
-import type { SourceControlProviderInfo } from "@t3tools/contracts";
+import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
 export {
   DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
-  formatChangeRequestAction,
-  formatCreateChangeRequestPhrase,
   getChangeRequestTerminology,
   resolveChangeRequestPresentation,
   type ChangeRequestPresentation,
@@ -15,7 +12,14 @@ import {
   resolveChangeRequestPresentation,
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./components/Icons";
+import {
+  AzureDevOpsIcon,
+  BitbucketIcon,
+  ForgejoIcon,
+  GitHubIcon,
+  GitLabIcon,
+} from "./components/Icons";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 
 export interface SourceControlPresentation {
   readonly providerName: string;
@@ -33,6 +37,12 @@ export function getSourceControlPresentation(
         providerName: provider?.name || presentation.providerName,
         terminology: getChangeRequestTerminology(provider),
         Icon: GitHubIcon,
+      };
+    case "forgejo":
+      return {
+        providerName: provider?.name || presentation.providerName,
+        terminology: getChangeRequestTerminology(provider),
+        Icon: ForgejoIcon,
       };
     case "gitlab":
       return {
@@ -56,7 +66,14 @@ export function getSourceControlPresentation(
       return {
         providerName: provider?.name || presentation.providerName,
         terminology: getChangeRequestTerminology(provider),
-        Icon: GitPullRequestIcon,
+        Icon: PullRequestGlyph.pullRequest,
       };
   }
+}
+
+/** For surfaces that know only the host kind, such as a change request row or filter. */
+export function getSourceControlPresentationForKind(
+  kind: SourceControlProviderKind,
+): SourceControlPresentation {
+  return getSourceControlPresentation({ kind, name: "", baseUrl: "" });
 }

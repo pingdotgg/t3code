@@ -108,9 +108,8 @@ export interface VpcOrigin extends Resource<
  * Load Balancer, Network Load Balancer, or EC2 instance inside a VPC without
  * exposing it to the public internet. Reference the resulting `vpcOriginId`
  * from a distribution origin's `vpcOriginConfig`.
- * @resource
- * @section Creating VPC Origins
- * @example Private ALB Origin
+ * ### Creating VPC Origins
+ * **Example:** Private ALB Origin
  * ```typescript
  * const vpcOrigin = yield* VpcOrigin("AppOrigin", {
  *   arn: loadBalancer.arn,
@@ -120,7 +119,7 @@ export interface VpcOrigin extends Resource<
  * });
  * ```
  *
- * @example Attaching a VPC Origin to a Distribution
+ * **Example:** Attaching a VPC Origin to a Distribution
  * ```typescript
  * const distribution = yield* Distribution("AppCdn", {
  *   origins: [
@@ -136,6 +135,8 @@ export interface VpcOrigin extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const VpcOrigin = Resource<VpcOrigin>("AWS.CloudFront.VpcOrigin");
 
@@ -409,7 +410,7 @@ export const VpcOriginProvider = () =>
               Effect.catchTag("CannotDeleteEntityWhileInUse", (error) =>
                 Effect.fail(
                   new VpcOriginStillInUse({
-                    message: error.Message ?? "VPC origin still in use",
+                    message: error.message ?? "VPC origin still in use",
                   }),
                 ),
               ),

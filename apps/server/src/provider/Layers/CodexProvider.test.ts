@@ -1,25 +1,6 @@
 import { assert, it } from "@effect/vitest";
 
-import {
-  applyPreferredCodexDefaultModel,
-  isLegacyCodexModel,
-  mapCodexModelCapabilities,
-} from "./CodexProvider.ts";
-
-it("keeps only the GPT-5.6 Codex family out of legacy models", () => {
-  assert.deepStrictEqual(
-    ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.4"].map((model) => [
-      model,
-      isLegacyCodexModel(model),
-    ]),
-    [
-      ["gpt-5.6-luna", false],
-      ["gpt-5.6-terra", false],
-      ["gpt-5.6-sol", false],
-      ["gpt-5.4", true],
-    ],
-  );
-});
+import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
@@ -144,6 +125,23 @@ it("prefers sol over terra when both are available", () => {
   ]);
 
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.6-sol");
+});
+
+it("ranks qualified Codex models while preserving their wire ids", () => {
+  const models = applyPreferredCodexDefaultModel([
+    {
+      slug: "openai.gpt-5.6-luna",
+      name: "Luna",
+      isCustom: false,
+      isDefault: true,
+      capabilities: null,
+    },
+    { slug: "openai.gpt-5.6-sol", name: "Sol", isCustom: false, capabilities: null },
+  ]);
+  assert.deepStrictEqual(
+    models.filter((model) => model.isDefault).map((model) => model.slug),
+    ["openai.gpt-5.6-sol"],
+  );
 });
 
 it("keeps Codex's own default when no preferred model is available", () => {

@@ -1,0 +1,9 @@
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+  android:minWidth="250dp" android:minHeight="180dp"
+  android:minResizeWidth="180dp" android:minResizeHeight="130dp"
+  android:targetCellWidth="4" android:targetCellHeight="3"
+  android:resizeMode="horizontal|vertical" android:widgetCategory="home_screen"
+  android:updatePeriodMillis="1800000"
+  android:description="@string/t3_subscription_widget_description"
+  android:initialLayout="@layout/t3_subscription_widget"
+  android:previewLayout="@layout/t3_subscription_widget" />

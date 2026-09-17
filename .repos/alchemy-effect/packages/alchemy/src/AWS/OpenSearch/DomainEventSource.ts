@@ -83,8 +83,8 @@ export interface DomainEventSourceProps extends EventRouteProps {
  * host-specific implementation layer (e.g. `AWS.Lambda.EventSource`) on the
  * Function effect.
  *
- * @section Consuming Domain Events
- * @example Alert When a Cluster Degrades or an Update Fails
+ * ### Consuming Domain Events
+ * **Example:** Alert When a Cluster Degrades or an Update Fails
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { makeReadWriteKVClient } from "./ReadWriteNamespaceBinding.ts";
 import { makeLocalKVNamespaceBinding } from "./NamespaceLocal.ts";
 import { ReadWriteNamespace } from "./ReadWriteNamespace.ts";
 import { makeReadWriteKVHttpClient } from "./ReadWriteNamespaceHttp.ts";
@@ -37,6 +38,9 @@ import { makeReadWriteKVHttpClient } from "./ReadWriteNamespaceHttp.ts";
 export const ReadWriteNamespaceLocal = Layer.effect(
   ReadWriteNamespace,
   Effect.suspend(() =>
-    makeLocalKVNamespaceBinding({ makeClient: makeReadWriteKVHttpClient }),
+    makeLocalKVNamespaceBinding({
+      makeHttpClient: makeReadWriteKVHttpClient,
+      makeNativeClient: makeReadWriteKVClient,
+    }),
   ),
 );

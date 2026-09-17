@@ -109,12 +109,11 @@ export interface NetworkAclEntry extends Resource<
  * numbers to make room for future rules. Because NACLs are stateless, always add
  * a matching ephemeral-port rule for return traffic.
  *
- * @resource
- * @section Inbound Rules
+ * ### Inbound Rules
  * Inbound rules (`egress: false`) match traffic entering the subnet. A common
  * pattern is to allow trusted source ranges plus the ephemeral ports needed for
  * return traffic.
- * @example Allow Inbound Traffic from the VPC CIDR
+ * **Example:** Allow Inbound Traffic from the VPC CIDR
  * ```typescript
  * const allowVpc = yield* AWS.EC2.NetworkAclEntry("AllowVpc", {
  *   networkAclId: acl.networkAclId,
@@ -129,7 +128,7 @@ export interface NetworkAclEntry extends Resource<
  * VPC's IPv4 range; the low `ruleNumber` (100) makes it take precedence over
  * higher-numbered rules.
  *
- * @example Allow Inbound Ephemeral Ports (NAT Return Traffic)
+ * **Example:** Allow Inbound Ephemeral Ports (NAT Return Traffic)
  * ```typescript
  * const allowEphemeral = yield* AWS.EC2.NetworkAclEntry("AllowEphemeral", {
  *   networkAclId: acl.networkAclId,
@@ -145,7 +144,7 @@ export interface NetworkAclEntry extends Resource<
  * ephemeral ports and need their own inbound rule; `protocol: "6"` is TCP and
  * `portRange` restricts the match to the ephemeral port range.
  *
- * @example Deny a Specific IPv6 Range
+ * **Example:** Deny a Specific IPv6 Range
  * ```typescript
  * const denyRange = yield* AWS.EC2.NetworkAclEntry("DenyBadActor", {
  *   networkAclId: acl.networkAclId,
@@ -160,10 +159,10 @@ export interface NetworkAclEntry extends Resource<
  * any allow rule can match it; use `ipv6CidrBlock` instead of `cidrBlock` to
  * target IPv6 traffic.
  *
- * @section Outbound Rules
+ * ### Outbound Rules
  * Outbound rules (`egress: true`) match traffic leaving the subnet and are
  * numbered in their own sequence, independent of the inbound rules.
- * @example Allow All Outbound Traffic
+ * **Example:** Allow All Outbound Traffic
  * ```typescript
  * const allowEgress = yield* AWS.EC2.NetworkAclEntry("AllowEgress", {
  *   networkAclId: acl.networkAclId,
@@ -177,8 +176,8 @@ export interface NetworkAclEntry extends Resource<
  * Setting `egress: true` makes this an outbound rule; allowing all protocols to
  * `0.0.0.0/0` is typical when you want the subnet to initiate connections freely.
  *
- * @section ICMP Rules
- * @example Allow Inbound ICMP Echo (Ping)
+ * ### ICMP Rules
+ * **Example:** Allow Inbound ICMP Echo (Ping)
  * ```typescript
  * const allowPing = yield* AWS.EC2.NetworkAclEntry("AllowPing", {
  *   networkAclId: acl.networkAclId,
@@ -192,6 +191,8 @@ export interface NetworkAclEntry extends Resource<
  * ```
  * ICMP (`protocol: "1"`) has no ports, so `icmpTypeCode` selects the message
  * type instead — type 8 is echo request and `code: -1` matches all codes.
+ *
+ * @resource
  */
 export const NetworkAclEntry = Resource<NetworkAclEntry>(
   "AWS.EC2.NetworkAclEntry",

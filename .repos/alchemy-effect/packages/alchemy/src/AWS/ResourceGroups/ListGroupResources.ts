@@ -19,9 +19,8 @@ export type ListGroupResourcesRequest = Omit<
  * `tag:GetResources` / CloudFormation read-through permissions the
  * enumeration fans out to. Provide the implementation with
  * `Effect.provide(AWS.ResourceGroups.ListGroupResourcesHttp)`.
- * @binding
- * @section Enumerating Group Members
- * @example List A Group's Member ARNs
+ * ### Enumerating Group Members
+ * **Example:** List A Group's Member ARNs
  * ```typescript
  * // init — bind the operation to the group
  * const listGroupResources = yield* AWS.ResourceGroups.ListGroupResources(group);
@@ -30,6 +29,8 @@ export type ListGroupResourcesRequest = Omit<
  * const { Resources } = yield* listGroupResources();
  * const arns = (Resources ?? []).map((r) => r.Identifier?.ResourceArn);
  * ```
+ *
+ * @binding
  */
 export interface ListGroupResources extends Binding.Service<
   ListGroupResources,

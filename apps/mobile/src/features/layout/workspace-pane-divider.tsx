@@ -1,14 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  Platform,
-  PlatformColor,
-  Pressable,
-  StyleSheet,
-  View,
-  type AccessibilityActionEvent,
-} from "react-native";
+import { Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
+import { cn } from "../../lib/cn";
 
 const ACCESSIBILITY_RESIZE_STEP = 24;
 
@@ -26,7 +20,6 @@ interface WorkspacePaneDividerProps {
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   const latestProps = useRef(props);
   latestProps.current = props;
-  const [hovered, setHovered] = useState(false);
   const [dragging, setDragging] = useState(false);
   const handleResizeStart = useCallback(() => {
     setDragging(true);
@@ -69,7 +62,7 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   return (
     <GestureDetector gesture={resizeGesture}>
       <Pressable
-        className="relative z-[100] -mx-[22px] w-11 self-stretch cursor-pointer justify-center"
+        className="relative z-[100] -mx-[22px] w-11 self-stretch justify-center"
         accessibilityActions={[
           { name: "increment", label: "Make pane wider" },
           { name: "decrement", label: "Make pane narrower" },
@@ -81,10 +74,15 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
           text: `${Math.round(props.currentWidth)} points wide`,
         }}
         onAccessibilityAction={handleAccessibilityAction}
-        onHoverIn={() => setHovered(true)}
-        onHoverOut={() => setHovered(false)}
       >
-        <View style={[styles.line, (hovered || dragging) && styles.activeLine]} />
+        <View
+          className={cn(
+            "h-full self-center bg-border opacity-70",
+            dragging ? "w-0.5 bg-primary opacity-100" : "w-px",
+            Platform.OS === "android" && !dragging && "opacity-0",
+          )}
+          style={[styles.line, dragging && styles.activeLine]}
+        />
       </Pressable>
     </GestureDetector>
   );
@@ -93,15 +91,10 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
 const styles = StyleSheet.create({
   line: {
     alignSelf: "center",
-    backgroundColor:
-      Platform.OS === "ios" ? PlatformColor("separator") : "rgba(120, 120, 128, 0.28)",
     height: "100%",
-    opacity: 0.7,
     width: StyleSheet.hairlineWidth,
   },
   activeLine: {
-    backgroundColor: Platform.OS === "ios" ? PlatformColor("systemBlueColor") : "#0a84ff",
-    opacity: 1,
     width: 2,
   },
 });

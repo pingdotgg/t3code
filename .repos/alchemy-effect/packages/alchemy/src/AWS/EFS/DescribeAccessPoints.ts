@@ -20,9 +20,8 @@ export interface DescribeAccessPointsRequest extends Omit<
  * per-tenant entry points created at runtime with
  * {@link CreateAccessPoint}. Provide the implementation with
  * `Effect.provide(AWS.EFS.DescribeAccessPointsHttp)`.
- * @binding
- * @section Managing Access Points at Runtime
- * @example List the file system's access points
+ * ### Managing Access Points at Runtime
+ * **Example:** List the file system's access points
  * ```typescript
  * const describeAccessPoints = yield* AWS.EFS.DescribeAccessPoints(files);
  *
@@ -31,6 +30,8 @@ export interface DescribeAccessPointsRequest extends Omit<
  *   yield* Effect.log(`${accessPoint.Name}: ${accessPoint.AccessPointId}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeAccessPoints extends Binding.Service<
   DescribeAccessPoints,

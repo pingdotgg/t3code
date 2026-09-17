@@ -1,6 +1,6 @@
 import * as NodeCrypto from "node:crypto";
 
-import type { DesktopSshEnvironmentTarget, DesktopUpdateChannel } from "@t3tools/contracts";
+import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -14,7 +14,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { buildSshChildEnvironment, type SshAuthOptions } from "./auth.ts";
 import { SshCommandError, SshInvalidTargetError } from "./errors.ts";
 
-const PUBLISHABLE_T3_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const DEFAULT_SSH_COMMAND_TIMEOUT_MS = 60_000;
 const MAX_SSH_ERROR_OUTPUT_LENGTH = 4_000;
 
@@ -80,7 +79,7 @@ export function remoteStateKey(target: DesktopSshEnvironmentTarget): string {
     .slice(0, 16);
 }
 
-export function buildSshHostSpec(target: DesktopSshEnvironmentTarget): string {
+function buildSshHostSpec(target: DesktopSshEnvironmentTarget): string {
   const destination = target.alias.trim() || target.hostname.trim();
   if (destination.length === 0) {
     throw new Error("SSH target is missing its alias/hostname.");
@@ -363,20 +362,3 @@ export const resolveSshTarget = Effect.fn("ssh/command.resolveSshTarget")(functi
     ),
   );
 });
-
-export function resolveRemoteT3CliPackageSpec(input: {
-  readonly appVersion: string;
-  readonly updateChannel: DesktopUpdateChannel;
-  readonly isDevelopment?: boolean;
-}): string {
-  const appVersion = input.appVersion.trim();
-  if (!input.isDevelopment && PUBLISHABLE_T3_VERSION_PATTERN.test(appVersion)) {
-    return `t3@${appVersion}`;
-  }
-
-  if (input.isDevelopment) {
-    return "t3@nightly";
-  }
-
-  return input.updateChannel === "nightly" ? "t3@nightly" : "t3@latest";
-}

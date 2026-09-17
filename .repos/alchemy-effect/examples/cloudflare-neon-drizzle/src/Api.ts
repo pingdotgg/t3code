@@ -1,5 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
+import * as Drizzle from "alchemy/Drizzle/Postgres";
 import { eq } from "drizzle-orm";
 import { Layer } from "effect";
 import * as Effect from "effect/Effect";

@@ -1,6 +1,6 @@
-import { ActivityIndicator, StatusBar, View, useColorScheme } from "react-native";
+import { ActivityIndicator, StatusBar, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useThemeColor } from "../lib/useThemeColor";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
 import { AppText as Text } from "./AppText";
 import { BrandMark } from "./BrandMark";
@@ -9,18 +9,13 @@ export function LoadingScreen(props: {
   readonly message: string;
   readonly messagePlacement?: "above-spinner" | "below-spinner";
 }) {
-  const colorScheme = useColorScheme();
-  const screenBg = useThemeColor("--color-screen");
+  const { themeAppearance: colorScheme } = useAppearancePreferences();
   const insets = useSafeAreaInsets();
   const messagePlacement = props.messagePlacement ?? "below-spinner";
 
   return (
     <View className="flex-1 bg-screen" style={{ paddingTop: insets.top }}>
-      <StatusBar
-        barStyle={colorScheme === "dark" ? "light-content" : "dark-content"}
-        backgroundColor={screenBg as string}
-        translucent
-      />
+      <StatusBar barStyle={colorScheme === "dark" ? "light-content" : "dark-content"} translucent />
       <View className="flex-1 items-center justify-center gap-5 px-6">
         <BrandMark compact />
         {messagePlacement === "above-spinner" ? (

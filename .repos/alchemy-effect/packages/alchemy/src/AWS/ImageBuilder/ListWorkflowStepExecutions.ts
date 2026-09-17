@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Lists the steps of one workflow execution with their runtime status —
  * drill-down from `ListWorkflowExecutions`. Provide the implementation with
  * `Effect.provide(AWS.ImageBuilder.ListWorkflowStepExecutionsHttp)`.
- * @binding
- * @section Workflow Monitoring
- * @example List the Steps of a Workflow Execution
+ * ### Workflow Monitoring
+ * **Example:** List the Steps of a Workflow Execution
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listWorkflowStepExecutions =
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   workflowExecutionId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListWorkflowStepExecutions extends Binding.Service<
   ListWorkflowStepExecutions,

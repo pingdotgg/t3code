@@ -24,7 +24,7 @@ Effect.gen(function*() {
   })
 )
 
-// Use Schema.TaggedErrorClass to define a custom error
-export class FileProcessingError extends Schema.TaggedErrorClass<FileProcessingError>()("FileProcessingError", {
+// Use Schema.TaggedError to define a custom error
+export class FileProcessingError extends Schema.TaggedError<FileProcessingError>()("FileProcessingError", {
   message: Schema.String
 }) {}

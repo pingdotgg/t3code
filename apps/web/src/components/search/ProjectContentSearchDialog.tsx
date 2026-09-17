@@ -1,5 +1,6 @@
+import { Spinner } from "~/components/ui/spinner";
 import type { ProjectContentMatch } from "@t3tools/contracts";
-import { LoaderCircle } from "lucide-react";
+
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
@@ -11,6 +12,8 @@ import { useProjectContentSearch } from "~/state/queries";
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { CommandPaletteContent } from "../CommandPaletteContent";
 import { ScrollArea } from "../ui/scroll-area";
+import { Toggle } from "../ui/toggle";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HighlightedSearchLine } from "./HighlightedSearchLine";
 
 interface ProjectContentSearchDialogProps {
@@ -58,19 +61,23 @@ function SearchOptionButton(props: {
   readonly children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={props.label}
-      aria-pressed={props.active}
-      title={props.label}
-      className={cn(
-        "flex size-8 shrink-0 items-center justify-center rounded-[5px] font-mono text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-        props.active && "bg-accent text-foreground shadow-sm",
-      )}
-      onClick={props.onClick}
-    >
-      {props.children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Toggle
+            aria-label={props.label}
+            pressed={props.active}
+            className="size-8 rounded-[5px] font-mono text-muted-foreground data-pressed:text-foreground sm:size-7"
+            size="compact"
+            variant="ghost"
+            onClick={props.onClick}
+          />
+        }
+      >
+        {props.children}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{props.label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -219,7 +226,7 @@ function OpenContentSearchDialog(props: {
         <div className="flex h-9 shrink-0 items-center border-b px-3 text-xs text-muted-foreground">
           {search.isPending ? (
             <span className="flex items-center gap-2">
-              <LoaderCircle className="size-3.5 animate-spin" /> Searching…
+              <Spinner className="size-3.5" /> Searching…
             </span>
           ) : search.error ? (
             <span className="text-destructive">{search.error}</span>

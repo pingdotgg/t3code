@@ -87,8 +87,10 @@ export const InMemoryService = (
         Effect.sync(() => {
           if (stage === undefined) {
             delete state[stack];
+            delete outputs[stack];
           } else {
             delete state[stack]?.[stage];
+            delete outputs[stack]?.[stage];
           }
         }),
       list: ({ stack, stage }: { stack: string; stage: string }) =>

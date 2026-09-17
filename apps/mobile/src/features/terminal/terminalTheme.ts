@@ -1,3 +1,15 @@
+import {
+  BUILT_IN_THEMES,
+  T3_CHAT_THEME,
+  getThemeColorsForAppearance,
+} from "@t3tools/shared/themePalettes";
+
+import {
+  getMobileThemeVariables,
+  themeColorToNativeColor,
+  type MobileThemeId,
+} from "../../lib/mobileTheme";
+
 export type TerminalAppearanceScheme = "light" | "dark";
 
 export interface TerminalTheme {
@@ -7,8 +19,28 @@ export interface TerminalTheme {
   readonly border: string;
   readonly cursorForeground: string;
   readonly cursorBackground: string;
-  readonly palette: readonly string[];
+  /** The 16 ANSI colors, in order. A fixed tuple so indexed reads are never undefined. */
+  readonly palette: TerminalPalette;
 }
+
+type TerminalPalette = readonly [
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+];
 
 const PIERRE_LIGHT_THEME: TerminalTheme = {
   // Pierre terminal palette with the app's shared screen background.
@@ -66,8 +98,30 @@ const PIERRE_DARK_THEME: TerminalTheme = {
   ],
 };
 
-export function getPierreTerminalTheme(scheme: TerminalAppearanceScheme): TerminalTheme {
+function getPierreTerminalTheme(scheme: TerminalAppearanceScheme): TerminalTheme {
   return scheme === "light" ? PIERRE_LIGHT_THEME : PIERRE_DARK_THEME;
+}
+
+export function getMobileTerminalTheme(
+  themeId: MobileThemeId,
+  scheme: TerminalAppearanceScheme,
+): TerminalTheme {
+  const base = getPierreTerminalTheme(scheme);
+  if (themeId === "t3-code" || themeId === "material-you") return base;
+
+  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
+  const palette = getThemeColorsForAppearance(theme, scheme) ?? theme.colors;
+  const colors = getMobileThemeVariables(themeId, scheme);
+  const background = themeColorToNativeColor(palette.terminalBackground);
+  return {
+    ...base,
+    background,
+    foreground: themeColorToNativeColor(palette.terminalForeground),
+    mutedForeground: colors["--color-foreground-muted"],
+    border: colors["--color-border"],
+    cursorForeground: themeColorToNativeColor(palette.terminalCursor),
+    cursorBackground: background,
+  };
 }
 
 export function buildGhosttyThemeConfig(theme: TerminalTheme): string {

@@ -1,4 +1,4 @@
-import { readPrebuiltWorkerBundle } from "@/Cloudflare/Workers/WorkerBundle";
+import { readPrebuiltWorkerBundle } from "@/Cloudflare/Workers/Sources/Prebuilt";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, layer } from "alchemy-test";
 import * as Effect from "effect/Effect";

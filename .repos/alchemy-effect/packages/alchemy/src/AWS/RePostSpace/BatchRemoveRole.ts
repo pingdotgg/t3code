@@ -17,9 +17,8 @@ export interface BatchRemoveRoleRequest extends Omit<
  * output's `errors` list rather than failing the whole call.
  * Provide the implementation with
  * `Effect.provide(AWS.RePostSpace.BatchRemoveRoleHttp)`.
- * @binding
- * @section Managing Roles
- * @example Remove the EXPERT role from users
+ * ### Managing Roles
+ * **Example:** Remove the EXPERT role from users
  * ```typescript
  * const batchRemoveRole = yield* AWS.RePostSpace.BatchRemoveRole(space);
  *
@@ -29,6 +28,8 @@ export interface BatchRemoveRoleRequest extends Omit<
  * });
  * console.log(result.removedAccessorIds, result.errors);
  * ```
+ *
+ * @binding
  */
 export interface BatchRemoveRole extends Binding.Service<
   BatchRemoveRole,

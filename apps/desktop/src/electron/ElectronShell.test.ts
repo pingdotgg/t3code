@@ -36,10 +36,129 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("copies text to the system clipboard", () =>
+    Effect.gen(function* () {
+      writeTextMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      yield* electronShell.copyText("https://example.com/path");
+
+      assert.deepEqual(writeTextMock.mock.calls, [["https://example.com/path"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("does not fail when the clipboard write rejects", () =>
+    Effect.gen(function* () {
+      writeTextMock.mockRejectedValue(new Error("write failed"));
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      yield* electronShell.copyText("https://example.com/path");
+
+      assert.deepEqual(writeTextMock.mock.calls, [["https://example.com/path"]]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("opens the Full Disk Access settings anchor", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const result = yield* electronShell.openSystemSettings("full-disk-access");
+
+      assert.equal(result, true);
+      assert.deepEqual(openExternalMock.mock.calls, [
+        ["x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"],
+      ]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("opens remote SSH editor URLs", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const result = yield* electronShell.openExternal(
+        "vscode://vscode-remote/ssh-remote+example.com/home/user/project",
+      );
+
+      assert.equal(result, true);
+      assert.deepEqual(openExternalMock.mock.calls, [
+        ["vscode://vscode-remote/ssh-remote+example.com/home/user/project"],
+      ]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("opens Zed's ssh deep link", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.all([
+        electronShell.openExternal("zed://ssh/example.com/home/user/project"),
+        electronShell.openExternal("zed://ssh/example.com/"),
+      ]);
+
+      assert.deepEqual(results, [true, true]);
+      assert.deepEqual(openExternalMock.mock.calls, [
+        ["zed://ssh/example.com/home/user/project"],
+        ["zed://ssh/example.com/"],
+      ]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("does not open editor URLs that mix up link shapes", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.all([
+        electronShell.openExternal("zed://extension/attacker"),
+        electronShell.openExternal("vscode://ssh/example.com/home/user/project"),
+      ]);
+
+      assert.deepEqual(results, [false, false]);
+      assert.equal(openExternalMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("does not open remote editor URLs with userinfo", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const results = yield* Effect.all([
+        electronShell.openExternal(
+          "vscode://user@vscode-remote/ssh-remote+example.com/home/user/project",
+        ),
+        electronShell.openExternal(
+          "vscode://:secret@vscode-remote/ssh-remote+example.com/home/user/project",
+        ),
+        electronShell.openExternal("zed://ssh/user@example.com/home/user/project"),
+      ]);
+
+      assert.deepEqual(results, [false, false, false]);
+      assert.equal(openExternalMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("does not open unsafe external URLs", () =>
     Effect.gen(function* () {
       const electronShell = yield* ElectronShell.ElectronShell;
       const result = yield* electronShell.openExternal("file:///etc/passwd");
+
+      assert.equal(result, false);
+      assert.equal(openExternalMock.mock.calls.length, 0);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
+  it.effect("does not open non-remote editor URLs", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const result = yield* electronShell.openExternal(
+        "vscode://ms-python.python/some-command?argument=attacker",
+      );
 
       assert.equal(result, false);
       assert.equal(openExternalMock.mock.calls.length, 0);

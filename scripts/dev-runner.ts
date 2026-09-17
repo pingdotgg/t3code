@@ -106,7 +106,7 @@ export function isBrowserAllowedPort(port: number): boolean {
   return !FETCH_BAD_PORTS.has(port);
 }
 
-export class DevRunnerConfigurationError extends Schema.TaggedErrorClass<DevRunnerConfigurationError>()(
+export class DevRunnerConfigurationError extends Schema.TaggedError<DevRunnerConfigurationError>()(
   "DevRunnerConfigurationError",
   {
     configKeys: Schema.Array(Schema.String),
@@ -118,7 +118,7 @@ export class DevRunnerConfigurationError extends Schema.TaggedErrorClass<DevRunn
   }
 }
 
-export class DevRunnerInvalidPortOffsetError extends Schema.TaggedErrorClass<DevRunnerInvalidPortOffsetError>()(
+export class DevRunnerInvalidPortOffsetError extends Schema.TaggedError<DevRunnerInvalidPortOffsetError>()(
   "DevRunnerInvalidPortOffsetError",
   {
     configKey: Schema.Literal("T3CODE_PORT_OFFSET"),
@@ -131,7 +131,7 @@ export class DevRunnerInvalidPortOffsetError extends Schema.TaggedErrorClass<Dev
   }
 }
 
-export class DevRunnerPortExhaustedError extends Schema.TaggedErrorClass<DevRunnerPortExhaustedError>()(
+export class DevRunnerPortExhaustedError extends Schema.TaggedError<DevRunnerPortExhaustedError>()(
   "DevRunnerPortExhaustedError",
   {
     startOffset: Schema.Number,
@@ -147,7 +147,7 @@ export class DevRunnerPortExhaustedError extends Schema.TaggedErrorClass<DevRunn
   }
 }
 
-export class DevRunnerProcessError extends Schema.TaggedErrorClass<DevRunnerProcessError>()(
+export class DevRunnerProcessError extends Schema.TaggedError<DevRunnerProcessError>()(
   "DevRunnerProcessError",
   {
     operation: Schema.Literals(["spawn", "wait-for-exit"]),
@@ -163,7 +163,7 @@ export class DevRunnerProcessError extends Schema.TaggedErrorClass<DevRunnerProc
   }
 }
 
-export class DevRunnerProcessExitError extends Schema.TaggedErrorClass<DevRunnerProcessExitError>()(
+export class DevRunnerProcessExitError extends Schema.TaggedError<DevRunnerProcessExitError>()(
   "DevRunnerProcessExitError",
   {
     mode: Schema.Literals(["dev", "dev:server", "dev:web", "dev:desktop"]),
@@ -178,7 +178,7 @@ export class DevRunnerProcessExitError extends Schema.TaggedErrorClass<DevRunner
   }
 }
 
-export class DevRunnerHostNotProxiableError extends Schema.TaggedErrorClass<DevRunnerHostNotProxiableError>()(
+export class DevRunnerHostNotProxiableError extends Schema.TaggedError<DevRunnerHostNotProxiableError>()(
   "DevRunnerHostNotProxiableError",
   {
     mode: Schema.Literals(["dev", "dev:web"]),
@@ -340,6 +340,14 @@ export function createDevRunnerEnv({
       delete output.T3CODE_HOME;
     }
 
+    // A dev-runner server is never launcher-managed. When the shell that runs
+    // this script was itself spawned by the machine's managed t3 service (an
+    // agent working inside T3 Code), these leak through and the child server
+    // fails startup with "The service launcher started a different t3 version"
+    // (serviceLauncherClient.ts resolveStartup).
+    delete output.T3_SERVICE_LAUNCHER_CONTEXT;
+    delete output.T3_BOOT_SERVICE_UNIT;
+
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
       // HOST is Vite's own bind address, and the desktop branch below is the
@@ -380,6 +388,7 @@ export function createDevRunnerEnv({
       delete output.T3CODE_MODE;
       delete output.T3CODE_NO_BROWSER;
       delete output.T3CODE_HOST;
+      delete output.T3CODE_DEV_AUTH_TOKEN;
     }
 
     if (!isDesktopMode && host !== undefined) {
@@ -780,6 +789,14 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
           if (input.devUrl === undefined) {
             env.VITE_DEV_SERVER_URL = shared.url;
           }
+          // A shared origin serves a remote browser, where unbundled dev's
+          // per-module requests each pay a tailnet round trip — a cold module
+          // graph takes minutes to first paint. Bundled dev collapses that to
+          // a few chunk requests. Only defaulted, so T3CODE_BUNDLED_DEV=0
+          // still opts a --share run back out.
+          if (env.T3CODE_BUNDLED_DEV === undefined) {
+            env.T3CODE_BUNDLED_DEV = "1";
+          }
           yield* Effect.logInfo(`[dev-runner] shared on tailnet: ${shared.url}`);
         }
       }
@@ -851,6 +868,7 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   browser: Flag.boolean("browser").pipe(
     Flag.withDescription("Open a browser automatically (disabled by default for web dev)."),
+    Flag.withDefault(false),
   ),
   autoBootstrapProjectFromCwd: Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
     Flag.withDescription(

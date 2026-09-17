@@ -10,6 +10,7 @@ import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
   AuthSessionId,
+  ClientSurface,
   ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 
@@ -54,6 +55,13 @@ export const CreateAuthSessionInput = Schema.Struct({
 });
 export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
 
+export const CreateReplacingActiveAuthSessionInput = Schema.Struct({
+  session: CreateAuthSessionInput,
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type CreateReplacingActiveAuthSessionInput =
+  typeof CreateReplacingActiveAuthSessionInput.Type;
+
 export const GetAuthSessionByIdInput = Schema.Struct({
   sessionId: AuthSessionId,
 });
@@ -61,6 +69,7 @@ export type GetAuthSessionByIdInput = typeof GetAuthSessionByIdInput.Type;
 
 export const ListActiveAuthSessionsInput = Schema.Struct({
   now: Schema.DateTimeUtcFromString,
+  connectedSessionIds: Schema.optionalKey(Schema.Array(AuthSessionId)),
 });
 export type ListActiveAuthSessionsInput = typeof ListActiveAuthSessionsInput.Type;
 
@@ -82,10 +91,23 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
+export const SetAuthSessionClientConnectionInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  surface: Schema.NullOr(ClientSurface),
+  appVersion: Schema.NullOr(Schema.String),
+});
+export type SetAuthSessionClientConnectionInput = typeof SetAuthSessionClientConnectionInput.Type;
+
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
     readonly create: (
+      input: CreateAuthSessionInput,
+    ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    readonly createReplacingActive: (
+      input: CreateReplacingActiveAuthSessionInput,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    readonly createIfAbsent: (
       input: CreateAuthSessionInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
     readonly getById: (
@@ -102,6 +124,9 @@ export class AuthSessionRepository extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
+    ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    readonly setClientConnection: (
+      input: SetAuthSessionClientConnectionInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
   }
 >()("t3/persistence/AuthSessions/AuthSessionRepository") {}
@@ -178,13 +203,15 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  const createSessionRow = SqlSchema.void({
-    Request: CreateAuthSessionInput,
-    execute: (input) =>
-      sql`
+  const insertSessionRow = (ignoreExisting: boolean) =>
+    SqlSchema.void({
+      Request: CreateAuthSessionInput,
+      execute: (input) =>
+        sql`
         INSERT INTO auth_sessions (
           session_id,
           subject,
@@ -215,8 +242,11 @@ export const make = Effect.gen(function* () {
           ${input.expiresAt},
           NULL
         )
+        ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
-  });
+    });
+  const createSessionRow = insertSessionRow(false);
+  const createSessionRowIfAbsent = insertSessionRow(true);
 
   const getSessionRowById = SqlSchema.findOneOption({
     Request: GetAuthSessionByIdInput,
@@ -243,10 +273,25 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const revokeActiveSessionsForReplacement = SqlSchema.findAll({
+    Request: CreateReplacingActiveAuthSessionInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ session, revokedAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
+        WHERE subject = ${session.subject}
+          AND method = ${session.method}
+          AND revoked_at IS NULL
+          AND expires_at > ${revokedAt}
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
   const listActiveSessionRows = SqlSchema.findAll({
     Request: ListActiveAuthSessionsInput,
     Result: AuthSessionRawDbRow,
-    execute: ({ now }) =>
+    execute: ({ now, connectedSessionIds = [] }) =>
       sql`
         SELECT
           session_id AS "sessionId",
@@ -265,7 +310,7 @@ export const make = Effect.gen(function* () {
           revoked_at AS "revokedAt"
         FROM auth_sessions
         WHERE revoked_at IS NULL
-          AND expires_at > ${now}
+          AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
         ORDER BY issued_at DESC, session_id DESC
       `,
   });
@@ -276,6 +321,20 @@ export const make = Effect.gen(function* () {
       sql`
         UPDATE auth_sessions
         SET last_connected_at = ${lastConnectedAt}
+        WHERE session_id = ${sessionId}
+          AND revoked_at IS NULL
+      `,
+  });
+
+  // COALESCE keeps the previous value when a client reports only one field, so
+  // a partial report never nulls out data a fuller client stored earlier.
+  const setClientConnectionRow = SqlSchema.void({
+    Request: SetAuthSessionClientConnectionInput,
+    execute: ({ sessionId, surface, appVersion }) =>
+      sql`
+        UPDATE auth_sessions
+        SET client_surface = COALESCE(${surface}, client_surface),
+            client_app_version = COALESCE(${appVersion}, client_app_version)
         WHERE session_id = ${sessionId}
           AND revoked_at IS NULL
       `,
@@ -313,6 +372,40 @@ export const make = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "AuthSessionRepository.create:query",
           "AuthSessionRepository.create:encodeRequest",
+          { sessionId: input.sessionId },
+        ),
+      ),
+    );
+
+  const createReplacingActive: AuthSessionRepository["Service"]["createReplacingActive"] = (
+    input,
+  ) =>
+    sql
+      .withTransaction(
+        revokeActiveSessionsForReplacement(input).pipe(
+          Effect.flatMap((revokedRows) =>
+            createSessionRow(input.session).pipe(
+              Effect.as(revokedRows.map((row) => row.sessionId)),
+            ),
+          ),
+        ),
+      )
+      .pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "AuthSessionRepository.createReplacingActive:query",
+            "AuthSessionRepository.createReplacingActive:encodeRequest",
+            { sessionId: input.session.sessionId },
+          ),
+        ),
+      );
+
+  const createIfAbsent: AuthSessionRepository["Service"]["createIfAbsent"] = (input) =>
+    createSessionRowIfAbsent(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.createIfAbsent:query",
+          "AuthSessionRepository.createIfAbsent:encodeRequest",
           { sessionId: input.sessionId },
         ),
       ),
@@ -404,13 +497,27 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const setClientConnection: AuthSessionRepository["Service"]["setClientConnection"] = (input) =>
+    setClientConnectionRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.setClientConnection:query",
+          "AuthSessionRepository.setClientConnection:encodeRequest",
+          { sessionId: input.sessionId },
+        ),
+      ),
+    );
+
   return {
     create,
+    createReplacingActive,
+    createIfAbsent,
     getById,
     listActive,
     revoke,
     revokeAllExcept,
     setLastConnectedAt,
+    setClientConnection,
   } satisfies AuthSessionRepository["Service"];
 });
 

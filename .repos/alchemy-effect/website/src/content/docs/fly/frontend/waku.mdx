@@ -1,0 +1,190 @@
+---
+title: Waku
+description: Deploy a Waku app to Fly with Fly.Website.Waku — RSC server on a Machine, SSG pages baked into the image, and Waku's own dev server under alchemy dev.
+sidebar:
+  order: 13
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Fly.Website.Waku` deploys a [Waku](https://waku.gg) app (React
+Server Components) to Fly. It builds the project programmatically:
+the RSC server runs as a Node [`Fly.Service`](/fly/compute/services)
+on a Machine, and the client output — including SSG-prerendered
+pages — is baked into the image. Omit `app` and Alchemy creates a
+[`Fly.App`](/fly/compute/apps) plus a shared IPv4 so
+`https://{app}.fly.dev` answers. No `waku.config.ts` edits are
+required — if you have one it loads natively — and there is no
+adapter to configure and no build command to run.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/waku`
+and `/waku/node` exports from your project at deploy time. It is only
+used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Waku
+
+No framework config is required — a fresh Waku project deploys
+as-is. If your project has a `waku.config.ts`, Alchemy loads it
+natively (exactly as Waku's own CLI does) and uses it as the base
+config — including Vite plugins under its `vite` field:
+
+```typescript
+// waku.config.ts
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "waku/config";
+
+export default defineConfig({
+  basePath: "/",
+  vite: {
+    plugins: [tailwindcss()],
+  },
+});
+```
+
+Options set on the resource (`srcDir`, `distDir`, `basePath`) merge
+over the file, per key. The one key Alchemy owns is
+`unstable_adapter` — the Node deploy target sets it. Setting it
+fails the build with an actionable error.
+
+:::note
+Vite configuration must live in `waku.config.ts`'s `vite` field —
+a standalone `vite.config.ts` is not loaded, same as Waku's own CLI.
+:::
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Fly from "alchemy/Fly";
+
+export const Website = Fly.Website.Waku("Website");
+```
+
+Pass `app` to put the site on an existing `Fly.App`. `rootDir`
+defaults to `"."`.
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyWakuSite",
+  {
+    providers: Fly.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Pages rendered as `"static"` are generated at build time and baked
+into the image; dynamic pages and API routes run on the Machine.
+Prerendered pages are served at their extensionless URLs (`/about`).
+
+The live `url` is `https://{app}.fly.dev`. `site.app`,
+`site.service`, `site.ip`, and `site.certificate` are the Fly
+resources underneath — `undefined` during `alchemy dev`.
+
+See the [Waku API reference](/providers/fly/website/waku) for every
+prop and attribute.
+
+## Add environment variables
+
+Process environment is a top-level `env` map — plain strings, or
+`Redacted` values:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Fly.Website.Waku("Website", {
++  env: {
++    GREETING: "Hello from alchemy",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The values are copied onto `process.env` before the build and the
+dev server, and onto the Machine at deploy time, so server code
+reads the same keys in both modes. Client inlining is whatever Vite
+does (`VITE_` prefixes).
+
+## Read the environment in server code
+
+The RSC server is a plain Node process. Server components and API
+routes read `process.env` (Waku's `getEnv` reads the same values):
+
+```typescript
+// src/pages/index.tsx
+export default async function HomePage() {
+  const greeting = process.env.GREETING ?? "hello";
+  return <h1>{greeting}</h1>;
+}
+
+export const getConfig = async () => ({ render: "dynamic" }) as const;
+```
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Waku's own dev server (native HMR) instead of
+deploying; `site.url` is the local address and no Fly resources are
+created. Wrap the site in `Alchemy.remote()` to deploy the live
+App and Service even during dev:
+
+```typescript
+export const Website = Fly.Website.Waku("Website").pipe(
+  Alchemy.remote(),
+);
+```
+
+## Custom domain
+
+```typescript
+const site = yield* Fly.Website.Waku("Web", {
+  domain: "app.example.com",
+});
+```
+
+`domain` requests ACME (`Fly.Certificate`) on the App. `url`
+becomes `https://app.example.com`. Point DNS at the App first — v1
+does not create DNS records.
+
+## Where next
+
+- [Waku API reference](/providers/fly/website/waku)
+- [Apps](/fly/compute/apps) and [Services](/fly/compute/services)
+- [IPs & certificates](/fly/networking)

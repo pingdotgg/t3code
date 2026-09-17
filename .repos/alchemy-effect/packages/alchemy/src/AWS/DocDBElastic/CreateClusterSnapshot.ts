@@ -12,15 +12,16 @@ import type { Cluster } from "./Cluster.ts";
  * pre-migration backup from an operational Lambda. Provide the
  * implementation with
  * `Effect.provide(AWS.DocDBElastic.CreateClusterSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Take an On-Demand Snapshot
+ * ### Managing Snapshots
+ * **Example:** Take an On-Demand Snapshot
  * ```typescript
  * const createSnapshot = yield* DocDBElastic.CreateClusterSnapshot(cluster);
  *
  * const result = yield* createSnapshot({ snapshotName: "pre-migration" });
  * // result.snapshot.status → "CREATING"
  * ```
+ *
+ * @binding
  */
 export interface CreateClusterSnapshot extends Binding.Service<
   CreateClusterSnapshot,

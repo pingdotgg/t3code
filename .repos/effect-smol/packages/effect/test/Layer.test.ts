@@ -452,6 +452,17 @@ describe("Layer", () => {
   })
 
   describe("MemoMap", () => {
+    it("does not memoize a build before its Effect executes", () => {
+      const memoMap = Layer.makeMemoMapUnsafe()
+      const scope = Scope.makeUnsafe()
+      const layer = Layer.effectDiscard(Effect.void)
+
+      // @effect-diagnostics-next-line floatingEffect:off
+      Layer.buildWithMemoMap(layer, memoMap, scope)
+
+      assert.strictEqual((memoMap as any).map.size, 0)
+    })
+
     it.effect("memoizes suspend across builds", () =>
       Effect.gen(function*() {
         const arr: Array<string> = []

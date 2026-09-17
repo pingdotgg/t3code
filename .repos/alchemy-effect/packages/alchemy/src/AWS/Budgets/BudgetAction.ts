@@ -154,9 +154,8 @@ export interface BudgetAction extends Resource<
  * permissions the action needs (the AWS managed policy
  * `AWSBudgetsActionsWithAWSResourceControlAccess` covers all three kinds).
  *
- * @resource
- * @section Creating a Budget Action
- * @example Apply a Deny-All Policy at 100% of the Budget
+ * ### Creating a Budget Action
+ * **Example:** Apply a Deny-All Policy at 100% of the Budget
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -184,7 +183,7 @@ export interface BudgetAction extends Resource<
  * });
  * ```
  *
- * @example Stop EC2 Instances Automatically
+ * **Example:** Stop EC2 Instances Automatically
  * ```typescript
  * const action = yield* AWS.Budgets.BudgetAction("StopDevInstances", {
  *   budgetName: budget.budgetName,
@@ -206,6 +205,8 @@ export interface BudgetAction extends Resource<
  *   subscribers: [{ subscriptionType: "EMAIL", address: "team@example.com" }],
  * });
  * ```
+ *
+ * @resource
  */
 export const BudgetAction = Resource<BudgetAction>("AWS.Budgets.BudgetAction");
 

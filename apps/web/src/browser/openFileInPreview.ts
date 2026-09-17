@@ -6,6 +6,7 @@ import type {
   PreviewSessionSnapshot,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import {
   type AtomCommandResult,
   mapAtomCommandResult,
@@ -22,6 +23,12 @@ import {
 } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
+import {
+  browserDefaultOpenProfileId,
+  browserDefaultOpenViewport,
+  resolveBrowserDefaults,
+} from "./browserDefaults";
+
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
@@ -30,6 +37,14 @@ export class BrowserPreviewUnavailableError extends Data.TaggedError(
 )<{
   readonly message: string;
 }> {}
+
+export class BrowserSettingsReadError extends Data.TaggedError("BrowserSettingsReadError")<{
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return "Saved browser settings could not be loaded.";
+  }
+}
 
 export type OpenPreviewMutation<E = unknown> = (input: {
   readonly environmentId: EnvironmentId;
@@ -40,10 +55,24 @@ export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
   readonly openPreview: OpenPreviewMutation<E>;
-}): Promise<AtomCommandResult<void, E>> {
+}): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
+  const defaults = await resolveBrowserDefaults().catch(
+    (cause: unknown) => new BrowserSettingsReadError({ cause }),
+  );
+  if (defaults instanceof BrowserSettingsReadError) {
+    return AsyncResult.failure(Cause.fail(defaults));
+  }
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
-    input: { threadId: input.threadRef.threadId, url: input.url },
+    input: {
+      threadId: input.threadRef.threadId,
+      url: input.url,
+      // Built here rather than via `openPreviewSession` because this path
+      // maps the result differently, so the configured defaults have to be
+      // applied explicitly or file/link opens would ignore them.
+      viewport: browserDefaultOpenViewport(defaults),
+      profileId: browserDefaultOpenProfileId(defaults),
+    },
   });
   return mapAtomCommandResult(result, (snapshot) => {
     applyPreviewServerSnapshot(input.threadRef, snapshot);
@@ -52,16 +81,26 @@ export async function openUrlInPreview<E>(input: {
   });
 }
 
+/**
+ * Opens a browser document in the integrated browser. Inside the workspace the
+ * page may load sibling assets; a file outside it is served on its own.
+ */
 export async function openFileInPreview<AssetError, PreviewError>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly filePath: string;
+  readonly workspaceRoot: string | undefined;
   readonly httpBaseUrl: string;
   readonly createAssetUrl: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: { readonly resource: AssetResource };
   }) => Promise<AtomCommandResult<AssetCreateUrlResult, AssetError>>;
   readonly openPreview: OpenPreviewMutation<PreviewError>;
-}): Promise<AtomCommandResult<void, AssetError | PreviewError | BrowserPreviewUnavailableError>> {
+}): Promise<
+  AtomCommandResult<
+    void,
+    AssetError | PreviewError | BrowserPreviewUnavailableError | BrowserSettingsReadError
+  >
+> {
   if (!isPreviewSupportedInRuntime()) {
     return AsyncResult.failure(
       Cause.fail(
@@ -71,11 +110,13 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       ),
     );
   }
+  const insideWorkspace =
+    mediaFileReference(input.filePath, input.workspaceRoot).relativePath !== undefined;
   const assetResult = await input.createAssetUrl({
     environmentId: input.threadRef.environmentId,
     input: {
       resource: {
-        _tag: "workspace-file",
+        _tag: insideWorkspace ? "workspace-file" : "media-file",
         threadId: input.threadRef.threadId,
         path: input.filePath,
       },

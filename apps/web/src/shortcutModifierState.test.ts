@@ -110,4 +110,29 @@ describe("shortcutModifierState", () => {
       shiftKey: false,
     });
   });
+
+  it("ignores poisoned modifier flags on non-modifier keys", () => {
+    // A dictation paste (synthetic ⌘V) can leave the browser reporting
+    // metaKey=true on later real key events. Enter to submit must not
+    // re-mark ⌘ as held.
+    const state = shortcutModifierStateAfterKeyboardEvent(
+      emptyState(),
+      keyboardEventLike("keydown", { key: "Enter", metaKey: true }),
+    );
+    expect(state).toEqual(emptyState());
+  });
+
+  it("clears a held modifier when a non-modifier key reports it released", () => {
+    const heldMeta: ShortcutModifierState = {
+      metaKey: true,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+    };
+    const state = shortcutModifierStateAfterKeyboardEvent(
+      heldMeta,
+      keyboardEventLike("keydown", { key: "a", metaKey: false }),
+    );
+    expect(state).toEqual(emptyState());
+  });
 });

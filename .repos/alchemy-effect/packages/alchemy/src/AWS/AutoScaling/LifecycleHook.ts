@@ -130,8 +130,8 @@ export interface LifecycleHook extends Resource<
  * {@link consumeLifecycleActions} to receive the transition events and
  * {@link CompleteLifecycleAction} to signal `CONTINUE` / `ABANDON`.
  *
- * @section Creating a Lifecycle Hook
- * @example Drain before termination (EventBridge target)
+ * ### Creating a Lifecycle Hook
+ * **Example:** Drain before termination (EventBridge target)
  * ```typescript
  * const hook = yield* LifecycleHook("Drain", {
  *   autoScalingGroup: group,
@@ -141,7 +141,7 @@ export interface LifecycleHook extends Resource<
  * });
  * ```
  *
- * @example Warm caches before an instance enters service
+ * **Example:** Warm caches before an instance enters service
  * ```typescript
  * const hook = yield* LifecycleHook("Warm", {
  *   autoScalingGroup: group,

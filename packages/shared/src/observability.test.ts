@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
@@ -21,6 +21,8 @@ import {
   makeTraceSink,
   type TraceRecord,
   type TraceSinkFlushStats,
+  OtlpHeadersFromString,
+  truncateTraceAttributes,
 } from "./observability.ts";
 
 describe("errorTag", () => {
@@ -110,6 +112,31 @@ const makeTestLayer = (tracePath: string) =>
   );
 
 const nodeServicesIt = it.layer(NodeServices.layer);
+
+describe("truncateTraceAttributes", () => {
+  it("clamps oversized strings at any depth without mutating the input", () => {
+    const stack = "s".repeat(2_000);
+    const attributes = {
+      "db.query.text": "q".repeat(2_000),
+      short: "ok",
+      error: { name: "Error", stack, nested: ["a".repeat(2_000)] },
+    };
+    const truncated = truncateTraceAttributes(attributes);
+
+    assert.equal((truncated["db.query.text"] as string).length, 200 + "…[truncated]".length);
+    assert.equal(truncated["short"], "ok");
+    const error = truncated["error"] as { stack: string; nested: Array<string> };
+    assert.equal(error.stack.length, 500 + "…[truncated]".length);
+    assert.equal(error.nested[0]?.length, 500 + "…[truncated]".length);
+    // Input is untouched: the live span's attributes are shared.
+    assert.equal(attributes.error.stack, stack);
+  });
+
+  it("returns the same reference when nothing exceeds the limits", () => {
+    const attributes = { short: "ok", nested: { fine: "also ok" } };
+    assert.equal(truncateTraceAttributes(attributes), attributes);
+  });
+});
 
 describe("observability", () => {
   it("normalizes circular arrays, maps, and sets without recursing forever", () => {
@@ -431,5 +458,42 @@ describe("observability", () => {
         }),
       ),
     );
+  });
+});
+
+describe("OtlpHeadersFromString", () => {
+  const decode = Schema.decodeUnknownSync(OtlpHeadersFromString);
+
+  it.each([
+    {
+      name: "decodes percent-encoded values",
+      input: "authorization=Basic%20abc%3D%3D,x-tenant=t3",
+      expected: { authorization: "Basic abc==", "x-tenant": "t3" },
+    },
+    {
+      name: "ignores whitespace around separators",
+      input: "authorization=Basic%20abc%3D%3D, x-tenant = t3 ,",
+      expected: { authorization: "Basic abc==", "x-tenant": "t3" },
+    },
+    {
+      name: "keeps literal equals signs inside a value",
+      input: "authorization=Bearer abc==",
+      expected: { authorization: "Bearer abc==" },
+    },
+    {
+      name: "keeps an empty value",
+      input: "x-empty=",
+      expected: { "x-empty": "" },
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(decode(input)).toEqual(expected);
+  });
+
+  it.each([
+    { name: "rejects a pair without a separator", input: "authorization" },
+    { name: "rejects a pair without a key", input: "=value" },
+    { name: "rejects a malformed percent-encoding", input: "authorization=%E0" },
+  ])("$name", ({ input }) => {
+    expect(() => decode(input)).toThrow();
   });
 });

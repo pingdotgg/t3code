@@ -97,6 +97,6 @@ export class JsonPlaceholder extends Context.Service<JsonPlaceholder, {
   )
 }
 
-export class JsonPlaceholderError extends Schema.TaggedErrorClass<JsonPlaceholderError>()("JsonPlaceholderError", {
+export class JsonPlaceholderError extends Schema.TaggedError<JsonPlaceholderError>()("JsonPlaceholderError", {
   cause: Schema.Defect()
 }) {}

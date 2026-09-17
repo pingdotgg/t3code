@@ -1,0 +1,66 @@
+---
+title: Migrations
+description: Better Auth's schema is applied automatically at deploy by an internal alchemy Action — input-hash diffed, dead-code-eliminated from runtime bundles, opt-out with migrate false.
+sidebar:
+  order: 2
+---
+
+Better Auth owns its schema — tables for users, sessions, accounts,
+verifications, plus whatever your plugins add. With alchemy, applying
+that schema is part of `alchemy deploy`, not a separate CLI step.
+
+## How it works
+
+When a stack containing `BetterAuth()` is evaluated, the package
+registers an internal alchemy **Action** (`BetterAuth.Migrate`). Actions
+run only during apply — never at plan, and the migration code is
+dead-code-eliminated from deployed runtime bundles entirely.
+
+The Action's input is a hash of:
+
+- **the schema fingerprint** — derived from your options (plugins,
+  additional fields, model renames), so adding a plugin re-runs the
+  migration on the next deploy;
+- **the database identity** — a non-secret identifier from the layer
+  (a D1 `databaseId`, a digest of the connection string, cluster ARNs),
+  so pointing at a new database re-runs it too. Connection strings
+  themselves are never persisted to state.
+
+Unchanged input ⇒ the Action no-ops without touching the database.
+`--force` re-runs it. Migrations are additive and idempotent
+(`CREATE TABLE` / `ADD COLUMN` on what's missing), so re-running is
+always safe.
+
+The host Function/Worker depends on the migration through its
+environment, so first-deploy traffic cannot race the schema.
+
+## Per-layer transport
+
+Each layer supplies its own deploy-time connection:
+
+| Layer | Deploy-time migration path |
+| --- | --- |
+| `CloudflareD1` | D1 HTTP query API (or the local simulator under `alchemy dev`) |
+| `Neon` | serverless driver against the same connection string |
+| `AuroraDataApi` | RDS Data API with the stack's credentials |
+| `CloudflareHyperdrive` | the **origin** URL you pass as `migrate` (Hyperdrive's own string is runtime-only) |
+| `Postgres` / `MySQL` | the connection string (or a separate `migrate` source) |
+| `SQLite` | the same local file |
+| `Memory` / `Drizzle` | no migration — memory needs none; Drizzle schemas are user-owned |
+
+## Opting out
+
+```typescript
+const auth = yield* BetterAuth({
+  migrate: false,
+  emailAndPassword: { enabled: true },
+});
+```
+
+With `migrate: false` you own the schema — generate it with
+`npx @better-auth/cli generate` and apply it through your own migration
+flow (for Drizzle users that is the default and only mode).
+
+Multiple `BetterAuth` instances in one stack? Give each a distinct
+`id` — it suffixes the migration Action and the auto-provisioned secret
+so they don't collide.

@@ -48,25 +48,24 @@ export default Alchemy.Stack(
 
 ## Migrations
 
-Point `migrationsDir` at a folder of `.sql` files. Files are sorted
+Point `migrations` at a folder of `.sql` files. Files are sorted
 by numeric prefix (`0001_`, `0002_`, …) and applied in order as part
 of every deploy; already-applied migrations are skipped:
 
 ```typescript
 const db = yield* Cloudflare.D1.Database("my-db", {
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 
-The tracking table is wrangler-compatible, and you can point at a
-custom one (e.g. for Drizzle-generated migrations):
-
-```typescript
-const db = yield* Cloudflare.D1.Database("my-db", {
-  migrationsDir: "./migrations",
-  migrationsTable: "drizzle_migrations",
-});
-```
+Bookkeeping lives in Alchemy's `__alchemy_migrations` table. A
+database previously migrated with `wrangler d1 migrations apply` or
+`drizzle-kit migrate` is
+[adopted automatically](/sql/effect-sql/migrations#adopting-an-existing-database):
+the old tool's applied history is copied in once and its table is
+frozen — never written, never dropped. D1 has no transactions over
+HTTP, so each migration and its bookkeeping row are sent as one
+batched query, matching wrangler's own behavior.
 
 The migration files themselves don't have to be hand-written —
 [Drizzle.Schema](/sql/drizzle/migrations) can generate them from a

@@ -16,6 +16,7 @@ import {
   AutocompleteSeparator,
 } from "~/components/ui/autocomplete";
 import { DIALOG_BACKDROP_CLASS, DIALOG_POPUP_CLASS } from "~/components/ui/dialog-styles";
+import { Button } from "~/components/ui/button";
 
 const CommandDialog = CommandDialogPrimitive.Root;
 
@@ -112,12 +113,12 @@ function CommandInput({
       <AutocompleteInput
         autoFocus
         className={cn(
-          "border-transparent! bg-transparent! shadow-none before:hidden has-focus-visible:ring-0 placeholder:text-muted-foreground/80 *:data-[slot=autocomplete-input]:ps-9! sm:*:data-[slot=autocomplete-input]:ps-[calc(var(--command-shell-inset)+1.5rem)]!",
+          "border-transparent! bg-transparent! shadow-none before:hidden has-focus-visible:ring-0 placeholder:text-placeholder *:data-[slot=autocomplete-input]:ps-9! sm:*:data-[slot=autocomplete-input]:ps-[calc(var(--command-shell-inset)+1.5rem)]!",
           className,
         )}
         placeholder={placeholder}
         size="lg"
-        startAddon={<SearchIcon className="translate-x-0.5 text-muted-foreground" />}
+        startAddon={<SearchIcon className="translate-x-0.5 text-icon-muted" />}
         {...props}
       />
     </div>
@@ -203,7 +204,7 @@ function CommandShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       className={cn(
-        "ms-auto font-medium font-sans text-muted-foreground/70 text-xs tracking-widest",
+        "ms-auto font-medium font-sans text-secondary-label text-xs tracking-widest",
         className,
       )}
       data-slot="command-shortcut"
@@ -225,6 +226,20 @@ function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
+function CommandFooterAction({
+  className,
+  ...props
+}: Omit<React.ComponentProps<typeof Button>, "size" | "variant">) {
+  return (
+    <Button
+      {...props}
+      variant="ghost-muted"
+      size="xs"
+      className={cn("h-auto px-2 text-xs hover:bg-transparent", className)}
+    />
+  );
+}
+
 export {
   CommandCreateHandle,
   Command,
@@ -234,6 +249,7 @@ export {
   CommandDialogTrigger,
   CommandEmpty,
   CommandFooter,
+  CommandFooterAction,
   CommandGroup,
   CommandGroupLabel,
   CommandInput,

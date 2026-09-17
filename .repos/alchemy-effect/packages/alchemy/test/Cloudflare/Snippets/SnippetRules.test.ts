@@ -52,7 +52,7 @@ const resolveZoneId = Effect.gen(function* () {
 });
 
 interface WireRule {
-  readonly snippet_name?: string;
+  readonly snippetName?: string;
   readonly expression?: string;
   readonly enabled?: boolean;
   readonly description?: string | null;
@@ -159,7 +159,7 @@ test.provider(
 
       const live = yield* pollLiveRules(zoneId, 1);
       expect(live).toHaveLength(1);
-      expect(live[0].snippet_name).toEqual(NAME_RULES_A);
+      expect(live[0].snippetName).toEqual(NAME_RULES_A);
       expect(live[0].expression).toEqual(EXPRESSION_V1);
 
       // `list()` enumerates every zone (no account-wide rule-list API) and
@@ -216,7 +216,7 @@ test.provider(
       const liveUpdated = yield* pollLiveRules(zoneId, 2);
       expect(liveUpdated).toHaveLength(2);
       expect(liveUpdated[0].expression).toEqual(EXPRESSION_V2);
-      expect(liveUpdated[1].snippet_name).toEqual(NAME_RULES_B);
+      expect(liveUpdated[1].snippetName).toEqual(NAME_RULES_B);
 
       // Destroy — rules must be deleted before the snippets they
       // reference (dependency ordering via the `snippetName` input). The

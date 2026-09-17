@@ -14,9 +14,8 @@ export interface StartSavingsPlansPurchaseRecommendationGenerationRequest
  * Request a fresh Savings Plans recommendation generation based on
  * your latest usage (limited to one generation per day). Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.StartSavingsPlansPurchaseRecommendationGenerationHttp)`.
- * @binding
- * @section Savings Plans
- * @example Refresh the Recommendations
+ * ### Savings Plans
+ * **Example:** Refresh the Recommendations
  * ```typescript
  * // init — account-level binding takes no resource
  * const startSavingsPlansPurchaseRecommendationGeneration = yield* AWS.CostExplorer.StartSavingsPlansPurchaseRecommendationGeneration();
@@ -25,6 +24,8 @@ export interface StartSavingsPlansPurchaseRecommendationGenerationRequest
  * const result = yield* startSavingsPlansPurchaseRecommendationGeneration();
  * const generationId = result.RecommendationId;
  * ```
+ *
+ * @binding
  */
 export interface StartSavingsPlansPurchaseRecommendationGeneration extends Binding.Service<
   StartSavingsPlansPurchaseRecommendationGeneration,

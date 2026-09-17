@@ -1,5 +1,7 @@
 import * as queues from "@distilled.cloud/cloudflare/queues";
+import * as workers from "@distilled.cloud/cloudflare/workers";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as MutableHashMap from "effect/MutableHashMap";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -10,12 +12,15 @@ import * as RpcProvider from "../../Local/RpcProvider.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
 import { isResourceOfType, Resource } from "../../Resource.ts";
+import { Stack } from "../../Stack.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import { detachQueueConsumersOfScript } from "./Consumer.ts";
 import {
   generateLocalId,
   isLiveId,
   LOCAL_ENTRY_URL,
   LocalRuntimeState,
+  localRuntimeServices,
 } from "../LocalRuntime.ts";
 import type { Providers } from "../Providers.ts";
 
@@ -48,29 +53,26 @@ export type Queue = Resource<
  * Queues enable you to send and receive messages with guaranteed delivery.
  * Create a queue as a resource, then bind it to a Worker to send messages
  * at runtime. Register a consumer to process messages.
- * @resource
- * @product Queues
- * @category Storage & Databases
- * @section Creating a Queue
- * @example Basic queue
+ * ### Creating a Queue
+ * **Example:** Basic queue
  * ```typescript
  * const queue = yield* Cloudflare.Queues.Queue("MyQueue");
  * ```
  *
- * @example Queue with explicit name
+ * **Example:** Queue with explicit name
  * ```typescript
  * const queue = yield* Cloudflare.Queues.Queue("MyQueue", {
  *   name: "my-app-queue",
  * });
  * ```
  *
- * @section Binding to a Worker
+ * ### Binding to a Worker
  * In an Effect-style Worker, use `Cloudflare.Queues.WriteQueue` in
  * the init phase and provide `Cloudflare.Queues.WriteQueueBinding` in
  * the runtime layer. The returned `WriteQueueClient` exposes `send`
  * and `sendBatch`.
  *
- * @example Sending messages from a Worker
+ * **Example:** Sending messages from a Worker
  * ```typescript
  * import * as Cloudflare from "alchemy/Cloudflare";
  * import * as Effect from "effect/Effect";
@@ -102,6 +104,10 @@ export type Queue = Resource<
  *   }).pipe(Effect.provide(Cloudflare.Queues.WriteQueueBinding)),
  * );
  * ```
+ *
+ * @resource
+ * @product Queues
+ * @category Storage & Databases
  */
 export const Queue = Resource<Queue>("Cloudflare.Queues.Queue", {
   aliases: ["Cloudflare.Queue"],
@@ -109,16 +115,10 @@ export const Queue = Resource<Queue>("Cloudflare.Queues.Queue", {
 
 export const ProviderLive = () =>
   Provider.succeed(Queue, {
-    // The `queueId` is not marked as stable because if you start in dev mode, the ID will change on first deploy.
-    stables: ["accountId"],
+    stables: ["queueId", "accountId"],
     diff: Effect.fn(function* ({ id, olds = {}, news = {}, output }) {
       const { accountId } = yield* yield* CloudflareEnvironment;
       if (!isResolved(news)) return undefined;
-      // If the queueId is a `dev:` ID, we need to update to a live one.
-      // The live resource doesn't exist yet, so there's no need to replace even if the name or accountId changed.
-      if (!isLiveId(output?.queueId)) {
-        return { action: "update" };
-      }
       if ((output?.accountId ?? accountId) !== accountId) {
         return { action: "replace" } as const;
       }
@@ -143,8 +143,9 @@ export const ProviderLive = () =>
       let observed:
         | { queueId?: string | null; queueName?: string | null }
         | undefined;
-      // A `dev:` id never exists on Cloudflare — skip straight to the
-      // name scan (promotion from dev to live).
+      // A `dev:` id (a mis-stamped legacy local row) is not a real queue id —
+      // skip the lookup (Cloudflare rejects it as a malformed parameter) and
+      // fall through to the name scan.
       if (output?.queueId && isLiveId(output.queueId)) {
         observed = yield* queues
           .getQueue({
@@ -196,13 +197,18 @@ export const ProviderLive = () =>
       };
     }),
     delete: Effect.fn(function* ({ output }) {
-      // If the queueId is a `dev:` ID, the resource only exists locally, so we don't need to delete it from Cloudflare.
+      // A `dev:` id means the physical resource only ever existed locally
+      // (a mis-stamped legacy row) — there is nothing to delete, and the
+      // API would reject the id as a malformed parameter.
       if (!isLiveId(output.queueId)) return;
       // Dependents (e.g. R2 event notification configs targeting this
       // queue) may still be tearing down concurrently — ride out the
       // dependency violation briefly, then fail loudly instead of
-      // silently leaking the queue.
-      yield* queues
+      // silently leaking the queue. A worker producer binding
+      // (`QueueInUseByWorkerBinding`) gets a shorter window: a sibling
+      // Worker's just-processed delete/unbind takes a few seconds to
+      // propagate to the queues subsystem.
+      const attempt = queues
         .deleteQueue({
           accountId: output.accountId,
           queueId: output.queueId,
@@ -215,8 +221,34 @@ export const ProviderLive = () =>
               Schedule.recurs(8),
             ]),
           }),
+          Effect.retry({
+            while: (e) => e._tag === "QueueInUseByWorkerBinding",
+            schedule: Schedule.max([
+              Schedule.spaced("2 seconds"),
+              Schedule.recurs(6),
+            ]),
+          }),
           Effect.catchTag("QueueNotFound", () => Effect.void),
         );
+      yield* attempt.pipe(
+        // Still pinned by a worker producer binding after the propagation
+        // window: every *tracked* worker is deleted or unbound before its
+        // queues by dependency order, so the referencing script is an
+        // orphaned generation leaked by a pre-stamping dev run (a local-
+        // stamped row whose real script was never deleted). Remove the
+        // scripts that carry this stack+stage's ownership tags and retry;
+        // a script from outside this stack+stage keeps the typed failure.
+        Effect.catchTag("QueueInUseByWorkerBinding", (cause) =>
+          Effect.gen(function* () {
+            const removed = yield* deleteOwnedProducerScripts(
+              output.accountId,
+              output.queueId,
+            );
+            if (removed === 0) return yield* Effect.fail(cause);
+            return yield* attempt;
+          }),
+        ),
+      );
     }),
     list: Effect.fn(function* () {
       const { accountId } = yield* yield* CloudflareEnvironment;
@@ -279,6 +311,80 @@ const createQueueName = (id: string, name: string | undefined) =>
     })).toLowerCase();
   });
 
+/**
+ * Delete the worker scripts that hold a producer binding on `queueId` AND
+ * carry this stack+stage's `alchemy:` ownership tags. Returns how many
+ * scripts were deleted.
+ *
+ * Used by the live queue delete when `QueueInUseByWorkerBinding` persists
+ * past the propagation-lag retry window: tracked workers are always
+ * deleted/unbound before their queues, so an own-stack script still
+ * binding the queue at that point is an orphaned generation (leaked by a
+ * pre-stamping dev run that rewrote the worker's row as local). Scripts
+ * without our ownership tags are left alone.
+ */
+const deleteOwnedProducerScripts = Effect.fn(function* (
+  accountId: string,
+  queueId: string,
+) {
+  const stack = yield* Stack;
+  const queue = yield* queues
+    .getQueue({ accountId, queueId })
+    .pipe(
+      Effect.catchTag(["QueueNotFound", "InvalidRoute"], () =>
+        Effect.succeed(undefined),
+      ),
+    );
+  const producerScripts = Array.from(
+    new Set(
+      (queue?.producers ?? []).flatMap((producer) =>
+        producer.type === "worker" &&
+        "scriptName" in producer &&
+        producer.scriptName
+          ? [producer.scriptName]
+          : [],
+      ),
+    ),
+  );
+  let removed = 0;
+  for (const scriptName of producerScripts) {
+    const settings = yield* workers
+      .getScriptScriptAndVersionSetting({ accountId, scriptName })
+      .pipe(
+        Effect.catchTag(["WorkerNotFound", "WorkerHasNoVersions"], () =>
+          Effect.succeed(undefined),
+        ),
+      );
+    const tags = new Set(settings?.tags ?? []);
+    if (
+      !tags.has(`alchemy:stack:${stack.name}`) ||
+      !tags.has(`alchemy:stage:${stack.stage}`)
+    ) {
+      continue;
+    }
+    yield* Effect.logWarning(
+      `Cloudflare Queue delete: removing orphaned worker script ` +
+        `"${scriptName}" that still binds queue ${queueId} (leaked by a ` +
+        `pre-providerMode dev run)`,
+    );
+    yield* workers.deleteScript({ accountId, scriptName, force: true }).pipe(
+      // The orphan may also be registered as a queue consumer — detach
+      // its consumers and retry, mirroring the Worker provider's own
+      // delete recovery.
+      Effect.catchTag("QueueConsumerConflict", () =>
+        detachQueueConsumersOfScript(accountId, scriptName).pipe(
+          Effect.andThen(
+            workers.deleteScript({ accountId, scriptName, force: true }),
+          ),
+        ),
+      ),
+      Effect.catchTag("WorkerNotFound", () => Effect.void),
+    );
+    removed++;
+  }
+  return removed;
+});
+
 // Cloudflare's `listQueues` accepts no name/prefix filter, so
 // adoption-by-name has to scan every page. Use the paginated
 // `.items` stream off the un-yielded operation method.
@@ -302,6 +408,15 @@ export const ProviderLocal = () =>
         diff: Effect.fn(function* ({ id, olds = {}, news = {}, output }) {
           const { accountId } = yield* yield* CloudflareEnvironment;
           if (!output?.queueId) return { action: "update" };
+          // A real (non-`dev:`) queueId on a local-mode row is legacy damage:
+          // pre-stamping dev runs preserved the live id, which the worker
+          // binding then treats as an `Alchemy.remote()` queue and fails on
+          // the missing producer shim. Replace so the new generation mints a
+          // true local identity (delete best-effort removes the stray live
+          // queue).
+          if (isLiveId(output.queueId)) {
+            return { action: "replace" };
+          }
           if (!isResolved(news)) return undefined;
           const name = yield* createQueueName(id, news.name);
           const oldName = output?.queueName
@@ -325,7 +440,13 @@ export const ProviderLocal = () =>
         reconcile: Effect.fn(function* ({ id, news = {}, output }) {
           const { accountId } = yield* yield* CloudflareEnvironment;
           const queue: Queue["Attributes"] = {
-            queueId: output?.queueId ?? generateLocalId(),
+            // Never carry a real (non-`dev:`) id forward onto a local row —
+            // the worker binding would treat it as an `Alchemy.remote()`
+            // queue and fail on the missing producer shim.
+            queueId:
+              output?.queueId && !isLiveId(output.queueId)
+                ? output.queueId
+                : generateLocalId(),
             queueName: yield* createQueueName(id, news.name),
             accountId: output?.accountId ?? accountId,
           };
@@ -334,13 +455,36 @@ export const ProviderLocal = () =>
         }),
         delete: Effect.fn(function* ({ output }) {
           MutableHashMap.remove(localRuntimeState.queues, output.queueId);
+          // Legacy local-mode rows written before providerMode stamping can
+          // carry a real queue's id — remove the live queue too so migrating
+          // the row to a true local identity doesn't leak it.
+          if (isLiveId(output.queueId)) {
+            yield* queues
+              .deleteQueue({
+                accountId: output.accountId,
+                queueId: output.queueId,
+              })
+              .pipe(
+                Effect.retry({
+                  while: (e) => e._tag === "QueueInUseByEventNotification",
+                  schedule: Schedule.max([
+                    Schedule.exponential("1 second"),
+                    Schedule.recurs(8),
+                  ]),
+                }),
+                Effect.catchTag(
+                  ["QueueNotFound", "InvalidRoute"],
+                  () => Effect.void,
+                ),
+              );
+          }
         }),
       };
     }),
   );
 
 export const QueueProvider = () =>
-  ProviderLayer.select({
-    local: () => ProviderLocal(),
+  ProviderLayer.dual(Queue, {
+    local: () => ProviderLocal().pipe(Layer.provide(localRuntimeServices())),
     live: () => ProviderLive(),
   });

@@ -34,7 +34,7 @@ const resolveFixtureVpc = Effect.gen(function* () {
 export default CloudMapTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // several routes fan out Cloud Map API calls; the 3s default is too tight
     timeout: Duration.seconds(30),
   },

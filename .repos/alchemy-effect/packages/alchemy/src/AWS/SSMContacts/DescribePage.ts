@@ -9,15 +9,16 @@ import * as Binding from "../../Binding.ts";
  * and content, and delivery/read timestamps.
  * Provide the implementation with
  * `Effect.provide(AWS.SSMContacts.DescribePageHttp)`.
- * @binding
- * @section Working with Pages
- * @example Inspect a Page
+ * ### Working with Pages
+ * **Example:** Inspect a Page
  * ```typescript
  * const describePage = yield* AWS.SSMContacts.DescribePage();
  *
  * const page = yield* describePage({ PageId: pageArn });
  * // page.SentTime, page.ReadTime, page.DeliveryTime, ...
  * ```
+ *
+ * @binding
  */
 export interface DescribePage extends Binding.Service<
   DescribePage,

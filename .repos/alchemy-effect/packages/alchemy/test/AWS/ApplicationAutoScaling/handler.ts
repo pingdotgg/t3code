@@ -30,7 +30,7 @@ export class ApplicationAutoScalingTestFunction extends Lambda.Function<Lambda.F
 export default ApplicationAutoScalingTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // A provisioned DynamoDB table is the cheapest, fastest real scalable

@@ -1,0 +1,35 @@
+{
+  "name": "aws-router-example",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/aws-router"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy"
+  },
+  "dependencies": {
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@distilled.cloud/aws": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect",
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:frontend",
+    "@types/react": "catalog:frontend",
+    "@types/react-dom": "catalog:frontend",
+    "@vitejs/plugin-react": "catalog:frontend",
+    "tailwindcss": "catalog:frontend",
+    "typescript": "catalog:build",
+    "vite": "catalog:build"
+  }
+}

@@ -3,8 +3,8 @@ import * as Drizzle from "alchemy/Drizzle";
 import * as Effect from "effect/Effect";
 
 /**
- * A Drizzle schema + D1 database. The database's `migrationsDir` is wired to
- * the schema resource's `out` output, so the provider order becomes:
+ * A Drizzle schema + D1 database. The database's `migrations` prop is wired
+ * to the schema resource, so the provider order becomes:
  *
  *   1. `Drizzle.Schema` regenerates pending migration SQL files whenever
  *      `src/schema.ts` drifts from the latest checked-in snapshot.
@@ -19,7 +19,6 @@ export const Database = Effect.gen(function* () {
   });
 
   return yield* Cloudflare.D1.Database("app-db", {
-    migrationsDir: schema.out,
-    migrationsTable: "drizzle_migrations",
+    migrations: schema,
   });
 });

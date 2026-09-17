@@ -18,13 +18,12 @@ export interface TestWirelessDeviceRequest extends Omit<
  * of the bound wireless device, from a deployed Lambda or Task. Useful for
  * verifying a destination's routing without radio hardware.
  *
- * @binding
- * @section Simulating an Uplink
+ * ### Simulating an Uplink
  * Provide the `TestWirelessDeviceHttp` implementation layer on the Function
  * effect, bind the device in the init phase, then call the returned client
  * at runtime.
  *
- * @example Send a Test Uplink
+ * **Example:** Send a Test Uplink
  * ```typescript
  * // init
  * const testDevice = yield* AWS.IoTWireless.TestWirelessDevice(device);
@@ -34,6 +33,8 @@ export interface TestWirelessDeviceRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(AWS.IoTWireless.TestWirelessDeviceHttp))
  * ```
+ *
+ * @binding
  */
 export interface TestWirelessDevice extends Binding.Service<
   TestWirelessDevice,

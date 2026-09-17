@@ -1,4 +1,5 @@
 import * as apprunner from "@distilled.cloud/aws/apprunner";
+import * as logs from "@distilled.cloud/aws/cloudwatch-logs";
 import * as ecr from "@distilled.cloud/aws/ecr";
 import * as iam from "@distilled.cloud/aws/iam";
 import type { Region } from "@distilled.cloud/aws/Region";
@@ -232,12 +233,14 @@ export interface ServiceProps extends PlatformProps {
    */
   env?: Record<string, any>;
   /**
-   * Bundler configuration for the Effect-native entrypoint.
+   * Bundler configuration for the Effect-native entrypoint: rolldown
+   * `input`/`output` overrides plus pure-annotation options (`pure`).
+   * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
+   * `@distilled.cloud/*` are annotated as pure by default so unused code
+   * from those packages is tree-shaken; list additional packages via
+   * `pure.packages`, or disable with `pure: false`.
    */
-  build?: {
-    input?: Partial<rolldown.InputOptions>;
-    output?: Partial<rolldown.OutputOptions>;
-  };
+  build?: Bundle.BundleConfig;
   /**
    * Docker image build for the Effect-native form: optional full
    * `dockerfile`. When omitted, Alchemy generates a Dockerfile for the
@@ -294,6 +297,22 @@ export interface ServiceProps extends PlatformProps {
    * @default AWS-owned key
    */
   kmsKeyArn?: string;
+  /**
+   * Keep the CloudWatch log groups App Runner auto-creates for the service
+   * (`/aws/apprunner/{serviceName}/{serviceId}/application` and
+   * `.../service`) when the service is deleted.
+   *
+   * By default they are deleted along with the service — App Runner itself
+   * leaves them behind, so every deploy+destroy cycle would otherwise
+   * strand a pair. Set this when the logs must outlive the service (an
+   * incident post-mortem, a compliance retention window). The kept groups
+   * are inert: their names embed the service id, so no future service ever
+   * writes to them, and nothing but a manual delete (or
+   * `alchemy unsafe nuke`) removes them.
+   *
+   * @default false
+   */
+  retainLogGroups?: boolean;
   /**
    * User-defined tags for the service.
    */
@@ -394,9 +413,8 @@ export interface ServiceRuntimeContext extends HostRuntimeContext {
  * to a managed ECR repository, and deploys, provisioning the instance and
  * ECR access roles automatically. Capability bindings (e.g. DynamoDB
  * `GetItem`) attach IAM policy statements to the managed instance role.
- * @resource
- * @section Creating a Service
- * @example Public ECR Image
+ * ### Creating a Service
+ * **Example:** Public ECR Image
  * ```typescript
  * const service = yield* AppRunner.Service("Hello", {
  *   imageRepository: {
@@ -409,7 +427,7 @@ export interface ServiceRuntimeContext extends HostRuntimeContext {
  * // service.serviceUrl -> "xxxxxxxx.us-west-2.awsapprunner.com"
  * ```
  *
- * @example Private ECR Image with Access Role
+ * **Example:** Private ECR Image with Access Role
  * ```typescript
  * const service = yield* AppRunner.Service("Api", {
  *   imageRepository: {
@@ -423,8 +441,8 @@ export interface ServiceRuntimeContext extends HostRuntimeContext {
  * });
  * ```
  *
- * @section Effect-Native Services
- * @example Inline Effect HTTP Program
+ * ### Effect-Native Services
+ * **Example:** Inline Effect HTTP Program
  * ```typescript
  * export default class Api extends AppRunner.Service<Api>()(
  *   "Api",
@@ -444,8 +462,47 @@ export interface ServiceRuntimeContext extends HostRuntimeContext {
  * ) {}
  * ```
  *
- * @section Scaling and Networking
- * @example Custom Auto Scaling and VPC Egress
+ * ### Bundling & Tree-shaking
+ * `main` is bundled with rolldown at deploy time. Top-level calls in the
+ * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
+ * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
+ * default, so anything the service doesn't use from those packages is
+ * tree-shaken out of the bundle. Any other package — including your own
+ * app — is left untouched unless you list it explicitly.
+ *
+ * **Example:** Treat additional packages as pure
+ * Pass package names (or picomatch globs) via `build.pure.packages` to
+ * annotate them in addition to the defaults.
+ * ```typescript
+ * {
+ *   main: import.meta.url,
+ *   build: {
+ *     pure: { packages: ["my-lib", "@my-scope/*"] },
+ *   },
+ * }
+ * ```
+ *
+ * Listing a package annotates calls whose result is bound (variable
+ * initializers, exports) — safe anywhere. If a listed package also
+ * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
+ * combination opts it into full annotation: top-level calls whose result
+ * is discarded (e.g. `router.on("/path", handler)` registrations) are
+ * also marked pure and deleted under minification when unused. Only list
+ * a `sideEffects: false` package if its modules really are free of
+ * meaningful top-level side effects. The `effect`, `alchemy`, and
+ * `@distilled.cloud` defaults declare exactly that, on purpose — their
+ * modules are designed to be fully tree-shakeable.
+ *
+ * **Example:** Disable pure annotations
+ * ```typescript
+ * {
+ *   main: import.meta.url,
+ *   build: { pure: false },
+ * }
+ * ```
+ *
+ * ### Scaling and Networking
+ * **Example:** Custom Auto Scaling and VPC Egress
  * ```typescript
  * const service = yield* AppRunner.Service("Api", {
  *   imageRepository: {
@@ -460,6 +517,8 @@ export interface ServiceRuntimeContext extends HostRuntimeContext {
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const Service: Platform<
   Service,
@@ -744,6 +803,96 @@ const emptyPlatformAttributes: PlatformAttributes = {
   codeHash: undefined,
 };
 
+/**
+ * The two CloudWatch log groups App Runner auto-creates for a service:
+ * `.../application` (the container's stdout/stderr) and `.../service`
+ * (App Runner's own deployment and health-check events).
+ *
+ * Both names embed the AWS-generated service id, so a pair belongs to
+ * exactly one service instance — it can never be shared with, or reused
+ * by, another service.
+ */
+const logGroupNamesFor = (serviceName: string, serviceId: string) => [
+  `/aws/apprunner/${serviceName}/${serviceId}/application`,
+  `/aws/apprunner/${serviceName}/${serviceId}/service`,
+];
+
+/**
+ * Delete one of a service's auto-created log groups, idempotently.
+ *
+ * `deleteService` does NOT remove them, so without this every
+ * deploy+destroy cycle strands a pair (matching how the Lambda and ECS
+ * providers reap `/aws/lambda/{name}` and their task log group).
+ *
+ * App Runner can flush a final batch of events after the service itself
+ * is gone, silently re-creating a just-deleted group, so the delete is
+ * followed by a bounded observe→delete convergence loop. A group that
+ * never reappears — the common case — costs a single extra describe.
+ * Reaping is auxiliary to an already-completed service deletion, so a
+ * group that survives the budget warns rather than failing the destroy.
+ */
+const reapLogGroup = Effect.fn(function* (logGroupName: string) {
+  const deleteGroup = logs.deleteLogGroup({ logGroupName }).pipe(
+    Effect.retry({
+      while: (error) =>
+        error._tag === "OperationAbortedException" ||
+        error._tag === "ServiceUnavailableException",
+      schedule: Schedule.max([
+        Schedule.exponential("250 millis"),
+        Schedule.recurs(6),
+      ]),
+    }),
+    Effect.catchTag("ResourceNotFoundException", () => Effect.void),
+    Effect.timeoutOrElse({
+      duration: "30 seconds",
+      orElse: () =>
+        Effect.logWarning(
+          `Timed out deleting App Runner log group ${logGroupName}`,
+        ),
+    }),
+  );
+
+  // A describe that cannot complete in time is not deletion proof —
+  // assume the group is still present and let the bounded loop converge.
+  const observeGroup = logs
+    .describeLogGroups({ logGroupNamePrefix: logGroupName, limit: 1 })
+    .pipe(
+      Effect.map((response) =>
+        (response.logGroups ?? []).some(
+          (group) => group.logGroupName === logGroupName,
+        ),
+      ),
+      Effect.timeoutOrElse({
+        duration: "15 seconds",
+        orElse: () =>
+          Effect.logWarning(
+            `Timed out observing App Runner log group ${logGroupName} — assuming still present`,
+          ).pipe(Effect.as(true)),
+      }),
+    );
+
+  yield* deleteGroup;
+
+  // Re-reaps at t=0s/5s/…/30s, each attempt idempotent.
+  const stillPresent = yield* Effect.gen(function* () {
+    const present = yield* observeGroup;
+    if (present) yield* deleteGroup;
+    return present;
+  }).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("5 seconds"),
+      until: (present) => !present,
+      times: 6,
+    }),
+  );
+
+  if (stillPresent) {
+    yield* Effect.logWarning(
+      `App Runner log group ${logGroupName} kept reappearing after delete`,
+    );
+  }
+});
+
 export const ServiceProvider = () =>
   Provider.effect(
     Service,
@@ -935,7 +1084,7 @@ export const ServiceProvider = () =>
                   []),
               ],
               resolve: {
-                conditionNames: ["bun", "import", "module", "default"],
+                conditionNames: [...Bundle.BUN_CONDITION_NAMES],
                 ...props.build?.input?.resolve,
               },
               plugins: [props.build?.input?.plugins, plugins],
@@ -947,6 +1096,7 @@ export const ServiceProvider = () =>
               minify: props.build?.output?.minify ?? false,
               entryFileNames: "index.mjs",
             },
+            props.build,
           );
         });
 
@@ -956,68 +1106,10 @@ export const ServiceProvider = () =>
               realMain,
               virtualEntryPlugin(
                 (importPath) => `
-import { BunServices } from "@effect/platform-bun";
-import { BunHttpServer } from "alchemy/Http";
-import { Stack } from "alchemy/Stack";
-import * as Config from "effect/Config";
-import * as ConfigProvider from "effect/ConfigProvider";
-import * as Credentials from "@distilled.cloud/aws/Credentials";
-import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
-import * as Region from "@distilled.cloud/aws/Region";
+import { bootstrap } from "alchemy/Runtime/Bootstrap/AppRunner";
+import { ${handler} as entrypoint } from ${JSON.stringify(importPath)};
 
-import { ${handler} as handler } from ${JSON.stringify(importPath)};
-
-const platform = Layer.mergeAll(
-  BunServices.layer,
-  FetchHttpClient.layer,
-  Logger.layer([Logger.consolePretty()]),
-);
-
-// Resolve the bundled program (the runners registered via host.run / serve)
-// and run it with a Bun HTTP server bound to PORT (App Runner injects PORT
-// for the configured service port), so a returned { fetch } handler is
-// actually served and host.run loops stay alive.
-const program = handler.pipe(
-  Effect.flatMap((service) => service.RuntimeContext.exports),
-  Effect.flatMap((exports) => exports.program),
-  Effect.provide(
-    Layer.effect(
-      Stack,
-      Effect.all([
-        Config.string("ALCHEMY_STACK_NAME"),
-        Config.string("ALCHEMY_STAGE")
-      ]).pipe(
-        Effect.map(([name, stage]) => ({
-          name,
-          stage,
-          bindings: {},
-          resources: {}
-        }))
-      )
-    ).pipe(
-      Layer.provideMerge(Credentials.fromEnv()),
-      Layer.provideMerge(Region.fromEnv()),
-      Layer.provideMerge(BunHttpServer()),
-      Layer.provideMerge(platform),
-      Layer.provideMerge(
-        Layer.succeed(
-          ConfigProvider.ConfigProvider,
-          ConfigProvider.fromEnv()
-        )
-      ),
-    )
-  ),
-  Effect.scoped
-);
-
-console.log("App Runner service bootstrap starting...");
-await Effect.runPromise(program).catch((err) => {
-  console.error("App Runner service bootstrap failed:", err);
-  process.exit(1);
-});
+await bootstrap(entrypoint);
 `,
               ),
             );
@@ -1553,7 +1645,7 @@ await Effect.runPromise(program).catch((err) => {
           return toAttrs(observed, platformAttributes);
         }),
 
-        delete: Effect.fn(function* ({ output }) {
+        delete: Effect.fn(function* ({ olds, output, force }) {
           // A service mid-operation rejects deletion with
           // InvalidStateException — wait (bounded) for it to settle first.
           const observed = yield* waitForSettled(output.serviceArn);
@@ -1629,6 +1721,24 @@ await Effect.runPromise(program).catch((err) => {
               .pipe(
                 Effect.catchTag("NoSuchEntityException", () => Effect.void),
               );
+          }
+
+          // Last, because the reap can sit through App Runner's final log
+          // flush: an interruption during that window must not strand the
+          // repository or the roles, which cost money and block re-creates.
+          //
+          // `retainLogGroups` keeps them; account-wide teardown (`force`)
+          // overrides that opt-out, since nuke's contract is to leave
+          // nothing behind. Nuke also enumerates from the cloud, so `olds`
+          // carries Attributes rather than Props there and the flag reads
+          // as unset anyway.
+          if (!olds.retainLogGroups || force) {
+            for (const logGroupName of logGroupNamesFor(
+              output.serviceName,
+              output.serviceId,
+            )) {
+              yield* reapLogGroup(logGroupName);
+            }
           }
         }),
 

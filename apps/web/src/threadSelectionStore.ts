@@ -34,6 +34,15 @@ interface ThreadSelectionStore extends ThreadSelectionState {
 
 const EMPTY_SET = new Set<string>();
 
+/** Clear completed deletions and missing threads, retaining failed or unprocessed threads. */
+export function getThreadKeysToDeselectAfterDelete(
+  selectedThreadKeys: readonly string[],
+  deletedThreadKeys: ReadonlySet<string>,
+  hasThread: (threadKey: string) => boolean,
+): string[] {
+  return selectedThreadKeys.filter((key) => deletedThreadKeys.has(key) || !hasThread(key));
+}
+
 export const useThreadSelectionStore = create<ThreadSelectionStore>((set, get) => ({
   selectedThreadKeys: EMPTY_SET,
   anchorThreadKey: null,

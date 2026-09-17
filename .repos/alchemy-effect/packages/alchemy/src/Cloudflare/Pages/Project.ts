@@ -193,17 +193,14 @@ export type Project = Resource<
  * The project `name` is its identity (it forms the `<name>.pages.dev`
  * subdomain), so renaming triggers a replacement. `productionBranch`,
  * `buildConfig`, and `deploymentConfigs` are all mutable in place.
- * @resource
- * @product Pages
- * @category Workers & Compute
- * @section Creating a Project
- * @example Minimal project (generated name)
+ * ### Creating a Project
+ * **Example:** Minimal project (generated name)
  * ```typescript
  * const project = yield* Cloudflare.Pages.Project("site", {});
  * // project.subdomain === "<generated-name>.pages.dev"
  * ```
  *
- * @example Named project with a build config
+ * **Example:** Named project with a build config
  * ```typescript
  * const project = yield* Cloudflare.Pages.Project("site", {
  *   name: "my-site",
@@ -215,8 +212,8 @@ export type Project = Resource<
  * });
  * ```
  *
- * @section Deployment Configuration
- * @example Environment variables and bindings
+ * ### Deployment Configuration
+ * **Example:** Environment variables and bindings
  * ```typescript
  * const project = yield* Cloudflare.Pages.Project("site", {
  *   deploymentConfigs: {
@@ -234,8 +231,8 @@ export type Project = Resource<
  * });
  * ```
  *
- * @section Custom Domains
- * @example Attach a custom domain
+ * ### Custom Domains
+ * **Example:** Attach a custom domain
  * ```typescript
  * const domain = yield* Cloudflare.Pages.Domain("site-domain", {
  *   projectName: project.name,
@@ -244,6 +241,10 @@ export type Project = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/pages/
+ *
+ * @resource
+ * @product Pages
+ * @category Workers & Compute
  */
 export const Project = Resource<Project>(TypeId);
 
@@ -358,17 +359,15 @@ export const ProjectProvider = () =>
         Stream.runCollect,
         Effect.map((chunk) =>
           Array.from(chunk).flatMap((page) =>
-            (page.result ?? []).map(
-              (project): ProjectAttributes => ({
-                projectId: project.id,
-                accountId,
-                name: project.name,
-                subdomain: project.subdomain ?? `${project.name}.pages.dev`,
-                domains: [...(project.domains ?? [])],
-                productionBranch: project.productionBranch,
-                createdOn: project.createdOn,
-              }),
-            ),
+            (page.result ?? []).map((project): ProjectAttributes => ({
+              projectId: project.id,
+              accountId,
+              name: project.name,
+              subdomain: project.subdomain ?? `${project.name}.pages.dev`,
+              domains: [...(project.domains ?? [])],
+              productionBranch: project.productionBranch,
+              createdOn: project.createdOn,
+            })),
           ),
         ),
       );

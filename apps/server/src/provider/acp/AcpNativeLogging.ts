@@ -9,6 +9,8 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
+const transientProtocolUpdates = new Set(["agent_message_chunk", "agent_thought_chunk"]);
+
 function structuralMethod(value: string): string {
   return value.length <= 128 && /^[A-Za-z][A-Za-z0-9._:/-]*$/.test(value) ? value : "unknown";
 }
@@ -64,12 +66,61 @@ function formatProtocolLogPayload(event: EffectAcpProtocol.AcpProtocolLogEvent) 
   };
 }
 
+function isTransientProtocolMessage(message: unknown): boolean {
+  if (typeof message !== "object" || message === null) return false;
+  const method = Reflect.get(message, "tag") ?? Reflect.get(message, "method");
+  if (method !== "session/update") return false;
+
+  const payload = Reflect.get(message, "payload") ?? Reflect.get(message, "params");
+  if (typeof payload !== "object" || payload === null) return false;
+  const update = Reflect.get(payload, "update");
+  if (typeof update !== "object" || update === null) return false;
+  const updateType = Reflect.get(update, "sessionUpdate");
+  return typeof updateType === "string" && transientProtocolUpdates.has(updateType);
+}
+
+function rawChunkContainsOnlyTransientMessages(payload: string): boolean {
+  const lines = payload.split("\n");
+  const remainder = lines.pop() ?? "";
+  if (remainder.trim().length > 0) return false;
+
+  const messages: Array<unknown> = [];
+  for (const line of lines) {
+    if (line.trim().length === 0) continue;
+    try {
+      messages.push(JSON.parse(line));
+    } catch {
+      return false;
+    }
+  }
+  return messages.length > 0 && messages.every(isTransientProtocolMessage);
+}
+
+function filterTransientProtocolLog(
+  event: EffectAcpProtocol.AcpProtocolLogEvent,
+): EffectAcpProtocol.AcpProtocolLogEvent | undefined {
+  if (event.direction !== "incoming") return event;
+
+  if (event.stage === "raw" && typeof event.payload === "string") {
+    return rawChunkContainsOnlyTransientMessages(event.payload) ? undefined : event;
+  }
+
+  if (event.stage !== "decoded") return event;
+  if (!Array.isArray(event.payload)) {
+    return isTransientProtocolMessage(event.payload) ? undefined : event;
+  }
+
+  const payload = event.payload.filter((message) => !isTransientProtocolMessage(message));
+  return payload.length === 0 ? undefined : { ...event, payload };
+}
+
 export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory")(function* () {
   const crypto = yield* Crypto.Crypto;
   return (input: {
     readonly nativeEventLogger: EventNdjsonLogger | undefined;
     readonly provider: ProviderDriverKind;
     readonly threadId: ThreadId;
+    readonly verboseProtocolLogging?: boolean;
   }): Pick<AcpSessionRuntime.AcpSessionRuntimeOptions, "requestLogger" | "protocolLogging"> => {
     const writeNativeAcpLog = (logInput: {
       readonly kind: "request" | "protocol";
@@ -111,16 +162,20 @@ export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory"
           kind: "request",
           payload: formatRequestLogPayload(event),
         }),
-      ...(input.nativeEventLogger
+      ...(input.nativeEventLogger && input.verboseProtocolLogging
         ? {
             protocolLogging: {
               logIncoming: true,
               logOutgoing: true,
-              logger: (event: EffectAcpProtocol.AcpProtocolLogEvent) =>
-                writeNativeAcpLog({
-                  kind: "protocol",
-                  payload: formatProtocolLogPayload(event),
-                }),
+              logger: (event: EffectAcpProtocol.AcpProtocolLogEvent) => {
+                const filtered = filterTransientProtocolLog(event);
+                return filtered
+                  ? writeNativeAcpLog({
+                      kind: "protocol",
+                      payload: formatProtocolLogPayload(filtered),
+                    })
+                  : Effect.void;
+              },
             } satisfies NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["protocolLogging"]>,
           }
         : {}),

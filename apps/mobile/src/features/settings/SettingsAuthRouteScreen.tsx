@@ -1,18 +1,28 @@
 import { useAuth } from "@clerk/expo";
-import { AuthView, UserProfileView } from "@clerk/expo/native";
+import { AuthView, type UserProfileCustomPage, UserProfileView } from "@clerk/expo/native";
 import { StackActions, useNavigation } from "@react-navigation/native";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useEffect } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { View } from "react-native";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { T3ConnectProfilePage } from "../cloud/T3ConnectProfilePage";
+
+// Custom rows in Clerk's native profile. Mirrors the web UserButton pages.
+const USER_PROFILE_CUSTOM_PAGES = [
+  {
+    path: "t3-connect",
+    label: "T3 Connect",
+    icon: "globe",
+    content: <T3ConnectProfilePage />,
+  },
+] satisfies UserProfileCustomPage[];
 
 export function SettingsAuthRouteScreen() {
   const navigation = useNavigation();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!hasCloudPublicConfig()) {
-      navigation.dispatch(StackActions.replace("Settings"));
+      navigation.dispatch(StackActions.replace("SettingsContent"));
     }
   }, [navigation]);
 
@@ -21,19 +31,35 @@ export function SettingsAuthRouteScreen() {
 
 function ConfiguredSettingsAuthRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const navigation = useNavigation();
+  const handleHostBack = useCallback(
+    () => navigation.dispatch(StackActions.popTo("SettingsContent")),
+    [navigation],
+  );
+  const hasBeenSignedIn = useRef(isSignedIn);
+  if (isSignedIn) {
+    hasBeenSignedIn.current = true;
+  }
+
+  useEffect(() => {
+    if (hasBeenSignedIn.current && isLoaded && isSignedIn === false) {
+      navigation.dispatch(StackActions.popTo("SettingsContent"));
+    }
+  }, [isLoaded, isSignedIn, navigation]);
 
   return (
-    <>
-      <NativeStackScreenOptions options={{ title: isSignedIn ? "Account" : "Sign in" }} />
-      <View collapsable={false} className="flex-1 overflow-hidden bg-sheet">
-        {isLoaded ? (
-          isSignedIn ? (
-            <UserProfileView isDismissible={false} />
-          ) : (
-            <AuthView isDismissible={false} />
-          )
-        ) : null}
-      </View>
-    </>
+    <View collapsable={false} className="flex-1 overflow-hidden bg-sheet">
+      {isLoaded ? (
+        hasBeenSignedIn.current ? (
+          <UserProfileView
+            customPages={USER_PROFILE_CUSTOM_PAGES}
+            isDismissible={false}
+            onHostBack={handleHostBack}
+          />
+        ) : (
+          <AuthView isDismissible={false} onHostBack={handleHostBack} />
+        )
+      ) : null}
+    </View>
   );
 }

@@ -31,6 +31,7 @@ const environmentInput = {
 const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
   metadata: Effect.die("unexpected metadata read"),
   name: Effect.succeed("T3 Code"),
+  systemLocale: Effect.succeed("en-US"),
   whenReady: Effect.void,
   quit: Effect.void,
   exit: () => Effect.void,
@@ -52,13 +53,16 @@ const electronAppLayer = Layer.succeed(ElectronApp.ElectronApp, {
 
 const electronDialogLayer = Layer.succeed(ElectronDialog.ElectronDialog, {
   pickFolder: () => Effect.succeed(Option.none()),
-  confirm: () => Effect.succeed(false),
+  pickFiles: () => Effect.succeed([]),
   showMessageBox: () => Effect.succeed({ response: 0, checkboxChecked: false }),
   showErrorBox: () => Effect.void,
 } satisfies ElectronDialog.ElectronDialog["Service"]);
 
 const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   getState: Effect.die("unexpected getState"),
+  isActionActive: Effect.succeed(false),
+  isInstallActive: Effect.succeed(false),
+  subscribe: Effect.die("unexpected subscribe"),
   emitState: Effect.void,
   disabledReason: Effect.succeed(Option.none()),
   configure: Effect.void,
@@ -66,6 +70,7 @@ const desktopUpdatesLayer = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   check: () => Effect.die("unexpected check"),
   download: Effect.die("unexpected download"),
   install: Effect.die("unexpected install"),
+  installPrepared: () => Effect.die("unexpected installPrepared"),
 } satisfies DesktopUpdates.DesktopUpdates["Service"]);
 
 const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
@@ -79,7 +84,11 @@ const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
+    prepareCaptureReveal: Effect.void,
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
+    dispatchSnapShotEvent: () => Effect.void,
+    zoomMain: (direction) =>
+      Deferred.succeed(selectedAction, `zoom-${direction}`).pipe(Effect.asVoid),
     syncAppearance: Effect.void,
   } satisfies DesktopWindow.DesktopWindow["Service"]);
 
@@ -93,6 +102,30 @@ const makeElectronMenuLayer = (
     showContextMenu: () => Effect.succeed(Option.none()),
   } satisfies ElectronMenu.ElectronMenu["Service"]);
 
+const configureMenu = (
+  selectedAction: Deferred.Deferred<string>,
+  applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
+) =>
+  Effect.gen(function* () {
+    const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+    yield* menu.configure;
+  }).pipe(
+    Effect.provide(
+      DesktopApplicationMenu.layer.pipe(
+        Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
+        Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
+        Layer.provideMerge(desktopUpdatesLayer),
+        Layer.provideMerge(electronDialogLayer),
+        Layer.provideMerge(electronAppLayer),
+        Layer.provideMerge(
+          DesktopEnvironment.layer(environmentInput).pipe(
+            Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
+          ),
+        ),
+      ),
+    ),
+  );
+
 describe("DesktopApplicationMenu", () => {
   it.effect("installs the native menu and routes Settings through DesktopWindow", () =>
     Effect.gen(function* () {
@@ -100,25 +133,7 @@ describe("DesktopApplicationMenu", () => {
       const applicationMenuTemplate =
         yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
 
-      yield* Effect.gen(function* () {
-        const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
-        yield* menu.configure;
-      }).pipe(
-        Effect.provide(
-          DesktopApplicationMenu.layer.pipe(
-            Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
-            Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
-            Layer.provideMerge(desktopUpdatesLayer),
-            Layer.provideMerge(electronDialogLayer),
-            Layer.provideMerge(electronAppLayer),
-            Layer.provideMerge(
-              DesktopEnvironment.layer(environmentInput).pipe(
-                Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
-              ),
-            ),
-          ),
-        ),
-      );
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
 
       const template = yield* Deferred.await(applicationMenuTemplate);
       const fileMenu = template.find((item) => item.label === "File");
@@ -135,6 +150,101 @@ describe("DesktopApplicationMenu", () => {
 
       settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "open-settings");
+    }),
+  );
+
+  it.effect("owns Paste as Text and routes it through the renderer", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const editMenu = template.find((item) => item.label === "Edit");
+      assert.isDefined(editMenu);
+      if (!Array.isArray(editMenu.submenu)) {
+        throw new Error("Expected Edit menu submenu to be an array.");
+      }
+      const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
+      assert.isDefined(pasteAsTextItem);
+      assert.equal(pasteAsTextItem.accelerator, "CmdOrCtrl+Shift+V");
+      if (typeof pasteAsTextItem.click !== "function") {
+        throw new Error("Expected Paste as Text menu item to have a click handler.");
+      }
+
+      pasteAsTextItem.click(
+        {} as Electron.MenuItem,
+        {} as Electron.BrowserWindow,
+        {} as KeyboardEvent,
+      );
+      assert.equal(yield* Deferred.await(selectedAction), "paste-as-text");
+    }),
+  );
+
+  // Chromium pastes as plain text for the accelerator on its own. Dispatching
+  // the action as well injects a second paste, which doubles the pasted text.
+  it.effect("leaves the accelerator to Chromium instead of injecting a paste", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const editMenu = template.find((item) => item.label === "Edit");
+      if (!Array.isArray(editMenu?.submenu)) {
+        throw new Error("Expected Edit menu submenu to be an array.");
+      }
+      const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
+      if (typeof pasteAsTextItem?.click !== "function") {
+        throw new Error("Expected Paste as Text menu item to have a click handler.");
+      }
+
+      pasteAsTextItem.click(
+        {} as Electron.MenuItem,
+        {} as Electron.BrowserWindow,
+        {
+          triggeredByAccelerator: true,
+        } as unknown as KeyboardEvent,
+      );
+      assert.isFalse(yield* Deferred.isDone(selectedAction));
+    }),
+  );
+
+  // Zoom must route through DesktopWindow.zoomMain instead of the Electron
+  // zoom roles: the roles zoom whichever webContents has focus, which breaks
+  // app zoom while an embedded preview WebContentsView holds focus.
+  it.effect("routes View menu zoom to the main window instead of zoom roles", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const viewMenu = template.find((item) => item.label === "View");
+      assert.isDefined(viewMenu);
+      if (!Array.isArray(viewMenu.submenu)) {
+        throw new Error("Expected View menu submenu to be an array.");
+      }
+
+      assert.isUndefined(
+        viewMenu.submenu.find((item) => item.role?.toLowerCase().includes("zoom")),
+      );
+
+      const zoomIn = viewMenu.submenu.find((item) => item.label === "Zoom In");
+      assert.isDefined(zoomIn);
+      assert.equal(zoomIn.accelerator, "CmdOrCtrl+=");
+      if (typeof zoomIn.click !== "function") {
+        throw new Error("Expected Zoom In menu item to have a click handler.");
+      }
+
+      zoomIn.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      assert.equal(yield* Deferred.await(selectedAction), "zoom-in");
     }),
   );
 });

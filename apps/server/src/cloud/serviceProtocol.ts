@@ -1,14 +1,25 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 
-export const SERVICE_LAUNCHER_PROTOCOL = 1 as const;
+// Protocol 3 requires the standalone executable layout. Bump when runtimePaths
+// or the installed runtime tree changes incompatibly; launchers survive self-updates.
+export const SERVICE_LAUNCHER_PROTOCOL = 3 as const;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
-export const SERVICE_LAUNCHER_FILE = "service-launcher.mjs";
 export const SERVICE_STATE_FILE = "service-state.json";
+/** Written by the launcher just before an explicit stop kills its child, so
+    the child can tell "the service is going away" from "the launcher is about
+    to start my replacement" while a pending update is recorded. */
+export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
+/** Written by `t3 update` when the unit was repointed at a new version but the
+    running service was deliberately left on the old one. The launcher removes
+    it when it starts (whoever restarted the service), so while it exists the
+    service is known to be behind its unit and status reports it that way. */
+export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
 
 export interface PendingServiceUpdate {
   readonly id: string;
   readonly fromVersion: string;
   readonly targetVersion: string;
+  readonly dbPath: string;
   readonly status: "pending";
 }
 
@@ -31,6 +42,7 @@ export type ServiceLauncherChildMessage =
   | {
       readonly type: "request-update";
       readonly targetVersion: string;
+      readonly dbPath: string;
     }
   | {
       readonly type: "prepared";
@@ -64,7 +76,7 @@ export const isExactServiceVersion = (version: string): boolean =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-export function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undefined {
+function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undefined {
   if (!isRecord(value)) return undefined;
   const { id, fromVersion, targetVersion, status } = value;
   if (
@@ -78,7 +90,9 @@ export function decodeServiceUpdate(value: unknown): ServiceUpdateRecord | undef
     return undefined;
   }
   if (status === "pending") {
-    return { id, fromVersion, targetVersion, status };
+    return typeof value.dbPath === "string" && value.dbPath.trim() !== ""
+      ? { id, fromVersion, targetVersion, dbPath: value.dbPath, status }
+      : undefined;
   }
   if (
     (status === "committed" || status === "rolled-back" || status === "failed") &&
@@ -165,6 +179,30 @@ export function parseServiceState(value: string): ServiceState | undefined {
   }
 }
 
+/** Detects an in-flight update across launcher protocol versions before replacing its state. */
+export function serviceStateHasPendingUpdate(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) && isRecord(parsed.update) && parsed.update.status === "pending";
+  } catch {
+    return false;
+  }
+}
+
+/** Reads the active version across launcher protocol revisions for downgrade protection. */
+export function serviceStateActiveVersion(value: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return isRecord(parsed) &&
+      typeof parsed.activeVersion === "string" &&
+      isExactServiceVersion(parsed.activeVersion)
+      ? parsed.activeVersion
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function decodeServiceLauncherContext(value: string): ServiceLauncherContext | undefined {
   let parsed: unknown;
   try {
@@ -202,8 +240,12 @@ export function decodeServiceLauncherChildMessage(
   value: unknown,
 ): ServiceLauncherChildMessage | undefined {
   if (!isRecord(value)) return undefined;
-  if (value.type === "request-update" && typeof value.targetVersion === "string") {
-    return { type: value.type, targetVersion: value.targetVersion };
+  if (
+    value.type === "request-update" &&
+    typeof value.targetVersion === "string" &&
+    typeof value.dbPath === "string"
+  ) {
+    return { type: value.type, targetVersion: value.targetVersion, dbPath: value.dbPath };
   }
   return value.type === "prepared" && typeof value.updateId === "string"
     ? { type: value.type, updateId: value.updateId }

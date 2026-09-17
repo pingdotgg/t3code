@@ -1,6 +1,10 @@
 import { unwrapRpcHandlers } from "@/Local/RpcSerialization.ts";
 import type { RpcProxyApi } from "@/Local/RpcServer.ts";
 import {
+  encodeSessionEnvironment,
+  SESSION_ENV_PARAM,
+} from "@/Local/RpcServerEnvironment.ts";
+import {
   layerServer,
   RpcSpawner,
   type RpcSpawnPayload,
@@ -28,22 +32,17 @@ const FIXTURE_TS_URL = new URL(
   "./fixtures/rpc-server-entry.ts",
   import.meta.url,
 ).toString();
+const FIXTURE_B_TS_URL = new URL(
+  "./fixtures/rpc-server-entry-b.ts",
+  import.meta.url,
+).toString();
 const CRASH_FIXTURE_TS_URL = new URL(
   "./fixtures/rpc-server-crash.ts",
   import.meta.url,
 ).toString();
 
-const samplePayload = (
-  serverEntryUrl: string,
-  stackName = "test",
-): RpcSpawnPayload => ({
+const samplePayload = (serverEntryUrl: string): RpcSpawnPayload => ({
   serverEntryUrl,
-  alchemyContext: {
-    dotAlchemy: "/tmp/.alchemy",
-    dev: true,
-    adopt: false,
-  },
-  stack: { name: stackName, stage: "dev" },
 });
 
 // The spawner inherits the runtime that vitest itself is running under
@@ -76,7 +75,7 @@ describe(`Local.RpcSpawner (runtime=${typeof globalThis.Bun !== "undefined" ? "b
   );
 
   it.live(
-    "caches the child by payload: a second POST returns the same url",
+    "caches the child by entry url: a second POST returns the same url",
     () =>
       Effect.gen(function* () {
         const url = yield* RpcSpawner.useSync((spawner) => spawner.url);
@@ -93,12 +92,15 @@ describe(`Local.RpcSpawner (runtime=${typeof globalThis.Bun !== "undefined" ? "b
   );
 
   it.live(
-    "distinct payloads spawn distinct children with distinct urls",
+    "distinct entry urls spawn distinct children with distinct urls",
     () =>
       Effect.gen(function* () {
+        // Children are keyed by serverEntryUrl ONLY — stacks share one child
+        // (each RPC session carries its own stack environment), so the second
+        // fixture must be a genuinely different entry module.
         const url = yield* RpcSpawner.useSync((spawner) => spawner.url);
-        const a = yield* post(url, samplePayload(FIXTURE_TS_URL, "stack-a"));
-        const b = yield* post(url, samplePayload(FIXTURE_TS_URL, "stack-b"));
+        const a = yield* post(url, samplePayload(FIXTURE_TS_URL));
+        const b = yield* post(url, samplePayload(FIXTURE_B_TS_URL));
         expect(a).not.toBe(b);
       }).pipe(Effect.provide(services)),
     { timeout: 60_000 },
@@ -198,12 +200,26 @@ const echoWebSocket = (
 ): Effect.Effect<string, Error> =>
   Effect.gen(function* () {
     yield* openWebSocket(new URL("/parent", rpcUrl));
+    // Sessions carry their stack environment (real clients — the
+    // RpcProviderProxy — always send one; a session without it is an error).
+    const sessionUrl = new URL(rpcUrl);
+    sessionUrl.searchParams.set(
+      SESSION_ENV_PARAM,
+      encodeSessionEnvironment({
+        alchemyContext: {
+          dotAlchemy: "/tmp/.alchemy",
+          dev: true,
+          adopt: false,
+        },
+        stack: { name: "test", stage: "dev" },
+      }),
+    );
     return yield* Effect.promise(async () => {
       // Cast through `unknown`: comparing capnweb's deeply-recursive Stub
       // type against RpcStub<RpcProxyApi> exceeds the compiler's
       // instantiation depth (TS2589/TS2321).
       const stub = newWebSocketRpcSession(
-        rpcUrl,
+        sessionUrl.toString(),
       ) as unknown as RpcStub<RpcProxyApi>;
       const provider = await stub.getProvider("Test.Echo");
       const handlers = unwrapRpcHandlers(provider as any) as {

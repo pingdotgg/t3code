@@ -20,6 +20,7 @@ import { useEnvironments } from "../../state/environments";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspaceEnvironment, type WorkspaceEnvironment } from "../../state/workspaceModel";
+import { relayManagedEnvironmentIds } from "./environmentSections";
 
 export interface RelayEnvironmentView {
   readonly environment: RelayClientEnvironmentRecord;
@@ -39,6 +40,10 @@ export function useConnectionController() {
   const registerEnvironment = useAtomCommand(environmentCatalog.register, "environment register");
   const removeEnvironmentMutation = useAtomCommand(environmentCatalog.remove, "environment remove");
   const retryEnvironmentMutation = useAtomCommand(environmentCatalog.retryNow, "environment retry");
+  const setEnvironmentEnabledMutation = useAtomCommand(
+    environmentCatalog.setEnabled,
+    "environment toggle",
+  );
   const refreshRelayEnvironments = useAtomCommand(
     relayEnvironmentDiscovery.refresh,
     "relay environment refresh",
@@ -49,7 +54,7 @@ export function useConnectionController() {
     [environments],
   );
   const registeredIds = useMemo(
-    () => new Set(connectedEnvironments.map((environment) => environment.environmentId)),
+    () => relayManagedEnvironmentIds(connectedEnvironments),
     [connectedEnvironments],
   );
   const relayEnvironments = useMemo<ReadonlyArray<RelayEnvironmentView>>(
@@ -92,6 +97,11 @@ export function useConnectionController() {
     (environmentId: EnvironmentId) => retryEnvironmentMutation(environmentId),
     [retryEnvironmentMutation],
   );
+  const setEnvironmentEnabled = useCallback(
+    (environmentId: EnvironmentId, enabled: boolean) =>
+      setEnvironmentEnabledMutation({ environmentId, enabled }),
+    [setEnvironmentEnabledMutation],
+  );
   const updateEnvironment = useCallback(
     (
       environmentId: EnvironmentId,
@@ -119,6 +129,7 @@ export function useConnectionController() {
     connectRelayEnvironment,
     removeEnvironment,
     retryEnvironment,
+    setEnvironmentEnabled,
     updateEnvironment,
     refreshRelayEnvironments,
   };

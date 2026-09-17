@@ -76,10 +76,15 @@ export const makePublicRepositoryHttpBinding = <
       return Effect.fn(
         `AWS.ECRPublic.${options.capability}(${repository.LogicalId})`,
       )(function* (request?: Omit<I, "repositoryName">) {
-        return yield* op({
-          ...request,
-          repositoryName: yield* RepositoryName,
-        } as unknown as I);
+        // The region must also be pinned at the call site: the yield-time
+        // snapshot is only a fallback — the calling fiber's ambient Region
+        // (the host Function's own region) wins over it.
+        return yield* pinEcrPublic(
+          op({
+            ...request,
+            repositoryName: yield* RepositoryName,
+          } as unknown as I),
+        );
       });
     });
   });
@@ -129,7 +134,8 @@ export const makePublicRegistryHttpBinding = <
       return Effect.fn(`AWS.ECRPublic.${options.capability}`)(function* (
         request?: I,
       ) {
-        return yield* op((request ?? {}) as I);
+        // Call-site region pin — see makePublicRepositoryHttpBinding above.
+        return yield* pinEcrPublic(op((request ?? {}) as I));
       });
     });
   });

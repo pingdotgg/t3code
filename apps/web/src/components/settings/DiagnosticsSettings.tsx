@@ -1,3 +1,4 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AlertTriangleIcon,
   ChevronDownIcon,
@@ -5,14 +6,12 @@ import {
   CopyIcon,
   FolderOpenIcon,
   InfoIcon,
-  RefreshCwIcon,
 } from "lucide-react";
-import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   ServerProcessDiagnosticsEntry,
   ServerProcessResourceHistorySummary,
@@ -22,24 +21,23 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
+import { ensureLocalApi } from "../../localApi";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
-import {
-  primaryServerAvailableEditorsAtom,
-  primaryServerObservabilityAtom,
-  serverEnvironment,
-} from "../../state/server";
+import { serverEnvironment } from "../../state/server";
 import { shellEnvironment } from "../../state/shell";
-import { usePrimaryEnvironment } from "../../state/environments";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useSettingsScope } from "./SettingsScopeContext";
 
 const NUMBER_FORMAT = new Intl.NumberFormat();
 
@@ -103,7 +101,7 @@ function StatBlock({
               render={
                 <button
                   type="button"
-                  className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
+                  className="cursor-pointer inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 hover:text-foreground"
                   aria-label={`${label} details`}
                 >
                   <InfoIcon className="size-3" />
@@ -158,43 +156,6 @@ function StatsGrid({ children }: { children: ReactNode }) {
 
 function EmptyRows({ label }: { label: string }) {
   return <div className="px-4 py-4 text-xs text-muted-foreground sm:px-5">{label}</div>;
-}
-
-function ExpandableText({
-  text,
-  className,
-  collapsedClassName = "line-clamp-3",
-  expandLabel = "Show full error",
-}: {
-  text: string;
-  className?: string;
-  collapsedClassName?: string;
-  expandLabel?: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const canExpand = text.length > 180 || text.includes("\n");
-
-  return (
-    <div className={cn("min-w-0", className)}>
-      <div
-        className={cn(
-          "whitespace-pre-wrap break-words",
-          !expanded && canExpand ? collapsedClassName : null,
-        )}
-      >
-        {text}
-      </div>
-      {canExpand ? (
-        <button
-          type="button"
-          className="mt-1 text-[11px] font-medium text-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? "Show less" : expandLabel}
-        </button>
-      ) : null}
-    </div>
-  );
 }
 
 function DiagnosticsTable({
@@ -272,14 +233,14 @@ function TraceIdCell({ traceId }: { traceId: string }) {
       <Tooltip>
         <TooltipTrigger
           render={
-            <button
-              type="button"
-              className="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
               aria-label={copied ? "Copied trace ID" : "Copy trace ID"}
               onClick={() => copyToClipboard(traceId)}
             >
               <CopyIcon className="size-3" />
-            </button>
+            </Button>
           }
         />
         <TooltipPopup side="top">{copied ? "Copied" : "Copy full trace ID"}</TooltipPopup>
@@ -321,14 +282,14 @@ function ProcessNameCell({
       style={{ paddingLeft: `${Math.min(process.depth, 6) * 10}px` }}
     >
       {hasChildren ? (
-        <button
-          type="button"
-          className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
           aria-label={isExpanded ? `Collapse ${name}` : `Expand ${name}`}
           onClick={() => onToggle(process.pid)}
         >
           <ChevronIcon className="size-3.5" />
-        </button>
+        </Button>
       ) : (
         <span className="size-5 shrink-0" aria-hidden="true" />
       )}
@@ -365,7 +326,7 @@ function ProcessSignalActions({
             <button
               type="button"
               disabled={isSignaling}
-              className="text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
+              className="cursor-pointer text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
               onClick={() => onSignal(process.pid, "SIGINT")}
             >
               INT
@@ -380,7 +341,7 @@ function ProcessSignalActions({
             <button
               type="button"
               disabled={isSignaling}
-              className="text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+              className="cursor-pointer text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
               onClick={() => onSignal(process.pid, "SIGKILL")}
             >
               KILL
@@ -634,21 +595,23 @@ function ResourceHistoryWindowSelector({
   onSelect: (windowMs: number) => void;
 }) {
   return (
-    <div className="flex items-center rounded-md border border-border/60 p-0.5">
+    <ToggleGroup
+      aria-label="Process history period"
+      variant="segmented"
+      value={[String(selectedWindowMs)]}
+      onValueChange={(next) => {
+        const selected = RESOURCE_HISTORY_WINDOWS.find(
+          (option) => String(option.windowMs) === next[0],
+        );
+        if (selected) onSelect(selected.windowMs);
+      }}
+    >
       {RESOURCE_HISTORY_WINDOWS.map((option) => (
-        <button
-          key={option.windowMs}
-          type="button"
-          className={cn(
-            "h-6 rounded-sm px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground",
-            selectedWindowMs === option.windowMs && "bg-muted text-foreground",
-          )}
-          onClick={() => onSelect(option.windowMs)}
-        >
+        <Toggle key={option.windowMs} value={String(option.windowMs)}>
           {option.label}
-        </button>
+        </Toggle>
       ))}
-    </div>
+    </ToggleGroup>
   );
 }
 
@@ -793,13 +756,12 @@ function DiagnosticsRefreshButton({
         render={
           <Button
             size="icon-xs"
-            variant="ghost"
-            className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+            variant="ghost-muted"
             disabled={isPending}
             onClick={onClick}
             aria-label={label}
           >
-            <RefreshCwIcon className={cn("size-3", isPending && "animate-spin")} />
+            <RefreshIcon refreshing={isPending} />
           </Button>
         }
       />
@@ -809,10 +771,12 @@ function DiagnosticsRefreshButton({
 }
 
 export function DiagnosticsSettingsPanel() {
-  const observability = useAtomValue(primaryServerObservabilityAtom);
-  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
-  const primaryEnvironment = usePrimaryEnvironment();
-  const environmentId = primaryEnvironment?.environmentId ?? null;
+  const { environment } = useSettingsScope();
+  // The boundary only mounts this page when the selection resolves to one
+  // connected environment, so the representative is the one to inspect.
+  const environmentId = environment?.environmentId ?? null;
+  const observability = environment?.serverConfig?.observability;
+  const availableEditors = environment?.serverConfig?.availableEditors;
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
@@ -857,6 +821,18 @@ export function DiagnosticsSettingsPanel() {
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
   const [signalingPid, setSignalingPid] = useState<number | null>(null);
+  const signalingPidRef = useRef<number | null>(null);
+  const environmentIdRef = useRef(environmentId);
+  const processDataRef = useRef(processData);
+  useEffect(() => {
+    processDataRef.current = processData;
+  }, [processData]);
+  useEffect(() => {
+    environmentIdRef.current = environmentId;
+    return () => {
+      environmentIdRef.current = null;
+    };
+  }, [environmentId]);
 
   const openLogsDirectory = useCallback(() => {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
@@ -895,28 +871,55 @@ export function DiagnosticsSettingsPanel() {
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
   const signalProcess = useCallback(
-    (pid: number, signal: ServerProcessSignal) => {
+    async (pid: number, signal: ServerProcessSignal) => {
+      const targetEnvironmentId = environmentIdRef.current;
+      const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
+      if (targetEnvironmentId === null || process === undefined) return;
+      if (signalingPidRef.current !== null) return;
+      signalingPidRef.current = pid;
+      setSignalingPid(pid);
+      const clearSignaling = () => {
+        signalingPidRef.current = null;
+        setSignalingPid(null);
+      };
+      if (signal === "SIGKILL") {
+        let confirmed = false;
+        try {
+          confirmed = await ensureLocalApi().dialogs.confirm(
+            `Send SIGKILL to process ${pid}? This cannot be handled by the process.`,
+            { variant: "destructive" },
+          );
+        } catch (error) {
+          clearSignaling();
+          toastManager.add({
+            type: "error",
+            title: "Could not confirm signal",
+            description: error instanceof Error ? error.message : `Failed to send ${signal}.`,
+          });
+          return;
+        }
+        if (!confirmed) {
+          clearSignaling();
+          return;
+        }
+      }
+      if (environmentIdRef.current !== targetEnvironmentId) {
+        clearSignaling();
+        return;
+      }
       if (
-        signal === "SIGKILL" &&
-        !window.confirm(`Send SIGKILL to process ${pid}? This cannot be handled by the process.`)
+        processDataRef.current?.processes.find((entry) => entry.pid === pid)?.startTimeMs !==
+        process.startTimeMs
       ) {
-        return;
-      }
-      if (environmentId === null) {
-        return;
-      }
-      const process = processData?.processes.find((entry) => entry.pid === pid);
-      if (process === undefined) {
+        clearSignaling();
         return;
       }
 
-      setSignalingPid(pid);
-      void (async () => {
+      try {
         const result = await signalServerProcess({
-          environmentId,
+          environmentId: targetEnvironmentId,
           input: { pid, startTimeMs: process.startTimeMs, signal },
         });
-        setSignalingPid(null);
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
@@ -949,9 +952,11 @@ export function DiagnosticsSettingsPanel() {
           return;
         }
         refreshProcesses();
-      })();
+      } finally {
+        clearSignaling();
+      }
     },
-    [environmentId, processData?.processes, refreshProcesses, signalServerProcess],
+    [refreshProcesses, signalServerProcess],
   );
 
   const processDiagnosticsError = processData ? Option.getOrNull(processData.error) : null;
@@ -962,8 +967,8 @@ export function DiagnosticsSettingsPanel() {
     : false;
 
   return (
-    <SettingsPageContainer className="max-w-6xl gap-10">
-      <ResourceTelemetryDiagnostics />
+    <SettingsPageContainer width="expanded" className="gap-10">
+      <ResourceTelemetryDiagnostics environmentId={environmentId} />
 
       <SettingsSection
         title="Live Processes"
@@ -1100,13 +1105,12 @@ export function DiagnosticsSettingsPanel() {
                 render={
                   <Button
                     size="icon-xs"
-                    variant="ghost"
-                    className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                    variant="ghost-muted"
                     disabled={!observability?.logsDirectoryPath || isOpeningLogsDirectory}
                     onClick={openLogsDirectory}
                     aria-label="Open logs folder"
                   >
-                    <FolderOpenIcon className="size-3" />
+                    <FolderOpenIcon />
                   </Button>
                 }
               />

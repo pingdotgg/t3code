@@ -6,7 +6,7 @@ const MANAGED_ENDPOINT_HASH_LENGTH = 16;
 const MANAGED_ENDPOINT_TUNNEL_PREFIX = "t3coderelay-managedendpoint";
 export const MANAGED_ENDPOINT_ZONE_OWNER_STAGE = "prod";
 
-export class RelayPublicDomainLabelTooLongError extends Schema.TaggedErrorClass<RelayPublicDomainLabelTooLongError>()(
+export class RelayPublicDomainLabelTooLongError extends Schema.TaggedError<RelayPublicDomainLabelTooLongError>()(
   "RelayPublicDomainLabelTooLongError",
   {
     stage: Schema.String,
@@ -56,7 +56,7 @@ function appendDnsSafeSuffix(prefix: string, suffix: string): string {
  * Alchemy's physical-name helper sanitizes resource names after adding the
  * stage. Keep custom domains and runtime-created resources aligned with it.
  */
-export function relayStageSlug(stage: string): string {
+function relayStageSlug(stage: string): string {
   return stage
     .toLowerCase()
     .replaceAll(/[^a-z0-9-]/g, "-")

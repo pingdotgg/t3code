@@ -72,16 +72,15 @@ export interface LogGroup extends Resource<
 /**
  * A CloudWatch Logs log group — the container for log streams and the unit
  * that retention, encryption, metric filters, and subscriptions attach to.
- * @resource
- * @section Creating Log Groups
- * @example ECS Task Log Group
+ * ### Creating Log Groups
+ * **Example:** ECS Task Log Group
  * ```typescript
  * const logs = yield* LogGroup("TaskLogs", {
  *   retention: "7 days",
  * });
  * ```
  *
- * @example Encrypted Log Group with Deletion Protection
+ * **Example:** Encrypted Log Group with Deletion Protection
  * ```typescript
  * const key = yield* AWS.KMS.Key("LogsKey");
  * const logs = yield* LogGroup("AuditLogs", {
@@ -91,11 +90,11 @@ export interface LogGroup extends Resource<
  * });
  * ```
  *
- * @section Writing Custom Log Events
+ * ### Writing Custom Log Events
  * Declare a `LogStream` and use the `PutLogEvents` binding inside a Lambda
  * function (or the batching `LogEventSink` for high-volume streams).
  *
- * @example Custom Audit Trail from a Lambda Function
+ * **Example:** Custom Audit Trail from a Lambda Function
  * ```typescript
  * // init
  * const logGroup = yield* AWS.Logs.LogGroup("AuditLogs", {
@@ -114,8 +113,8 @@ export interface LogGroup extends Resource<
  * });
  * ```
  *
- * @section Consuming Log Events
- * @example React to Error Logs
+ * ### Consuming Log Events
+ * **Example:** React to Error Logs
  * ```typescript
  * // Subscribe a Lambda handler to matching events (creates the
  * // subscription filter + invoke permission automatically).
@@ -129,8 +128,8 @@ export interface LogGroup extends Resource<
  * );
  * ```
  *
- * @section Metrics
- * @example Count Errors with a Metric Filter
+ * ### Metrics
+ * **Example:** Count Errors with a Metric Filter
  * ```typescript
  * yield* AWS.Logs.MetricFilter("ErrorCount", {
  *   logGroupName: logGroup.logGroupName,
@@ -142,6 +141,8 @@ export interface LogGroup extends Resource<
  *   }],
  * });
  * ```
+ *
+ * @resource
  */
 export const LogGroup = Resource<LogGroup>("AWS.Logs.LogGroup");
 
@@ -206,14 +207,13 @@ export const LogGroupProvider = () =>
                   const tags = yield* logs
                     .listTagsForResource({ resourceArn: tagArn })
                     .pipe(
-                      Effect.map(
-                        (r): Record<string, string> =>
-                          Object.fromEntries(
-                            Object.entries(r.tags ?? {}).filter(
-                              (entry): entry is [string, string] =>
-                                typeof entry[1] === "string",
-                            ),
+                      Effect.map((r): Record<string, string> =>
+                        Object.fromEntries(
+                          Object.entries(r.tags ?? {}).filter(
+                            (entry): entry is [string, string] =>
+                              typeof entry[1] === "string",
                           ),
+                        ),
                       ),
                       Effect.catchTag("ResourceNotFoundException", () =>
                         Effect.succeed({} as Record<string, string>),
@@ -362,14 +362,13 @@ export const LogGroupProvider = () =>
           const observedTags = yield* logs
             .listTagsForResource({ resourceArn: arn })
             .pipe(
-              Effect.map(
-                (r): Record<string, string> =>
-                  Object.fromEntries(
-                    Object.entries(r.tags ?? {}).filter(
-                      (entry): entry is [string, string] =>
-                        typeof entry[1] === "string",
-                    ),
+              Effect.map((r): Record<string, string> =>
+                Object.fromEntries(
+                  Object.entries(r.tags ?? {}).filter(
+                    (entry): entry is [string, string] =>
+                      typeof entry[1] === "string",
                   ),
+                ),
               ),
               Effect.catch(() => Effect.succeed({} as Record<string, string>)),
             );

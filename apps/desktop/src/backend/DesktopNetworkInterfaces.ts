@@ -20,7 +20,7 @@ export type NetworkInterfaces = Readonly<
   Record<string, readonly DesktopNetworkInterfaceInfo[] | undefined>
 >;
 
-export class DesktopNetworkInterfacesReadError extends Schema.TaggedErrorClass<DesktopNetworkInterfacesReadError>()(
+export class DesktopNetworkInterfacesReadError extends Schema.TaggedError<DesktopNetworkInterfacesReadError>()(
   "DesktopNetworkInterfacesReadError",
   {
     platform: Schema.String,
@@ -39,6 +39,7 @@ export class DesktopNetworkInterfaces extends Context.Service<
   }
 >()("@t3tools/desktop/backend/DesktopNetworkInterfaces") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   return DesktopNetworkInterfaces.of({

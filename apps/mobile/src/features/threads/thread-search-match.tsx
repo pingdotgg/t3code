@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 
 import { AppText as Text } from "../../components/AppText";
@@ -55,7 +56,11 @@ export function ThreadSearchMatchExcerpt(props: {
     <Text
       className={cn(
         props.compact ? "text-sm" : "text-xs",
-        props.selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+        props.selected
+          ? Platform.OS === "android"
+            ? "text-thread-selected-foreground-muted"
+            : "text-user-bubble-foreground-muted"
+          : "text-foreground-muted",
       )}
       numberOfLines={1}
     >
@@ -63,10 +68,12 @@ export function ThreadSearchMatchExcerpt(props: {
         className={cn(
           props.compact ? "text-sm font-t3-medium" : "text-xs font-t3-medium",
           props.selected
-            ? "text-user-bubble-foreground"
+            ? Platform.OS === "android"
+              ? "text-thread-selected-foreground"
+              : "text-user-bubble-foreground"
             : isUser
-              ? "text-blue-500 dark:text-blue-400"
-              : "text-emerald-600 dark:text-emerald-400",
+              ? "text-foreground-secondary"
+              : "text-adaptive-emerald-600-400",
         )}
       >
         {isUser ? "You:" : "Agent:"}{" "}
@@ -77,7 +84,9 @@ export function ThreadSearchMatchExcerpt(props: {
             props.compact ? "text-sm" : "text-xs",
             part.highlighted && "font-t3-bold",
             props.selected
-              ? "text-user-bubble-foreground"
+              ? Platform.OS === "android"
+                ? "text-thread-selected-foreground"
+                : "text-user-bubble-foreground"
               : part.highlighted
                 ? "text-foreground"
                 : "text-foreground-muted",

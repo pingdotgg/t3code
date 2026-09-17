@@ -13,9 +13,8 @@ export interface PutJobSuccessResultRequest
  * CodePipeline job operations do not support resource-level permissions, so
  * the grant is on `*`. The binding takes no resource — the job id arrives
  * with the invocation event.
- * @binding
- * @section Job Workers
- * @example Complete an Invoke-Action Job
+ * ### Job Workers
+ * **Example:** Complete an Invoke-Action Job
  * ```typescript
  * const putJobSuccess = yield* AWS.CodePipeline.PutJobSuccessResult();
  *
@@ -24,6 +23,8 @@ export interface PutJobSuccessResultRequest
  *   outputVariables: { RELEASE: version },
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutJobSuccessResult extends Binding.Service<
   PutJobSuccessResult,

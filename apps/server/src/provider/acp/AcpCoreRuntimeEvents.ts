@@ -4,15 +4,20 @@ import {
   type CanonicalRequestType,
   type EventId,
   type ProviderApprovalDecision,
+  type ProviderApprovalOption,
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type RuntimeRequestId,
   type ThreadId,
-  type ToolLifecycleItemType,
   type TurnId,
 } from "@t3tools/contracts";
 
-import type { AcpPermissionRequest, AcpPlanUpdate, AcpToolCallState } from "./AcpRuntimeModel.ts";
+import {
+  type AcpPermissionRequest,
+  type AcpPlanUpdate,
+  type AcpToolCallState,
+  canonicalItemTypeFromAcpToolKind,
+} from "./AcpRuntimeModel.ts";
 
 type AcpAdapterRawSource = Extract<
   RuntimeEventRawSource,
@@ -26,7 +31,7 @@ interface AcpEventStamp {
 
 type AcpCanonicalRequestType = Extract<
   CanonicalRequestType,
-  "exec_command_approval" | "file_read_approval" | "file_change_approval" | "unknown"
+  "exec_command_approval" | "file_read_approval" | "file_change_approval" | "dynamic_tool_call"
 >;
 
 function canonicalRequestTypeFromAcpKind(kind: string | "unknown"): AcpCanonicalRequestType {
@@ -39,22 +44,6 @@ function canonicalRequestTypeFromAcpKind(kind: string | "unknown"): AcpCanonical
     case "delete":
     case "move":
       return "file_change_approval";
-    default:
-      return "unknown";
-  }
-}
-
-function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecycleItemType {
-  switch (kind) {
-    case "execute":
-      return "command_execution";
-    case "edit":
-    case "delete":
-    case "move":
-      return "file_change";
-    case "search":
-    case "fetch":
-      return "web_search";
     default:
       return "dynamic_tool_call";
   }
@@ -83,6 +72,7 @@ export function makeAcpRequestOpenedEvent(input: {
   readonly turnId: TurnId | undefined;
   readonly requestId: RuntimeRequestId;
   readonly permissionRequest: AcpPermissionRequest;
+  readonly approvalOptions?: ReadonlyArray<ProviderApprovalOption>;
   readonly detail: string;
   readonly args: unknown;
   readonly source: AcpAdapterRawSource;
@@ -100,6 +90,7 @@ export function makeAcpRequestOpenedEvent(input: {
       requestType: canonicalRequestTypeFromAcpKind(input.permissionRequest.kind),
       detail: input.detail,
       args: input.args,
+      ...(input.approvalOptions !== undefined ? { options: input.approvalOptions } : {}),
     },
     raw: {
       source: input.source,
@@ -219,6 +210,7 @@ export function makeAcpContentDeltaEvent(input: {
   readonly threadId: ThreadId;
   readonly turnId: TurnId | undefined;
   readonly itemId?: string;
+  readonly streamKind?: "assistant_text" | "reasoning_text";
   readonly text: string;
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
@@ -230,7 +222,7 @@ export function makeAcpContentDeltaEvent(input: {
     turnId: input.turnId,
     ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
     payload: {
-      streamKind: "assistant_text",
+      streamKind: input.streamKind ?? "assistant_text",
       delta: input.text,
     },
     raw: {

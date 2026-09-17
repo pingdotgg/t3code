@@ -152,6 +152,108 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates the locale from the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            LANG: "de_DE.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "de_DE.UTF-8");
+    }),
+  );
+
+  it.effect("preserves an inherited locale over the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        LANG: "en_US.UTF-8",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            LANG: "de_DE.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "en_US.UTF-8");
+    }),
+  );
+
+  it.effect("does not mix login-shell locale categories into an inherited locale", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        LANG: "en_US.UTF-8",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            LC_ALL: "de_DE.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "en_US.UTF-8");
+      assert.equal(env.LC_ALL, undefined);
+    }),
+  );
+
+  it.effect("falls back to a UTF-8 LC_CTYPE when no locale is available on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" }),
+      });
+
+      assert.equal(env.LANG, undefined);
+      assert.equal(env.LC_ALL, undefined);
+      assert.equal(env.LC_CTYPE, "en_US.UTF-8");
+    }),
+  );
+
+  it.effect("does not apply the locale fallback on linux", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () => envOutput({ PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin" }),
+      });
+
+      assert.equal(env.LANG, undefined);
+    }),
+  );
+
   it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on linux", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
@@ -218,7 +320,7 @@ describe("DesktopShellEnvironment", () => {
                 FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
                 FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
               })
-            : envOutput({ PATH: "C:\\Custom\\Bin;C:\\Windows\\System32" });
+            : envOutput({ PATH: 'C:\\Custom\\Bin;C:";C:\\Windows\\System32' });
         },
       });
 
@@ -231,9 +333,11 @@ describe("DesktopShellEnvironment", () => {
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+          "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
           "C:\\Custom\\Bin",
+          "C:",
         ].join(";"),
       );
       assert.equal(env.FNM_DIR, "C:\\Users\\testuser\\AppData\\Roaming\\fnm");

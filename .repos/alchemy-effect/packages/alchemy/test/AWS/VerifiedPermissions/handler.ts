@@ -15,7 +15,7 @@ export class VerifiedPermissionsTestFunction extends AWS.Lambda.Function<AWS.Lam
 export default VerifiedPermissionsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // isAuthorized fans out an AVP API call; the 3s default is too tight
     timeout: Duration.seconds(30),
   },

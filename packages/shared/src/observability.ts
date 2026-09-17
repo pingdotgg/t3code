@@ -3,10 +3,18 @@ import * as Effect from "effect/Effect";
 import type * as Exit from "effect/Exit";
 import * as ExitRuntime from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Tracer from "effect/Tracer";
-import { OtlpResource, OtlpTracer } from "effect/unstable/observability";
+import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
 
 import { RotatingFileSink } from "./logging.ts";
+
+export const OtlpProtocol = Schema.Literals(["http/json", "http/protobuf"]);
+export type OtlpProtocol = typeof OtlpProtocol.Type;
+export const otlpSerializationLayer = (protocol: OtlpProtocol) =>
+  protocol === "http/protobuf" ? OtlpSerialization.layerProtobuf : OtlpSerialization.layerJson;
 
 const FLUSH_BUFFER_THRESHOLD = 256;
 const textEncoder = new TextEncoder();
@@ -248,7 +256,62 @@ function formatTraceExit(exit: Exit.Exit<unknown, unknown>): EffectTraceRecord["
   };
 }
 
-export function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
+const TRACE_ATTRIBUTE_MAX_LENGTH = 500;
+const TRACE_ATTRIBUTE_TRUNCATED_LENGTH = 200;
+const TRACE_ATTRIBUTE_TRUNCATION_SUFFIX = "…[truncated]";
+const ALWAYS_TRUNCATED_TRACE_ATTRIBUTES: ReadonlySet<string> = new Set(["db.query.text"]);
+
+// Clamps strings nested inside already-normalized attribute values (arrays and
+// plain objects from normalizeJsonValue, e.g. an Error's `stack`). Returns the
+// input reference when nothing was clamped.
+function truncateNestedValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length <= TRACE_ATTRIBUTE_MAX_LENGTH
+      ? value
+      : `${value.slice(0, TRACE_ATTRIBUTE_MAX_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+  }
+  if (Array.isArray(value)) {
+    const truncated = value.map(truncateNestedValue);
+    return truncated.some((entry, index) => entry !== value[index]) ? truncated : value;
+  }
+  if (isPlainObject(value)) {
+    let truncated: Record<string, unknown> | undefined;
+    for (const [key, entry] of Object.entries(value)) {
+      const next = truncateNestedValue(entry);
+      if (next === entry) continue;
+      truncated ??= { ...value };
+      truncated[key] = next;
+    }
+    return truncated ?? value;
+  }
+  return value;
+}
+
+/**
+ * Clamps oversized attribute values on the serialized trace record so the file
+ * sink stays small, including strings nested inside arrays and objects (e.g.
+ * error stacks). Returns a new record when anything was clamped; never
+ * mutates the input (the live span's attributes are shared with other tracers).
+ */
+export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
+  let truncated: Record<string, unknown> | undefined;
+  for (const [key, value] of Object.entries(attributes)) {
+    if (typeof value === "string" && ALWAYS_TRUNCATED_TRACE_ATTRIBUTES.has(key)) {
+      if (value.length <= TRACE_ATTRIBUTE_TRUNCATED_LENGTH) continue;
+      truncated ??= { ...attributes };
+      truncated[key] =
+        `${value.slice(0, TRACE_ATTRIBUTE_TRUNCATED_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
+      continue;
+    }
+    const next = truncateNestedValue(value);
+    if (next === value) continue;
+    truncated ??= { ...attributes };
+    truncated[key] = next;
+  }
+  return truncated ?? attributes;
+}
+
+function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
   const status = span.status as Extract<Tracer.SpanStatus, { _tag: "Ended" }>;
   const parentSpanId = Option.getOrUndefined(span.parent)?.spanId;
 
@@ -263,16 +326,18 @@ export function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
     startTimeUnixNano: String(status.startTime),
     endTimeUnixNano: String(status.endTime),
     durationMs: Number(status.endTime - status.startTime) / 1_000_000,
-    attributes: compactTraceAttributes(Object.fromEntries(span.attributes)),
+    attributes: truncateTraceAttributes(
+      compactTraceAttributes(Object.fromEntries(span.attributes)),
+    ),
     events: span.events.map(([name, startTime, attributes]) => ({
       name,
       timeUnixNano: String(startTime),
-      attributes: compactTraceAttributes(attributes),
+      attributes: truncateTraceAttributes(compactTraceAttributes(attributes)),
     })),
     links: span.links.map((link) => ({
       traceId: link.span.traceId,
       spanId: link.span.spanId,
-      attributes: compactTraceAttributes(link.attributes),
+      attributes: truncateTraceAttributes(compactTraceAttributes(link.attributes)),
     })),
     exit: formatTraceExit(status.exit),
   };
@@ -626,3 +691,51 @@ function parseBigInt(input: string): bigint {
     return 0n;
   }
 }
+
+/**
+ * Parses the `OTEL_EXPORTER_OTLP_HEADERS` wire format used by
+ * `T3CODE_OTLP_HEADERS`: W3C Baggage `key=value` pairs joined by commas, with
+ * percent-encoded values. Each pair splits at its first `=` so an encoded or
+ * literal `=` inside a value survives, and whitespace around the separators is
+ * ignored.
+ */
+export const OtlpHeadersFromString = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.Record(Schema.String, Schema.String),
+    SchemaTransformation.transformOrFail({
+      decode: (input) => {
+        const headers: Record<string, string> = {};
+        for (const pair of input.split(",")) {
+          if (pair.trim() === "") {
+            continue;
+          }
+          const separator = pair.indexOf("=");
+          const key = separator === -1 ? "" : pair.slice(0, separator).trim();
+          if (key === "") {
+            return Effect.fail(
+              new SchemaIssue.InvalidValue({
+                message: `Expected key=value but received ${JSON.stringify(pair.trim())}.`,
+              }),
+            );
+          }
+          try {
+            headers[key] = decodeURIComponent(pair.slice(separator + 1).trim());
+          } catch {
+            return Effect.fail(
+              new SchemaIssue.InvalidValue({
+                message: `Header ${JSON.stringify(key)} has a malformed percent-encoded value.`,
+              }),
+            );
+          }
+        }
+        return Effect.succeed(headers);
+      },
+      encode: (headers) =>
+        Effect.succeed(
+          Object.entries(headers)
+            .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+            .join(","),
+        ),
+    }),
+  ),
+);

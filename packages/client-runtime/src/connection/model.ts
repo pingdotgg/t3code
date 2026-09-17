@@ -75,7 +75,7 @@ export const ConnectionBlockedReason = Schema.Literals([
 ]);
 export type ConnectionBlockedReason = typeof ConnectionBlockedReason.Type;
 
-export class ConnectionTransientError extends Schema.TaggedErrorClass<ConnectionTransientError>()(
+export class ConnectionTransientError extends Schema.TaggedError<ConnectionTransientError>()(
   "ConnectionTransientError",
   {
     reason: ConnectionTransientReason,
@@ -88,7 +88,7 @@ export class ConnectionTransientError extends Schema.TaggedErrorClass<Connection
   }
 }
 
-export class ConnectionBlockedError extends Schema.TaggedErrorClass<ConnectionBlockedError>()(
+export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlockedError>()(
   "ConnectionBlockedError",
   {
     reason: ConnectionBlockedReason,
@@ -103,6 +103,8 @@ export class ConnectionBlockedError extends Schema.TaggedErrorClass<ConnectionBl
 
 export type ConnectionAttemptError = ConnectionTransientError | ConnectionBlockedError;
 
+export const DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
+
 export type PreparedHttpAuthorization =
   | {
       readonly _tag: "Bearer";
@@ -111,6 +113,7 @@ export type PreparedHttpAuthorization =
   | {
       readonly _tag: "Dpop";
       readonly accessToken: string;
+      readonly expiresAtEpochMs: number;
     };
 
 export interface PreparedConnection {

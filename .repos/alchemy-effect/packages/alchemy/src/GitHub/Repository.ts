@@ -225,9 +225,8 @@ export interface Repository extends Resource<
  * Authentication is resolved via the `GitHubCredentials` service supplied by
  * `GitHub.providers()` (env, stored PAT, `gh` CLI, or OAuth). The token needs
  * `repo` scope (and `delete_repo` when deletion is opted in via `destroy()`).
- * @resource
- * @section Creating a Repository
- * @example Basic Repository
+ * ### Creating a Repository
+ * **Example:** Basic Repository
  * ```typescript
  * const repo = yield* GitHub.Repository("api", {
  *   owner: "my-org",
@@ -237,7 +236,7 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @example Private Repository with Settings
+ * **Example:** Private Repository with Settings
  * ```typescript
  * const repo = yield* GitHub.Repository("internal-tools", {
  *   owner: "my-org",
@@ -249,7 +248,7 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @example Initialize from Templates
+ * **Example:** Initialize from Templates
  * The `autoInit`, `gitignoreTemplate`, and `licenseTemplate` props seed the
  * first commit. They are only honored at create time — changing them on a
  * later deploy has no effect on an existing repository.
@@ -263,8 +262,8 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @section Topics and Merge Configuration
- * @example Repository with Topics and Merge Policy
+ * ### Topics and Merge Configuration
+ * **Example:** Repository with Topics and Merge Policy
  * ```typescript
  * const repo = yield* GitHub.Repository("sdk", {
  *   owner: "my-org",
@@ -277,8 +276,8 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @section Renaming a Repository
- * @example Rename in Place
+ * ### Renaming a Repository
+ * **Example:** Rename in Place
  * Keep the same logical ID and change `name` to rename the live repository
  * instead of replacing it — the repository's history, issues, and pull
  * requests are preserved. Only changing `owner` triggers a replacement.
@@ -296,8 +295,8 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @section Archiving a Repository
- * @example Make a Repository Read-Only
+ * ### Archiving a Repository
+ * **Example:** Make a Repository Read-Only
  * Archiving sets the repository to read-only. Set `archived` back to `false`
  * on a later deploy to un-archive it.
  * ```typescript
@@ -308,11 +307,11 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @section Wiring with Other Resources
+ * ### Wiring with Other Resources
  * The repository's outputs can drive other GitHub resources so the whole
  * repository configuration lives in one program.
  *
- * @example Seed a Variable into the Repository
+ * **Example:** Seed a Variable into the Repository
  * ```typescript
  * const repo = yield* GitHub.Repository("api", {
  *   owner: "my-org",
@@ -328,7 +327,7 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @example Store a Secret in the Repository
+ * **Example:** Store a Secret in the Repository
  * ```typescript
  * import * as Redacted from "effect/Redacted";
  *
@@ -346,8 +345,8 @@ export interface Repository extends Resource<
  * });
  * ```
  *
- * @section Deleting a Repository
- * @example Allow Repository Deletion
+ * ### Deleting a Repository
+ * **Example:** Allow Repository Deletion
  * ```typescript
  * import { destroy } from "alchemy/RemovalPolicy";
  *
@@ -356,6 +355,8 @@ export interface Repository extends Resource<
  *   name: "ephemeral-preview",
  * }).pipe(destroy());
  * ```
+ *
+ * @resource
  */
 export const Repository = Resource<Repository>("GitHub.Repository", {
   defaultRemovalPolicy: "retain",

@@ -19,9 +19,8 @@ export interface SetInstanceHealthRequest
  * health checks: a watchdog Lambda (or the instance itself) flags an instance
  * `Unhealthy` and the group replaces it. Provide the implementation with
  * `Effect.provide(AWS.AutoScaling.SetInstanceHealthHttp)`.
- * @binding
- * @section Custom Health Checks
- * @example Flag a failing instance for replacement
+ * ### Custom Health Checks
+ * **Example:** Flag a failing instance for replacement
  * ```typescript
  * // init — bind the operation to the group
  * const setInstanceHealth = yield* AWS.AutoScaling.SetInstanceHealth(group);
@@ -32,6 +31,8 @@ export interface SetInstanceHealthRequest
  *   HealthStatus: "Unhealthy",
  * });
  * ```
+ *
+ * @binding
  */
 export interface SetInstanceHealth extends Binding.Service<
   SetInstanceHealth,

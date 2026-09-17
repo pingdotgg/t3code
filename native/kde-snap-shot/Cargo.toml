@@ -1,0 +1,19 @@
+[package]
+name = "t3-kde-snap-shot"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+async-channel = "2"
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zbus = { version = "5.19", features = ["blocking-api"] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = true
