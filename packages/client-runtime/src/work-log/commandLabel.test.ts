@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { commandProgramName } from "./commandLabel.ts";
+import { commandDisplayText, commandProgramName } from "./commandLabel.ts";
 
 describe("commandProgramName", () => {
   it.each([
@@ -475,5 +475,21 @@ describe("commandProgramName", () => {
 
   it("bounds nested command wrappers", () => {
     expect(commandProgramName(`${"command ".repeat(9)}git status`)).toBeNull();
+  });
+});
+
+describe("commandDisplayText", () => {
+  it.each([
+    ["/bin/zsh -lc 'git diff --stat'", "git diff --stat"],
+    ['bash -c "printf \\"%s\\" hello; git status"', 'printf "%s" hello; git status'],
+    ["/usr/bin/fish --command 'rg TODO src | head -20'", "rg TODO src | head -20"],
+    ["zsh -lc 'pwd\nls'", "pwd\nls"],
+    ["git status", "git status"],
+    ["zsh script.sh", "zsh script.sh"],
+    ["zsh -lc 'echo $1' name value", "zsh -lc 'echo $1' name value"],
+    ["zsh -lc 'pwd'; git status", "zsh -lc 'pwd'; git status"],
+    ["zsh -lc 'unterminated", "zsh -lc 'unterminated"],
+  ])("shows the script without hiding meaningful outer commands: %s", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
   });
 });
