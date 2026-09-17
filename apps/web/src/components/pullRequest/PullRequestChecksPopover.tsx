@@ -151,13 +151,7 @@ export function PullRequestChecksPopover({
   const presentation = pullRequestChecksStatePresentation(checksState);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
   const summary = checks === undefined ? null : summarizePullRequestChecks(checks);
-  const count = checks?.filter((check) =>
-    checksState === "failing"
-      ? check.status === "failure" || check.status === "cancelled"
-      : checksState === "pending"
-        ? check.status === "pending" || check.status === "action-required"
-        : check.status === "success",
-  ).length;
+  const runningCount = checks?.filter((check) => check.status === "pending").length ?? 0;
   return (
     <Popover>
       {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
@@ -186,11 +180,11 @@ export function PullRequestChecksPopover({
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
         {variant === "count" ? (
           <>
-            {checks === undefined ? null : (
+            {checks !== undefined && runningCount > 0 ? (
               <span className="tabular-nums">
-                {count}/{checks.length}
+                {runningCount}/{checks.length}
               </span>
-            )}
+            ) : null}
             <ChevronDownIcon aria-hidden className="size-3" />
           </>
         ) : null}
