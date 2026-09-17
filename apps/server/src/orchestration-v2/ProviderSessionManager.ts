@@ -131,7 +131,7 @@ export class ProviderSessionReleaseError extends Schema.TaggedError<ProviderSess
   }
 }
 
-const isProviderSessionReleaseError = Schema.is(ProviderSessionReleaseError);
+export const isProviderSessionReleaseError = Schema.is(ProviderSessionReleaseError);
 
 export class ProviderSessionActivityError extends Schema.TaggedError<ProviderSessionActivityError>()(
   "ProviderSessionActivityError",
