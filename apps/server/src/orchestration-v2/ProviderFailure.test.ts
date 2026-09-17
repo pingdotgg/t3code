@@ -7,6 +7,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -64,6 +65,17 @@ it("does not split a surrogate pair at the truncation boundary", () => {
   assert.equal(failure.message.length, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH - 1);
   assert.equal(failure.message.at(-1), "…");
   assert.notMatch(failure.message.slice(0, -1), /[\uD800-\uDBFF]$/u);
+});
+
+it("does not expose error or Effect cause messages", () => {
+  const cause = new Error("private command output", { cause: new Error("private nested output") });
+  for (const value of [cause, Cause.fail(cause), "private string", { message: "private object" }]) {
+    assert.equal(makeProviderFailure({ cause: value }).message, "Provider turn failed.");
+    assert.equal(
+      makeProviderFailure({ cause: value, message: "Provider connection closed." }).message,
+      "Provider connection closed.",
+    );
+  }
 });
 
 it("does not serialize arbitrary provider causes", () => {
