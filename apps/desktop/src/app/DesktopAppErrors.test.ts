@@ -22,6 +22,19 @@ describe("DesktopApp errors", () => {
     );
   });
 
+  it("reports a taken default desktop port without offering 3774", () => {
+    const error = new DesktopBackendPortUnavailableError({
+      startPort: 3_773,
+      maxPort: 3_773,
+      hosts: ["127.0.0.1", "0.0.0.0", "::"],
+    });
+
+    assert.equal(
+      error.message,
+      "Desktop backend port 3773 is already in use on 127.0.0.1, 0.0.0.0, ::. Another T3 Code is already running for this home.",
+    );
+  });
+
   it("reports the required development port", () => {
     const error = new DesktopDevelopmentBackendPortRequiredError();
 

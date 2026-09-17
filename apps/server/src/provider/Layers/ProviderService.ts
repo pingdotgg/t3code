@@ -937,6 +937,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       PATH: shimDir,
       PATH_SEPARATOR: hostPlatform === "win32" ? ";" : ":",
       AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
+      ELECTRON_RUN_AS_NODE: "1",
     } satisfies Record<string, string>;
   });
 

@@ -34,7 +34,6 @@ import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
-const MAX_TCP_PORT = 65_535;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
 
 const makeDesktopRunId = Crypto.Crypto.pipe(
@@ -51,6 +50,9 @@ export class DesktopBackendPortUnavailableError extends Schema.TaggedError<Deskt
   },
 ) {
   override get message(): string {
+    if (this.startPort === this.maxPort) {
+      return `Desktop backend port ${this.startPort} is already in use on ${this.hosts.join(", ")}. Another T3 Code is already running for this home.`;
+    }
     return `No desktop backend port is available on hosts ${this.hosts.join(", ")} between ${this.startPort} and ${this.maxPort}.`;
   }
 }
@@ -80,30 +82,24 @@ const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(functio
     } as const;
   }
 
+  // Packaged desktop shares ~/.t3. Scanning to 3774 starts a second backend
+  // that reconciles provider sessions and kills OpenCode/Cursor threads.
   const net = yield* NetService.NetService;
-  for (let port = DEFAULT_DESKTOP_BACKEND_PORT; port <= MAX_TCP_PORT; port += 1) {
-    let availableOnEveryHost = true;
-
-    for (const host of DESKTOP_BACKEND_PORT_PROBE_HOSTS) {
-      if (!(yield* net.canListenOnHost(port, host))) {
-        availableOnEveryHost = false;
-        break;
-      }
-    }
-
-    if (availableOnEveryHost) {
-      return {
-        port,
-        selectedByScan: true,
-      } as const;
+  const port = DEFAULT_DESKTOP_BACKEND_PORT;
+  for (const host of DESKTOP_BACKEND_PORT_PROBE_HOSTS) {
+    if (!(yield* net.canListenOnHost(port, host))) {
+      return yield* new DesktopBackendPortUnavailableError({
+        startPort: port,
+        maxPort: port,
+        hosts: DESKTOP_BACKEND_PORT_PROBE_HOSTS,
+      });
     }
   }
 
-  return yield* new DesktopBackendPortUnavailableError({
-    startPort: DEFAULT_DESKTOP_BACKEND_PORT,
-    maxPort: MAX_TCP_PORT,
-    hosts: DESKTOP_BACKEND_PORT_PROBE_HOSTS,
-  });
+  return {
+    port,
+    selectedByScan: false,
+  } as const;
 });
 
 const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupError")(function* (
