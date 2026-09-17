@@ -436,14 +436,26 @@ describe("review thread decoding", () => {
           requested: [{ login: "julius", name: "Julius", avatarUrl: "https://avatars/j.png" }],
           // An app that has reviewed is no longer an outstanding request, which is why asking
           // only for requests reported nobody on a pull request a bot had reviewed.
-          reviewed: [{ login: "macroscopeapp", avatarUrl: "https://avatars/in/900172.png" }],
+          reviewed: [
+            {
+              __typename: "Bot",
+              login: "macroscopeapp",
+              avatarUrl: "https://avatars/in/900172.png",
+            },
+          ],
         }),
       ),
     );
 
+    expect(result.botLogins).toEqual(new Set(["macroscopeapp"]));
     expect(result.reviewers).toEqual([
       { login: "julius", name: "Julius", avatarUrl: "https://avatars/j.png" },
-      { login: "macroscopeapp", name: null, avatarUrl: "https://avatars/in/900172.png" },
+      {
+        login: "macroscopeapp",
+        name: null,
+        avatarUrl: "https://avatars/in/900172.png",
+        isBot: true,
+      },
     ]);
   });
 
