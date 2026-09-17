@@ -15,6 +15,10 @@ export interface AutoSettleDaysFieldProps {
 export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const commit = () => {
+    if (props.disabled) {
+      setDraft(null);
+      return;
+    }
     const text = (draft ?? "").trim();
     setDraft(null);
     // Validate the whole input; decimals and trailing text must not become whole days.

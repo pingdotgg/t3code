@@ -11,6 +11,7 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
   const navigation = useNavigation();
   const {
     availableTargets,
+    selectedTargets,
     selectedIds,
     selectAll,
     toggleEnvironment,
@@ -47,7 +48,9 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
                 {
                   type: "submenu",
                   label:
-                    selectedIds === null ? "All environments" : `${selectedIds.size} environments`,
+                    selectedIds === null
+                      ? "All environments"
+                      : `${selectedTargets.length} environments`,
                   items: [
                     {
                       type: "action",

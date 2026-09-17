@@ -9,7 +9,7 @@ import {
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
-import { useState, type ComponentProps } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import { Alert, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -113,6 +113,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     projectSelected ? (selectedProject?.members.map((member) => member.project) ?? []) : null,
   );
   const [pendingWrites, setPendingWrites] = useState(0);
+  const writeInFlight = useRef(false);
   const [pendingTargets, setPendingTargets] = useState<
     readonly ScopedMobileSettingsTarget[] | null
   >(null);
@@ -129,9 +130,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     reportFailure: true,
   });
   const write = (patch: ServerSettingsPatch) => {
-    if (!hasConnectedSelection) return;
+    if (writeInFlight.current || !hasConnectedSelection) return;
     const writes = planMobileScopedSettingsPatch(targets, projectSelected, patch);
     if (writes.length === 0) return;
+    writeInFlight.current = true;
     setPendingTargets(targets);
     setPendingWrites((count) => count + 1);
     void Promise.allSettled(
@@ -139,13 +141,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
         updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
       ),
     ).finally(() => {
+      writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
     });
   };
   const clearProjectOverrides = () => {
+    if (writeInFlight.current) return;
     const writes = planMobileScopedSettingsClear(targets, PAGE_PROJECT_KEYS[props.page]);
     if (writes.length === 0) return;
+    writeInFlight.current = true;
     setPendingTargets(targets);
     setPendingWrites((count) => count + 1);
     void Promise.allSettled(
@@ -153,6 +158,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
         updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
       ),
     ).finally(() => {
+      writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
     });

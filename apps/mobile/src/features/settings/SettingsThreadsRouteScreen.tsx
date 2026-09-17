@@ -2,7 +2,7 @@ import { AutoSettleDaysField } from "./components/AutoSettleDaysField";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -63,6 +63,7 @@ function AutoSettleSettingsRows() {
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const projectSelected = selectedProjectKey !== null;
   const [pendingWrites, setPendingWrites] = useState(0);
+  const writeInFlight = useRef(false);
   const [pendingTargets, setPendingTargets] = useState<
     readonly ScopedMobileSettingsTarget[] | null
   >(null);
@@ -86,9 +87,10 @@ function AutoSettleSettingsRows() {
   }
 
   const writeToAll = (patch: Partial<AutoSettleSettings>) => {
-    if (pendingWrites > 0) return;
+    if (writeInFlight.current) return;
     const writes = planMobileScopedSettingsPatch(syncTargets, projectSelected, patch);
     if (writes.length === 0) return;
+    writeInFlight.current = true;
     setPendingTargets(syncTargets);
     setPendingWrites((count) => count + 1);
     void Promise.allSettled(
@@ -96,6 +98,7 @@ function AutoSettleSettingsRows() {
         updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
       ),
     ).finally(() => {
+      writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
     });
@@ -128,11 +131,13 @@ function AutoSettleSettingsRows() {
         target.sources.sidebarAutoSettleAfterDays === "project",
     );
   const clearProjectOverrides = () => {
+    if (writeInFlight.current) return;
     const writes = planMobileScopedSettingsClear(syncTargets, [
       "sidebarAutoSettleOnMerge",
       "sidebarAutoSettleAfterDays",
     ]);
     if (writes.length === 0) return;
+    writeInFlight.current = true;
     setPendingTargets(syncTargets);
     setPendingWrites((count) => count + 1);
     void Promise.allSettled(
@@ -140,6 +145,7 @@ function AutoSettleSettingsRows() {
         updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
       ),
     ).finally(() => {
+      writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
     });
