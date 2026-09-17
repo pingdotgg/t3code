@@ -2158,11 +2158,10 @@ export function GeneralSettingsPanel() {
     if (value === null) return;
     const sidebarAutoSettleAfterDays =
       value === "off" ? null : (autoSettleAfterDays ?? AUTO_SETTLE_DEFAULT_DAYS);
-    if (value === "off") {
-      updateSettings({ sidebarAutoSettleAfterDays });
-      return;
-    }
-    updateSettings({ sidebarAutoSettleAfterDays, sidebarAutoSettleScope: value });
+    updateSettings({
+      sidebarAutoSettleAfterDays,
+      sidebarAutoSettleScope: value === "off" ? "all" : value,
+    });
   }
 
   const supportsRestartContinuation =

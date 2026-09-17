@@ -93,9 +93,10 @@ prevent automatic settlement. An old closed or merged pull request does not
 settle work you resumed after it closed.
 
 For inactivity settlement, choose **All threads**, **Threads without a PR**,
-or **Off** in **Settings → General**. Threads without a PR excludes manual,
-agent-created, stack, and automatically detected branch links. Merge and close
-settlement still follows the PR rules.
+or **Off** in **Settings → General**. Threads without a PR excludes threads with
+PRs linked manually (including older links), created through the app, linked by
+an agent, associated through a stack, or detected from the branch. Dismissed
+stack PRs do not count. Merge and close settlement still follows the PR rules.
 
 On mobile, these rules are in **Settings → Thread behavior**.
 These rules continue to run when your apps are closed. On web and desktop, choose an environment at the top to change only

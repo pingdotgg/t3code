@@ -209,7 +209,7 @@ function AutoSettleSettingsRows() {
           writeToAll({
             sidebarAutoSettleAfterDays:
               value === "off" ? null : (afterDays ?? AUTO_SETTLE_DEFAULT_DAYS),
-            ...(value !== "off" ? { sidebarAutoSettleScope: value } : {}),
+            sidebarAutoSettleScope: value === "off" ? "all" : value,
           });
         }}
       >
