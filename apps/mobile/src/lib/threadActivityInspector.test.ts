@@ -14,7 +14,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadFeed, type ThreadFeedActivity } from "./threadActivity";
+import type { ThreadFeedActivity } from "./threadActivity";
 import { buildThreadActivityInspector } from "./threadActivityInspector";
 
 const threadId = ThreadId.make("thread-1");
@@ -43,7 +43,7 @@ function itemBase(id: string) {
   };
 }
 
-function activityFor(item: OrchestrationV2TurnItem): ThreadFeedActivity {
+function activityFor(item: OrchestrationV2TurnItem): Pick<ThreadFeedActivity, "projectedItem"> {
   const row: OrchestrationV2ProjectedTurnItem = {
     position: 0,
     visibility: "inherited",
@@ -51,11 +51,7 @@ function activityFor(item: OrchestrationV2TurnItem): ThreadFeedActivity {
     sourceItemId: item.id,
     item,
   };
-  const group = buildThreadFeed([row])[0];
-  if (group?.type !== "activity-group" || !group.activities[0]) {
-    throw new Error("Expected an activity group");
-  }
-  return group.activities[0];
+  return { projectedItem: row };
 }
 
 describe("buildThreadActivityInspector", () => {
