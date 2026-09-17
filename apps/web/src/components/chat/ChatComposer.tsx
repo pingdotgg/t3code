@@ -3932,6 +3932,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const onComposerCommandKey = (
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
+    isTaskItem = false,
   ) => {
     if (key === "Tab" && event.shiftKey) {
       if (!planModeUiEnabled) return false;
@@ -3975,8 +3976,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitComposer(undefined, submissionIntent);
       return true;
     }
-    // List continuation and indentation run as store replacements so both
-    // composer modes behave (and serialize) identically.
+    // Native task splitting preserves marks and chips on both sides of the caret.
+    if (key === "Enter" && isTaskItem) return false;
     if (!event.isComposing && (key === "Enter" || (key === "Tab" && !event.shiftKey))) {
       const selection = composerEditorRef.current?.readSelectionRange();
       const snapshot = readComposerSnapshot();

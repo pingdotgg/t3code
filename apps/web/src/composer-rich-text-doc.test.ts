@@ -241,6 +241,58 @@ describe("composer rich text document model", () => {
     expect(serializeEditorDoc(rebuilt).value).toBe(serialized);
   });
 
+  it.each([
+    { parts: [{ text: "hello ", marks: ["bold"] }], expected: "**hello** " },
+    { parts: [{ text: "  ", marks: ["bold"] }], expected: "  " },
+    { parts: [{ text: " left ", marks: ["bold", "italic"] }], expected: " ***left*** " },
+    {
+      parts: [
+        { text: "one ", marks: ["bold"] },
+        { text: " two ", marks: ["bold", "italic"] },
+        { text: " three", marks: ["bold"] },
+      ],
+      expected: "**one  *two*  three**",
+    },
+    {
+      parts: [
+        { text: "hello ", marks: ["bold"] },
+        { text: "world ", marks: ["bold", "italic"] },
+      ],
+      expected: "**hello *world*** ",
+    },
+    { parts: [{ text: " hello ", marks: ["code"] }], expected: "` hello `" },
+  ])("keeps boundary whitespace outside emphasis in $expected", ({ parts, expected }) => {
+    const doc = schema.node("doc", null, [
+      schema.node(
+        "paragraph",
+        null,
+        parts.map(({ text, marks }) =>
+          schema.text(
+            text,
+            marks.map((name) => schema.mark(name)),
+          ),
+        ),
+      ),
+    ]);
+    const map = serializeEditorDoc(doc);
+    expect(map.value).toBe(expected);
+    const rebuilt = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(map.value, (name) => ({ label: name, description: null })),
+    );
+    expect(rebuilt.textContent).toBe(doc.textContent);
+    expect(serializeEditorDoc(rebuilt).value).toBe(map.value);
+    for (let flat = 0; flat <= map.docLength; flat += 1) {
+      expect(pmToFlat(map, flatToPm(map, flat))).toBe(flat);
+      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      if (flat < map.docLength && !/\s/.test(doc.textContent[flat]!)) {
+        expect(rebuilt.resolve(flat + 1).nodeAfter!.marks.map((mark) => mark.type.name)).toEqual(
+          doc.resolve(flat + 1).nodeAfter!.marks.map((mark) => mark.type.name),
+        );
+      }
+    }
+  });
+
   it("keeps chip sources canonical through the document", () => {
     const map = roundTrip("explain @README.md with **care**\nsecond line *here*");
     expect(map.value).toBe("explain @README.md with **care**\nsecond line *here*");

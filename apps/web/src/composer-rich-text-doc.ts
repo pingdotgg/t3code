@@ -342,7 +342,48 @@ function appendInlineRuns(
   acc: RichAccumulator,
 ): void {
   const children: ProseMirrorNode[] = [];
-  container.forEach((child) => children.push(child));
+  container.forEach((child) => {
+    if (!child.isText) {
+      children.push(child);
+      return;
+    }
+    // Separate boundary whitespace so delimiters can move past it without
+    // changing the document offsets or marks on the visible text.
+    const text = child.text!;
+    const start = text.length - text.trimStart().length;
+    const end = Math.max(start, text.trimEnd().length);
+    let offset = 0;
+    for (const boundary of [start, end, text.length]) {
+      if (boundary > offset) children.push(child.cut(offset, boundary));
+      offset = boundary;
+    }
+  });
+  // Emphasis cannot open or close next to whitespace. Retain a whitespace
+  // mark only when its range has visible content on both sides.
+  for (const mark of MARK_NESTING_ORDER) {
+    if (mark === "code") continue;
+    for (const direction of [1, -1]) {
+      let hasContent = false;
+      for (
+        let index = direction === 1 ? 0 : children.length - 1;
+        index >= 0 && index < children.length;
+        index += direction
+      ) {
+        const child = children[index]!;
+        if (
+          child.type.name === "hardBreak" ||
+          !child.marks.some((item) => item.type.name === mark)
+        ) {
+          hasContent = false;
+        } else if (child.isText && /^\s+$/.test(child.text!)) {
+          if (!hasContent)
+            children[index] = child.mark(child.marks.filter((item) => item.type.name !== mark));
+        } else {
+          hasContent = true;
+        }
+      }
+    }
+  }
   // Longer shared marks surround shorter ones. This keeps both nested
   // formatting and formatting across chips inside a single delimiter pair.
   const markEnds = new Map<RichTextMark, number>();

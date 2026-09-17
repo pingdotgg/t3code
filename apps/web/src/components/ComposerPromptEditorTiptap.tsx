@@ -138,6 +138,7 @@ export interface ComposerPromptEditorProps {
   onCommandKeyDown?: (
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
+    isTaskItem?: boolean,
   ) => boolean;
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp?: (key: string) => void;
@@ -204,7 +205,7 @@ const ComposerMentionExtension = Node.create({
     return [{ tag: "span[data-composer-mention]" }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ["span", { "data-composer-mention": "", ...HTMLAttributes }, 0];
+    return ["span", { "data-composer-mention": "", ...HTMLAttributes }];
   },
   addNodeView() {
     return ReactNodeViewRenderer(ComposerMentionNodeView);
@@ -263,7 +264,7 @@ const ComposerSkillExtension = Node.create({
     return [{ tag: "span[data-composer-skill]" }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ["span", { "data-composer-skill": "", ...HTMLAttributes }, 0];
+    return ["span", { "data-composer-skill": "", ...HTMLAttributes }];
   },
   addNodeView() {
     return ReactNodeViewRenderer(ComposerSkillNodeView);
@@ -328,7 +329,7 @@ const ComposerCitationExtension = Node.create({
     return [{ tag: "span[data-composer-citation]" }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ["span", { "data-composer-citation": "", ...HTMLAttributes }, 0];
+    return ["span", { "data-composer-citation": "", ...HTMLAttributes }];
   },
   addNodeView() {
     return ReactNodeViewRenderer(ComposerCitationNodeView);
@@ -429,7 +430,7 @@ const ComposerContextReferenceExtension = Node.create({
     return [{ tag: "span[data-composer-context-reference]" }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ["span", { "data-composer-context-reference": "", ...HTMLAttributes }, 0];
+    return ["span", { "data-composer-context-reference": "", ...HTMLAttributes }];
   },
   addNodeView() {
     return ReactNodeViewRenderer(ComposerContextReferenceNodeView);
@@ -869,15 +870,25 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           }
           const handler = onCommandKeyDownRef.current;
           if (event.key === "Enter") {
-            const handled = handler?.("Enter", event) ?? false;
+            const instance = editorHolder.current;
+            const isTaskItem = richText && (instance?.isActive("taskItem") ?? false);
+            const handled = handler?.("Enter", event, isTaskItem) ?? false;
             if (handled) {
               event.preventDefault();
               event.stopPropagation();
               return true;
             }
-            // Split the paragraph so a single newline visibly advances the
-            // caret. The parent handles list continuation before this point.
             event.preventDefault();
+            if (
+              isTaskItem &&
+              instance &&
+              (instance.commands.splitListItem("taskItem", { checked: false }) ||
+                (view.state.selection.$from.parent.content.size === 0 &&
+                  instance.commands.liftListItem("taskItem")))
+            ) {
+              return true;
+            }
+            // Split the paragraph so a single newline visibly advances the caret.
             return splitBlockKeepMarks(view.state, (tr) => {
               // The split is programmatic, so the browser won't follow the
               // caret into view on its own.
@@ -1180,7 +1191,15 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       const clipboardData = event.clipboardData;
       const { from, to } = editor.state.selection;
       if (from === to) return;
-      const text = serializeEditorDoc(editor.state.doc.cut(from, to)).value;
+      const { doc, schema } = editor.state;
+      const slice = doc.slice(from, to);
+      const first = slice.content.firstChild;
+      const content = first?.isInline
+        ? schema.nodes.paragraph!.create(null, slice.content)
+        : first?.type.name === "taskItem"
+          ? schema.nodes.taskList!.create(null, slice.content)
+          : slice.content;
+      const text = serializeEditorDoc(doc.type.create(null, content)).value;
       const contextIds = Array.from(new Set(collectInlineContextIds(text)));
       const fragment = contextIds.length > 0 ? build?.(contextIds) : null;
       event.preventDefault();
