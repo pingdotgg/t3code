@@ -151,6 +151,8 @@ interface StartThreadBootstrap {
     readonly createdAt: string;
   };
   readonly prepareWorktree?: {
+    /** V2 worktree launches always fail rather than falling back to the project checkout. */
+    readonly requireWorktree?: boolean;
     readonly projectCwd: string;
     readonly baseBranch: string;
     readonly branch?: string;
