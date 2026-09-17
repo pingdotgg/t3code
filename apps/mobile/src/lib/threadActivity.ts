@@ -126,9 +126,7 @@ type RawThreadFeedEntry =
     };
 
 export type ThreadFeedEntry =
-  | (Extract<RawThreadFeedEntry, { type: "message" }> & {
-      readonly reasoningMessages?: OrchestrationThread["messages"];
-    })
+  | Extract<RawThreadFeedEntry, { type: "message" }>
   | {
       readonly type: "activity-group";
       readonly id: string;

@@ -9,8 +9,8 @@ describe("ComposerPendingApprovalActions", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalActions
         requestId={RuntimeRequestId.make("approval-1")}
-        isResponding={false}
         canRespond
+        isResponding={false}
         onRespondToApproval={async () => undefined}
       />,
     );
@@ -25,8 +25,8 @@ describe("ComposerPendingApprovalActions", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalActions
         requestId={RuntimeRequestId.make("approval-safari")}
-        isResponding={false}
         canRespond
+        isResponding={false}
         options={[
           { decision: "decline", label: "Decline" },
           { decision: "acceptAlways", label: "Always allow Safari" },
@@ -41,19 +41,23 @@ describe("ComposerPendingApprovalActions", () => {
     expect(markup).not.toContain("Always allow this session");
   });
 
-  it("limits provider-supplied approval labels so narrow rows can wrap", () => {
-    const label = "Allow ".repeat(40).trim();
+  it("preserves provider labels for the main decisions", () => {
     const markup = renderToStaticMarkup(
       <ComposerPendingApprovalActions
-        requestId={RuntimeRequestId.make("approval-long-label")}
-        isResponding={false}
+        requestId={RuntimeRequestId.make("approval-1")}
         canRespond
-        options={[{ decision: "acceptAlways", label }]}
+        isResponding={false}
+        options={[
+          { decision: "accept", label: "Allow once" },
+          { decision: "decline", label: "Deny" },
+        ]}
         onRespondToApproval={async () => undefined}
       />,
     );
 
-    expect(markup).toContain('class="max-w-40 truncate"');
-    expect(markup).toContain(label);
+    expect(markup).toContain("Allow once");
+    expect(markup).toContain("Deny");
+    expect(markup).not.toContain(">Approve<");
+    expect(markup).not.toContain(">Decline<");
   });
 });

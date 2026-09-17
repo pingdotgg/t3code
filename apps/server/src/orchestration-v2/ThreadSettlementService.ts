@@ -1,5 +1,10 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { CommandId, type OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import {
+  CommandId,
+  type ThreadId,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -232,6 +237,7 @@ export const make = Effect.gen(function* () {
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
+    threadId?: ThreadId,
   ) {
     const settings = yield* settingsService.getSettings;
     if (!autoSettlementConfigured(settings)) {
@@ -245,7 +251,11 @@ export const make = Effect.gen(function* () {
     // the merged pull request: most threads carry no link and settle from
     // their branch lookup, which would otherwise wait for the next minute's
     // sweep on a possibly stale cached answer.
-    const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
+    const candidates = threads.filter(
+      (thread) =>
+        (threadId === undefined || thread.id === threadId) &&
+        isAutoSettlementCandidate(thread, nowMs),
+    );
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
@@ -428,8 +438,11 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const runSweep = (mergedPullRequest: PullRequestService.PullRequestMergeEvent | null) =>
-    sweep(mergedPullRequest).pipe(
+  const runSweep = (
+    mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
+    threadId?: ThreadId,
+  ) =>
+    sweep(mergedPullRequest, threadId).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.failCause(cause)
@@ -438,13 +451,36 @@ export const make = Effect.gen(function* () {
             }),
       ),
     );
-  const worker = yield* makeDrainableWorker(() => runSweep(null));
+  const worker = yield* makeDrainableWorker((threadId: ThreadId | undefined) =>
+    runSweep(null, threadId),
+  );
+
+  const processEvent = (event: OrchestrationV2DomainEvent) => {
+    switch (event.type) {
+      case "thread.pull-request-synced":
+      case "provider-session.detached":
+        return worker.enqueue(event.threadId);
+      case "provider-session.updated":
+        return event.payload.status !== "starting" && event.payload.status !== "running"
+          ? worker.enqueue(event.threadId)
+          : Effect.void;
+      case "run.updated":
+        return ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
+          event.payload.status,
+        )
+          ? worker.enqueue(event.threadId)
+          : Effect.void;
+      default:
+        return Effect.void;
+    }
+  };
 
   const start: ThreadSettlementServiceV2["Service"]["start"] = Effect.fn(
     "ThreadSettlementServiceV2.start",
   )(function* () {
     const settingsChanges = yield* settingsService.subscribeChanges;
     const mergedPullRequests = yield* pullRequests.subscribeMerges;
+    const events = orchestrator.streamDomainEvents;
     const initialSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
     let lastSettlementSettings = autoSettlementSettingsKey(initialSettings);
     yield* forkParked(
@@ -463,7 +499,14 @@ export const make = Effect.gen(function* () {
         return worker.enqueue(undefined);
       }),
     );
-    yield* forkParked(Stream.runForEach(mergedPullRequests, runSweep));
+    yield* forkParked(Stream.runForEach(mergedPullRequests, (event) => runSweep(event)));
+    yield* forkParked(
+      Stream.runForEach(events, processEvent).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Thread settlement event stream failed", { cause }),
+        ),
+      ),
+    );
   });
 
   return { start, drain: worker.drain } satisfies ThreadSettlementServiceV2["Service"];
