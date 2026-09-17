@@ -50,7 +50,7 @@ layer("056_ProjectionV2TurnItemIdDigest", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 54 });
+      yield* runMigrations({ toMigrationInclusive: 55 });
 
       yield* insertTurnItem(sql, "item-a", encodeJson({ id: "item-a", type: "assistant_message" }));
       // The digest tracks the payload id, not the column: drivers can mangle
