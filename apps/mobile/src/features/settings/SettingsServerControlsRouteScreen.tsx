@@ -10,7 +10,7 @@ import {
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
 import { useRef, useState, type ComponentProps } from "react";
-import { Alert, Platform, Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RUNTIME_MODE_CHOICES } from "../threads/thread-settings-options";
@@ -79,11 +79,6 @@ const STREAMING_CHOICES: ReadonlyArray<{
     mode: "paragraph",
     label: "Finished paragraphs",
     description: "Show each paragraph or code block as it completes.",
-  },
-  {
-    mode: "token",
-    label: "Token by token (legacy)",
-    description: "Repaint for every token; this can be slower.",
   },
 ];
 
@@ -301,23 +296,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         selected={uniform("responseStreamingMode") === choice.mode}
                         separated={index > 0}
                         disabled={disabledFor("responseStreamingMode")}
-                        onPress={() => {
-                          if (choice.mode !== "token") {
-                            write({ responseStreamingMode: choice.mode });
-                            return;
-                          }
-                          Alert.alert(
-                            "Use legacy token streaming?",
-                            "Repainting every token can make the app slower.",
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              {
-                                text: "Use token streaming",
-                                onPress: () => write({ responseStreamingMode: "token" }),
-                              },
-                            ],
-                          );
-                        }}
+                        onPress={() => write({ responseStreamingMode: choice.mode })}
                       />
                     ))}
                   </SettingsSection>
