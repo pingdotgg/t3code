@@ -244,6 +244,38 @@ describe("scoped settings writes", () => {
     }
   });
 
+  it("replaces the skill list a project seeds from its environment, and clears back to it", () => {
+    const review = { source: "personal", name: "review" } as const;
+    const deploy = { source: "repo", name: "deploy" } as const;
+    const withEnvironmentList = environment("Server", { settings: { disabledSkills: [review] } });
+    // The component sends the whole list, so seeding is the environment's list
+    // plus the switch that moved; the entry replaces rather than merges.
+    const seeded = planScopedSettingsPatch(checkout, [laptop, withEnvironmentList], {
+      disabledSkills: [review, deploy],
+    });
+    expect(seeded.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrides: { [projectId]: { disabledSkills: [review, deploy] } },
+    });
+
+    const overriding = environment("Server", {
+      settings: {
+        disabledSkills: [review],
+        projectSettingsOverrides: { [projectId]: { disabledSkills: [review, deploy] } },
+      },
+    });
+    expect(
+      planScopedSettingsPatch(checkout, [laptop, overriding], { disabledSkills: [deploy] })
+        .serverWrites[0]?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: { disabledSkills: [deploy] } } });
+    expect(
+      planScopedSettingsClear(checkout, [laptop, overriding], ["disabledSkills"]).serverWrites[0]
+        ?.patch,
+    ).toEqual({ projectSettingsOverrides: { [projectId]: null } });
+    expect(
+      resolveScopedSettingsTargets(checkout, [laptop, overriding])[0]?.sources.disabledSkills,
+    ).toBe("project");
+  });
+
   it("refuses environment-wide keys and older servers at project scope", () => {
     expect(
       planScopedSettingsPatch(project, environments, { enableProviderUpdateChecks: false }),

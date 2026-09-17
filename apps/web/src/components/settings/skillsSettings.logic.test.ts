@@ -1,7 +1,11 @@
 import type { ProviderSkillKey, ServerProviderSkill } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildSkillsSettingsModel, toggleDisabledSkill } from "./skillsSettings.logic";
+import {
+  buildSkillsSettingsModel,
+  toggleDisabledSkill,
+  unfoldSettingsDisabledSkills,
+} from "./skillsSettings.logic";
 
 function skill(overrides: Partial<ServerProviderSkill> & { name: string }): ServerProviderSkill {
   return {
@@ -118,5 +122,34 @@ describe("toggleDisabledSkill", () => {
         false,
       ),
     ).toEqual([{ source: "repo", name: "review" }]);
+  });
+});
+
+describe("unfoldSettingsDisabledSkills", () => {
+  it("lets the project list decide by peeling the environment fold off", () => {
+    const [folded, byProvider] = unfoldSettingsDisabledSkills([
+      skill({ name: "review", enabled: false, disabledBy: "settings" }),
+      skill({ name: "deploy", enabled: false, disabledBy: "provider" }),
+    ]);
+
+    expect(folded).toEqual({ ...skill({ name: "review" }), enabled: true });
+    expect(byProvider).toMatchObject({ enabled: false, disabledBy: "provider" });
+  });
+
+  it("keeps a project's own list off once it is rebuilt from the unfolded skills", () => {
+    const model = buildSkillsSettingsModel({
+      providers: providers(
+        unfoldSettingsDisabledSkills([
+          skill({ name: "review", enabled: false, disabledBy: "settings" }),
+          skill({ name: "deploy", enabled: false, disabledBy: "settings" }),
+        ]),
+      ),
+      disabledSkills: [{ source: "personal", name: "deploy" }] as ProviderSkillKey[],
+    });
+
+    expect(model.providers[0]?.sources[0]?.rows.map((row) => [row.title, row.disabled])).toEqual([
+      ["Deploy", true],
+      ["Review", false],
+    ]);
   });
 });

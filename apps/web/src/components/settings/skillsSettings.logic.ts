@@ -66,7 +66,7 @@ function keyId(key: Pick<ProviderSkillKey, "source" | "name">): string {
   return `${key.source}:${normalizeName(key.name)}`;
 }
 
-export function isSameProviderSkillKey(
+function isSameProviderSkillKey(
   left: Pick<ProviderSkillKey, "source" | "name">,
   right: Pick<ProviderSkillKey, "source" | "name">,
 ): boolean {
@@ -84,6 +84,22 @@ export function toggleDisabledSkill(
 ): ProviderSkillKey[] {
   const without = disabledSkills.filter((entry) => !isSameProviderSkillKey(entry, key));
   return disabled ? [...without, { source: key.source, name: key.name.trim() }] : without;
+}
+
+/**
+ * The published skills carry the environment fold, so a skill the environment
+ * list switched off arrives `enabled: false, disabledBy: "settings"`. A project
+ * override replaces that list rather than adding to it, so peel the fold back
+ * off before the project's own list decides. A provider's own no stays.
+ */
+export function unfoldSettingsDisabledSkills(
+  skills: ReadonlyArray<ServerProviderSkill>,
+): ServerProviderSkill[] {
+  return skills.map((skill) => {
+    if (skill.disabledBy !== "settings") return skill;
+    const { disabledBy: _folded, ...rest } = skill;
+    return { ...rest, enabled: true };
+  });
 }
 
 function matchesQuery(haystack: ReadonlyArray<string | undefined>, query: string): boolean {

@@ -7,14 +7,19 @@ import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Switch } from "../ui/switch";
 import { DRIVER_OPTION_BY_VALUE } from "./providerDriverMeta";
+import { scopedSettingsSource } from "./scopedSettings";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { useSettingsScope } from "./SettingsScopeContext";
+import { useUpdateScopedSettings } from "./useScopedSettings";
 import {
   buildSkillsSettingsModel,
-  isSameProviderSkillKey,
   toggleDisabledSkill,
+  unfoldSettingsDisabledSkills,
   type SkillsSettingsInputProvider,
 } from "./skillsSettings.logic";
+
+const DISABLED_SKILLS_KEYS = ["disabledSkills"] as const;
 
 function providerLabel(provider: ServerProvider): string {
   return (
@@ -30,21 +35,27 @@ function providerLabel(provider: ServerProvider): string {
  */
 function toSkillsInputProviders(
   providers: ReadonlyArray<ServerProvider>,
+  unfold: boolean,
 ): SkillsSettingsInputProvider[] {
-  return providers.map((provider) => ({
-    id: provider.instanceId,
-    label: providerLabel(provider),
-    skills: [
+  return providers.map((provider) => {
+    const skills = [
       ...provider.skills,
       ...(provider.workspaceSnapshots ?? []).flatMap((snapshot) => snapshot.skills),
-    ],
-  }));
+    ];
+    return {
+      id: provider.instanceId,
+      label: providerLabel(provider),
+      skills: unfold ? unfoldSettingsDisabledSkills(skills) : skills,
+    };
+  });
 }
 
 /**
- * The environment's skill list. Switching a skill off writes its key to
- * `disabledSkills`; the registry republishes its fold, so the composer picker
- * follows without a reload.
+ * The skill list for whatever the breadcrumb selects. At environment scope a
+ * switch writes the environment's `disabledSkills` and the registry
+ * republishes its fold, so the composer picker follows without a reload. At
+ * project scope it writes the project's override instead, which replaces the
+ * environment list rather than adding to it.
  */
 export function SkillsSettings({
   environmentId,
@@ -57,22 +68,63 @@ export function SkillsSettings({
   readonly disabledSkills: ReadonlyArray<ProviderSkillKey>;
   readonly readOnly: boolean;
 }) {
-  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const updateEnvironmentSettings = useUpdateEnvironmentSettings(environmentId);
+  const updateScopedSettings = useUpdateScopedSettings();
+  const { scope, target, targets } = useSettingsScope();
   const [query, setQuery] = useState("");
-  const inputProviders = useMemo(() => toSkillsInputProviders(providers), [providers]);
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  const source = scopedSettingsSource(targets, DISABLED_SKILLS_KEYS);
+  // The project's effective list: its own when it overrides, the environment's
+  // while it still inherits.
+  const effectiveDisabledSkills =
+    isProjectScope && target ? target.settings.disabledSkills : disabledSkills;
+  const inputProviders = useMemo(
+    () => toSkillsInputProviders(providers, isProjectScope),
+    [providers, isProjectScope],
+  );
   const model = useMemo(
-    () => buildSkillsSettingsModel({ providers: inputProviders, disabledSkills, query }),
-    [inputProviders, disabledSkills, query],
+    () =>
+      buildSkillsSettingsModel({
+        providers: inputProviders,
+        disabledSkills: effectiveDisabledSkills,
+        query,
+      }),
+    [inputProviders, effectiveDisabledSkills, query],
   );
 
   const setDisabled = (key: ProviderSkillKey, disabled: boolean) => {
-    updateSettings({ disabledSkills: toggleDisabledSkill(disabledSkills, key, disabled) });
+    // The whole list goes over the wire, so the first switch at project scope
+    // seeds the override from the environment list it was inheriting.
+    const next = { disabledSkills: toggleDisabledSkill(effectiveDisabledSkills, key, disabled) };
+    if (isProjectScope) updateScopedSettings(next);
+    else updateEnvironmentSettings(next);
   };
 
   const isEmpty = model.providers.length === 0 && model.stale.length === 0;
 
   return (
     <SettingsSection {...searchableSetting("skills")}>
+      {/* The reset this row renders when the source is project or mixed is the
+          Clear action: it drops the key so the project follows the environment
+          again. A read-only session gets the state without the control. */}
+      {isProjectScope ? (
+        <SettingsRow
+          {...(readOnly ? {} : { serverScoped: true, settingKeys: DISABLED_SKILLS_KEYS })}
+          title={
+            source === "environment"
+              ? "Using the environment list"
+              : source === "mixed"
+                ? "Overriding some of this project's checkouts"
+                : "Overriding for this project"
+          }
+          description={
+            source === "environment"
+              ? "Switching a skill off here starts a list for this project, seeded from the environment's."
+              : "This project's list replaces the environment's. Reset it to follow the environment again."
+          }
+        />
+      ) : null}
+
       <div className="px-3 py-2 sm:px-4">
         <InputGroup>
           <InputGroupAddon>
@@ -150,13 +202,7 @@ export function SkillsSettings({
                 size="icon-xs"
                 variant="ghost-muted"
                 aria-label={`Remove ${row.label}`}
-                onClick={() =>
-                  updateSettings({
-                    disabledSkills: disabledSkills.filter(
-                      (key) => !isSameProviderSkillKey(key, row.key),
-                    ),
-                  })
-                }
+                onClick={() => setDisabled(row.key, false)}
               >
                 <XIcon />
               </Button>
