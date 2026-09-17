@@ -116,6 +116,7 @@ export function DeviceWorkspace(props: {
       </div>
       {toolsOpen ? (
         <DeviceToolsPanel
+          environmentId={props.environmentId}
           device={props.device}
           controls={controls}
           hostDiagnostics={props.hostDiagnostics}

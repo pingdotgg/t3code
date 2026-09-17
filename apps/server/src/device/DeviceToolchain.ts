@@ -23,6 +23,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import type { DeviceStreamSource } from "@t3tools/contracts";
+
 import * as ProcessRunner from "../processRunner.ts";
 
 const DEVICE_HUB_PACKAGE = "expo-device-hub";
@@ -37,13 +39,13 @@ export const AGENT_DEVICE_VERSION = "0.21.12";
  * emulators and silently streams nothing on some of them (the socket opens and
  * closes without a frame, so the panel waits on video forever). scrcpy is
  * serve-emu's own default, works on emulators and is the only source for
- * physical devices.
+ * physical devices, so T3 asks for it unless the setting says otherwise.
  */
-export const DEVICE_HUB_ARGS: ReadonlyArray<string> = [
+export const deviceHubArgs = (streamSource: DeviceStreamSource): ReadonlyArray<string> => [
   "--hide-sidebar",
   "--hide-boot-device",
   "--stream-source",
-  "scrcpy",
+  streamSource,
 ];
 
 const INSTALL_TIMEOUT = Duration.minutes(10);

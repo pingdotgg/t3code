@@ -5,7 +5,11 @@ import {
   type DeviceHubAccess,
   resolveDeviceHubAccess,
 } from "@t3tools/client-runtime/state/deviceHubAccess";
-import type { DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
+import {
+  DEFAULT_DEVICE_STREAM_SOURCE,
+  type DeviceServiceState,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -25,6 +29,7 @@ const EMPTY_DEVICE_STATE: DeviceServiceState = {
   sessions: [],
   onboardingCompleted: false,
   agentAccessEnabled: false,
+  streamSource: DEFAULT_DEVICE_STREAM_SOURCE,
   hubBasePath: "/api/device-hub",
   revision: 0,
 };
