@@ -6,6 +6,35 @@ import Testing
 @Suite("Attachment pre-upload coordinator")
 @MainActor
 struct FeatureAttachmentUploadCoordinatorTests {
+    @Test func completedTransferStartsNextUploadBeforeDraftSaveFinishes() async throws {
+        let uploads = CoordinatorUploadHarness()
+        let persistence = CoordinatorPersistenceHarness(suspended: true)
+        let coordinator = FeatureAttachmentUploadCoordinator(
+            maximumConcurrentUploads: 1,
+            upload: uploads.upload,
+            persist: persistence.persist
+        )
+        let values = [attachment(byte: 1), attachment(byte: 2)]
+        coordinator.syncOwner(draftKey: "draft", environmentID: "one", attachments: values)
+        let first = await uploads.nextStart()
+        uploads.complete(first, environmentID: "one")
+        await persistence.nextCall()
+
+        let second = await uploads.nextStart()
+        #expect(second != first)
+        #expect(uploads.maximumActive == 1)
+        #expect(coordinator.state(environmentID: "one", attachmentID: first) == .uploading)
+
+        persistence.resume(result: true)
+        uploads.complete(second, environmentID: "one")
+        await waitUntilObserved {
+            values.allSatisfy {
+                coordinator.state(environmentID: "one", attachmentID: $0.id)
+                    == .ready(.init(environmentID: "one", attachmentID: "uploaded"))
+            }
+        }
+    }
+
     @Test func canceledTransferKeepsConcurrencySlotUntilItReturns() async throws {
         let uploads = CoordinatorUploadHarness()
         let coordinator = makeCoordinator(limit: 3, uploads: uploads)
