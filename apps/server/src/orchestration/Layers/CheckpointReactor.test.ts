@@ -505,6 +505,7 @@ describe("CheckpointReactor", () => {
     "archived",
     "alias",
     "nested",
+    "ancestor",
     "project-root",
     "conversation",
   ] as const)("preserves sibling files when reverting a shared workspace, owner=%s", (owner) =>
@@ -515,6 +516,7 @@ describe("CheckpointReactor", () => {
           ...(owner === "alias" || owner === "nested" || owner === "ancestor"
             ? {
                 secondThreadWorktreePath: (cwd: string) => {
+                  if (owner === "ancestor") return NodePath.dirname(cwd);
                   if (owner === "nested") {
                     const nested = NodePath.join(cwd, "nested-owner");
                     NodeFS.mkdirSync(nested);
