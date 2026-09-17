@@ -260,7 +260,17 @@ for (const blockedPhase of ["discovery", "probe", "retry"] as const) {
                 staging &&
                 input.args.some((arg) => arg.startsWith(":(exclude,literal)")));
             if (block)
-              return Deferred.succeed(entered, undefined).pipe(
+              return (
+                blockedPhase === "retry"
+                  ? fs
+                      .writeFileString(
+                        `${input.env!.GIT_INDEX_FILE!}.lock`,
+                        "interrupted index write",
+                      )
+                      .pipe(Effect.orDie)
+                  : Effect.void
+              ).pipe(
+                Effect.andThen(Deferred.succeed(entered, undefined)),
                 Effect.andThen(Effect.never),
                 Effect.onInterrupt(() =>
                   Effect.sync(() => {
@@ -298,6 +308,7 @@ for (const blockedPhase of ["discovery", "probe", "retry"] as const) {
       assert.isTrue(interrupted);
       assert.isDefined(privateIndex);
       assert.isFalse(yield* fs.exists(privateIndex!));
+      assert.isFalse(yield* fs.exists(`${privateIndex!}.lock`));
       assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
       assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git", "index")), originalIndex);
     }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),

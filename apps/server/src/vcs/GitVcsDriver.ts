@@ -786,9 +786,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
       };
 
-      const cleanupTempIndex = fileSystem
-        .remove(tempIndexPath, { force: true })
-        .pipe(Effect.ignore);
+      // Forced process termination can leave Git's private index lock behind.
+      const cleanupTempIndex = Effect.forEach(
+        [tempIndexPath, `${tempIndexPath}.lock`],
+        (indexFile) => fileSystem.remove(indexFile, { force: true }).pipe(Effect.ignore),
+        { discard: true },
+      );
 
       yield* Effect.gen(function* () {
         const headExists = yield* hasHeadCommit(input.cwd);
