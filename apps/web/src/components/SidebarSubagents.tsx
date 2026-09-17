@@ -6,6 +6,7 @@ import { BotIcon, ChevronDownIcon } from "lucide-react";
 import { memo, useId, useState } from "react";
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "./ui/button";
 
 function statusClass(status: keyof typeof THREAD_SUBAGENT_STATUS_LABELS) {
   if (
@@ -48,16 +49,14 @@ export const SidebarSubagents = memo(function SidebarSubagents({
         if (event.key === "Enter" || event.key === " ") event.stopPropagation();
       }}
     >
-      <button
-        type="button"
+      <Button
+        variant="sidebar-disclosure"
+        size="sm-multiline"
         aria-expanded={expanded}
         aria-controls={treeId}
         aria-label={`Subagents for ${threadTitle}: ${model.label}`}
         onClick={() => setExpanded((value) => !value)}
-        className={cn(
-          "grid w-full cursor-pointer grid-cols-[auto_1fr_auto] items-center gap-x-1.5 gap-y-0.5 rounded-md border px-2 py-1.5 text-left text-[11px] outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring",
-          expanded ? "border-border/70 bg-sidebar-accent/50" : "border-border/40 bg-muted/30",
-        )}
+        className="grid w-full grid-cols-[auto_1fr_auto] gap-x-1.5 gap-y-0.5 text-left text-[11px] sm:text-[11px]"
       >
         <BotIcon aria-hidden className="row-span-2 size-3.5 text-muted-foreground" />
         <span className="font-medium text-secondary-label">Subagents</span>
@@ -77,7 +76,7 @@ export const SidebarSubagents = memo(function SidebarSubagents({
             expanded && "rotate-180",
           )}
         />
-      </button>
+      </Button>
       <ul
         id={treeId}
         aria-label={`Subagents for ${threadTitle}`}
