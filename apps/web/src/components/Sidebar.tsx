@@ -593,14 +593,14 @@ function SidebarMarker(props: {
 
 // Shelf headers stay visible and keep their measured height while dragging.
 function SidebarSectionHeader(props: {
-  marker: "snoozed-header" | "settled-header";
+  marker: "pinned-header" | "pinned-divider" | "snoozed-header" | "settled-header";
   label: string;
   className?: string;
   // While dragging, the settled header reads at full strength and takes the
   // accent while the lifted row is over it.
   dragging?: boolean;
   isDropTarget?: boolean;
-  toggle: { expanded: boolean; onToggle: () => void };
+  toggle?: { expanded: boolean; onToggle: () => void };
 }) {
   const snoozed = props.marker === "snoozed-header";
   const className = cn(
@@ -621,13 +621,15 @@ function SidebarSectionHeader(props: {
           props.isDropTarget && "bg-primary/50",
         )}
       />
-      <ChevronDownIcon
-        aria-hidden
-        className={cn(
-          "size-3 shrink-0 transition-transform",
-          props.toggle.expanded && "rotate-180",
-        )}
-      />
+      {props.toggle ? (
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0 transition-transform",
+            props.toggle.expanded && "rotate-180",
+          )}
+        />
+      ) : null}
     </>
   );
   return (
@@ -636,15 +638,19 @@ function SidebarSectionHeader(props: {
       data-testid={`sidebar-${props.marker}`}
       className={cn("mx-0.5 h-8", props.className)}
     >
-      <button
-        type="button"
-        onClick={props.toggle.onToggle}
-        aria-expanded={props.toggle.expanded}
-        data-testid={`sidebar-${snoozed ? "snoozed" : "settled"}-shelf-toggle`}
-        className={cn(className, "cursor-pointer")}
-      >
-        {content}
-      </button>
+      {props.toggle ? (
+        <button
+          type="button"
+          onClick={props.toggle.onToggle}
+          aria-expanded={props.toggle.expanded}
+          data-testid={`sidebar-${snoozed ? "snoozed" : "settled"}-shelf-toggle`}
+          className={cn(className, "cursor-pointer")}
+        >
+          {content}
+        </button>
+      ) : (
+        <div className={className}>{content}</div>
+      )}
     </SidebarMarker>
   );
 }
@@ -1349,7 +1355,6 @@ const SidebarWorktreeCard = memo(function SidebarWorktreeCard(props: {
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
-  isRemote: boolean;
   activeThreadKey: string | null;
   openPullRequestsInRightPanel: boolean;
   onActivate: (threadRef: ScopedThreadRef) => void;
@@ -1446,33 +1451,41 @@ const SidebarWorktreeCard = memo(function SidebarWorktreeCard(props: {
             type="button"
             data-worktree-drag-handle
             onClick={() => props.onActivate(threadRef)}
-            className="flex min-w-0 flex-1 items-center gap-1.5 text-left hover:text-foreground"
+            className="flex min-w-0 items-center gap-1.5 text-left hover:text-foreground"
           >
             {project ? <ProjectFavicon project={project} className="size-4 shrink-0" /> : null}
-            <span className="truncate">{props.projectDisplayName ?? project?.title}</span>
+            <span className="truncate text-secondary-label/75">
+              {props.projectDisplayName ?? project?.title}
+            </span>
           </button>
-          {props.isRemote ? (
-            <Tooltip>
-              <TooltipTrigger render={<span />}>
-                <EnvironmentMachineIcon kind={props.environmentMachine} className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipPopup>{props.environmentLabel ?? "Remote environment"}</TooltipPopup>
-            </Tooltip>
-          ) : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  className="shrink-0"
+                  role="img"
+                  aria-label={props.environmentLabel ?? "Environment"}
+                />
+              }
+            >
+              <EnvironmentMachineIcon kind={props.environmentMachine} className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup>{props.environmentLabel ?? "Environment"}</TooltipPopup>
+          </Tooltip>
           {props.lifecycle.isPinned ? (
             <button
               type="button"
               aria-label="Unpin worktree"
               disabled={!props.pinningSupported}
               onClick={() => props.onLifecycleAction("unpin")}
-              className="rounded-sm p-1 hover:bg-sidebar-row-hover"
+              className="shrink-0 rounded-sm p-1 hover:bg-sidebar-row-hover"
             >
               <PinIcon className="size-3" />
             </button>
           ) : null}
           <span
             className={cn(
-              "flex items-center opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100",
+              "ml-auto flex shrink-0 items-center opacity-0 group-hover/worktree:opacity-100 group-focus-within/worktree:opacity-100",
               snoozeMenuOpen && "opacity-100",
             )}
           >
@@ -1518,7 +1531,9 @@ const SidebarWorktreeCard = memo(function SidebarWorktreeCard(props: {
         <ul className="list-none">{props.children}</ul>
         <div className="flex min-h-5 items-center gap-1.5 px-2 text-xs text-secondary-label">
           <Tooltip>
-            <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
+            <TooltipTrigger
+              render={<span className="min-w-0 flex-1 truncate text-secondary-label/75" />}
+            >
               {checkout}
             </TooltipTrigger>
             <TooltipPopup>{cwd ?? checkout}</TooltipPopup>
@@ -2769,13 +2784,25 @@ export default function Sidebar() {
     ) {
       return [];
     }
-    const items: SidebarListItem[] = worktreeGroups.activeGroups.flatMap((group) =>
-      group.threads.map((thread) => ({
-        kind: "thread" as const,
-        key: sidebarThreadKey(thread),
-        section: sectionByThreadKey.get(sidebarThreadKey(thread)) ?? "active",
-      })),
-    );
+    const items: SidebarListItem[] = [];
+    let pinnedSection = false;
+    for (const group of worktreeGroups.activeGroups) {
+      const pinned = worktreeReorderSection(group) === "pinned";
+      if (pinned && !pinnedSection) {
+        items.push({ kind: "marker", marker: "pinned-header" });
+        pinnedSection = true;
+      } else if (!pinned && pinnedSection) {
+        items.push({ kind: "marker", marker: "pinned-divider" });
+        pinnedSection = false;
+      }
+      items.push(
+        ...group.threads.map((thread): SidebarListItem => ({
+          kind: "thread",
+          key: sidebarThreadKey(thread),
+          section: sectionByThreadKey.get(sidebarThreadKey(thread)) ?? "active",
+        })),
+      );
+    }
     if (snoozedThreads.length > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
       items.push(...rowsOf(visibleSnoozedThreads, "snoozed"));
@@ -4011,7 +4038,6 @@ export default function Sidebar() {
                               environmentMachine={
                                 environmentMachineById.get(representative.environmentId) ?? "server"
                               }
-                              isRemote={representative.environmentId !== primaryEnvironmentId}
                               activeThreadKey={routeThreadKey}
                               openPullRequestsInRightPanel={routeThreadRef !== null}
                               onActivate={navigateToThread}
@@ -4031,6 +4057,16 @@ export default function Sidebar() {
                           continue;
                         }
                         switch (item.marker) {
+                          case "pinned-header":
+                          case "pinned-divider":
+                            items.push(
+                              <SidebarSectionHeader
+                                key={item.marker}
+                                marker={item.marker}
+                                label={item.marker === "pinned-header" ? "Pinned" : "Active"}
+                              />,
+                            );
+                            break;
                           case "snoozed-header":
                             items.push(
                               <SidebarSectionHeader

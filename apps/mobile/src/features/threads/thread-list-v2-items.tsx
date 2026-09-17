@@ -831,7 +831,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     >
       <View
         className={cn(
-          "min-h-[44px] flex-row items-center gap-2 py-2",
+          "min-h-[36px] flex-row items-center gap-2 py-1",
           sidebarPane ? "px-3" : "px-5",
         )}
       >
@@ -971,6 +971,7 @@ export const ThreadListV2WorktreeHeader = memo(function ThreadListV2WorktreeHead
     readonly threads: ReadonlyArray<EnvironmentThreadShell>;
     readonly project: EnvironmentProject | null;
     readonly projectTitle: string;
+    readonly environmentMachine?: EnvironmentMachineKind;
     readonly environmentLabel: string | null;
     readonly count: number;
   },
@@ -1016,9 +1017,16 @@ export const ThreadListV2WorktreeHeader = memo(function ThreadListV2WorktreeHead
                 workspaceRoot={props.project.workspaceRoot}
               />
             ) : null}
-            <Text className="min-w-0 flex-1 text-sm text-foreground-muted" numberOfLines={1}>
+            <Text className="min-w-0 shrink text-sm text-foreground-tertiary" numberOfLines={1}>
               {props.projectTitle}
             </Text>
+            <View accessibilityLabel={props.environmentLabel ?? "Environment"}>
+              <EnvironmentMachineSymbol
+                kind={props.environmentMachine ?? "server"}
+                size={12}
+                tintColorClassName="accent-foreground-muted"
+              />
+            </View>
             {worktreeActions.lifecycle.isPinned ? (
               <SymbolView
                 name="pin"
@@ -1027,7 +1035,7 @@ export const ThreadListV2WorktreeHeader = memo(function ThreadListV2WorktreeHead
                 type="monochrome"
               />
             ) : null}
-            <Text className="text-xs tabular-nums text-foreground-tertiary">
+            <Text className="ml-auto text-xs tabular-nums text-foreground-tertiary">
               {threadTimeLabel(thread)}
             </Text>
           </View>

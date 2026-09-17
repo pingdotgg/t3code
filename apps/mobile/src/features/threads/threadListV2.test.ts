@@ -989,6 +989,71 @@ function makePendingTask(id: string): PendingNewTask {
 }
 
 describe("buildThreadListV2ListItems", () => {
+  it("keeps unpinned siblings inside the pinned section and separates active worktrees", () => {
+    const sibling = makeThread({
+      id: ThreadId.make("sibling"),
+      title: "Sibling",
+      worktreePath: "/pinned",
+      createdAt: "2026-01-01T00:00:00Z",
+    });
+    const pinned = makeThread({
+      id: ThreadId.make("pinned"),
+      title: "Pinned",
+      createdAt: NOW,
+      worktreePath: "/pinned",
+      pinnedAt: NOW,
+    });
+    const active = makeThread({
+      id: ThreadId.make("active"),
+      title: "Active",
+      worktreePath: "/active",
+    });
+    const layout = buildThreadListV2Items({
+      groupWorktrees: true,
+      threads: [active, pinned, sibling],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const rows = buildThreadListV2ListItems({ ...layout, groupWorktrees: true, pendingTasks: [] });
+    expect(
+      rows.map((row) =>
+        row.type === "v2-section"
+          ? row.label
+          : row.type === "v2-thread"
+            ? row.item.thread.id
+            : row.type,
+      ),
+    ).toEqual(["Pinned", "v2-worktree", sibling.id, pinned.id, "Active", "v2-worktree", active.id]);
+  });
+
+  it("does not add an empty active section between pinned and parked worktrees", () => {
+    const pinned = makeThread({
+      id: ThreadId.make("pinned"),
+      title: "Pinned",
+      createdAt: NOW,
+      worktreePath: "/pinned",
+      pinnedAt: NOW,
+    });
+    const settled = makeThread({
+      id: ThreadId.make("settled"),
+      title: "Settled",
+      worktreePath: "/settled",
+      settledOverride: "settled",
+    });
+    const layout = buildThreadListV2Items({
+      groupWorktrees: true,
+      threads: [pinned, settled],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+    const rows = buildThreadListV2ListItems({ ...layout, groupWorktrees: true, pendingTasks: [] });
+    expect(rows.filter((row) => row.type === "v2-section").map((row) => row.label)).toEqual([
+      "Pinned",
+    ]);
+  });
+
   const layout = buildThreadListV2Items({
     threads: [
       makeThread({ id: ThreadId.make("active"), title: "active" }),
