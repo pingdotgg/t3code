@@ -89,7 +89,7 @@ describe("work entry labels", () => {
     tone: "tool" as const,
   };
 
-  it("keeps a stable live reasoning label and exposes the trace in grouped rows", () => {
+  it("previews reasoning in the live row and falls back to a short label while empty", () => {
     const thought = {
       ...entry,
       itemType: "reasoning" as const,
@@ -97,10 +97,25 @@ describe("work entry labels", () => {
       detail: "Check **ordering** first.",
       toolLifecycleStatus: "inProgress" as const,
     };
-    expect(liveWorkEntryLabel(thought, undefined, true)).toBe("Thinking");
+    expect(liveWorkEntryLabel(thought, undefined, true)).toBe(thought.detail);
+    expect(
+      liveWorkEntryLabel(
+        { ...thought, detail: "First paragraph.\n\nSecond paragraph." },
+        undefined,
+        true,
+      ),
+    ).toBe("First paragraph. Second paragraph.");
+    expect(liveWorkEntryLabel({ ...thought, detail: "  " }, undefined, true)).toBe("Thinking");
+    expect(
+      liveWorkEntryLabel(
+        { ...thought, detail: "", toolLifecycleStatus: "completed" },
+        undefined,
+        false,
+      ),
+    ).toBe("Thought");
     expect(
       liveWorkEntryLabel({ ...thought, toolLifecycleStatus: "completed" }, undefined, false),
-    ).toBe("Thought");
+    ).toBe(thought.detail);
     expect(workEntryDisplayLabel(thought, undefined)).toBe(thought.detail);
     expect(workEntryIsVisibleInGroup(thought)).toBe(true);
     expect(workEntryIsVisibleInGroup({ ...thought, toolLifecycleStatus: "completed" })).toBe(true);
@@ -170,7 +185,10 @@ describe("work entry labels", () => {
     const commandEntry = { ...entry, command };
     expect(liveWorkEntryLabel(commandEntry, undefined, true)).toBe("Running vp");
     expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe("Ran vp");
-    expect(workEntryDisplayLabel(commandEntry, undefined)).toBe(command);
+    expect(workEntryDisplayLabel(commandEntry, undefined)).toBe(
+      "vp test run apps/web/src/session-logic.test.ts",
+    );
+    expect(commandEntry.command).toBe(command);
   });
 
   it.each([
@@ -3514,6 +3532,49 @@ describe("linked timeline resources", () => {
     projectedItem: { item: { id, type, runId: eventRunId } } as OrchestrationV2ProjectedTurnItem,
   });
   const common = { isWorking: false, turnDiffSummaries: [], supportsConversationRollback: false };
+
+  it("previews a thought and joins adjacent worklogs without removing message boundaries", () => {
+    const rows = deriveMessagesTimelineRows({
+      ...common,
+      timelineEntries: [
+        {
+          kind: "work",
+          id: "thought",
+          createdAt: "2026-09-08T10:00:01Z",
+          entry: {
+            id: "thought",
+            runId,
+            createdAt: "2026-09-08T10:00:01Z",
+            label: "Thought",
+            itemType: "reasoning",
+            tone: "thinking",
+            detail: "First paragraph.\n\nSecond paragraph.",
+          },
+        },
+        event("child", "subagent"),
+        {
+          kind: "message",
+          id: "answer",
+          createdAt: "2026-09-08T10:00:03Z",
+          message: {
+            id: MessageId.make("answer"),
+            role: "assistant",
+            text: "Done",
+            runId,
+            streaming: false,
+            createdAt: "2026-09-08T10:00:03Z",
+            updatedAt: "2026-09-08T10:00:03Z",
+          },
+        },
+      ],
+      expandedRunIds: new Set([runId]),
+    });
+    expect(rows.find((row) => row.kind === "work")).toMatchObject({
+      displayLabel: "First paragraph. Second paragraph.",
+      continuesWorkLog: true,
+    });
+    expect(rows.find((row) => row.id === "child")?.continuesWorkLog).toBeUndefined();
+  });
 
   it("groups adjacent subagents without merging across a resource or run boundary", () => {
     const rows = deriveMessagesTimelineRows({

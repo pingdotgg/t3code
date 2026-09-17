@@ -23,7 +23,11 @@ const message = (text: string, streaming = true): ProviderAdapterV2Event => ({
   },
 });
 
-const turnItem = (text: string, streaming = true): ProviderAdapterV2Event => ({
+const turnItem = (
+  text: string,
+  streaming = true,
+  type: "assistant_message" | "reasoning" = "assistant_message",
+): ProviderAdapterV2Event => ({
   type: "turn_item.updated",
   driver: ProviderDriverKind.make("codex"),
   turnItem: {
@@ -41,8 +45,7 @@ const turnItem = (text: string, streaming = true): ProviderAdapterV2Event => ({
     startedAt: null,
     completedAt: null,
     updatedAt: DateTime.makeUnsafe("2026-09-14T00:00:00Z"),
-    type: "assistant_message",
-    messageId: MessageId.make("message"),
+    ...(type === "assistant_message" ? { type, messageId: MessageId.make("message") } : { type }),
     text,
     streaming,
   },
@@ -79,20 +82,27 @@ describe("V2 assistant streaming", () => {
     expect(buffered(final, 501)).toBe(final);
   });
 
-  it("buffers turn items at paragraph boundaries and flushes the final item", () => {
-    const filter = makeAssistantStreamingFilter("paragraph");
-    expect(filter(turnItem("First"), 0)).toBeNull();
-    expect(filter(turnItem("First\n\nSec"), 10)).toMatchObject({
-      turnItem: { text: "First\n\n", streaming: true },
-    });
-    expect(filter(turnItem("First\n\nSecond\n\nThi"), 100)).toBeNull();
-    const final = turnItem("First\n\nSecond\n\nThird", false);
-    expect(filter(final, 110)).toBe(final);
+  it.each(["assistant_message", "reasoning"] as const)(
+    "buffers %s at paragraph boundaries and flushes the final item",
+    (type) => {
+      const item = (text: string, streaming = true) => turnItem(text, streaming, type);
+      const filter = makeAssistantStreamingFilter("paragraph");
+      expect(filter(item("First"), 0)).toBeNull();
+      expect(filter(item("First\n\nSec"), 10)).toMatchObject({
+        turnItem: { text: "First\n\n", streaming: true, type },
+      });
+      expect(filter(item("First\n\nSecond\n\nThi"), 100)).toBeNull();
+      expect(filter(item("First\n\nSecond\n\nThi"), 410)).toMatchObject({
+        turnItem: { text: "First\n\nSecond\n\n", streaming: true },
+      });
+      const final = item("First\n\nSecond\n\nThird", false);
+      expect(filter(final, 420)).toBe(final);
 
-    const buffered = makeAssistantStreamingFilter("turn");
-    expect(buffered(turnItem("First\n\nSecond"), 0)).toBeNull();
-    expect(buffered(final, 1)).toBe(final);
-  });
+      const buffered = makeAssistantStreamingFilter("turn");
+      expect(buffered(item("First\n\nSecond"), 0)).toBeNull();
+      expect(buffered(final, 1)).toBe(final);
+    },
+  );
 
   it.each(["turn", "paragraph"] as const)(
     "suppresses running assistant nodes in %s mode while delivering tool and completed nodes",

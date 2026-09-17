@@ -172,6 +172,47 @@ function makeClaudeTestTurnInput(input: {
 }
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
+  it.each([false, true])("requests thinking summaries with resume=%s", (resume) => {
+    const options = makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "thinking-thread",
+      resume,
+      cwd: "/workspace",
+    });
+    assert.deepEqual(options.thinking, { type: "adaptive", display: "summarized" });
+    assert.equal(options.extraArgs?.["thinking-display"], "summarized");
+    assert.include(options.settings, { showThinkingSummaries: true });
+  });
+
+  it("preserves an explicit omitted thinking display", () => {
+    const options = makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "thinking-thread",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: "--thinking-display omitted" },
+    });
+    assert.isUndefined(options.thinking);
+    assert.equal(options.extraArgs?.["thinking-display"], "omitted");
+    assert.notInclude(options.settings ?? {}, { showThinkingSummaries: true });
+  });
+
+  it("does not enable thinking when the model option disables it", () => {
+    const options = makeClaudeQueryOptions({
+      modelSelection: {
+        ...CLAUDE_TEST_MODEL_SELECTION,
+        model: "claude-haiku-4-5",
+        options: [{ id: "thinking", value: false }],
+      },
+      nativeThreadId: "thinking-thread",
+      resume: false,
+      cwd: "/workspace",
+    });
+    assert.isUndefined(options.thinking);
+    assert.isUndefined(options.extraArgs?.["thinking-display"]);
+    assert.include(options.settings, { alwaysThinkingEnabled: false });
+  });
+
   it.each([
     ["--permission-mode acceptEdits", "acceptEdits"],
     ["--dangerously-skip-permissions", "bypassPermissions"],
@@ -1887,6 +1928,124 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect.each(["completed", "interrupted"] as const)(
+    "projects Claude thinking blocks when %s",
+    (status) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("reasoning-attempt"),
+            text: "Check the plan",
+            attachments: [],
+          }),
+        );
+        const stream = (event: unknown, parent: string | null = null) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: parent,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "stream-frame",
+          });
+        const snapshot = (id: string, uuid: string, thinking: string) =>
+          claudeSdkFrame({
+            type: "assistant",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id,
+              model: "claude-sonnet-4-6",
+              content: [{ type: "thinking", thinking, signature: "secret-signature" }],
+            },
+          });
+        const frames = [
+          stream({ type: "message_start", message: { id: "thought-message" } }),
+          stream({
+            type: "content_block_start",
+            index: 2,
+            content_block: { type: "thinking", thinking: "" },
+          }),
+          stream({
+            type: "content_block_delta",
+            index: 2,
+            delta: { type: "thinking_delta", thinking: "First " },
+          }),
+          stream({
+            type: "content_block_delta",
+            index: 2,
+            delta: { type: "thinking_delta", thinking: "thought" },
+          }),
+          stream({
+            type: "content_block_delta",
+            index: 2,
+            delta: { type: "signature_delta", signature: "secret-signature" },
+          }),
+          stream({ type: "content_block_stop", index: 2 }),
+          snapshot("thought-message", "first-snapshot", "Authoritative first thought"),
+          snapshot("thought-message", "first-snapshot", "Authoritative first thought"),
+          stream({
+            type: "content_block_start",
+            index: 4,
+            content_block: { type: "thinking", thinking: "Second thought" },
+          }),
+          stream({ type: "content_block_stop", index: 4 }),
+          snapshot("thought-message", "second-snapshot", ""),
+          snapshot("completion-only", "third-snapshot", "Completion only"),
+          snapshot("redacted", "empty-snapshot", ""),
+          stream({ type: "message_start", message: { id: "child-message" } }, "child-tool"),
+          stream(
+            {
+              type: "content_block_start",
+              index: 0,
+              content_block: { type: "thinking", thinking: "Child thought" },
+            },
+            "child-tool",
+          ),
+          stream({ type: "message_start", message: { id: "partial-message" } }),
+          stream({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "thinking", thinking: "Partial thought" },
+          }),
+          makeResultFrame({
+            uuid: "reasoning-result",
+            result: "",
+            ...(status === "interrupted" ? { terminalReason: "aborted_streaming" as const } : {}),
+          }),
+        ];
+        for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, status);
+        const latest = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "reasoning"
+              ? [[event.turnItem.id, event.turnItem] as const]
+              : [],
+          ),
+        );
+        assert.deepEqual(
+          [...latest.values()].map((item) => item.text),
+          ["Authoritative first thought", "Second thought", "Completion only", "Partial thought"],
+        );
+        assert.equal(new Set([...latest.values()].map((item) => item.ordinal)).size, 4);
+        for (const item of latest.values()) {
+          assert.equal(item.streaming, false);
+          assert.isNotNull(item.completedAt);
+        }
+        assert.isFalse(
+          harness.events.some(
+            (event) => event.type === "message.updated" && event.message.role === "assistant",
+          ),
+        );
+        for (const item of latest.values()) assert.notInclude(item.text, "secret-signature");
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+  );
 
   for (const terminalReason of ["aborted_tools", "aborted_streaming"] as const) {
     for (const steered of [true, false]) {
@@ -4270,73 +4429,98 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("keeps a subagent snapshot model that arrives before task_started", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        const toolUseId = "toolu-early-model";
-        const taskId = "task-early-model";
-
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-early-model"),
-            text: "Spawn a subagent.",
-            attachments: [],
-            modelSelection: {
-              ...CLAUDE_TEST_MODEL_SELECTION,
-              model: "claude-opus-4-6",
-            },
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          claudeSdkFrame({
+  it.effect.each(["requested", "observed-before", "observed-after", "inherit"] as const)(
+    "records the subagent model from %s without inheriting the parent override",
+    (source) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
+          const toolUseId = "toolu-subagent-model";
+          const parentModel = "claude-opus-4-6";
+          const observedModel = "claude-haiku-4-5-20251001";
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-subagent-model"),
+              text: "Spawn a Haiku subagent.",
+              attachments: [],
+              modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model: parentModel },
+            }),
+          );
+          const observed = claudeSdkFrame({
             type: "assistant",
             parent_tool_use_id: toolUseId,
-            message: {
-              model: "claude-sonnet-4-6",
-              content: [],
-            },
+            message: { model: observedModel, content: [] },
             uuid: "00000000-0000-4000-8000-000000000206",
             session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
-        yield* Queue.offer(
-          harness.sdkMessages,
-          claudeSdkFrame({
-            type: "system",
-            subtype: "task_started",
-            task_id: taskId,
-            tool_use_id: toolUseId,
-            description: "Early model task",
-            task_type: "local_agent",
-            uuid: "00000000-0000-4000-8000-000000000207",
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        );
-        const subagentEvents = () =>
-          harness.events.filter(
-            (event): event is Extract<ProviderAdapterV2Event, { type: "subagent.updated" }> =>
-              event.type === "subagent.updated",
+          });
+          if (source === "observed-before") yield* Queue.offer(harness.sdkMessages, observed);
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "assistant",
+              parent_tool_use_id: null,
+              message: {
+                model: parentModel,
+                content: [
+                  {
+                    type: "tool_use",
+                    id: toolUseId,
+                    name: "Agent",
+                    input: {
+                      description: "Haiku puzzle",
+                      subagent_type: "general-purpose",
+                      model: source === "inherit" ? "inherit" : "haiku",
+                      prompt: "Solve the puzzle.",
+                    },
+                  },
+                ],
+              },
+              uuid: "00000000-0000-4000-8000-000000000209",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
           );
-        yield* awaitUntil(() => subagentEvents().length === 1, "early model subagent");
-
-        assert.equal(subagentEvents()[0]?.subagent.model, "claude-sonnet-4-6");
-
-        yield* Queue.offer(
-          harness.sdkMessages,
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000208",
-            result: "Spawned the subagent.",
-          }),
-        );
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "early model turn terminal");
-      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
-    ),
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "task-subagent-model",
+              tool_use_id: toolUseId,
+              description: "Haiku puzzle",
+              task_type: "local_agent",
+              uuid: "00000000-0000-4000-8000-000000000207",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          if (source === "observed-after") yield* Queue.offer(harness.sdkMessages, observed);
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000208",
+              result: "Spawned the subagent.",
+            }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+          const subagents = harness.events.filter((event) => event.type === "subagent.updated");
+          const initialModel =
+            source === "observed-before"
+              ? observedModel
+              : source === "inherit"
+                ? parentModel
+                : "haiku";
+          assert.equal(subagents[0]?.subagent.model, initialModel);
+          assert.equal(
+            subagents.at(-1)?.subagent.model,
+            source.startsWith("observed") ? observedModel : initialModel,
+          );
+          const child = harness.events.find((event) => event.type === "app_thread.created");
+          assert.equal(child?.appThread.modelSelection?.model, initialModel);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
   );
 
   it.effect("extracts text from direct content-block subagent results", () =>
