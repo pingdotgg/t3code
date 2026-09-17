@@ -49,6 +49,10 @@ import {
   type ProviderAdapterV2Shape,
 } from "../ProviderAdapter.ts";
 import { makeLayer as makeProviderAdapterRegistryLayer } from "../ProviderAdapterRegistry.ts";
+import {
+  ProviderAdapterRegistryLookupError,
+  ProviderAdapterRegistryV2,
+} from "../ProviderAdapterRegistry.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   CLAUDE_MODEL_SELECTION,
@@ -305,6 +309,185 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
 });
 
 describe("orchestration v2 provider switching", () => {
+  it.live("resumes a queued account switch without requiring a portable handoff", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("queued-account-switch");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const alternateSelection: ModelSelection = {
+          ...CODEX_MODEL_SELECTION,
+          instanceId: ProviderInstanceId.make("codex-alternate"),
+        };
+        const alternateCapabilities = {
+          ...CodexProviderCapabilitiesV2,
+          canConsumeHandoffSummaries: false,
+        };
+        const adapters = [
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            holdFirstTurn: started,
+          }),
+          makeTestAdapter({
+            instanceId: alternateSelection.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: alternateCapabilities,
+            modelSelection: alternateSelection,
+            responseByRunOrdinal: { 2: "Alternate account complete" },
+            capturedTurns,
+          }),
+        ];
+        const registryLayer = Layer.succeed(
+          ProviderAdapterRegistryV2,
+          ProviderAdapterRegistryV2.of({
+            get: (instanceId) => {
+              const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
+              return adapter === undefined
+                ? Effect.fail(new ProviderAdapterRegistryLookupError({ instanceId }))
+                : Effect.succeed(adapter);
+            },
+            list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
+            getMetadata: (instanceId) => {
+              const adapter = adapters.find((candidate) => candidate.instanceId === instanceId);
+              return adapter === undefined
+                ? Effect.fail(new ProviderAdapterRegistryLookupError({ instanceId }))
+                : Effect.succeed({
+                    driver: CODEX_DRIVER,
+                    continuationKey: "codex:shared-native-account-history",
+                    enabled: true,
+                    capabilities:
+                      instanceId === alternateSelection.instanceId
+                        ? alternateCapabilities
+                        : CodexProviderCapabilitiesV2,
+                  });
+            },
+          }),
+        );
+        const queuedThreadId = ThreadId.make("thread:queued-account-switch");
+        const projection = yield* Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          const eventSink = yield* EventSinkV2;
+          const worker = yield* OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-account-switch:create"),
+            threadId: queuedThreadId,
+            projectId: ProjectId.make("project:queued-account-switch"),
+            title: "Queued account switch",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-account-switch:first"),
+            threadId: queuedThreadId,
+            messageId: MessageId.make("message:queued-account-switch:first"),
+            text: "First account turn",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(started);
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-account-switch:second"),
+            threadId: queuedThreadId,
+            messageId: MessageId.make("message:queued-account-switch:second"),
+            text: "Alternate account turn",
+            attachments: [],
+            modelSelection: alternateSelection,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const queued = yield* orchestrator.getThreadProjection(queuedThreadId);
+          assert.deepEqual(
+            queued.runs.map((run) => run.status),
+            ["running", "queued"],
+          );
+          assert.equal(queued.thread.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
+          const sourceNativeRef = queued.providerThreads.find(
+            (providerThread) => providerThread.id === queued.runs[0]?.providerThreadId,
+          )?.nativeThreadRef;
+          assert.isNotNull(sourceNativeRef);
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:queued-account-switch:first-complete"),
+                type: "run.updated",
+                threadId: queuedThreadId,
+                runId: queued.runs[0]!.id,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: now,
+                payload: { ...queued.runs[0]!, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.resumeQueuedRuns;
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.event.type === "run.updated" &&
+                event.event.runId === queued.runs[1]?.id &&
+                event.event.payload.status === "completed",
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+          const delivered = yield* orchestrator.getThreadProjection(queuedThreadId);
+          const targetNativeRef = delivered.providerThreads.find(
+            (providerThread) => providerThread.id === delivered.runs[1]?.providerThreadId,
+          )?.nativeThreadRef;
+          assert.deepEqual(targetNativeRef, sourceNativeRef);
+          return delivered;
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "queued-account-switch",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              registryLayer,
+            ),
+          ),
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => [run.providerInstanceId, run.status]),
+          [
+            [CODEX_MODEL_SELECTION.instanceId, "completed"],
+            [alternateSelection.instanceId, "completed"],
+          ],
+        );
+        assert.lengthOf(projection.contextHandoffs, 0);
+        assert.deepEqual(
+          (yield* Ref.get(capturedTurns)).map((turn) => turn.text),
+          ["First account turn", "Alternate account turn"],
+        );
+      }),
+    ),
+  );
+
   it.live("finishes earlier queued Codex turns before handing context to queued Claude", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -950,6 +950,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ),
             )
         : null;
+      const activeProviderThread = projection.providerThreads.find(
+        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+      );
+      const canResumeAcrossInstances =
+        switchPlan?.instanceChanged === true &&
+        switchPlan.transition.type === "restart_and_resume" &&
+        activeProviderThread !== undefined &&
+        activeProviderThread.nativeThreadRef !== null;
+      const deliveryProviderThread =
+        canResumeAcrossInstances && activeProviderThread !== undefined
+          ? {
+              ...queuedProviderThread,
+              nativeThreadRef: activeProviderThread.nativeThreadRef,
+              nativeConversationHeadRef: activeProviderThread.nativeConversationHeadRef,
+              nativeMetadata: activeProviderThread.nativeMetadata,
+            }
+          : queuedProviderThread;
       const targetAdapter = yield* providerAdapters.get(queuedRun.providerInstanceId).pipe(
         Effect.mapError(
           (cause) =>
@@ -972,6 +989,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
       const coveredRuns =
+        canResumeAcrossInstances ||
         latestCompletedRun === undefined ||
         latestCompletedRun.providerInstanceId === queuedRun.providerInstanceId
           ? []
@@ -981,7 +999,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 run.ordinal > (queuedProviderThread.lastRunOrdinal ?? 0) &&
                 run.ordinal <= latestCompletedRun.ordinal,
             );
-      const needsFullContext = queuedProviderThread.nativeThreadRef === null;
+      const needsFullContext = deliveryProviderThread.nativeThreadRef === null;
       const handoffStrategy = needsFullContext
         ? ("full_thread_summary" as const)
         : ("delta_since_target_last_seen" as const);
@@ -1093,7 +1111,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ),
           ));
       const providerSessionId =
-        (queuedProviderThread.providerSessionId !== null &&
+        (!canResumeAcrossInstances &&
+        queuedProviderThread.providerSessionId !== null &&
         !switchPlan?.releaseProviderSessionIds.includes(queuedProviderThread.providerSessionId)
           ? queuedProviderThread.providerSessionId
           : null) ??
@@ -1115,7 +1134,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         ));
       const providerThread: OrchestrationV2ProviderThread = {
-        ...queuedProviderThread,
+        ...deliveryProviderThread,
         providerSessionId,
         status: "not_loaded",
         firstRunOrdinal: queuedProviderThread.firstRunOrdinal ?? queuedRun.ordinal,
