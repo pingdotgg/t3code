@@ -1009,6 +1009,209 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  it.live("fails an unsupported queued handoff and advances to the next queued provider", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("queued-handoff-rejection");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const rejectedThreadId = ThreadId.make("thread:queued-handoff-rejection");
+        const rejectedMessageId = MessageId.make("message:queued-handoff-rejection:claude");
+        const unsupportedClaudeCapabilities = {
+          ...ClaudeProviderCapabilitiesV2,
+          context: {
+            ...ClaudeProviderCapabilitiesV2.context,
+            canConsumeHandoffSummaries: false,
+          },
+        };
+        const registryLayer = makeProviderAdapterRegistryLayer([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 3: "Later Codex queued turn complete" },
+            capturedTurns,
+            holdFirstTurn: started,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: unsupportedClaudeCapabilities,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        const projection = yield* Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          const eventSink = yield* EventSinkV2;
+          const worker = yield* OrchestrationEffectWorkerV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-handoff-rejection:create"),
+            threadId: rejectedThreadId,
+            projectId: ProjectId.make("project:queued-handoff-rejection"),
+            title: "Queued handoff rejection",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-handoff-rejection:first"),
+            threadId: rejectedThreadId,
+            messageId: MessageId.make("message:queued-handoff-rejection:first"),
+            text: "First Codex turn",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(started);
+          const active = yield* orchestrator.getThreadProjection(rejectedThreadId);
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:queued-handoff-rejection:existing-item"),
+                type: "turn-item.updated",
+                threadId: rejectedThreadId,
+                runId: active.runs[0]!.id,
+                nodeId: active.runs[0]!.rootNodeId!,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make("turn-item:queued-handoff-rejection:existing-item"),
+                  threadId: rejectedThreadId,
+                  runId: active.runs[0]!.id,
+                  nodeId: active.runs[0]!.rootNodeId!,
+                  providerThreadId: active.runs[0]!.providerThreadId,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 150,
+                  status: "completed",
+                  title: null,
+                  inputIntent: "turn_start",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  type: "user_message",
+                  messageId: rejectedMessageId,
+                  text: "Unsupported Claude turn",
+                  attachments: [],
+                  createdBy: "user",
+                  creationSource: "web",
+                },
+              },
+            ],
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-handoff-rejection:claude"),
+            threadId: rejectedThreadId,
+            messageId: rejectedMessageId,
+            text: "Unsupported Claude turn",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-handoff-rejection:later"),
+            threadId: rejectedThreadId,
+            messageId: MessageId.make("message:queued-handoff-rejection:later"),
+            text: "Later Codex turn",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const queued = yield* orchestrator.getThreadProjection(rejectedThreadId);
+          assert.deepEqual(
+            queued.runs.map((run) => run.status),
+            ["running", "queued", "queued"],
+          );
+          const queuedItem = queued.turnItems.find(
+            (item) => item.type === "user_message" && item.messageId === rejectedMessageId,
+          );
+          assert.equal(queuedItem?.runId, queued.runs[1]?.id);
+          assert.equal(queuedItem?.providerThreadId, queued.runs[1]?.providerThreadId);
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:queued-handoff-rejection:first-complete"),
+                type: "run.updated",
+                threadId: rejectedThreadId,
+                runId: queued.runs[0]!.id,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: now,
+                payload: { ...queued.runs[0]!, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.resumeQueuedRuns;
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.event.type === "run.updated" &&
+                event.event.runId === queued.runs[2]?.id &&
+                event.event.payload.status === "completed",
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+          return yield* orchestrator.getThreadProjection(rejectedThreadId);
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "queued-handoff-rejection",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              registryLayer,
+            ),
+          ),
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "failed", "completed"],
+        );
+        assert.equal(projection.runs[1]?.queuePosition, null);
+        assert.equal(projection.thread.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
+        assert.lengthOf(projection.contextHandoffs, 0);
+        const failureItem = projection.turnItems.find(
+          (item) => item.type === "error" && item.runId === projection.runs[1]?.id,
+        );
+        assert.equal(
+          failureItem?.type === "error" ? failureItem.failure.code : null,
+          "context_handoff_unsupported",
+        );
+        assert.deepEqual(
+          (yield* Ref.get(capturedTurns)).map((turn) => turn.driver),
+          [CODEX_DRIVER, CODEX_DRIVER],
+        );
+      }),
+    ),
+  );
+
   const importedFailureScenario = (queueBeforeFailure: boolean) =>
     Effect.scoped(
       Effect.gen(function* () {

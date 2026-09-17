@@ -77,6 +77,7 @@ import {
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import { ProviderContinuationRequests } from "./ProviderContinuationRequests.ts";
+import { makeProviderFailure } from "./ProviderFailure.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
@@ -1040,7 +1041,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ),
               );
       if (transferId !== null) {
-        yield* commandPolicy
+        const handoffRejection = yield* commandPolicy
           .ensureContextHandoff({
             commandId,
             threadId,
@@ -1049,15 +1050,77 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             strategy: needsFullContext ? "full_thread_summary" : "delta_context",
           })
           .pipe(
-            Effect.mapError(
-              (cause) =>
-                new OrchestratorDispatchError({
-                  commandId,
-                  commandType: "message.dispatch",
-                  cause,
-                }),
-            ),
+            Effect.match({
+              onFailure: (cause) => cause,
+              onSuccess: () => null,
+            }),
           );
+        if (handoffRejection !== null) {
+          const failure = makeProviderFailure({
+            message: handoffRejection.message,
+            code: "context_handoff_unsupported",
+            class: "validation_error",
+          });
+          yield* writeSystemEvents([
+            {
+              type: "run-attempt.updated",
+              threadId,
+              runId: queuedRun.id,
+              nodeId: rootNodeId,
+              providerInstanceId: queuedRun.providerInstanceId,
+              occurredAt: now,
+              payload: { ...attempt, status: "failed", completedAt: now },
+            },
+            {
+              type: "node.updated",
+              threadId,
+              runId: queuedRun.id,
+              nodeId: rootNodeId,
+              providerInstanceId: queuedRun.providerInstanceId,
+              occurredAt: now,
+              payload: { ...rootNode, status: "failed", completedAt: now },
+            },
+            {
+              type: "turn-item.updated",
+              threadId,
+              runId: queuedRun.id,
+              nodeId: rootNodeId,
+              providerInstanceId: queuedRun.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: queuedProviderThread.driver,
+                  nativeItemId: `queued-handoff-failure:${queuedRun.id}`,
+                }),
+                threadId,
+                runId: queuedRun.id,
+                nodeId: rootNodeId,
+                providerThreadId: queuedProviderThread.id,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: nextTurnItemOrdinal(projection),
+                status: "failed",
+                title: "Queued provider handoff failed",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "error",
+                failure,
+              },
+            },
+            {
+              type: "run.updated",
+              threadId,
+              runId: queuedRun.id,
+              nodeId: rootNodeId,
+              providerInstanceId: queuedRun.providerInstanceId,
+              occurredAt: now,
+              payload: { ...queuedRun, status: "failed", queuePosition: null, completedAt: now },
+            },
+          ]);
+          return;
+        }
       }
       const handoff =
         transferId === null || latestCompletedRun === undefined
@@ -4149,7 +4212,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ...existingItem,
               runId,
               nodeId: rootNodeId,
-              providerThreadId: queueProviderThread.id,
+              providerThreadId: queuedProviderThread.id,
               providerTurnId: null,
               inputIntent: "queued_turn",
               updatedAt: now,
