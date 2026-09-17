@@ -84,14 +84,16 @@ export interface AggregateResult {
  */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
+  readonly #seen: Set<string>;
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
   #duplicatesDropped = 0;
   #outOfWindow = 0;
 
-  constructor(options: AggregateOptions) {
+  /** Share seen keys when a scan keeps separate source buckets. */
+  constructor(options: AggregateOptions, seen = new Set<string>()) {
+    this.#seen = seen;
     this.#options = options;
     this.#toDay = makeDayFormatter(options.timeZone);
     if (options.resolution === "hour") {
