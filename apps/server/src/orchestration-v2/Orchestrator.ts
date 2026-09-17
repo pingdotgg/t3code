@@ -932,6 +932,142 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       const commandId = CommandId.make(`command:system:start-queued:${queuedRun.id}`);
       const now = yield* DateTime.now;
+      const selectionChanged = !modelSelectionsEqual(
+        projection.thread.modelSelection,
+        queuedRun.modelSelection,
+      );
+      const switchPlan = selectionChanged
+        ? yield* providerSwitchService
+            .plan({ projection, targetModelSelection: queuedRun.modelSelection })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId,
+                    commandType: "message.dispatch",
+                    cause,
+                  }),
+              ),
+            )
+        : null;
+      const targetAdapter = yield* providerAdapters.get(queuedRun.providerInstanceId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorDispatchError({
+              commandId,
+              commandType: "message.dispatch",
+              cause,
+            }),
+        ),
+      );
+      const targetCapabilities = yield* targetAdapter.getCapabilities().pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorDispatchError({
+              commandId,
+              commandType: "message.dispatch",
+              cause,
+            }),
+        ),
+      );
+      const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
+      const coveredRuns =
+        latestCompletedRun === undefined ||
+        latestCompletedRun.providerInstanceId === queuedRun.providerInstanceId
+          ? []
+          : projection.runs.filter(
+              (run) =>
+                run.status === "completed" &&
+                run.ordinal > (queuedProviderThread.lastRunOrdinal ?? 0) &&
+                run.ordinal <= latestCompletedRun.ordinal,
+            );
+      const needsFullContext = queuedProviderThread.nativeThreadRef === null;
+      const handoffStrategy = needsFullContext
+        ? ("full_thread_summary" as const)
+        : ("delta_since_target_last_seen" as const);
+      const transferId =
+        coveredRuns.length === 0
+          ? null
+          : yield* idAllocator.allocate
+              .contextTransfer({
+                sourceThreadId: threadId,
+                targetThreadId: threadId,
+                type: "provider_handoff",
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestratorDispatchError({
+                      commandId,
+                      commandType: "message.dispatch",
+                      cause,
+                    }),
+                ),
+              );
+      if (transferId !== null) {
+        yield* commandPolicy
+          .ensureContextHandoff({
+            commandId,
+            threadId,
+            providerInstanceId: queuedRun.providerInstanceId,
+            capabilities: targetCapabilities,
+            strategy: needsFullContext ? "full_thread_summary" : "delta_context",
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestratorDispatchError({
+                  commandId,
+                  commandType: "message.dispatch",
+                  cause,
+                }),
+            ),
+          );
+      }
+      const handoff =
+        transferId === null || latestCompletedRun === undefined
+          ? null
+          : yield* contextHandoffService
+              .prepareProviderHandoff({
+                threadId,
+                targetRunId: queuedRun.id,
+                transferId,
+                fromProviderThreadIds: Array.from(
+                  new Set(
+                    coveredRuns.flatMap((run) =>
+                      run.providerThreadId === null ? [] : [run.providerThreadId],
+                    ),
+                  ),
+                ),
+                toProviderThreadId: queuedProviderThread.id,
+                fromProviderInstanceId: latestCompletedRun.providerInstanceId,
+                toProviderInstanceId: queuedRun.providerInstanceId,
+                coveredRunOrdinals: {
+                  from: coveredRuns[0]!.ordinal,
+                  to: coveredRuns.at(-1)!.ordinal,
+                },
+                strategy: handoffStrategy,
+                items: [
+                  ...(needsFullContext && projection.thread.historyOrigin === "v1_import"
+                    ? projection.turnItems.filter((item) => item.runId === null)
+                    : []),
+                  ...projection.turnItems.filter(
+                    (item) =>
+                      item.runId !== null && coveredRuns.some((run) => run.id === item.runId),
+                  ),
+                ],
+                createdAt: now,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestratorDispatchError({
+                      commandId,
+                      commandType: "message.dispatch",
+                      cause,
+                    }),
+                ),
+              );
       const checkpointScope =
         storedCheckpointScope ??
         (yield* runtimePolicy
@@ -957,7 +1093,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ),
           ));
       const providerSessionId =
-        queuedProviderThread.providerSessionId ??
+        (queuedProviderThread.providerSessionId !== null &&
+        !switchPlan?.releaseProviderSessionIds.includes(queuedProviderThread.providerSessionId)
+          ? queuedProviderThread.providerSessionId
+          : null) ??
         (yield* providerAdapters.get(queuedRun.providerInstanceId).pipe(
           Effect.flatMap((adapter) =>
             providerSessionIdFor({
@@ -981,6 +1120,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "not_loaded",
         firstRunOrdinal: queuedProviderThread.firstRunOrdinal ?? queuedRun.ordinal,
         lastRunOrdinal: queuedRun.ordinal,
+        handoffIds: appendContextHandoffId(queuedProviderThread.handoffIds, handoff?.id ?? null),
         updatedAt: now,
       };
       const startingRun: OrchestrationV2Run = {
@@ -988,6 +1128,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "starting",
         queuePosition: null,
         startedAt: null,
+        contextHandoffId: handoff?.id ?? null,
       };
       const userTurnItem: OrchestrationV2TurnItem = {
         ...(legacyQueuedTurnItem ?? {
@@ -1041,8 +1182,97 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               },
             ]
           : [];
+      const sessionsToDetach = projection.providerSessions.filter(
+        (session) =>
+          switchPlan?.releaseProviderSessionIds.includes(session.id) &&
+          session.status !== "stopped" &&
+          session.status !== "error",
+      );
       yield* writeSystemEvents(
         [
+          ...(selectionChanged
+            ? [
+                {
+                  type:
+                    queuedRun.providerInstanceId === projection.thread.providerInstanceId
+                      ? ("thread.model-selection-updated" as const)
+                      : ("thread.provider-switched" as const),
+                  threadId,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: {
+                    ...projection.thread,
+                    providerInstanceId: queuedRun.providerInstanceId,
+                    modelSelection: queuedRun.modelSelection,
+                    updatedAt: now,
+                  },
+                },
+              ]
+            : []),
+          ...(handoff === null || transferId === null || latestCompletedRun === undefined
+            ? []
+            : [
+                {
+                  type: "context-transfer.created" as const,
+                  threadId,
+                  runId: queuedRun.id,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: {
+                    id: transferId,
+                    type: "provider_handoff" as const,
+                    sourceThreadId: threadId,
+                    targetThreadId: threadId,
+                    sourcePoint: contextSourcePointForRun(projection, latestCompletedRun),
+                    basePoint:
+                      needsFullContext || queuedProviderThread.lastRunOrdinal === null
+                        ? null
+                        : (() => {
+                            const baseRun = projection.runs.find(
+                              (run) => run.ordinal === queuedProviderThread.lastRunOrdinal,
+                            );
+                            return baseRun === undefined
+                              ? null
+                              : contextSourcePointForRun(projection, baseRun);
+                          })(),
+                    sourceProviderInstanceId: latestCompletedRun.providerInstanceId,
+                    targetProviderInstanceId: queuedRun.providerInstanceId,
+                    targetRunId: queuedRun.id,
+                    status: "consumed" as const,
+                    resolution: {
+                      strategy: needsFullContext
+                        ? ("portable_context" as const)
+                        : ("delta_context" as const),
+                      contextHandoffId: handoff.id,
+                    },
+                    createdBy: queuedMessage.createdBy,
+                    error: null,
+                    createdAt: now,
+                    updatedAt: now,
+                    consumedAt: now,
+                  },
+                },
+                {
+                  type: "context-handoff.updated" as const,
+                  threadId,
+                  runId: queuedRun.id,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: handoff,
+                },
+              ]),
+          ...sessionsToDetach.map((session) => ({
+            type: "provider-session.detached" as const,
+            threadId,
+            driver: session.driver,
+            providerInstanceId: session.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              providerSessionId: session.id,
+              detachedAt: now,
+              reason: "Provider or model selection changed.",
+            },
+          })),
           ...checkpointEvents,
           {
             type: "provider-thread.updated",
@@ -1071,6 +1301,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         ],
         [
+          ...sessionsToDetach.map((session) => ({
+            id: `effect:${commandId}:provider-session.detach:${session.id}`,
+            commandId,
+            threadId,
+            request: {
+              type: "provider-session.detach" as const,
+              providerSessionId: session.id,
+              detail: "Provider or model selection changed.",
+            },
+          })),
           {
             id: `effect:${commandId}:provider-turn.start:${queuedRun.id}`,
             commandId,
@@ -3591,13 +3831,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Active run ${activeRun.id} has no provider thread for queued dispatch.`,
           });
         }
-        if (modelSelection.instanceId !== queueProviderThread.providerInstanceId) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: `Queued dispatch for provider instance ${modelSelection.instanceId} cannot run behind active provider instance ${queueProviderThread.providerInstanceId}.`,
-          });
-        }
         const existingProviderSession =
           queueProviderThread.providerSessionId === null
             ? undefined
@@ -3618,6 +3851,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const now = yield* DateTime.now;
         const ordinal = nextRunOrdinal(projection);
         const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
+        const targetProviderThread =
+          modelSelection.instanceId === queueProviderThread.providerInstanceId
+            ? queueProviderThread
+            : rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0];
+        const queuedAdapter = yield* providerAdapters
+          .get(modelSelection.instanceId)
+          .pipe(mapDispatchError(command));
+        const queuedProviderThread: OrchestrationV2ProviderThread = targetProviderThread ?? {
+          id: idAllocator.derive.providerThread({
+            driver: queuedAdapter.driver,
+            nativeThreadId: `pending:${runId}`,
+          }),
+          driver: queuedAdapter.driver,
+          providerInstanceId: modelSelection.instanceId,
+          providerSessionId: null,
+          appThreadId: command.threadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "not_loaded",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        };
         const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
         const rootNodeId = idAllocator.derive.rootNode({ runId });
         const checkpointScope =
@@ -3629,7 +3889,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     threadId: command.threadId,
                     runId,
                     rootNodeId,
-                    providerThreadId: queueProviderThread.id,
+                    providerThreadId: queuedProviderThread.id,
                     cwd:
                       resolvedRuntimePolicy.cwd ??
                       existingProviderSession?.cwd ??
@@ -3653,7 +3913,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ordinal,
           providerInstanceId: modelSelection.instanceId,
           modelSelection,
-          providerThreadId: queueProviderThread.id,
+          providerThreadId: queuedProviderThread.id,
           userMessageId: command.messageId,
           rootNodeId,
           activeAttemptId: attemptId,
@@ -3681,7 +3941,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           attemptOrdinal: 1,
           rootNodeId,
           providerInstanceId: modelSelection.instanceId,
-          providerThreadId: queueProviderThread.id,
+          providerThreadId: queuedProviderThread.id,
           providerTurnId: null,
           reason: "initial",
           status: "pending",
@@ -3697,7 +3957,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           kind: "root_turn",
           status: "pending",
           countsForRun: true,
-          providerThreadId: queueProviderThread.id,
+          providerThreadId: queuedProviderThread.id,
           providerTurnId: null,
           nativeItemRef: null,
           runtimeRequestId: null,
@@ -3726,6 +3986,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.notification === undefined ? {} : { notification: command.notification }),
         };
         const emitEvent = emit(events, command);
+        if (targetProviderThread === undefined) {
+          yield* emitEvent({
+            type: "provider-thread.updated",
+            threadId: command.threadId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: queuedProviderThread,
+          });
+        }
         yield* emitEvent({
           type: "run.created",
           threadId: command.threadId,

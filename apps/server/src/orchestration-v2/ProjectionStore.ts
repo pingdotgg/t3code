@@ -546,7 +546,8 @@ export function applyToProjection(
       return {
         ...base,
         thread:
-          event.payload.appThreadId === base.thread.id
+          event.payload.appThreadId === base.thread.id &&
+          !(event.payload.status === "not_loaded" && event.payload.firstRunOrdinal === null)
             ? {
                 ...base.thread,
                 activeProviderThreadId: event.payload.id,
@@ -1830,7 +1831,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
             `;
-            if (event.payload.appThreadId !== null) {
+            if (
+              event.payload.appThreadId !== null &&
+              !(event.payload.status === "not_loaded" && event.payload.firstRunOrdinal === null)
+            ) {
               const threadRows = yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_threads

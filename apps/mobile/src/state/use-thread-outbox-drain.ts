@@ -705,7 +705,10 @@ export function useThreadOutboxDrain(): void {
       }
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
 
-      if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
+      if (
+        queuedMessage.dispatchMode !== "queue" &&
+        !modelSelectionsEqual(settings.modelSelection, thread.modelSelection)
+      ) {
         const updateResult = await updateThreadMetadata({
           environmentId: queuedMessage.environmentId,
           input: {

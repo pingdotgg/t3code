@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2Command,
@@ -16,6 +17,7 @@ import {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -28,12 +30,14 @@ import { ClaudeProviderCapabilitiesV2 } from "../Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "../Adapters/CursorAdapterV2.ts";
 import { layer as eventSinkLayer } from "../EventSink.ts";
+import { EventSinkV2 } from "../EventSink.ts";
 import { layer as eventStoreLayer } from "../EventStore.ts";
 import {
   LegacyV1ThreadImporter,
   layer as legacyV1ThreadImporterLayer,
 } from "../LegacyV1ThreadImporter.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
+import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
 import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,
@@ -84,6 +88,7 @@ function makeTestAdapter(input: {
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
   readonly failResume?: boolean;
   readonly failedRunOrdinals?: ReadonlySet<number>;
+  readonly holdFirstTurn?: Deferred.Deferred<void>;
 }): ProviderAdapterV2Shape {
   return {
     instanceId: input.instanceId,
@@ -155,6 +160,10 @@ function makeTestAdapter(input: {
                   text: turnInput.message.text,
                 },
               ]);
+              if (turnInput.runOrdinal === 1 && input.holdFirstTurn !== undefined) {
+                yield* Deferred.succeed(input.holdFirstTurn, undefined);
+                return;
+              }
               const eventTime = yield* DateTime.now;
               const providerTurnId = ProviderTurnId.make(
                 `provider-turn:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}`,
@@ -296,6 +305,184 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
 });
 
 describe("orchestration v2 provider switching", () => {
+  it.live("finishes earlier queued Codex turns before handing context to queued Claude", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("queued-provider-switch");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const registryLayer = makeProviderAdapterRegistryLayer([
+          makeTestAdapter({
+            instanceId: ProviderInstanceId.make("codex"),
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {
+              1: "Codex current turn complete",
+              2: "Codex first queued turn complete",
+              3: "Codex second queued turn complete",
+            },
+            capturedTurns,
+            holdFirstTurn: started,
+          }),
+          makeTestAdapter({
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 4: "Claude turn complete" },
+            capturedTurns,
+          }),
+        ]);
+        const queuedThreadId = ThreadId.make("thread:queued-provider-switch");
+        const projection = yield* Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          const worker = yield* OrchestrationEffectWorkerV2;
+          const eventSink = yield* EventSinkV2;
+          const dispatch = (ordinal: number, modelSelection: ModelSelection) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:queued-provider-switch:${ordinal}`),
+              threadId: queuedThreadId,
+              messageId: MessageId.make(`message:queued-provider-switch:${ordinal}`),
+              text: `Prompt ${ordinal}`,
+              attachments: [],
+              modelSelection,
+              dispatchMode: {
+                type: ordinal === 1 ? "start_immediately" : "queue_after_active",
+              },
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-provider-switch:create"),
+            threadId: queuedThreadId,
+            projectId: ProjectId.make("project:queued-provider-switch"),
+            title: "Queued provider switch",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* dispatch(1, CODEX_MODEL_SELECTION);
+          yield* Deferred.await(started);
+          yield* dispatch(2, CODEX_MODEL_SELECTION);
+          yield* dispatch(3, CODEX_MODEL_SELECTION);
+          yield* dispatch(4, CLAUDE_MODEL_SELECTION);
+          const queued = yield* orchestrator.getThreadProjection(queuedThreadId);
+          assert.deepEqual(
+            queued.runs.map((run) => run.status),
+            ["running", "queued", "queued", "queued"],
+          );
+          assert.equal(queued.thread.activeProviderThreadId, queued.runs[0]?.providerThreadId);
+          assert.equal(queued.thread.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
+          assert.lengthOf(queued.contextHandoffs, 0);
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:queued-provider-switch:first-response"),
+                type: "turn-item.updated",
+                threadId: queuedThreadId,
+                runId: queued.runs[0]!.id,
+                nodeId: queued.runs[0]!.rootNodeId!,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make("turn-item:queued-provider-switch:first-response"),
+                  threadId: queuedThreadId,
+                  runId: queued.runs[0]!.id,
+                  nodeId: queued.runs[0]!.rootNodeId!,
+                  providerThreadId: queued.runs[0]!.providerThreadId,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 101,
+                  status: "completed",
+                  title: null,
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  type: "assistant_message",
+                  messageId: MessageId.make("message:queued-provider-switch:first-response"),
+                  text: "Codex current turn complete",
+                  streaming: false,
+                },
+              },
+              {
+                id: EventId.make("event:queued-provider-switch:first-complete"),
+                type: "run.updated",
+                threadId: queuedThreadId,
+                runId: queued.runs[0]!.id,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: now,
+                payload: { ...queued.runs[0]!, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.resumeQueuedRuns;
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.event.type === "run.updated" &&
+                event.event.runId === queued.runs[3]?.id &&
+                event.event.payload.status === "completed",
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+          return yield* orchestrator.getThreadProjection(queuedThreadId);
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "queued-provider-switch",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              registryLayer,
+            ),
+          ),
+        );
+        const turns = yield* Ref.get(capturedTurns);
+        assert.deepEqual(
+          projection.runs.map((run) => [run.providerInstanceId, run.status]),
+          [
+            ["codex", "completed"],
+            ["codex", "completed"],
+            ["codex", "completed"],
+            ["claudeAgent", "completed"],
+          ],
+        );
+        assert.deepEqual(
+          turns.map((turn) => [turn.driver, turn.text.includes("Prompt 4")]),
+          [
+            ["codex", false],
+            ["codex", false],
+            ["codex", false],
+            ["claudeAgent", true],
+          ],
+        );
+        assert.lengthOf(projection.contextHandoffs, 1);
+        assert.equal(projection.contextHandoffs[0]?.targetRunId, projection.runs[3]?.id);
+        assert.include(turns[3]?.text ?? "", "Codex current turn complete");
+        assert.include(turns[3]?.text ?? "", "Codex first queued turn complete");
+        assert.include(turns[3]?.text ?? "", "Codex second queued turn complete");
+      }),
+    ),
+  );
+
   it.live("reissues imported v1 context when switching after the first provider fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
