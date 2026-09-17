@@ -564,7 +564,13 @@ describe("EventNdjsonLogger", () => {
         const oldest = `${ownedLogPath(basePath, "oldest")}.1.gz`;
         const newest = `${ownedLogPath(basePath, "newest")}.1.gz`;
         const unrelated = NodePath.join(tempDir, "unrelated.log.1.gz");
+        const legacy = NodePath.join(tempDir, "legacy-thread.log.1.gz");
         const archive = NodeZlib.gzipSync("provider event");
+        NodeFS.writeFileSync(
+          legacy,
+          NodeZlib.gzipSync("[2026-01-01T00:00:00.000Z] CANON: " + "x".repeat(1_000_000)),
+        );
+        NodeFS.utimesSync(legacy, (now - 20_000) / 1_000, (now - 20_000) / 1_000);
         for (const path of [expired, oldest, newest, unrelated])
           NodeFS.writeFileSync(path, archive);
         NodeFS.utimesSync(expired, (now - 20_000) / 1_000, (now - 20_000) / 1_000);

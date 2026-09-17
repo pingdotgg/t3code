@@ -7,6 +7,7 @@
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import type { ThreadId } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
@@ -277,10 +278,28 @@ export function writeBatchedMessages(
   flush();
 }
 
-function isProviderLogFile(filePath: string, fileName: string, filePrefix: string): boolean {
+async function isProviderLogFile(
+  filePath: string,
+  fileName: string,
+  filePrefix: string,
+): Promise<boolean> {
   if (!/\.log(?:\.\d+(?:\.gz)?)?$/u.test(fileName)) return false;
   if (fileName.startsWith(filePrefix)) return true;
-  if (fileName.endsWith(".gz")) return false;
+  if (fileName.endsWith(".gz")) {
+    const input = NodeFS.createReadStream(filePath).compose(NodeZlib.createGunzip());
+    const header = Buffer.alloc(256);
+    let bytesRead = 0;
+    try {
+      for await (const chunk of input) {
+        if (!Buffer.isBuffer(chunk)) continue;
+        bytesRead += chunk.copy(header, bytesRead, 0, header.byteLength - bytesRead);
+        if (bytesRead === header.byteLength) break;
+      }
+      return /^\[[^\]\r\n]+\] (?:NTIVE|CANON|ORCH): /u.test(header.toString("utf8", 0, bytesRead));
+    } finally {
+      input.destroy();
+    }
+  }
 
   const descriptor = NodeFS.openSync(filePath, "r");
   try {
@@ -292,14 +311,14 @@ function isProviderLogFile(filePath: string, fileName: string, filePrefix: strin
   }
 }
 
-function enforceRetention(input: {
+async function enforceRetention(input: {
   readonly directory: string;
   readonly maxTotalBytes: number;
   readonly maxAgeMs: number;
   readonly activeFilePaths: ReadonlySet<string>;
   readonly filePrefix: string;
   readonly now: number;
-}): RetentionResult {
+}): Promise<RetentionResult> {
   const failures: Array<FileOperationFailure> = [];
   const files: Array<{ filePath: string; mtimeMs: number; size: number }> = [];
 
@@ -314,7 +333,7 @@ function enforceRetention(input: {
     if (!entry.isFile()) continue;
     const filePath = NodePath.join(input.directory, entry.name);
     try {
-      if (!isProviderLogFile(filePath, entry.name, input.filePrefix)) continue;
+      if (!(await isProviderLogFile(filePath, entry.name, input.filePrefix))) continue;
       const stat = NodeFS.statSync(filePath);
       files.push({ filePath, mtimeMs: stat.mtimeMs, size: stat.size });
     } catch (cause) {
@@ -395,7 +414,7 @@ function resolveOptions(
   return Effect.succeed(resolved);
 }
 
-function drainPending(input: {
+async function drainPending(input: {
   readonly directory: string;
   readonly options: ResolvedOptions;
   readonly state: StoreState;
@@ -403,7 +422,7 @@ function drainPending(input: {
   readonly now: number;
   readonly timerFired: boolean;
   readonly close: boolean;
-}): readonly [DrainResult, StoreState] {
+}): Promise<readonly [DrainResult, StoreState]> {
   if (input.state.closed) {
     return [{ attributions: [], failures: [] }, input.state];
   }
@@ -462,7 +481,7 @@ function drainPending(input: {
   const retentionDue =
     input.now - input.state.lastRetentionAt >= input.options.retentionCheckIntervalMs;
   const retention = retentionDue
-    ? enforceRetention({
+    ? await enforceRetention({
         directory: input.directory,
         maxTotalBytes: input.options.maxTotalBytes,
         maxAgeMs: input.options.maxAgeMs,
@@ -519,7 +538,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   });
 
   const initializedAt = yield* Clock.currentTimeMillis;
-  const initialRetention = yield* Effect.sync(() =>
+  const initialRetention = yield* Effect.promise(() =>
     enforceRetention({
       directory,
       maxTotalBytes: resolved.maxTotalBytes,
@@ -549,7 +568,7 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
   const flush = Effect.fnUntraced(function* (timerFired: boolean, close: boolean) {
     const startedAt = yield* Clock.currentTimeMillis;
     const result = yield* SynchronizedRef.modifyEffect(stateRef, (state) =>
-      Effect.sync(() =>
+      Effect.promise(() =>
         drainPending({
           directory,
           options: resolved,
