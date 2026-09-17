@@ -21,6 +21,8 @@ import {
   type PullRequestState,
   type PullRequestUpdateMethod,
   type SourceControlProviderKind,
+  type ThreadLinkedPullRequest,
+  type ThreadPullRequestLink,
   type VcsRef,
 } from "@t3tools/contracts";
 import {
