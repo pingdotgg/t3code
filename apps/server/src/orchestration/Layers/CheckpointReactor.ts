@@ -93,6 +93,26 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const queuedEntryRefreshes = new Set<string>();
+  const entryRefreshWorker = yield* makeDrainableWorker((cwd: string) =>
+    Effect.sync(() => queuedEntryRefreshes.delete(cwd)).pipe(
+      Effect.andThen(workspaceEntries.refresh(cwd)),
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("failed to refresh checkpoint workspace entries", {
+              cwd,
+              cause: Cause.pretty(cause),
+            }),
+      ),
+    ),
+  );
+  const refreshWorkspaceEntries = Effect.fn("refreshWorkspaceEntries")(function* (cwd: string) {
+    if (queuedEntryRefreshes.has(cwd)) return;
+    queuedEntryRefreshes.add(cwd);
+    yield* entryRefreshWorker.enqueue(cwd);
+  });
+
   const startedTurns = new Map<ThreadId, TurnId>();
   const pending = new Set<ThreadId>();
 
@@ -270,7 +290,7 @@ const make = Effect.gen(function* () {
 
     // Refresh the workspace entry index so the @-mention file picker
     // reflects files created or deleted during this turn.
-    yield* workspaceEntries.refresh(input.cwd);
+    yield* refreshWorkspaceEntries(input.cwd);
 
     // Git may have been initialized during this turn, leaving no pre-turn
     // snapshot. Keep the completion checkpoint for future turns, but do not
@@ -850,7 +870,7 @@ const make = Effect.gen(function* () {
 
       // Refresh the workspace entry index so the @-mention file picker
       // reflects the reverted filesystem state.
-      yield* workspaceEntries.refresh(checkpointCwd);
+      yield* refreshWorkspaceEntries(checkpointCwd);
     }
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
@@ -1041,7 +1061,10 @@ const make = Effect.gen(function* () {
 
   return {
     start,
-    drain: worker.drain.pipe(Effect.andThen(statusRefreshWorker.drain)),
+    drain: worker.drain.pipe(
+      Effect.andThen(statusRefreshWorker.drain),
+      Effect.andThen(entryRefreshWorker.drain),
+    ),
   } satisfies CheckpointReactorShape;
 });
 
