@@ -137,6 +137,34 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("checkpoint recovery discovers nested HEAD independently of inherited GIT_DIR", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-git-dir-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["init", "empty"]);
+    const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
+    yield* Effect.acquireUseRelease(
+      Effect.sync(() => {
+        const previous = process.env.GIT_DIR;
+        process.env.GIT_DIR = path.join(cwd, ".git");
+        return previous;
+      }),
+      () => driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+      (previous) =>
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env.GIT_DIR;
+          else process.env.GIT_DIR = previous;
+        }),
+    );
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+    assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", "empty"])).stdout, "");
+    assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git", "index")), originalIndex);
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("checkpoint capture still fails when a clean filter rejects a file", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

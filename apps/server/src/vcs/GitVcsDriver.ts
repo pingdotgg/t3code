@@ -717,12 +717,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
-  const hasHeadCommit = (cwd: string) =>
+  const hasHeadCommit = (cwd: string, env?: NodeJS.ProcessEnv) =>
     execute({
       operation: "GitVcsDriver.checkpoints.hasHeadCommit",
       cwd,
       args: ["rev-parse", "--verify", "HEAD"],
       allowNonZeroExit: true,
+      ...(env !== undefined ? { env } : {}),
     }).pipe(Effect.map((result) => result.exitCode === 0));
 
   const resolveCheckpointCommit = (cwd: string, checkpointRef: string) =>
@@ -955,6 +956,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 );
                 // Refuse excessive recovery work before probing any nested repositories.
                 if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
+                // Discover each child's repository instead of inheriting the server's Git bindings.
+                const nestedRepoEnv: NodeJS.ProcessEnv = {
+                  ...process.env,
+                  GIT_DIR: undefined,
+                  GIT_WORK_TREE: undefined,
+                  GIT_COMMON_DIR: undefined,
+                  GIT_INDEX_FILE: undefined,
+                  GIT_OBJECT_DIRECTORY: undefined,
+                  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+                };
                 const exclusions: Array<string> = [];
                 for (const entry of candidates) {
                   const nestedCwd = path.join(input.cwd, entry);
@@ -962,7 +973,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     (yield* fileSystem
                       .exists(path.join(nestedCwd, ".git"))
                       .pipe(Effect.mapError(() => error))) &&
-                    !(yield* hasHeadCommit(nestedCwd))
+                    !(yield* hasHeadCommit(nestedCwd, nestedRepoEnv))
                   ) {
                     exclusions.push(`:(exclude,literal)${entry}`);
                   }
