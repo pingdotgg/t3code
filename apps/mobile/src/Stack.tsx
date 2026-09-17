@@ -62,6 +62,12 @@ import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsD
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
+import {
+  SettingsEnvironmentAgentBehaviorRouteScreen,
+  SettingsEnvironmentMaintenanceRouteScreen,
+  SettingsEnvironmentNewThreadsRouteScreen,
+  SettingsEnvironmentSourceControlRouteScreen,
+} from "./features/settings/SettingsServerControlsRouteScreen";
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import {
