@@ -1,8 +1,8 @@
 import * as Schema from "effect/Schema";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 
 import {
   PullRequestDetail,
+  pullRequestHostOf,
   type PullRequestAction,
   type PullRequestActor,
   type PullRequestBaseComparison,
@@ -15,6 +15,8 @@ import {
   type PullRequestMergeability,
   type PullRequestMergeMethod,
   type PullRequestReaction,
+  type PullRequestRef,
+  type RepositoryIdentity,
   type PullRequestReviewThread,
   type PullRequestState,
   type PullRequestUpdateMethod,
@@ -1092,6 +1094,15 @@ export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): bo
 
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
 
+export function resolvePullRequestReferenceHost(
+  reference: PullRequestRef,
+  identity: RepositoryIdentity | null | undefined,
+): PullRequestRef {
+  // Other providers may resolve an SSH remote to a different web authority on the server.
+  if (reference.host !== undefined || identity?.provider !== "github") return reference;
+  return { ...reference, host: pullRequestHostOf(identity, "github") };
+}
+
 export interface PullRequestDetailSnapshotRef {
   readonly host?: string | undefined;
   readonly projectId: string;
@@ -1121,7 +1132,13 @@ export function readPullRequestDetailSnapshot(
   reference: PullRequestDetailSnapshotRef,
 ): PullRequestDetail | null {
   try {
-    const raw = storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference));
+    const raw =
+      storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference)) ??
+      (reference.host === undefined
+        ? null
+        : storage?.getItem(
+            pullRequestDetailSnapshotKey(environmentId, { ...reference, host: undefined }),
+          ));
     if (!raw) return null;
     const decoded = decodeDetailSnapshot(JSON.parse(raw));
     return decoded._tag === "Some"
@@ -1157,14 +1174,22 @@ export function resolveDisplayedPullRequestDetail(input: {
 }): PullRequestDetail | null {
   if (input.live !== null) return input.live;
   if (
-    input.cached !== null &&
-    input.cached.projectId === input.reference.projectId &&
-    input.cached.repository.toLowerCase() === input.reference.repository.toLowerCase() &&
-    input.cached.number === input.reference.number &&
-    (input.reference.host === undefined ||
-      parseChangeRequestUrl(input.cached.url)?.host === input.reference.host.toLowerCase())
+    input.cached === null ||
+    input.cached.projectId !== input.reference.projectId ||
+    input.cached.repository.toLowerCase() !== input.reference.repository.toLowerCase() ||
+    input.cached.number !== input.reference.number
   ) {
-    return input.cached;
+    return null;
   }
-  return null;
+  if (input.reference.host === undefined) return input.cached;
+  try {
+    const url = new URL(input.cached.url);
+    const host = input.cached.provider === "forgejo" ? url.host : url.hostname;
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      host.toLowerCase() === input.reference.host.toLowerCase()
+      ? input.cached
+      : null;
+  } catch {
+    return null;
+  }
 }

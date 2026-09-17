@@ -410,6 +410,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       return false
     }
 
+    emitInput("\u{7F}")
     return false
   }
 

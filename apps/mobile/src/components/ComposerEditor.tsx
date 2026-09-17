@@ -1,4 +1,6 @@
 import { ComposerContextId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -19,6 +21,7 @@ import {
   useComposerDraft,
 } from "../state/use-composer-drafts";
 import { importComposerContextClipboard } from "../lib/composerContextClipboard";
+import { mobilePreferencesAtom } from "../state/preferences";
 import { ComposerContextSheet } from "./ComposerContextSheet";
 import { AppText as Text } from "./AppText";
 import {
@@ -53,6 +56,10 @@ export function ComposerEditor({
   ...props
 }: ComposerEditorProps) {
   const draft = useComposerDraft(draftKey ?? null);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const preferredEnterBehavior = AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.composerEnterBehavior
+    : undefined;
   const contextHistory = useMemo(() => createComposerDraftContextHistory(), [draftKey]);
   useEffect(() => () => contextHistory.dispose(), [contextHistory]);
   const changeText = (text: string) => {
@@ -148,8 +155,9 @@ export function ComposerEditor({
   const selectedReference = selected
     ? collectComposerContextReferences(selected.source)[0]
     : undefined;
-  const selectedSkill = selected?.source.startsWith("$")
-    ? props.skills?.find((skill) => skill.name === selected.source.slice(1))
+  const selectedSkillName = selected?.source.match(/^\p{Sc}(.+)$/u)?.[1];
+  const selectedSkill = selectedSkillName
+    ? props.skills?.find((skill) => skill.name === selectedSkillName)
     : undefined;
   const record = draft.context?.records.find(
     (entry) => entry.contextId === selectedReference?.contextId,
@@ -158,6 +166,7 @@ export function ComposerEditor({
     <>
       <NativeComposerEditor
         {...props}
+        enterBehavior={props.enterBehavior ?? preferredEnterBehavior}
         onChangeText={changeText}
         readOnly={props.readOnly || importing}
         onSubmit={importing ? undefined : props.onSubmit}

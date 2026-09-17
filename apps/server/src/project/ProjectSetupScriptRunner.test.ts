@@ -29,9 +29,11 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
 const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
   Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
     getUserInputActivity: () => Effect.die("unused"),
+    listActivitiesByKind: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () => Effect.die("unused"),
+    getDeletedWorktreeThreads: () => Effect.die("unused"),
     getArchivedShellSnapshot: () => Effect.die("unused"),
     getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
     getCounts: () => Effect.die("unused"),
@@ -112,7 +114,12 @@ describe("ProjectSetupScriptRunner", () => {
         terminalId: "setup-default-setup",
         cwd: "/repo/worktrees/a",
         worktreePath: "/repo/worktrees/a",
-        env: { T3CODE_PROJECT_ROOT: "/repo/project", T3CODE_WORKTREE_PATH: "/repo/worktrees/a" },
+        env: {
+          T3CODE_PROJECT_ROOT: "/repo/project",
+          T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+          NO_COLOR: "1",
+          FORCE_COLOR: "0",
+        },
       });
       expect(write).toHaveBeenCalledWith({
         threadId: "thread-1",
@@ -203,6 +210,7 @@ describe("ProjectSetupScriptRunner", () => {
           scriptCommand: "bun install",
           terminalId: "setup-setup",
           cwd: "/repo/worktrees/a",
+          async: true,
         });
         expect(open).toHaveBeenCalledWith({
           threadId: "thread-1",
@@ -210,6 +218,8 @@ describe("ProjectSetupScriptRunner", () => {
           cwd: "/repo/worktrees/a",
           worktreePath: "/repo/worktrees/a",
           env: {
+            NO_COLOR: "1",
+            FORCE_COLOR: "0",
             T3CODE_PROJECT_ROOT: "/repo/project",
             T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
           },
@@ -298,7 +308,9 @@ describe("ProjectSetupScriptRunner", () => {
         // control sequences are stripped, and the echoed wrapper is hidden.
         yield* emit(`( bun install\r\n> ); printf '\\n${sentinel}%s\\n' "$?"\r\n`);
         yield* emit("\u001b[32mResolving");
-        yield* emit(" deps\u001b[0m\r\nDone in 2s\r\n");
+        yield* emit(" deps\u001b[0m\r\n");
+        // Progress redraws separated by bare carriage returns are their own lines.
+        yield* emit("Progress: 1/3\rProgress: 2/3\rProgress: 3/3\r\nDone in 2s\r\n");
         // A spoofed sentinel from the script itself must not settle completion.
         yield* emit("__T3_SETUP_DONE__:0\r\n");
         yield* emit(`__T3_SETUP_DONE___${"0".repeat(32)}:0\r\n`);
@@ -308,6 +320,9 @@ describe("ProjectSetupScriptRunner", () => {
         expect(completion.exitCode).toBe(3);
         expect(seen).toEqual([
           "Resolving deps",
+          "Progress: 1/3",
+          "Progress: 2/3",
+          "Progress: 3/3",
           "Done in 2s",
           "__T3_SETUP_DONE__:0",
           `__T3_SETUP_DONE___${"0".repeat(32)}:0`,

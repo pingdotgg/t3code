@@ -186,7 +186,11 @@ export function resolveProactiveTurnDiffAction(input: {
   ) {
     return "ignore";
   }
-  return "open";
+  const changedLines = input.checkpoint.files.reduce(
+    (total, file) => total + file.additions + file.deletions,
+    0,
+  );
+  return input.checkpoint.files.length >= 3 || changedLines >= 50 ? "open" : "ignore";
 }
 
 export function codexArtifactTemplatePromptToAppend(
@@ -250,6 +254,11 @@ export function toolGroupConsumesUpwardNavigation(target: EventTarget | null): b
   }
   return false;
 }
+
+export {
+  findRecordedWorktreeSetup,
+  resolveVisibleWorktreeSetup,
+} from "@t3tools/client-runtime/worktree-setup";
 
 export function resolveDraftHeroState(input: {
   isLocalDraftThread: boolean;
@@ -405,7 +414,7 @@ export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input:
 
 export function resolveDraftPromotionNavigationTarget(input: {
   serverThreadRef: ScopedThreadRef | null;
-  serverThread: Pick<Thread, "latestTurn" | "session"> | null | undefined;
+  serverThread: Pick<Thread, "latestTurn" | "session" | "messages"> | null | undefined;
   backgroundSubmissionPending: boolean;
 }): ScopedThreadRef | null {
   if (input.backgroundSubmissionPending) {
@@ -415,9 +424,13 @@ export function resolveDraftPromotionNavigationTarget(input: {
   const turnStarted = input.serverThread?.latestTurn?.startedAt != null;
   const startupStopped =
     sessionStatus === "error" || sessionStatus === "stopped" || sessionStatus === "interrupted";
-  // Keep local preparation feedback mounted until the server can render the
-  // running turn or its startup error on the canonical thread route.
-  return turnStarted || startupStopped ? input.serverThreadRef : null;
+  // A worktree bootstrap persists the user message before the turn, so the
+  // thread route can render the send and the live setup by itself. Otherwise
+  // keep the draft mounted until the server can render the running turn or
+  // its startup error.
+  const messagePersisted =
+    input.serverThread?.messages.some((message) => message.role === "user") ?? false;
+  return turnStarted || startupStopped || messagePersisted ? input.serverThreadRef : null;
 }
 
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {

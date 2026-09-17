@@ -148,7 +148,9 @@ type RawThreadFeedEntry =
     };
 
 export type ThreadFeedEntry =
-  | Extract<RawThreadFeedEntry, { type: "message" }>
+  | (Extract<RawThreadFeedEntry, { type: "message" }> & {
+      readonly reasoningMessages?: OrchestrationThread["messages"];
+    })
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -168,7 +170,7 @@ export type ThreadFeedEntry =
       readonly summaryKind: ToolGroupSummaryKind;
       readonly toolSurface?: WorkLogEntry["toolSurface"];
       readonly toolIcon?: WorkLogEntry["toolIcon"];
-      readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
+      readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request" | "brain";
       readonly hasFailure: boolean;
       readonly live: boolean;
       readonly shimmer: boolean;
@@ -254,6 +256,18 @@ const turnFoldRowsCache = new WeakMap<
   Extract<ThreadFeedEntry, { readonly type: "turn-fold" }>
 >();
 let cachedThinkingRow: Extract<ThreadFeedEntry, { readonly type: "thinking" }> | null = null;
+const reasoningGroupsCache = new WeakMap<
+  ThreadFeedEntry,
+  Extract<ThreadFeedEntry, { readonly type: "message" }>
+>();
+const activityRunsCache = new WeakMap<
+  ThreadFeedEntry,
+  {
+    readonly source: ReadonlyArray<ThreadFeedEntry>;
+    readonly state: string;
+    readonly rows: ThreadFeedEntry[];
+  }
+>();
 
 export function isContextCompactionActivityGroup(
   entry: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
@@ -411,7 +425,12 @@ function deriveWorkLogEntries(
   const ordered = Arr.sort(activities, activityOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of foldUserInputActivities(ordered)) {
-    if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
+    // The setup card owns its snapshot, including failed and cancelled outcomes.
+    if (
+      isWorktreeSetupActivity(activity.kind) &&
+      (activity.tone !== "error" || activity.kind === "worktree-setup")
+    )
+      continue;
     if (activity.kind === "tool.started") continue;
     // Like web: an agent's task.started row anchors its batch. It has a fixed
     // id and timestamp, unlike progress ticks, whose stable per-task id is
@@ -1595,7 +1614,7 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
   return bMs > aMs ? b : a;
 }
 
-function deriveUnsettledTurnId(latestTurn: ThreadFeedLatestTurn | null): TurnId | null {
+export function deriveUnsettledTurnId(latestTurn: ThreadFeedLatestTurn | null): TurnId | null {
   if (!latestTurn) {
     return null;
   }
@@ -1636,8 +1655,13 @@ function deriveThreadFeedTurnFolds(
       pendingUserBoundary = entry.message.createdAt;
       continue;
     }
+    // Thinking is work, so it folds with the rest of it. A provider that
+    // interleaves a block with every tool call would otherwise leave dozens of
+    // "Thought" rows standing beside the "Worked for ..." summary.
+    // Nothing folds while the turn is live, which is when traces are watched.
     const turnId =
-      entry.type === "message" && entry.message.role === "assistant"
+      entry.type === "message" &&
+      (entry.message.role === "assistant" || entry.message.role === "reasoning")
         ? entry.message.turnId
         : entry.type === "activity-group"
           ? entry.turnId
@@ -1664,7 +1688,15 @@ function deriveThreadFeedTurnFolds(
     if (turnId === unsettledTurnId) {
       continue;
     }
-    if (entries.some((entry) => entry.type === "message" && entry.message.streaming)) {
+    // A live turn is already excluded above, so only an answer still being
+    // written may hold a fold open. A thinking block stranded by a crashed
+    // provider keeps its streaming flag forever and must not.
+    if (
+      entries.some(
+        (entry) =>
+          entry.type === "message" && entry.message.streaming && entry.message.role !== "reasoning",
+      )
+    ) {
       continue;
     }
 
@@ -1684,13 +1716,16 @@ function deriveThreadFeedTurnFolds(
       continue;
     }
     // A lone compaction row stays visible on its own; it only folds away as
-    // part of a turn that already folds other work.
-    const hidesNonCompactionWork = entries.some(
+    // part of a turn that already folds other work. Thinking is the same: a
+    // question answered by thought alone keeps its "Thought" row
+    // rather than collapsing behind a "Worked for ..." that hides nothing else.
+    const hidesFoldableWork = entries.some(
       (entry) =>
         hiddenEntryIds.has(entry.id) &&
-        !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)),
+        !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
+        !(entry.type === "message" && entry.message.role === "reasoning"),
     );
-    if (!hidesNonCompactionWork) {
+    if (!hidesFoldableWork) {
       continue;
     }
 
@@ -1766,7 +1801,8 @@ export function deriveThreadFeedPresentation(
   }
 
   const result: ThreadFeedEntry[] = [];
-  for (const entry of sourceFeed) {
+  for (let index = 0; index < sourceFeed.length; index += 1) {
+    const entry = sourceFeed[index]!;
     const isActiveTailGroup =
       isWorking &&
       unsettledTurnId !== null &&
@@ -1798,6 +1834,31 @@ export function deriveThreadFeedPresentation(
       result.push(row);
     }
     if (!collapsedEntryIds.has(entry.id)) {
+      const runTurnId = activityRunTurnId(entry);
+      if (runTurnId !== null) {
+        let end = index + 1;
+        while (
+          end < sourceFeed.length &&
+          activityRunTurnId(sourceFeed[end]!) === runTurnId &&
+          !collapsedEntryIds.has(sourceFeed[end]!.id) &&
+          !foldsByAnchorId.has(sourceFeed[end]!.id)
+        ) {
+          end += 1;
+        }
+        const run = sourceFeed.slice(index, end);
+        if (run.some((row) => row.type === "message")) {
+          appendMixedActivityRun(
+            result,
+            run,
+            expandedWorkGroupIds,
+            unsettledTurnId,
+            isWorking,
+            run.at(-1) === activeTailGroup,
+          );
+          index = end - 1;
+          continue;
+        }
+      }
       appendPresentedFeedEntry(
         result,
         entry,
@@ -1818,6 +1879,7 @@ export function deriveThreadFeedPresentation(
     !result.some(
       (row) =>
         (row.type === "work-toggle" && row.shimmer) ||
+        row.id === LIVE_ACTIVITY_ROW_ID ||
         // A working spawn card is the live activity: its status line shows
         // what the agents are doing, so a Thinking row under it would lie.
         (row.type === "agent-spawn" &&
@@ -1826,6 +1888,157 @@ export function deriveThreadFeedPresentation(
     )
   ) {
     result.push(thinkingRow(activeWorkStartedAt, unsettledTurnId));
+  }
+  return result;
+}
+
+function activityRunTurnId(entry: ThreadFeedEntry): TurnId | null {
+  if (entry.type === "message" && entry.message.role === "reasoning") {
+    return entry.message.turnId;
+  }
+  if (
+    entry.type === "activity-group" &&
+    !isContextCompactionActivityGroup(entry) &&
+    !isUserInputActivityGroup(entry) &&
+    entry.activities.every(
+      (activity) =>
+        !activity.workEntry.agentSpawn &&
+        activity.workEntry.tone !== "error" &&
+        !workEntryIndicatesToolFailure(activity.workEntry),
+    )
+  ) {
+    return entry.turnId;
+  }
+  return null;
+}
+
+function appendMixedActivityRun(
+  result: ThreadFeedEntry[],
+  run: ReadonlyArray<ThreadFeedEntry>,
+  expandedWorkGroupIds: ReadonlySet<string>,
+  unsettledTurnId: TurnId | null,
+  isWorking: boolean,
+  activeTail: boolean,
+) {
+  const first = run[0]!;
+  const last = run.at(-1)!;
+  const turnId = activityRunTurnId(first);
+  const live = isWorking && activeTail && turnId === unsettledTurnId;
+  const firstTool =
+    first.type === "activity-group"
+      ? visibleActivityGroupEntries(first, unsettledTurnId, isWorking)[0]
+      : undefined;
+  const groupId = firstTool ? toolActivityGroupId(firstTool) : `activity-run:${first.id}`;
+  const expanded = expandedWorkGroupIds.has(groupId);
+  const state = `${isWorking}:${unsettledTurnId}:${activeTail}:${expanded}`;
+  const cached = activityRunsCache.get(first);
+  if (
+    cached?.state === state &&
+    cached.source.length === run.length &&
+    run.every((entry, index) => entry === cached.source[index])
+  ) {
+    result.push(...cached.rows);
+    return;
+  }
+  const outputStart = result.length;
+  const history = groupConsecutiveReasoningMessages(run).map((entry) =>
+    entry.type === "activity-group"
+      ? {
+          ...entry,
+          activities: visibleActivityGroupEntries(entry, unsettledTurnId, isWorking).map(
+            (activity) => ({ ...activity, groupedToolDetail: true }),
+          ),
+        }
+      : entry,
+  );
+  const activities = history.flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  );
+  const trailingGroup = history.at(-1);
+  // A missing completion before the latest thought must not reclaim the live line.
+  const summaryActivities =
+    live && trailingGroup?.type === "activity-group" ? trailingGroup.activities : activities;
+  const toolRows: ThreadFeedEntry[] = [];
+  if (summaryActivities.length > 0) {
+    appendToolGroupRows(
+      toolRows,
+      { type: "activity-group", id: first.id, createdAt: first.createdAt, turnId, activities },
+      summaryActivities,
+      new Set(),
+      unsettledTurnId,
+      isWorking,
+      live && last.type === "activity-group",
+    );
+  }
+  const toolSummary = toolRows.find((entry) => entry.type === "work-toggle");
+  const thinking = live && (last.type === "message" || !toolSummary?.shimmer);
+  const thoughtCount = run.filter((entry) => entry.type === "message").length;
+  result.push({
+    type: "work-toggle",
+    id: live ? LIVE_ACTIVITY_ROW_ID : `work-toggle:${groupId}`,
+    createdAt: first.createdAt,
+    turnId,
+    groupId,
+    hiddenCount: activities.length + thoughtCount,
+    expanded,
+    summary: thinking
+      ? "Thinking"
+      : (toolSummary?.summary ?? `Thought${thoughtCount > 1 ? ` (×${thoughtCount})` : ""}`),
+    summaryKind: toolSummary?.summaryKind ?? "other",
+    ...(thinking || !toolSummary
+      ? { summaryToolIcon: "brain" as const }
+      : {
+          ...(toolSummary.toolSurface ? { toolSurface: toolSummary.toolSurface } : {}),
+          ...(toolSummary.toolIcon ? { toolIcon: toolSummary.toolIcon } : {}),
+          ...(toolSummary.summaryToolIcon ? { summaryToolIcon: toolSummary.summaryToolIcon } : {}),
+        }),
+    hasFailure: toolSummary?.hasFailure ?? false,
+    live,
+    shimmer: live,
+  });
+  if (expanded) result.push(...history);
+  activityRunsCache.set(first, { source: run, state, rows: result.slice(outputStart) });
+}
+
+function groupConsecutiveReasoningMessages(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+): ThreadFeedEntry[] {
+  const result: ThreadFeedEntry[] = [];
+  for (let index = 0; index < feed.length; index += 1) {
+    const entry = feed[index]!;
+    if (entry.type !== "message" || entry.message.role !== "reasoning" || !entry.message.turnId) {
+      result.push(entry);
+      continue;
+    }
+    const messages = [entry.message];
+    while (index + 1 < feed.length) {
+      const next = feed[index + 1]!;
+      if (
+        next.type !== "message" ||
+        next.message.role !== "reasoning" ||
+        next.message.turnId !== entry.message.turnId
+      ) {
+        break;
+      }
+      messages.push(next.message);
+      index += 1;
+    }
+    if (messages.length === 1) {
+      result.push(entry);
+      continue;
+    }
+    let group = reasoningGroupsCache.get(entry);
+    if (
+      !group ||
+      group.reasoningMessages?.length !== messages.length ||
+      !messages.every(
+        (message, messageIndex) => group?.reasoningMessages?.[messageIndex] === message,
+      )
+    ) {
+      group = { ...entry, reasoningMessages: messages };
+      reasoningGroupsCache.set(entry, group);
+    }
+    result.push(group);
   }
   return result;
 }
@@ -1898,16 +2111,7 @@ function appendActivityGroupRows(
   isWorking: boolean,
   activeTail: boolean,
 ): void {
-  const activities = omitSupersededLifecycleMarkers(
-    entry.activities.filter(
-      (activity) =>
-        !(activity.toolLike && activity.status === "neutral") ||
-        (isWorking &&
-          activity.lifecycleStatus === "inProgress" &&
-          activity.turnId === unsettledTurnId),
-    ),
-    (activity) => activity.workEntry,
-  );
+  const activities = visibleActivityGroupEntries(entry, unsettledTurnId, isWorking);
   if (activities.length === 0) {
     return;
   }
@@ -1958,6 +2162,28 @@ function appendActivityGroupRows(
   flushGroupableRun(true);
 }
 
+function visibleActivityGroupEntries(
+  entry: ThreadFeedActivityGroup,
+  unsettledTurnId: TurnId | null,
+  isWorking: boolean,
+) {
+  return omitSupersededLifecycleMarkers(
+    entry.activities.filter(
+      (activity) =>
+        !(activity.toolLike && activity.status === "neutral") ||
+        (isWorking &&
+          activity.lifecycleStatus === "inProgress" &&
+          activity.turnId === unsettledTurnId),
+    ),
+    (activity) => activity.workEntry,
+  );
+}
+
+function toolActivityGroupId(activity: ThreadFeedActivity): string {
+  const entry = activity.workEntry;
+  return `work-group:${entry.toolCallId ? `tool:${entry.turnId ?? "no-turn"}:${entry.toolCallId}` : activity.id}`;
+}
+
 function appendToolGroupRows(
   result: ThreadFeedEntry[],
   sourceGroup: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
@@ -1967,11 +2193,7 @@ function appendToolGroupRows(
   isWorking: boolean,
   activeTail: boolean,
 ): void {
-  const firstEntry = activities[0]!.workEntry;
-  const identity = firstEntry.toolCallId
-    ? `tool:${firstEntry.turnId ?? "no-turn"}:${firstEntry.toolCallId}`
-    : activities[0]!.id;
-  const groupId = `work-group:${identity}`;
+  const groupId = toolActivityGroupId(activities[0]!);
   const expanded = expandedWorkGroupIds.has(groupId);
   const latestActiveActivity = activities.findLast(
     (activity) =>
