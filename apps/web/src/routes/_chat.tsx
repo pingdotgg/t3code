@@ -10,10 +10,14 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
-import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import {
+  buildSidebarProjectSnapshots,
+  resolveScopedNewThreadProjectRef,
+} from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
+import { useUiStateStore } from "../uiStateStore";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
@@ -27,22 +31,45 @@ import { primaryServerKeybindingsAtom } from "~/state/server";
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
-  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
-    useHandleNewThread();
+  const {
+    activeDraftThread,
+    activeThread,
+    defaultProjectRef,
+    handleNewThread,
+    orderedProjects,
+    routeThreadRef,
+  } = useHandleNewThread();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const sidebarProjectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectGroupCount = useMemo(
+  const projectScopeKey = useUiStateStore((state) => state.sidebarProjectScopeKey);
+  const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects,
+        projects: sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: () => null,
-      }).length,
-    [primaryEnvironmentId, projectGroupingSettings, projects],
+      }),
+    [
+      orderedProjects,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      projects,
+      sidebarProjectSortOrder,
+    ],
+  );
+  // Only the default sidebar has a project filter; the legacy sidebar ignores
+  // a persisted scope key.
+  const scopedProjectGroup = useMemo(
+    () =>
+      legacySidebarEnabled
+        ? null
+        : (projectGroups.find((group) => group.projectKey === projectScopeKey) ?? null),
+    [legacySidebarEnabled, projectGroups, projectScopeKey],
   );
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
@@ -94,19 +121,31 @@ function ChatRouteGlobalShortcuts() {
       if (command === "chat.new") {
         event.preventDefault();
         event.stopPropagation();
-        // The default sidebar routes creation through the command palette
-        // whenever there is a real choice to make; the legacy sidebar (and
-        // single-project setups) keep the immediate contextual create.
-        if (!legacySidebarEnabled && projectGroupCount > 1) {
-          openCommandPalette({ open: "new-thread-in" });
-          return;
-        }
-        void startNewThreadFromContext({
+        const context = {
           activeDraftThread,
           activeThread: activeThread ?? undefined,
           defaultProjectRef,
           handleNewThread,
-        });
+        };
+        // Mirrors the sidebar's New button: a project filter picks the
+        // project; otherwise the default sidebar routes creation through the
+        // command palette whenever there is a real choice to make, and the
+        // legacy sidebar (and single-project setups) keep the immediate
+        // contextual create.
+        if (scopedProjectGroup) {
+          void handleNewThread(
+            resolveScopedNewThreadProjectRef(
+              scopedProjectGroup,
+              resolveThreadActionProjectRef(context),
+            ),
+          );
+          return;
+        }
+        if (!legacySidebarEnabled && projectGroups.length > 1) {
+          openCommandPalette({ open: "new-thread-in" });
+          return;
+        }
+        void startNewThreadFromContext(context);
         return;
       }
 
@@ -166,8 +205,9 @@ function ChatRouteGlobalShortcuts() {
     keybindings,
     defaultProjectRef,
     previewOpen,
-    projectGroupCount,
+    projectGroups.length,
     routeThreadRef,
+    scopedProjectGroup,
     selectedThreadKeysSize,
     legacySidebarEnabled,
     terminalOpen,

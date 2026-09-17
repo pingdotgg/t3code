@@ -473,6 +473,7 @@ export function useHandleNewThread() {
   return {
     activeDraftThread,
     activeThread,
+    orderedProjects,
     defaultProjectRef: orderedProjects[0]
       ? scopeProjectRef(orderedProjects[0].environmentId, orderedProjects[0].id)
       : null,

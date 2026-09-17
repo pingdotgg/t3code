@@ -1,3 +1,4 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
 import type { Project } from "./types";
@@ -174,4 +175,17 @@ export function buildSidebarProjectPickerEntries(input: {
     ...entries.slice(0, preferredIndex),
     ...entries.slice(preferredIndex + 1),
   ];
+}
+
+// Where "New thread" lands while the sidebar is scoped to one project group:
+// the same physical project the picker would offer for that group, so a
+// viewed checkout on another machine keeps winning over the representative.
+export function resolveScopedNewThreadProjectRef(
+  group: SidebarProjectSnapshot,
+  preferredProjectRef: ScopedProjectRef | null,
+): ScopedProjectRef {
+  const target =
+    buildSidebarProjectPickerEntries({ groups: [group], preferredProjectRef })[0]?.targetProject ??
+    group;
+  return scopeProjectRef(target.environmentId, target.id);
 }
