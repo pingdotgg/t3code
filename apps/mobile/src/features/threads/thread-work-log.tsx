@@ -425,6 +425,7 @@ interface ThreadWorkLogProps {
   readonly onCopyRow: (rowId: string, value: string) => void;
   readonly onToggleRow: (rowId: string, anchorKey: string) => void;
   readonly renderImage: MarkdownImageRenderer;
+  readonly renderReasoning: (text: string) => ReactNode;
 }
 
 export function ThreadWorkLog(props: ThreadWorkLogProps) {
@@ -441,6 +442,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
         onCopyRow={props.onCopyRow}
         onToggleRow={props.onToggleRow}
         renderImage={props.renderImage}
+        renderReasoning={props.renderReasoning}
         themeAppearance={props.themeAppearance}
       />
     ),
@@ -453,12 +455,26 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       props.onCopyRow,
       props.onToggleRow,
       props.renderImage,
+      props.renderReasoning,
       props.themeAppearance,
     ],
   );
 
   if (props.activities.length === 0) {
     return null;
+  }
+
+  if (
+    props.activities[0]?.groupedToolDetail &&
+    props.activities.every((row) => row.projectedItem.item.type === "reasoning")
+  ) {
+    return (
+      <ScrollView nestedScrollEnabled className="ml-7 max-h-96 py-1">
+        {props.activities.map((row) => (
+          <View key={row.id}>{props.renderReasoning(row.workEntry.detail ?? "")}</View>
+        ))}
+      </ScrollView>
+    );
   }
 
   return (
@@ -745,7 +761,8 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
 ) {
   const { row, expanded } = props;
   const canExpand = row.canExpand;
-  const fullDetail = expanded ? row.getFullDetail() : null;
+  const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
+  const fullDetail = expanded && !reasoning ? row.getFullDetail() : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
@@ -758,7 +775,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   const iconIsDestructive = !isSystemNotice && (row.icon === "alert" || row.icon === "warning");
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
-  const icon = toolPresentation?.icon ?? workRowSymbolName(row.icon);
+  const icon = reasoning ? "brain" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
 
   return (
     <Animated.View
@@ -878,12 +895,16 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         </View>
       </Pressable>
 
-      {expanded && (fullDetail || viewedImagePath || row.workEntry.questionAnswer) ? (
+      {expanded && (reasoning || fullDetail || viewedImagePath || row.workEntry.questionAnswer) ? (
         <Animated.View
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
+          className={
+            reasoning
+              ? "ml-7 py-1"
+              : "ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
+          }
         >
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory
@@ -903,9 +924,13 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
             className="max-h-60"
             contentContainerStyle={{ paddingRight: 8 }}
           >
-            <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
-              {fullDetail}
-            </Text>
+            {reasoning ? (
+              props.renderReasoning(reasoning.text)
+            ) : (
+              <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
+                {fullDetail}
+              </Text>
+            )}
           </ScrollView>
         </Animated.View>
       ) : null}
@@ -1281,6 +1306,8 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
       return "magnifyingglass";
     case "other":
       return { ios: "wrench", android: "build" };
+    case "reasoning":
+      return { ios: "brain", android: "psychology" };
     case "agent-tool":
       return { ios: "sparkles", android: "auto_awesome" };
     case "tone-tool":
