@@ -4,6 +4,7 @@ import type {
   ComposerContextRecord,
   ElementContextSource,
   EnvironmentId,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
@@ -88,6 +89,7 @@ export function ComposerContextSheet(props: {
   readonly onOpenPullRequest?: () => void;
   readonly skillDescription?: string;
   readonly onOpenSkill?: () => void;
+  readonly onOpenThread?: (thread: ScopedThreadRef) => void;
   readonly environmentId?: EnvironmentId;
   readonly records?: ReadonlyArray<ComposerContextRecord>;
   readonly attachments?: ReadonlyArray<DraftComposerAttachment>;
@@ -349,6 +351,25 @@ export function ComposerContextSheet(props: {
                 ) : null}
                 {record.kind === "mention" ? (
                   <ContextField label="Path" value={record.path} code />
+                ) : null}
+                {record.kind === "thread" ? (
+                  <View className="gap-3">
+                    <ContextField label="Thread" value={record.title} />
+                    {props.onOpenThread ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() =>
+                          props.onOpenThread?.({
+                            environmentId: record.environmentId,
+                            threadId: record.threadId,
+                          })
+                        }
+                        className="rounded-xl bg-subtle p-4"
+                      >
+                        <Text className="text-foreground">Open thread</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
                 ) : null}
                 {record.kind === "skill" ? (
                   <View className="gap-3">

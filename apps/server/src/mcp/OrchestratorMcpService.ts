@@ -781,6 +781,40 @@ const make = Effect.gen(function* () {
       return { parent, target } as const;
     });
 
+  /**
+   * A thread the user attached as context (a `thread` record on one of their own messages)
+   * is readable even outside the calling project. Only records the user authored count:
+   * an agent cannot widen its own reach by writing a record.
+   */
+  const userAttachedThreadIds = (parent: OrchestrationV2ThreadProjection): Set<ThreadId> => {
+    const ids = new Set<ThreadId>();
+    for (const message of parent.messages) {
+      if (message.role !== "user" || message.createdBy !== "user") continue;
+      for (const record of message.context?.records ?? []) {
+        if (record.kind === "thread" && "threadId" in record) ids.add(record.threadId);
+      }
+    }
+    return ids;
+  };
+
+  const loadReadableThread = (scope: McpInvocationScope, threadId: ThreadId) =>
+    Effect.gen(function* () {
+      yield* requireCapability(scope);
+      const parent = yield* loadProjection(scope.threadId);
+      if (threadId === scope.threadId) return { parent, target: parent } as const;
+      const target = yield* loadProjectThread(parent.thread.projectId, threadId).pipe(
+        Effect.catchIf(
+          (error) =>
+            error.code === "thread_not_found" && userAttachedThreadIds(parent).has(threadId),
+          () => loadProjection(threadId),
+        ),
+      );
+      if (target.thread.deletedAt !== null) {
+        return yield* failure("thread_not_found", `Thread ${threadId} is no longer available.`);
+      }
+      return { parent, target } as const;
+    });
+
   const loadProviders = providerRegistry.getProviders;
 
   /**
@@ -1619,7 +1653,7 @@ const make = Effect.gen(function* () {
       }),
     readThread: (scope, input) =>
       Effect.gen(function* () {
-        const { parent, target } = yield* loadScopedThread(scope, input.threadId);
+        const { parent, target } = yield* loadReadableThread(scope, input.threadId);
         const view = input.view ?? "messages";
         const afterPosition = input.afterPosition ?? -1;
         const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
