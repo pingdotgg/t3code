@@ -943,6 +943,26 @@ describe("buildThreadFeed", () => {
     }
   });
 
+  it("leaves failed setup snapshots to the setup card", () => {
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-setup-failed"),
+        projectId: ProjectId.make("project-1"),
+        title: "Failed setup",
+        activities: [
+          makeActivity({
+            id: EventId.make("worktree-failed"),
+            kind: "worktree-setup",
+            summary: "Worktree setup failed",
+            createdAt: "2026-08-30T00:00:00.000Z",
+            tone: "error",
+          }),
+        ],
+      }),
+    );
+    expect(feed).toEqual([]);
+  });
+
   it.each(["setup-script.requested", "setup-script.started"])(
     "keeps error-toned %s notices visible",
     (kind) => {
