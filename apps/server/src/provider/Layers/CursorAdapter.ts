@@ -323,6 +323,7 @@ function selectAutoApprovedPermissionOption(
   return undefined;
 }
 
+/** Bind Cursor sessions and ACP events to one configured provider instance. */
 export function makeCursorAdapter(
   cursorSettings: CursorSettings,
   options?: CursorAdapterLiveOptions,
@@ -964,6 +965,7 @@ export function makeCursorAdapter(
         }).pipe(Effect.scoped),
       );
 
+    /** Submit or steer a Cursor turn, keeping selected-file instructions separate from native commands. */
     const sendTurn: CursorAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const ctx = yield* requireSession(input.threadId);

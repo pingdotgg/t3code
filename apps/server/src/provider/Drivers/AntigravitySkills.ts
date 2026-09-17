@@ -184,6 +184,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   };
   const skillsByPath = new Map<string, ServerProviderSkill>();
 
+  /** Scan one root within the shared budget, retaining separate files even when names match. */
   const scanDirectory = Effect.fn("scanAntigravitySkillDirectory")(function* (
     directory: string,
     scope: string,

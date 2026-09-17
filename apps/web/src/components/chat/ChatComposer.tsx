@@ -1439,6 +1439,7 @@ export interface ChatComposerProps {
 // Component
 // --------------------------------------------------------------------------
 
+/** Edit a thread draft and prepare its text, attachments, and selected skills for submission. */
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
     composerDraftTarget,
@@ -3512,6 +3513,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [readComposerSnapshot]);
 
   const { onUsageLimitsCommand } = props;
+  /** Apply a menu choice to the draft, preserving the exact file when the choice is a skill. */
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
       if (composerSelectLockRef.current) return;
