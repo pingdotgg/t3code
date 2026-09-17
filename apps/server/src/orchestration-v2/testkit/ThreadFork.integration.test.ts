@@ -909,6 +909,7 @@ describe("orchestration V2 thread fork", () => {
             threadId: sourceThreadId,
             scopeId: checkpointScopeId,
             checkpointId: firstCheckpointId,
+            restoreFiles: false,
           },
         ] satisfies ReadonlyArray<OrchestrationV2Command>;
 
@@ -1111,6 +1112,7 @@ describe("orchestration V2 thread fork", () => {
             threadId: targetThreadId,
             scopeId: targetCheckpointScopeId,
             checkpointId: targetFirstCheckpointId,
+            restoreFiles: false,
           },
           {
             type: "message.dispatch",
