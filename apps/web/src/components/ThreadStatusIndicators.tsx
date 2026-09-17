@@ -218,7 +218,7 @@ export function ThreadPullRequestBadgeControl({
   url?: string | undefined;
   status: PrStatusIndicator | null;
   onOpenStack: () => void;
-  onOpenPullRequest: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onOpenPullRequest: (event: MouseEvent<HTMLAnchorElement>, url?: string) => void;
 }) {
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
   if (presentation === null) return null;
@@ -273,10 +273,19 @@ export function ThreadPullRequestBadgeControl({
         side="top"
         variant={showList ? "glass" : "default"}
         className={
-          showList ? "w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal" : undefined
+          showList
+            ? "pointer-events-auto w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
+            : undefined
         }
       >
-        {showList ? <ThreadPullRequestsMiniList pullRequests={pullRequests} /> : presentation.label}
+        {showList ? (
+          <ThreadPullRequestsMiniList
+            pullRequests={pullRequests}
+            onOpenPullRequest={onOpenPullRequest}
+          />
+        ) : (
+          presentation.label
+        )}
       </TooltipPopup>
     </Tooltip>
   );
@@ -288,8 +297,10 @@ export function ThreadPullRequestBadgeControl({
  */
 export function ThreadPullRequestsMiniList({
   pullRequests,
+  onOpenPullRequest,
 }: {
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+  onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
 }) {
   const lines = useMemo(
     () =>
@@ -305,14 +316,8 @@ export function ThreadPullRequestsMiniList({
           snapshot === null
             ? null
             : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
-        return (
-          <li
-            key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
-            className="flex min-w-0 items-center gap-2"
-            // Capped like the panel: past a few layers the indent only repeats "still in the
-            // stack", and sixteen of them would walk the titles off the popover.
-            style={{ paddingLeft: `${Math.min(line.depth, 3) * 0.75}rem` }}
-          >
+        const content = (
+          <>
             {presentation ? (
               <presentation.Icon
                 aria-hidden
@@ -333,6 +338,27 @@ export function ThreadPullRequestsMiniList({
                 {line.stack.kind === "native" ? "stack" : "chain"} · {line.stack.size}
               </span>
             ) : null}
+          </>
+        );
+        return (
+          <li
+            key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
+            style={{ paddingLeft: `${Math.min(line.depth, 3) * 0.75}rem` }}
+          >
+            {onOpenPullRequest ? (
+              <a
+                href={line.link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => onOpenPullRequest(event, line.link.url)}
+              >
+                {content}
+              </a>
+            ) : (
+              <div className="flex min-w-0 items-center gap-2">{content}</div>
+            )}
           </li>
         );
       })}
