@@ -36,7 +36,8 @@ import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { CheckpointServiceV2 } from "./CheckpointService.ts";
+import { CheckpointBaselineCaptureError, CheckpointServiceV2 } from "./CheckpointService.ts";
+import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
 import {
@@ -661,6 +662,122 @@ it.effect("refreshes MCP credential liveness before calling the provider", () =>
 
     assert.deepEqual(yield* Ref.get(order), [`touch:${threadId}`, "start-turn"]);
   }).pipe(Effect.provide(RunExecutionTestLayer)),
+);
+
+it.effect("starts the provider when checkpoint baseline capture fails", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:run-execution-baseline-failure");
+    const runId = RunId.make("run:run-execution-baseline-failure");
+    const attemptId = RunAttemptId.make("attempt:run-execution-baseline-failure");
+    const providerThreadId = ProviderThreadId.make(
+      "provider-thread:run-execution-baseline-failure",
+    );
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const providerSessionId = ProviderSessionId.make("session:run-execution-baseline-failure");
+    const rootNodeId = NodeId.make("node:run-execution-baseline-failure");
+    const checkpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:run-execution-baseline-failure"),
+    } as OrchestrationV2CheckpointScope;
+    const providerStarts = yield* Ref.make(0);
+    const writes = yield* Ref.make<
+      ReadonlyArray<{
+        events: ReadonlyArray<OrchestrationV2DomainEvent>;
+        effects: ReadonlyArray<PendingOrchestrationEffectV2>;
+      }>
+    >([]);
+    const testLayer = runExecutionServiceLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(CheckpointServiceV2)({
+            captureBaseline: () =>
+              Effect.fail(
+                new CheckpointBaselineCaptureError({
+                  scopeId: checkpointScope.id,
+                  ordinalWithinScope: 0,
+                  cause: new Error("VCS process timed out"),
+                }),
+              ),
+          }),
+          Layer.mock(EventSinkV2)({
+            writeWithEffects: (input) =>
+              Ref.update(writes, (current) => [
+                ...current,
+                { events: input.events, effects: input.effects },
+              ]).pipe(Effect.as([])),
+          }),
+          idAllocatorLayer,
+          Layer.mock(ProviderEventIngestorV2)({ ingestNormalized: () => Effect.succeed([]) }),
+          ServerSettingsService.layerTest(),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const runExecution = yield* RunExecutionServiceV2;
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make("command:run-execution-baseline-failure"),
+        appThread: { id: threadId } as OrchestrationV2AppThread,
+        providerSessionId,
+        session: {
+          events: Stream.never,
+          startTurn: () => Ref.update(providerStarts, (count) => count + 1),
+        } as unknown as ProviderAdapterV2SessionRuntime,
+        run: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+        } as OrchestrationV2Run,
+        rootNode: { id: rootNodeId } as OrchestrationV2ExecutionNode,
+        checkpointScope,
+        providerThread: {
+          id: providerThreadId,
+          driver,
+        } as OrchestrationV2ProviderThread,
+        attempt: {
+          id: attemptId,
+          providerTurnId: null,
+        } as OrchestrationV2RunAttempt,
+        attemptId,
+        providerTurnOrdinal: 1,
+        message: {
+          messageId: MessageId.make("message:run-execution-baseline-failure"),
+          text: "Start the provider without a baseline.",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      });
+    }).pipe(Effect.provide(testLayer));
+
+    assert.equal(yield* Ref.get(providerStarts), 1);
+
+    const events = (yield* Ref.get(writes)).flatMap((write) => [...write.events]);
+    const failedEvent = events.find(
+      (event) =>
+        (event.type === "run.updated" ||
+          event.type === "run-attempt.updated" ||
+          event.type === "node.updated") &&
+        event.payload.status === "failed",
+    );
+    assert.isUndefined(failedEvent);
+    const errorItem = events.find(
+      (event) => event.type === "turn-item.updated" && event.payload.type === "error",
+    );
+    assert.isUndefined(errorItem);
+  }),
 );
 
 it.effect("keeps ingesting owned child events after the root turn terminalizes", () =>
