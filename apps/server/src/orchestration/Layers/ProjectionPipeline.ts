@@ -1485,7 +1485,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 : projectionTurnRepository.upsertByTurnId({
                     ...turn,
                     turnId: turn.turnId,
-                    state: "completed",
+                    state: "interrupted",
                     completedAt: event.payload.session.updatedAt,
                   }),
             { concurrency: 1 },
