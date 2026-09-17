@@ -2247,6 +2247,170 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  for (const terminalStatus of ["completed", "interrupted"] as const) {
+    it.effect(`retains Codex reasoning parts when the turn is ${terminalStatus}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = `codex-reasoning-${terminalStatus}`;
+          const nativeThreadId = `native-${scenario}-thread`;
+          const nativeTurnId = `native-${scenario}-turn`;
+          const prompt = "Explain the check.";
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+              ...[
+                {
+                  method: "item/reasoning/summaryTextDelta",
+                  params: { itemId: "thought", summaryIndex: 0, delta: "Summary " },
+                },
+                {
+                  method: "item/reasoning/summaryTextDelta",
+                  params: { itemId: "thought", summaryIndex: 0, delta: "one" },
+                },
+                {
+                  method: "item/reasoning/summaryTextDelta",
+                  params: { itemId: "thought", summaryIndex: 1, delta: "Summary two" },
+                },
+                {
+                  method: "item/reasoning/textDelta",
+                  params: { itemId: "thought", contentIndex: 0, delta: "Raw trace" },
+                },
+                {
+                  method: "item/completed",
+                  params: {
+                    item: {
+                      type: "commandExecution",
+                      id: "after-thought",
+                      command: "pwd",
+                      cwd: "/workspace",
+                      processId: "42",
+                      source: "unifiedExecStartup",
+                      status: "completed",
+                      commandActions: [{ type: "unknown", command: "pwd" }],
+                      aggregatedOutput: "/workspace",
+                      exitCode: 0,
+                      durationMs: 1,
+                    },
+                  },
+                },
+                ...(terminalStatus === "completed"
+                  ? [
+                      {
+                        method: "item/completed",
+                        params: {
+                          item: {
+                            type: "reasoning",
+                            id: "thought",
+                            summary: ["Final summary one", "Summary two"],
+                            content: ["Raw trace"],
+                          },
+                        },
+                      },
+                      {
+                        method: "item/completed",
+                        params: {
+                          item: {
+                            type: "reasoning",
+                            id: "completion-only",
+                            summary: ["Completion without deltas"],
+                            content: [],
+                          },
+                        },
+                      },
+                      {
+                        method: "item/reasoning/textDelta",
+                        params: {
+                          itemId: "delta-only",
+                          contentIndex: 0,
+                          delta: "Retained when completion omits content",
+                        },
+                      },
+                      {
+                        method: "item/completed",
+                        params: {
+                          item: { type: "reasoning", id: "delta-only", summary: [], content: [] },
+                        },
+                      },
+                    ]
+                  : []),
+              ].map((event, index) => ({
+                type: "emit_inbound" as const,
+                label: `reasoning-${index}`,
+                frame: {
+                  method: event.method,
+                  params: { threadId: nativeThreadId, turnId: nativeTurnId, ...event.params },
+                },
+              })),
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: terminalStatus }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
+              text: prompt,
+            }),
+          );
+          yield* harness.firstTerminal;
+          const latest = new Map(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "reasoning"
+                ? [[event.turnItem.id, event.turnItem] as const]
+                : [],
+            ),
+          );
+          assert.deepEqual(
+            [...latest.values()].map((item) => item.text),
+            terminalStatus === "completed"
+              ? [
+                  "Final summary one",
+                  "Summary two",
+                  "Raw trace",
+                  "Completion without deltas",
+                  "Retained when completion omits content",
+                ]
+              : ["Summary one", "Summary two", "Raw trace"],
+          );
+          assert.isTrue([...latest.values()].every((item) => item.status === terminalStatus));
+          assert.isTrue([...latest.values()].every((item) => item.streaming === false));
+          assert.isTrue(
+            [...latest.values()].every(
+              (item) => item.runId !== null && item.providerTurnId !== null,
+            ),
+          );
+          assert.equal(new Set([...latest.values()].map((item) => item.ordinal)).size, latest.size);
+          const command = harness.events.find(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "command_execution",
+          );
+          assert.isDefined(command);
+          if (command?.type === "turn_item.updated") {
+            assert.isTrue(
+              [...latest.values()]
+                .slice(0, 3)
+                .every((item) => item.ordinal < command.turnItem.ordinal),
+            );
+          }
+          assert.deepEqual(assistantMessages(harness.events), []);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+    );
+  }
+
   const finalAnswerTranscript = (
     scenario: string,
     answers: ReadonlyArray<{
