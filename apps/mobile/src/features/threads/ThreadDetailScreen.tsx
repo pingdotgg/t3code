@@ -181,6 +181,8 @@ export interface ThreadDetailScreenProps {
   readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
+  /** Whether the model picker may offer providers other than this thread's. */
+  readonly canSwitchThreadProvider: boolean;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateThreadInteractionMode: (interactionMode: ProviderInteractionMode) => void;
@@ -1194,6 +1196,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     onStopThread={props.onStopThread}
                     onSendMessage={handleSendMessage}
                     onShowUsageLimits={showUsageLimits}
+                    canSwitchProvider={props.canSwitchThreadProvider}
                     onUpdateModelSelection={props.onUpdateThreadModelSelection}
                     onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                     onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
