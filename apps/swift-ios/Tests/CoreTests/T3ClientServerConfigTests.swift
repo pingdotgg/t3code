@@ -393,11 +393,140 @@ final class T3ClientServerConfigTests: XCTestCase {
         await authClient.disconnect()
     }
 
+    func testMalformedSubscriptionFinishesListenersAndBootstrapWithoutRetry() async throws {
+        let connection = ServerConfigTestConnection(mode: .malformed)
+        let retries = ServerConfigRetryRecorder()
+        let client = makeClient(connection: connection, retryDelay: { attempt in
+            await retries.record(attempt)
+            throw CancellationError()
+        })
+        addTeardownBlock { await client.disconnect() }
+        var iterator = await client.serverConfigEvents().makeAsyncIterator()
+        do {
+            _ = try await iterator.next()
+            XCTFail("Malformed configuration must fail the listener")
+        } catch {
+            XCTAssertTrue(error is DecodingError, "Unexpected listener error: \(error)")
+        }
+        do {
+            _ = try await client.serverConfig()
+            XCTFail("Malformed configuration must fail bootstrap")
+        } catch {
+            XCTAssertTrue(error is DecodingError, "Unexpected bootstrap error: \(error)")
+        }
+        let attempts = await retries.attempts
+        XCTAssertTrue(attempts.isEmpty, "Permanent decoding errors must not enter retry backoff")
+        let tags = await connection.tags()
+        XCTAssertEqual(tags, ["subscribeServerConfig", "subscribeServerConfig"])
+    }
+
+    func testTerminalSubscriptionFailureRetainsListenersAndRecovers() async throws {
+        let connection = ServerConfigTestConnection(mode: .recovering)
+        let client = makeClient(connection: connection, retryDelay: { _ in })
+        addTeardownBlock { await client.disconnect() }
+        let events = await client.serverConfigEvents()
+        var iterator = events.makeAsyncIterator()
+
+        guard case let .snapshot(initial)? = try await iterator.next() else {
+            return XCTFail("Expected the initial configuration snapshot.")
+        }
+        XCTAssertEqual(initial.providers.first?.instanceId, "codex-old")
+
+        try await connection.pushSubscriptionFailure("Temporary stream failure")
+        guard case let .snapshot(recovered)? = try await iterator.next() else {
+            return XCTFail("Expected the listener to survive and receive the retried snapshot.")
+        }
+        XCTAssertEqual(recovered.providers.first?.instanceId, "codex-recovered")
+        let requestTags = await connection.tags()
+        XCTAssertEqual(requestTags, ["subscribeServerConfig", "subscribeServerConfig"])
+        await client.disconnect()
+    }
+
+    func testUnexpectedSubscriptionCompletionRetainsListenersAndRecovers() async throws {
+        let connection = ServerConfigTestConnection(mode: .recovering)
+        let client = makeClient(connection: connection, retryDelay: { _ in })
+        addTeardownBlock { await client.disconnect() }
+        let events = await client.serverConfigEvents()
+        var iterator = events.makeAsyncIterator()
+
+        guard case let .snapshot(initial)? = try await iterator.next() else {
+            return XCTFail("Expected the initial configuration snapshot.")
+        }
+        XCTAssertEqual(initial.providers.first?.instanceId, "codex-old")
+
+        try await connection.completeSubscription()
+        guard case let .snapshot(recovered)? = try await iterator.next() else {
+            return XCTFail("Expected the listener to survive a completed live stream.")
+        }
+        XCTAssertEqual(recovered.providers.first?.instanceId, "codex-recovered")
+        let requestTags = await connection.tags()
+        XCTAssertEqual(requestTags, ["subscribeServerConfig", "subscribeServerConfig"])
+        await client.disconnect()
+    }
+
+    func testRetiredSubscriptionCompletionPreservesReplacementOwner() async throws {
+        try await assertObsoleteCompletionPreservesReplacement(cancelled: false)
+    }
+
+    func testCancelledSubscriptionCompletionPreservesReplacementOwner() async throws {
+        try await assertObsoleteCompletionPreservesReplacement(cancelled: true)
+    }
+
+    private func assertObsoleteCompletionPreservesReplacement(cancelled: Bool) async throws {
+        let original = ServerConfigTestConnection(mode: .snapshot)
+        let replacement = ServerConfigTestConnection(mode: .recovering)
+        let retries = ServerConfigRetryRecorder()
+        let client = makeClient(connection: original, reconnectConnection: replacement,
+                                retryDelay: { attempt in await retries.record(attempt) })
+        addTeardownBlock { await client.disconnect() }
+        var initial = await client.serverConfigEvents().makeAsyncIterator()
+        guard case .snapshot? = try await initial.next() else {
+            return XCTFail("Expected the first subscription generation.")
+        }
+        await client.disconnect()
+        var current = await client.serverConfigEvents().makeAsyncIterator()
+        guard case .snapshot? = try await current.next() else {
+            return XCTFail("Expected the replacement subscription generation.")
+        }
+
+        // Start advances to 1, disconnect retires it at 2, replacement starts at 3.
+        // Deliver the delayed EOF callback directly after the replacement receipt,
+        // so this checks ownership without racing task cancellation against startup.
+        if cancelled {
+            await Task {
+                withUnsafeCurrentTask { $0?.cancel() }
+                await client.retryServerConfigSubscription(generation: 3, error: RPCError.disconnected)
+            }.value
+        } else {
+            await client.retryServerConfigSubscription(generation: 1, error: RPCError.disconnected)
+        }
+        let ignoredAttempts = await retries.attempts
+        XCTAssertEqual(ignoredAttempts, [], "An obsolete completion must not start or increment backoff")
+        var replay = await client.serverConfigEvents().makeAsyncIterator()
+        guard case .snapshot? = try await replay.next() else {
+            return XCTFail("The replacement config must remain available.")
+        }
+        let replacementTags = await replacement.tags()
+        XCTAssertEqual(replacementTags, ["subscribeServerConfig"], "The existing replacement owns its subscription")
+
+        try await replacement.completeSubscription()
+        guard case let .snapshot(recovered)? = try await current.next() else {
+            return XCTFail("The replacement must still recover from its own completion.")
+        }
+        XCTAssertEqual(recovered.providers.first?.instanceId, "codex-recovered")
+        let attempts = await retries.attempts
+        XCTAssertEqual(attempts, [0], "Only the current generation may consume the first retry attempt")
+    }
+
     private func makeClient(
         connection: ServerConfigTestConnection,
         reconnectConnection: ServerConfigTestConnection? = nil,
         waitTimeout: Duration = .seconds(4),
-        failAttachmentUploads: Bool = false
+        failAttachmentUploads: Bool = false,
+        retryDelay: @escaping @Sendable (Int) async throws -> Void = { attempt in
+            let seconds = min(16, 1 << min(attempt, 4))
+            try await Task.sleep(for: .seconds(seconds))
+        }
     ) -> T3Client {
         let environment = Environment(
             id: "environment-1",
@@ -414,7 +543,8 @@ final class T3ClientServerConfigTests: XCTestCase {
             webSocketConnector: ServerConfigTestConnector(
                 connections: [connection] + (reconnectConnection.map { [$0] } ?? [])
             ),
-            rpcConnectionWaitTimeout: waitTimeout
+            rpcConnectionWaitTimeout: waitTimeout,
+            serverConfigRetryDelay: retryDelay
         )
     }
 }
@@ -448,7 +578,7 @@ private actor ServerConfigTestConnector: WebSocketConnecting {
 }
 
 private actor ServerConfigTestConnection: WebSocketConnection {
-    enum Mode { case snapshot, silent, failure(String) }
+    enum Mode { case snapshot, silent, failure(String), recovering, malformed }
 
     private let mode: Mode
     private let supportsUsageLimitSources: Bool?
@@ -486,8 +616,12 @@ private actor ServerConfigTestConnection: WebSocketConnection {
             subscriptionRequestID = id
             switch mode {
             case .snapshot: try enqueue(chunk(id: id, value: snapshot(id: "codex-old")))
+            case .malformed: try enqueue(chunk(id: id, value: .object(["type": .number(42)])))
             case .silent: break
             case let .failure(message): try enqueue(failure(id: id, message: message))
+            case .recovering:
+                let providerID = requestTags.count == 1 ? "codex-old" : "codex-recovered"
+                try enqueue(chunk(id: id, value: snapshot(id: providerID)))
             }
         case "server.getConfig":
             try enqueue(success(id: id, value: config(id: "codex-old")))
@@ -569,6 +703,16 @@ private actor ServerConfigTestConnection: WebSocketConnection {
         try enqueue(success(id: refreshRequestID, value: .object([
             "providers": .array([provider(id: id)]),
         ])))
+    }
+
+    func pushSubscriptionFailure(_ message: String) throws {
+        guard let subscriptionRequestID else { return }
+        try enqueue(failure(id: subscriptionRequestID, message: message))
+    }
+
+    func completeSubscription() throws {
+        guard let subscriptionRequestID else { return }
+        try enqueue(success(id: subscriptionRequestID, value: .null))
     }
 
     private func snapshot(id: String) -> JSONValue {
@@ -661,4 +805,9 @@ private actor ServerConfigTestConnection: WebSocketConnection {
             responses.append(data)
         }
     }
+}
+
+private actor ServerConfigRetryRecorder {
+    private(set) var attempts: [Int] = []
+    func record(_ attempt: Int) { attempts.append(attempt) }
 }
