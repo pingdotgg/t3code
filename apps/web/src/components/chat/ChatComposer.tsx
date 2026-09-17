@@ -3977,7 +3977,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     // List continuation and indentation run as store replacements so both
     // composer modes behave (and serialize) identically.
-    if (key === "Enter" || (key === "Tab" && !event.shiftKey)) {
+    if (!event.isComposing && (key === "Enter" || (key === "Tab" && !event.shiftKey))) {
       const selection = composerEditorRef.current?.readSelectionRange();
       const snapshot = readComposerSnapshot();
       if (selection && selection.start === selection.end && snapshot.value === promptRef.current) {

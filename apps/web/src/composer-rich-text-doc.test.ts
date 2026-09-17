@@ -137,6 +137,8 @@ describe("composer rich text document model", () => {
     "  - [ ] first\n - [ ] second\n  - [ ] child",
     "**before @README.md after**",
     "*a **b** c*",
+    "*a**b***",
+    "**a*b***",
     "**a *b* c**",
     "literal \uFFFC **before @README.md after**",
     "- [x] done\n- [ ] next",
@@ -210,6 +212,33 @@ describe("composer rich text document model", () => {
       expect(child.marks.map((mark) => mark.type.name)).toContain("bold"),
     );
     expect(serializeEditorDoc(doc).value).toBe("**before @README.md after**");
+  });
+
+  it.each([
+    [["bold"], ["bold", "italic"], ["italic"]],
+    [["italic"], ["bold", "italic"], ["bold"]],
+    [["bold"], ["bold", "strike"], ["strike"]],
+    [["strike"], ["bold", "strike"], ["bold"]],
+  ])("preserves crossing mark ranges %j through controlled rebuilds", (...marks) => {
+    const doc = schema.node("doc", null, [
+      schema.node(
+        "paragraph",
+        null,
+        marks.map((names, index) =>
+          schema.text(
+            String.fromCharCode(97 + index),
+            names.map((name) => schema.mark(name)),
+          ),
+        ),
+      ),
+    ]);
+    const serialized = serializeEditorDoc(doc).value;
+    const rebuilt = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(serialized, (name) => ({ label: name, description: null })),
+    );
+    expect(rebuilt.eq(doc)).toBe(true);
+    expect(serializeEditorDoc(rebuilt).value).toBe(serialized);
   });
 
   it("keeps chip sources canonical through the document", () => {

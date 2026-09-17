@@ -82,7 +82,16 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
     const canOpen = after !== "" && !/\s/.test(after) && (char !== "_" || !/\w/.test(before));
     while (index < end) {
       const top = stack.at(-1);
+      // Inside italic, a double marker opens bold before closing the single
+      // marker. Once bold is active, closing runs unwind both styles.
+      const opensNestedBold =
+        top?.mark === "italic" &&
+        end - index === 2 &&
+        canOpen &&
+        (char === "*" || char === "_") &&
+        !stack.some((frame) => frame.mark === "bold");
       if (
+        !opensNestedBold &&
         canClose &&
         top &&
         text.startsWith(top.delimiter, index) &&
@@ -93,9 +102,17 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
         index += top.delimiter.length;
       } else if (canOpen && (char !== "~" || end - index >= 2)) {
         const length = char === "~" || end - index >= 2 ? 2 : 1;
+        const mark = char === "~" ? "strike" : length === 2 ? "bold" : "italic";
+        // A mark cannot nest inside itself, including alternate delimiters.
+        // This bounds the stack to the supported styles for arbitrary input.
+        if (stack.some((frame) => frame.mark === mark)) {
+          pushSpan(current(), text.slice(index, end), []);
+          index = end;
+          continue;
+        }
         stack.push({
           delimiter: char.repeat(length),
-          mark: char === "~" ? "strike" : length === 2 ? "bold" : "italic",
+          mark,
           spans: [],
         });
         index += length;
