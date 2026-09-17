@@ -172,6 +172,47 @@ function makeClaudeTestTurnInput(input: {
 }
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
+  it.each([false, true])("requests thinking summaries with resume=%s", (resume) => {
+    const options = makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "thinking-thread",
+      resume,
+      cwd: "/workspace",
+    });
+    assert.deepEqual(options.thinking, { type: "adaptive", display: "summarized" });
+    assert.equal(options.extraArgs?.["thinking-display"], "summarized");
+    assert.include(options.settings, { showThinkingSummaries: true });
+  });
+
+  it("preserves an explicit omitted thinking display", () => {
+    const options = makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "thinking-thread",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: "--thinking-display omitted" },
+    });
+    assert.isUndefined(options.thinking);
+    assert.equal(options.extraArgs?.["thinking-display"], "omitted");
+    assert.notInclude(options.settings ?? {}, { showThinkingSummaries: true });
+  });
+
+  it("does not enable thinking when the model option disables it", () => {
+    const options = makeClaudeQueryOptions({
+      modelSelection: {
+        ...CLAUDE_TEST_MODEL_SELECTION,
+        model: "claude-haiku-4-5",
+        options: [{ id: "thinking", value: false }],
+      },
+      nativeThreadId: "thinking-thread",
+      resume: false,
+      cwd: "/workspace",
+    });
+    assert.isUndefined(options.thinking);
+    assert.isUndefined(options.extraArgs?.["thinking-display"]);
+    assert.include(options.settings, { alwaysThinkingEnabled: false });
+  });
+
   it.each([
     ["--permission-mode acceptEdits", "acceptEdits"],
     ["--dangerously-skip-permissions", "bypassPermissions"],
@@ -1887,6 +1928,124 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect.each(["completed", "interrupted"] as const)(
+    "projects Claude thinking blocks when %s",
+    (status) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("reasoning-attempt"),
+            text: "Check the plan",
+            attachments: [],
+          }),
+        );
+        const stream = (event: unknown, parent: string | null = null) =>
+          claudeSdkFrame({
+            type: "stream_event",
+            event,
+            parent_tool_use_id: parent,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "stream-frame",
+          });
+        const snapshot = (id: string, uuid: string, thinking: string) =>
+          claudeSdkFrame({
+            type: "assistant",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              id,
+              model: "claude-sonnet-4-6",
+              content: [{ type: "thinking", thinking, signature: "secret-signature" }],
+            },
+          });
+        const frames = [
+          stream({ type: "message_start", message: { id: "thought-message" } }),
+          stream({
+            type: "content_block_start",
+            index: 2,
+            content_block: { type: "thinking", thinking: "" },
+          }),
+          stream({
+            type: "content_block_delta",
+            index: 2,
+            delta: { type: "thinking_delta", thinking: "First " },
+          }),
+          stream({
+            type: "content_block_delta",
+            index: 2,
+            delta: { type: "thinking_delta", thinking: "thought" },
+          }),
+          stream({
+            type: "content_block_delta",
+            index: 2,
+            delta: { type: "signature_delta", signature: "secret-signature" },
+          }),
+          stream({ type: "content_block_stop", index: 2 }),
+          snapshot("thought-message", "first-snapshot", "Authoritative first thought"),
+          snapshot("thought-message", "first-snapshot", "Authoritative first thought"),
+          stream({
+            type: "content_block_start",
+            index: 4,
+            content_block: { type: "thinking", thinking: "Second thought" },
+          }),
+          stream({ type: "content_block_stop", index: 4 }),
+          snapshot("thought-message", "second-snapshot", ""),
+          snapshot("completion-only", "third-snapshot", "Completion only"),
+          snapshot("redacted", "empty-snapshot", ""),
+          stream({ type: "message_start", message: { id: "child-message" } }, "child-tool"),
+          stream(
+            {
+              type: "content_block_start",
+              index: 0,
+              content_block: { type: "thinking", thinking: "Child thought" },
+            },
+            "child-tool",
+          ),
+          stream({ type: "message_start", message: { id: "partial-message" } }),
+          stream({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "thinking", thinking: "Partial thought" },
+          }),
+          makeResultFrame({
+            uuid: "reasoning-result",
+            result: "",
+            ...(status === "interrupted" ? { terminalReason: "aborted_streaming" as const } : {}),
+          }),
+        ];
+        for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, status);
+        const latest = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "reasoning"
+              ? [[event.turnItem.id, event.turnItem] as const]
+              : [],
+          ),
+        );
+        assert.deepEqual(
+          [...latest.values()].map((item) => item.text),
+          ["Authoritative first thought", "Second thought", "Completion only", "Partial thought"],
+        );
+        assert.equal(new Set([...latest.values()].map((item) => item.ordinal)).size, 4);
+        for (const item of latest.values()) {
+          assert.equal(item.streaming, false);
+          assert.isNotNull(item.completedAt);
+        }
+        assert.isFalse(
+          harness.events.some(
+            (event) => event.type === "message.updated" && event.message.role === "assistant",
+          ),
+        );
+        for (const item of latest.values()) assert.notInclude(item.text, "secret-signature");
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+  );
 
   for (const terminalReason of ["aborted_tools", "aborted_streaming"] as const) {
     for (const steered of [true, false]) {
