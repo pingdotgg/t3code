@@ -1,6 +1,7 @@
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import {
   normalizeThreadPullRequestKey,
+  visibleThreadPullRequests,
   threadPullRequestKeysEqual,
   legacyThreadPullRequestKey,
 } from "@t3tools/shared/threadPullRequests";
@@ -1978,7 +1979,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   snapshot: null,
                   stack: null,
                 };
+            const branch = thread.branchPullRequest;
+            const branchKey = branch ? legacyThreadPullRequestKey(branch) : null;
             pullRequests = [
+              ...(command.source === "manual" &&
+              branch &&
+              branchKey &&
+              visibleThreadPullRequests(links).length === 0 &&
+              !threadPullRequestKeysEqual(branchKey, key) &&
+              !links.some((entry) => threadPullRequestKeysEqual(entry, branchKey))
+                ? [
+                    {
+                      ...branchKey,
+                      url: branch.url,
+                      source: "manual" as const,
+                      linkedAt: DateTime.formatIso(now),
+                      snapshot: null,
+                      stack: null,
+                    },
+                  ]
+                : []),
               ...links.filter((entry) => !threadPullRequestKeysEqual(entry, key)),
               link,
             ];
