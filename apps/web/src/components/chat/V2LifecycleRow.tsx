@@ -1,3 +1,10 @@
+import { useThreadShell, useProject } from "../../state/entities";
+import { SubagentTooltipContent } from "./SubagentTooltipContent";
+import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { environmentThreadDetails } from "../../state/threads";
+import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
+import { WorkLogButton, WorkLogRow } from "./WorkLog";
 import { resolveHandoffEndpoints, type HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 import { Fragment } from "react";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
@@ -7,12 +14,14 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ThreadId,
+  type EnvironmentId,
+  type NodeId,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   ArrowRightLeftIcon,
   ArrowRightIcon,
-  BotIcon,
   GitForkIcon,
   MessageSquareIcon,
   MinusIcon,
@@ -20,7 +29,6 @@ import {
 } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
-import { cn } from "../../lib/utils";
 import { getProviderInstanceEntry } from "../../providerInstances";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
@@ -42,19 +50,11 @@ export function isV2LifecycleItem(item: OrchestrationV2TurnItem): boolean {
   return LIFECYCLE_TYPES.has(item.type);
 }
 
-// Once a subagent stops, its last streamed result says more than the stale
-// progress line; while it runs, live progress comes first.
-const TERMINAL_SUBAGENT_STATUSES = new Set<OrchestrationV2TurnItem["status"]>([
-  "completed",
-  "failed",
-  "cancelled",
-  "interrupted",
-]);
-
 export type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 
 export function V2LifecycleRow(props: {
   readonly item: OrchestrationV2TurnItem;
+  readonly environmentId: EnvironmentId;
   readonly resourceSummary?: boolean | undefined;
   readonly createdAt: string;
   readonly timestampFormat: TimestampFormat;
@@ -204,15 +204,18 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "subagent") {
-    const streamedResult = item.result?.trim() ? item.result : null;
-    const detail = TERMINAL_SUBAGENT_STATUSES.has(item.status)
-      ? (streamedResult ?? item.progress ?? item.prompt)
-      : (item.progress ?? streamedResult ?? item.prompt);
     return (
       <SubagentTimelineLink
+        parentRef={scopeThreadRef(props.environmentId, item.threadId)}
+        subagentId={item.subagentId}
         status={item.status}
+        driver={item.driver}
+        provider={props.providerStatuses.find(
+          (provider) => provider.instanceId === item.providerInstanceId,
+        )}
         title={formatSubagentDisplayTitle(item.title ?? "Subagent")}
-        detail={detail}
+        result={item.result}
+        progress={item.progress}
         threadId={item.childThreadId}
         onOpenThread={props.onOpenThread}
       />
@@ -222,70 +225,88 @@ export function V2LifecycleRow(props: {
 }
 
 function SubagentTimelineLink(props: {
+  readonly parentRef: ScopedThreadRef;
+  readonly subagentId: NodeId;
+  readonly driver: ProviderDriverKind;
+  readonly provider: ServerProvider | undefined;
   readonly title: string;
-  readonly detail: string;
+  readonly result: string | null;
+  readonly progress: string | undefined;
   readonly status: OrchestrationV2TurnItem["status"];
   readonly threadId: ThreadId | null;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const agent = useAtomValue(
+    environmentThreadDetails.threadAtom(props.parentRef),
+    (thread) => thread?.projection.subagents.find((agent) => agent.id === props.subagentId) ?? null,
+  );
   const threadId = props.threadId;
   const statusLabel = props.status.replaceAll("_", " ");
-  const content = (
-    <>
-      <span className="relative flex size-6 shrink-0 items-center justify-center">
-        <BotIcon className="size-4 text-icon-muted" aria-hidden />
-        <span
-          role="img"
-          aria-label={statusLabel}
-          className={cn(
-            "absolute right-0.5 bottom-0.5 size-1.5 rounded-full ring-2 ring-background",
-            props.status === "failed"
-              ? "bg-destructive"
-              : props.status === "completed"
-                ? "bg-success"
-                : props.status === "cancelled" || props.status === "interrupted"
-                  ? "bg-muted-foreground/60"
-                  : "bg-info",
-          )}
-        />
-      </span>
-      <span className="min-w-0 truncate">{props.title}</span>
-    </>
+  const icon = (
+    <ThreadRelationshipIcon driver={props.driver} provider={props.provider} status={props.status} />
   );
+  const label = <span className="block truncate">{props.title}</span>;
   return (
-    <div
-      data-v2-item-type="subagent"
-      className="flex min-w-0 max-w-full items-center gap-0.5 text-sm text-secondary-label"
-    >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            threadId === null ? (
-              <span
-                aria-description={`${statusLabel}: ${props.detail}`}
-                className="flex min-w-0 items-center gap-1.5 px-0.5 py-0.5 leading-relaxed"
-              >
-                {content}
-              </span>
-            ) : (
-              <button
-                type="button"
-                aria-label={`Open ${props.title}`}
-                aria-description={`${statusLabel}: ${props.detail}`}
-                onClick={() => props.onOpenThread(threadId)}
-                className="flex min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left leading-relaxed hover:bg-accent/20 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                {content}
-              </button>
-            )
-          }
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          threadId === null ? (
+            <WorkLogRow
+              data-v2-item-type="subagent"
+              aria-description={statusLabel}
+              icon={icon}
+              label={label}
+            />
+          ) : (
+            <WorkLogButton
+              data-v2-item-type="subagent"
+              aria-label={`Open ${props.title}`}
+              aria-description={statusLabel}
+              onClick={() => props.onOpenThread(threadId)}
+              icon={icon}
+              label={label}
+            />
+          )
+        }
+      />
+      <TooltipPopup>
+        <SubagentTimelineTooltip
+          {...props}
+          model={agent?.model ?? null}
+          status={agent?.status ?? props.status}
+          result={agent?.result ?? props.result}
+          progress={agent?.progress ?? props.progress}
         />
-        <TooltipPopup className="max-w-80 whitespace-pre-wrap break-words">
-          {props.title} · {statusLabel}
-          {props.detail ? `\n${props.detail}` : ""}
-        </TooltipPopup>
-      </Tooltip>
-    </div>
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function SubagentTimelineTooltip(
+  props: Parameters<typeof SubagentTimelineLink>[0] & { model: string | null },
+) {
+  const environmentId = props.parentRef.environmentId;
+  const parent = useThreadShell(props.parentRef)?.source;
+  const child = useThreadShell(
+    props.threadId ? scopeThreadRef(environmentId, props.threadId) : null,
+  )?.source;
+  const parentProject = useProject(
+    parent ? scopeProjectRef(environmentId, parent.projectId) : null,
+  );
+  const childProject = useProject(child ? scopeProjectRef(environmentId, child.projectId) : null);
+  return (
+    <SubagentTooltipContent
+      title={formatSubagentDisplayTitle(child?.title ?? props.title)}
+      model={props.model}
+      provider={props.provider}
+      status={props.status}
+      result={props.result}
+      progress={props.progress}
+      parentThread={parent}
+      childThread={child}
+      parentProject={parentProject ?? undefined}
+      childProject={childProject ?? undefined}
+    />
   );
 }
 

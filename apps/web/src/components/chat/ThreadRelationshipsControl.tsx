@@ -1,6 +1,7 @@
+import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
+import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { fileBasename } from "@t3tools/client-runtime/markdown-links";
 import { projectedSubagentsToRuntime } from "@t3tools/client-runtime/state/subagentRuntime";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
@@ -17,13 +18,11 @@ import {
   resolveLatestMergeBackRun,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
-import { formatModelSlugName } from "@t3tools/shared/model";
 import { groupBy } from "effect/Array";
 import { useNavigate } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   BotIcon,
-  ChevronDownIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   LoaderCircleIcon,
@@ -43,10 +42,8 @@ import {
 } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { cn } from "../../lib/utils";
 import { AgentElapsed } from "../AgentsPanel";
-import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
-import { getTriggerDisplayModelLabel } from "./providerIconUtils";
+import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -59,8 +56,6 @@ import {
   THREAD_DETAILS_PANEL_MENU_POPUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
-
-const THREAD_RELATIONSHIP_ICON_CLASS = "size-4 shrink-0 text-muted-foreground";
 
 // Lineage paging: a busy thread can accumulate dozens of forks and subagents,
 // and the panel it lives in already scrolls. Show a workable window, keep the
@@ -128,28 +123,16 @@ function ThreadLineageGroup(props: {
   return (
     <div>
       {props.label ? (
-        <Button
-          size="compact"
-          variant="ghost-muted"
-          aria-expanded={expanded}
+        <CollapsibleSectionHeader
+          expanded={expanded}
           onClick={() => setExpanded(!expanded)}
-          className="w-full justify-start gap-2 text-left text-muted-foreground/60"
+          accessory={
+            failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null
+          }
         >
-          <span className="shrink-0">
-            {props.label}
-            {!expanded && ` (${props.rows.length})`}
-          </span>
-          <span aria-hidden className="h-px min-w-2 flex-1 bg-border/60" />
-          {failedCount > 0 ? (
-            <span className="shrink-0 text-[10px] leading-none text-destructive-foreground">
-              {failedCount} failed
-            </span>
-          ) : null}
-          <ChevronDownIcon
-            aria-hidden
-            className={cn("size-3 shrink-0 transition-transform", expanded && "rotate-180")}
-          />
-        </Button>
+          {props.label}
+          {!expanded && ` (${props.rows.length})`}
+        </CollapsibleSectionHeader>
       ) : null}
       {expanded ? (
         <ThreadLineageRowList
@@ -169,13 +152,6 @@ function relationshipLabel(edge: ThreadRelationshipEdge, currentThreadId: Thread
     return edge.sourceThreadId === currentThreadId ? "Subagent" : "Parent agent";
   }
   return edge.sourceThreadId === currentThreadId ? "Fork" : "Parent thread";
-}
-
-function statusDotClass(status: string | null): string {
-  if (status === "running" || status === "in_progress") return "bg-info";
-  if (status === "failed" || status === "error") return "bg-destructive";
-  if (status === "completed") return "bg-success";
-  return "bg-muted-foreground/45";
 }
 
 function relationshipThreadTitle(input: {
@@ -226,7 +202,6 @@ export function ThreadRelationshipsPanel(props: {
   }, [archivedShells, projection, props.environmentId, threadShells]);
   const currentThread = projection?.thread ?? graph.nodes.get(props.threadId)?.thread;
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
-  const currentWorkspace = currentThread?.worktreePath ?? currentProject?.workspaceRoot;
   const navigate = useNavigate();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
@@ -371,74 +346,34 @@ export function ThreadRelationshipsPanel(props: {
                   (agent?.providerInstanceId ?? node?.thread?.providerInstanceId),
               );
               const providerDriver = agent?.driver ?? provider?.driver;
-              const model = provider?.models.find((model) => model.slug === agent?.model);
-              const modelLabel = model
-                ? getTriggerDisplayModelLabel(model)
-                : agent?.model
-                  ? formatModelSlugName(agent.model)
-                  : "Unknown";
               const project = projects.find((project) => project.id === node?.thread?.projectId);
-              const differentProject =
-                currentThread && project && project.id !== currentThread.projectId ? project : null;
-              const workspace = node?.thread?.worktreePath ?? project?.workspaceRoot;
-              const differentWorkspace =
-                currentWorkspace && workspace !== currentWorkspace ? workspace : null;
               const relationshipHint = node?.missing
                 ? "This related thread is unavailable"
                 : `Open ${relationship.toLowerCase()} in this chat`;
               const relationshipTooltip = agent ? (
-                <div className="max-w-64 space-y-1 py-1">
-                  <div className="font-medium">{threadTitle}</div>
-                  <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
-                    <dt className="text-muted-foreground">Model</dt>
-                    <dd className="break-words text-right">{modelLabel}</dd>
-                    {differentProject ? (
-                      <>
-                        <dt className="text-muted-foreground">Project</dt>
-                        <dd className="break-words text-right">{differentProject.title}</dd>
-                      </>
-                    ) : null}
-                    {differentWorkspace ? (
-                      <>
-                        <dt className="text-muted-foreground">
-                          {node?.thread?.branch
-                            ? "Branch"
-                            : node?.thread?.worktreePath
-                              ? "Worktree"
-                              : "Workspace"}
-                        </dt>
-                        <dd className="break-words text-right">
-                          {node?.thread?.branch ?? fileBasename(differentWorkspace)}
-                        </dd>
-                      </>
-                    ) : null}
-                  </dl>
-                </div>
+                <SubagentTooltipContent
+                  title={threadTitle}
+                  model={agent.model}
+                  provider={provider}
+                  status={agent.status}
+                  result={agent.result}
+                  progress={agent.progress}
+                  parentThread={currentThread ?? undefined}
+                  childThread={node?.thread ?? undefined}
+                  parentProject={currentProject}
+                  childProject={project}
+                />
               ) : (
                 relationshipHint
               );
               const relationshipContent = (
                 <>
-                  <span className="relative -mx-0.5 grid size-4 shrink-0 place-items-center">
-                    {isSubagent && !isParent && providerDriver ? (
-                      <ProviderInstanceIcon
-                        driverKind={providerDriver}
-                        displayName={provider?.displayName ?? providerDriver}
-                        acpRegistryIconUrl={provider?.iconUrl}
-                        iconClassName={THREAD_RELATIONSHIP_ICON_CLASS}
-                        className="z-auto"
-                      />
-                    ) : (
-                      <RelationshipIcon className={THREAD_RELATIONSHIP_ICON_CLASS} />
-                    )}
-                    <span
-                      className={cn(
-                        "absolute -bottom-1 -right-1 size-2 rounded-full border-2 border-card",
-                        statusDotClass(edge.status),
-                      )}
-                      aria-hidden="true"
-                    />
-                  </span>
+                  <ThreadRelationshipIcon
+                    driver={isSubagent && !isParent ? providerDriver : undefined}
+                    provider={provider}
+                    fallbackIcon={RelationshipIcon}
+                    status={edge.status}
+                  />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-medium leading-4 text-foreground/85">
                       {threadTitle}

@@ -242,6 +242,36 @@ it("shows readable models and only differing workspace details in agent tooltips
   expect(text()).not.toContain("Worktree");
   expect(text()).not.toContain("Workspace");
 
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        ...projection.subagents[0],
+        progress: "Checking the latest changes",
+        result: "Old intermediate result",
+      },
+    ],
+  };
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(text()).toContain("Checking the latest changes");
+  expect(text()).not.toContain("Old intermediate result");
+  const result = "Final checks passed. " + "More detail. ".repeat(50) + "Hidden tail";
+  state.projection = {
+    ...projection,
+    subagents: [
+      { ...projection.subagents[0], status: "failed", progress: "Stale progress", result },
+    ],
+  };
+  await act(async () => renderer.update(cloneElement(panel)));
+  await act(async () =>
+    renderer.root.findByProps({ type: "button", "aria-expanded": false }).props.onClick(),
+  );
+  expect(text()).toContain("Final checks passed.");
+  expect(text()).not.toContain("Stale progress");
+  expect(text()).not.toContain("Hidden tail");
+  expect(text()).not.toContain(result);
+  state.projection = projection;
+
   child.worktreePath = "/main/worktrees/checker";
   state.shells = [{ environmentId: "test", source: { ...child } }];
   await act(async () => renderer.update(cloneElement(panel)));
