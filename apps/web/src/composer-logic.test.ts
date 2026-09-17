@@ -61,6 +61,51 @@ describe("formatAssistantCitationForComposer", () => {
 });
 
 describe("composerSubmissionIntentForEnter", () => {
+  it.each([
+    ["enter", "one line", false, "foreground"],
+    ["enter", "two\nlines", false, "foreground"],
+    ["mod-enter-multiline", "one line", false, "foreground"],
+    ["mod-enter-multiline", "two\nlines", false, null],
+    ["mod-enter-multiline", "two\nlines", true, "foreground"],
+    ["mod-enter", "one line", false, null],
+    ["mod-enter", "one line", true, "foreground"],
+  ] as const)("uses %s for %j with modifier=%s", (sendShortcut, prompt, modifierKey, expected) => {
+    expect(
+      composerSubmissionIntentForEnter({
+        isMobileViewport: false,
+        shiftKey: false,
+        modifierKey,
+        isDraftThread: false,
+        sendShortcut,
+        prompt,
+      }),
+    ).toBe(expected);
+  });
+
+  it.each([
+    ["enter", false, "alternate"],
+    ["enter", true, null],
+    ["mod-enter-multiline", false, "foreground"],
+    ["mod-enter-multiline", true, "alternate"],
+    ["mod-enter", false, "foreground"],
+    ["mod-enter", true, "alternate"],
+  ] as const)(
+    "resolves running follow-ups with %s and shift=%s",
+    (sendShortcut, shiftKey, expected) => {
+      expect(
+        composerSubmissionIntentForEnter({
+          isMobileViewport: false,
+          shiftKey,
+          modifierKey: true,
+          isDraftThread: false,
+          isRunning: true,
+          sendShortcut,
+          prompt: "two\nlines",
+        }),
+      ).toBe(expected);
+    },
+  );
+
   it("submits plain Enter on desktop", () => {
     expect(
       composerSubmissionIntentForEnter({

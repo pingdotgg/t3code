@@ -238,9 +238,11 @@ export function invalidateCustomThemes() {
   notifyCustomThemeListeners();
 }
 
+const EMPTY_CUSTOM_THEMES: ReadonlyArray<ThemeDefinition> = [];
+
 export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
   const snapshot = getCustomThemeLibrarySnapshot();
-  return snapshot.status === "ready" ? snapshot.themes : [];
+  return snapshot.status === "ready" ? snapshot.themes : EMPTY_CUSTOM_THEMES;
 }
 
 export function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {

@@ -42,6 +42,7 @@ import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/ser
 import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { createUpdateProgress } from "./updateProgress.ts";
 import { bootServiceLayer } from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
@@ -357,7 +358,13 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       reason: `'${input.requestedVersion}' is not an exact t3 version.`,
     });
   }
-  const targetVersion = input.requestedVersion ?? (yield* resolveNewestVersion(channel));
+  const progress = createUpdateProgress();
+  progress.status("Checking for updates...");
+  const targetVersion = yield* (
+    input.requestedVersion === undefined
+      ? resolveNewestVersion(channel)
+      : Effect.succeed(input.requestedVersion)
+  ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);
 
   // Preview is a maintainers' dogfooding train: it is cut by hand from
@@ -446,14 +453,17 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       Effect.orElseSucceed(() => false),
     );
 
-  yield* Console.log(
+  progress.heading(
     executableCurrent && restartPending
       ? `The background service is still running the version before ${targetVersion} (${targetChannel}).`
       : executableCurrent
         ? `Updating the background service ${serviceVersion ?? "(unknown version)"} -> ${targetVersion} (${targetChannel}).`
         : alreadyOnDisk
-          ? `Switching t3 ${currentVersion} -> ${targetVersion} (${targetChannel}, already downloaded).`
-          : `Updating t3 ${currentVersion} -> ${targetVersion} (${targetChannel}).`,
+          ? "Switching T3 Code"
+          : "Updating T3 Code",
+    executableCurrent
+      ? ""
+      : `${currentVersion} → ${targetVersion}${targetChannel === "stable" ? "" : ` (${targetChannel})`}`,
   );
   let restartService = false;
   if (serviceInstalled && !serviceCurrent) {
@@ -477,6 +487,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
 
   const runtime = yield* ensurePinnedRuntimeInstalled({
+    onProgress: progress.report,
     baseDir: input.baseDir,
     version: targetVersion,
     fs,
@@ -510,6 +521,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
           ),
         ),
   }).pipe(
+    Effect.ensuring(Effect.sync(progress.finish)),
     Effect.catchIf(
       (error): error is PinnedRuntimeInstallError =>
         error._tag === "PinnedRuntimeInstallError" &&
@@ -539,6 +551,11 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // version; only the restart itself waits for the user's answer.
   let serviceUpdated = false;
   if (serviceInstalled && !serviceCurrent) {
+    yield* Console.log(
+      restartService
+        ? "Restarting the background service..."
+        : "Updating the background service...",
+    );
     yield* BootService.BootService.pipe(
       Effect.flatMap((target) =>
         target.install({ allowDowngrade: input.allowDowngrade, start: restartService }),
@@ -560,12 +577,11 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     serviceUpdated = restartService;
   }
 
-  yield* Console.log("");
-  yield* Console.log(`t3 ${targetVersion} is installed at ${runtime.entryPath}`);
+  progress.success(`Installed T3 Code ${targetVersion}`);
   if (Option.isSome(repointed)) {
-    yield* Console.log(`  ${repointed.value} now runs ${targetVersion}`);
+    yield* Console.log("  Run t3 to get started.\n");
   } else {
-    yield* Console.log(`  Run it as ${runtime.entryPath}, or point your \`t3\` launcher at it.`);
+    yield* Console.log(`  Run ${runtime.entryPath}\n`);
   }
   if (serviceUpdated) {
     yield* Console.log(`  Background service restarted on ${targetVersion}`);
