@@ -148,10 +148,8 @@ function NativeSidebarContainer(props: ThreadNavigationSidebarProps) {
 function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
-  const { materialYouStyleLayoutActive, themeVariables: materialTheme } =
-    useAppearancePreferences();
+  const { themeVariables: materialTheme } = useAppearancePreferences();
   const screenColor = materialTheme["--color-screen"];
-  const mutedColor = materialTheme["--color-foreground-muted"];
 
   const insets = useSafeAreaInsets();
   const projects = useProjects();
@@ -874,7 +872,7 @@ function ThreadNavigationSidebarPane(
                 }),
               )}
               searchQuery={props.searchQuery}
-              pane={materialYouStyleLayoutActive ? "screen" : "sidebar"}
+              pane={Platform.OS === "android" ? "screen" : "sidebar"}
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
               }
@@ -915,7 +913,7 @@ function ThreadNavigationSidebarPane(
               disabled={!shelfPreferencesLoaded}
               expanded={item.expanded}
               onToggle={toggleSnoozedShelf}
-              pane={materialYouStyleLayoutActive ? "screen" : "sidebar"}
+              pane={Platform.OS === "android" ? "screen" : "sidebar"}
             />
           );
         case "v2-settled-shelf":
@@ -925,7 +923,7 @@ function ThreadNavigationSidebarPane(
               disabled={!shelfPreferencesLoaded}
               expanded={item.expanded}
               onToggle={toggleSettledShelf}
-              pane={materialYouStyleLayoutActive ? "screen" : "sidebar"}
+              pane={Platform.OS === "android" ? "screen" : "sidebar"}
             />
           );
         case "v2-show-more":
@@ -945,7 +943,7 @@ function ThreadNavigationSidebarPane(
         case "header":
           return (
             <ThreadListGroupHeader
-              variant={materialYouStyleLayoutActive ? "compact" : "sidebar"}
+              variant={Platform.OS === "android" ? "compact" : "sidebar"}
               collapsed={item.collapsed}
               isFirst={item.isFirst}
               groupKey={item.group.key}
@@ -963,7 +961,7 @@ function ThreadNavigationSidebarPane(
         case "pending-task":
           return (
             <PendingTaskListRow
-              variant={materialYouStyleLayoutActive ? "compact" : "sidebar"}
+              variant={Platform.OS === "android" ? "compact" : "sidebar"}
               pendingTask={item.pendingTask}
               environmentLabel={
                 savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ?? null
@@ -1013,7 +1011,7 @@ function ThreadNavigationSidebarPane(
         case "show-more":
           return (
             <ThreadListShowMoreRow
-              variant={materialYouStyleLayoutActive ? "compact" : "sidebar"}
+              variant={Platform.OS === "android" ? "compact" : "sidebar"}
               hiddenCount={item.hiddenCount}
               canShowLess={item.canShowLess}
               groupKey={item.groupKey}
@@ -1023,7 +1021,6 @@ function ThreadNavigationSidebarPane(
       }
     },
     [
-      materialYouStyleLayoutActive,
       archiveThread,
       activeReorderEnvironmentIds,
       threadMovePlanners,
@@ -1189,7 +1186,7 @@ function ThreadNavigationSidebarPane(
                 }
                 contentContainerStyle={[
                   styles.threadListContent,
-                  materialYouStyleLayoutActive ? { paddingHorizontal: 0 } : null,
+                  Platform.OS === "android" ? { paddingHorizontal: 0 } : null,
                   {
                     paddingBottom: Math.max(insets.bottom, 16) + 16,
                     paddingTop: 6,
@@ -1222,9 +1219,10 @@ function ThreadNavigationSidebarPane(
       <View
         className="flex-1"
         style={
-          materialYouStyleLayoutActive
+          Platform.OS === "android"
             ? {
                 marginTop: stickyHeaderHeight,
+                marginHorizontal: 4,
                 paddingBottom: insets.bottom,
                 backgroundColor: screenColor,
                 borderTopLeftRadius: 28,
@@ -1234,39 +1232,43 @@ function ThreadNavigationSidebarPane(
             : { paddingBottom: insets.bottom }
         }
       >
-        <SwipeableScrollGateProvider enabled={swipeEnabled}>
-          <GestureDetector gesture={sidebarScrollGesture}>
-            <LegendList
-              data={listItems}
-              drawDistance={500}
-              estimatedItemSize={64}
-              extraData={listExtraData}
-              getItemType={(item) => item.type}
-              itemsAreEqual={sidebarItemsAreEqual}
-              keyExtractor={(item) => item.key}
-              renderItem={renderListItem}
-              contentContainerStyle={[
-                styles.threadListContent,
-                materialYouStyleLayoutActive ? { paddingHorizontal: 0 } : null,
-                {
-                  paddingBottom:
-                    Platform.OS === "android"
-                      ? Math.max(insets.bottom, 16) + 88 - insets.bottom
-                      : 16 + insets.bottom,
-                  paddingTop: materialYouStyleLayoutActive ? 6 : topListInset,
-                },
-              ]}
-              keyboardDismissMode="on-drag"
-              keyboardShouldPersistTaps="handled"
-              {...scrollGateHandlers}
-              recycleItems
-              scrollEventThrottle={16}
-              showsVerticalScrollIndicator={false}
-              style={styles.threadList}
-              ListEmptyComponent={listEmpty}
-            />
-          </GestureDetector>
-        </SwipeableScrollGateProvider>
+        {Platform.OS === "android" && listItems.length === 0 ? (
+          <View className="flex-1 items-center justify-center">{listEmpty}</View>
+        ) : (
+          <SwipeableScrollGateProvider enabled={swipeEnabled}>
+            <GestureDetector gesture={sidebarScrollGesture}>
+              <LegendList
+                data={listItems}
+                drawDistance={500}
+                estimatedItemSize={64}
+                extraData={listExtraData}
+                getItemType={(item) => item.type}
+                itemsAreEqual={sidebarItemsAreEqual}
+                keyExtractor={(item) => item.key}
+                renderItem={renderListItem}
+                contentContainerStyle={[
+                  styles.threadListContent,
+                  Platform.OS === "android" ? { paddingHorizontal: 0 } : null,
+                  {
+                    paddingBottom:
+                      Platform.OS === "android"
+                        ? Math.max(insets.bottom, 16) + 148 - insets.bottom
+                        : 16 + insets.bottom,
+                    paddingTop: Platform.OS === "android" ? 6 : topListInset,
+                  },
+                ]}
+                keyboardDismissMode="on-drag"
+                keyboardShouldPersistTaps="handled"
+                {...scrollGateHandlers}
+                recycleItems
+                scrollEventThrottle={16}
+                showsVerticalScrollIndicator={false}
+                style={styles.threadList}
+                ListEmptyComponent={listEmpty}
+              />
+            </GestureDetector>
+          </SwipeableScrollGateProvider>
+        )}
       </View>
 
       {Platform.OS === "android" ? (
@@ -1340,53 +1342,7 @@ function ThreadNavigationSidebarPane(
             />
           </View>
         </View>
-
-        <View
-          className={
-            materialYouStyleLayoutActive
-              ? "mx-4 mt-[9px] min-h-12 flex-row items-center gap-2.5 rounded-full border border-input-border bg-input px-3.5"
-              : "mx-4 mt-[9px] h-[38px] flex-row items-center gap-1.5 rounded-xl bg-sidebar-search pr-2.5 pl-[11px]"
-          }
-        >
-          <SymbolView
-            name="magnifyingglass"
-            size={15}
-            tintColorClassName={"accent-foreground-muted"}
-            type="monochrome"
-          />
-          <TextInput
-            ref={searchInputRef}
-            accessibilityLabel="Search threads"
-            autoCapitalize="none"
-            autoCorrect={false}
-            clearButtonMode={materialYouStyleLayoutActive ? "never" : "while-editing"}
-            onChangeText={props.onSearchQueryChange}
-            placeholder="Search"
-            placeholderTextColorClassName={"accent-placeholder"}
-            returnKeyType="search"
-            className={
-              materialYouStyleLayoutActive
-                ? "flex-1 px-0 py-2.5 font-sans text-base text-foreground"
-                : "h-[34px] flex-1 px-0 py-0 font-sans text-base text-foreground"
-            }
-            value={props.searchQuery}
-          />
-          {materialYouStyleLayoutActive && props.searchQuery.length > 0 ? (
-            <Pressable
-              accessibilityLabel="Clear search"
-              hitSlop={10}
-              onPress={() => props.onSearchQueryChange("")}
-            >
-              <SymbolView
-                name="xmark.circle.fill"
-                size={17}
-                tintColor={mutedColor}
-                type="monochrome"
-              />
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
+      )}
     </View>
   );
 }

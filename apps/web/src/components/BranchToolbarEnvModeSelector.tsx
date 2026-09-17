@@ -112,12 +112,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       </span>
     );
 
-    if (!workspacePath) return lockedRow;
-
     return (
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
-        <TooltipPopup side="left">{workspacePath}</TooltipPopup>
+        <TooltipPopup side={displayMode === "panel" ? "left" : undefined}>
+          {workspacePath ?? resolveLockedWorkspaceLabel(activeWorktreePath)}
+        </TooltipPopup>
       </Tooltip>
     );
   }
@@ -172,12 +172,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
                 : "min-w-0 max-w-[240px] truncate group-data-[compact]/composer-context:max-w-0 transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
             }
           >
-            <span
-              data-composer-label-motion
-              className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
-            >
-              <SelectValue />
-            </span>
+            <SelectValue />
           </span>
           {displayMode === "panel" ? (
             <span className="shrink-0 text-[10px] font-normal text-muted-foreground/70">
@@ -185,7 +180,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             </span>
           ) : null}
         </TooltipTrigger>
-        {workspacePath ? <TooltipPopup side="left">{workspacePath}</TooltipPopup> : null}
+        <TooltipPopup side={displayMode === "panel" ? "left" : undefined}>
+          {workspacePath ??
+            (effectiveEnvMode === "worktree"
+              ? resolveEnvModeLabel("worktree")
+              : resolveCurrentWorkspaceLabel(activeWorktreePath))}
+        </TooltipPopup>
       </Tooltip>
       <SelectPopup
         alignItemWithTrigger={false}
