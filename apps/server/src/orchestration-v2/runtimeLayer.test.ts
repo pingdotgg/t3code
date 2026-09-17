@@ -517,6 +517,38 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
             (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request.type),
             ["provider-thread.rollback"],
           );
+          yield* orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("runtime-rollback-share"),
+            threadId,
+            worktreePath: null,
+          });
+          const sharedCommandId = CommandId.make("runtime-rollback-shared");
+          const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+          const shared = yield* orchestrator
+            .dispatch({
+              type: "checkpoint.rollback",
+              commandId: sharedCommandId,
+              threadId,
+              checkpointId,
+              scopeId: scope.id,
+            })
+            .pipe(Effect.flip);
+          assert.match(String(shared.cause), /isolated worktree/);
+          assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+          assert.deepEqual(yield* outbox.listByCommandId(sharedCommandId), []);
+          const conversationOnly = yield* orchestrator.dispatch({
+            type: "checkpoint.rollback",
+            commandId: CommandId.make("runtime-rollback-conversation"),
+            threadId,
+            checkpointId,
+            scopeId: scope.id,
+            restoreFiles: false,
+          });
+          assert.deepEqual(
+            conversationOnly.storedEvents.map((stored) => stored.event.type),
+            ["checkpoint.rollback-requested"],
+          );
         } else {
           const error = yield* rollback.pipe(Effect.flip);
           assert.instanceOf(error, OrchestratorDispatchError);
