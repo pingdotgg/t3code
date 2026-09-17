@@ -48,6 +48,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import {
   agentDeviceStateDir,
+  DEVICE_HUB_ARGS,
   type DeviceToolPaths,
   ensureAgentDevice,
   ensureDeviceHub,
@@ -362,15 +363,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       .spawn(
         ChildProcess.make(
           nodePath,
-          [
-            hubTool.entryPath,
-            "--port",
-            String(port),
-            "--host",
-            "127.0.0.1",
-            "--hide-sidebar",
-            "--hide-boot-device",
-          ],
+          [hubTool.entryPath, "--port", String(port), "--host", "127.0.0.1", ...DEVICE_HUB_ARGS],
           {
             detached: false,
             shell: false,
