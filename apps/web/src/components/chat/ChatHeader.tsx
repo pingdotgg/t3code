@@ -62,11 +62,11 @@ function AncestorBreadcrumbs({
     [environmentId, threadId],
   );
   const thread = useThreadShell(threadRef);
-  if (descendantThreadIds.includes(threadId)) return null;
+  if (thread === null || descendantThreadIds.includes(threadId)) return null;
 
   const parentThreadId =
-    thread?.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null;
-  const title = thread?.title ?? "Parent thread";
+    thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null;
+  const title = thread.title;
   return (
     <>
       {parentThreadId !== null ? (
