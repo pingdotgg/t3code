@@ -573,16 +573,17 @@ export function ProviderModelsSection({
             <GripVerticalIcon className="size-3" />
           </span>
         ) : dragHandle ? (
-          <button
+          <Button
             ref={dragHandle.setActivatorNodeRef}
-            type="button"
+            size="icon-micro"
+            variant="ghost-muted"
             {...dragHandle.attributes}
             {...dragHandle.listeners}
             aria-label={`Drag to reorder ${model.name}`}
-            className="flex size-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-sm text-muted-foreground/50 transition-colors hover:text-muted-foreground active:cursor-grabbing"
+            className="cursor-grab touch-none active:cursor-grabbing"
           >
             <GripVerticalIcon className="size-3" />
-          </button>
+          </Button>
         ) : (
           // Filtered rows are not draggable; keep the columns aligned.
           <span className="size-5 shrink-0" aria-hidden />
