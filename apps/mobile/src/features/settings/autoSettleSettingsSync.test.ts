@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { planAutoSettleSettingsSync } from "./autoSettleSettingsSync";
@@ -74,5 +74,19 @@ describe("auto-settle settings sync", () => {
     ]);
 
     expect(plan.mismatches).toEqual([]);
+  });
+
+  it("notices different project checkouts on the same environment", () => {
+    const projectReference = { ...reference, projectId: ProjectId.make("one") };
+    const otherCheckout = {
+      environmentId: reference.environmentId,
+      projectId: ProjectId.make("two"),
+      label: "Other checkout",
+      settings: { ...reference.settings, sidebarAutoSettleAfterDays: null },
+    };
+
+    expect(planAutoSettleSettingsSync(projectReference, [otherCheckout]).mismatches).toEqual([
+      otherCheckout,
+    ]);
   });
 });

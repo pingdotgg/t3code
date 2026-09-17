@@ -47,7 +47,7 @@ export function SettingsProjectGroupingRouteScreen() {
     : null;
 
   return (
-    <SettingsScreen title="Project Grouping">
+    <SettingsScreen title="Organization">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -55,7 +55,7 @@ export function SettingsProjectGroupingRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SettingsSection title="Default grouping">
+        <SettingsSection title="Project grouping">
           {GROUPING_OPTIONS.map((option, index) => (
             <Pressable
               key={option.mode}
