@@ -21,7 +21,9 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { CheckpointServiceV2 } from "./CheckpointService.ts";
+import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import { VcsProcessTimeoutError } from "@t3tools/contracts";
+import { CheckpointServiceV2, layer as checkpointServiceLayer } from "./CheckpointService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -48,9 +50,9 @@ const modelSelection = {
 } as const;
 
 it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
-  it.effect(
-    "preserves a newer delegatedCompletion cohort when checkpoint run.updated is applied after it",
-    () =>
+  it.effect.each([false, true])(
+    "finalizes capture without losing newer delegated completion, ref lookup fails=%s",
+    (refLookupFails) =>
       Effect.gen(function* () {
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
@@ -255,11 +257,34 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           Layer.provide(
             Layer.mergeAll(
               IdAllocator.layer,
-              Layer.mock(CheckpointServiceV2)({
-                materializeBaselineCheckpoint: () =>
-                  Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
-                capture: () => Effect.succeed(captured),
-              }),
+              refLookupFails
+                ? checkpointServiceLayer.pipe(
+                    Layer.provide(
+                      Layer.mergeAll(
+                        IdAllocator.layer,
+                        Layer.mock(CheckpointStore.CheckpointStore)({
+                          isGitRepository: () => Effect.succeed(true),
+                          captureCheckpoint: () => Effect.void,
+                          hasCheckpointRef: () =>
+                            Effect.fail(
+                              new VcsProcessTimeoutError({
+                                operation: "test.hasCheckpointRef",
+                                command: "git",
+                                cwd: "/repo",
+                                timeoutMs: 30000,
+                              }),
+                            ),
+                        }),
+                      ),
+                    ),
+                  )
+                : Layer.mock(CheckpointServiceV2)({
+                    materializeBaselineCheckpoint: () =>
+                      Effect.die(
+                        "baseline materialization must be skipped when ordinal 0 is ready",
+                      ),
+                    capture: () => Effect.succeed(captured),
+                  }),
               Layer.mock(EventSinkV2)({
                 commitCommand: (input) =>
                   Ref.set(committed, input.events).pipe(
@@ -288,7 +313,15 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
             return;
           }
           assert.equal(runUpdated.payload.status, "completed");
-          assert.equal(runUpdated.payload.checkpointId, captured.id);
+          const capturedEvent = events.find((event) => event.type === "checkpoint.captured");
+          assert.equal(
+            runUpdated.payload.checkpointId,
+            refLookupFails ? capturedEvent?.payload.id : captured.id,
+          );
+          if (refLookupFails && capturedEvent?.type === "checkpoint.captured") {
+            assert.equal(capturedEvent.payload.status, "ready");
+            assert.deepEqual(capturedEvent.payload.files, []);
+          }
           assert.isUndefined(
             runUpdated.payload.delegatedCompletion,
             "checkpoint capture must omit delegatedCompletion so ProjectionStore can keep a newer cohort",
@@ -317,7 +350,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           const projectedRun = projection.runs[0];
           assert.isDefined(projectedRun);
           assert.equal(projectedRun?.status, "completed");
-          assert.equal(projectedRun?.checkpointId, captured.id);
+          assert.equal(projectedRun?.checkpointId, runUpdated.payload.checkpointId);
           assert.deepEqual(projectedRun?.delegatedCompletion, newerCohort);
           assert.equal(projectedRun?.delegatedCompletion?.delivery?.messageId, deliveryMessageId);
           assert.deepEqual(projectedRun?.delegatedCompletion?.delivery?.taskIds, [taskId]);

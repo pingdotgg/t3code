@@ -329,10 +329,20 @@ export const layer: Layer.Layer<
             });
             const checkpointable = yield* isGitCheckpointable(input.scope.cwd);
             const available = checkpointable
-              ? yield* checkpointStore.hasCheckpointRef({
-                  cwd: input.scope.cwd,
-                  checkpointRef,
-                })
+              ? yield* checkpointStore
+                  .hasCheckpointRef({
+                    cwd: input.scope.cwd,
+                    checkpointRef,
+                  })
+                  .pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("orchestration V2 baseline ref lookup failed", {
+                        scopeId: input.scope.id,
+                        checkpointRef,
+                        cause: String(cause),
+                      }).pipe(Effect.as(false)),
+                    ),
+                  )
               : false;
             return makeCheckpoint({
               id: checkpointId,
@@ -430,10 +440,20 @@ export const layer: Layer.Layer<
             });
           }
 
-          const previousExists = yield* checkpointStore.hasCheckpointRef({
-            cwd: input.scope.cwd,
-            checkpointRef: previousCheckpointRef,
-          });
+          const previousExists = yield* checkpointStore
+            .hasCheckpointRef({
+              cwd: input.scope.cwd,
+              checkpointRef: previousCheckpointRef,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration V2 previous checkpoint ref lookup failed", {
+                  scopeId: input.scope.id,
+                  checkpointRef: previousCheckpointRef,
+                  cause: String(cause),
+                }).pipe(Effect.as(false)),
+              ),
+            );
           const files = previousExists
             ? yield* checkpointStore
                 .diffCheckpoints({
