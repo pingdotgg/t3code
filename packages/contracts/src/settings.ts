@@ -36,7 +36,7 @@ import {
 import {
   ProviderInstanceConfig,
   ProviderInstanceId,
-  type ProviderDriverKind,
+  ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
 
@@ -404,6 +404,7 @@ export const ClientSettingsSchema = Schema.Struct({
   favorites: Schema.Array(
     Schema.Struct({
       provider: ProviderInstanceId,
+      driver: Schema.optionalKey(ProviderDriverKind),
       model: TrimmedNonEmptyString,
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -1484,6 +1485,7 @@ export const ClientSettingsPatch = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         provider: ProviderInstanceId,
+        driver: Schema.optionalKey(ProviderDriverKind),
         model: TrimmedNonEmptyString,
       }),
     ),

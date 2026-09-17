@@ -341,6 +341,7 @@ const PersistedComposerDraftStoreState = Schema.Struct({
   stickyModelSelectionByProvider: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ModelSelection),
   ),
+  stickyDriverByProvider: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderDriverKind)),
   stickyActiveProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
 });
 type PersistedComposerDraftStoreState = typeof PersistedComposerDraftStoreState.Type;
@@ -486,6 +487,7 @@ interface ComposerDraftStoreState {
   backgroundSubmissionThreadKeys: Record<string, true>;
   rewindingThreadKeys: ReadonlySet<string>;
   stickyModelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  stickyDriverByProvider?: Record<ProviderInstanceId, ProviderDriverKind>;
   stickyActiveProvider: ProviderInstanceId | null;
   /** Returns the editable composer content for a draft session or server thread. */
   getComposerDraft: (target: ComposerThreadTarget) => ComposerThreadDraftState | null;
@@ -569,7 +571,10 @@ interface ComposerDraftStoreState {
   /** Removes draft-session metadata after promotion is complete. */
   finalizePromotedDraftThread: (threadRef: ComposerThreadTarget) => void;
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
-  setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
+  setStickyModelSelection: (
+    modelSelection: ModelSelection | null | undefined,
+    driver?: ProviderDriverKind,
+  ) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
@@ -577,6 +582,8 @@ interface ComposerDraftStoreState {
     modelSelection: ModelSelection | null | undefined,
     opts?: {
       explicit?: boolean;
+      /** Routing hops preserve intent without turning inherited defaults into picks. */
+      preserveExplicit?: boolean;
       /**
        * Replace the stored entry outright instead of preserving its
        * existing options when the incoming selection has none. Used when
@@ -594,7 +601,10 @@ interface ComposerDraftStoreState {
       | null
       | undefined,
   ) => void;
-  applyStickyState: (threadRef: ComposerThreadTarget) => void;
+  applyStickyState: (
+    threadRef: ComposerThreadTarget,
+    providers?: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>,
+  ) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
     provider: ProviderDriverKind,
@@ -2217,6 +2227,7 @@ export function partializeComposerDraftStoreState(
       state.stickyModelSelectionByProvider,
     ),
     stickyActiveProvider: state.stickyActiveProvider,
+    stickyDriverByProvider: state.stickyDriverByProvider ?? {},
   };
 }
 
@@ -2287,6 +2298,7 @@ function normalizeCurrentPersistedComposerDraftStoreState(
     logicalProjectDraftThreadKeyByLogicalProjectKey,
     stickyModelSelectionByProvider: compactModelSelectionByProvider(stickyModelSelectionByProvider),
     stickyActiveProvider,
+    stickyDriverByProvider: normalizedPersistedState.stickyDriverByProvider ?? {},
   };
 }
 
@@ -2517,6 +2529,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         backgroundSubmissionThreadKeys: {},
         rewindingThreadKeys: new Set<string>(),
         stickyModelSelectionByProvider: {},
+        stickyDriverByProvider: {},
         stickyActiveProvider: null,
         getComposerDraft: (target) => getComposerDraftState(get(), target),
         getDraftThreadByLogicalProjectKey: (logicalProjectKey) => {
@@ -2918,13 +2931,21 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return removeDraftThreadReferences(state, threadKey);
           });
         },
-        setStickyModelSelection: (modelSelection) => {
+        setStickyModelSelection: (modelSelection, driver) => {
           const normalized = normalizeModelSelection(modelSelection);
           set((state) => {
             if (!normalized) {
               return state;
             }
-            const current = state.stickyModelSelectionByProvider[normalized.instanceId];
+            const previousDriver =
+              state.stickyDriverByProvider?.[normalized.instanceId] ?? normalized.instanceId;
+            const current =
+              driver && previousDriver !== driver
+                ? undefined
+                : state.stickyModelSelectionByProvider[normalized.instanceId];
+            const stickyDriverByProvider = { ...state.stickyDriverByProvider };
+            if (driver) stickyDriverByProvider[normalized.instanceId] = driver;
+            else delete stickyDriverByProvider[normalized.instanceId];
             // Model-only picker updates omit options (same contract as
             // setModelSelection). Keep the last sticky traits so Fast/Normal
             // survives Composer 2 → 2.5 and new chats.
@@ -2936,28 +2957,49 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...state.stickyModelSelectionByProvider,
               [normalized.instanceId]: nextSelection,
             };
-            if (Equal.equals(state.stickyModelSelectionByProvider, nextMap)) {
+            if (
+              Equal.equals(state.stickyModelSelectionByProvider, nextMap) &&
+              Equal.equals(state.stickyDriverByProvider ?? {}, stickyDriverByProvider)
+            ) {
               return state.stickyActiveProvider === normalized.instanceId
                 ? state
                 : { stickyActiveProvider: normalized.instanceId };
             }
             return {
               stickyModelSelectionByProvider: nextMap,
+              stickyDriverByProvider,
               stickyActiveProvider: normalized.instanceId,
             };
           });
         },
-        applyStickyState: (threadRef) => {
+        applyStickyState: (threadRef, providers) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
           }
           set((state) => {
             const stickyMap = state.stickyModelSelectionByProvider;
-            const stickyActiveProvider = state.stickyActiveProvider;
             const existing = state.draftsByThreadKey[threadKey];
             const base = existing ?? createEmptyThreadDraft();
             const nextMap = compactModelSelectionByProvider(stickyMap);
+            if (providers) {
+              for (const id of Object.keys(nextMap) as ProviderInstanceId[]) {
+                // Legacy default IDs identify their driver. Untagged custom IDs
+                // cannot safely carry a selection between machines.
+                const driver = state.stickyDriverByProvider?.[id] ?? id;
+                if (
+                  !providers.some(
+                    (provider) => provider.instanceId === id && provider.driver === driver,
+                  )
+                ) {
+                  delete nextMap[id];
+                }
+              }
+            }
+            const stickyActiveProvider =
+              state.stickyActiveProvider && nextMap[state.stickyActiveProvider]
+                ? state.stickyActiveProvider
+                : null;
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               base.activeProvider === stickyActiveProvider &&
@@ -3047,6 +3089,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               return state;
             }
             const base = existing ?? createEmptyThreadDraft();
+            const explicit =
+              opts?.explicit === true ||
+              (opts?.preserveExplicit === true && base.modelSelectionExplicit === true);
             const nextMap = { ...base.modelSelectionByProvider };
             if (normalized) {
               const current = nextMap[normalized.instanceId];
@@ -3068,7 +3113,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               base.activeProvider === nextActiveProvider &&
-              (base.modelSelectionExplicit ?? false) === (opts?.explicit === true)
+              (base.modelSelectionExplicit ?? false) === explicit
             ) {
               return state;
             }
@@ -3080,7 +3125,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...restBase,
               modelSelectionByProvider: nextMap,
               activeProvider: nextActiveProvider,
-              ...(opts?.explicit === true ? { modelSelectionExplicit: true as const } : {}),
+              ...(explicit ? { modelSelectionExplicit: true as const } : {}),
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
@@ -3177,7 +3222,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (options?.persistSticky === true) {
               nextStickyMap = { ...state.stickyModelSelectionByProvider };
               const stickyBase =
-                nextStickyMap[instanceKey] ??
+                ((state.stickyDriverByProvider?.[instanceKey] ?? instanceKey) === normalizedProvider
+                  ? nextStickyMap[instanceKey]
+                  : undefined) ??
                 base.modelSelectionByProvider[instanceKey] ??
                 createModelSelection(instanceKey, fallbackModel);
               if (providerOpts) {
@@ -3186,7 +3233,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   stickyBase.model,
                   providerOpts,
                 );
-              } else if ((stickyBase.options?.length ?? 0) > 0) {
+              } else {
                 const { options: _, ...rest } = stickyBase;
                 nextStickyMap[instanceKey] = rest as ModelSelection;
               }
@@ -3198,7 +3245,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               Equal.equals(state.stickyModelSelectionByProvider, nextStickyMap) &&
-              state.stickyActiveProvider === nextStickyActiveProvider
+              state.stickyActiveProvider === nextStickyActiveProvider &&
+              (options?.persistSticky !== true ||
+                state.stickyDriverByProvider?.[instanceKey] === normalizedProvider)
             ) {
               return state;
             }
@@ -3225,6 +3274,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ? {
                     stickyModelSelectionByProvider: nextStickyMap,
                     stickyActiveProvider: nextStickyActiveProvider,
+                    stickyDriverByProvider: {
+                      ...state.stickyDriverByProvider,
+                      [instanceKey]: normalizedProvider,
+                    },
                   }
                 : {}),
             };
@@ -4077,6 +4130,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             normalizedPersisted.logicalProjectDraftThreadKeyByLogicalProjectKey,
           stickyModelSelectionByProvider: normalizedPersisted.stickyModelSelectionByProvider ?? {},
           stickyActiveProvider: normalizedPersisted.stickyActiveProvider ?? null,
+          stickyDriverByProvider: normalizedPersisted.stickyDriverByProvider ?? {},
         };
       },
     },

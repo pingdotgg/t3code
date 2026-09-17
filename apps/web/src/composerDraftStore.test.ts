@@ -155,6 +155,7 @@ function resetComposerDraftStore() {
     draftThreadsByThreadKey: {},
     logicalProjectDraftThreadKeyByLogicalProjectKey: {},
     stickyModelSelectionByProvider: {},
+    stickyDriverByProvider: {},
     stickyActiveProvider: null,
   });
 }
@@ -3402,4 +3403,107 @@ describe("composerDraftStore attachment references", () => {
       prompt,
     );
   });
+});
+
+describe("auto-balance sticky identity and routing intent", () => {
+  const instanceId = ProviderInstanceId.make("work");
+  const draftId = DraftId.make("review-routing-draft");
+  beforeEach(resetComposerDraftStore);
+
+  it("does not seed another driver sharing the instance ID and model", () => {
+    const store = useComposerDraftStore.getState();
+    store.setStickyModelSelection({ instanceId, model: "shared-model" }, CLAUDE_AGENT_DRIVER);
+    store.applyStickyState(draftId, [{ instanceId, driver: CODEX_DRIVER }]);
+    expect(store.getComposerDraft(draftId)?.modelSelectionByProvider[instanceId]).toBeUndefined();
+    store.applyStickyState(draftId, [{ instanceId, driver: CLAUDE_AGENT_DRIVER }]);
+    expect(store.getComposerDraft(draftId)?.activeProvider).toBe(instanceId);
+  });
+
+  it("does not carry options across a driver collision, including trait edits", () => {
+    const store = useComposerDraftStore.getState();
+    store.setStickyModelSelection(
+      { instanceId, model: "shared", options: [{ id: "effort", value: "max" }] },
+      CLAUDE_AGENT_DRIVER,
+    );
+    store.setStickyModelSelection({ instanceId, model: "shared" }, CODEX_DRIVER);
+    expect(
+      useComposerDraftStore.getState().stickyModelSelectionByProvider[instanceId]?.options,
+    ).toBeUndefined();
+    store.setProviderModelOptions(draftId, CLAUDE_AGENT_DRIVER, [{ id: "effort", value: "high" }], {
+      instanceId,
+      model: "claude-model",
+      persistSticky: true,
+    });
+    store.applyStickyState(DraftId.make("next-review-draft"), [
+      { instanceId, driver: CODEX_DRIVER },
+    ]);
+    expect(
+      store.getComposerDraft(DraftId.make("next-review-draft"))?.activeProvider ?? null,
+    ).toBeNull();
+    expect(useComposerDraftStore.getState().stickyDriverByProvider?.[instanceId]).toBe(
+      CLAUDE_AGENT_DRIVER,
+    );
+    store.setProviderModelOptions(DraftId.make("blank-options-draft"), CODEX_DRIVER, [], {
+      instanceId,
+      model: "codex-model",
+      persistSticky: true,
+    });
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[instanceId]).toEqual({
+      instanceId,
+      model: "codex-model",
+    });
+  });
+
+  it("restores sticky driver identity after reload", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = useComposerDraftStore.getState();
+      store.setStickyModelSelection({ instanceId, model: "shared-model" }, CLAUDE_AGENT_DRIVER);
+      await vi.advanceTimersByTimeAsync(300);
+      await useComposerDraftStore.persist.rehydrate();
+      expect(useComposerDraftStore.getState().stickyDriverByProvider?.[instanceId]).toBe(
+        CLAUDE_AGENT_DRIVER,
+      );
+      store.applyStickyState(draftId, [{ instanceId, driver: CODEX_DRIVER }]);
+      expect(store.getComposerDraft(draftId)?.activeProvider ?? null).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves legacy default providers but drops unidentified custom sticky providers", () => {
+    const store = useComposerDraftStore.getState();
+    store.setStickyModelSelection({ instanceId, model: "legacy-custom" });
+    store.setStickyModelSelection({ instanceId: CODEX_INSTANCE, model: "legacy-default" });
+    store.applyStickyState(draftId, [
+      { instanceId, driver: CLAUDE_AGENT_DRIVER },
+      { instanceId: CODEX_INSTANCE, driver: CODEX_DRIVER },
+    ]);
+    expect(store.getComposerDraft(draftId)?.modelSelectionByProvider[instanceId]).toBeUndefined();
+    expect(store.getComposerDraft(draftId)?.activeProvider).toBe(CODEX_INSTANCE);
+  });
+
+  it.each([false, true])(
+    "preserves explicit=%s through routing so only seeds accept destination defaults",
+    (explicit) => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(draftId, { instanceId, model: "project-a" }, { explicit });
+      store.setModelSelection(
+        draftId,
+        { instanceId, model: "project-a" },
+        { preserveExplicit: true },
+      );
+      expect(store.getComposerDraft(draftId)?.modelSelectionExplicit ?? false).toBe(explicit);
+      if (!store.getComposerDraft(draftId)?.modelSelectionExplicit) {
+        store.setModelSelection(
+          draftId,
+          { instanceId, model: "project-b" },
+          { replaceOptions: true },
+        );
+      }
+      expect(store.getComposerDraft(draftId)?.modelSelectionByProvider[instanceId]?.model).toBe(
+        explicit ? "project-a" : "project-b",
+      );
+    },
+  );
 });

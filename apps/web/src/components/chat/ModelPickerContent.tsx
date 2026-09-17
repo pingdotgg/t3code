@@ -1,4 +1,8 @@
 import {
+  matchesProviderModelFavorite,
+  toggleProviderModelFavorite,
+} from "../../providerModelFavorites";
+import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
   type ProviderDriverKind,
@@ -280,14 +284,38 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   }, [focusSearchInput]);
 
-  // Create a Set for efficient lookup. Favorites are keyed by
-  // `${instanceId}:${slug}`; the storage schema widened from ProviderDriverKind
-  // to ProviderInstanceId so pre-migration favorites keyed by driver slugs
-  // (e.g. `"codex:gpt-5"`) still resolve — the default instance id equals
-  // the driver slug.
-  const favoritesSet = useMemo(() => {
-    return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
-  }, [favorites]);
+  const favoriteIdentityByInstance = useMemo(
+    () =>
+      new Map(
+        instanceEntries.map((entry) => [
+          entry.instanceId,
+          {
+            instanceId: entry.snapshot.instanceId,
+            driverKind: entry.driverKind,
+            allowLegacy: !instanceEntries.some(
+              (other) =>
+                other.snapshot.instanceId === entry.snapshot.instanceId &&
+                other.driverKind !== entry.driverKind,
+            ),
+          },
+        ]),
+      ),
+    [instanceEntries],
+  );
+  const favoritesSet = useMemo(
+    () =>
+      new Set(
+        instanceEntries.flatMap((entry) => {
+          const identity = favoriteIdentityByInstance.get(entry.instanceId)!;
+          return favorites
+            .filter((favorite) =>
+              matchesProviderModelFavorite(favorite, identity, identity.allowLegacy),
+            )
+            .map((favorite) => providerModelKey(entry.instanceId, favorite.model));
+        }),
+      ),
+    [favorites, instanceEntries, favoriteIdentityByInstance],
+  );
 
   /**
    * Lookup table keyed by `instanceId`. Used for display name + driver
@@ -600,16 +628,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const toggleFavorite = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
-      const newFavorites = [...favorites];
-      const index = newFavorites.findIndex((f) => f.provider === instanceId && f.model === model);
-      if (index >= 0) {
-        newFavorites.splice(index, 1);
-      } else {
-        newFavorites.push({ provider: instanceId, model });
-      }
-      updateSettings({ favorites: newFavorites });
+      const identity = favoriteIdentityByInstance.get(instanceId);
+      if (!identity) return;
+      updateSettings({
+        favorites: toggleProviderModelFavorite(favorites, identity, model, identity.allowLegacy),
+      });
     },
-    [favorites, updateSettings],
+    [favorites, updateSettings, favoriteIdentityByInstance],
   );
 
   const modelJumpCommandByKey = useMemo(() => {
