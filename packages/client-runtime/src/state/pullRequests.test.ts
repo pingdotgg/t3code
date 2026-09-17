@@ -236,6 +236,84 @@ for (const scenario of [
   );
 }
 
+for (const provider of ["github", "gitlab", "bitbucket", "azure-devops"] as const) {
+  it.effect(`routes ${provider} viewed marks to their storage environment`, () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reference = {
+          projectId: ProjectId.make("project-1"),
+          host: "github.com",
+          repository: "acme/web",
+          number: 7,
+        };
+        const calls: { environment: string; operation: string; input: unknown }[] = [];
+        const clientFor = (environment: string) =>
+          ({
+            [WS_METHODS.pullRequestsRouting]: () =>
+              Effect.succeed({
+                host: reference.host,
+                provider,
+                accountId: "123",
+                viewer: "maria-rcks",
+              }),
+            [WS_METHODS.pullRequestsRoutingIdentity]: () =>
+              Effect.succeed({
+                host: reference.host,
+                provider,
+                accountId: "123",
+                viewer: "maria-rcks",
+              }),
+            [WS_METHODS.pullRequestsFilesViewed]: (input: unknown) =>
+              Effect.sync(() => {
+                calls.push({ environment, operation: "read", input });
+                return { files: [{ path: "a.ts", state: "viewed" }], truncated: false };
+              }),
+            [WS_METHODS.pullRequestsSetFilesViewed]: (input: unknown) =>
+              Effect.sync(() => {
+                calls.push({ environment, operation: "write", input });
+              }),
+            [WS_METHODS.pullRequestsInvalidate]: (input: unknown) =>
+              Effect.sync(() => {
+                calls.push({ environment, operation: "invalidate", input });
+              }),
+          }) as unknown as WsRpcProtocolClient;
+        const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+          clientFor("origin"),
+          clientFor("local"),
+        );
+        const files = [{ path: "a.ts", viewed: false }];
+        const route = createPullRequestRouter();
+        yield* Effect.gen(function* () {
+          expect(yield* route(WS_METHODS.pullRequestsFilesViewed, reference)).toEqual({
+            files: [{ path: "a.ts", state: "viewed" }],
+            truncated: false,
+          });
+          yield* route(WS_METHODS.pullRequestsSetFilesViewed, { ...reference, files });
+        }).pipe(
+          Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+          Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        );
+        const environment = provider === "github" ? "local" : "origin";
+        const guard = provider === "github" ? { expectedAccountId: "123" } : {};
+        expect(calls.filter((call) => call.operation !== "invalidate")).toEqual([
+          { environment, operation: "read", input: { ...reference, allowStale: false, ...guard } },
+          { environment, operation: "write", input: { ...reference, files, ...guard } },
+        ]);
+        const invalidations = calls.filter((call) => call.operation === "invalidate");
+        if (provider === "github") expect(invalidations.length).toBeGreaterThan(0);
+        else expect(invalidations).toEqual([]);
+        for (const call of invalidations) {
+          expect(call.input).toEqual({
+            reference: expect.objectContaining(reference),
+            filesViewedOnly: true,
+          });
+        }
+      }),
+    ),
+  );
+}
+
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
   label: "Test environment",

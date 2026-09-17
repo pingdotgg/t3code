@@ -1,5 +1,8 @@
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -19,6 +22,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as BitbucketApi from "../sourceControl/BitbucketApi.ts";
+import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";
 import {
   buildReviewThreads,
   decodeCommentsJson,
@@ -135,7 +139,13 @@ const CONVERSATION_PAGE_SIZE = 50;
 const CONVERSATION_PAGES = 10;
 /** The same ceiling the gh and glab diff reads use. */
 const DIFF_MAX_BYTES = 8 * 1024 * 1024;
-
+/**
+ * Deliberately far shorter than the window the caller holds versions for: a refresh drops what the
+ * caller holds precisely so the next read reaches Bitbucket, and this must not be what answers it
+ * instead.
+ */
+const REVISION_PATCH_TTL = Duration.seconds(5);
+const REVISION_PATCH_CAPACITY = 16;
 export interface BitbucketPullRequestBatch {
   readonly items: ReadonlyArray<BitbucketPullRequest>;
   readonly truncated: boolean;
@@ -181,6 +191,25 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<BitbucketDiffStat, BitbucketPullRequestApiError>;
+
+    /**
+     * What the pull request's head has of each of these paths, as opaque ids, read off the pull
+     * request's own patch, the only place Bitbucket states a file's version. A path the patch does
+     * not carry is answered as the empty revision, and left out altogether when the patch was cut
+     * short at the byte ceiling and so cannot be spoken for.
+     *
+     * Answers with every file the patch carries rather than only the paths asked about, since
+     * reading one file's version here means parsing all of them. `complete` is false for a patch
+     * cut short, which cannot speak for what came after the cut.
+     */
+    readonly getFileRevisions: (input: {
+      readonly repository: string;
+      readonly number: number;
+      readonly paths: ReadonlyArray<string>;
+    }) => Effect.Effect<
+      { readonly revisions: ReadonlyMap<string, string>; readonly complete: boolean },
+      BitbucketPullRequestApiError
+    >;
 
     readonly getMergeability: (input: {
       readonly repository: string;
@@ -525,6 +554,58 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const pullRequestDiff = (input: {
+    readonly repository: string;
+    readonly number: number;
+    readonly commit?: string | undefined;
+  }): Effect.Effect<
+    { readonly patch: string; readonly truncated: boolean },
+    BitbucketPullRequestApiError
+  > =>
+    input.commit !== undefined && !isCommitSha(input.commit)
+      ? Effect.fail(new BitbucketDiffCommitError())
+      : withRepository(input.repository, (path) =>
+          // Already a unified patch, so it needs no decoding at all, only a bound, which a
+          // diff of any size would otherwise ignore. A commit's own patch sits beside the pull
+          // request's at `/diff/{sha}` and reads the same way.
+          bitbucket
+            .request({
+              method: "GET",
+              url:
+                input.commit === undefined
+                  ? `${path}/pullrequests/${input.number}/diff`
+                  : `${path}/diff/${input.commit}`,
+              maxBytes: DIFF_MAX_BYTES,
+            })
+            .pipe(
+              Effect.map((response) => ({ patch: response.body, truncated: response.truncated })),
+            ),
+        );
+
+  /**
+   * What the version reads that come one tick at a time want out of the pull request's whole
+   * patch, shared between them. The parsed answer rather than the patch, which at this capacity
+   * would hold sixteen bodies of up to the byte ceiling each resident, and saves walking a patch
+   * of a hundred thousand lines again on every tick.
+   */
+  const revisionPatches = yield* Cache.makeWith(
+    (key: string) => {
+      const [repository, number] = JSON.parse(key) as [string, number];
+      return pullRequestDiff({ repository, number }).pipe(
+        Effect.map((diff) => ({
+          revisions: parseDiffFileRevisions(diff.patch),
+          truncated: diff.truncated,
+        })),
+      );
+    },
+    {
+      capacity: REVISION_PATCH_CAPACITY,
+      // A failure is not held: the tick after it should reach Bitbucket rather than be handed the
+      // same error for as long as a good patch would have lasted.
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? REVISION_PATCH_TTL : Duration.zero),
+    },
+  );
+
   return BitbucketPullRequestApi.of({
     getViewer: () =>
       bitbucket.request({ method: "GET", url: "/user" }).pipe(
@@ -596,25 +677,23 @@ export const make = Effect.gen(function* () {
         }),
       ).pipe(Effect.catchIf(isRepositoryPermissionRemovedError, () => Effect.succeed(true))),
 
-    getPullRequestDiff: (input) =>
-      input.commit !== undefined && !isCommitSha(input.commit)
-        ? Effect.fail(new BitbucketDiffCommitError())
-        : withRepository(input.repository, (path) =>
-            // Already a unified patch, so it needs no decoding at all — only a bound, which a
-            // diff of any size would otherwise ignore. A commit's own patch sits beside the pull
-            // request's at `/diff/{sha}` and reads the same way.
-            bitbucket
-              .request({
-                method: "GET",
-                url:
-                  input.commit === undefined
-                    ? `${path}/pullrequests/${input.number}/diff`
-                    : `${path}/diff/${input.commit}`,
-                maxBytes: DIFF_MAX_BYTES,
-              })
-              .pipe(
-                Effect.map((response) => ({ patch: response.body, truncated: response.truncated })),
-              ),
+    getPullRequestDiff: pullRequestDiff,
+
+    getFileRevisions: (input) =>
+      input.paths.length === 0
+        ? Effect.succeed({ revisions: new Map(), complete: false })
+        : Cache.get(revisionPatches, JSON.stringify([input.repository, input.number])).pipe(
+            Effect.map((diff) => {
+              const revisions = new Map(diff.revisions);
+              // A patch cut short at the byte ceiling says nothing about the files past the cut,
+              // so those paths are left out rather than reported as removed.
+              if (!diff.truncated) {
+                for (const path of input.paths) {
+                  if (!revisions.has(path)) revisions.set(path, "");
+                }
+              }
+              return { revisions, complete: !diff.truncated };
+            }),
           ),
 
     getDiffStat: (input) =>

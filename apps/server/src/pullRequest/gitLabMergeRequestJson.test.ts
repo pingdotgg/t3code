@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   decodeAwardEmojiJson,
+  decodeRepositoryBlobsJson,
   decodeCommitsJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
@@ -381,6 +382,57 @@ describe("decodeCommitsJson", () => {
 });
 
 describe("decodeMergeRequestDiffsJson", () => {
+  it("quotes literal backslashes without interpreting them as escapes", () => {
+    const result = expectSuccess(
+      decodeMergeRequestDiffsJson(
+        JSON.stringify([
+          {
+            old_path: String.raw`src\notes.ts`,
+            new_path: String.raw`src\notes.ts`,
+            diff: "@@ -1 +1 @@\n-old\n+new",
+          },
+        ]),
+      ),
+    );
+
+    expect(result.patch).toBe(
+      [
+        String.raw`diff --git "a/src\\notes.ts" "b/src\\notes.ts"`,
+        String.raw`--- "a/src\\notes.ts"`,
+        String.raw`+++ "b/src\\notes.ts"`,
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("preserves spaces and literal backslashes in both rename paths", () => {
+    const result = expectSuccess(
+      decodeMergeRequestDiffsJson(
+        JSON.stringify([
+          {
+            old_path: String.raw` old\name.ts `,
+            new_path: String.raw` new\name.ts `,
+            renamed_file: true,
+            diff: "",
+          },
+        ]),
+      ),
+    );
+
+    expect(result.patch).toBe(
+      [
+        String.raw`diff --git "a/ old\\name.ts " "b/ new\\name.ts "`,
+        String.raw`rename from " old\\name.ts "`,
+        String.raw`rename to " new\\name.ts "`,
+        String.raw`--- "a/ old\\name.ts "`,
+        String.raw`+++ "b/ new\\name.ts "`,
+      ].join("\n"),
+    );
+  });
+
   it("assembles a unified patch GitLab does not return", () => {
     const result = expectSuccess(
       decodeMergeRequestDiffsJson(
@@ -628,5 +680,124 @@ describe("gitLabAwardName", () => {
     expect(gitLabAwardName("thumbs-up")).toBe("thumbsup");
     expect(gitLabAwardName("laugh")).toBe("laughing");
     expect(gitLabAwardName("hooray")).toBe("tada");
+  });
+});
+
+describe("decodeRepositoryBlobsJson", () => {
+  /** Null is the query going unanswered, which these cases are not about. */
+  function expectBlobs(result: Result.Result<ReadonlyMap<string, string> | null, unknown>) {
+    const blobs = expectSuccess(result);
+    expect(blobs).not.toBe(null);
+    if (blobs === null) throw new Error("expected an answered blobs query");
+    return blobs;
+  }
+
+  it("reads a blob id per path", () => {
+    const blobs = expectBlobs(
+      decodeRepositoryBlobsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              repository: {
+                blobs: {
+                  nodes: [
+                    { path: "src/a.ts", oid: "aaa111" },
+                    { path: "src/b.ts", oid: "bbb222" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...blobs]).toEqual([
+      ["src/a.ts", "aaa111"],
+      ["src/b.ts", "bbb222"],
+    ]);
+  });
+
+  it("leaves out a node missing either half, which names no version", () => {
+    const blobs = expectBlobs(
+      decodeRepositoryBlobsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              repository: {
+                blobs: {
+                  nodes: [
+                    { path: "src/a.ts", oid: null },
+                    { path: null, oid: "bbb222" },
+                    null,
+                    { path: "src/c.ts", oid: "ccc333" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...blobs]).toEqual([["src/c.ts", "ccc333"]]);
+  });
+
+  it("keys a blob by the path the host spelled, spaces and all", () => {
+    // A leading or trailing space is a legal part of a file's name. Trimmed here, the id lands
+    // under a key the asked-for path is not spelled with, and the caller fills that path in as
+    // the empty revision: a mark on the file then never compares against the real head blob.
+    const blobs = expectBlobs(
+      decodeRepositoryBlobsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              repository: {
+                blobs: {
+                  nodes: [
+                    { path: " leading.ts", oid: "aaa111" },
+                    { path: "trailing.ts ", oid: "bbb222" },
+                    { path: "   ", oid: "ccc333" },
+                    { path: "", oid: "ddd444" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...blobs]).toEqual([
+      [" leading.ts", "aaa111"],
+      ["trailing.ts ", "bbb222"],
+      // A name that is only spaces is one Git carries too, so it is a path like any other.
+      ["   ", "ccc333"],
+    ]);
+  });
+
+  it("tells a project the reader cannot see from a revision with none of the files", () => {
+    // Null is the query going unanswered. Read as an empty answer it would say the head has none
+    // of the asked-for files, which reports every file a reader has cleared as changed.
+    expect(
+      expectSuccess(decodeRepositoryBlobsJson(JSON.stringify({ data: { project: null } }))),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodeRepositoryBlobsJson(JSON.stringify({ data: { project: { repository: null } } })),
+      ),
+    ).toBe(null);
+    expect(
+      expectSuccess(
+        decodeRepositoryBlobsJson(
+          JSON.stringify({ data: { project: { repository: { blobs: { nodes: [] } } } } }),
+        ),
+      ),
+    ).toEqual(new Map());
+  });
+
+  it("fails on output that is not the query's shape", () => {
+    expect(Result.isSuccess(decodeRepositoryBlobsJson("not json"))).toBe(false);
+    expect(Result.isSuccess(decodeRepositoryBlobsJson(JSON.stringify({ errors: [] })))).toBe(false);
   });
 });
