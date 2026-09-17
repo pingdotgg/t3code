@@ -379,6 +379,8 @@ export class GitVcsDriver extends Context.Service<
 >()("t3/vcs/GitVcsDriver") {}
 
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
+const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
@@ -944,9 +946,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
               });
               if (untracked.stdoutTruncated) return yield* error;
+              const candidates = splitNullSeparatedGitStdoutPaths(untracked).filter((entry) =>
+                entry.endsWith("/"),
+              );
+              // Refuse excessive recovery work before probing any nested repositories.
+              if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
               const exclusions: Array<string> = [];
-              for (const entry of splitNullSeparatedGitStdoutPaths(untracked)) {
-                if (!entry.endsWith("/")) continue;
+              for (const entry of candidates) {
                 const nestedCwd = path.join(input.cwd, entry);
                 if (
                   (yield* fileSystem
@@ -959,7 +965,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               }
               if (exclusions.length === 0) return yield* error;
               return yield* stageFiles(exclusions);
-            }),
+            }).pipe(
+              // One budget covers discovery, queued Git admission, probes, and the staging retry.
+              Effect.timeoutOrElse({
+                duration: CHECKPOINT_RECOVERY_TIMEOUT,
+                orElse: () => Effect.fail(error),
+              }),
+            ),
           ),
         );
 

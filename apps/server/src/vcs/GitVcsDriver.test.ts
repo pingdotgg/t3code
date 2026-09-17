@@ -1,5 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -7,7 +10,7 @@ import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 
-import { CheckpointRef, GitCommandError } from "@t3tools/contracts";
+import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -182,6 +185,144 @@ it.effect("checkpoint capture refuses a truncated nested repository listing", ()
     );
 
     assert.strictEqual(result._tag, "Failure");
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("checkpoint recovery refuses excessive candidates before probing", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-recovery-cap-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["init", "empty"]);
+    const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
+    let stageError: VcsProcessExitError | undefined;
+    let nestedProbes = 0;
+    let stageAttempts = 0;
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.cwd !== cwd && input.args.includes("rev-parse")) nestedProbes++;
+          if (input.args.includes("add") && input.args.includes("-A")) stageAttempts++;
+          return liveProcess.run(input).pipe(
+            Effect.tapError((error) => {
+              if (error._tag === "VcsProcessExitError") stageError = error;
+              return Effect.void;
+            }),
+            Effect.map((result) =>
+              input.args.includes("--others")
+                ? {
+                    ...result,
+                    stdout: Array.from({ length: 65 }, (_, i) => `empty${i}/`).join("\0") + "\0",
+                  }
+                : result,
+            ),
+          );
+        },
+      }),
+    );
+    const error = yield* captureDriver.checkpoints
+      .captureCheckpoint({ cwd, checkpointRef })
+      .pipe(Effect.flip);
+    assert.strictEqual(error, stageError);
+    assert.strictEqual(stageAttempts, 1);
+    assert.strictEqual(nestedProbes, 0);
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+    assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git", "index")), originalIndex);
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+for (const blockedPhase of ["discovery", "probe", "retry"] as const) {
+  it.effect(`checkpoint recovery has one deadline including ${blockedPhase}`, () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-recovery-timeout-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* git(["init", "empty"]);
+      const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
+      const entered = yield* Deferred.make<void>();
+      let stageError: VcsProcessExitError | undefined;
+      let privateIndex: string | undefined;
+      let interrupted = false;
+      const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) => {
+            const staging = input.args.includes("add") && input.args.includes("-A");
+            if (staging) privateIndex = input.env?.GIT_INDEX_FILE;
+            const block =
+              (blockedPhase === "discovery" && input.args.includes("--others")) ||
+              (blockedPhase === "probe" && input.cwd !== cwd && input.args.includes("rev-parse")) ||
+              (blockedPhase === "retry" &&
+                staging &&
+                input.args.some((arg) => arg.startsWith(":(exclude,literal)")));
+            if (block)
+              return Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() =>
+                  Effect.sync(() => {
+                    interrupted = true;
+                  }),
+                ),
+              );
+            return liveProcess.run(input).pipe(
+              Effect.tapError((error) => {
+                if (staging && error._tag === "VcsProcessExitError") stageError = error;
+                return Effect.void;
+              }),
+            );
+          },
+        }),
+      );
+      const fiber = yield* captureDriver.checkpoints
+        .captureCheckpoint({ cwd, checkpointRef })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("5 seconds");
+      const error = yield* Fiber.join(fiber);
+      assert.strictEqual(error, stageError);
+      assert.isTrue(interrupted);
+      assert.isDefined(privateIndex);
+      assert.isFalse(yield* fs.exists(privateIndex!));
+      assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+      assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git", "index")), originalIndex);
+    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+  );
+}
+
+it.effect("checkpoint recovery preserves interruption and removes the private index", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-recovery-interrupt-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["init", "empty"]);
+    const entered = yield* Deferred.make<void>();
+    let privateIndex: string | undefined;
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.args.includes("add") && input.args.includes("-A"))
+            privateIndex = input.env?.GIT_INDEX_FILE;
+          return input.args.includes("--others")
+            ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+            : liveProcess.run(input);
+        },
+      }),
+    );
+    const fiber = yield* captureDriver.checkpoints
+      .captureCheckpoint({ cwd, checkpointRef })
+      .pipe(Effect.forkScoped);
+    yield* Deferred.await(entered);
+    yield* Fiber.interrupt(fiber);
+    assert.isDefined(privateIndex);
+    assert.isFalse(yield* fs.exists(privateIndex!));
     assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
