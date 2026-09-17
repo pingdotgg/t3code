@@ -1,4 +1,4 @@
-import { SidebarSubagents } from "./SidebarSubagents";
+import { useSidebarSubagents } from "./SidebarSubagents";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -357,6 +357,7 @@ interface SidebarThreadRowProps {
 }
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+  const subagents = useSidebarSubagents(props.thread, true);
   const {
     orderedProjectThreadKeys,
     isActive,
@@ -764,6 +765,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <PullRequestGlyph.pullRequest className="size-3" />
             </a>
           ) : null}
+          {subagents.toggle}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
           {renamingThreadKey === threadKey ? (
             <input
@@ -938,7 +940,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </div>
         </div>
       </SidebarMenuSubButton>
-      <SidebarSubagents thread={thread} />
+      {subagents.tree}
     </SidebarMenuSubItem>
   );
 });
