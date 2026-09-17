@@ -33,6 +33,7 @@ export function observeTimelineRun(
   }
   return { observation, anchorMessageId: input.messageId };
 }
+import type { RunAttemptId } from "@t3tools/contracts";
 
 // Match the titlebar fade inset so draft promotion preserves the first row's position.
 export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
@@ -147,10 +148,9 @@ export interface RememberedTimelinePosition {
   readonly scrollOffset: number;
   readonly atEnd: boolean;
   readonly disclosures?: {
-    readonly turns: ReadonlySet<TurnId>;
+    readonly runs: ReadonlySet<RunId>;
     readonly workGroups: ReadonlySet<string>;
-    readonly spawnEntries: ReadonlySet<string>;
-    readonly reasoningMessages: ReadonlySet<string>;
+    readonly attempts: ReadonlySet<RunAttemptId>;
     readonly workGroupState: {
       scrollPositions: Map<string, { readonly entryId: string; readonly offset: number }>;
       expandedEntries: Set<string>;
