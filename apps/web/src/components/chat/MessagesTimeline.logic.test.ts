@@ -89,7 +89,7 @@ describe("work entry labels", () => {
     tone: "tool" as const,
   };
 
-  it("keeps a stable live reasoning label and exposes the trace in grouped rows", () => {
+  it("previews reasoning in the live row and falls back to a short label while empty", () => {
     const thought = {
       ...entry,
       itemType: "reasoning" as const,
@@ -97,10 +97,25 @@ describe("work entry labels", () => {
       detail: "Check **ordering** first.",
       toolLifecycleStatus: "inProgress" as const,
     };
-    expect(liveWorkEntryLabel(thought, undefined, true)).toBe("Thinking");
+    expect(liveWorkEntryLabel(thought, undefined, true)).toBe(thought.detail);
+    expect(
+      liveWorkEntryLabel(
+        { ...thought, detail: "First paragraph.\n\nSecond paragraph." },
+        undefined,
+        true,
+      ),
+    ).toBe("First paragraph. Second paragraph.");
+    expect(liveWorkEntryLabel({ ...thought, detail: "  " }, undefined, true)).toBe("Thinking");
+    expect(
+      liveWorkEntryLabel(
+        { ...thought, detail: "", toolLifecycleStatus: "completed" },
+        undefined,
+        false,
+      ),
+    ).toBe("Thought");
     expect(
       liveWorkEntryLabel({ ...thought, toolLifecycleStatus: "completed" }, undefined, false),
-    ).toBe("Thought");
+    ).toBe(thought.detail);
     expect(workEntryDisplayLabel(thought, undefined)).toBe(thought.detail);
     expect(workEntryIsVisibleInGroup(thought)).toBe(true);
     expect(workEntryIsVisibleInGroup({ ...thought, toolLifecycleStatus: "completed" })).toBe(true);
