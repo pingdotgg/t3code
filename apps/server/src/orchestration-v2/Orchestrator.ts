@@ -881,6 +881,107 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
+  const failQueuedRunStart = (threadId: ThreadId, cause: unknown) =>
+    Effect.gen(function* () {
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      const queuedRun = nextQueuedRun(projection);
+      if (queuedRun === undefined) return;
+      const now = yield* DateTime.now;
+      const rootNode = projection.nodes.find((node) => node.id === queuedRun.rootNodeId);
+      const attempt = projection.attempts.find((entry) => entry.id === queuedRun.activeAttemptId);
+      const providerThread = projection.providerThreads.find(
+        (entry) => entry.id === queuedRun.providerThreadId,
+      );
+      const handoffUnsupported =
+        typeof cause === "object" &&
+        cause !== null &&
+        "_tag" in cause &&
+        cause._tag === "CommandPolicyCapabilityUnsupportedError";
+      const failureCause =
+        typeof cause === "object" &&
+        cause !== null &&
+        "_tag" in cause &&
+        cause._tag === "OrchestratorDispatchError" &&
+        "cause" in cause
+          ? cause.cause
+          : cause;
+      const failure = makeProviderFailure({
+        cause: failureCause,
+        code: handoffUnsupported ? "context_handoff_unsupported" : "queued_start_failed",
+        class: handoffUnsupported ? "validation_error" : "unknown",
+      });
+      yield* writeSystemEvents([
+        ...(attempt !== undefined && rootNode !== undefined
+          ? [
+              {
+                type: "run-attempt.updated" as const,
+                threadId,
+                runId: queuedRun.id,
+                nodeId: rootNode.id,
+                providerInstanceId: queuedRun.providerInstanceId,
+                occurredAt: now,
+                payload: { ...attempt, status: "failed" as const, completedAt: now },
+              },
+            ]
+          : []),
+        ...(rootNode === undefined
+          ? []
+          : [
+              {
+                type: "node.updated" as const,
+                threadId,
+                runId: queuedRun.id,
+                nodeId: rootNode.id,
+                providerInstanceId: queuedRun.providerInstanceId,
+                occurredAt: now,
+                payload: { ...rootNode, status: "failed" as const, completedAt: now },
+              },
+            ]),
+        ...(rootNode === undefined || providerThread === undefined
+          ? []
+          : [
+              {
+                type: "turn-item.updated" as const,
+                threadId,
+                runId: queuedRun.id,
+                nodeId: rootNode.id,
+                providerInstanceId: queuedRun.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: providerThread.driver,
+                    nativeItemId: `queued-start-failure:${queuedRun.id}`,
+                  }),
+                  threadId,
+                  runId: queuedRun.id,
+                  nodeId: rootNode.id,
+                  providerThreadId: providerThread.id,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: nextTurnItemOrdinal(projection),
+                  status: "failed" as const,
+                  title: "Queued provider could not start",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  type: "error" as const,
+                  failure,
+                },
+              },
+            ]),
+        {
+          type: "run.updated",
+          threadId,
+          runId: queuedRun.id,
+          ...(rootNode === undefined ? {} : { nodeId: rootNode.id }),
+          providerInstanceId: queuedRun.providerInstanceId,
+          occurredAt: now,
+          payload: { ...queuedRun, status: "failed", queuePosition: null, completedAt: now },
+        },
+      ]);
+    });
+
   const startNextQueuedRun = (threadId: ThreadId) =>
     Effect.gen(function* () {
       const projection = yield* projectionStore.getThreadProjection(threadId);
@@ -1041,86 +1142,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ),
               );
       if (transferId !== null) {
-        const handoffRejection = yield* commandPolicy
-          .ensureContextHandoff({
-            commandId,
-            threadId,
-            providerInstanceId: queuedRun.providerInstanceId,
-            capabilities: targetCapabilities,
-            strategy: needsFullContext ? "full_thread_summary" : "delta_context",
-          })
-          .pipe(
-            Effect.match({
-              onFailure: (cause) => cause,
-              onSuccess: () => null,
-            }),
-          );
-        if (handoffRejection !== null) {
-          const failure = makeProviderFailure({
-            message: handoffRejection.message,
-            code: "context_handoff_unsupported",
-            class: "validation_error",
-          });
-          yield* writeSystemEvents([
-            {
-              type: "run-attempt.updated",
-              threadId,
-              runId: queuedRun.id,
-              nodeId: rootNodeId,
-              providerInstanceId: queuedRun.providerInstanceId,
-              occurredAt: now,
-              payload: { ...attempt, status: "failed", completedAt: now },
-            },
-            {
-              type: "node.updated",
-              threadId,
-              runId: queuedRun.id,
-              nodeId: rootNodeId,
-              providerInstanceId: queuedRun.providerInstanceId,
-              occurredAt: now,
-              payload: { ...rootNode, status: "failed", completedAt: now },
-            },
-            {
-              type: "turn-item.updated",
-              threadId,
-              runId: queuedRun.id,
-              nodeId: rootNodeId,
-              providerInstanceId: queuedRun.providerInstanceId,
-              occurredAt: now,
-              payload: {
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: queuedProviderThread.driver,
-                  nativeItemId: `queued-handoff-failure:${queuedRun.id}`,
-                }),
-                threadId,
-                runId: queuedRun.id,
-                nodeId: rootNodeId,
-                providerThreadId: queuedProviderThread.id,
-                providerTurnId: null,
-                nativeItemRef: null,
-                parentItemId: null,
-                ordinal: nextTurnItemOrdinal(projection),
-                status: "failed",
-                title: "Queued provider handoff failed",
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-                type: "error",
-                failure,
-              },
-            },
-            {
-              type: "run.updated",
-              threadId,
-              runId: queuedRun.id,
-              nodeId: rootNodeId,
-              providerInstanceId: queuedRun.providerInstanceId,
-              occurredAt: now,
-              payload: { ...queuedRun, status: "failed", queuePosition: null, completedAt: now },
-            },
-          ]);
-          return;
-        }
+        yield* commandPolicy.ensureContextHandoff({
+          commandId,
+          threadId,
+          providerInstanceId: queuedRun.providerInstanceId,
+          capabilities: targetCapabilities,
+          strategy: needsFullContext ? "full_thread_summary" : "delta_context",
+        });
       }
       const handoff =
         transferId === null || latestCompletedRun === undefined
@@ -1447,7 +1475,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         ],
       );
-    });
+    }).pipe(Effect.catch((cause) => failQueuedRunStart(threadId, cause)));
 
   const resumeQueuedRuns = Effect.gen(function* () {
     const threadIds = yield* projectionStore.getRecoveryThreadIds("queued-runs");
