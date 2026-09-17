@@ -16,6 +16,7 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "pause"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -32,6 +33,8 @@ export interface ThreadActionMenuState {
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
+  readonly isPaused: boolean;
+  readonly canPauseNow: boolean;
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an active turn, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
@@ -97,6 +100,13 @@ export function buildThreadActionMenuItems(
                 ],
               },
         ]
+      : []),
+    // Manual pause parks the provider session (frees its process/RAM) while
+    // the thread stays active. Resume is sending the next message — the
+    // server recreates a stopped session on turn start — so a paused thread
+    // shows no pause item.
+    ...(!state.isPaused && state.canPauseNow
+      ? [{ id: "pause" as const, label: "Pause session", icon: "pause" }]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration
