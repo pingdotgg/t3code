@@ -17,7 +17,10 @@ import { expect, it } from "vite-plus/test";
 import { ProviderAdapterRegistryV2 } from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
-import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
+import {
+  ThreadManagementService,
+  ThreadManagementThreadNotFoundError,
+} from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import {
   layer as orchestratorMcpServiceLayer,
@@ -314,5 +317,139 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     expect(result.status).toBe("running");
     expect(result.taskId).toBe(taskId);
     expect(result.childThreadId).toBe(childThreadId);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("readThread reaches a thread the user attached as context, but not one an agent attached", async () => {
+  const foreignProjectId = ProjectId.make("project-mcp-orchestrator-foreign");
+  const foreignThreadId = ThreadId.make("thread-mcp-orchestrator-foreign");
+  const agentOnlyThreadId = ThreadId.make("thread-mcp-orchestrator-agent-only");
+  const threadRecord = (threadId: ThreadId) => ({
+    version: 1,
+    kind: "thread",
+    contextId: `thread_${threadId}`,
+    label: "Attached",
+    environmentId,
+    threadId,
+    title: "Attached",
+  });
+  const message = (input: { createdBy: "user" | "agent"; threadId: ThreadId }) => ({
+    id: `message-${input.threadId}`,
+    threadId: parentThreadId,
+    runId: null,
+    nodeId: null,
+    role: "user",
+    text: `[Attached](t3-context://v1/thread/thread_${input.threadId})`,
+    context: { version: 1, records: [threadRecord(input.threadId)] },
+    attachments: [],
+    streaming: false,
+    createdBy: input.createdBy,
+    creationSource: input.createdBy === "user" ? "user" : "mcp",
+    createdAt: now,
+    updatedAt: now,
+  });
+  const parentProjection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [],
+    visibleTurnItems: [],
+    runtimeRequests: [],
+    messages: [
+      message({ createdBy: "user", threadId: foreignThreadId }),
+      message({ createdBy: "agent", threadId: agentOnlyThreadId }),
+    ],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const foreignProjection = (threadId: ThreadId) =>
+    ({
+      thread: {
+        ...baseThread({
+          threadId,
+          title: "Foreign",
+          instanceId: parentInstanceId,
+          model: "gpt-5.4",
+        }),
+        projectId: foreignProjectId,
+      },
+      runs: [],
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "inherited",
+          sourceThreadId: threadId,
+          sourceItemId: "item-1",
+          item: {
+            id: "item-1",
+            type: "assistant_message",
+            messageId: "assistant-1",
+            status: "completed",
+            title: null,
+            text: "Foreign thread said hello",
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      ],
+      runtimeRequests: [],
+      messages: [],
+      contextTransfers: [],
+      subagents: [],
+      updatedAt: now,
+    }) as unknown as OrchestrationV2ThreadProjection;
+
+  const layer = orchestratorMcpServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService)({
+          getThreadProjection: (threadId) => {
+            if (threadId === parentThreadId) return Effect.succeed(parentProjection);
+            if (threadId === foreignThreadId || threadId === agentOnlyThreadId) {
+              return Effect.succeed(foreignProjection(threadId));
+            }
+            return Effect.die(`unexpected thread ${threadId}`);
+          },
+          getProjectThread: (input) =>
+            Effect.fail(
+              new ThreadManagementThreadNotFoundError({
+                projectId: input.projectId,
+                threadId: input.threadId,
+              }),
+            ),
+        } satisfies Partial<ThreadManagementService["Service"]>),
+        Layer.mock(ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry["Service"]>),
+        Layer.mock(ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService;
+    const attached = yield* service.readThread(makeScope(), { threadId: foreignThreadId });
+    expect(attached.thread.threadId).toBe(foreignThreadId);
+    expect(attached.items.map((item) => item.text)).toEqual(["Foreign thread said hello"]);
+
+    const denied = yield* service
+      .readThread(makeScope(), { threadId: agentOnlyThreadId })
+      .pipe(Effect.flip);
+    expect(denied.code).toBe("thread_not_found");
+
+    const write = yield* service
+      .sendToThread(makeScope(), { threadId: foreignThreadId, message: "hi" })
+      .pipe(Effect.flip);
+    expect(write.code).toBe("thread_not_found");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
