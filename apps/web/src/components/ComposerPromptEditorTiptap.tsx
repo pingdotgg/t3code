@@ -646,6 +646,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
+  const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   const [isEmpty, setIsEmpty] = useState(value.length === 0);
@@ -1014,9 +1015,15 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   // Controlled value/cursor from the store (history recall, chip insertion…).
   useLayoutEffect(() => {
     if (!editor) return;
+    const initialSelection = !hasAppliedControlledSelectionRef.current;
+    hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampCollapsedComposerCursor(value, cursor);
     const previousSnapshot = snapshotRef.current;
-    if (previousSnapshot.value === value && previousSnapshot.cursor === normalizedCursor) {
+    if (
+      !initialSelection &&
+      previousSnapshot.value === value &&
+      previousSnapshot.cursor === normalizedCursor
+    ) {
       return;
     }
     const normalizedExpandedCursor = expandCollapsedComposerCursor(value, normalizedCursor);
@@ -1033,7 +1040,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     setIsEmpty(value.length === 0);
     const rootElement = editor.view.dom;
     const isFocused = Boolean(rootElement && document.activeElement === rootElement);
-    if (previousSnapshot.value === value && !isFocused) return;
+    if (!initialSelection && previousSnapshot.value === value && !isFocused) return;
 
     isApplyingControlledUpdateRef.current = true;
     const pendingCitation =
