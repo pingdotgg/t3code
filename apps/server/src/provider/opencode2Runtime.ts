@@ -8,7 +8,6 @@ import * as P from "effect/Predicate";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as NodeURL from "node:url";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Model, OpenCode, Permission } from "@opencode/client/effect";
 import { Service as OpenCodeLocalService } from "@opencode/client/effect/service";
 import type { OpenCodeClient } from "@opencode/client/effect";
@@ -362,11 +361,9 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
   return OpenCode2Runtime.of({ connect, loadInventory });
 });
 
-export const OpenCode2RuntimeLive = Layer.effect(OpenCode2Runtime, makeOpenCode2Runtime).pipe(
-  // `HttpClient` (API calls) and `FileSystem` (local service registration file)
-  // both come from the Node platform layer.
-  Layer.provide(NodeServices.layer),
-);
+// Requires `HttpClient` (API calls) and `FileSystem` (local service
+// registration file); the platform layer is composed in `server.ts`.
+export const OpenCode2RuntimeLive = Layer.effect(OpenCode2Runtime, makeOpenCode2Runtime);
 
 export type { OpenCodeClient };
 

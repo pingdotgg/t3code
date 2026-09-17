@@ -2903,10 +2903,16 @@ export function makeOpenCode2Adapter(
               "OpenCode 2 session interrupt did not complete within 10 seconds.",
             ),
           ),
+          // The marker only suppresses completion while the interrupt is in
+          // flight; a failed interrupt must not strand a turn that later ends.
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (context.cancellationTurnId === targetTurnId) {
+                context.cancellationTurnId = undefined;
+              }
+            }),
+          ),
         );
-      if (context.cancellationTurnId === targetTurnId) {
-        context.cancellationTurnId = undefined;
-      }
       // The `session.execution.interrupted` event usually drives the abort;
       // emit locally too so a stream outage cannot strand a running turn.
       if (targetTurnId) {
