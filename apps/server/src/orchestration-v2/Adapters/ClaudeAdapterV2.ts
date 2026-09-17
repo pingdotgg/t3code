@@ -2405,6 +2405,23 @@ function rememberPendingClaudeSubagentModel(
   }
 }
 
+/** Agent calls carry model overrides even when the SDK omits child assistant snapshots. */
+function rememberClaudeSubagentRequestedModel(
+  context: ActiveClaudeTurnContext,
+  toolUseId: string,
+  input: ClaudeNativeToolInput,
+): void {
+  const model = firstStringInputField(input, ["model"]);
+  if (
+    model === undefined ||
+    model === "inherit" ||
+    context.subagentsByToolUseId.has(toolUseId) ||
+    context.pendingSubagentModelsByToolUseId.has(toolUseId)
+  )
+    return;
+  rememberPendingClaudeSubagentModel(context.pendingSubagentModelsByToolUseId, toolUseId, model);
+}
+
 type PendingClaudeRuntimeRequest =
   | {
       readonly type: "approval";
@@ -3424,7 +3441,10 @@ export function makeClaudeAdapterV2(
               parentNodeId: nodeId,
               activeProviderThreadId: null,
               providerInstanceId: input.context.input.modelSelection.instanceId,
-              modelSelection: input.context.input.modelSelection,
+              modelSelection:
+                task.model && task.model !== input.context.input.modelSelection.model
+                  ? { instanceId: input.context.input.modelSelection.instanceId, model: task.model }
+                  : input.context.input.modelSelection,
               title: subagentThreadTitle({
                 parentTitle: input.context.input.appThread.title,
                 prompt: task.prompt,
@@ -5024,10 +5044,11 @@ export function makeClaudeAdapterV2(
           }
 
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
+            const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
             if (toolUse.name === "Agent") {
+              rememberClaudeSubagentRequestedModel(context, toolUse.id, nativeToolInput);
               continue;
             }
-            const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
             if (toolUse.name === "TodoWrite" && parentToolUseIdFromSdkMessage(message) === null) {
               yield* emitClaudePlanProjection({
                 context,
@@ -5227,7 +5248,9 @@ export function makeClaudeAdapterV2(
 
           const nativeRequestId = callbackOptions.toolUseID;
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
-          if (toolName !== "Agent") {
+          if (toolName === "Agent") {
+            rememberClaudeSubagentRequestedModel(context, nativeRequestId, nativeToolInput);
+          } else {
             yield* ensureToolCallStarted({
               context,
               nativeItemId: nativeRequestId,
