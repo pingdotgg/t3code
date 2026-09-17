@@ -138,7 +138,6 @@ import {
   isStackedPullRequestBase,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
-  pullRequestComposerTarget,
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
@@ -511,10 +510,7 @@ export function PullRequestDetailPanel({
    * again is at best a no-op and at worst git refusing a branch two checkouts.
    */
   context?: "page" | "thread";
-  /**
-   * The open thread's composer. Beside the thread whose own pull request this is, hand-offs
-   * land here instead of opening a new thread — the branch is already under the reader's feet.
-   */
+  /** The open thread's composer. */
   composerDraftTarget?: ScopedThreadRef | DraftId;
   /**
    * Beside a thread, the way back to that thread's list of pull requests. The tab strip can
@@ -1064,10 +1060,7 @@ export function PullRequestDetailPanel({
     reviewComments?: ReadonlyArray<ReviewCommentContext>;
   };
 
-  // Beside the thread whose own pull request this is, a task belongs in that thread's composer:
-  // the branch is already checked out under it, so opening a second thread would only scatter
-  // the work.
-  const attachTarget = pullRequestComposerTarget(context, composerDraftTarget);
+  const attachTarget = composerDraftTarget ?? null;
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
 
   const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
