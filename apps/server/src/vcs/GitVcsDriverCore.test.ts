@@ -718,6 +718,67 @@ it.effect("refreshes the current branch after an external checkout", () =>
   ).pipe(Effect.provide(TestLayer)),
 );
 
+for (const configureWorktree of [false, true]) {
+  it.effect(
+    `keeps separate Git metadata out of worktree paths (core.worktree: ${configureWorktree})`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTmpDir();
+          const metadataRoot = yield* makeTmpDir("git-vcs-driver-metadata-");
+          const gitDir = path.join(metadataRoot, "metadata");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(cwd, ["init", "--separate-git-dir", gitDir]);
+          if (configureWorktree) {
+            yield* git(cwd, ["config", "core.worktree", cwd]);
+          }
+          const nestedCwd = path.join(cwd, "nested");
+          yield* fileSystem.makeDirectory(nestedCwd);
+          const linkedPath = path.join(metadataRoot, "linked");
+          yield* git(cwd, ["worktree", "add", "-b", "linked", linkedPath]);
+
+          // Fill the shared ref cache from a linked checkout before reading the
+          // main checkout, whose root cannot be inferred from the metadata path.
+          const linkedRefs = yield* driver.listRefs({ cwd: linkedPath, refresh: true });
+          assert.equal(
+            linkedRefs.refs.find((ref) => ref.name === initialBranch)?.worktreePath,
+            null,
+          );
+          assert.equal(
+            NodeFS.realpathSync.native(
+              linkedRefs.refs.find((ref) => ref.name === "linked")!.worktreePath!,
+            ),
+            NodeFS.realpathSync.native(linkedPath),
+          );
+
+          const mainRefs = yield* driver.listRefs({ cwd: nestedCwd });
+          const mainRef = mainRefs.refs.find((ref) => ref.name === initialBranch);
+          assert.isTrue(mainRef?.current);
+          assert.equal(
+            NodeFS.realpathSync.native(mainRef!.worktreePath!),
+            NodeFS.realpathSync.native(cwd),
+          );
+          assert.equal(
+            NodeFS.realpathSync.native(
+              mainRefs.refs.find((ref) => ref.name === "linked")!.worktreePath!,
+            ),
+            NodeFS.realpathSync.native(linkedPath),
+          );
+
+          const linkedAgain = yield* driver.listRefs({ cwd: linkedPath });
+          assert.isTrue(linkedAgain.refs.find((ref) => ref.name === "linked")?.current);
+          assert.equal(
+            linkedAgain.refs.find((ref) => ref.name === initialBranch)?.worktreePath,
+            null,
+          );
+        }),
+      ).pipe(Effect.provide(TestLayer)),
+  );
+}
+
 it.effect("backs off failed upstream refreshes across linked worktrees", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -2772,10 +2772,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const existingWorktreeEntries = yield* Effect.filter(
       parsedWorktreeEntries,
       ([, worktreePath]) =>
-        fileSystem.stat(worktreePath).pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        ),
+        // With --separate-git-dir, Git can report the metadata directory as
+        // the main worktree. It must never be offered as a checkout to reuse.
+        worktreePath === gitCommonDir
+          ? Effect.succeed(false)
+          : fileSystem.stat(worktreePath).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            ),
       { concurrency: 16 },
     );
     const worktreeMap = new Map(existingWorktreeEntries);
@@ -2964,12 +2968,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const hasCurrentWorktreeBranch =
         repositoryPaths.worktreeRoot !== null &&
         snapshot.localBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);
-      const localBranches = snapshot.localBranches.map((ref) => ({
-        ...ref,
-        current: hasCurrentWorktreeBranch
+      const localBranches = snapshot.localBranches.map((ref) => {
+        const current = hasCurrentWorktreeBranch
           ? ref.worktreePath === repositoryPaths.worktreeRoot
-          : ref.name === repositoryPaths.currentBranch,
-      }));
+          : ref.name === repositoryPaths.currentBranch;
+        return {
+          ...ref,
+          current,
+          // The caller's --show-toplevel is authoritative for its checkout.
+          // Keep this out of the snapshot shared with linked worktrees.
+          worktreePath: current ? repositoryPaths.worktreeRoot : ref.worktreePath,
+        };
+      });
       const combinedBranches = input.includeMatchingRemoteRefs
         ? [...localBranches, ...snapshot.remoteBranches]
         : dedupeRemoteBranchesWithLocalMatches([...localBranches, ...snapshot.remoteBranches]);
