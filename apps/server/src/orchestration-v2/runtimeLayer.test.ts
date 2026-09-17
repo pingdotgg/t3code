@@ -866,6 +866,16 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
       assert.deepEqual(answered.runtimeRequests[0]?.answers, command.answers);
       assert.equal(answered.nodes.find((node) => node.id === nodeId)?.status, "completed");
       assert.equal(answered.turnItems.find((item) => item.id === itemId)?.status, "completed");
+      const answeredItem = answered.turnItems.find((item) => item.id === itemId);
+      assert.equal(answeredItem?.type, "user_input_request");
+      if (answeredItem?.type === "user_input_request") {
+        assert.deepEqual(answeredItem.questionAnswer, {
+          requestId,
+          answers: command.answers,
+          attachmentsByQuestionId: {},
+          questionTextById: { color: "Which color?" },
+        });
+      }
       assert.equal(answered.messages.length, 1);
       assert.equal(answered.messages[0]?.text, "Which color?\nBlue");
       assert.equal(answered.messages[0]?.role, "user");

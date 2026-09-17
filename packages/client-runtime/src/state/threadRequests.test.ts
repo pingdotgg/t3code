@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
-import { derivePendingThreadRequests } from "./threadRequests.ts";
+import { createQuestionHistoryProjector, derivePendingThreadRequests } from "./threadRequests.ts";
 
 const requestId = RuntimeRequestId.make("async-question");
 const nodeId = NodeId.make("async-question-node");
@@ -114,4 +114,40 @@ describe("pending v2 questions", () => {
     expect(derivePendingThreadRequests(answered).userInputs).toEqual([]);
     expect(answered.runtimeRequests[0]?.answers).toEqual({ next: "  continue  " });
   });
+});
+
+it("restores old text answers without mutating history or replacing unchanged rows", () => {
+  const project = createQuestionHistoryProjector();
+  const item = projection.turnItems[0]!;
+  const row = {
+    item,
+    position: 0,
+    sourceItemId: item.id,
+    sourceThreadId: item.threadId,
+    visibility: "local" as const,
+  };
+  const rows = [row];
+  const pending = { visibleTurnItems: rows, runtimeRequests: projection.runtimeRequests };
+  expect(project(pending)).toBe(rows);
+  const answered = {
+    ...pending,
+    runtimeRequests: [
+      {
+        ...projection.runtimeRequests[0]!,
+        status: "resolved" as const,
+        answers: { next: "Continue" },
+      },
+    ],
+  };
+  const result = project(answered);
+  expect(result[0]?.item).toMatchObject({
+    questionAnswer: {
+      answers: { next: "Continue" },
+      attachmentsByQuestionId: {},
+      questionTextById: { next: "What should happen next?" },
+    },
+  });
+  expect(row.item).not.toHaveProperty("questionAnswer");
+  expect(project(answered)).toBe(result);
+  expect(project({ ...answered, visibleTurnItems: [...rows] })[0]).toBe(result[0]);
 });
