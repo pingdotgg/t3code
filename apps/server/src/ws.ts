@@ -1620,6 +1620,7 @@ const makeWsRpcLayer = (
             );
 
           const settledBootstrapProgram = bootstrapProgram.pipe(
+            Effect.interruptible,
             Effect.catchCause((cause) => {
               const dispatchError = toBootstrapDispatchCommandCauseError(cause);
               if (Cause.hasInterruptsOnly(cause)) {
@@ -1687,6 +1688,8 @@ const makeWsRpcLayer = (
                   ),
               ).pipe(Effect.andThen(cleanupAndFail(cause, dispatchError)));
             }),
+            // Cancellation must finish recording and rollback after the bootstrap is interrupted.
+            Effect.uninterruptible,
           );
 
           // The bootstrap outlives the connection that asked for it: a reload
