@@ -5679,12 +5679,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           occurredAt: now,
           payload: {
             ...approvalTurnItem,
-            ...(approvalTurnItem.type === "user_input_request" && command.attachmentsByQuestionId
+            ...(approvalTurnItem.type === "user_input_request" && command.answers !== undefined
               ? {
                   questionAnswer: {
                     requestId: command.requestId,
                     answers: command.answers ?? {},
-                    attachmentsByQuestionId: command.attachmentsByQuestionId,
+                    attachmentsByQuestionId: command.attachmentsByQuestionId ?? {},
                     questionTextById: Object.fromEntries(
                       approvalTurnItem.questions.map((question) => [
                         question.id,
