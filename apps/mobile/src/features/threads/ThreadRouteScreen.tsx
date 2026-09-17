@@ -10,6 +10,7 @@ import { ScreenHeader } from "../../components/ScreenHeader";
 import { ScreenHeaderButton } from "../../components/ScreenHeaderButton";
 import type { ScreenHeaderAction } from "../../components/ScreenHeader.types";
 import { useThreadHeaderOptions } from "./useThreadHeaderOptions";
+
 import {
   StackActions,
   useFocusEffect,
@@ -19,6 +20,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import {
+  CommandId,
+  MessageId,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ThreadId,
@@ -853,20 +856,23 @@ function ThreadRouteContent(
   const worktreeSetup = useWorktreeSetup({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
-    activities: selectedThreadDetail?.activities ?? [],
+    activities: [],
     preparing:
-      selectedThreadCreation?.message.creation?.workspaceMode === "worktree" &&
-      selectedThreadCreation.outcome == null,
-    turnStarted: selectedThreadDetail?.latestTurn?.startedAt != null,
+      selectedThread?.worktreePath != null ||
+      (selectedThreadCreation?.message.creation?.workspaceMode === "worktree" &&
+        selectedThreadCreation.outcome == null),
+    turnStarted: selectedThread?.latestRun?.startedAt != null,
     followUpSent:
       composer.selectedThreadFeed.filter(
         (entry) => entry.type === "message" && entry.message.role === "user",
       ).length +
-        composer.selectedThreadQueuedMessages.length >
+        composer.selectedThreadQueueCount >
       1,
   });
   const awaitingBootstrapTurn =
-    worktreeSetup?.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup);
+    worktreeSetup !== null
+      ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
+      : (selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup);
   const handleCancelWorktreeSetup = useCallback(() => {
     if (!selectedThread) return;
@@ -1010,6 +1016,30 @@ function ThreadRouteContent(
           activeWorkStartedAt={composer.activeWorkStartedAt}
           isCompacting={composer.isCompacting}
           creationState={creationState}
+          setupWorkingStartedAt={
+            composer.activeWorkStartedAt !== null &&
+            worktreeSetup !== null &&
+            composer.selectedThreadFeed.filter(
+              (entry) => entry.type === "message" && entry.message.role === "user",
+            ).length <= 1
+              ? composer.activeWorkStartedAt
+              : null
+          }
+          worktreeSetup={
+            worktreeSetup
+              ? {
+                  snapshot: worktreeSetup,
+                  turnStartedAt: selectedThread?.latestRun?.startedAt ?? null,
+                  working: composer.activeWorkStartedAt !== null,
+                  turnStarted: selectedThread?.latestRun?.startedAt != null,
+                  onCancel: handleCancelWorktreeSetup,
+                  onWorkLocally:
+                    selectedThreadCreation?.outcome == null && selectedThreadCreation
+                      ? handleWorkLocally
+                      : null,
+                }
+              : null
+          }
           activePendingApproval={requests.activePendingApproval}
           respondingApprovalId={requests.respondingApprovalId}
           activePendingUserInput={requests.activePendingUserInput}

@@ -1,7 +1,10 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
+import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { commandLabel } from "./KeybindingsSettings.logic";
 import {
   validateSettingsScopeSearch,
   type ResolvedSettingsScope,
@@ -56,6 +59,11 @@ export interface SettingsSearchItem {
   readonly localBackendManagementOnly?: boolean;
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
+  /**
+   * Sorts after every other match. Keybinding commands mirror rows on other
+   * surfaces, so "model" must still lead with Default model, not Model Picker.
+   */
+  readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
 
@@ -121,6 +129,22 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "storage-worktrees",
+    title: "Worktree cleanup",
+    to: "/settings/storage",
+    scope: "project-defaults",
+    searchTerms: [
+      "disk storage delete deleted archived threads old inactive merged unchanged worktrees retention days project inherit off custom",
+    ],
+  },
+  {
+    id: "storage-artifacts",
+    title: "Artifacts and logs",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: ["disk storage browser screenshots captures rotated logs cleanup retention"],
+  },
   {
     id: "project-defaults",
     title: "Project defaults and overrides",
@@ -327,6 +351,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Show skills in slash menu",
     to: "/settings/general",
     searchTerms: ["command menu dollar $ slash /"],
+  },
+  {
+    id: "composer-rich-text",
+    title: "Rich text composer",
+    to: "/settings/general",
+    searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
   },
   {
     id: "composer-collapse",
@@ -784,6 +814,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/providers": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
+  "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",

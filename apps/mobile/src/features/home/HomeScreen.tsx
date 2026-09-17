@@ -36,7 +36,6 @@ import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { usePendingThreadOrder } from "../../state/thread-order";
@@ -219,7 +218,6 @@ function HomeTopContentSpacer() {
 /* ─── Main screen ────────────────────────────────────────────────────── */
 
 export function HomeScreen(props: HomeScreenProps) {
-  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const [groupDisplayStates, setGroupDisplayStates] = useState<
     ReadonlyMap<string, HomeGroupDisplayState>
   >(() => new Map());
@@ -1046,11 +1044,11 @@ export function HomeScreen(props: HomeScreenProps) {
 
   if (!hasAnyThreads) {
     return (
-      <View className={materialYouStyleLayoutActive ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+      <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
         <View
           className={cn(
             "flex-1 items-center justify-center bg-screen px-8",
-            materialYouStyleLayoutActive && "overflow-hidden rounded-t-[28px]",
+            Platform.OS === "android" && "overflow-hidden rounded-t-[28px]",
           )}
           style={{
             paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
@@ -1063,11 +1061,22 @@ export function HomeScreen(props: HomeScreenProps) {
               detail={emptyState.detail}
               actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
               onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
+              action={
+                Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
+                  <MaterialFloatingActionButton
+                    label="Add environment"
+                    icon="plus"
+                    variant="extended"
+                    tone="primary"
+                    onPress={props.onAddConnection}
+                  />
+                ) : undefined
+              }
               variant="plain"
             />
             {emptyState.loading ? (
               <View className="mt-4 items-center">
-                <ActivityIndicator colorClassName={"accent-icon-muted"} />
+                <ActivityIndicator colorClassName="accent-icon-muted" />
               </View>
             ) : null}
           </View>
@@ -1102,7 +1111,11 @@ export function HomeScreen(props: HomeScreenProps) {
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : (
-      <EmptyState title="No threads yet" detail="Create a task to start a new coding runtime." />
+      <EmptyState
+        title="No threads yet"
+        detail="Create a task to start a new coding runtime."
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
     )
   ) : null;
   // Use the v2 project scope for its empty state. Snoozed threads need no
@@ -1142,10 +1155,10 @@ export function HomeScreen(props: HomeScreenProps) {
 
   if (threadListV2Enabled) {
     return (
-      <View className={materialYouStyleLayoutActive ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+      <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
         <View
           className={
-            materialYouStyleLayoutActive
+            Platform.OS === "android"
               ? "flex-1 overflow-hidden rounded-t-[28px] bg-screen"
               : "flex-1 bg-screen"
           }
@@ -1185,7 +1198,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 paddingBottom:
                   Platform.OS === "ios"
                     ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
-                    : Math.max(insets.bottom, 16) + 88,
+                    : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? 148 : 88),
               }}
             />
           </SwipeableScrollGateProvider>
@@ -1195,10 +1208,10 @@ export function HomeScreen(props: HomeScreenProps) {
   }
 
   return (
-    <View className={materialYouStyleLayoutActive ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+    <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
       <View
         className={
-          materialYouStyleLayoutActive
+          Platform.OS === "android"
             ? "flex-1 overflow-hidden rounded-t-[28px] bg-screen"
             : "flex-1 bg-screen"
         }
@@ -1239,7 +1252,7 @@ export function HomeScreen(props: HomeScreenProps) {
               paddingBottom:
                 Platform.OS === "ios"
                   ? Math.max(insets.bottom, 24) + 24 + iosBottomToolbarClearance
-                  : Math.max(insets.bottom, 16) + 88,
+                  : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? 148 : 88),
             }}
             scrollIndicatorInsets={
               Platform.OS === "ios"

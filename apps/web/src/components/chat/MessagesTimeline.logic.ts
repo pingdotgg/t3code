@@ -342,18 +342,6 @@ export type TimelineLatestRun = Pick<
 
 const LIVE_ACTIVITY_ROW_ID = "live-activity-row";
 
-type ActivityEntry = Extract<TimelineEntry, { kind: "message" | "work" }>;
-
-function isActivityEntry(entry: TimelineEntry): entry is ActivityEntry {
-  return entry.kind === "message"
-    ? entry.message.role === "reasoning"
-    : entry.kind === "work" &&
-        entry.entry.agentSpawn === undefined &&
-        entry.entry.questionAnswer === undefined &&
-        entry.entry.sourceActivityKind !== "context-compaction" &&
-        entry.entry.tone !== "error";
-}
-
 export type MessagesTimelineRow =
   | {
       kind: "worktree-setup";
@@ -1547,11 +1535,6 @@ function attachCreatedThreadSummaries(
 
 const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
 
-/** True once the bootstrap handed off to the agent (async setup script may still run). */
-export function worktreeSetupAgentStarted(snapshot: WorktreeSetupSnapshot): boolean {
-  return snapshot.stages.some((stage) => stage.id === "agent" && stage.status === "done");
-}
-
 type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
 
 export interface MessagesTimelineRowsProjection {
@@ -1637,18 +1620,6 @@ function replaceStreamingMessageRows(
   }
   if (replacements.size === 0) return previous.rows;
   return previous.rows.map((row) => {
-    if (row.kind === "activity-group") {
-      if (!row.entries.some((entry) => entry.kind === "message" && replacements.has(entry.message)))
-        return row;
-      return {
-        ...row,
-        entries: row.entries.map((entry) => {
-          if (entry.kind !== "message") return entry;
-          const message = replacements.get(entry.message);
-          return message ? { ...entry, message } : entry;
-        }),
-      };
-    }
     if (row.kind !== "message" && row.kind !== "assistant-meta") return row;
     const entry = replacements.get(row.message);
     return entry

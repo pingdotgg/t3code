@@ -1,4 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
+import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -31,8 +32,6 @@ import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import * as Haptics from "expo-haptics";
-import { BlurTargetView } from "expo-blur";
-import { GlassBlurTargetContext } from "../../lib/glassBlurTarget";
 import {
   memo,
   useCallback,
@@ -69,7 +68,6 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceContentWidth } from "../layout/workspace-content-width";
-
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -118,6 +116,8 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 
 export interface ThreadDetailScreenProps {
+  readonly worktreeSetup?: WorktreeSetupCardProps | null;
+  readonly setupWorkingStartedAt?: string | null;
   readonly selectedThread: EnvironmentThreadShell;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
@@ -404,6 +404,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       return null;
     }
     if (props.creationState?.kind === "preparing") {
+      // The setup header already reports progress in the feed.
+      if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
         label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
@@ -916,7 +918,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, [freeze, scrollMessageToEnd]);
 
   const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
-  const { themeAppearance, materialYouStyleLayoutActive } = useAppearancePreferences();
+  const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
 
   const handleFeedTouchStart = useCallback((event: GestureResponderEvent) => {
@@ -948,13 +950,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const handleFeedTouchCancel = useCallback(() => {
     feedTouchStartRef.current = null;
   }, []);
-  const feedBlurTarget = useRef<View>(null);
 
   return (
     <View className="flex-1">
       {showContent ? (
-        <BlurTargetView
-          ref={feedBlurTarget}
+        <View
           style={{ flex: 1 }}
           onTouchStart={handleFeedTouchStart}
           onTouchMove={handleFeedTouchMove}
@@ -964,7 +964,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           <View
             pointerEvents="none"
             className={
-              materialYouStyleLayoutActive
+              Platform.OS === "android"
                 ? "absolute inset-0 bg-thread-canvas"
                 : "absolute inset-0 bg-screen"
             }
@@ -975,6 +975,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             threadId={props.selectedThread.id}
             workspaceRoot={props.threadCwd}
             feed={props.selectedThreadFeed}
+            worktreeSetup={props.worktreeSetup}
+            setupWorkingStartedAt={props.setupWorkingStartedAt}
             queuedMessages={props.queuedMessages}
             dispatchingMessageId={props.dispatchingMessageId}
             onEditPendingMessage={handleEditPendingMessage}
@@ -1001,7 +1003,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             skills={selectedProviderSkills}
             onUseArtifactTemplate={handleUseArtifactTemplate}
           />
-        </BlurTargetView>
+        </View>
       ) : (
         <View className="flex-1" />
       )}
@@ -1151,7 +1153,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     : undefined
                 }
               >
-                <GlassBlurTargetContext value={feedBlurTarget}>
+                <>
                   <ThreadComposer
                     editorRef={composerEditorRef}
                     draftMessage={props.draftMessage}
@@ -1203,7 +1205,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     onExpandedChange={setComposerExpanded}
                     onEditorFocusChange={handleComposerFocusChange}
                   />
-                </GlassBlurTargetContext>
+                </>
               </View>
             </View>
           </Animated.View>
