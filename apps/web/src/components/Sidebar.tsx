@@ -64,6 +64,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useReducer,
@@ -154,6 +155,7 @@ import {
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
+  formatSidebarThreadAccessibleStatus,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
@@ -1052,6 +1054,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const cardStatusDescriptionId = useId();
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
@@ -1726,6 +1729,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   }
 
   const diff = latestTurnDiff(thread);
+  const cardStatusDescription = formatSidebarThreadAccessibleStatus({
+    hasUnsentDraft,
+    isPinned: props.isPinned,
+    isRegeneratingTitle,
+    statusLabel: topStatus?.label ?? null,
+    terminalLabel: terminalStatus ? terminalProcessLabel(terminalProcessCount) : null,
+  });
 
   return (
     <li
@@ -1752,6 +1762,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   ? `${thread.title}, ${props.projectDisplayName}`
                   : thread.title
               }
+              aria-describedby={cardStatusDescription ? cardStatusDescriptionId : undefined}
               className={rowSurfaceClassName}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
@@ -1761,6 +1772,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           }
         >
           <div className="relative z-10 h-[3.75rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
+            {cardStatusDescription ? (
+              <span id={cardStatusDescriptionId} className="sr-only">
+                {cardStatusDescription}
+              </span>
+            ) : null}
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {props.project ? (
