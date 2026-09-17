@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 
 import {
+  VcsProcessTimeoutError,
+  VcsProcessSpawnError,
   ProviderDriverKind,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -290,6 +292,9 @@ describe("CheckpointReactor", () => {
   });
 
   async function createHarness(options?: {
+    readonly checkpointLookupFailure?: (
+      cwd: string,
+    ) => VcsProcessTimeoutError | VcsProcessSpawnError | undefined;
     readonly hasSession?: boolean;
     readonly seedFilesystemCheckpoints?: boolean;
     readonly initializeGit?: boolean;
@@ -370,7 +375,20 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(Layer.mock(PullRequestService)({ refreshAfterTurn })),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
-      Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer))),
+      Layer.provideMerge(
+        Layer.effect(
+          CheckpointStore.CheckpointStore,
+          CheckpointStore.make.pipe(
+            Effect.map((store) => ({
+              ...store,
+              hasCheckpointRef: (input) => {
+                const failure = options?.checkpointLookupFailure?.(input.cwd);
+                return failure ? Effect.fail(failure) : store.hasCheckpointRef(input);
+              },
+            })),
+          ),
+        ).pipe(Layer.provide(VcsDriverRegistry.layer)),
+      ),
       Layer.provideMerge(
         WorkspaceEntries.layer.pipe(
           Layer.provide(WorkspacePaths.layer),
@@ -573,6 +591,77 @@ describe("CheckpointReactor", () => {
         expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
       }
     }),
+  );
+
+  effectIt.effect.each(["timeout", "spawn"] as const)(
+    "captures and finalizes a turn when previous checkpoint lookup fails (%s)",
+    (failureKind) =>
+      Effect.gen(function* () {
+        let failLookup = false;
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            seedFilesystemCheckpoints: false,
+            checkpointLookupFailure: (cwd) =>
+              !failLookup
+                ? undefined
+                : failureKind === "timeout"
+                  ? new VcsProcessTimeoutError({
+                      operation: "test.refLookup",
+                      command: "git",
+                      cwd,
+                      timeoutMs: 30000,
+                    })
+                  : new VcsProcessSpawnError({
+                      operation: "test.refLookup",
+                      command: "git",
+                      cwd,
+                      cause: new Error("transient lookup spawn failure"),
+                    }),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const turnId = asTurnId("turn-ref-timeout");
+        harness.provider.emit({
+          type: "turn.started",
+          eventId: EventId.make("evt-ref-start"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          threadId,
+          turnId,
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({ type: "checkpoint.baseline.captured" });
+        NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "new snapshot\n");
+        failLookup = true;
+        harness.provider.emit({
+          type: "turn.completed",
+          eventId: EventId.make("evt-ref-complete"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+          threadId,
+          turnId,
+          payload: { state: "completed" },
+        });
+        yield* Effect.promise(harness.drain);
+        const ref = checkpointRefForThreadTurn(threadId, 1);
+        expect(gitShowFileAtRef(harness.cwd, ref, "README.md")).toBe("new snapshot\n");
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.diff.finalized",
+          turnId,
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "turn.processing.quiesced",
+          turnId,
+        });
+        const model = yield* Effect.promise(harness.readModel);
+        expect(model.threads[0]?.checkpoints[0]).toMatchObject({
+          checkpointRef: ref,
+          status: "ready",
+          files: [],
+        });
+        expect(
+          model.threads[0]?.activities.some((a) => a.kind === "checkpoint.capture.failed"),
+        ).toBe(false);
+      }),
   );
 
   effectIt.effect("captures baseline and large turn summaries before completion receipts", () =>
