@@ -67,7 +67,8 @@ function AccountChip({ email }: { readonly email: string }) {
 
 /**
  * The same mark the model picker uses for a native instance (provider glyph,
- * initials badge, accent); hub accounts have no instance, so they get the chip.
+ * initials badge, accent). A hub account with an email and no instance gets the
+ * two-letter chip; anything else still gets the glyph, so no account is blank.
  */
 function AccountAvatar({
   account,
@@ -76,7 +77,7 @@ function AccountAvatar({
   readonly account: LimitAccount;
   readonly className?: string;
 }) {
-  if (account.redeem) {
+  if (!account.email || account.redeem) {
     return (
       <ProviderInstanceIcon
         driverKind={account.driver}
@@ -89,7 +90,7 @@ function AccountAvatar({
       />
     );
   }
-  return account.email ? <AccountChip email={account.email} /> : null;
+  return <AccountChip email={account.email} />;
 }
 
 /** The account's label beside its avatar: the instance name when there is one, else the driver label. */
@@ -275,7 +276,7 @@ function PoolSegment({
           aria-hidden
           className="absolute inset-0 flex items-center justify-center @2xl/pool:hidden"
         >
-          {account.redeem || account.email ? <AccountAvatar account={account} /> : index}
+          <AccountAvatar account={account} />
         </span>
         <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
           <AccountAvatar account={account} />
