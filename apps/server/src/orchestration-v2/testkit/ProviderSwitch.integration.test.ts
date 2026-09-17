@@ -98,6 +98,7 @@ function makeTestAdapter(input: {
   readonly failResume?: boolean;
   readonly failedRunOrdinals?: ReadonlySet<number>;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
+  readonly releaseFirstTurn?: Deferred.Deferred<void>;
 }): ProviderAdapterV2Shape {
   return {
     instanceId: input.instanceId,
@@ -171,7 +172,8 @@ function makeTestAdapter(input: {
               ]);
               if (turnInput.runOrdinal === 1 && input.holdFirstTurn !== undefined) {
                 yield* Deferred.succeed(input.holdFirstTurn, undefined);
-                return;
+                if (input.releaseFirstTurn === undefined) return;
+                yield* Deferred.await(input.releaseFirstTurn);
               }
               const eventTime = yield* DateTime.now;
               const providerTurnId = ProviderTurnId.make(
@@ -1007,7 +1009,7 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
-  it.live("reissues imported v1 context when switching after the first provider fails", () =>
+  const importedFailureScenario = (queueBeforeFailure: boolean) =>
     Effect.scoped(
       Effect.gen(function* () {
         const importedThreadId = ThreadId.make("thread:provider-switch:legacy-import");
@@ -1016,6 +1018,8 @@ describe("orchestration v2 provider switching", () => {
         const recoveryPrompt = "What was the imported release marker?";
         const cwd = yield* checkpointWorkspace("provider-switch-legacy-import");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const firstTurnStarted = yield* Deferred.make<void>();
+        const releaseFirstTurn = yield* Deferred.make<void>();
         const registryLayer = makeProviderAdapterRegistryLayer([
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("codex"),
@@ -1025,6 +1029,7 @@ describe("orchestration v2 provider switching", () => {
             responseByRunOrdinal: {},
             capturedTurns,
             failedRunOrdinals: new Set([1]),
+            ...(queueBeforeFailure ? { holdFirstTurn: firstTurnStarted, releaseFirstTurn } : {}),
           }),
           makeTestAdapter({
             instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -1078,98 +1083,99 @@ describe("orchestration v2 provider switching", () => {
           const importer = yield* LegacyV1ThreadImporter;
           const maintenance = yield* ProjectionMaintenanceV2;
           const orchestrator = yield* OrchestratorV2;
+          const worker = yield* OrchestrationEffectWorkerV2;
 
           yield* sql`
-            INSERT INTO projection_projects (
-              project_id,
-              title,
-              workspace_root,
-              default_model_selection_json,
-              scripts_json,
-              created_at,
-              updated_at,
-              deleted_at
-            ) VALUES (
-              ${importedProjectId},
-              'Imported provider switch project',
-              ${cwd},
-              '{"instanceId":"codex","model":"gpt-5.4"}',
-              '[]',
-              '2026-01-01T00:00:00.000Z',
-              '2026-01-01T00:00:00.000Z',
-              NULL
-            )
-          `;
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        ) VALUES (
+          ${importedProjectId},
+          'Imported provider switch project',
+          ${cwd},
+          '{"instanceId":"codex","model":"gpt-5.4"}',
+          '[]',
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z',
+          NULL
+        )
+      `;
           yield* sql`
-            INSERT INTO projection_threads (
-              thread_id,
-              project_id,
-              title,
-              model_selection_json,
-              runtime_mode,
-              interaction_mode,
-              branch,
-              worktree_path,
-              latest_turn_id,
-              created_at,
-              updated_at,
-              archived_at,
-              settled_override,
-              settled_at,
-              deleted_at
-            ) VALUES (
-              ${importedThreadId},
-              ${importedProjectId},
-              'Imported provider switch thread',
-              '{"instanceId":"codex","model":"gpt-5.4"}',
-              'full-access',
-              'default',
-              'main',
-              ${cwd},
-              NULL,
-              '2026-01-01T00:00:00.000Z',
-              '2026-01-01T00:00:00.000Z',
-              NULL,
-              NULL,
-              NULL,
-              NULL
-            )
-          `;
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          archived_at,
+          settled_override,
+          settled_at,
+          deleted_at
+        ) VALUES (
+          ${importedThreadId},
+          ${importedProjectId},
+          'Imported provider switch thread',
+          '{"instanceId":"codex","model":"gpt-5.4"}',
+          'full-access',
+          'default',
+          'main',
+          ${cwd},
+          NULL,
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z',
+          NULL,
+          NULL,
+          NULL,
+          NULL
+        )
+      `;
           yield* sql`
-            INSERT INTO projection_thread_messages (
-              message_id,
-              thread_id,
-              turn_id,
-              role,
-              text,
-              attachments_json,
-              is_streaming,
-              created_at,
-              updated_at
-            ) VALUES
-              (
-                'message:provider-switch:legacy-import:user',
-                ${importedThreadId},
-                NULL,
-                'user',
-                'Remember that the imported release marker is violet.',
-                '[]',
-                0,
-                '2026-01-01T01:00:00.000Z',
-                '2026-01-01T01:00:00.000Z'
-              ),
-              (
-                'message:provider-switch:legacy-import:assistant',
-                ${importedThreadId},
-                NULL,
-                'assistant',
-                'I will remember violet.',
-                '[]',
-                0,
-                '2026-01-01T01:01:00.000Z',
-                '2026-01-01T01:01:00.000Z'
-              )
-          `;
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          attachments_json,
+          is_streaming,
+          created_at,
+          updated_at
+        ) VALUES
+          (
+            'message:provider-switch:legacy-import:user',
+            ${importedThreadId},
+            NULL,
+            'user',
+            'Remember that the imported release marker is violet.',
+            '[]',
+            0,
+            '2026-01-01T01:00:00.000Z',
+            '2026-01-01T01:00:00.000Z'
+          ),
+          (
+            'message:provider-switch:legacy-import:assistant',
+            ${importedThreadId},
+            NULL,
+            'assistant',
+            'I will remember violet.',
+            '[]',
+            0,
+            '2026-01-01T01:01:00.000Z',
+            '2026-01-01T01:01:00.000Z'
+          )
+      `;
 
           yield* importer.reconcileShells;
           yield* maintenance.rebuild;
@@ -1187,7 +1193,11 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: CODEX_MODEL_SELECTION,
             dispatchMode: { type: "start_immediately" },
           });
-          yield* waitForIdle(importedThreadId);
+          if (queueBeforeFailure) {
+            yield* Deferred.await(firstTurnStarted);
+          } else {
+            yield* waitForIdle(importedThreadId);
+          }
           yield* orchestrator.dispatch({
             type: "message.dispatch",
             createdBy: "user",
@@ -1198,8 +1208,33 @@ describe("orchestration v2 provider switching", () => {
             text: recoveryPrompt,
             attachments: [],
             modelSelection: CLAUDE_MODEL_SELECTION,
-            dispatchMode: { type: "start_immediately" },
+            dispatchMode: {
+              type: queueBeforeFailure ? "queue_after_active" : "start_immediately",
+            },
           });
+          if (queueBeforeFailure) {
+            const queued = yield* orchestrator.getThreadProjection(importedThreadId);
+            assert.deepEqual(
+              queued.runs.map((run) => run.status),
+              ["running", "queued"],
+            );
+            assert.deepEqual(
+              queued.contextHandoffs.map((handoff) => handoff.targetRunId),
+              [queued.runs[0]?.id],
+            );
+            yield* Deferred.succeed(releaseFirstTurn, undefined);
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.event.type === "run.updated" &&
+                  event.event.runId === queued.runs[1]?.id &&
+                  event.event.payload.status === "completed",
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(importedThreadId);
+          }
           return yield* waitForIdle(importedThreadId);
         }).pipe(Effect.provide(testLayer));
 
@@ -1229,7 +1264,14 @@ describe("orchestration v2 provider switching", () => {
         assert.include(turns[1]?.text ?? "", recoveryPrompt);
         assert.notInclude(turns[1]?.text ?? "", failedPrompt);
       }),
-    ),
+    );
+
+  it.live("reissues imported v1 context when switching after the first provider fails", () =>
+    importedFailureScenario(false),
+  );
+  it.live(
+    "reissues imported v1 context when a queued provider starts after the first provider fails",
+    () => importedFailureScenario(true),
   );
 
   it.live("uses portable fallback when native resume fails after a provider switch", () =>

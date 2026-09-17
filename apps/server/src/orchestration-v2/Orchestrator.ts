@@ -1013,6 +1013,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 run.ordinal <= latestCompletedRun.ordinal,
             );
       const needsFullContext = deliveryProviderThread.nativeThreadRef === null;
+      const legacyImportItems =
+        projection.thread.historyOrigin === "v1_import"
+          ? projection.turnItems.filter((item) => item.runId === null)
+          : [];
       const handoffStrategy = needsFullContext
         ? ("full_thread_summary" as const)
         : ("delta_since_target_last_seen" as const);
@@ -1079,9 +1083,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 },
                 strategy: handoffStrategy,
                 items: [
-                  ...(needsFullContext && projection.thread.historyOrigin === "v1_import"
-                    ? projection.turnItems.filter((item) => item.runId === null)
-                    : []),
+                  ...(needsFullContext ? legacyImportItems : []),
                   ...projection.turnItems.filter(
                     (item) =>
                       item.runId !== null && coveredRuns.some((run) => run.id === item.runId),
@@ -1099,6 +1101,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     }),
                 ),
               );
+      const legacyImportRecoveryHandoff =
+        latestCompletedRun === undefined && needsFullContext && legacyImportItems.length > 0
+          ? yield* contextHandoffService
+              .prepareLegacyImport({
+                threadId,
+                targetRunId: queuedRun.id,
+                toProviderThreadId: queuedProviderThread.id,
+                toProviderInstanceId: queuedRun.providerInstanceId,
+                items: legacyImportItems,
+                createdAt: now,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestratorDispatchError({
+                      commandId,
+                      commandType: "message.dispatch",
+                      cause,
+                    }),
+                ),
+              )
+          : null;
+      const activeHandoff = handoff ?? legacyImportRecoveryHandoff;
       const checkpointScope =
         storedCheckpointScope ??
         (yield* runtimePolicy
@@ -1152,7 +1177,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "not_loaded",
         firstRunOrdinal: queuedProviderThread.firstRunOrdinal ?? queuedRun.ordinal,
         lastRunOrdinal: queuedRun.ordinal,
-        handoffIds: appendContextHandoffId(queuedProviderThread.handoffIds, handoff?.id ?? null),
+        handoffIds: appendContextHandoffId(
+          queuedProviderThread.handoffIds,
+          activeHandoff?.id ?? null,
+        ),
         updatedAt: now,
       };
       const startingRun: OrchestrationV2Run = {
@@ -1160,7 +1188,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         status: "starting",
         queuePosition: null,
         startedAt: null,
-        contextHandoffId: handoff?.id ?? null,
+        contextHandoffId: activeHandoff?.id ?? null,
       };
       const userTurnItem: OrchestrationV2TurnItem = {
         ...(legacyQueuedTurnItem ?? {
@@ -1284,6 +1312,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   providerInstanceId: queuedRun.providerInstanceId,
                   occurredAt: now,
                   payload: handoff,
+                },
+              ]),
+          ...(legacyImportRecoveryHandoff === null
+            ? []
+            : [
+                {
+                  type: "context-handoff.updated" as const,
+                  threadId,
+                  runId: queuedRun.id,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: legacyImportRecoveryHandoff,
                 },
               ]),
           ...sessionsToDetach.map((session) => ({
