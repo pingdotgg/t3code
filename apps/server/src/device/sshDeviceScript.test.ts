@@ -8,7 +8,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
-import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { AGENT_DEVICE_VERSION, DEVICE_HUB_ARGS, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -35,6 +35,13 @@ it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
     });
   }),
 );
+
+it("starts remote hubs on the same capture source as local ones", () => {
+  // grpc-screenshot streams nothing on some emulators and never works on
+  // physical devices, so the remote script must not fall back to the hub default.
+  expect(remoteDeviceScript("owner", "start")).toContain(JSON.stringify(DEVICE_HUB_ARGS));
+  expect(DEVICE_HUB_ARGS).toContain("scrcpy");
+});
 
 it.effect("preserves shell metacharacters and newlines in remote arguments", () =>
   Effect.gen(function* () {

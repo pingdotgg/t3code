@@ -30,6 +30,22 @@ export const DEVICE_HUB_VERSION = "0.12.0";
 const AGENT_DEVICE_PACKAGE = "agent-device";
 export const AGENT_DEVICE_VERSION = "0.21.12";
 
+/**
+ * Hub arguments shared by every place that starts one, local or over SSH.
+ *
+ * The hub defaults Android capture to `grpc-screenshot`, which only works on
+ * emulators and silently streams nothing on some of them (the socket opens and
+ * closes without a frame, so the panel waits on video forever). scrcpy is
+ * serve-emu's own default, works on emulators and is the only source for
+ * physical devices.
+ */
+export const DEVICE_HUB_ARGS: ReadonlyArray<string> = [
+  "--hide-sidebar",
+  "--hide-boot-device",
+  "--stream-source",
+  "scrcpy",
+];
+
 const INSTALL_TIMEOUT = Duration.minutes(10);
 const installLock = Semaphore.makeUnsafe(1);
 
