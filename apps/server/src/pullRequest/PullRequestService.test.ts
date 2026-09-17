@@ -4100,7 +4100,7 @@ it.effect("shares linked summaries and reuses them for display without asking th
 
 it.effect("keeps routed reads separate when the GitHub account changes", () =>
   Effect.gen(function* () {
-    for (const operation of ["summary", "detail", "checks", "diff"] as const) {
+    for (const operation of ["summary", "detail", "checks", "diff", "filesViewed"] as const) {
       let failing = false;
       let calls = 0;
       const read = () =>
@@ -4155,7 +4155,7 @@ it.effect("keeps routed reads separate when the GitHub account changes", () =>
 
 it.effect("isolates routed caches for two credentials belonging to the same account", () =>
   Effect.gen(function* () {
-    for (const operation of ["summary", "detail", "checks", "diff"] as const) {
+    for (const operation of ["summary", "detail", "checks", "diff", "filesViewed"] as const) {
       let credential = "broad";
       let calls = 0;
       const read = () =>
