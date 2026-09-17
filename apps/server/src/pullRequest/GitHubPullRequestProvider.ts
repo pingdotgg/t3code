@@ -408,6 +408,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequest")),
         Effect.map(([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
           ...detail.pullRequest,
+          author: withAvatar(detail.pullRequest.author, new Map<string, string>(), input.host),
           checks: withWorkflowApprovals(
             detail.pullRequest.checks,
             detail.workflowApprovals.runs,
