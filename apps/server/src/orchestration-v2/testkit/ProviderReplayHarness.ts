@@ -25,7 +25,7 @@ import { layer as commandPolicyLayer } from "../CommandPolicy.ts";
 import { layer as commandReceiptStoreLayer } from "../CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "../ContextHandoffService.ts";
 import * as Context from "effect/Context";
-import { EffectOutboxV2, layer as effectOutboxLayer } from "../EffectOutbox.ts";
+import * as EffectOutbox from "../EffectOutbox.ts";
 import {
   executorLayer as effectExecutorLayer,
   layer as effectWorkerLayer,
@@ -41,10 +41,7 @@ import { OrchestratorV2, type OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { layer as providerEventIngestorLayer } from "../ProviderEventIngestor.ts";
-import {
-  ProviderSessionManagerV2,
-  layerWithOptions as providerSessionManagerLayerWithOptions,
-} from "../ProviderSessionManager.ts";
+import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts";
 import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControlService.ts";
 import { layer as providerTurnStartServiceLayer } from "../ProviderTurnStartService.ts";
@@ -225,11 +222,14 @@ export function runOrchestratorV2ProviderReplayScenario<
     return run.pipe(Effect.provide(layer));
   }
   return Effect.gen(function* () {
-    yield* Effect.flatMap(EffectOutboxV2, (outbox) =>
+    yield* Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) =>
       outbox.reconcileAfterProcessLoss.pipe(Effect.orDie),
     );
     const result = yield* run;
-    yield* Effect.flatMap(ProviderSessionManagerV2, (sessions) => sessions.shutdown);
+    yield* Effect.flatMap(
+      ProviderSessionManager.ProviderSessionManagerV2,
+      (sessions) => sessions.shutdown,
+    );
     return result;
   }).pipe(Effect.provide(layer));
 }
@@ -252,8 +252,8 @@ export function makeOrchestratorV2ProviderReplayLayer<
   | OrchestratorV2
   | OrchestrationEffectWorkerV2
   | EventSinkV2
-  | EffectOutboxV2
-  | ProviderSessionManagerV2,
+  | EffectOutbox.EffectOutboxV2
+  | ProviderSessionManager.ProviderSessionManagerV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(
@@ -277,8 +277,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   | OrchestratorV2
   | OrchestrationEffectWorkerV2
   | EventSinkV2
-  | EffectOutboxV2
-  | ProviderSessionManagerV2,
+  | EffectOutbox.EffectOutboxV2
+  | ProviderSessionManager.ProviderSessionManagerV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const serverConfigLayer = Layer.effect(
@@ -299,7 +299,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     eventStoreLayer,
     projectionStoreLayer,
     commandReceiptStoreLayer,
-    effectOutboxLayer,
+    EffectOutbox.layer,
     turnItemPositionStoreLayer,
   ).pipe(Layer.provide(databaseLayer));
   const eventSinkProvided = eventSinkLayer.pipe(
@@ -331,7 +331,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     idAllocatorLayer,
     providerEventIngestorProvided,
   );
-  const providerSessionManagerProvided = providerSessionManagerLayerWithOptions({
+  const providerSessionManagerProvided = ProviderSessionManager.layerWithOptions({
     configureMcp: false,
   }).pipe(
     Layer.provide(
@@ -448,10 +448,12 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   );
   const lifecycleServicesLayer = Layer.unwrap(
     Effect.gen(function* () {
-      const outbox = yield* EffectOutboxV2;
-      const sessions = yield* ProviderSessionManagerV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
       return Layer.succeedContext(
-        Context.make(EffectOutboxV2, outbox).pipe(Context.add(ProviderSessionManagerV2, sessions)),
+        Context.make(EffectOutbox.EffectOutboxV2, outbox).pipe(
+          Context.add(ProviderSessionManager.ProviderSessionManagerV2, sessions),
+        ),
       );
     }),
   ).pipe(Layer.provide(Layer.mergeAll(storesLayer, providerSessionManagerProvided)));
