@@ -71,7 +71,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree, workspaceDisplayName],
   );
 
-  if (envLocked) {
+  if (envLocked || forceNewWorktree) {
     const lockedRow = (
       <span
         className={cn(
@@ -80,7 +80,11 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         )}
         data-composer-context-control
       >
-        {activeWorktreePath ? (
+        {forceNewWorktree ? (
+          <FolderGit2Icon
+            className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
+          />
+        ) : activeWorktreePath ? (
           <FolderGitIcon
             className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3"}
           />
@@ -101,12 +105,14 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             data-composer-label-motion
             className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
           >
-            {workspaceDisplayName ?? resolveLockedWorkspaceLabel(activeWorktreePath)}
+            {forceNewWorktree
+              ? resolveEnvModeLabel("worktree")
+              : (workspaceDisplayName ?? resolveLockedWorkspaceLabel(activeWorktreePath))}
           </span>
         </span>
         {displayMode === "panel" ? (
           <span className="shrink-0 text-[10px] font-normal text-muted-foreground/70">
-            {workspaceKind}
+            {forceNewWorktree ? "Worktree" : workspaceKind}
           </span>
         ) : null}
       </span>
@@ -116,7 +122,9 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
         <TooltipPopup side={displayMode === "panel" ? "left" : undefined}>
-          {workspacePath ?? resolveLockedWorkspaceLabel(activeWorktreePath)}
+          {forceNewWorktree
+            ? "Each model starts in its own worktree."
+            : (workspacePath ?? resolveLockedWorkspaceLabel(activeWorktreePath))}
         </TooltipPopup>
       </Tooltip>
     );
