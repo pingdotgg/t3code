@@ -18,6 +18,10 @@ import {
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import {
+  buildThreadContinuationPrompt,
+  type ThreadContinuationIntent,
+} from "@t3tools/client-runtime/thread-continuation";
+import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
   resolveProjectScripts,
@@ -75,6 +79,11 @@ import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-s
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import {
+  createNewTaskDraft,
+  setComposerDraftText,
+  updateComposerDraftSettings,
+} from "../../state/use-composer-drafts";
 import { threadEnvironment } from "../../state/threads";
 import { projectThreadContentPresentation } from "./threadContentPresentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -842,6 +851,76 @@ function ThreadRouteContent(
       preparingWorktree: selectedThreadCreation.message.creation?.workspaceMode === "worktree",
     };
   })();
+  const handleContinueTurn = useCallback(
+    (
+      intent: ThreadContinuationIntent,
+      assistantMessage: Parameters<NonNullable<ThreadDetailScreenProps["onContinueTurn"]>>[1],
+    ) => {
+      if (!selectedThreadProject || !selectedThread) return;
+      const messages = selectedThreadDetail?.messages ?? [];
+      const assistantIndex = messages.findIndex((message) => message.id === assistantMessage.id);
+      let userRequest = "";
+      for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+        const candidate = messages[index];
+        if (candidate?.role === "user") {
+          userRequest = candidate.text;
+          break;
+        }
+      }
+      const checkpoint = selectedThreadDetail?.checkpoints.find(
+        (candidate) =>
+          candidate.assistantMessageId === assistantMessage.id ||
+          candidate.turnId === assistantMessage.turnId,
+      );
+      const prompt = buildThreadContinuationPrompt({
+        intent,
+        sourceThreadTitle: selectedThread.title,
+        userRequest,
+        assistantResponse: assistantMessage.text,
+        changedFiles: checkpoint?.files.map((file) => file.path) ?? [],
+      });
+      const draftId = createNewTaskDraft({
+        environmentId: selectedThread.environmentId,
+        projectId: selectedThread.projectId,
+      });
+      const continuationWorktreePath = resolvePreferredThreadWorktreePath({
+        threadShellWorktreePath: selectedThread.worktreePath ?? null,
+        threadDetailWorktreePath: selectedThreadDetailWorktreePath,
+      });
+      setComposerDraftText(draftId, prompt);
+      updateComposerDraftSettings(draftId, {
+        modelSelection:
+          selectedThreadWithDraftSettings?.modelSelection ?? selectedThread.modelSelection,
+        runtimeMode:
+          intent === "second-opinion"
+            ? "approval-required"
+            : (selectedThreadWithDraftSettings?.runtimeMode ?? selectedThread.runtimeMode),
+        interactionMode: "default",
+        workspaceSelection: {
+          mode: "local",
+          branch: selectedThread.branch,
+          worktreePath: continuationWorktreePath,
+        },
+      });
+      navigation.navigate("NewTaskSheet", {
+        screen: "NewTaskDraft",
+        params: {
+          draftId,
+          environmentId: String(selectedThread.environmentId),
+          projectId: String(selectedThread.projectId),
+          title: selectedThreadProject.title,
+        },
+      });
+    },
+    [
+      navigation,
+      selectedThread,
+      selectedThreadDetail,
+      selectedThreadDetailWorktreePath,
+      selectedThreadProject,
+      selectedThreadWithDraftSettings,
+    ],
+  );
   // Deep links / cold starts land with Thread as the ONLY route, where the
   // native back button does not render. Provide an explicit Home escape for
   // that case; when history exists the native back button is used instead.
@@ -931,6 +1010,7 @@ function ThreadRouteContent(
           usesAutomaticContentInsets={usesNativeHeaderGlass}
           onOpenConnectionEditor={handleOpenConnectionEditor}
           onChangeDraftMessage={composer.onChangeDraftMessage}
+          onContinueTurn={handleContinueTurn}
           onPickDraftMedia={composer.onPickDraftMedia}
           onPickDraftFiles={composer.onPickDraftFiles}
           onNativePasteImages={composer.onNativePasteImages}

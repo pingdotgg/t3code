@@ -47,6 +47,12 @@ import {
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
+import {
+  buildThreadContinuationPrompt,
+  buildThreadContinuationTitle,
+  buildWholeThreadContinuationPrompt,
+  type ThreadContinuationIntent,
+} from "@t3tools/client-runtime/thread-continuation";
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
@@ -263,7 +269,11 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { useThreadActions } from "../hooks/useThreadActions";
-import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import {
+  getAppModelOptionsForInstance,
+  resolveAppModelSelectionForInstance,
+  type AppModelOption,
+} from "../modelSelection";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -331,7 +341,7 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
-import { threadEnvironment, useEnvironmentThread } from "../state/threads";
+import { loadCompleteThread, threadEnvironment, useEnvironmentThread } from "../state/threads";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -2821,6 +2831,24 @@ export default function ChatView(props: ChatViewProps) {
       ),
     [providerStatuses, settings],
   );
+  const continuationModelOptionsByInstance = useMemo<
+    ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>
+  >(() => {
+    const options = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
+    for (const entry of providerInstanceEntries) {
+      options.set(
+        entry.instanceId,
+        getAppModelOptionsForInstance(
+          settings,
+          entry,
+          activeThread?.modelSelection.instanceId === entry.instanceId
+            ? activeThread.modelSelection.model
+            : null,
+        ),
+      );
+    }
+    return options;
+  }, [activeThread?.modelSelection, providerInstanceEntries, settings]);
   const { selectedProviderEntry, requestedDriverKind } = useMemo(
     () =>
       resolveComposerProviderSelection({
@@ -8858,6 +8886,281 @@ export default function ChatView(props: ChatViewProps) {
     composerRef,
   ]);
 
+  const [continuationStartingKeys, setContinuationStartingKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const continuationStarting = continuationStartingKeys.has(routeThreadKey);
+  const [continuationHistoryLoadingKeys, setContinuationHistoryLoadingKeys] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  const continuationHistoryLoading = continuationHistoryLoadingKeys.has(routeThreadKey);
+  const startContinuation = useCallback(
+    async (input: {
+      intent: ThreadContinuationIntent;
+      prompt: string;
+      title: string;
+      modelSelection: ModelSelection;
+    }) => {
+      if (
+        !activeThread ||
+        !activeProject ||
+        !isServerThread ||
+        activeEnvironmentUnavailable ||
+        continuationStarting
+      ) {
+        return;
+      }
+      const { intent, modelSelection, prompt, title } = input;
+      const sourceThreadKey = routeThreadKey;
+      setContinuationStartingKeys((current) => {
+        if (current.has(sourceThreadKey)) return current;
+        return new Set(current).add(sourceThreadKey);
+      });
+      try {
+        if (intent === "handoff") {
+          const opened = await handleNewThread(
+            scopeProjectRef(activeThread.environmentId, activeProject.id),
+            {
+              branch: activeThread.branch,
+              worktreePath: activeThread.worktreePath,
+              envMode: activeThread.worktreePath ? "worktree" : "local",
+            },
+          );
+          if (opened) {
+            setComposerDraftPrompt(opened.draftId, prompt);
+            setComposerDraftModelSelection(opened.draftId, modelSelection, {
+              explicit: true,
+              replaceOptions: true,
+            });
+            setComposerDraftRuntimeMode(opened.draftId, activeThread.runtimeMode);
+            setComposerDraftInteractionMode(opened.draftId, "default");
+          } else {
+            toastManager.add({ type: "error", title: "Could not open handoff thread" });
+          }
+          return;
+        }
+
+        const createdAt = new Date().toISOString();
+        const nextThreadId = newThreadId();
+        const startResult = await startThreadTurn({
+          environmentId,
+          input: {
+            threadId: nextThreadId,
+            message: {
+              messageId: newMessageId(),
+              role: "user",
+              text: prompt,
+              attachments: [],
+            },
+            modelSelection,
+            titleSeed: title,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: activeProject.id,
+                title,
+                modelSelection,
+                runtimeMode: "approval-required",
+                interactionMode: "default",
+                branch: activeThread.branch,
+                worktreePath: activeThread.worktreePath,
+                createdAt,
+              },
+            },
+            createdAt,
+          },
+        });
+        if (startResult._tag === "Success") {
+          await waitForStartedServerThread(
+            scopeThreadRef(activeThread.environmentId, nextThreadId),
+          );
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: { environmentId: activeThread.environmentId, threadId: nextThreadId },
+          });
+        } else if (!isAtomCommandInterrupted(startResult)) {
+          throw squashAtomCommandFailure(startResult);
+        }
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title:
+              intent === "handoff"
+                ? "Could not open handoff thread"
+                : "Could not request a second opinion",
+            description: chatActionErrorMessage(error),
+          }),
+        );
+      } finally {
+        setContinuationStartingKeys((current) => {
+          if (!current.has(sourceThreadKey)) return current;
+          const next = new Set(current);
+          next.delete(sourceThreadKey);
+          return next;
+        });
+      }
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeProject,
+      activeThread,
+      continuationStarting,
+      environmentId,
+      handleNewThread,
+      isServerThread,
+      navigate,
+      routeThreadKey,
+      setComposerDraftInteractionMode,
+      setComposerDraftModelSelection,
+      setComposerDraftPrompt,
+      setComposerDraftRuntimeMode,
+      startThreadTurn,
+    ],
+  );
+
+  const onStartTurnContinuation = useCallback(
+    (
+      intent: ThreadContinuationIntent,
+      assistantMessage: ChatMessage,
+      modelSelection: ModelSelection,
+    ) => {
+      if (!activeThread) return;
+      const assistantIndex = activeThread.messages.findIndex(
+        (message) => message.id === assistantMessage.id,
+      );
+      let userRequest = "";
+      for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+        const candidate = activeThread.messages[index];
+        if (candidate?.role === "user") {
+          userRequest = candidate.text;
+          break;
+        }
+      }
+      const checkpoint = activeThread.checkpoints.find(
+        (candidate) =>
+          candidate.assistantMessageId === assistantMessage.id ||
+          candidate.turnId === assistantMessage.turnId,
+      );
+      return startContinuation({
+        intent,
+        modelSelection,
+        prompt: buildThreadContinuationPrompt({
+          intent,
+          sourceThreadTitle: activeThread.title,
+          userRequest,
+          assistantResponse: assistantMessage.text ?? "",
+          changedFiles: checkpoint?.files.map((file) => file.path) ?? [],
+        }),
+        title: buildThreadContinuationTitle({
+          intent,
+          sourceThreadTitle: activeThread.title,
+        }),
+      });
+    },
+    [activeThread, startContinuation],
+  );
+
+  const onStartWholeThreadContinuation = useCallback(
+    async (intent: ThreadContinuationIntent, modelSelection: ModelSelection) => {
+      if (!activeThread || continuationHistoryLoading || continuationStarting) return;
+      const sourceThreadKey = routeThreadKey;
+      setContinuationHistoryLoadingKeys((current) => {
+        if (current.has(sourceThreadKey)) return current;
+        return new Set(current).add(sourceThreadKey);
+      });
+      try {
+        const completeThread = await loadCompleteThread(
+          activeThread.environmentId,
+          activeThread.id,
+        );
+        if (currentRouteThreadKeyRef.current !== sourceThreadKey) return;
+        await startContinuation({
+          intent,
+          modelSelection,
+          prompt: buildWholeThreadContinuationPrompt({
+            intent,
+            sourceThreadTitle: completeThread.title,
+            messages: completeThread.messages.map(({ role, text }) => ({ role, text })),
+            changedFiles: completeThread.checkpoints.flatMap((checkpoint) =>
+              checkpoint.files.map((file) => file.path),
+            ),
+          }),
+          title: buildThreadContinuationTitle({
+            intent,
+            sourceThreadTitle: completeThread.title,
+          }),
+        });
+      } catch (error) {
+        if (currentRouteThreadKeyRef.current !== sourceThreadKey) return;
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not load the full thread",
+            description: chatActionErrorMessage(error),
+          }),
+        );
+      } finally {
+        setContinuationHistoryLoadingKeys((current) => {
+          if (!current.has(sourceThreadKey)) return current;
+          const next = new Set(current);
+          next.delete(sourceThreadKey);
+          return next;
+        });
+      }
+    },
+    [
+      activeThread,
+      continuationHistoryLoading,
+      continuationStarting,
+      routeThreadKey,
+      startContinuation,
+    ],
+  );
+
+  const threadContinuationPicker = useMemo(() => {
+    if (!activeThread || !isServerThread || providerInstanceEntries.length === 0) return undefined;
+    return {
+      activeModelSelection: activeThread.modelSelection,
+      instanceEntries: providerInstanceEntries,
+      modelOptionsByInstance: continuationModelOptionsByInstance,
+      disabled: activeEnvironmentUnavailable || continuationStarting || continuationHistoryLoading,
+      onSelect: onStartWholeThreadContinuation,
+    };
+  }, [
+    activeEnvironmentUnavailable,
+    activeThread?.modelSelection,
+    continuationHistoryLoading,
+    continuationModelOptionsByInstance,
+    continuationStarting,
+    isServerThread,
+    onStartWholeThreadContinuation,
+    providerInstanceEntries,
+  ]);
+
+  const messageContinuationPicker = useMemo(() => {
+    if (!activeThread || paintOnlyDisplayedTimeline || providerInstanceEntries.length === 0) {
+      return undefined;
+    }
+    return {
+      activeModelSelection: activeThread.modelSelection,
+      instanceEntries: providerInstanceEntries,
+      modelOptionsByInstance: continuationModelOptionsByInstance,
+      disabled: activeEnvironmentUnavailable || continuationStarting || continuationHistoryLoading,
+      onSelect: onStartTurnContinuation,
+    };
+  }, [
+    activeEnvironmentUnavailable,
+    activeThread?.modelSelection,
+    continuationHistoryLoading,
+    continuationModelOptionsByInstance,
+    continuationStarting,
+    onStartTurnContinuation,
+    paintOnlyDisplayedTimeline,
+    providerInstanceEntries,
+  ]);
+
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string): string | null => {
       if (!activeThread) {
@@ -9433,6 +9736,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
+            {...(threadContinuationPicker ? { threadContinuationPicker } : {})}
           />
         </WorkspacePageHeader>
 
@@ -9514,6 +9818,9 @@ export default function ChatView(props: ChatViewProps) {
                 routeThreadKey={displayedTimelineKey}
                 displayThreadKey={displayedTimelineKey}
                 onOpenTurnDiff={paintOnlyDisplayedTimeline ? noopHeldTurnDiff : onOpenTurnDiff}
+                {...(messageContinuationPicker
+                  ? { continuationPicker: messageContinuationPicker }
+                  : {})}
                 supportsConversationRollback={
                   !paintOnlyDisplayedTimeline && supportsConversationRollback
                 }

@@ -251,6 +251,10 @@
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"
     },
+    "./thread-continuation": {
+      "types": "./src/threadContinuation.ts",
+      "default": "./src/threadContinuation.ts"
+    },
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
