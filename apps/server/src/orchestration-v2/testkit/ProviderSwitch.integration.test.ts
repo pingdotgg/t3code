@@ -438,6 +438,7 @@ describe("orchestration v2 provider switching", () => {
             targetRunId: beforeSteer.runs[0]!.id,
           });
           const afterSteer = yield* orchestrator.getThreadProjection(queuedThreadId);
+          assert.deepEqual(afterSteer.thread.modelSelection, GROK_MODEL_SELECTION);
           const interruptedTurn = afterSteer.providerTurns.find(
             (turn) => turn.runAttemptId === beforeSteer.runs[0]?.activeAttemptId,
           )!;

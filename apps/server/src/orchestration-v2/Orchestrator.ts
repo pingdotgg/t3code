@@ -3420,6 +3420,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: { ...currentRootNode, status: "interrupted", completedAt: now },
         });
       }
+      if (selectionChanged) {
+        yield* emitEvent({
+          type: providerInstanceChanged
+            ? "thread.provider-switched"
+            : "thread.model-selection-updated",
+          threadId: input.command.threadId,
+          providerInstanceId: input.modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            ...input.projection.thread,
+            providerInstanceId: input.modelSelection.instanceId,
+            modelSelection: input.modelSelection,
+            updatedAt: now,
+          },
+        });
+      }
       if (requiresProviderThreadHandoff || requiresProviderSessionRestart) {
         yield* emitEvent({
           type: "provider-thread.updated",
