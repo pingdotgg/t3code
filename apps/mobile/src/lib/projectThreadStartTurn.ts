@@ -2,6 +2,7 @@ import {
   CommandId,
   MessageId,
   ThreadId,
+  type ChatAttachment,
   type ModelSelection,
   type OrchestrationMessageContext,
   type ProjectId,
@@ -22,8 +23,8 @@ export interface ProjectThreadStartTurnSpec {
   readonly createdAt: string;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
-  /** Wire attachments from `prepareTurnAttachments`, in composer order. */
-  readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment>;
+  /** New uploads or server-owned attachments from a cancelled setup. */
+  readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment | ChatAttachment>;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
