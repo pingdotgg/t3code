@@ -39,6 +39,7 @@ export function assertClaudeThreadRollbackOutput(
     "assistant_message",
     "checkpoint",
     "user_message",
+    "reasoning",
     "assistant_message",
     "checkpoint",
   ]);
@@ -47,6 +48,7 @@ export function assertClaudeThreadRollbackOutput(
     "assistant_message",
     "checkpoint",
     "user_message",
+    "reasoning",
     "assistant_message",
     "checkpoint",
   ]);
