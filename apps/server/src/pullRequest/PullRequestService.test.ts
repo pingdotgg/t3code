@@ -1056,7 +1056,45 @@ it.effect("refuses an action the host never claimed it could run", () =>
     );
 
     assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.propertyVal(error, "notDispatched", true);
     assert.isFalse(ran);
+  }),
+);
+
+it.effect("preserves provider dispatch certainty on action errors", () =>
+  Effect.gen(function* () {
+    const failures = [true, false];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          runAction: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "github",
+                operation: "runAction",
+                reason: "failed",
+                detail: "write failed",
+                ...(failures.shift() === true ? { notDispatched: true } : {}),
+              }),
+            ),
+        }),
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      action: "close" as const,
+    };
+
+    const preflight = yield* Effect.flip(service.runAction(input));
+    assert.strictEqual(preflight._tag, "PullRequestOperationError");
+    assert.propertyVal(preflight, "notDispatched", true);
+
+    const ambiguous = yield* Effect.flip(service.runAction(input));
+    assert.strictEqual(ambiguous._tag, "PullRequestOperationError");
+    assert.notProperty(ambiguous, "notDispatched");
   }),
 );
 
@@ -1114,6 +1152,116 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
   ),
 );
 
+it.effect("forwards unfinished GitCafe actions without publishing a merge", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const outcomes = [
+        {
+          operation: { kind: "merge" as const, id: "operation-pending" },
+          state: "pending" as const,
+          detail: "Waiting for checks.",
+        },
+        {
+          operation: { kind: "merge" as const, id: "operation-failed" },
+          state: "failed" as const,
+          detail: "A required check failed.",
+        },
+      ];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "web",
+            workspaceRoot: "/a",
+            repository: "acme/web",
+            provider: "gitcafe",
+            host: "git.cafe",
+          }),
+        ],
+        providers: [
+          fakeProvider("gitcafe", {
+            runAction: () => Effect.succeed(outcomes.shift()!),
+            getChangeRequestSummary: () => Effect.die("unfinished work must not be confirmed"),
+          }),
+        ],
+      });
+      const merges = yield* service.subscribeMerges;
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+      const pending = yield* service.runAction({ ...reference, action: "merge" });
+      const failed = yield* service.runAction({ ...reference, action: "merge" });
+      assert.deepStrictEqual(pending, {
+        operation: { kind: "merge", id: "operation-pending" },
+        state: "pending",
+        detail: "Waiting for checks.",
+      });
+      assert.deepStrictEqual(failed, {
+        operation: { kind: "merge", id: "operation-failed" },
+        state: "failed",
+        detail: "A required check failed.",
+      });
+
+      const nextMerge = yield* Stream.runHead(merges).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Effect.yieldNow;
+      assert.strictEqual(nextMerge.pollUnsafe(), undefined);
+    }),
+  ),
+);
+
+it.effect("inspects completed GitCafe operations without reauthorizing the original action", () =>
+  Effect.gen(function* () {
+    const received: Array<unknown> = [];
+    const operation = { kind: "stack-land" as const, id: "operation-1" };
+    const outcome = { operation, state: "completed" as const, detail: "Landed." };
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "gitcafe",
+          host: "git.cafe",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitcafe", {
+          getViewerPermissions: () => Effect.die("inspection must not reauthorize the mutation"),
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(3, "2026-07-02T00:00:00Z")),
+          runAction: (input) => {
+            received.push(input);
+            return Effect.succeed(outcome);
+          },
+        }),
+      ],
+    });
+
+    const result = yield* service.runAction({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 3,
+      action: "merge",
+      stackNumber: 50,
+      operation,
+    });
+
+    assert.deepStrictEqual(result, outcome);
+    assert.deepStrictEqual(received, [
+      {
+        cwd: "/a",
+        repository: "acme/web",
+        host: "git.cafe",
+        number: 3,
+        action: "merge",
+        stackNumber: 50,
+        operation,
+      },
+    ]);
+  }),
+);
+
 it.effect("refuses an action this viewer may not take, and says what access it takes", () =>
   Effect.gen(function* () {
     let ran: string | null = null;
@@ -1142,6 +1290,7 @@ it.effect("refuses an action this viewer may not take, and says what access it t
 
     const error = yield* Effect.flip(service.runAction({ ...reference, action: "merge" }));
     assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.propertyVal(error, "notDispatched", true);
     assert.include(error.message, "You need write access on this repository to merge.");
     assert.strictEqual(ran, null);
 
@@ -1312,6 +1461,59 @@ it.effect("refuses to resolve a conversation this viewer may not, without asking
 
     assert.strictEqual(error._tag, "PullRequestOperationError");
     assert.include(error.message, "to resolve a review conversation.");
+  }),
+);
+
+it.effect("lets GitCafe authorize conversation resolution from the thread root", () =>
+  Effect.gen(function* () {
+    const received: Array<unknown> = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "gitcafe",
+          host: "git.cafe",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitcafe", {
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: ["merge", "ready", "draft", "close", "reopen"],
+              comment: true,
+              resolve: false,
+              verdicts: ["comment", "approve", "request-changes"],
+              requestReviewers: true,
+            }),
+          setThreadResolution: (input) => {
+            received.push(input);
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+
+    yield* service.setThreadResolution({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      threadId: "t1",
+      resolved: true,
+    });
+
+    assert.deepStrictEqual(received, [
+      {
+        cwd: "/a",
+        repository: "acme/web",
+        host: "git.cafe",
+        number: 1,
+        threadId: "t1",
+        resolved: true,
+      },
+    ]);
   }),
 );
 
@@ -2123,6 +2325,7 @@ it.effect("refuses a verdict the host never claimed, without asking the provider
     );
 
     assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.propertyVal(error, "notDispatched", true);
     assert.isFalse(submitted);
   }),
 );
@@ -2203,6 +2406,108 @@ it.effect(
       yield* service.submitReview({ ...reference, verdict: "approve", body: "", comments: [] });
       assert.isTrue(approved);
     }),
+);
+
+it.effect("forwards the review revision and request id", () =>
+  Effect.gen(function* () {
+    const received: Array<unknown> = [];
+    const reviewRevision = { version: 7, headOid: "head-7", baseOid: "base-2" };
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "gitcafe",
+          host: "git.cafe",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitcafe", {
+          submitReview: (input) => {
+            received.push(input);
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+
+    yield* service.submitReview({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 3,
+      verdict: "approve",
+      body: "Ship it.",
+      comments: [],
+      reviewRevision,
+      requestId: "review-request-1",
+    });
+
+    assert.deepStrictEqual(received, [
+      {
+        cwd: "/a",
+        repository: "acme/web",
+        host: "git.cafe",
+        number: 3,
+        verdict: "approve",
+        body: "Ship it.",
+        comments: [],
+        reviewRevision,
+        requestId: "review-request-1",
+      },
+    ]);
+  }),
+);
+
+it.effect("forwards the displayed revision when expanding pull request files", () =>
+  Effect.gen(function* () {
+    const received: Array<unknown> = [];
+    const reviewRevision = { version: 7, headOid: "head-7", baseOid: "base-2" };
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "gitcafe",
+          host: "git.cafe",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitcafe", {
+          getDiffFileContents: (input) => {
+            received.push(input);
+            return Effect.succeed({ oldContents: "before\n", newContents: "after\n" });
+          },
+        }),
+      ],
+    });
+
+    yield* service.diffFileContents({
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 3,
+      reviewRevision,
+      changeType: "change",
+      oldPath: "src/file.ts",
+      newPath: "src/file.ts",
+    });
+
+    assert.deepStrictEqual(received, [
+      {
+        cwd: "/a",
+        repository: "acme/web",
+        host: "git.cafe",
+        number: 3,
+        reviewRevision,
+        changeType: "change",
+        oldPath: "src/file.ts",
+        newPath: "src/file.ts",
+      },
+    ]);
+  }),
 );
 
 it.effect("refuses to resolve a conversation on a host that cannot", () =>
@@ -4353,7 +4658,106 @@ it.effect('resolves an author filter of "me" to the viewer before narrowing a ho
   }),
 );
 
-it.effect("authorizes stack rebases independently of whether the selected layer is behind", () =>
+it.effect("dispatches GitCafe stack actions with the exact revision and request id", () =>
+  Effect.gen(function* () {
+    const received: Array<unknown> = [];
+    const capabilities = {
+      ...fakeProvider("gitcafe").capabilities,
+      actions: ["merge", "update-branch"] as const,
+      updateMethods: ["rebase"] as const,
+      stackActions: true,
+    };
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "gitcafe",
+          host: "git.cafe",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitcafe", {
+          capabilities,
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: ["merge"],
+              stackRebase: true,
+              comment: true,
+              resolve: false,
+              verdicts: [],
+              requestReviewers: false,
+            }),
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(3, "2026-07-01T00:00:00Z")),
+          runAction: (input) => {
+            received.push(input);
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+    const reference = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 3,
+      stackNumber: 50,
+      expectedStackRevision: 7,
+    };
+
+    yield* service.runAction({
+      ...reference,
+      action: "merge",
+      requestId: "land-request",
+    });
+    yield* service.runAction({
+      ...reference,
+      action: "update-branch",
+      updateMethod: "rebase",
+      requestId: "restack-request",
+    });
+    assert.deepStrictEqual(received, [
+      {
+        cwd: "/a",
+        repository: "acme/web",
+        host: "git.cafe",
+        number: 3,
+        action: "merge",
+        stackNumber: 50,
+        requestId: "land-request",
+        expectedStackRevision: 7,
+      },
+      {
+        cwd: "/a",
+        repository: "acme/web",
+        host: "git.cafe",
+        number: 3,
+        action: "update-branch",
+        stackNumber: 50,
+        updateMethod: "rebase",
+        requestId: "restack-request",
+        expectedStackRevision: 7,
+      },
+    ]);
+
+    const missingRevision = yield* Effect.flip(
+      service.runAction({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 3,
+        action: "merge",
+        stackNumber: 50,
+        requestId: "invalid-request",
+      }),
+    );
+    assert.strictEqual(missingRevision._tag, "PullRequestOperationError");
+    assert.propertyVal(missingRevision, "notDispatched", true);
+    assert.strictEqual(received.length, 2);
+  }),
+);
+
+it.effect("authorizes GitHub stack rebases only with expected heads", () =>
   Effect.gen(function* () {
     let taken = 0;
     let summaryReads = 0;

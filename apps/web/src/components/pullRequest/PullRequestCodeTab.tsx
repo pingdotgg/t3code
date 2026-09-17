@@ -7,6 +7,7 @@ import type {
   PullRequestOmittedFileStat,
   PullRequestRef,
   PullRequestReviewPosition,
+  PullRequestReviewRevision,
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
 } from "@t3tools/contracts";
@@ -109,6 +110,7 @@ interface DiffSlice {
   /** What was asked for, null being the first slice. Identifies the slice among the loaded ones. */
   readonly cursor: string | null;
   readonly patch: string;
+  readonly reviewRevision?: PullRequestReviewRevision;
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats: ReadonlyArray<PullRequestOmittedFileStat>;
@@ -292,6 +294,9 @@ function PullRequestCodeTab({
       const next = {
         cursor,
         patch: data.patch,
+        ...(cursor === null && data.reviewRevision !== undefined
+          ? { reviewRevision: data.reviewRevision }
+          : {}),
         truncated: data.truncated,
         nextCursor: data.nextCursor,
         omittedFileStats: data.omittedFileStats ?? [],
@@ -304,6 +309,9 @@ function PullRequestCodeTab({
       if (
         existing !== undefined &&
         existing.patch === next.patch &&
+        existing.reviewRevision?.version === next.reviewRevision?.version &&
+        existing.reviewRevision?.headOid === next.reviewRevision?.headOid &&
+        existing.reviewRevision?.baseOid === next.reviewRevision?.baseOid &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
         existing.omittedFileStats.length === next.omittedFileStats.length &&
@@ -356,15 +364,32 @@ function PullRequestCodeTab({
     reportFailure: false,
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
+  const renderedDiffRevision = loadedSlices.find((slice) => slice.cursor === null)?.reviewRevision;
   const loadDiffFiles = useMemo(
     () =>
       createPullRequestDiffFileContentsLoader(getDiffFileContents, {
         environmentId,
         reference,
         commit,
-        cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
+        ...(commit !== null || renderedDiffRevision === undefined
+          ? {}
+          : { reviewRevision: renderedDiffRevision }),
+        cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${
+          commit ??
+          (renderedDiffRevision === undefined
+            ? "revision-current"
+            : `revision-${renderedDiffRevision.version}-${renderedDiffRevision.headOid}-${renderedDiffRevision.baseOid}`)
+        }`,
       }),
-    [commit, detail.updatedAt, environmentId, getDiffFileContents, reference, referenceKey],
+    [
+      commit,
+      detail.updatedAt,
+      environmentId,
+      getDiffFileContents,
+      reference,
+      referenceKey,
+      renderedDiffRevision,
+    ],
   );
 
   // What is offered is the intersection of two different questions: what this host can do at
@@ -382,7 +407,11 @@ function PullRequestCodeTab({
   }, [detail.capabilities.review, detail.viewerPermissions]);
   // A comment is posted against the pull request's head diff, so a line number taken from one
   // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
-  const canCommentOnLines = review.inlineComment && commit === null;
+  const canCommentOnLines =
+    review.inlineComment &&
+    review.verdicts.length > 0 &&
+    commit === null &&
+    (detail.provider !== "gitcafe" || renderedDiffRevision !== undefined);
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
   // rather than one per slice already on screen. Its cache key carries the theme, which is what
   // the tokenizer caches against, so a theme change is still a fresh parse.
@@ -819,7 +848,7 @@ function PullRequestCodeTab({
         thread={thread}
         workspaceRoot={detail.workspaceRoot}
         canReply={review.reply}
-        canResolve={review.resolve}
+        canResolve={detail.capabilities.review.resolve && (thread.canResolve ?? review.resolve)}
         canReact={detail.capabilities.reactions === true}
         environmentId={environmentId}
         reference={reference}
@@ -851,7 +880,11 @@ function PullRequestCodeTab({
         }
         // A conversation on a line is made of review comments, whatever the host filed them as.
         canEditComment={(comment) =>
-          canEditPullRequestComment(detail, { author: comment.author, kind: "review-comment" })
+          canEditPullRequestComment(detail, {
+            author: comment.author,
+            canEdit: comment.canEdit,
+            kind: "review-comment",
+          })
         }
         onEditComment={(commentId, body) =>
           runThreadCommand("The comment could not be saved", () =>
@@ -924,13 +957,26 @@ function PullRequestCodeTab({
               setSelectedLines(null);
             }}
             onComment={(body) => {
-              addComment(reviewKey, {
-                id: nextPendingReviewCommentId(),
-                path: draft.path,
-                ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
-                position: draft.position,
-                body,
-              });
+              const added = addComment(
+                reviewKey,
+                {
+                  id: nextPendingReviewCommentId(),
+                  path: draft.path,
+                  ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
+                  position: draft.position,
+                  body,
+                },
+                detail.provider === "gitcafe" ? renderedDiffRevision : undefined,
+              );
+              if (!added) {
+                toastManager.add({
+                  type: "error",
+                  title: "This diff changed while your review was open",
+                  description:
+                    "Submit or discard the existing comments before reviewing the new diff.",
+                });
+                return;
+              }
               setDraft(null);
               setSelectedLines(null);
             }}
@@ -940,11 +986,13 @@ function PullRequestCodeTab({
     ),
     [
       addComment,
+      detail.provider,
       draft,
       finishSelection,
       onAddToAgentSelection,
       removeComment,
       renderThreadCard,
+      renderedDiffRevision,
       reviewKey,
     ],
   );
@@ -982,6 +1030,10 @@ function PullRequestCodeTab({
             <PullRequestReviewBar
               environmentId={environmentId}
               reference={reference}
+              provider={detail.provider}
+              {...(renderedDiffRevision === undefined
+                ? {}
+                : { displayedRevision: renderedDiffRevision })}
               verdicts={review.verdicts}
               requestChangesSummaryRequired={detail.provider === "forgejo"}
               onSubmitted={() => {

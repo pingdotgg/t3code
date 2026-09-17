@@ -197,6 +197,8 @@ export const PullRequestComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: PullRequestCommentKind,
   author: Schema.NullOr(PullRequestActor),
+  /** Host-reported permission to rewrite this specific remark. */
+  canEdit: Schema.optional(Schema.Boolean),
   body: Schema.String,
   createdAt: IsoDateTime,
   url: Schema.NullOr(Schema.String),
@@ -219,9 +221,19 @@ export type PullRequestDiffSide = typeof PullRequestDiffSide.Type;
 export const PullRequestReviewVerdict = Schema.Literals(["comment", "approve", "request-changes"]);
 export type PullRequestReviewVerdict = typeof PullRequestReviewVerdict.Type;
 
+/** The exact comparison a revision-fenced host permits a review to address. */
+export const PullRequestReviewRevision = Schema.Struct({
+  version: NonNegativeInt,
+  headOid: TrimmedNonEmptyString,
+  baseOid: TrimmedNonEmptyString,
+});
+export type PullRequestReviewRevision = typeof PullRequestReviewRevision.Type;
+
 export const PullRequestThreadComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   author: Schema.NullOr(PullRequestActor),
+  /** Host-reported permission to rewrite this specific remark. */
+  canEdit: Schema.optional(Schema.Boolean),
   body: Schema.String,
   createdAt: IsoDateTime,
   url: Schema.NullOr(Schema.String),
@@ -241,6 +253,8 @@ export const PullRequestReviewThread = Schema.Struct({
   line: Schema.NullOr(PositiveInt),
   side: PullRequestDiffSide,
   isResolved: Schema.Boolean,
+  /** Host-reported permission to toggle this specific thread's current resolution state. */
+  canResolve: Schema.optional(Schema.Boolean),
   /**
    * The line the thread was written against is no longer in the diff, so it cannot be shown
    * against the code. Such a thread is listed separately rather than pinned to the wrong line.
@@ -451,6 +465,8 @@ export const PullRequestViewerPermissions = Schema.Struct({
   verdicts: Schema.Array(PullRequestReviewVerdict),
   /** This viewer may ask somebody for a review, and take the request back again. */
   requestReviewers: Schema.Boolean,
+  /** This viewer may rewrite the change request's title and description. */
+  editChangeRequest: Schema.optional(Schema.Boolean),
   /**
    * The ways this viewer may bring the branch up to date, narrowed from what the host offers.
    * Absent or empty means they may not, which is also what a host with no such action says.
@@ -723,6 +739,7 @@ export const PullRequestStack = Schema.Struct({
   number: PositiveInt,
   url: TrimmedNonEmptyString,
   base: TrimmedNonEmptyString,
+  revision: Schema.optional(PositiveInt),
   layers: Schema.Array(
     Schema.Struct({
       number: PositiveInt,
@@ -919,6 +936,7 @@ export type PullRequestOmittedFileStat = typeof PullRequestOmittedFileStat.Type;
 
 export const PullRequestDiffResult = Schema.Struct({
   patch: Schema.String,
+  reviewRevision: Schema.optional(PullRequestReviewRevision),
   /**
    * Something inside this slice could not be shown — a binary file, or a hunk the host declined
    * to inline. Not the same as there being more slices, which `nextCursor` answers.
@@ -939,6 +957,8 @@ export const PullRequestDiffFileContentsInput = Schema.Struct({
   ...PullRequestRef.fields,
   /** One commit's own comparison; absent means the whole change request. */
   commit: Schema.optional(TrimmedNonEmptyString),
+  /** The exact whole-change comparison whose patch is being expanded. */
+  reviewRevision: Schema.optional(PullRequestReviewRevision),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
   oldPath: TrimmedNonEmptyString,
   newPath: TrimmedNonEmptyString,
@@ -957,10 +977,25 @@ export const PullRequestStackHead = Schema.Struct({
 });
 export type PullRequestStackHead = typeof PullRequestStackHead.Type;
 
+export const PullRequestActionOperation = Schema.Struct({
+  kind: Schema.Literals(["merge", "stack-land", "stack-restack"]),
+  id: TrimmedNonEmptyString,
+});
+export const PullRequestActionOutcome = Schema.Struct({
+  operation: PullRequestActionOperation,
+  state: Schema.Literals(["pending", "completed", "failed"]),
+  detail: Schema.String,
+});
+export type PullRequestActionOutcome = typeof PullRequestActionOutcome.Type;
+
 export const PullRequestActionInput = Schema.Struct({
   /** Native stack scope; only send to environments advertising pullRequestStackActions. */
   stackNumber: Schema.optional(PositiveInt),
+  expectedStackRevision: Schema.optional(PositiveInt),
   expectedStackHeads: Schema.optional(Schema.Array(PullRequestStackHead)),
+  requestId: Schema.optional(TrimmedNonEmptyString),
+  /** Inspect admitted work; never create another operation. */
+  operation: Schema.optional(PullRequestActionOperation),
   ...PullRequestRef.fields,
   action: PullRequestAction,
   /**
@@ -1061,6 +1096,8 @@ export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft
  */
 export const PullRequestSubmitReviewInput = Schema.Struct({
   ...PullRequestRef.fields,
+  reviewRevision: Schema.optional(PullRequestReviewRevision),
+  requestId: Schema.optional(TrimmedNonEmptyString),
   verdict: PullRequestReviewVerdict,
   /** The review's own words. May be empty, which is how an approval with no remarks is sent. */
   body: Schema.String.check(Schema.isMaxLength(65_536)),
@@ -1303,6 +1340,8 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
   {
     operation: Schema.String,
     detail: TrimmedNonEmptyString,
+    /** This invocation did not start a remote mutation, not proof about an earlier attempt. */
+    notDispatched: Schema.optional(Schema.Literal(true)),
     cause: Schema.optional(Schema.Defect()),
   },
   { httpApiStatus: 502 },

@@ -7,6 +7,7 @@ import {
   type EnvironmentId,
   DEFAULT_SERVER_SETTINGS,
   type PullRequestAction,
+  type PullRequestActionInput,
   type PullRequestMergeMethod,
   type PullRequestListEntry,
   type PullRequestUpdateMethod,
@@ -66,7 +67,7 @@ import {
 } from "~/logicalProject";
 import { changeRequestRepositoryUrl, gitHubPullRequestBrowserUrl } from "~/lib/openPullRequestLink";
 import { usePreparePullRequestThreadAction } from "~/lib/sourceControlActions";
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
@@ -119,6 +120,14 @@ import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { PullRequestCommentComposer } from "./PullRequestCommentComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
+import {
+  decodePullRequestActionOutcome,
+  inspectionInput,
+  pullRequestActionScopeKey,
+  readStoredPullRequestAction,
+  type StoredPullRequestAction,
+  writeStoredPullRequestAction,
+} from "./pullRequestActionState";
 import {
   buildAddSelectionToAgentHandoff,
   buildAskAboutPullRequestHandoff,
@@ -832,10 +841,55 @@ export function PullRequestDetailPanel({
   }, [forcedRefreshToken, refreshFromHost]);
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+  const mergeStorageScope = { ...reference, action: "merge" as const };
+  const mergeScopeKey = pullRequestActionScopeKey(environmentId, mergeStorageScope);
+  const currentMergeScopeKey = useRef(mergeScopeKey);
+  currentMergeScopeKey.current = mergeScopeKey;
+  const [mergeOperation, setMergeOperation] = useState<StoredPullRequestAction | null>(() =>
+    readStoredPullRequestAction(
+      typeof window === "undefined" ? undefined : window.sessionStorage,
+      environmentId,
+      mergeStorageScope,
+    ),
+  );
+  useEffect(() => {
+    setMergeOperation(
+      readStoredPullRequestAction(
+        typeof window === "undefined" ? undefined : window.sessionStorage,
+        environmentId,
+        mergeStorageScope,
+      ),
+    );
+  }, [
+    environmentId,
+    pullRequestKey,
+    reference.host,
+    reference.number,
+    reference.projectId,
+    reference.repository,
+  ]);
+  const rememberMergeOperation = (
+    next: StoredPullRequestAction | null,
+    scope: PullRequestActionInput = mergeStorageScope,
+  ) => {
+    writeStoredPullRequestAction(
+      typeof window === "undefined" ? undefined : window.sessionStorage,
+      environmentId,
+      next,
+      scope,
+    );
+    if (currentMergeScopeKey.current === pullRequestActionScopeKey(environmentId, scope)) {
+      setMergeOperation(next);
+    }
+  };
   // Which action is in flight, not merely that one is: every control here is disabled while any
   // of them runs, but only the button that was pressed may say what it is doing.
   const [pendingAction, setPendingAction] = useState<PullRequestAction | null>(null);
-  const actionPending = pendingAction !== null;
+  useEffect(() => setPendingAction(null), [mergeScopeKey]);
+  const actionPending =
+    pendingAction !== null ||
+    (detail?.provider === "gitcafe" &&
+      (mergeOperation?.state === "pending" || mergeOperation?.state === "unknown"));
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
   // Scoped to the pull request it was typed against, since this one panel shows a different one
   // every time it is opened and a half-written title must not follow it there.
@@ -921,22 +975,53 @@ export function PullRequestDetailPanel({
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
   ) => {
+    const durableMerge = action === "merge" && detail?.provider === "gitcafe";
+    const input = {
+      ...reference,
+      action,
+      ...(durableMerge ? { requestId: randomUUID() } : {}),
+      ...(method ? { mergeMethod: method } : {}),
+      ...(updateMethod ? { updateMethod } : {}),
+    };
+    if (durableMerge) {
+      rememberMergeOperation(
+        {
+          input,
+          state: "unknown",
+          detail: "The merge request was sent, but its result has not been confirmed yet.",
+        },
+        input,
+      );
+    }
     const result = await runAction({
       environmentId,
-      input: {
-        ...reference,
-        action,
-        ...(method ? { mergeMethod: method } : {}),
-        ...(updateMethod ? { updateMethod } : {}),
-      },
+      input,
     });
-    setPendingAction(null);
+    const isCurrentScope =
+      currentMergeScopeKey.current === pullRequestActionScopeKey(environmentId, input);
+    if (isCurrentScope) setPendingAction(null);
     if (result._tag === "Failure") {
+      const failure = squashAtomCommandFailure(result);
+      if (durableMerge) {
+        rememberMergeOperation(
+          typeof failure === "object" &&
+            failure !== null &&
+            "notDispatched" in failure &&
+            failure.notDispatched === true
+            ? null
+            : {
+                input,
+                state: "unknown",
+                detail:
+                  "The merge result could not be confirmed. Do not submit it again automatically.",
+              },
+          input,
+        );
+      }
       // The host's own sentence, because it is the only thing that says why. A merge strategy a
       // branch policy forbids is refused at completion and nowhere earlier — Azure DevOps
       // publishes no per-strategy availability to hide the control with — so "action failed"
       // would leave the reader pressing the same button again.
-      const failure = squashAtomCommandFailure(result);
       // The hint stands for what was actually asked for: a reader who pressed Update branch is
       // told to check their access, not offered the merge commit they already chose.
       const hint =
@@ -950,18 +1035,43 @@ export function PullRequestDetailPanel({
       });
       return false;
     }
+    if (durableMerge) {
+      const outcome = decodePullRequestActionOutcome(result.value);
+      if (!outcome) {
+        rememberMergeOperation(
+          {
+            input,
+            state: "unknown",
+            detail: "GitCafe returned an unknown result. Open the pull request to recover safely.",
+          },
+          input,
+        );
+        return false;
+      }
+      if (outcome.state === "pending") {
+        rememberMergeOperation({ input, ...outcome, state: "pending" }, input);
+        return false;
+      }
+      if (outcome.state === "failed") {
+        rememberMergeOperation({ input, ...outcome, state: "failed" }, input);
+        return false;
+      }
+      rememberMergeOperation(null, input);
+    }
     toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS[action] });
     // A branch update moves the head commit, which leaves the diff atom pointed at a comparison
     // that no longer exists — the same staleness the manual refresh button fixes, so it goes
     // through that path rather than a second one. Every other action here only changes metadata;
     // a merge does move the branch too, but it also closes the pull request, where the diff is
     // no longer what anyone is looking at.
-    if (pullRequestActionNeedsHostRefresh(action)) {
-      void refreshFromHost();
-    } else {
-      refreshDetail();
+    if (isCurrentScope) {
+      if (pullRequestActionNeedsHostRefresh(action)) {
+        void refreshFromHost();
+      } else {
+        refreshDetail();
+      }
+      onActed?.();
     }
-    onActed?.();
     return true;
   };
 
@@ -970,9 +1080,60 @@ export function PullRequestDetailPanel({
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
   ) => {
-    if (pendingAction !== null) return false;
+    if (actionPending) return false;
     setPendingAction(action);
     return finishAction(action, method, updateMethod);
+  };
+
+  const checkMergeStatus = async () => {
+    if (!mergeOperation || pendingAction !== null) return;
+    const input = inspectionInput(mergeOperation);
+    if (!input) return;
+    setPendingAction("merge");
+    const result = await runAction({ environmentId, input });
+    const isCurrentScope =
+      currentMergeScopeKey.current === pullRequestActionScopeKey(environmentId, input);
+    if (isCurrentScope) setPendingAction(null);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: "Could not check merge status",
+        description: String(squashAtomCommandFailure(result)),
+      });
+      return;
+    }
+    const outcome = decodePullRequestActionOutcome(result.value);
+    if (!outcome) {
+      rememberMergeOperation(
+        {
+          ...mergeOperation,
+          state: "unknown",
+          detail: "GitCafe returned an unknown result. Open the pull request to recover safely.",
+        },
+        mergeOperation.input,
+      );
+      return;
+    }
+    if (outcome.state === "pending") {
+      rememberMergeOperation(
+        { input: mergeOperation.input, ...outcome, state: "pending" },
+        mergeOperation.input,
+      );
+      return;
+    }
+    if (outcome.state === "failed") {
+      rememberMergeOperation(
+        { input: mergeOperation.input, ...outcome, state: "failed" },
+        mergeOperation.input,
+      );
+      return;
+    }
+    rememberMergeOperation(null, mergeOperation.input);
+    toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS.merge });
+    if (isCurrentScope) {
+      refreshDetail();
+      onActed?.();
+    }
   };
 
   const performCommentAction = async (body: string, action: "close" | "reopen") => {
@@ -1657,6 +1818,7 @@ export function PullRequestDetailPanel({
               {nativeStack ? (
                 <PullRequestStackMenu
                   stack={nativeStack}
+                  nativeGitCafeActions={detail.provider === "gitcafe"}
                   notice={nativeStackQuery.notice}
                   onRetry={nativeStackQuery.error ? nativeStackQuery.refresh : undefined}
                   reference={reference}
@@ -1753,6 +1915,44 @@ export function PullRequestDetailPanel({
                     ) : null}
                   </MenuPopup>
                 </Menu>
+              ) : null}
+              {detail.provider === "gitcafe" && mergeOperation ? (
+                <span className="inline-flex shrink-0 items-center gap-1" role="status">
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          className="max-w-48 truncate text-xs text-muted-foreground"
+                          tabIndex={0}
+                        />
+                      }
+                    >
+                      {mergeOperation.state === "pending"
+                        ? "Merge pending"
+                        : mergeOperation.state === "failed"
+                          ? `Merge failed: ${mergeOperation.detail}`
+                          : mergeOperation.detail}
+                    </TooltipTrigger>
+                    <TooltipPopup>{mergeOperation.detail}</TooltipPopup>
+                  </Tooltip>
+                  {mergeOperation.operation ? (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={pendingAction !== null}
+                      onClick={() => void checkMergeStatus()}
+                    >
+                      {pendingAction === "merge" ? "Checking…" : "Check status"}
+                    </Button>
+                  ) : null}
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    render={<a href={detail.url} target="_blank" rel="noreferrer" />}
+                  >
+                    {detail.provider === "gitcafe" ? "Open on GitCafe" : "Open pull request"}
+                  </Button>
+                </span>
               ) : null}
               {/* Said where the Merge button is, because it is the answer to why nobody has
                   pressed it: the merge is already asked for, and the host is holding it. */}

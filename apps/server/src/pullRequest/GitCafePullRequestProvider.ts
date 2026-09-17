@@ -8,29 +8,40 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitCafeCli from "../sourceControl/GitCafeCli.ts";
+import { makeGitCafeActionWrites } from "./gitCafeActionWrites.ts";
+import { makeGitCafeConversationWrites } from "./gitCafeConversationWrites.ts";
 import * as Json from "./gitCafePullRequestJson.ts";
+import { makeGitCafeReviewWrites } from "./gitCafeReviewWrites.ts";
 import {
   PullRequestProviderError,
   type ProviderRepositoryRef,
   type PullRequestProviderApi,
 } from "./PullRequestProvider.ts";
 
-// The deployed API requires versioned write receipts. Enable mutations after their
-// request and completion semantics are mapped, independently of readable host data.
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
-  comment: false,
-  actions: [],
-  mergeMethods: [],
+  comment: true,
+  actions: ["ready", "draft", "close", "reopen", "merge", "update-branch"],
+  mergeMethods: ["merge", "squash", "rebase"],
+  updateMethods: ["rebase"],
   search: true,
   stacks: true,
-  stackActions: false,
-  reactions: false,
-  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
-  reviewers: { request: false, listCandidates: false },
-  edit: { changeRequest: false, comment: false },
+  stackActions: true,
+  reactions: true,
+  labels: true,
+  review: {
+    inlineComment: true,
+    reply: true,
+    resolve: true,
+    verdicts: ["approve", "request-changes", "comment"],
+  },
+  reviewers: { request: true, listCandidates: true },
+  edit: { changeRequest: true, comment: true },
 };
 const IdentitySchema = Schema.Struct({ user: Schema.Struct({ username: TrimmedNonEmptyString }) });
+const LabelsSchema = Schema.Struct({
+  items: Schema.Array(Schema.Struct({ name: Schema.String, color: Schema.String })),
+});
 const FilterOptionsSchema = Schema.Struct({
   actors: Schema.Array(
     Schema.Struct({ actorId: TrimmedNonEmptyString, handle: TrimmedNonEmptyString }),
@@ -73,10 +84,14 @@ const ChecksSchema = Schema.Struct({
 const DiffPageSchema = Schema.Struct({
   ...Json.DiffSchema.fields,
   version: NonNegativeInt,
+  headOid: Schema.optional(TrimmedNonEmptyString),
+  comparisonBaseOid: Schema.optional(TrimmedNonEmptyString),
   nextAfter: Schema.NullOr(TrimmedNonEmptyString),
 });
 const DiffCursorSchema = Schema.Struct({
   version: NonNegativeInt,
+  headOid: Schema.optional(TrimmedNonEmptyString),
+  baseOid: Schema.optional(TrimmedNonEmptyString),
   after: TrimmedNonEmptyString,
 });
 const CommitDiffCursorSchema = Schema.Struct({ after: TrimmedNonEmptyString });
@@ -89,6 +104,8 @@ const ComparePageSchema = Schema.Struct({
 });
 const DiffFileContentsSchema = Schema.Struct({
   version: NonNegativeInt,
+  headOid: Schema.optional(TrimmedNonEmptyString),
+  comparisonBaseOid: Schema.optional(TrimmedNonEmptyString),
   file: Schema.Struct({
     oldContent: Schema.optional(Schema.NullOr(Schema.String)),
     newContent: Schema.optional(Schema.NullOr(Schema.String)),
@@ -130,14 +147,34 @@ export function gitCafeProviderFailure(error: GitCafeCli.GitCafeCliError) {
   if (error.status === 429 || error.code === "RATE_LIMITED") return "rate-limited" as const;
   return "failed" as const;
 }
-export function gitCafeViewerPermissions(): PullRequestViewerPermissions {
+export function gitCafeViewerPermissions(
+  pull?: typeof Json.PullDetailSchema.Type,
+): PullRequestViewerPermissions {
+  const capabilities = pull?.capabilities;
+  const edit = capabilities?.edit ?? false;
+  const review = capabilities?.review ?? false;
+  const moderate = capabilities?.moderate ?? false;
+  const merge = capabilities?.merge ?? false;
   return {
-    actions: [],
-    stackRebase: false,
-    comment: false,
-    resolve: false,
-    verdicts: [],
-    requestReviewers: false,
+    actions: [
+      ...(edit
+        ? ([
+            pull?.draft ? "ready" : "draft",
+            pull?.state === "closed" ? "reopen" : "close",
+          ] as const)
+        : []),
+      ...(merge && pull?.state === "open" && !pull.draft ? (["merge"] as const) : []),
+    ],
+    stackRebase: merge,
+    // Pull projections cannot attest to a grant's independent comment selectors. Like cafe pr
+    // comment, offer the write and let the comment endpoint authorize it.
+    comment: true,
+    resolve: moderate,
+    verdicts: review ? ["approve", "request-changes", "comment"] : [],
+    requestReviewers: moderate,
+    editChangeRequest: edit,
+    updateMethods: [],
+    labels: moderate,
   };
 }
 
@@ -152,13 +189,6 @@ export const make = Effect.gen(function* () {
       detail,
       ...(cause === undefined ? {} : { cause }),
     });
-  const unsupported = (operation: string) =>
-    Effect.fail(
-      failure(
-        operation,
-        "GitCafe writes are not supported here yet. Open the pull request on GitCafe to make changes.",
-      ),
-    );
   const target = (input: ProviderRepositoryRef) =>
     (input.host === "git.cafe" || input.host === "staging.git.cafe") &&
     /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(input.repository)
@@ -255,6 +285,9 @@ export const make = Effect.gen(function* () {
     }
     return { items, nextAfter };
   });
+  const writes = makeGitCafeConversationWrites(cli);
+  const reviewWrites = makeGitCafeReviewWrites(cli);
+  const actionWrites = makeGitCafeActionWrites(cli);
   const provider: PullRequestProviderApi = {
     kind: "gitcafe",
     capabilities: CAPABILITIES,
@@ -333,7 +366,7 @@ export const make = Effect.gen(function* () {
     getChangeRequest: Effect.fn("GitCafePullRequestProvider.getChangeRequest")(function* (input) {
       const base = yield* target(input);
       const pull = yield* readPull(input);
-      const [reviewers, status, changes, checks] = yield* Effect.all(
+      const [reviewers, status, changes, checks, labels] = yield* Effect.all(
         [
           read(
             input,
@@ -375,12 +408,14 @@ export const make = Effect.gen(function* () {
                 ChecksSchema,
                 "getChecks",
               ),
+          read(input, `${base}/${input.number}/labels?limit=100`, LabelsSchema, "listLabels"),
         ],
         { concurrency: 4 },
       );
       const actors = Json.toReviewers(reviewers, input.host);
       return {
         ...Json.toChangeRequest(pull, input.repository, input.host),
+        labels: labels.items,
         body: pull.description ?? "",
         ...(pull.sourceRepo === null
           ? {}
@@ -424,7 +459,7 @@ export const make = Effect.gen(function* () {
           squash: status.merge.strategies.includes("squash"),
           rebase: status.merge.strategies.includes("rebase"),
         },
-        viewerPermissions: gitCafeViewerPermissions(),
+        viewerPermissions: gitCafeViewerPermissions(pull),
       };
     }),
     getChangeRequestStack: Effect.fn("GitCafePullRequestProvider.getChangeRequestStack")(
@@ -474,7 +509,7 @@ export const make = Effect.gen(function* () {
         );
       },
     ),
-    getViewerPermissions: () => Effect.succeed(gitCafeViewerPermissions()),
+    getViewerPermissions: (input) => readPull(input).pipe(Effect.map(gitCafeViewerPermissions)),
     getDiff: Effect.fn("GitCafePullRequestProvider.getDiff")(function* (input) {
       const base = yield* target(input);
       if (input.commit !== undefined) {
@@ -532,7 +567,8 @@ export const make = Effect.gen(function* () {
           : yield* decodeDiffCursor(input.cursor).pipe(
               Effect.mapError((cause) => failure("getDiff", "Invalid GitCafe diff cursor.", cause)),
             );
-      const version = cursor?.version ?? (yield* readPull(input)).version;
+      const revision = cursor ?? { version: (yield* readPull(input)).version };
+      const version = revision.version;
       const query = new URLSearchParams({ expectedVersion: String(version), limit: "500" });
       if (cursor !== null) query.set("after", cursor.after);
       const page = yield* read(
@@ -542,18 +578,37 @@ export const make = Effect.gen(function* () {
         "getDiff",
         8 * 1024 * 1024,
       );
+      if (
+        page.version !== version ||
+        (cursor?.headOid !== undefined && cursor.headOid !== page.headOid) ||
+        (cursor?.baseOid !== undefined && cursor.baseOid !== page.comparisonBaseOid)
+      )
+        return yield* failure(
+          "getDiff",
+          `GitCafe returned a different diff snapshot than revision ${version} requested.`,
+        );
       const diff = Json.toDiff(page);
+      const reviewRevision =
+        page.headOid === undefined || page.comparisonBaseOid === undefined
+          ? undefined
+          : { version, headOid: page.headOid, baseOid: page.comparisonBaseOid };
       return {
         ...diff,
+        ...(reviewRevision === undefined ? {} : { reviewRevision }),
         nextCursor:
           page.nextAfter === null
             ? null
-            : encodeDiffCursor({ version: page.version, after: page.nextAfter }),
+            : encodeDiffCursor({
+                version,
+                ...(reviewRevision === undefined
+                  ? {}
+                  : { headOid: reviewRevision.headOid, baseOid: reviewRevision.baseOid }),
+                after: page.nextAfter,
+              }),
       };
     }),
     getDiffFileContents: Effect.fn("GitCafePullRequestProvider.getDiffFileContents")(
       function* (input) {
-        const pull = yield* readPull(input);
         const unavailable = (side: "old" | "new", reason?: string) =>
           failure(
             "getDiffFileContents",
@@ -561,9 +616,10 @@ export const make = Effect.gen(function* () {
           );
         if (input.commit === undefined) {
           const base = yield* target(input);
+          const version = input.reviewRevision?.version ?? (yield* readPull(input)).version;
           const query = new URLSearchParams({
             path: input.changeType === "deleted" ? input.oldPath : input.newPath,
-            expectedVersion: String(pull.version),
+            expectedVersion: String(version),
           });
           const result = yield* read(
             input,
@@ -572,6 +628,16 @@ export const make = Effect.gen(function* () {
             "getDiffFileContents",
             3 * 1024 * 1024,
           );
+          if (
+            result.version !== version ||
+            (input.reviewRevision !== undefined &&
+              (result.headOid !== input.reviewRevision.headOid ||
+                result.comparisonBaseOid !== input.reviewRevision.baseOid))
+          )
+            return yield* failure(
+              "getDiffFileContents",
+              "GitCafe returned file contents from a different diff snapshot. Refresh the diff before expanding it.",
+            );
           if (input.changeType !== "new" && result.file.oldContent == null)
             return yield* unavailable("old", result.file.oldContentUnavailableReason);
           if (input.changeType !== "deleted" && result.file.newContent == null)
@@ -582,6 +648,7 @@ export const make = Effect.gen(function* () {
           };
         }
 
+        const pull = yield* readPull(input);
         const repository =
           pull.sourceRepo === null
             ? input.repository
@@ -627,14 +694,9 @@ export const make = Effect.gen(function* () {
         return { oldContents, newContents };
       },
     ),
-    runAction: () => unsupported("runAction"),
-    comment: () => unsupported("comment"),
-    submitReview: () => unsupported("submitReview"),
-    listReviewerCandidates: () => unsupported("listReviewerCandidates"),
-    setReviewerRequest: () => unsupported("setReviewerRequest"),
-    replyToThread: () => unsupported("replyToThread"),
-    setReaction: () => unsupported("setReaction"),
-    setThreadResolution: () => unsupported("setThreadResolution"),
+    ...writes,
+    ...reviewWrites,
+    ...actionWrites,
   };
   return provider;
 });

@@ -4,7 +4,14 @@
  * review. The glass card frame belongs to the caller (PullRequestCodeTab), which is why this
  * only contributes its own padding.
  */
-import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestRef,
+  PullRequestReviewRevision,
+  PullRequestReviewVerdict,
+  SourceControlProviderKind,
+} from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -49,12 +56,16 @@ const VERDICTS: ReadonlyArray<{
 export function PullRequestReviewBar({
   environmentId,
   reference,
+  provider,
+  displayedRevision,
   verdicts,
   requestChangesSummaryRequired,
   onSubmitted,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  provider: SourceControlProviderKind;
+  displayedRevision?: PullRequestReviewRevision;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   requestChangesSummaryRequired: boolean;
   onSubmitted: () => void;
@@ -70,6 +81,13 @@ export function PullRequestReviewBar({
   const removeComments = usePullRequestReviewStore((store) => store.removeComments);
   const setSummary = usePullRequestReviewStore((store) => store.setSummary);
   const clearSummary = usePullRequestReviewStore((store) => store.clearSummary);
+  const draftRevision = usePullRequestReviewStore((store) => store.revisions[reviewKey]);
+  const unsettled = usePullRequestReviewStore((store) => store.submissions[reviewKey]);
+  const startSubmission = usePullRequestReviewStore((store) => store.startSubmission);
+  const finishSubmissionAttempt = usePullRequestReviewStore(
+    (store) => store.finishSubmissionAttempt,
+  );
+  const clearSubmission = usePullRequestReviewStore((store) => store.clearSubmission);
   const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
     reportFailure: false,
   });
@@ -79,14 +97,29 @@ export function PullRequestReviewBar({
 
   const submit = async (verdict: (typeof VERDICTS)[number]) => {
     if (pending) return;
-    const submittedBody = body;
-    const submittedComments = comments;
+    const proposed = {
+      verdict: verdict.value,
+      body,
+      comments,
+      ...((comments.length > 0 ? draftRevision : displayedRevision) === undefined
+        ? {}
+        : { revision: comments.length > 0 ? draftRevision! : displayedRevision! }),
+    };
+    const started = provider === "gitcafe" ? startSubmission(reviewKey, proposed) : undefined;
+    if (provider === "gitcafe" && started === undefined) return;
+    const submission = started?.submission ?? { ...proposed, id: undefined };
+    const submittedBody = submission.body;
+    const submittedComments = submission.comments;
+    const reviewRevision = submission.revision;
+    const requestId = submission.id;
     setPending(true);
     const result = await submitReview({
       environmentId,
       input: {
         ...reference,
-        verdict: verdict.value,
+        ...(provider === "gitcafe" && reviewRevision !== undefined ? { reviewRevision } : {}),
+        ...(requestId === undefined ? {} : { requestId }),
+        verdict: submission.verdict,
         body: submittedBody,
         comments: submittedComments,
       },
@@ -94,7 +127,29 @@ export function PullRequestReviewBar({
     setPending(false);
     if (result._tag === "Failure") {
       // The draft is kept: whatever went wrong, retyping the review is not the answer.
-      toastManager.add({ type: "error", title: "The review could not be submitted" });
+      const failure = squashAtomCommandFailure(result);
+      if (requestId !== undefined) {
+        finishSubmissionAttempt(reviewKey, requestId);
+        if (
+          started?.firstAttempt === true &&
+          typeof failure === "object" &&
+          failure !== null &&
+          "notDispatched" in failure &&
+          failure.notDispatched === true
+        )
+          clearSubmission(reviewKey, requestId);
+      }
+      const detail =
+        failure instanceof Error
+          ? failure.message
+          : typeof failure === "string"
+            ? failure
+            : "Retry the preserved submission or follow the provider's recovery instructions.";
+      toastManager.add({
+        type: "error",
+        title: "The review could not be submitted",
+        description: detail,
+      });
       return;
     }
     // More remarks may have been added while the host was accepting this snapshot. Leave those,
@@ -104,7 +159,11 @@ export function PullRequestReviewBar({
       submittedComments.map((comment) => comment.id),
     );
     clearSummary(reviewKey, submittedBody);
-    toastManager.add({ type: "success", title: verdict.sent });
+    if (requestId !== undefined) clearSubmission(reviewKey, requestId);
+    toastManager.add({
+      type: "success",
+      title: VERDICTS.find((candidate) => candidate.value === submission.verdict)?.sent,
+    });
     onSubmitted();
   };
 
@@ -141,12 +200,24 @@ export function PullRequestReviewBar({
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />
       <div className="mt-2 flex flex-wrap justify-end gap-2">
+        {unsettled !== undefined ? (
+          <Button
+            size="xs"
+            variant="default"
+            disabled={pending}
+            onClick={() =>
+              void submit(VERDICTS.find((candidate) => candidate.value === unsettled.verdict)!)
+            }
+          >
+            Retry previous submission
+          </Button>
+        ) : null}
         {offered.map((verdict) => (
           <Button
             key={verdict.value}
             size="xs"
             variant={verdict.value === "comment" ? "outline" : "default"}
-            disabled={pending || !canSubmit(verdict.value)}
+            disabled={pending || unsettled !== undefined || !canSubmit(verdict.value)}
             onClick={() => void submit(verdict)}
           >
             <span className="flex items-center gap-1.5">

@@ -74,6 +74,8 @@ export const PullDetailSchema = Schema.Struct({
   closedAt: Schema.NullOr(IsoDateTime),
   mergedAt: Schema.NullOr(IsoDateTime),
   sourceRepo: Schema.NullOr(Schema.Struct({ owner: Schema.String, name: Schema.String })),
+  observedBaseOid: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeRoute: Schema.optional(Schema.Literals(["native", "provider", "unsupported"])),
   capabilities: Schema.Struct({
     comment: Schema.Boolean,
     review: Schema.Boolean,
@@ -143,6 +145,7 @@ export function toStack(
     number: stack.number,
     url: `https://${host}/${repository}/stacks/${stack.number}`,
     base: stack.landingBase,
+    revision: stack.revision,
     layers: [...stack.members]
       .sort((a, b) => a.position - b.position)
       .map((member) => ({
@@ -166,6 +169,16 @@ const CommentSchema = Schema.Struct({
   side: Schema.NullOr(Schema.Literals(["left", "right"])),
   commitOid: Schema.NullOr(Schema.String),
   resolvedAt: Schema.NullOr(IsoDateTime),
+  capabilities: Schema.optional(
+    Schema.Struct({
+      edit: Schema.Boolean,
+      hide: Schema.Boolean,
+      unhide: Schema.Boolean,
+      delete: Schema.Boolean,
+      resolve: Schema.Boolean,
+      unresolve: Schema.Boolean,
+    }),
+  ),
 });
 export const CommentsSchema = Schema.Struct({
   items: Schema.Array(CommentSchema),
@@ -305,11 +318,18 @@ export function toActivity(
       line: first.line,
       side: first.side!,
       isResolved: root?.resolvedAt != null,
+      ...(root?.capabilities === undefined
+        ? {}
+        : {
+            canResolve:
+              root.resolvedAt === null ? root.capabilities.resolve : root.capabilities.unresolve,
+          }),
       isOutdated:
         headOid !== undefined && latest.commitOid !== null && latest.commitOid !== headOid,
       comments: group.map((comment) => ({
         id: comment.id,
         author: toActor(comment.author, host),
+        ...(comment.capabilities === undefined ? {} : { canEdit: comment.capabilities.edit }),
         body: comment.body ?? "",
         createdAt: comment.createdAt,
         url: null,
@@ -325,6 +345,7 @@ export function toActivity(
         id: comment.id,
         kind: comment.path === null ? ("issue-comment" as const) : ("review-comment" as const),
         author: toActor(comment.author, host),
+        ...(comment.capabilities === undefined ? {} : { canEdit: comment.capabilities.edit }),
         body: comment.body ?? "",
         createdAt: comment.createdAt,
         url: null,

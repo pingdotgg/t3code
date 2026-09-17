@@ -3,6 +3,8 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestStackMembership,
   PullRequestAction,
+  PullRequestActionOutcome,
+  PullRequestActionInput,
   PullRequestStackHead,
   PullRequestActor,
   PullRequestBaseComparison,
@@ -22,6 +24,7 @@ import type {
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
+  PullRequestReviewRevision,
   PullRequestReviewDecision,
   PullRequestReviewThread,
   PullRequestThreadCommentsResult,
@@ -51,6 +54,8 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
     operation: Schema.String,
     reason: Schema.Literals(["missing-tool", "unauthenticated", "rate-limited", "failed"]),
     detail: Schema.String,
+    /** This invocation did not start any remote mutation; it says nothing about earlier attempts. */
+    notDispatched: Schema.optional(Schema.Literal(true)),
     retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
@@ -136,6 +141,7 @@ export interface ProviderChangeRequestStack {
   readonly number: number;
   readonly url: string;
   readonly base: string;
+  readonly revision?: number;
   readonly layers: ReadonlyArray<ProviderChangeRequestStackLayer>;
 }
 
@@ -245,6 +251,7 @@ export interface ProviderChangeRequestActivity {
 }
 
 export interface ProviderDiffSlice {
+  readonly reviewRevision?: PullRequestReviewRevision;
   readonly patch: string;
   /** Something in this slice could not be shown, as opposed to there being more slices. */
   readonly truncated: boolean;
@@ -442,6 +449,8 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & {
       readonly number: number;
       readonly commit?: string | undefined;
+      /** The whole-change comparison returned with the displayed patch. */
+      readonly reviewRevision?: PullRequestReviewRevision | undefined;
       readonly changeType: "change" | "rename-pure" | "rename-changed" | "new" | "deleted";
       readonly oldPath: string;
       readonly newPath: string;
@@ -453,13 +462,16 @@ export interface PullRequestProviderApi {
       readonly number: number;
       readonly action: PullRequestAction;
       readonly stackNumber?: number;
+      readonly expectedStackRevision?: number;
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
+      readonly requestId?: string;
+      readonly operation?: PullRequestActionInput["operation"];
       /** Meaningful for `merge` and `enable-auto-merge`; absent takes the host's own default. */
       readonly mergeMethod?: PullRequestMergeMethod;
       /** Only meaningful for `update-branch`; absent takes the host's own default. */
       readonly updateMethod?: PullRequestUpdateMethod;
     },
-  ) => Effect.Effect<void, PullRequestProviderError>;
+  ) => Effect.Effect<void | PullRequestActionOutcome, PullRequestProviderError>;
 
   /**
    * Rewrites the change request's own words. Only called when `capabilities.edit.changeRequest`
@@ -503,6 +515,8 @@ export interface PullRequestProviderApi {
   readonly submitReview: (
     input: ProviderRepositoryRef & {
       readonly number: number;
+      readonly reviewRevision?: PullRequestReviewRevision;
+      readonly requestId?: string;
       readonly verdict: PullRequestReviewVerdict;
       readonly body: string;
       readonly comments: ReadonlyArray<PullRequestReviewCommentDraft>;

@@ -4,10 +4,12 @@ import type {
   PullRequestRef,
   PullRequestStack,
   PullRequestMergeMethod,
+  PullRequestActionInput,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { GitMergeIcon, LayersIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { randomUUID } from "~/lib/utils";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { Button } from "../ui/button";
@@ -25,9 +27,18 @@ import { toastManager } from "../ui/toast";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
+import {
+  decodePullRequestActionOutcome,
+  inspectionInput,
+  pullRequestActionScopeKey,
+  readStoredPullRequestAction,
+  type StoredPullRequestAction,
+  writeStoredPullRequestAction,
+} from "./pullRequestActionState";
 
 export function PullRequestStackMenu({
   stack,
+  nativeGitCafeActions,
   reference,
   environmentId,
   canMerge,
@@ -41,6 +52,7 @@ export function PullRequestStackMenu({
   notice?: string | null;
   onRetry?: (() => void) | undefined;
   stack: PullRequestStack;
+  nativeGitCafeActions: boolean;
   reference: PullRequestRef;
   environmentId: EnvironmentId;
   canMerge: boolean;
@@ -51,7 +63,54 @@ export function PullRequestStackMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [confirmation, setConfirmation] = useState<"merge" | "update-branch" | null>(null);
+  const storageScope = {
+    ...reference,
+    number: stack.layers.find((layer) => layer.state !== "merged")?.number ?? reference.number,
+    stackNumber: stack.number,
+    action: "merge" as const,
+  };
+  const scopeKey = pullRequestActionScopeKey(environmentId, storageScope);
+  const currentScopeKey = useRef(scopeKey);
+  currentScopeKey.current = scopeKey;
+  const [storedAction, setStoredAction] = useState<StoredPullRequestAction | null>(() =>
+    nativeGitCafeActions
+      ? readStoredPullRequestAction(
+          typeof window === "undefined" ? undefined : window.sessionStorage,
+          environmentId,
+          storageScope,
+        )
+      : null,
+  );
+  useEffect(() => {
+    setStoredAction(
+      nativeGitCafeActions
+        ? readStoredPullRequestAction(
+            typeof window === "undefined" ? undefined : window.sessionStorage,
+            environmentId,
+            storageScope,
+          )
+        : null,
+    );
+  }, [environmentId, nativeGitCafeActions, scopeKey]);
+  const remember = (
+    next: StoredPullRequestAction | null,
+    scope: PullRequestActionInput = storageScope,
+  ) => {
+    writeStoredPullRequestAction(
+      typeof window === "undefined" ? undefined : window.sessionStorage,
+      environmentId,
+      next,
+      scope,
+    );
+    if (currentScopeKey.current === pullRequestActionScopeKey(environmentId, scope)) {
+      setStoredAction(next);
+    }
+  };
   const [pending, setPending] = useState(false);
+  useEffect(() => {
+    setPending(false);
+    setConfirmation(null);
+  }, [scopeKey]);
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
   const top = stack.layers.at(-1);
   const unmerged = stack.layers.filter((layer) => layer.state !== "merged");
@@ -64,14 +123,23 @@ export function PullRequestStackMenu({
     layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
   );
   const hasUnknownHead = expectedStackHeads.length !== unmerged.length;
+  const durablePending = storedAction?.state === "pending" || storedAction?.state === "unknown";
   const mergeDisabled =
     pending ||
+    durablePending ||
+    (nativeGitCafeActions && stack.revision === undefined) ||
     selectedLayer?.state !== "open" ||
-    mergeLayers.some((layer) => !layer.headSha) ||
+    (!nativeGitCafeActions && mergeLayers.some((layer) => !layer.headSha)) ||
     mergeHasClosed ||
     mergeLayers.length === 0 ||
     mergeLayers.some((layer) => layer.isDraft);
-  const rebaseDisabled = pending || hasUnknownHead || hasClosed || unmerged.length === 0;
+  const rebaseDisabled =
+    pending ||
+    durablePending ||
+    (nativeGitCafeActions && stack.revision === undefined) ||
+    (!nativeGitCafeActions && hasUnknownHead) ||
+    hasClosed ||
+    unmerged.length === 0;
   const run = async () => {
     if (
       pending ||
@@ -80,42 +148,154 @@ export function PullRequestStackMenu({
     )
       return;
     const action = confirmation;
-    const target = action === "merge" ? selectedLayer : top;
-    if (!target?.headSha) return;
+    const target = action === "merge" ? selectedLayer : nativeGitCafeActions ? unmerged[0] : top;
+    if (!target || (!nativeGitCafeActions && !target.headSha)) return;
     const actionHeads = (action === "merge" ? mergeLayers : unmerged).flatMap((layer) =>
       layer.headSha ? [{ number: layer.number, headSha: layer.headSha }] : [],
     );
+    const input: PullRequestActionInput = {
+      ...reference,
+      number: target.number,
+      stackNumber: stack.number,
+      ...(nativeGitCafeActions
+        ? { expectedStackRevision: stack.revision, requestId: randomUUID() }
+        : { expectedStackHeads: actionHeads }),
+      action,
+      ...(action === "merge" ? { mergeMethod } : { updateMethod: "rebase" as const }),
+    };
+    if (nativeGitCafeActions) {
+      remember({
+        input,
+        state: "unknown",
+        detail: "The stack request was sent, but its result has not been confirmed yet.",
+      });
+    }
     setPending(true);
     const result = await runAction({
       environmentId,
-      input: {
-        ...reference,
-        number: target.number,
-        stackNumber: stack.number,
-        expectedStackHeads: actionHeads,
-        action,
-        ...(action === "merge" ? { mergeMethod } : { updateMethod: "rebase" }),
-      },
+      input,
     });
-    setPending(false);
-    setConfirmation(null);
-    onActed();
+    const isCurrentScope =
+      currentScopeKey.current === pullRequestActionScopeKey(environmentId, input);
+    if (isCurrentScope) setPending(false);
+    if (isCurrentScope) setConfirmation(null);
     if (result._tag === "Failure") {
+      const failure = squashAtomCommandFailure(result);
+      if (nativeGitCafeActions) {
+        remember(
+          typeof failure === "object" &&
+            failure !== null &&
+            "notDispatched" in failure &&
+            failure.notDispatched === true
+            ? null
+            : {
+                input,
+                state: "unknown",
+                detail:
+                  "The stack result could not be confirmed. Do not submit it again automatically.",
+              },
+          input,
+        );
+      }
       toastManager.add({
         type: "error",
         title: "Stack operation did not complete",
-        description: String(squashAtomCommandFailure(result)),
+        description: String(failure),
       });
     } else {
-      toastManager.add({
-        type: "success",
-        title: action === "merge" ? "Stack merge request completed" : "Stack rebased",
-        description:
-          action === "merge"
-            ? "GitHub merged the stack or added it to its merge queue."
-            : undefined,
-      });
+      let outcome = null;
+      if (nativeGitCafeActions) {
+        outcome = decodePullRequestActionOutcome(result.value);
+        if (!outcome)
+          remember(
+            {
+              input,
+              state: "unknown",
+              detail: "GitCafe returned an unknown stack result.",
+            },
+            input,
+          );
+        else if (outcome.state === "completed") remember(null, input);
+        else if (outcome.state === "pending")
+          remember({ input, ...outcome, state: "pending" }, input);
+        else remember({ input, ...outcome, state: "failed" }, input);
+      }
+      if (isCurrentScope) onActed();
+      if (nativeGitCafeActions && !outcome) return;
+      toastManager.add(
+        outcome?.state === "failed"
+          ? { type: "error", title: "Stack operation failed", description: outcome.detail }
+          : {
+              type: "success",
+              title: nativeGitCafeActions
+                ? outcome?.state === "completed"
+                  ? "Stack operation completed"
+                  : "Stack operation accepted"
+                : action === "merge"
+                  ? "Stack merge request completed"
+                  : "Stack rebased",
+              description:
+                action === "merge" && !nativeGitCafeActions
+                  ? "GitHub merged the stack or added it to its merge queue."
+                  : undefined,
+            },
+      );
     }
+  };
+  const checkStatus = async () => {
+    if (!storedAction || pending) return;
+    const discovery =
+      storedAction.input.action === "merge"
+        ? { kind: "stack-land" as const, id: "latest" }
+        : { kind: "stack-restack" as const, id: "latest" };
+    const discovering = !storedAction.operation;
+    const input = inspectionInput(storedAction, discovery);
+    if (!input) return;
+    setPending(true);
+    const result = await runAction({ environmentId, input });
+    const isCurrentScope =
+      currentScopeKey.current === pullRequestActionScopeKey(environmentId, input);
+    if (isCurrentScope) setPending(false);
+    if (result._tag === "Failure") {
+      toastManager.add({
+        type: "error",
+        title: "Could not check stack status",
+        description: String(squashAtomCommandFailure(result)),
+      });
+      return;
+    }
+    const outcome = decodePullRequestActionOutcome(result.value);
+    if (!outcome) {
+      toastManager.add({
+        type: "error",
+        title: "Stack status could not be read",
+        description: "GitCafe returned an unknown stack result.",
+      });
+      return;
+    }
+    if (discovering) {
+      // Latest is useful discovery, but does not identify the lost request's operation.
+      remember(
+        {
+          input: storedAction.input,
+          state: "unknown",
+          detail: `Latest stack status: ${outcome.detail}`,
+        },
+        storedAction.input,
+      );
+    } else if (outcome.state === "completed") remember(null, storedAction.input);
+    else {
+      remember(
+        {
+          input: storedAction.input,
+          operation: storedAction.operation,
+          state: outcome.state,
+          detail: outcome.detail,
+        },
+        storedAction.input,
+      );
+    }
+    if (isCurrentScope && outcome.state === "completed") onActed();
   };
   const confirmationLayers = confirmation === "merge" ? mergeLayers : unmerged;
   return (
@@ -160,6 +340,29 @@ export function PullRequestStackMenu({
                   : undefined
               }
             />
+            {nativeGitCafeActions && storedAction ? (
+              <div
+                className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-muted-foreground"
+                role="status"
+              >
+                <span>{storedAction.detail}</span>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={pending}
+                  onClick={() => void checkStatus()}
+                >
+                  {pending ? "Checking…" : "Check status"}
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  render={<a href={stack.url} target="_blank" rel="noreferrer" />}
+                >
+                  Open on GitCafe
+                </Button>
+              </div>
+            ) : null}
           </MenuGroup>
           {canMerge || canRebase ? (
             <>
@@ -226,8 +429,12 @@ export function PullRequestStackMenu({
             </DialogTitle>
             <DialogDescription>
               {confirmation === "merge"
-                ? `Merge #${reference.number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`
-                : `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`}
+                ? nativeGitCafeActions
+                  ? `Land the selected prefix through #${reference.number} into ${stack.base} using ${mergeMethod}. GitCafe checks the current stack revision and restacks the remaining pull requests.`
+                  : `Merge #${reference.number} and its unmerged layers below into ${stack.base} using ${mergeMethod}. GitHub checks their rules before merging or queueing them and rebases the remaining stack after merging.`
+                : nativeGitCafeActions
+                  ? `Restack every unmerged pull request from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks.`
+                  : `Rebase the remote branches from bottom to top onto ${stack.base}. This rewrites branch history and may restart checks. If a layer fails, earlier updates remain.`}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>

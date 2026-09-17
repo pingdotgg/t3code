@@ -87,8 +87,15 @@ GitCafe repositories use HTTPS by default. If Git credentials need refreshing, r
 `staging.git.cafe`. Sign in separately for staging with
 `cafe auth login --host https://staging.git.cafe/api`.
 
-GitCafe's review browser currently supports reading pull requests, diffs, conversations, and
-native stacks. Use GitCafe itself for review edits, comments, and merge or restack actions.
+GitCafe's review browser supports comments, review edits, reactions, inline reviews, and merging.
+Open the diff before submitting a review so it refers to the revision you reviewed. If the pull
+request changes, refresh and review the new diff before submitting again. Available actions depend
+on your GitCafe permissions.
+
+If a review result cannot be confirmed, **Retry previous submission** sends the original review,
+not subsequent draft edits. Keep that tab open until the attempt is settled. If a merge is accepted
+but still pending, use **Check status**. When its result is unknown, inspect the pull request on
+GitCafe before attempting another merge.
 
 ## Clone or publish a project
 
@@ -184,4 +191,11 @@ even when its changes look independent. Stack actions require an environment tha
 ## GitCafe stacks
 
 Open a GitCafe review's stack badge to navigate its native stack. Linked reviews also group by
-stack. Stack navigation is read-only; stack merging and restacking are not available in T3 Code yet.
+stack. Merge through a selected layer or restack the unmerged layers using GitCafe's native
+operations. These operate on GitCafe's current branches, using the displayed stack revision to
+check that the stack structure has not changed.
+
+An accepted operation may still be running. Use **Check status** to inspect progress; after a
+lost response, it can discover the latest stack operation without submitting another write.
+Layers already completed remain changed if a later layer fails. Use GitCafe's CLI or API to
+resume or reconcile an operation that needs intervention.
