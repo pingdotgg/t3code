@@ -9,7 +9,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Tracer from "effect/Tracer";
 import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
 
-import { RotatingFileSink } from "./logging.ts";
+import { RotatingFileSink, RotatingFileSinkError } from "./logging.ts";
 
 export const OtlpProtocol = Schema.Literals(["http/json", "http/protobuf"]);
 export type OtlpProtocol = typeof OtlpProtocol.Type;
@@ -18,6 +18,7 @@ export const otlpSerializationLayer = (protocol: OtlpProtocol) =>
 
 const FLUSH_BUFFER_THRESHOLD = 256;
 const textEncoder = new TextEncoder();
+const isRotatingFileSinkError = Schema.is(RotatingFileSinkError);
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;
 
@@ -131,8 +132,8 @@ export interface TraceSink {
   readonly filePath: string;
   push: (record: TraceRecord) => void;
   flush: Effect.Effect<void>;
-  /** Stop accepting records and await the final flush and archive compression. */
-  close: () => Effect.Effect<void>;
+  /** Stop accepting records and drain writes and compression. Retry close after a write failure. */
+  close: () => Effect.Effect<void, RotatingFileSinkError>;
 }
 
 export interface LocalFileTracerOptions extends TraceSinkOptions {
@@ -389,9 +390,9 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
       const startedAt = performance.now();
       try {
         sink.write(chunk);
-      } catch {
+      } catch (cause) {
         buffer.unshift(...records.slice(persistedCount));
-        return;
+        throw cause;
       }
       pendingFlushStats = {
         logicalWriteBytes: pendingFlushStats.logicalWriteBytes + chunkBytes,
@@ -402,15 +403,21 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   };
 
-  const flushBuffer = Effect.sync(() => {
-    flushUnsafe();
-    const stats = pendingFlushStats;
-    pendingFlushStats = {
-      logicalWriteBytes: 0,
-      count: 0,
-      durationMs: 0,
-    };
-    return stats;
+  const flushBuffer = Effect.try({
+    try: () => {
+      flushUnsafe();
+      const stats = pendingFlushStats;
+      pendingFlushStats = {
+        logicalWriteBytes: 0,
+        count: 0,
+        durationMs: 0,
+      };
+      return stats;
+    },
+    catch: (cause) =>
+      isRotatingFileSinkError(cause)
+        ? cause
+        : new RotatingFileSinkError({ operation: "write", filePath: options.filePath, cause }),
   }).pipe(
     Effect.flatMap((stats) =>
       stats.count > 0 && options.onFlush ? options.onFlush(stats).pipe(Effect.ignore) : Effect.void,
@@ -418,13 +425,12 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     Effect.withTracerEnabled(false),
   );
 
-  const flush = Effect.suspend(() => (closed ? Effect.void : flushBuffer));
+  const flush = Effect.suspend(() => (closed ? Effect.void : flushBuffer.pipe(Effect.ignore)));
   const close = Effect.gen(function* () {
     closed = true;
-    yield* flushBuffer;
-    yield* Effect.promise(() => sink.flushCompression());
+    yield* flushBuffer.pipe(Effect.ensuring(Effect.promise(() => sink.flushCompression())));
   });
-  yield* Effect.addFinalizer(() => close.pipe(Effect.ignore));
+  yield* Effect.addFinalizer(() => close.pipe(Effect.ignore({ log: "Warn" })));
   yield* Effect.forkScoped(
     Effect.sleep(`${options.batchWindowMs} millis`).pipe(
       Effect.andThen(flush),

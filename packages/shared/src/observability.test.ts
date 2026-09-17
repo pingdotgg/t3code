@@ -237,6 +237,40 @@ describe("observability", () => {
       ),
     );
 
+    it.effect("reports final write failures and retains buffered records for another close", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-trace-close-failure-",
+          });
+          const tracePath = path.join(directory, "trace.ndjson");
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 1_024,
+            maxFiles: 2,
+            batchWindowMs: 1_000,
+          });
+          sink.push(makeRecord("retained"));
+          yield* fileSystem.makeDirectory(tracePath);
+          yield* sink.flush;
+          const failure = yield* sink.close().pipe(Effect.flip);
+          assert.equal(failure._tag, "RotatingFileSinkError");
+          assert.equal(failure.filePath, tracePath);
+          yield* fileSystem.remove(tracePath, { recursive: true });
+          sink.push(makeRecord("after-close"));
+          yield* sink.close();
+          yield* sink.close();
+          const records = yield* readTraceRecords(tracePath);
+          assert.deepEqual(
+            records.map((record) => record.name),
+            ["retained"],
+          );
+        }),
+      ),
+    );
+
     it.effect("reports successful logical trace writes", () =>
       Effect.scoped(
         Effect.gen(function* () {
