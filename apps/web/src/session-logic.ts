@@ -161,7 +161,7 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
   if (
     !workLogEntryIsToolLike(entry) ||
     workEntryIndicatesToolFailure(entry) ||
-    entry.tone === "thinking"
+    (entry.tone === "thinking" && entry.itemType !== "reasoning")
   ) {
     return false;
   }
