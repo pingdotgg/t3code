@@ -435,10 +435,12 @@ function ProjectDetail({
             title="Project icon"
             description={
               projectIcon?.kind === "lucide"
-                ? `${projectIcon.monogram ?? projectIcon.name} · ${projectIcon.color}`
-                : projectIcon?.kind === "emoji"
-                  ? projectIcon.emoji
-                  : (faviconPath ?? "Automatic")
+                ? `${projectIcon.name} · ${projectIcon.color}`
+                : projectIcon?.kind === "monogram"
+                  ? `${projectIcon.text} · ${projectIcon.color}`
+                  : projectIcon?.kind === "emoji"
+                    ? projectIcon.emoji
+                    : (faviconPath ?? "Automatic")
             }
             resetAction={
               group.memberProjects.some(

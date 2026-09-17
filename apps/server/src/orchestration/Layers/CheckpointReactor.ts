@@ -886,7 +886,7 @@ const make = Effect.gen(function* () {
           (startedTurnId === undefined && !thread.session?.activeTurnId))
       ) {
         pending.delete(event.threadId);
-        yield* pullRequests.refreshAfterTurn;
+        yield* pullRequests.refreshAfterTurn(thread.projectId);
       }
       if (
         event.type === "turn.aborted" &&

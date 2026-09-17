@@ -183,7 +183,7 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
           <SymbolView
             name="plus"
             size={compact ? 20 : 16}
-            tintColorClassName={"accent-icon-muted"}
+            tintColorClassName="accent-icon-muted"
             type="monochrome"
             weight="medium"
           />
@@ -232,7 +232,7 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
         <SymbolView
           name={icon}
           size={10}
-          tintColorClassName={"accent-icon-subtle"}
+          tintColorClassName="accent-icon-subtle"
           type="monochrome"
           weight="semibold"
         />
@@ -379,7 +379,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
               <SymbolView
                 name="chevron.right"
                 size={13}
-                tintColorClassName={"accent-icon-subtle"}
+                tintColorClassName="accent-icon-subtle"
                 type="monochrome"
               />
             </View>
@@ -469,10 +469,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   >["simultaneousWithExternalGesture"];
 }) {
   const { width: windowWidth } = useWindowDimensions();
-  const { themeAppearance: colorScheme, materialYouStyleLayoutActive } = useAppearancePreferences();
+  const { themeAppearance: colorScheme } = useAppearancePreferences();
   const compact = props.variant === "compact";
   const selected = props.selected === true;
-  const visuallySelected = selected && (!compact || materialYouStyleLayoutActive);
+  const visuallySelected = selected && (!compact || Platform.OS === "android");
   const theme = useUniwindTheme();
   const screenColor = theme["--color-screen"];
   const drawerColor = theme["--color-drawer"];
@@ -507,22 +507,22 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
 
   const backgroundColor = compact ? screenColor : drawerColor;
-  const effectiveSelectedBackground = materialYouStyleLayoutActive
-    ? materialSelectedBackgroundColor
-    : selectedBackgroundColor;
-  const effectiveSelectedForeground = materialYouStyleLayoutActive
-    ? materialSelectedForegroundColor
-    : selectedForegroundColor;
+  const effectiveSelectedBackground =
+    Platform.OS === "android" ? materialSelectedBackgroundColor : selectedBackgroundColor;
+  const effectiveSelectedForeground =
+    Platform.OS === "android" ? materialSelectedForegroundColor : selectedForegroundColor;
   const effectiveStatus =
     visuallySelected && status
       ? {
           ...status,
-          pillClassName: materialYouStyleLayoutActive
-            ? "bg-thread-selected-foreground/20"
-            : "bg-user-bubble-foreground/20",
-          textClassName: materialYouStyleLayoutActive
-            ? "text-thread-selected-foreground"
-            : "text-user-bubble-foreground",
+          pillClassName:
+            Platform.OS === "android"
+              ? "bg-thread-selected-foreground/20"
+              : "bg-user-bubble-foreground/20",
+          textClassName:
+            Platform.OS === "android"
+              ? "text-thread-selected-foreground"
+              : "text-user-bubble-foreground",
         }
       : status;
 
@@ -596,7 +596,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                   compact
                     ? "accent-icon-subtle"
                     : selected
-                      ? materialYouStyleLayoutActive
+                      ? Platform.OS === "android"
                         ? "accent-thread-selected-foreground-muted"
                         : "accent-user-bubble-foreground-muted"
                       : "accent-foreground-muted"
@@ -608,7 +608,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 "shrink",
                 compact ? "text-sm" : "text-xs",
                 visuallySelected
-                  ? materialYouStyleLayoutActive
+                  ? Platform.OS === "android"
                     ? "text-thread-selected-foreground-muted"
                     : "text-user-bubble-foreground-muted"
                   : "text-foreground-muted",
@@ -647,7 +647,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <Text
               className={`${compact ? "text-sm" : "text-xs"} font-t3-medium ${
                 visuallySelected
-                  ? materialYouStyleLayoutActive
+                  ? Platform.OS === "android"
                     ? "text-thread-selected-foreground"
                     : "text-user-bubble-foreground"
                   : pr.textClassName
@@ -666,7 +666,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         key={`${thread.environmentId}:${thread.id}`}
         interactionClassName={
           visuallySelected
-            ? materialYouStyleLayoutActive
+            ? Platform.OS === "android"
               ? "bg-thread-selected-foreground"
               : "bg-user-bubble-foreground"
             : "bg-primary"
@@ -676,10 +676,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         accessibilityRole="button"
         className="bg-screen"
         style={
-          materialYouStyleLayoutActive
+          Platform.OS === "android"
             ? {
                 backgroundColor: visuallySelected ? effectiveSelectedBackground : backgroundColor,
-                borderRadius: SIDEBAR_ROW_RADIUS,
+                borderRadius: 20,
               }
             : undefined
         }
@@ -689,13 +689,18 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         }}
       >
         <View className="pr-[18px] pt-[10px]" style={{ paddingLeft: THREAD_LIST_COMPACT_INSET }}>
-          <View className={cn("gap-[3px] pb-[10px]", !props.isLast && "border-b border-separator")}>
+          <View
+            className={cn(
+              "gap-[3px] pb-[10px]",
+              Platform.OS !== "android" && !props.isLast && "border-b border-separator",
+            )}
+          >
             <View className="flex-row items-center justify-between gap-2">
               <Text
                 className={cn(
                   "flex-1 text-lg font-t3-bold",
                   visuallySelected
-                    ? materialYouStyleLayoutActive
+                    ? Platform.OS === "android"
                       ? "text-thread-selected-foreground"
                       : "text-user-bubble-foreground"
                     : "text-foreground",
@@ -706,14 +711,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               </Text>
               <View className="flex-row items-center gap-2">
                 {props.hasQueuedMessages ? (
-                  <QueuedMessageIcon selected={visuallySelected && !materialYouStyleLayoutActive} />
+                  <QueuedMessageIcon selected={visuallySelected && Platform.OS !== "android"} />
                 ) : null}
                 {statusPill}
                 <Text
                   className={cn(
                     "text-base tabular-nums",
                     visuallySelected
-                      ? materialYouStyleLayoutActive
+                      ? Platform.OS === "android"
                         ? "text-thread-selected-foreground-muted"
                         : "text-user-bubble-foreground-muted"
                       : "text-foreground-tertiary",
@@ -724,7 +729,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 <SymbolView
                   name="chevron.right"
                   size={13}
-                  tintColorClassName={"accent-icon-subtle"}
+                  tintColorClassName="accent-icon-subtle"
                   type="monochrome"
                 />
               </View>
@@ -746,7 +751,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         key={`${thread.environmentId}:${thread.id}`}
         interactionClassName={
           visuallySelected
-            ? materialYouStyleLayoutActive
+            ? Platform.OS === "android"
               ? "bg-thread-selected-foreground"
               : "bg-user-bubble-foreground"
             : "bg-primary"
@@ -761,7 +766,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         }}
         style={{
           backgroundColor: visuallySelected ? effectiveSelectedBackground : backgroundColor,
-          borderRadius: SIDEBAR_ROW_RADIUS,
+          borderRadius: Platform.OS === "android" ? 20 : SIDEBAR_ROW_RADIUS,
           minHeight: 64,
           justifyContent: "center",
           paddingHorizontal: 12,
@@ -774,7 +779,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               className={cn(
                 "flex-1 text-base font-t3-medium",
                 visuallySelected
-                  ? materialYouStyleLayoutActive
+                  ? Platform.OS === "android"
                     ? "text-thread-selected-foreground"
                     : "text-user-bubble-foreground"
                   : "text-foreground",
@@ -785,14 +790,14 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             </Text>
             <View className="flex-row items-center gap-2">
               {props.hasQueuedMessages ? (
-                <QueuedMessageIcon selected={visuallySelected && !materialYouStyleLayoutActive} />
+                <QueuedMessageIcon selected={visuallySelected && Platform.OS !== "android"} />
               ) : null}
               {statusPill}
               <Text
                 className={cn(
                   "text-xs tabular-nums",
                   visuallySelected
-                    ? materialYouStyleLayoutActive
+                    ? Platform.OS === "android"
                       ? "text-thread-selected-foreground-muted"
                       : "text-user-bubble-foreground-muted"
                     : "text-foreground-muted",
@@ -820,9 +825,11 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       threadKey={`${thread.environmentId}:${thread.id}`}
       backgroundColor={backgroundColor}
       containerStyle={
-        compact && !materialYouStyleLayoutActive
-          ? undefined
-          : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
+        Platform.OS === "android"
+          ? { borderRadius: 20, overflow: "hidden", marginHorizontal: 8, marginVertical: 2 }
+          : compact
+            ? undefined
+            : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
       }
       enableTrackpadSwipe
       fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
