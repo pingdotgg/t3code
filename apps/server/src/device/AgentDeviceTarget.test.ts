@@ -95,4 +95,37 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       Effect.provide(NodeServices.layer),
     ),
   );
+
+  it.effect("runs the desktop Electron binary as Node instead of a second app", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const platform = yield* HostProcessPlatform;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-shim-electron-" });
+      const entryPath = path.join(dir, "cli.mjs");
+      yield* fs.writeFileString(entryPath, "console.log(1)");
+      yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
+      const launcher = yield* fs.readFileString(
+        path.join(dir, "device/bin/agent-device-launcher.mjs"),
+      );
+      expect(launcher).toContain('ELECTRON_RUN_AS_NODE: "1"');
+      if (platform === "win32") {
+        expect(yield* fs.readFileString(path.join(dir, "device/bin/agent-device.cmd"))).toContain(
+          "ELECTRON_RUN_AS_NODE=1",
+        );
+      } else {
+        expect(yield* fs.readFileString(path.join(dir, "device/bin/agent-device"))).toContain(
+          "export ELECTRON_RUN_AS_NODE=1",
+        );
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcessIsExecutable, false),
+      Effect.provideService(
+        HostProcessExecutablePath,
+        "/Applications/T3 Code.app/Contents/MacOS/T3 Code",
+      ),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
 });
