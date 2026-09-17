@@ -471,6 +471,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "skills",
+    title: "Skills",
+    to: "/settings/providers",
+    searchTerms: [
+      "skill disable switch off hide personal project repo app system source $ picker slash menu stale claude codex cursor grok opencode antigravity",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",
