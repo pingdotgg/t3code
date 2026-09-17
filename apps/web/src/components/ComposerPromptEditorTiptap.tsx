@@ -921,7 +921,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           // default replace keeps marks intact, wrapping would drop them.
           let touchesSpecial = false;
           view.state.doc.nodesBetween(from, to, (node) => {
-            if ((node.isAtom && node.isInline) || (node.isText && node.marks.length > 0)) {
+            if (
+              (node.isAtom && node.isInline && !node.isText) ||
+              (node.isText && node.marks.length > 0)
+            ) {
               touchesSpecial = true;
               return false;
             }
