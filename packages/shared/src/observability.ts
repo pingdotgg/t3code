@@ -131,6 +131,7 @@ export interface TraceSink {
   readonly filePath: string;
   push: (record: TraceRecord) => void;
   flush: Effect.Effect<void>;
+  /** Stop accepting records and await the final flush and archive compression. */
   close: () => Effect.Effect<void>;
 }
 
@@ -352,6 +353,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
   });
 
   let buffer: Array<string> = [];
+  let closed = false;
   let pendingFlushStats: TraceSinkFlushStats = {
     logicalWriteBytes: 0,
     count: 0,
@@ -400,7 +402,7 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   };
 
-  const flush = Effect.sync(() => {
+  const flushBuffer = Effect.sync(() => {
     flushUnsafe();
     const stats = pendingFlushStats;
     pendingFlushStats = {
@@ -416,15 +418,24 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     Effect.withTracerEnabled(false),
   );
 
-  const close = flush.pipe(Effect.andThen(Effect.promise(() => sink.flushCompression())));
+  const flush = Effect.suspend(() => (closed ? Effect.void : flushBuffer));
+  const close = Effect.gen(function* () {
+    closed = true;
+    yield* flushBuffer;
+    yield* Effect.promise(() => sink.flushCompression());
+  });
   yield* Effect.addFinalizer(() => close.pipe(Effect.ignore));
   yield* Effect.forkScoped(
-    Effect.sleep(`${options.batchWindowMs} millis`).pipe(Effect.andThen(flush), Effect.forever),
+    Effect.sleep(`${options.batchWindowMs} millis`).pipe(
+      Effect.andThen(flush),
+      Effect.repeat({ while: () => !closed }),
+    ),
   );
 
   return {
     filePath: options.filePath,
     push(record) {
+      if (closed) return;
       try {
         buffer.push(`${JSON.stringify(record)}\n`);
         if (buffer.length >= FLUSH_BUFFER_THRESHOLD) {

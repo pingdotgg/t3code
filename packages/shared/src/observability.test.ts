@@ -12,6 +12,7 @@ import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   causeErrorTag,
@@ -201,6 +202,37 @@ describe("observability", () => {
           assert.equal(lines.length, 2);
           assert.equal(lines[0]?.name, "alpha");
           assert.equal(lines[1]?.name, "beta");
+        }),
+      ),
+    );
+
+    it.effect("direct close rejects later writes while its scope remains open", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-trace-close-",
+          });
+          const tracePath = path.join(directory, "trace.ndjson");
+          const sink = yield* makeTraceSink({
+            filePath: tracePath,
+            maxBytes: 500,
+            maxFiles: 2,
+            batchWindowMs: 1_000,
+          });
+          sink.push(makeRecord("before-close"));
+          yield* sink.close();
+          const contents = yield* fileSystem.readFileString(tracePath);
+          for (let index = 0; index < 256; index += 1) {
+            sink.push(makeRecord("after-close", String(index)));
+          }
+          yield* TestClock.adjust(2_000);
+          yield* sink.flush;
+          yield* sink.close();
+          assert.equal(yield* fileSystem.readFileString(tracePath), contents);
+          assert.include(contents, "before-close");
+          assert.deepEqual(yield* fileSystem.readDirectory(directory), ["trace.ndjson"]);
         }),
       ),
     );
