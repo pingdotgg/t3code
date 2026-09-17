@@ -249,6 +249,12 @@ export function isContextCompactionActivityGroup(entry: ThreadFeedActivityGroup)
   );
 }
 
+export function isContextHandoffActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  return (
+    entry.activities.length === 1 && entry.activities[0]?.projectedItem.item.type === "handoff"
+  );
+}
+
 function isUserInputActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return entry.activities.some((activity) => activity.workEntry.questionAnswer !== undefined);
 }
@@ -731,6 +737,7 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
 
     const isStandaloneActivity =
       entry.activity.projectedItem.item.type === "compaction" ||
+      entry.activity.projectedItem.item.type === "handoff" ||
       entry.activity.projectedItem.item.type === "notification";
     if (
       isStandaloneActivity ||
@@ -872,7 +879,9 @@ function deriveThreadFeedRunFolds(
               entry.type === "activity-group" &&
               entry.activities.some(
                 (activity) =>
-                  activity.prominent || activity.projectedItem.item.type === "notification",
+                  activity.prominent ||
+                  activity.projectedItem.item.type === "notification" ||
+                  activity.projectedItem.item.type === "handoff",
               )
             ),
         )
@@ -937,7 +946,7 @@ export function deriveThreadFeedPresentation(
   const activeTailGroup = sourceFeed.at(-1);
   const foldsByAnchorId = deriveThreadFeedRunFolds(sourceFeed, latestRun);
   const activeRunId = unsettledRunId(latestRun);
-  const isWorking = activeWorkStartedAt !== null;
+  const isWorking = activeWorkStartedAt !== null && latestRun?.status !== "preparing";
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
     if (!expandedRunIds.has(fold.runId)) {
@@ -990,6 +999,7 @@ export function deriveThreadFeedPresentation(
   // Keep exactly one live slot while a run is working. When no tool row can
   // carry it yet (or the latest call failed), the slot reads "Thinking".
   if (
+    isWorking &&
     activeWorkStartedAt !== null &&
     !result.some(
       (row) =>
@@ -1027,7 +1037,11 @@ function appendPresentedFeedEntry(
     result.push(entry);
     return;
   }
-  if (isContextCompactionActivityGroup(entry) || isUserInputActivityGroup(entry)) {
+  if (
+    isContextCompactionActivityGroup(entry) ||
+    isContextHandoffActivityGroup(entry) ||
+    isUserInputActivityGroup(entry)
+  ) {
     result.push(entry);
     return;
   }
