@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
@@ -89,6 +90,7 @@ const make = Effect.gen(function* () {
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const startedTurns = new Map<ThreadId, TurnId>();
@@ -724,7 +726,14 @@ const make = Effect.gen(function* () {
             error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
           ),
         );
-      if (otherCwd === canonicalCwd) return false;
+      if (otherCwd === null) continue;
+      const relative = path.relative(canonicalCwd, otherCwd);
+      // An owner in a subdirectory is still affected by a restore of the whole checkout.
+      if (
+        relative === "" ||
+        (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+      )
+        return false;
     }
     return true;
   });

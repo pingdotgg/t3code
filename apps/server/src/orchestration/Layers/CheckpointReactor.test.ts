@@ -500,64 +500,77 @@ describe("CheckpointReactor", () => {
     };
   }
 
-  effectIt.effect.each(["active", "archived", "alias", "project-root", "conversation"] as const)(
-    "preserves sibling files when reverting a shared workspace, owner=%s",
-    (owner) =>
-      Effect.gen(function* () {
-        const harness = yield* Effect.promise(() =>
-          createHarness({
-            secondThreadSharingWorktree: true,
-            ...(owner === "alias"
-              ? {
-                  secondThreadWorktreePath: (cwd: string) => {
-                    const alias = `${cwd}-alias`;
-                    NodeFS.symlinkSync(cwd, alias, "junction");
-                    tempDirs.push(alias);
-                    return alias;
-                  },
-                }
-              : {}),
-          }),
-        );
-        const createdAt = "2026-01-01T00:00:02.000Z";
-        if (owner === "archived")
-          yield* harness.engine.dispatch({
-            type: "thread.archive",
-            commandId: CommandId.make("cmd-archive-owner"),
-            threadId: ThreadId.make("thread-2"),
-          });
-        if (owner === "project-root")
-          yield* harness.engine.dispatch({
-            type: "thread.meta.update",
-            commandId: CommandId.make("cmd-root-owner"),
-            threadId: ThreadId.make("thread-2"),
-            worktreePath: null,
-          });
-        const siblingFile = NodePath.join(harness.cwd, "sibling-work.txt");
-        NodeFS.writeFileSync(siblingFile, "sibling work\n");
+  effectIt.effect.each([
+    "active",
+    "archived",
+    "alias",
+    "nested",
+    "project-root",
+    "conversation",
+  ] as const)("preserves sibling files when reverting a shared workspace, owner=%s", (owner) =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          secondThreadSharingWorktree: true,
+          ...(owner === "alias" || owner === "nested"
+            ? {
+                secondThreadWorktreePath: (cwd: string) => {
+                  if (owner === "nested") {
+                    const nested = NodePath.join(cwd, "nested-owner");
+                    NodeFS.mkdirSync(nested);
+                    return nested;
+                  }
+                  const alias = `${cwd}-alias`;
+                  NodeFS.symlinkSync(cwd, alias, "junction");
+                  tempDirs.push(alias);
+                  return alias;
+                },
+              }
+            : {}),
+        }),
+      );
+      const createdAt = "2026-01-01T00:00:02.000Z";
+      if (owner === "archived")
         yield* harness.engine.dispatch({
-          type:
-            owner === "conversation" ? "thread.conversation.revert" : "thread.checkpoint.revert",
-          commandId: CommandId.make("cmd-shared-revert"),
-          threadId: ThreadId.make("thread-1"),
-          turnCount: 0,
-          createdAt,
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-archive-owner"),
+          threadId: ThreadId.make("thread-2"),
         });
-        yield* Effect.promise(harness.drain);
-        expect(NodeFS.readFileSync(siblingFile, "utf8")).toBe("sibling work\n");
-        expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
-        const model = yield* Effect.promise(harness.readModel);
-        const failure = model.threads
-          .find((t) => t.id === "thread-1")
-          ?.activities.find((a) => a.kind === "checkpoint.revert.failed");
-        if (owner === "conversation") expect(failure).toBeUndefined();
-        else {
-          expect(failure?.payload).toMatchObject({
-            detail: expect.stringContaining("isolated worktree"),
-          });
-          expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
-        }
-      }),
+      if (owner === "project-root")
+        yield* harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-root-owner"),
+          threadId: ThreadId.make("thread-2"),
+          worktreePath: null,
+        });
+      const siblingFile = NodePath.join(
+        harness.cwd,
+        ...(owner === "nested" ? ["nested-owner"] : []),
+        "sibling-work.txt",
+      );
+      NodeFS.writeFileSync(siblingFile, "sibling work\n");
+      yield* harness.engine.dispatch({
+        type: owner === "conversation" ? "thread.conversation.revert" : "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-shared-revert"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 0,
+        createdAt,
+      });
+      yield* Effect.promise(harness.drain);
+      expect(NodeFS.readFileSync(siblingFile, "utf8")).toBe("sibling work\n");
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
+      const model = yield* Effect.promise(harness.readModel);
+      const failure = model.threads
+        .find((t) => t.id === "thread-1")
+        ?.activities.find((a) => a.kind === "checkpoint.revert.failed");
+      if (owner === "conversation") expect(failure).toBeUndefined();
+      else {
+        expect(failure?.payload).toMatchObject({
+          detail: expect.stringContaining("isolated worktree"),
+        });
+        expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+      }
+    }),
   );
 
   effectIt.effect("captures baseline and large turn summaries before completion receipts", () =>
