@@ -143,14 +143,15 @@ export function nextHiddenModelsForBulkToggle(
 export const ALL_LABEL_ID = "label:all";
 export const HIDDEN_LABEL_ID = "label:hidden";
 /** Drop slots shown in place of an empty segment; they take part in the flow like the labels. */
-export const ENABLED_SLOT_ID = "label:enabled-slot";
+const ENABLED_SLOT_ID = "label:enabled-slot";
 export const HIDDEN_SLOT_ID = "label:hidden-slot";
-const isMarkerId = (id: string) => id.startsWith("label:");
+const MARKER_IDS = new Set([ALL_LABEL_ID, HIDDEN_LABEL_ID, ENABLED_SLOT_ID, HIDDEN_SLOT_ID]);
+const isMarkerId = (id: string) => MARKER_IDS.has(id);
 
 export type ModelListSegment = "favorites" | "enabled" | "hidden";
 
 /** The flat list after moving `activeId` onto `overId`; the same array when that is a no-op. */
-export function moveModelListItem(
+function moveModelListItem(
   items: ReadonlyArray<string>,
   activeId: string,
   overId: string,
@@ -161,7 +162,7 @@ export function moveModelListItem(
   return arrayMove([...items], from, to);
 }
 
-export function modelListSegment(items: ReadonlyArray<string>, id: string): ModelListSegment {
+function modelListSegment(items: ReadonlyArray<string>, id: string): ModelListSegment {
   const index = items.indexOf(id);
   const allIndex = items.indexOf(ALL_LABEL_ID);
   if (index > items.indexOf(HIDDEN_LABEL_ID)) return "hidden";
