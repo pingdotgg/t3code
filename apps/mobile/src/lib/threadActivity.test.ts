@@ -777,7 +777,7 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
-  it("places the fold after leading resource cards and keeps later cards visible", () => {
+  it("folds subagents while keeping created-thread and fork cards visible", () => {
     const { providerThreadId: _providerThreadId, ...forkBase } = base(
       "item-fork",
       "2026-06-20T00:00:02.000Z",
@@ -827,15 +827,14 @@ describe("buildThreadFeed", () => {
     const collapsed = deriveThreadFeedPresentation(feed, null, new Set());
     expect(collapsed.map((entry) => entry.type)).toEqual([
       "message",
-      "activity-group",
-      "activity-group",
       "run-fold",
+      "activity-group",
       "activity-group",
       "message",
     ]);
-    expect(collapsed[3]).toMatchObject({
+    expect(collapsed[1]).toMatchObject({
       type: "run-fold",
-      createdAt: "2026-06-20T00:00:03.000Z",
+      createdAt: "2026-06-20T00:00:01.500Z",
     });
     expect(
       collapsed.flatMap((entry) =>
@@ -843,7 +842,15 @@ describe("buildThreadFeed", () => {
           ? entry.activities.map((activity) => activity.projectedItem)
           : [],
       ),
-    ).toEqual(projectedResources);
+    ).toEqual(projectedResources.slice(1));
+    const expanded = deriveThreadFeedPresentation(feed, null, new Set([runId]));
+    expect(
+      expanded.some(
+        (entry) =>
+          entry.type === "activity-group" &&
+          entry.activities.some((activity) => activity.projectedItem.item.type === "subagent"),
+      ),
+    ).toBe(true);
   });
 
   it("folds settled V2 run work while keeping the terminal assistant message visible", () => {
@@ -1344,6 +1351,54 @@ describe("retained v2 feed presentation", () => {
     },
   );
 
+  it("groups only adjacent subagents in the same run, keeping their child links", () => {
+    const agent = (id: string, index: number, agentRunId = runId) =>
+      projected(
+        {
+          ...base(id, `2026-06-20T00:00:0${index}.000Z`, index),
+          type: "subagent",
+          runId: agentRunId,
+          subagentId: NodeId.make(id),
+          origin: "app_owned",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          childThreadId: ThreadId.make(`child-${id}`),
+          prompt: "Solve the puzzle",
+          result: "Done",
+        },
+        index,
+      );
+    const feed = buildThreadFeed([
+      agent("a", 1),
+      agent("b", 2),
+      projected(command("2026-06-20T00:00:03.000Z"), 3),
+      agent("c", 4),
+      agent("d", 5, RunId.make("other-run")),
+    ]);
+    expect(
+      feed.flatMap((entry) =>
+        entry.type === "activity-group"
+          ? [entry.activities.map((activity) => activity.projectedItem.item.id)]
+          : [],
+      ),
+    ).toEqual([["a", "b"], ["item-command"], ["c"], ["d"]]);
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set([runId, RunId.make("other-run")]),
+    );
+    const groups = presented.flatMap((entry) =>
+      entry.type === "activity-group" && entry.activities[0]?.projectedItem.item.type === "subagent"
+        ? [entry]
+        : [],
+    );
+    expect(groups.map((entry) => entry.activities.length)).toEqual([2, 1, 1]);
+    expect(groups[0]?.activities.map((activity) => activity.projectedItem.item)).toMatchObject([
+      { childThreadId: "child-a" },
+      { childThreadId: "child-b" },
+    ]);
+  });
+
   it("shows an idle native subagent without claiming completion", () => {
     const rows = buildThreadFeed([
       projected(
@@ -1365,9 +1420,10 @@ describe("retained v2 feed presentation", () => {
     ]);
     expect(rows[0]).toMatchObject({
       type: "activity-group",
-      activities: [{ status: "neutral", lifecycleStatus: "idle", prominent: true }],
+      activities: [{ status: "neutral", lifecycleStatus: "idle", prominent: false }],
     });
-    expect(deriveThreadFeedPresentation(rows, null, new Set())).toMatchObject([
+    expect(deriveThreadFeedPresentation(rows, null, new Set([runId]))).toMatchObject([
+      { type: "run-fold", expanded: true },
       { type: "activity-group", activities: [{ lifecycleStatus: "idle" }] },
     ]);
   });
@@ -1662,3 +1718,41 @@ it.each(["First paragraph.\n\nSecond paragraph.", ""])(
     }
   },
 );
+
+it("previews a settled thought in its collapsed header and labels its expanded header", () => {
+  const thought: OrchestrationV2TurnItem = {
+    ...base("thought-preview", "2026-06-20T00:00:02.000Z", 1),
+    type: "reasoning",
+    streaming: false,
+    text: "First paragraph.\n\nSecond paragraph.",
+  };
+  const feed = buildThreadFeed([
+    projected(userMessage(), 0),
+    projected(thought, 1),
+    projected(assistantMessage(), 2),
+  ]);
+  const run = {
+    runId,
+    status: "completed" as const,
+    startedAt: "2026-06-20T00:00:01.000Z",
+    completedAt: "2026-06-20T00:00:03.000Z",
+  };
+  const collapsed = deriveThreadFeedPresentation(feed, run, new Set([runId]));
+  const header = collapsed.find((row) => row.type === "work-toggle");
+  expect(header).toMatchObject({ summary: "First paragraph. Second paragraph." });
+  if (header?.type !== "work-toggle") throw new Error("Expected thought toggle");
+  const expanded = deriveThreadFeedPresentation(
+    feed,
+    run,
+    new Set([runId]),
+    new Set([header.groupId]),
+  );
+  expect(expanded.find((row) => row.type === "work-toggle")).toMatchObject({
+    summary: "Thought",
+    continuesWorkLog: true,
+  });
+  const detail = expanded.find((row) => row.type === "activity-group");
+  expect(detail?.continuesWorkLog).toBeUndefined();
+  if (detail?.type !== "activity-group") throw new Error("Expected full thought");
+  expect(detail.activities[0]?.detail).toBe(thought.text);
+});
