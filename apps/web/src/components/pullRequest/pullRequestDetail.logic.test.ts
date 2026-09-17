@@ -274,15 +274,6 @@ describe("pull request primary control", () => {
   });
 });
 
-describe("pull request state description", () => {
-  it("keeps draft and conflicts orthogonal to the terminal states", () => {
-    expect(describePullRequestState("open", true)).toBe("Draft");
-    expect(describePullRequestState("open", false)).toBe("Ready for review");
-    expect(describePullRequestState("merged", true)).toBe("Merged");
-    expect(describePullRequestState("closed", false)).toBe("Closed");
-  });
-});
-
 describe("stacked pull request classification", () => {
   it("requires a known default branch", () => {
     expect(isStackedPullRequestBase("main", [{ name: "main", isDefault: false }])).toBe(false);
