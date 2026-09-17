@@ -13,6 +13,7 @@ const {
   setDesktopNameMock,
   mkdirSyncMock,
   writeFileSyncMock,
+  readFileSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -21,6 +22,7 @@ const {
   setDesktopNameMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
+  readFileSyncMock: vi.fn(() => "{}"),
 }));
 
 vi.mock("electron", () => ({
@@ -39,7 +41,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("node:fs", () => ({
-  readFileSync: () => "{}",
+  readFileSync: readFileSyncMock,
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
 }));
@@ -55,7 +57,55 @@ describe("DesktopPreReadyPlatform", () => {
     setDesktopNameMock.mockReset();
     mkdirSyncMock.mockReset();
     writeFileSyncMock.mockReset();
+    readFileSyncMock.mockReset().mockReturnValue("{}");
   });
+
+  it.effect("restores the saved Linux device scale before startup yields", () => {
+    readFileSyncMock.mockReturnValue('{"linuxDeviceScaleFactor":2}');
+
+    return Effect.gen(function* () {
+      yield* DesktopPreReadyPlatform.make;
+      assert.deepEqual(
+        appendSwitchMock.mock.calls.filter(([name]) => name === "force-device-scale-factor"),
+        [["force-device-scale-factor", "2"]],
+      );
+    }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
+  });
+
+  for (const [value, expected] of [
+    ["1.5", 1.5],
+    ["0", null],
+    ["-1", null],
+    ["Infinity", null],
+    ["", null],
+  ] as const) {
+    it.effect(`keeps the explicit device scale '${value}' ahead of saved settings`, () => {
+      readFileSyncMock.mockReturnValue('{"linuxDeviceScaleFactor":2}');
+      hasSwitchMock.mockImplementation((name) => name === "force-device-scale-factor");
+      getSwitchValueMock.mockReturnValue(value);
+
+      return Effect.gen(function* () {
+        const options = yield* DesktopPreReadyPlatform.make;
+        assert.equal(options.linuxDeviceScaleFactorCommandLine, expected);
+        assert.isFalse(
+          appendSwitchMock.mock.calls.some(([name]) => name === "force-device-scale-factor"),
+        );
+      }).pipe(Effect.provideService(HostProcessPlatform, "linux"));
+    });
+  }
+
+  for (const platform of ["darwin", "win32"] as const) {
+    it.effect(`does not restore Linux display scaling on ${platform}`, () => {
+      readFileSyncMock.mockReturnValue('{"linuxDeviceScaleFactor":2}');
+      return Effect.gen(function* () {
+        const options = yield* DesktopPreReadyPlatform.make;
+        assert.equal(options.linuxDeviceScaleFactorCommandLine, null);
+        assert.isFalse(
+          appendSwitchMock.mock.calls.some(([name]) => name === "force-device-scale-factor"),
+        );
+      }).pipe(Effect.provideService(HostProcessPlatform, platform));
+    });
+  }
 
   it.effect("preserves an explicit Linux password-store switch", () => {
     hasSwitchMock.mockImplementation((switchName) => switchName === "password-store");
@@ -165,6 +215,7 @@ describe("DesktopPreReadyPlatform", () => {
           preReady: {
             linux: null,
             linuxPasswordStoreCommandLine: null,
+            linuxDeviceScaleFactorCommandLine: null,
           },
         });
         assert.deepEqual(events, ["pre-ready", "clerk"]);
