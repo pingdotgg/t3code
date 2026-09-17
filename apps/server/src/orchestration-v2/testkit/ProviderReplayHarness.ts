@@ -24,7 +24,8 @@ import { layer as checkpointRollbackServiceLayer } from "../CheckpointRollbackSe
 import { layer as commandPolicyLayer } from "../CommandPolicy.ts";
 import { layer as commandReceiptStoreLayer } from "../CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "../ContextHandoffService.ts";
-import { layer as effectOutboxLayer } from "../EffectOutbox.ts";
+import * as Context from "effect/Context";
+import { EffectOutboxV2, layer as effectOutboxLayer } from "../EffectOutbox.ts";
 import {
   executorLayer as effectExecutorLayer,
   layer as effectWorkerLayer,
@@ -40,7 +41,10 @@ import { OrchestratorV2, type OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { layer as providerEventIngestorLayer } from "../ProviderEventIngestor.ts";
-import { layerWithOptions as providerSessionManagerLayerWithOptions } from "../ProviderSessionManager.ts";
+import {
+  ProviderSessionManagerV2,
+  layerWithOptions as providerSessionManagerLayerWithOptions,
+} from "../ProviderSessionManager.ts";
 import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts";
 import { layer as providerTurnControlServiceLayer } from "../ProviderTurnControlService.ts";
 import { layer as providerTurnStartServiceLayer } from "../ProviderTurnStartService.ts";
@@ -156,6 +160,15 @@ export interface OrchestratorV2ProviderReplayScenario<
 > extends OrchestratorV2Scenario {
   readonly transcript: Transcript;
   readonly runtimePolicyOverride?: RuntimePolicyV2Override;
+  /**
+   * Models a production restart boundary around the scenario run: reconcile
+   * the effect outbox for the (recreated) runtime before the first step, the
+   * same rows serverRuntimeStartup retires via ProviderRuntimeRecoveryService
+   * on boot, and drive provider-session shutdown to completion before the
+   * caller's scope teardown so in-flight releases finish instead of dying
+   * mid-close with the scope.
+   */
+  readonly runtimeRestart?: boolean;
 }
 
 export interface OrchestratorV2ProviderReplayHarness<
@@ -206,8 +219,19 @@ export function runOrchestratorV2ProviderReplayScenario<
     ...options,
     replayGate,
   });
+  const run = runOrchestratorV2Scenario(scenario, { replayGate });
 
-  return runOrchestratorV2Scenario(scenario, { replayGate }).pipe(Effect.provide(layer));
+  if (scenario.runtimeRestart !== true) {
+    return run.pipe(Effect.provide(layer));
+  }
+  return Effect.gen(function* () {
+    yield* Effect.flatMap(EffectOutboxV2, (outbox) =>
+      outbox.reconcileAfterProcessLoss.pipe(Effect.orDie),
+    );
+    const result = yield* run;
+    yield* Effect.flatMap(ProviderSessionManagerV2, (sessions) => sessions.shutdown);
+    return result;
+  }).pipe(Effect.provide(layer));
 }
 
 export function makeOrchestratorV2ProviderReplayLayer<
@@ -225,7 +249,11 @@ export function makeOrchestratorV2ProviderReplayLayer<
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
-  OrchestratorV2 | OrchestrationEffectWorkerV2 | EventSinkV2,
+  | OrchestratorV2
+  | OrchestrationEffectWorkerV2
+  | EventSinkV2
+  | EffectOutboxV2
+  | ProviderSessionManagerV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(
@@ -246,7 +274,11 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     readonly runEffectWorker?: boolean;
   } = {},
 ): Layer.Layer<
-  OrchestratorV2 | OrchestrationEffectWorkerV2 | EventSinkV2,
+  | OrchestratorV2
+  | OrchestrationEffectWorkerV2
+  | EventSinkV2
+  | EffectOutboxV2
+  | ProviderSessionManagerV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const serverConfigLayer = Layer.effect(
@@ -414,10 +446,20 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const effectWorkerProvided = effectWorkerLayer.pipe(
     Layer.provide(Layer.merge(storesLayer, effectExecutorProvided)),
   );
+  const lifecycleServicesLayer = Layer.unwrap(
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const sessions = yield* ProviderSessionManagerV2;
+      return Layer.succeedContext(
+        Context.make(EffectOutboxV2, outbox).pipe(Context.add(ProviderSessionManagerV2, sessions)),
+      );
+    }),
+  ).pipe(Layer.provide(Layer.mergeAll(storesLayer, providerSessionManagerProvided)));
   const replayRuntime = Layer.mergeAll(
     orchestratorProvided,
     effectWorkerProvided,
     eventSinkProvided,
+    lifecycleServicesLayer,
   ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
 
   // Build the daemon from the exact worker instance exposed alongside the
