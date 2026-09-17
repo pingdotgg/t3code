@@ -2137,7 +2137,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(rows[1]).toMatchObject({ entries: [thought] });
   });
 
-  it("shows each tool once across expanded activity histories separated by a failed tool", () => {
+  it("keeps thoughts and tools in one activity row across a failed tool", () => {
     const thought = reasoningEntry("reasoning-entry", "2026-01-01T00:00:01Z", "turn-1");
     const tools = ["a", "b", "c"].map((id, index) => {
       const entry = toolEntry(id, `2026-01-01T00:00:0${index + 2}Z`, "turn-1");
@@ -2161,22 +2161,56 @@ describe("deriveMessagesTimelineRows", () => {
       supportsConversationRollback: false,
     } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
     const rows = deriveMessagesTimelineRows(input);
-    const expanded = deriveMessagesTimelineRows({
-      ...input,
-      expandedWorkGroupIds: new Set(rows.flatMap((row) => ("groupId" in row ? [row.groupId] : []))),
+    expect(rows.map((row) => row.kind)).toEqual(["working", "activity-group"]);
+    expect(rows.at(-1)).toMatchObject({
+      id: "live-activity-row",
+      entries: [thought, ...tools],
+      active: true,
     });
-    const visibleTools = expanded.flatMap((row) =>
-      row.kind === "activity-group" && row.expanded
-        ? row.entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry.id] : []))
-        : row.kind === "work"
-          ? row.groupedEntries.map((entry) => entry.id)
-          : [],
-    );
-    expect(visibleTools).toEqual(["a", "b", "c"]);
-    expect(expanded.filter((row) => row.id === "live-activity-row")).toMatchObject([
-      { kind: "work-live", entry: { id: "c" } },
-    ]);
+    const settled = deriveMessagesTimelineRows({
+      ...input,
+      timelineEntries: [
+        thought,
+        ...tools,
+        reasoningEntry("reasoning-next", "2026-01-01T00:00:05Z", "turn-1"),
+        { ...tools[1]!, id: "d", entry: { ...tools[1]!.entry, id: "d", toolCallId: "d" } },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+    });
+    expect(settled.map((row) => row.kind)).toEqual(["activity-group"]);
   });
+
+  it.each(["failed", "declined"] as const)(
+    "settles the activity row while the latest tool is %s",
+    (status) => {
+      const thought = reasoningEntry("reasoning-entry", "2026-01-01T00:00:01Z", "turn-1");
+      const tool = toolEntry("last-tool", "2026-01-01T00:00:02Z", "turn-1");
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: [
+          thought,
+          {
+            ...tool,
+            entry: {
+              ...tool.entry,
+              command: "echo nope",
+              toolCallId: "last-tool",
+              toolLifecycleStatus: status,
+              sourceActivityKind: "tool.completed" as const,
+            },
+          },
+        ],
+        runningTurnId: TurnId.make("turn-1"),
+        isWorking: true,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(rows.map((row) => row.kind)).toEqual(["working", "activity-group", "thinking"]);
+      expect(rows[1]).toMatchObject({ id: "activity-group:reasoning-entry", active: false });
+      expect(rows[2]).toMatchObject({ id: "live-activity-row" });
+    },
+  );
 
   it("folds mixed activity under worked-for and restores ordered details when expanded", () => {
     const entries = [

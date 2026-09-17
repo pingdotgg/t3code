@@ -1901,10 +1901,7 @@ function activityRunTurnId(entry: ThreadFeedEntry): TurnId | null {
     !isContextCompactionActivityGroup(entry) &&
     !isUserInputActivityGroup(entry) &&
     entry.activities.every(
-      (activity) =>
-        !activity.workEntry.agentSpawn &&
-        activity.workEntry.tone !== "error" &&
-        !workEntryIndicatesToolFailure(activity.workEntry),
+      (activity) => !activity.workEntry.agentSpawn && activity.workEntry.tone !== "error",
     )
   ) {
     return entry.turnId;
