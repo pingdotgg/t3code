@@ -1,6 +1,7 @@
 import { requireOptionalNativeModule } from "expo";
 
 interface T3MarkdownTextSelectionNativeModule {
+  readonly setSelectionHandleColor?: (reactTag: number, color: number) => void;
   readonly installCopySanitizer: (reactTag: number, contextClipboardConfig: string) => void;
   readonly renderContextChip?: (payloadJson: string) => {
     readonly uri: string;
@@ -18,6 +19,10 @@ const nativeModule =
 
 export function installMarkdownCopySanitizer(reactTag: number, contextClipboardConfig = ""): void {
   nativeModule?.installCopySanitizer(reactTag, contextClipboardConfig);
+}
+
+export function setMarkdownSelectionHandleColor(reactTag: number, color: number): void {
+  nativeModule?.setSelectionHandleColor?.(reactTag, color);
 }
 
 export function renderAndroidContextChip(payloadJson: string) {

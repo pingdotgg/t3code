@@ -2,8 +2,9 @@ import { Platform, Pressable, View } from "react-native";
 import Animated, { Easing, LinearTransition, ReduceMotion } from "react-native-reanimated";
 import { AppText as Text } from "./AppText";
 import { cn } from "../lib/cn";
+import { MaterialSegmentedControl } from "./MaterialSegmentedControl";
 
-export function SegmentedControl<Value extends number | string>(props: {
+export interface SegmentedControlProps<Value extends number | string> {
   readonly options: readonly {
     readonly value: Value;
     readonly label: string;
@@ -11,18 +12,26 @@ export function SegmentedControl<Value extends number | string>(props: {
   }[];
   readonly selected: Value;
   readonly onSelect: (value: Value) => void;
-  /** The tab bar is full height; filters under it are shorter so it stays primary. */
+  /** Compact sizing applies to the non-Material control. */
   readonly size?: "default" | "compact";
   /** "tab" for the view switcher; filters stay plain buttons. */
   readonly role?: "tab" | "button";
   readonly className?: string;
-}) {
+}
+
+export function SegmentedControl<Value extends number | string>(
+  props: SegmentedControlProps<Value>,
+) {
   const compact = props.size === "compact";
+  if (Platform.OS === "android") {
+    return <MaterialSegmentedControl {...props} />;
+  }
   return (
     <View
       accessible={false}
       className={cn(
-        "flex-row overflow-hidden rounded-full border-continuous bg-card",
+        "flex-row overflow-hidden",
+        "rounded-full border-continuous bg-card",
         props.className,
       )}
     >
@@ -31,7 +40,7 @@ export function SegmentedControl<Value extends number | string>(props: {
         layout={LinearTransition.duration(200)
           .easing(Easing.out(Easing.cubic))
           .reduceMotion(ReduceMotion.System)}
-        className="absolute bottom-0 top-0 rounded-full bg-subtle-strong"
+        className="absolute inset-y-0 rounded-full bg-subtle-strong"
         style={{
           width: `${100 / props.options.length}%`,
           start: `${

@@ -119,6 +119,216 @@ it.effect("checkpoint capture does not rerun clean filters for unchanged indexed
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+for (const nested of [false, true]) {
+  for (const indexState of [
+    "sparse",
+    "flags",
+    "manual-skip",
+    "missing",
+    "non-cone-missing",
+  ] as const) {
+    it.effect(
+      `sparse checkpoint preserves two captures (nested=${nested}, index=${indexState})`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const driver = yield* GitVcsDriver.makeVcsDriverShape();
+          const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-sparse-" });
+          const { git } = yield* makeCheckpointFixture(driver, cwd);
+          const write = Effect.fn(function* (name: string, contents: string) {
+            yield* fs.makeDirectory(path.dirname(path.join(cwd, name)), { recursive: true });
+            yield* fs.writeFileString(path.join(cwd, name), contents);
+          });
+          for (const name of [
+            "scope/in/edit",
+            "scope/in/delete",
+            "scope/out/deep/absent",
+            "scope/out/present",
+            "elsewhere/file",
+          ]) {
+            yield* write(name, "original\n");
+          }
+          yield* git(["add", "."]);
+          yield* git(["commit", "-m", "sparse fixture"]);
+          yield* git([
+            "sparse-checkout",
+            "set",
+            "--cone",
+            "--sparse-index",
+            "scope/in",
+            "elsewhere",
+          ]);
+          if (indexState === "non-cone-missing")
+            yield* git(["sparse-checkout", "set", "--no-cone", "/scope/in/", "/elsewhere/"]);
+          yield* write("scope/in/edit", "staged\n");
+          yield* write("elsewhere/file", "staged outside\n");
+          yield* git(["add", "."]);
+          if (indexState === "flags")
+            yield* git(["update-index", "--assume-unchanged", "scope/in/delete"]);
+          if (indexState === "manual-skip")
+            yield* git(["update-index", "--skip-worktree", "scope/in/delete"]);
+          yield* git(["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
+          yield* write("scope/in/edit", "working\n");
+          yield* write("scope/out/present", "modified skipped\n");
+          yield* write("scope/out/new file", "new outside cone\n");
+          yield* write("elsewhere/file", "working outside\n");
+          yield* fs.remove(path.join(cwd, "scope/in/delete"));
+          const indexPath = path.join(cwd, ".git/index");
+          if (indexState.endsWith("missing")) yield* fs.remove(indexPath);
+          const originalIndex = yield* fs
+            .readFile(indexPath)
+            .pipe(Effect.orElseSucceed(() => null));
+          const captureCwd = nested ? path.join(cwd, "scope") : cwd;
+          for (const turn of [1, 2]) {
+            const ref = CheckpointRef.make(`refs/t3/checkpoints/sparse/${turn}`);
+            if (turn === 2) {
+              yield* write("scope/in/edit", "second\n");
+              yield* fs.remove(path.join(cwd, "scope/out/new file"));
+              yield* write("scope/out/second", "second addition\n");
+            }
+            const capture = driver.checkpoints.captureCheckpoint({
+              cwd: captureCwd,
+              checkpointRef: ref,
+            });
+            if (indexState === "non-cone-missing") {
+              assert.strictEqual((yield* capture.pipe(Effect.flip))._tag, "VcsProcessExitError");
+              assert.isFalse(
+                yield* driver.checkpoints.hasCheckpointRef({ cwd: captureCwd, checkpointRef: ref }),
+              );
+              assert.isFalse(yield* fs.exists(indexPath));
+              break;
+            }
+            yield* capture;
+            for (const [name, content] of [
+              ["scope/out/deep/absent", "original\n"],
+              ["scope/out/present", "modified skipped\n"],
+              ["scope/in/edit", turn === 1 ? "working\n" : "second\n"],
+              ["elsewhere/file", nested ? "original\n" : "working outside\n"],
+              [
+                turn === 1 ? "scope/out/new file" : "scope/out/second",
+                turn === 1 ? "new outside cone\n" : "second addition\n",
+              ],
+            ]) {
+              assert.strictEqual((yield* git(["show", `${ref}:${name}`])).stdout, content);
+            }
+            const files = (yield* git(["ls-tree", "-rz", "--name-only", ref])).stdout.split("\0");
+            assert.notInclude(files, "scope/in/delete");
+            if (turn === 2) assert.notInclude(files, "scope/out/new file");
+            assert.deepEqual(
+              yield* fs.readFile(indexPath).pipe(Effect.orElseSucceed(() => null)),
+              originalIndex,
+            );
+            assert.isFalse(yield* fs.exists(path.join(cwd, "scope/out/deep/absent")));
+            assert.strictEqual(
+              yield* fs.readFileString(path.join(cwd, "elsewhere/file")),
+              "working outside\n",
+            );
+          }
+        }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+    );
+  }
+}
+
+it.effect("checkpoint capture keeps the legacy path when Git lacks add --sparse", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-legacy-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["sparse-checkout", "set", "--cone", "included"]);
+    const originalIndex = yield* fs.readFile(path.join(cwd, ".git/index"));
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.args.includes("-h"))
+            return Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(129),
+              stdout: "usage: git add",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          return liveProcess.run(
+            input.args.includes("--sparse")
+              ? {
+                  ...input,
+                  args: input.args.map((arg) =>
+                    arg === "--sparse" ? "--unsupported-sparse" : arg,
+                  ),
+                }
+              : input,
+          );
+        },
+      }),
+    );
+    yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+    assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git/index")), originalIndex);
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+for (const indexMode of ["normal", "flags", "sparse"] as const) {
+  it.effect(
+    `checkpoint index inspection handles entries beyond the output cap (index=${indexMode})`,
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const liveProcess = yield* VcsProcess.VcsProcess;
+        const driver = yield* GitVcsDriver.makeVcsDriverShape();
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-inspection-" });
+        const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+        yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "stable filter=probe\n");
+        yield* fs.writeFileString(path.join(cwd, "stable"), "unchanged\n");
+        yield* fs.writeFileString(path.join(cwd, "z-skipped"), "original\n");
+        yield* fs.makeDirectory(path.join(cwd, "excluded"));
+        yield* fs.writeFileString(path.join(cwd, "excluded/file"), "absent\n");
+        yield* fs.writeFileString(
+          path.join(cwd, ".git/filter.cjs"),
+          'require("node:fs").appendFileSync(".git/reads", "read\\n"); process.stdin.pipe(process.stdout);',
+        );
+        yield* git(["config", "filter.probe.clean", "node .git/filter.cjs"]);
+        yield* fs.utimes(path.join(cwd, "stable"), 1_700_000_000, 1_700_000_000);
+        yield* git(["add", "."]);
+        yield* git(["commit", "-m", "inspection fixture"]);
+        if (indexMode === "flags") yield* git(["update-index", "--skip-worktree", "z-skipped"]);
+        if (indexMode === "sparse")
+          yield* git(["sparse-checkout", "set", "--cone", "--sparse-index", "included"]);
+        yield* fs.writeFileString(path.join(cwd, "z-skipped"), "modified\n");
+        yield* fs.writeFileString(path.join(cwd, ".git/reads"), "");
+        const originalIndex = yield* fs.readFile(path.join(cwd, ".git/index"));
+        const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+          Effect.provideService(VcsProcess.VcsProcess, {
+            run: (input) =>
+              liveProcess.run(
+                input.args.includes("ls-files")
+                  ? {
+                      ...input,
+                      maxOutputBytes: 8,
+                      onStdoutChunk: (chunk) => {
+                        for (let i = 0; i < chunk.length; i++)
+                          input.onStdoutChunk?.(chunk.subarray(i, i + 1));
+                      },
+                    }
+                  : input,
+              ),
+          }),
+        );
+        yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+        assert.strictEqual(
+          (yield* git(["show", `${checkpointRef}:z-skipped`])).stdout,
+          "modified\n",
+        );
+        if (indexMode !== "flags")
+          assert.strictEqual(yield* fs.readFileString(path.join(cwd, ".git/reads")), "");
+        assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git/index")), originalIndex);
+      }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+  );
+}
+
 for (const timestamp of [1_700_000_000, 1_700_000_000.9999]) {
   it.effect(
     `checkpoint capture preserves same-size edits with racy index timestamps (${timestamp})`,
@@ -403,6 +613,70 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
               return {
                 exitCode: ChildProcessSpawner.ExitCode(0),
                 stdout: "",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              };
+            }),
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publishing them", () => {
+  const observedArgs: ReadonlyArray<string>[] = [];
+
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd: "/repo",
+      checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread/turn/1"),
+    });
+
+    const writeCommands = ["add", "write-tree", "commit-tree", "update-ref"];
+    const writes = observedArgs.filter((args) =>
+      writeCommands.some((command) => args.includes(command)),
+    );
+    assert.strictEqual(writes.length, 4);
+    for (const args of writes) {
+      const command = args.findIndex((arg) => writeCommands.includes(arg));
+      for (const setting of ["core.fsync=objects,reference", "core.fsyncMethod=fsync"]) {
+        const index = args.indexOf(setting);
+        assert.strictEqual(args[index - 1], "-c", args.join(" "));
+        assert.isBelow(index, command);
+      }
+    }
+    assert.deepStrictEqual(observedArgs.at(-1), [
+      "-C",
+      "/repo",
+      "-c",
+      "core.fsync=objects,reference",
+      "-c",
+      "core.fsyncMethod=fsync",
+      "update-ref",
+      "refs/t3/checkpoints/thread/turn/1",
+      "commit0000",
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            Effect.sync(() => {
+              observedArgs.push(input.args);
+              const stdout = input.args.includes("write-tree")
+                ? "tree0000\n"
+                : input.args.includes("commit-tree")
+                  ? "commit0000\n"
+                  : input.args.includes("--git-common-dir")
+                    ? ".git\n"
+                    : "";
+              return {
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdout,
                 stderr: "",
                 stdoutTruncated: false,
                 stderrTruncated: false,

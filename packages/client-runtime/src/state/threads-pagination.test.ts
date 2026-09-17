@@ -133,6 +133,7 @@ type LoaderResponse = Option.Option<OrchestrationThreadDetailSnapshot>;
 
 const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (options?: {
   readonly paginationCapability?: boolean;
+  readonly reasoningCapability?: boolean;
   readonly initialResponse?: LoaderResponse;
   /** Cached snapshot returned by the cache store (simulates a warm cache). */
   readonly cached?: OrchestrationThreadDetailSnapshot;
@@ -140,6 +141,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
   const inputs = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
   const loaderWindows = yield* Ref.make<ReadonlyArray<ThreadSnapshotWindow | undefined>>([]);
+  const loaderReasoning = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const lastSubscribeInput = yield* Ref.make<Record<string, unknown> | undefined>(undefined);
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationThreadDetailSnapshot>>([]);
   // Older-page responses resolve through deferreds so tests can interleave
@@ -156,6 +158,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     client,
     initialConfig: Effect.succeed({
       threadSnapshotPagination: options?.paginationCapability !== false,
+      reasoningMessages: options?.reasoningCapability === true,
     } as never),
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
@@ -169,8 +172,9 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     Option.some(PREPARED),
   );
   const snapshotLoader = ThreadSnapshotLoader.of({
-    load: (_prepared, _threadId, window) =>
+    load: (_prepared, _threadId, window, reasoningMessages) =>
       Ref.update(loaderWindows, (current) => [...current, window]).pipe(
+        Effect.andThen(Ref.update(loaderReasoning, (current) => [...current, reasoningMessages])),
         Effect.andThen(
           window?.beforeCursor === undefined
             ? Effect.succeed(
@@ -231,6 +235,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     awaitState,
     resolveNextPage,
     loaderWindows,
+    loaderReasoning,
     lastSubscribeInput,
     savedThreads,
     threadState,
@@ -287,6 +292,32 @@ const revertEvent = (sequence: number): OrchestrationThreadStreamItem => ({
 });
 
 describe("thread pagination state", () => {
+  for (const reasoningCapability of [false, true]) {
+    it.effect(
+      `negotiates reasoning for initial, older and socket reads: ${reasoningCapability}`,
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({
+            reasoningCapability,
+            initialResponse: Option.some(WINDOWED_SNAPSHOT),
+          });
+          yield* harness.awaitState((value) => Option.isSome(value.page));
+          const input = yield* Ref.get(harness.lastSubscribeInput);
+          expect(input?.reasoningMessages).toBe(reasoningCapability ? true : undefined);
+          expect(yield* Ref.get(harness.loaderReasoning)).toEqual([reasoningCapability]);
+          expect(requestOlderThreadTurns(TARGET.environmentId, THREAD_ID)).toBe(true);
+          yield* harness.resolveNextPage(Option.some(OLDER_PAGE));
+          yield* harness.awaitState((value) =>
+            Option.match(value.page, { onNone: () => false, onSome: (page) => !page.hasMore }),
+          );
+          expect(yield* Ref.get(harness.loaderReasoning)).toEqual([
+            reasoningCapability,
+            reasoningCapability,
+          ]);
+        }),
+    );
+  }
+
   it.effect("windows the initial load when the server advertises pagination", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
