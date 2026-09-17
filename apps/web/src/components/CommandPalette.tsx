@@ -2058,6 +2058,7 @@ function OpenCommandPaletteDialog(props: {
     searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
     title: item.title,
     description: `Settings · ${SETTINGS_SECTION_LABELS[item.to]}`,
+    ...(item.secondary ? { secondary: true } : {}),
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({

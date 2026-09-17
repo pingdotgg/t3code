@@ -142,6 +142,8 @@ export interface CommandPaletteItem {
   /** Optional content rendered inline after the title text (before the timestamp). */
   readonly titleTrailingContent?: ReactNode;
   readonly shortcutCommand?: KeybindingCommand;
+  /** Sorts after every other match in its group; see `SettingsSearchItem.secondary`. */
+  readonly secondary?: boolean;
 }
 
 export interface CommandPaletteActionItem extends CommandPaletteItem {
@@ -434,7 +436,12 @@ export function filterCommandPaletteGroups(input: {
         rank: rankCommandPaletteItemMatch(item, normalizedQuery, queryTokens),
       });
     })
-      .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
+      .toSorted(
+        (left, right) =>
+          Number(left.item.secondary ?? false) - Number(right.item.secondary ?? false) ||
+          right.rank - left.rank ||
+          left.index - right.index,
+      )
       .map((entry) => entry.item);
 
     if (items.length === 0) {
