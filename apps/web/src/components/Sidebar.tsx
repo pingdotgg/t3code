@@ -3131,29 +3131,19 @@ export default function Sidebar() {
     (threadRef: ScopedThreadRef) => {
       void (async () => {
         const result = await pauseThreadSession(threadRef);
-        if (result._tag === "Failure") {
-          if (!isAtomCommandInterrupted(result)) {
-            const error = squashAtomCommandFailure(result);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Failed to pause session",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          }
-          return;
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to pause session",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
         }
-        // No navigation: the thread stays where it is, only its provider
-        // process is gone. Resume is sending the next message.
-        toastManager.add(
-          stackedThreadToast({
-            type: "success",
-            title: "Session paused",
-            description: "Send a message to resume.",
-            timeout: 5_000,
-          }),
-        );
+        // No success toast: dispatch only confirms the stop request was
+        // accepted, not that the provider stopped. The Paused pill arriving
+        // on the row is the confirmation; a failed stop reports an error.
       })();
     },
     [pauseThreadSession],

@@ -113,5 +113,6 @@ describe("buildThreadActionMenuItems", () => {
     expect(ids(baseState)).toContain("pause");
     expect(ids({ ...baseState, canPauseNow: false })).not.toContain("pause");
     expect(ids({ ...baseState, isPaused: true })).not.toContain("pause");
+    expect(ids({ ...baseState, isSettled: true })).not.toContain("pause");
   });
 });

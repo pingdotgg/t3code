@@ -104,8 +104,9 @@ export function buildThreadActionMenuItems(
     // Manual pause parks the provider session (frees its process/RAM) while
     // the thread stays active. Resume is sending the next message — the
     // server recreates a stopped session on turn start — so a paused thread
-    // shows no pause item.
-    ...(!state.isPaused && state.canPauseNow
+    // shows no pause item. Settled threads park their session via settle
+    // cleanup already, so Pause is not offered there either.
+    ...(!state.isPaused && !state.isSettled && state.canPauseNow
       ? [{ id: "pause" as const, label: "Pause session", icon: "pause" }]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },

@@ -147,10 +147,10 @@ export function resolveThreadListV2Status(
   if (thread.session?.status === "error") {
     return "failed";
   }
-  // Stopped = user-paused to save RAM (resume is the next message). Muted
-  // presence, not an alert: mirrors the web sidebar's Paused pill.
   if (thread.session != null && thread.session.status === "stopped") {
-    return "paused";
+    // A stopped session carrying a failure still reads as failed, never as
+    // the calm Paused state. Mirrors the web sidebar's Paused pill gating.
+    return thread.session.lastError != null ? "failed" : "paused";
   }
   return "ready";
 }

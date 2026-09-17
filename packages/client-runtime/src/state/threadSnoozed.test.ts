@@ -399,18 +399,23 @@ function pauseSession(
 }
 
 describe("session pause predicates", () => {
-  it("reports paused only for a stopped session", () => {
+  it("reports paused only for a cleanly stopped session", () => {
     expect(isSessionPaused(makePauseShell(pauseSession("stopped")))).toBe(true);
     expect(isSessionPaused(makePauseShell(pauseSession("ready")))).toBe(false);
     expect(isSessionPaused(makePauseShell(null))).toBe(false);
+    // A stopped session carrying a failure still reads as failed.
+    expect(isSessionPaused(makePauseShell({ ...pauseSession("stopped"), lastError: "boom" }))).toBe(
+      false,
+    );
   });
 
-  it("pauses idle sessions but never mid-turn, stopped, or unstarted ones", () => {
+  it("pauses idle sessions but never starting, mid-turn, stopped, or unstarted ones", () => {
     expect(canPauseSession(makePauseShell(pauseSession("ready")))).toBe(true);
-    expect(canPauseSession(makePauseShell(pauseSession("starting")))).toBe(true);
     expect(
       canPauseSession(makePauseShell({ ...pauseSession("running"), activeTurnId: null })),
     ).toBe(true);
+    // A starting session may be adopting a turn mid-stop.
+    expect(canPauseSession(makePauseShell(pauseSession("starting")))).toBe(false);
     // Running with a live turn must be interrupted first (archive guard twin).
     expect(canPauseSession(makePauseShell(pauseSession("running"), TurnId.make("turn-1")))).toBe(
       false,

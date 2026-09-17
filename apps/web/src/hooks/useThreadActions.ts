@@ -101,7 +101,7 @@ export class ThreadSessionPauseBlockedError extends Schema.TaggedError<ThreadSes
   },
 ) {
   override get message(): string {
-    return "Interrupt the running turn before pausing the session.";
+    return "Only an idle session can be paused. Interrupt the running turn first.";
   }
 }
 

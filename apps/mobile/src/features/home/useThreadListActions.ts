@@ -283,7 +283,9 @@ export function useThreadListActions(): {
           "Could not pause session",
           thread.session?.status === "running"
             ? "This thread is working. Interrupt it first, then try again."
-            : "This thread has no active session to pause.",
+            : thread.session?.status === "starting"
+              ? "This thread is still starting. Try again once it's idle."
+              : "This thread has no active session to pause.",
         );
         return false;
       }

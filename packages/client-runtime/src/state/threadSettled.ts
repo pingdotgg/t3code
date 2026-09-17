@@ -317,21 +317,30 @@ export function localSnoozeTime(date: Date): string {
  * (`ensureSessionForThread` treats `stopped` as absent). Resume is therefore
  * "send a message", not a second command — no contract change needed.
  *
- * A paused session is `session != null && status === "stopped"`. A null
- * session (never started) is not "paused", it is just idle.
+ * A paused session is a cleanly stopped one: `session != null`, status
+ * `"stopped"`, no `lastError`. A null session (never started) is not
+ * "paused", it is just idle — and a stopped session carrying a failure
+ * still reads as failed, never as the calm Paused state.
  */
 export function isSessionPaused(shell: Pick<OrchestrationThreadShell, "session">): boolean {
-  return shell.session != null && shell.session.status === "stopped";
+  return (
+    shell.session != null && shell.session.status === "stopped" && shell.session.lastError == null
+  );
 }
 
 /**
  * Pause mirrors the archive guard: never yank a thread mid-turn. Interrupt
- * first, then pause. Idle sessions (ready / error / no active turn) are
- * pausable; already-paused or never-started threads are not.
+ * first, then pause. Only idle sessions (ready / error / running with no
+ * live turn) are pausable — starting sessions are rejected because a turn
+ * may be adopting mid-stop, and already-paused or never-started threads are
+ * not pausable. The check races the server by nature (snapshot vs dispatch);
+ * the worst case is a turn that starts in the gap and recreates the session,
+ * which surfaces visibly and can simply be paused again.
  */
 export function canPauseSession(shell: Pick<OrchestrationThreadShell, "session">): boolean {
   const session = shell.session;
   if (session == null || session.status === "stopped") return false;
+  if (session.status === "starting") return false;
   if (session.status === "running" && session.activeTurnId != null) return false;
   return true;
 }
