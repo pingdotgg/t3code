@@ -546,6 +546,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestTurnRef = useRef(latestTurn);
+  // Bounds how long a position restore waits for rows that contain the saved
+  // anchor; switched threads can paint another thread's rows for a frame.
+  const restoreDeadlineRef = useRef<number | null>(null);
   // The list stays mounted across thread switches. Its first end pins on the
   // new thread must snap, not glide, even if that thread is mid-turn.
   const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
@@ -556,6 +559,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
     setPositionedThreadKey(null);
+    restoreDeadlineRef.current = null;
     previousLatestTurnRef.current = latestTurn;
     setSettlingListIdentity(listIdentityKey);
     paintedExpandedTurnIds = rememberedPosition?.disclosures?.turns ?? new Set();
@@ -833,6 +837,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       if (settleFrame !== null) cancelAnimationFrame(settleFrame);
       // Supersede any pending estimated-index scroll before the browser applies the gesture.
       if (viewport) void list.scrollToOffset({ offset: viewport.scrollTop, animated: false });
+      restoreDeadlineRef.current = null;
       setPositionedThreadKey(listIdentityKey);
     };
     const cancelForNavigation = () => {
@@ -856,6 +861,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const position = rememberedPosition;
     const index = position ? rows.findIndex((row) => row.id === position.rowId) : -1;
     if (position?.atEnd === false) onManualNavigation();
+    if (position?.atEnd === false && index < 0) {
+      // The displayed rows may briefly be a paint-only projection of another
+      // thread. Restoring against those would clamp the offset and mark the
+      // restoration done before the real rows arrive, so wait for rows that
+      // contain the saved anchor (bounded) before falling back.
+      if (restoreDeadlineRef.current === null) {
+        restoreDeadlineRef.current = Date.now() + 2_000;
+      }
+      if (Date.now() < restoreDeadlineRef.current) {
+        return;
+      }
+      restoreDeadlineRef.current = null;
+    }
     if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
     const scrolling =
       position?.atEnd === false
@@ -871,6 +889,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     void Promise.resolve(scrolling).then(() => {
       if (cancelled) return;
       if (position?.atEnd !== false || index < 0) {
+        restoreDeadlineRef.current = null;
         setPositionedThreadKey(listIdentityKey);
         return;
       }
@@ -902,6 +921,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           return;
         }
         if (++stableFrames >= 2) {
+          restoreDeadlineRef.current = null;
           setPositionedThreadKey(listIdentityKey);
         } else {
           settleFrame = requestAnimationFrame(reconcile);
