@@ -297,6 +297,7 @@ describe("CheckpointReactor", () => {
     readonly threadWorktreePath?: string | null;
     readonly threadBranch?: string | null;
     readonly secondThreadSharingWorktree?: boolean;
+    readonly secondThreadWorktreePath?: (cwd: string) => string;
     readonly localStatusRefName?: string | null;
     readonly providerSessionCwd?: string;
     readonly providerName?: ProviderDriverKind;
@@ -436,7 +437,8 @@ describe("CheckpointReactor", () => {
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
           branch: options?.threadBranch ?? null,
-          worktreePath: options?.threadWorktreePath ?? cwd,
+          worktreePath:
+            options?.threadWorktreePath !== undefined ? options.threadWorktreePath : cwd,
           createdAt,
         })
         .pipe(
@@ -455,7 +457,8 @@ describe("CheckpointReactor", () => {
                   interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
                   runtimeMode: "approval-required",
                   branch: null,
-                  worktreePath: options?.threadWorktreePath ?? cwd,
+                  worktreePath:
+                    options?.secondThreadWorktreePath?.(cwd) ?? options?.threadWorktreePath ?? cwd,
                   createdAt,
                 }),
               )
@@ -496,6 +499,81 @@ describe("CheckpointReactor", () => {
       pullRequestRefreshes,
     };
   }
+
+  effectIt.effect.each([
+    "active",
+    "archived",
+    "alias",
+    "nested",
+    "ancestor",
+    "project-root",
+    "conversation",
+  ] as const)("preserves sibling files when reverting a shared workspace, owner=%s", (owner) =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          secondThreadSharingWorktree: true,
+          ...(owner === "alias" || owner === "nested" || owner === "ancestor"
+            ? {
+                secondThreadWorktreePath: (cwd: string) => {
+                  if (owner === "ancestor") return NodePath.dirname(cwd);
+                  if (owner === "nested") {
+                    const nested = NodePath.join(cwd, "nested-owner");
+                    NodeFS.mkdirSync(nested);
+                    return nested;
+                  }
+                  const alias = `${cwd}-alias`;
+                  NodeFS.symlinkSync(cwd, alias, "junction");
+                  tempDirs.push(alias);
+                  return alias;
+                },
+              }
+            : {}),
+        }),
+      );
+      const createdAt = "2026-01-01T00:00:02.000Z";
+      if (owner === "archived")
+        yield* harness.engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-archive-owner"),
+          threadId: ThreadId.make("thread-2"),
+        });
+      if (owner === "project-root")
+        yield* harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-root-owner"),
+          threadId: ThreadId.make("thread-2"),
+          worktreePath: null,
+        });
+      const siblingFile = NodePath.join(
+        harness.cwd,
+        ...(owner === "nested" ? ["nested-owner"] : []),
+        "sibling-work.txt",
+      );
+      NodeFS.writeFileSync(siblingFile, "sibling work\n");
+      yield* harness.engine.dispatch({
+        type: owner === "conversation" ? "thread.conversation.revert" : "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-shared-revert"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 0,
+        createdAt,
+      });
+      yield* Effect.promise(harness.drain);
+      expect(NodeFS.readFileSync(siblingFile, "utf8")).toBe("sibling work\n");
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
+      const model = yield* Effect.promise(harness.readModel);
+      const failure = model.threads
+        .find((t) => t.id === "thread-1")
+        ?.activities.find((a) => a.kind === "checkpoint.revert.failed");
+      if (owner === "conversation") expect(failure).toBeUndefined();
+      else {
+        expect(failure?.payload).toMatchObject({
+          detail: expect.stringContaining("isolated worktree"),
+        });
+        expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+      }
+    }),
+  );
 
   effectIt.effect("captures baseline and large turn summaries before completion receipts", () =>
     Effect.gen(function* () {
@@ -1963,7 +2041,7 @@ describe("CheckpointReactor", () => {
   });
 
   it.each([false, true])(
-    "reverts without an active session using project cwd fallback: %s",
+    "restores files only in an isolated worktree without an active session, project cwd=%s",
     async (useProjectCwd) => {
       const harness = await createHarness({
         hasSession: false,
@@ -1995,12 +2073,28 @@ describe("CheckpointReactor", () => {
         }),
       );
 
-      await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
-      expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
-        threadId: ThreadId.make("thread-1"),
-        numTurns: 1,
-      });
-      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v1\n");
+      await harness.drain();
+      if (useProjectCwd) {
+        expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+        expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
+        const model = await harness.readModel();
+        expect(model.threads[0]?.activities).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: "checkpoint.revert.failed",
+              payload: expect.objectContaining({
+                detail: expect.stringContaining("isolated worktree"),
+              }),
+            }),
+          ]),
+        );
+      } else {
+        expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+          threadId: ThreadId.make("thread-1"),
+          numTurns: 1,
+        });
+        expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v1\n");
+      }
     },
   );
 });
