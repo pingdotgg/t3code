@@ -15,8 +15,8 @@ import {
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { MaterialScreenContent } from "../../components/MaterialScreenContent";
+import { AppText as Text } from "../../components/AppText";
 import { AudioFilePreview } from "../../components/AudioFilePreview";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
@@ -43,7 +43,10 @@ import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
-import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
+import {
+  AndroidWorkspaceSidebarButton,
+  WorkspaceSidebarToolbar,
+} from "../layout/workspace-sidebar-toolbar";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -52,6 +55,7 @@ import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
+import { MaterialFilesHeader } from "./MaterialFilesHeader";
 import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
 import { WorkspaceFilePreviewError } from "./WorkspaceFilePreviewError";
 import { WorkspaceFileVideoPreview } from "./WorkspaceFileVideoPreview";
@@ -328,10 +332,9 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const isAndroid = Platform.OS === "android";
-  const { themeAppearance: highlightTheme, materialYouStyleLayoutActive } =
-    useAppearancePreferences();
+  const { themeAppearance: highlightTheme } = useAppearancePreferences();
   const theme = useUniwindTheme();
-  const screenColor = theme["--color-screen"];
+  const headerColor = theme["--color-header"];
   const sheetSurfaceColor = theme["--color-sheet-solid"];
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
@@ -451,7 +454,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       <NativeStackScreenOptions
         options={{
           contentStyle: {
-            backgroundColor: materialYouStyleLayoutActive ? screenColor : sheetSurfaceColor,
+            backgroundColor: Platform.OS === "android" ? headerColor : sheetSurfaceColor,
           },
           headerShown: !isAndroid,
           unstable_headerSubtitle:
@@ -484,46 +487,16 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       />
       {isAndroid ? (
         <>
-          <AndroidScreenHeader
-            title="Files"
-            subtitle={projectName}
-            onBack={handleReturnToThread}
-            hideBottomBorder={materialYouStyleLayoutActive}
-            actions={[
-              {
-                accessibilityLabel: "Refresh files",
-                icon: "arrow.clockwise",
-                onPress: entriesQuery.refresh,
-              },
-            ]}
-          />
-          <View
-            className={
-              materialYouStyleLayoutActive
-                ? "mx-4 my-2 min-h-12 flex-row items-center gap-2 rounded-full border border-input-border bg-input px-3.5"
-                : "flex-row items-center gap-2 border-b border-border px-3 py-2"
-            }
-          >
-            <SymbolView
-              name="magnifyingglass"
-              size={17}
-              tintColorClassName={"accent-icon-muted"}
-              type="monochrome"
+          {
+            <MaterialFilesHeader
+              projectName={projectName}
+              leading={<AndroidWorkspaceSidebarButton />}
+              searchQuery={searchQuery}
+              onSearchQueryChange={setSearchQuery}
+              onRefresh={entriesQuery.refresh}
+              onBack={handleReturnToThread}
             />
-            <TextInput
-              accessibilityLabel="Search files"
-              autoCapitalize="none"
-              autoCorrect={false}
-              className={
-                materialYouStyleLayoutActive
-                  ? "min-h-10 flex-1 py-2 text-sm text-foreground"
-                  : "min-h-10 flex-1 rounded-xl py-2 text-sm"
-              }
-              placeholder="Search files"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-          </View>
+          }
         </>
       ) : (
         <>
@@ -548,26 +521,28 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
           )}
         </>
       )}
-      <FileTreeBrowser
-        key={JSON.stringify([environmentId, cwd])}
-        entries={entriesQuery.entries}
-        loadedDirectories={entriesQuery.loadedDirectories}
-        onLoadDirectory={entriesQuery.loadDirectory}
-        error={entriesQuery.error}
-        isPending={entriesQuery.isPending}
-        searchQuery={searchQuery}
-        searchTruncated={entriesQuery.searchTruncated}
-        selectedPath={null}
-        onPreviewFile={handlePreviewFile}
-        onRefresh={entriesQuery.refresh}
-        onSelectFile={handleSelectFile}
-      />
-      <FilesToolbarBottomFade />
+      <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
+        <FileTreeBrowser
+          key={JSON.stringify([environmentId, cwd])}
+          entries={entriesQuery.entries}
+          loadedDirectories={entriesQuery.loadedDirectories}
+          onLoadDirectory={entriesQuery.loadDirectory}
+          error={entriesQuery.error}
+          isPending={entriesQuery.isPending}
+          searchQuery={searchQuery}
+          searchTruncated={entriesQuery.searchTruncated}
+          selectedPath={null}
+          onPreviewFile={handlePreviewFile}
+          onRefresh={entriesQuery.refresh}
+          onSelectFile={handleSelectFile}
+        />
+        <FilesToolbarBottomFade />
+      </MaterialScreenContent>
     </>
   );
 
-  return materialYouStyleLayoutActive ? (
-    <View className="flex-1" style={{ backgroundColor: screenColor }}>
+  return Platform.OS === "android" ? (
+    <View className="flex-1" style={{ backgroundColor: headerColor }}>
       {content}
     </View>
   ) : (
@@ -933,6 +908,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         <AndroidScreenHeader
           title={basename(relativePath)}
           subtitle={headerSubtitle}
+          leading={<AndroidWorkspaceSidebarButton />}
+          hideBottomBorder
           onBack={handleBack}
           trailing={
             <>
@@ -942,6 +919,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
                     panes.auxiliaryPaneVisible ? "Hide file navigator" : "Show file navigator"
                   }
                   icon="sidebar.right"
+                  selected={panes.auxiliaryPaneVisible}
                   onPress={toggleAuxiliaryPane}
                 />
               ) : null}
@@ -1007,25 +985,27 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             ))}
         </NativeHeaderToolbar.Menu>
       </NativeHeaderToolbar>
-      <FileContent
-        key={previewKey}
-        activeMode={resolvedActiveMode}
-        cwd={cwd}
-        environmentId={environmentId}
-        previewUri={previewUri}
-        previewFailure={assetPreview._tag === "Failure" ? assetPreview.reason : null}
-        onRetryPreview={handleRetryPreview}
-        videoSource={videoSource}
-        mediaSource={mediaSource}
-        resolveVideoUri={assetPreview.refresh}
-        fileContents={fileData?.contents ?? null}
-        fileError={fileQuery.error}
-        initialLine={targetLine}
-        relativePath={relativePath}
-        threadId={threadId}
-        truncated={fileData?.truncated ?? false}
-        onRefresh={() => fileQuery.refresh()}
-      />
+      <MaterialScreenContent>
+        <FileContent
+          key={previewKey}
+          activeMode={resolvedActiveMode}
+          cwd={cwd}
+          environmentId={environmentId}
+          previewUri={previewUri}
+          previewFailure={assetPreview._tag === "Failure" ? assetPreview.reason : null}
+          onRetryPreview={handleRetryPreview}
+          videoSource={videoSource}
+          mediaSource={mediaSource}
+          resolveVideoUri={assetPreview.refresh}
+          fileContents={fileData?.contents ?? null}
+          fileError={fileQuery.error}
+          initialLine={targetLine}
+          relativePath={relativePath}
+          threadId={threadId}
+          truncated={fileData?.truncated ?? false}
+          onRefresh={() => fileQuery.refresh()}
+        />
+      </MaterialScreenContent>
       <FilePreviewModal
         source={fullScreenPreview}
         onRequestClose={() => setFullScreenPreview(null)}

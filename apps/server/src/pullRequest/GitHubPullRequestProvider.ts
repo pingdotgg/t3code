@@ -40,6 +40,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
+  viewedFiles: "host",
   review: {
     inlineComment: true,
     reply: true,
@@ -133,8 +134,11 @@ function withAvatar(
   actor: PullRequestActor | null,
   avatarsByLogin: ReadonlyMap<string, string>,
   host: string,
+  botLogins?: ReadonlySet<string>,
 ): PullRequestActor | null {
-  if (actor === null || actor.avatarUrl !== null) return actor;
+  if (actor === null) return actor;
+  if (botLogins?.has(actor.login)) actor = { ...actor, isBot: true };
+  if (actor.avatarUrl !== null) return actor;
   const avatarUrl = avatarsByLogin.get(actor.login) ?? loginAvatarUrl(actor.login, host);
   return avatarUrl === null ? actor : { ...actor, avatarUrl };
 }
@@ -405,6 +409,7 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequest")),
         Effect.map(([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
           ...detail.pullRequest,
+          author: withAvatar(detail.pullRequest.author, new Map<string, string>(), input.host),
           checks: withWorkflowApprovals(
             detail.pullRequest.checks,
             detail.workflowApprovals.runs,
@@ -450,6 +455,7 @@ export const make = Effect.gen(function* () {
               truncated: true,
               reviewers: [],
               avatarsByLogin: new Map<string, string>(),
+              botLogins: new Set<string>(),
               commitStats: new Map<
                 string,
                 { readonly additions: number; readonly deletions: number }
@@ -463,7 +469,12 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => ({
-          author: withAvatar(pullRequest.author, reviewThreads.avatarsByLogin, input.host),
+          author: withAvatar(
+            pullRequest.author,
+            reviewThreads.avatarsByLogin,
+            input.host,
+            reviewThreads.botLogins,
+          ),
           reviewers: reviewThreads.reviewers,
           reactions: reviewThreads.reactions,
           commits: (reviewThreads.commits.length > 0
@@ -473,7 +484,13 @@ export const make = Effect.gen(function* () {
             ...commit,
             ...reviewThreads.commitStats.get(commit.oid),
             authors: commit.authors?.map(
-              (author) => withAvatar(author, reviewThreads.avatarsByLogin, input.host) ?? author,
+              (author) =>
+                withAvatar(
+                  author,
+                  reviewThreads.avatarsByLogin,
+                  input.host,
+                  reviewThreads.botLogins,
+                ) ?? author,
             ),
           })),
           comments: [...pullRequest.comments, ...reviewThreads.comments]
@@ -489,7 +506,12 @@ export const make = Effect.gen(function* () {
                 rendersEmpty(comment.body)
                   ? (reviewThreads.dismissalsByReviewId.get(comment.id) ?? comment.body)
                   : comment.body,
-              author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
+              author: withAvatar(
+                comment.author,
+                reviewThreads.avatarsByLogin,
+                input.host,
+                reviewThreads.botLogins,
+              ),
               // A comment out of `gh pr view --json` carries none of its own: that read
               // reports no reaction at all, so they arrive from the GraphQL page by node id.
               reactions: comment.reactions ?? reviewThreads.reactionsById.get(comment.id) ?? [],
@@ -503,7 +525,12 @@ export const make = Effect.gen(function* () {
             ...thread,
             comments: thread.comments.map((comment) => ({
               ...comment,
-              author: withAvatar(comment.author, reviewThreads.avatarsByLogin, input.host),
+              author: withAvatar(
+                comment.author,
+                reviewThreads.avatarsByLogin,
+                input.host,
+                reviewThreads.botLogins,
+              ),
             })),
           })),
         })),
@@ -549,6 +576,12 @@ export const make = Effect.gen(function* () {
 
     getDiffFileContents: (input) =>
       cli.getPullRequestDiffFileContents(input).pipe(Effect.mapError(fail("getDiffFileContents"))),
+
+    getFilesViewed: (input) =>
+      cli.getPullRequestFilesViewed(input).pipe(Effect.mapError(fail("getFilesViewed"))),
+
+    setFilesViewed: (input) =>
+      cli.setPullRequestFilesViewed(input).pipe(Effect.mapError(fail("setFilesViewed"))),
 
     listReviewerCandidates: (input) =>
       cli.listReviewerCandidates(input).pipe(Effect.mapError(fail("listReviewerCandidates"))),
