@@ -156,6 +156,36 @@ it.effect("checkpoint capture still fails when a clean filter rejects a file", (
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("checkpoint capture refuses a truncated nested repository listing", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-truncated-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["init", "empty"]);
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) =>
+          liveProcess
+            .run(input)
+            .pipe(
+              Effect.map((result) =>
+                input.args.includes("--others") ? { ...result, stdoutTruncated: true } : result,
+              ),
+            ),
+      }),
+    );
+
+    const result = yield* Effect.result(
+      captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("checkpoint capture does not rerun clean filters for unchanged indexed files", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

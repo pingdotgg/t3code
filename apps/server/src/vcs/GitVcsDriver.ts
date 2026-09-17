@@ -941,7 +941,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 cwd: input.cwd,
                 args: ["ls-files", "--others", "--exclude-standard", "-z", "--", "."],
                 env: commitEnv,
+                maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
               });
+              if (untracked.stdoutTruncated) return yield* error;
               const exclusions: Array<string> = [];
               for (const entry of splitNullSeparatedGitStdoutPaths(untracked)) {
                 if (!entry.endsWith("/")) continue;
