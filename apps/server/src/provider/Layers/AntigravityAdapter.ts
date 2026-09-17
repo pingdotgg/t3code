@@ -971,6 +971,10 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       }),
     );
 
+  // `input.disabledSkills` is not supported here: Antigravity has no `$name`
+  // rewrite, so the prompt goes out as typed and switching a skill off only
+  // hides it from the picker. Anything that starts dispatching skills here
+  // must fold that list first (`resolveEffectiveSkills`), as ClaudeAdapter does.
   const sendTurn: Adapter["sendTurn"] = Effect.fn("AntigravityAdapter.sendTurn")(function* (input) {
     const context = yield* requireSession(input.threadId);
     if (input.modelSelection && input.modelSelection.instanceId !== options.instanceId) {

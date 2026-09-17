@@ -33,6 +33,7 @@ import {
   type ProviderDriverKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
+  type ProviderSkillKey,
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
@@ -903,6 +904,31 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  /**
+   * The skills the user switched off for this thread's project. The
+   * environment list is the answer unless some project overrides the key —
+   * the same cheap guard `agentAccessSettings` uses to keep a thread lookup
+   * off every turn. An unreadable settings file switches nothing off: the
+   * list is the only record of the choice, so there is nothing to honour.
+   */
+  const disabledSkillsForThread = Effect.fn("ProviderService.disabledSkillsForThread")(
+    function* (threadId: ThreadId) {
+      const settings = yield* serverSettings.getSettings;
+      const overridden = Object.values(settings.projectSettingsOverrides).some(
+        (entry) => entry.disabledSkills !== undefined,
+      );
+      if (!overridden || Option.isNone(projectionQuery)) return settings.disabledSkills;
+      const thread = yield* projectionQuery.value.getThreadShellById(threadId);
+      if (Option.isNone(thread)) return settings.disabledSkills;
+      return resolveProjectSettings(settings, thread.value.projectId).settings.disabledSkills;
+    },
+    Effect.catch((cause) =>
+      Effect.logWarning("Could not resolve disabled skills; sending the turn with none off.", {
+        cause,
+      }).pipe(Effect.as<ReadonlyArray<ProviderSkillKey>>([])),
+    ),
+  );
+
   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
     threadId: ThreadId,
   ) {
@@ -1732,7 +1758,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }),
         (turnMetadata) =>
           Effect.gen(function* () {
-            const turn = yield* routed.adapter.sendTurn(input);
+            // Resolved here, not in the adapter: this is where the thread's
+            // project is already known, and the list must never ride the wire.
+            const disabledSkills = yield* disabledSkillsForThread(input.threadId);
+            const turn = yield* routed.adapter.sendTurn(
+              disabledSkills.length > 0 ? { ...input, disabledSkills } : input,
+            );
             yield* associateTurnAnalytics({
               providerInstanceId: routed.instanceId,
               threadId: input.threadId,

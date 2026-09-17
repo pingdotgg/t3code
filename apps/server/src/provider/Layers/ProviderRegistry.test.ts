@@ -1428,6 +1428,108 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         }),
       );
 
+      // The registry is the publish chokepoint for the user's disabled skills:
+      // every client and the send path read `enabled` / `disabledBy` from here
+      // rather than re-deriving the rule.
+      it.effect("folds the disabled skills into what it publishes, and back out again", () =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("claudeAgent");
+          const instanceId = ProviderInstanceId.make("claudeAgent");
+          const reviewSkill = {
+            name: "review",
+            path: "/home/dev/.claude/skills/review/SKILL.md",
+            scope: "user",
+            enabled: true,
+          } as const;
+          const provider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [reviewSkill],
+          } as const satisfies ServerProvider;
+          const instance = {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: { driverKind: driver, continuationKey: "claude:instance:claude" },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(provider),
+              refresh: Effect.succeed(provider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const serverSettings = yield* makeMutableServerSettingsService(
+            decodeServerSettings(
+              deepMerge(encodedDefaultServerSettings, {
+                disabledSkills: [{ source: "personal", name: "review" }],
+              }),
+            ),
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                  getInstance: (requested) =>
+                    Effect.succeed(requested === instanceId ? instance : undefined),
+                  listInstances: Effect.succeed([instance]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.empty,
+                  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+                }),
+              ),
+              Layer.provideMerge(
+                Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+              ),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-skills-" }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            assert.deepStrictEqual((yield* registry.getProviders)[0]?.skills, [
+              { ...reviewSkill, enabled: false, disabledBy: "settings" },
+            ]);
+
+            // Switching it back on must take effect without a provider rescan,
+            // so wait on the republish rather than re-reading on a timer.
+            const republished = yield* Stream.take(registry.streamChanges, 1).pipe(
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            // `Stream.fromPubSub` subscribes on stream start, so let the forked
+            // fibre reach its subscribe before the publish it must observe.
+            yield* Effect.yieldNow;
+            yield* serverSettings.updateSettings({ disabledSkills: [] });
+            const [published] = yield* Fiber.join(republished);
+            assert.deepStrictEqual(published?.[0]?.skills, [reviewSkill]);
+            assert.deepStrictEqual((yield* registry.getProviders)[0]?.skills, [reviewSkill]);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("deduplicates cwd probes and clears snapshots when an instance rebuilds", () =>
         Effect.gen(function* () {
           const driver = ProviderDriverKind.make("codex");

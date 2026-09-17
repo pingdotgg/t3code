@@ -26,9 +26,11 @@ import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderSkillKey,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
+import { resolveEffectiveSkills } from "@t3tools/shared/providerSkills";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -41,6 +43,7 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import {
@@ -99,6 +102,42 @@ export function upsertProviderWorkspaceSnapshot(
     ].slice(-MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER),
   };
 }
+
+/**
+ * Apply the user's disabled skills to everything the registry hands out. The
+ * fold runs on the way out, never on `providersRef`: stored snapshots stay as
+ * the provider reported them, so switching a skill back on takes effect on the
+ * next read instead of waiting for a rescan the fold could not undo.
+ */
+export function foldDisabledSkills(
+  providers: ReadonlyArray<ServerProvider>,
+  disabledSkills: ReadonlyArray<ProviderSkillKey>,
+): ReadonlyArray<ServerProvider> {
+  if (disabledSkills.length === 0) {
+    return providers;
+  }
+  return providers.map((provider) => ({
+    ...provider,
+    skills: resolveEffectiveSkills({ skills: provider.skills, disabledSkills }),
+    ...(provider.workspaceSnapshots !== undefined
+      ? {
+          workspaceSnapshots: provider.workspaceSnapshots.map((snapshot) => ({
+            ...snapshot,
+            skills: resolveEffectiveSkills({ skills: snapshot.skills, disabledSkills }),
+          })),
+        }
+      : {}),
+  }));
+}
+
+const haveDisabledSkillsChanged = (
+  previous: ReadonlyArray<ProviderSkillKey>,
+  next: ReadonlyArray<ProviderSkillKey>,
+): boolean =>
+  previous.length !== next.length ||
+  previous.some(
+    (key, index) => key.source !== next[index]?.source || key.name !== next[index].name,
+  );
 
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
@@ -278,7 +317,30 @@ export const ProviderRegistryLive = Layer.effect(
   ProviderRegistry,
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry;
+    const serverSettings = yield* ServerSettingsService;
     const config = yield* ServerConfig;
+
+    // An unreadable settings file must not resurrect a skill the user switched
+    // off, but the list is all we have: without it every skill reads enabled.
+    // Same direction the picker takes, and the failure is visible immediately.
+    const readDisabledSkills = serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.disabledSkills),
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not read server settings; publishing skills unfolded.", {
+          cause,
+        }).pipe(Effect.as<ReadonlyArray<ProviderSkillKey>>([])),
+      ),
+    );
+
+    /**
+     * The publish chokepoint. Every provider list the registry hands a caller
+     * passes through here, so `ServerProviderSkill.enabled` and `disabledBy`
+     * are already folded by the time a client or the send path reads them.
+     */
+    const withEffectiveSkills = (providers: ReadonlyArray<ServerProvider>) =>
+      readDisabledSkills.pipe(
+        Effect.map((disabledSkills) => foldDisabledSkills(providers, disabledSkills)),
+      );
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
@@ -791,6 +853,28 @@ export const ProviderRegistryLive = Layer.effect(
       () => syncLiveSourcesAndContinue,
     ).pipe(Effect.forkScoped);
 
+    // Switching a skill off changes what the registry publishes without
+    // changing any snapshot, so nothing else would wake subscribers. Republish
+    // the list we already hold, and only for this key: a settings write is
+    // common and a full provider list is not a cheap thing to put on the wire.
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    yield* readDisabledSkills.pipe(
+      Effect.flatMap((initialDisabledSkills) =>
+        Stream.runFoldEffect(
+          settingsChanges,
+          () => initialDisabledSkills,
+          (previous, settings) =>
+            haveDisabledSkillsChanged(previous, settings.disabledSkills)
+              ? Ref.get(providersRef).pipe(
+                  Effect.flatMap((providers) => PubSub.publish(changesPubSub, providers)),
+                  Effect.as(settings.disabledSkills),
+                )
+              : Effect.succeed(previous),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+
     const recoverRefreshFailure = Effect.fn("recoverRefreshFailure")(function* (
       cause: Cause.Cause<unknown>,
     ) {
@@ -866,17 +950,27 @@ export const ProviderRegistryLive = Layer.effect(
     });
 
     return {
-      getProviders: Ref.get(providersRef),
+      getProviders: Ref.get(providersRef).pipe(Effect.flatMap(withEffectiveSkills)),
       refresh: (provider?: ProviderDriverKind) =>
-        refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refresh(provider).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.flatMap(withEffectiveSkills),
+        ),
       refreshInstance: (instanceId: ProviderInstanceId) =>
-        refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refreshInstance(instanceId).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.flatMap(withEffectiveSkills),
+        ),
       refreshWorkspaceSnapshot: (input) =>
-        refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
+        refreshWorkspaceSnapshot(input).pipe(
+          Effect.catchCause(recoverRefreshFailure),
+          Effect.flatMap(withEffectiveSkills),
+        ),
       getProviderMaintenanceCapabilitiesForInstance,
-      setProviderMaintenanceActionState,
+      setProviderMaintenanceActionState: (input) =>
+        setProviderMaintenanceActionState(input).pipe(Effect.flatMap(withEffectiveSkills)),
       get streamChanges() {
-        return Stream.fromPubSub(changesPubSub);
+        return Stream.fromPubSub(changesPubSub).pipe(Stream.mapEffect(withEffectiveSkills));
       },
     } satisfies ProviderRegistryShape;
   }),

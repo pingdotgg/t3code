@@ -71,6 +71,7 @@ import {
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
 import { HostProcessIsExecutable } from "@t3tools/shared/hostProcess";
+import { resolveEffectiveSkills } from "@t3tools/shared/providerSkills";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -5133,7 +5134,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // skillOverrides, or reserved for the agent with `user-invocable: false`,
     // is left as prose: the CLI would answer `/name` with a notice instead of
     // running it.
-    const skills = yield* discoverClaudeSkills(
+    const discoveredSkills = yield* discoverClaudeSkills(
       claudeSettings,
       context.session.cwd,
       claudeEnvironment,
@@ -5141,6 +5142,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+    // A skill the user switched off in T3 Code is left as prose too, so the
+    // switch stops an accidental dispatch and not just the picker row.
+    const skills = resolveEffectiveSkills({
+      skills: discoveredSkills,
+      disabledSkills: input.disabledSkills ?? [],
+    });
     const message = yield* buildUserMessageEffect(input, {
       fileSystem,
       attachmentsDir: serverConfig.attachmentsDir,

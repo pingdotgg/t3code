@@ -60,7 +60,10 @@ import {
   ProviderWorkspaceMissingError,
   type ProviderAdapterError,
 } from "../Errors.ts";
-import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import type {
+  ProviderAdapterSendTurnInput,
+  ProviderAdapterShape,
+} from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -168,7 +171,7 @@ function makeFakeCodexAdapter(
 
   const sendTurn = vi.fn(
     (
-      input: ProviderSendTurnInput,
+      input: ProviderAdapterSendTurnInput,
     ): Effect.Effect<ProviderTurnStartResult, ProviderAdapterError> => {
       if (!sessions.has(input.threadId)) {
         return Effect.fail(
@@ -4936,7 +4939,36 @@ boundedListing.layer("ProviderServiceLive session listing", (it) => {
   );
 });
 
-const decodeBrowserAccessThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
+const decodeProjectThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
+
+/**
+ * Every projection read a test does not exercise. Spread it and override the
+ * one method under test, so a new query method does not break these layers.
+ */
+const UNUSED_PROJECTION_SNAPSHOT_QUERY = {
+  getTurnStartMessage: () => Effect.die("unused"),
+  getImportedAgentSessionSources: () => Effect.die("unused"),
+  getUserInputActivity: () => Effect.die("unused"),
+  listActivitiesByKind: () => Effect.die("unused"),
+  getCommandReadModel: () => Effect.die("unused"),
+  getSnapshot: () => Effect.die("unused"),
+  getShellSnapshot: () => Effect.die("unused"),
+  getArchivedShellSnapshot: () => Effect.die("unused"),
+  getSnapshotSequence: () => Effect.die("unused"),
+  getCounts: () => Effect.die("unused"),
+  getEventReplayStats: () => Effect.die("unused"),
+  getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
+  getProjectShells: () => Effect.die("unused"),
+  getProjectShellById: () => Effect.die("unused"),
+  getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+  getThreadCheckpointContext: () => Effect.die("unused"),
+  getFullThreadDiffContext: () => Effect.die("unused"),
+  getThreadRuntimeContext: () => Effect.die("unused"),
+  getThreadShellById: () => Effect.die("unused"),
+  getThreadDetailById: () => Effect.die("unused"),
+  getThreadDetailSnapshot: () => Effect.die("unused"),
+  searchThreads: () => Effect.die("unused"),
+} satisfies ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"];
 
 describe("agent browser access", () => {
   const projectId = ProjectId.make("project-browser-access");
@@ -4963,29 +4995,12 @@ describe("agent browser access", () => {
         Layer.provide(runtimeRepositoryLayer),
       );
       const projectionLayer = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getTurnStartMessage: () => Effect.die("unused"),
-        getImportedAgentSessionSources: () => Effect.die("unused"),
-        getUserInputActivity: () => Effect.die("unused"),
-        listActivitiesByKind: () => Effect.die("unused"),
-        getCommandReadModel: () => Effect.die("unused"),
-        getSnapshot: () => Effect.die("unused"),
-        getShellSnapshot: () => Effect.die("unused"),
-        getArchivedShellSnapshot: () => Effect.die("unused"),
-        getSnapshotSequence: () => Effect.die("unused"),
-        getCounts: () => Effect.die("unused"),
-        getEventReplayStats: () => Effect.die("unused"),
-        getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
-        getProjectShells: () => Effect.die("unused"),
-        getProjectShellById: () => Effect.die("unused"),
-        getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
-        getThreadCheckpointContext: () => Effect.die("unused"),
-        getFullThreadDiffContext: () => Effect.die("unused"),
-        getThreadRuntimeContext: () => Effect.die("unused"),
+        ...UNUSED_PROJECTION_SNAPSHOT_QUERY,
         getThreadShellById: (requestedThreadId) =>
           Effect.gen(function* () {
             assert.equal(requestedThreadId, threadId);
             return Option.some(
-              yield* decodeBrowserAccessThreadShell({
+              yield* decodeProjectThreadShell({
                 id: threadId,
                 projectId,
                 title: "Browser access test",
@@ -5004,9 +5019,6 @@ describe("agent browser access", () => {
               }),
             );
           }).pipe(Effect.orDie),
-        getThreadDetailById: () => Effect.die("unused"),
-        getThreadDetailSnapshot: () => Effect.die("unused"),
-        searchThreads: () => Effect.die("unused"),
       });
       const providerLayer = makeProviderServiceLive({
         issueMcpCredential: (request) =>
@@ -5146,6 +5158,123 @@ describe("agent browser access", () => {
         { withoutOrchestration: true },
       );
       assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("disabled skills on the send path", () => {
+  const projectId = ProjectId.make("project-disabled-skills");
+  const REVIEW = { source: "personal", name: "review" } as const;
+  const DEPLOY = { source: "repo", name: "deploy" } as const;
+
+  /** Send one turn and report the disabled-skill keys the adapter received. */
+  const sendTurnWith = (input: {
+    readonly threadId: ThreadId;
+    readonly disabledSkills: ReadonlyArray<{ readonly source: string; readonly name: string }>;
+    readonly projectOverride?: ReadonlyArray<{ readonly source: string; readonly name: string }>;
+  }) =>
+    Effect.gen(function* () {
+      const codex = makeFakeCodexAdapter();
+      const projectionLayer = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+        ...UNUSED_PROJECTION_SNAPSHOT_QUERY,
+        getThreadShellById: () =>
+          decodeProjectThreadShell({
+            id: input.threadId,
+            projectId,
+            title: "Disabled skills test",
+            modelSelection: createModelSelection(codexInstanceId, "gpt-5.4"),
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            latestTurn: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            session: null,
+            latestUserMessageAt: null,
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            hasActionableProposedPlan: false,
+          }).pipe(Effect.map(Option.some), Effect.orDie),
+      });
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(
+          Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistry,
+            makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter }),
+          ),
+        ),
+        Layer.provide(
+          ProviderSessionDirectoryLive.pipe(
+            Layer.provide(
+              ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
+            ),
+          ),
+        ),
+        Layer.provide(projectionLayer),
+        Layer.provide(
+          ServerSettings.ServerSettingsService.layerTest({
+            disabledSkills: input.disabledSkills,
+            projectSettingsOverrides:
+              input.projectOverride === undefined
+                ? {}
+                : { [projectId]: { disabledSkills: input.projectOverride } },
+          } as Parameters<typeof ServerSettings.ServerSettingsService.layerTest>[0]),
+        ),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        yield* provider.startSession(input.threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: codexInstanceId,
+          threadId: input.threadId,
+          runtimeMode: "full-access",
+        });
+        yield* provider.sendTurn({ threadId: input.threadId, input: "go" });
+      }).pipe(Effect.provide(providerLayer));
+
+      return codex.sendTurn.mock.calls.at(-1)?.[0].disabledSkills;
+    });
+
+  it.effect("hands the adapter the environment list when the project has no override", () =>
+    Effect.gen(function* () {
+      const disabledSkills = yield* sendTurnWith({
+        threadId: asThreadId("thread-skills-environment"),
+        disabledSkills: [REVIEW],
+      });
+      assert.deepEqual(disabledSkills, [REVIEW]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // The override replaces the environment list rather than merging with it, so
+  // the environment's `review` is back on for this project and `deploy` is off.
+  it.effect("a project override replaces the environment list", () =>
+    Effect.gen(function* () {
+      const disabledSkills = yield* sendTurnWith({
+        threadId: asThreadId("thread-skills-override"),
+        disabledSkills: [REVIEW],
+        projectOverride: [DEPLOY],
+      });
+      assert.deepEqual(disabledSkills, [DEPLOY]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("an empty project override switches nothing off for that project", () =>
+    Effect.gen(function* () {
+      const disabledSkills = yield* sendTurnWith({
+        threadId: asThreadId("thread-skills-override-empty"),
+        disabledSkills: [REVIEW],
+        projectOverride: [],
+      });
+      assert.deepEqual(disabledSkills, undefined);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

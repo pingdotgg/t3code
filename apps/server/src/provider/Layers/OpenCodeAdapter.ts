@@ -3092,6 +3092,10 @@ export function makeOpenCodeAdapter(
       },
     );
 
+    // `input.disabledSkills` is not supported here: OpenCode has no `$name`
+    // rewrite, so the prompt goes out as typed and switching a skill off only
+    // hides it from the picker. Anything that starts dispatching skills here
+    // must fold that list first (`resolveEffectiveSkills`), as ClaudeAdapter does.
     const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
       const context = yield* ensureSessionContext(sessions, input.threadId);
       yield* awaitOpenCodeContextReady(context);
