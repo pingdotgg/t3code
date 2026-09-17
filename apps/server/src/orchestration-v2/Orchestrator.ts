@@ -3872,23 +3872,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Active run ${activeRun.id} has no provider thread for queued dispatch.`,
           });
         }
-        const existingProviderSession =
-          queueProviderThread.providerSessionId === null
-            ? undefined
-            : projection.providerSessions.find(
-                (candidate) => candidate.id === queueProviderThread.providerSessionId,
-              );
-        if (existingProviderSession !== undefined) {
-          yield* enforceCommandPolicy(command)(
-            commandPolicy.ensureQueuedMessages({
-              commandId: command.commandId,
-              threadId: command.threadId,
-              providerInstanceId: modelSelection.instanceId,
-              capabilities: existingProviderSession.capabilities,
-            }),
-          );
-        }
-
         const now = yield* DateTime.now;
         const ordinal = nextRunOrdinal(projection);
         const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
@@ -3899,6 +3882,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const queuedAdapter = yield* providerAdapters
           .get(modelSelection.instanceId)
           .pipe(mapDispatchError(command));
+        const selectedProviderSession =
+          targetProviderThread?.providerSessionId === null ||
+          targetProviderThread?.providerSessionId === undefined
+            ? undefined
+            : projection.providerSessions.find(
+                (candidate) => candidate.id === targetProviderThread.providerSessionId,
+              );
+        const queuedCapabilities =
+          selectedProviderSession?.capabilities ??
+          (yield* queuedAdapter.getCapabilities().pipe(mapDispatchError(command)));
+        yield* enforceCommandPolicy(command)(
+          commandPolicy.ensureQueuedMessages({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            providerInstanceId: modelSelection.instanceId,
+            capabilities: queuedCapabilities,
+          }),
+        );
         const queuedProviderThread: OrchestrationV2ProviderThread = targetProviderThread ?? {
           id: idAllocator.derive.providerThread({
             driver: queuedAdapter.driver,
@@ -3933,7 +3934,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     providerThreadId: queuedProviderThread.id,
                     cwd:
                       resolvedRuntimePolicy.cwd ??
-                      existingProviderSession?.cwd ??
+                      selectedProviderSession?.cwd ??
                       projection.thread.worktreePath ??
                       process.cwd(),
                     createdAt: now,
