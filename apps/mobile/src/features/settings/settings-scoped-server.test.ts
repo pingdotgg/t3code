@@ -37,7 +37,7 @@ describe("mobile project settings scope", () => {
     };
     const secondSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,
-      responseStreamingMode: "token",
+      responseStreamingMode: "turn",
       projectSettingsOverrides: {},
     };
     const targets = resolveMobileSettingsTargets(
@@ -66,7 +66,7 @@ describe("mobile project settings scope", () => {
       },
     ]);
     expect(firstSettings.responseStreamingMode).toBe("paragraph");
-    expect(secondSettings.responseStreamingMode).toBe("token");
+    expect(secondSettings.responseStreamingMode).toBe("turn");
   });
 
   it("resets only the selected page's override and rejects environment-wide writes", () => {
