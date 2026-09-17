@@ -78,7 +78,7 @@ export interface AggregateResult {
 /**
  * Accumulates records across many files.
  *
- * De-duplication is global across the whole scan, not per file: Claude Code
+ * De-duplication spans every file within a source directory: Claude Code
  * copies a message's records forward when a session is resumed or forked, so
  * the same `dedupeKey` legitimately appears in several transcripts.
  */
@@ -112,13 +112,14 @@ export class UsageAggregator {
    * can derive per-window facts (distinct sessions, for one) from the records
    * that landed rather than everything the mtime prefilter happened to admit.
    */
-  add(record: UsageRecord): boolean {
+  add(record: UsageRecord, sourceIndex?: number): boolean {
     if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) {
+      const dedupeKey = JSON.stringify([sourceIndex, record.dedupeKey]);
+      if (this.#seen.has(dedupeKey)) {
         this.#duplicatesDropped += 1;
         return false;
       }
-      this.#seen.add(record.dedupeKey);
+      this.#seen.add(dedupeKey);
     }
 
     if (
@@ -146,7 +147,7 @@ export class UsageAggregator {
             this.#hourlyWindow.sinceTimeMs +
               Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS) * HOUR_MS,
           ).toISOString();
-    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}`;
+    const key = `${day}\u0000${hourStart}\u0000${record.provider}\u0000${record.model}\u0000${sourceIndex ?? ""}`;
     let bucket = this.#buckets.get(key);
     if (bucket === undefined) {
       bucket = {
@@ -187,9 +188,11 @@ export class UsageAggregator {
   finish(): AggregateResult {
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
-      const [day = "", hourStart = "", provider = "", model = ""] = key.split("\u0000");
+      const [day = "", hourStart = "", provider = "", model = "", sourceIndex = ""] =
+        key.split("\u0000");
       buckets.push({
         day: day as UsageDay,
+        ...(sourceIndex === "" ? {} : { sourceIndex: Number(sourceIndex) }),
         ...(hourStart === "" ? {} : { hourStart }),
         provider: provider as UsageBucket["provider"],
         model,
@@ -208,7 +211,8 @@ export class UsageAggregator {
         a.day.localeCompare(b.day) ||
         (a.hourStart ?? "").localeCompare(b.hourStart ?? "") ||
         a.provider.localeCompare(b.provider) ||
-        a.model.localeCompare(b.model),
+        a.model.localeCompare(b.model) ||
+        (a.sourceIndex ?? -1) - (b.sourceIndex ?? -1),
     );
 
     return {

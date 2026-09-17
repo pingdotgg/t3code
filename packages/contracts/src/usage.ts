@@ -21,14 +21,13 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 5 as const;
+export const USAGE_CONTRACT_VERSION = 6 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
- * remain valid, so mixed-version environments keep those totals instead of
- * treating every older server as stale.
+ * v5 adds Grok; v6 attributes buckets to source directories. Older summaries
+ * remain usable when each bucket can be attributed to a single source.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -89,6 +88,8 @@ export type UsageTokenTotals = typeof UsageTokenTotals.Type;
  * to `costUsd`.
  */
 export const UsageBucket = Schema.Struct({
+  /** Index into UsageSummary.sources. Absent on pre-v6 servers. */
+  sourceIndex: Schema.optional(NonNegativeInt),
   day: UsageDay,
   hourStart: Schema.optional(TrimmedNonEmptyString),
   provider: UsageProviderKind,

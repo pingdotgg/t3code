@@ -87,6 +87,32 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
   });
 
+  it("attributes buckets and deduplicates within each physical source", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+    });
+    const item = record({ dedupeKey: "msg_1:" });
+    expect(aggregator.add(item, 0)).toBe(true);
+    expect(aggregator.add(item, 0)).toBe(false);
+    expect(aggregator.add(item, 1)).toBe(true);
+    expect(aggregator.add(item, 1)).toBe(false);
+    const result = aggregator.finish();
+    expect(result.duplicatesDropped).toBe(2);
+    expect(
+      result.buckets.map((bucket) => [
+        bucket.sourceIndex,
+        bucket.records,
+        bucket.totals.outputTokens,
+      ]),
+    ).toEqual([
+      [0, 1, 50],
+      [1, 1, 50],
+    ]);
+  });
+
   it("still sums records that carry no dedupe key", () => {
     const result = aggregate([record(), record()]);
 

@@ -2,7 +2,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollVie
 import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { type RouteProp, useIsFocused, useNavigation, useRoute } from "@react-navigation/native";
 import {
-  isCompatibleUsageContractVersion,
+  isMergeableUsageSummary,
   isModelCostUnknown,
   type DailyTotals,
   type MergedUsage,
@@ -569,7 +569,7 @@ function isUsageLoading(environment: EnvironmentUsageStatus) {
 function usageEnvironmentStatus(environment: EnvironmentUsageStatus): string {
   if (
     environment.summary &&
-    !isCompatibleUsageContractVersion(environment.summary.contractVersion, USAGE_CONTRACT_VERSION)
+    !isMergeableUsageSummary(environment.summary, USAGE_CONTRACT_VERSION)
   ) {
     return "Older server · excluded from usage totals";
   }
