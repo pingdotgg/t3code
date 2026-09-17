@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ProviderThread,
   ProjectId,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   ThreadId,
@@ -41,6 +42,7 @@ import {
 } from "../LegacyV1ThreadImporter.ts";
 import { OrchestratorDispatchError, OrchestratorV2 } from "../Orchestrator.ts";
 import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
+import { EffectOutboxV2, layer as effectOutboxLayer } from "../EffectOutbox.ts";
 import {
   ProjectionMaintenanceV2,
   layer as projectionMaintenanceLayer,
@@ -861,10 +863,13 @@ describe("orchestration v2 provider switching", () => {
           }),
         ]);
         const queuedThreadId = ThreadId.make("thread:queued-provider-switch");
+        const databaseLayer = SqlitePersistenceMemory;
+        const outboxProvided = effectOutboxLayer.pipe(Layer.provide(databaseLayer));
         const projection = yield* Effect.gen(function* () {
           const orchestrator = yield* OrchestratorV2;
           const worker = yield* OrchestrationEffectWorkerV2;
           const eventSink = yield* EventSinkV2;
+          const effectOutbox = yield* EffectOutboxV2;
           const dispatch = (ordinal: number, modelSelection: ModelSelection) =>
             orchestrator.dispatch({
               type: "message.dispatch",
@@ -907,9 +912,25 @@ describe("orchestration v2 provider switching", () => {
           assert.equal(queued.thread.activeProviderThreadId, queued.runs[0]?.providerThreadId);
           assert.equal(queued.thread.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
           assert.lengthOf(queued.contextHandoffs, 0);
+          const activeSession = queued.providerSessions.find(
+            (session) => session.providerInstanceId === CODEX_MODEL_SELECTION.instanceId,
+          );
+          assert.isDefined(activeSession);
           const now = yield* DateTime.now;
           yield* eventSink.write({
             events: [
+              ...(["stopped", "error"] as const).map((status) => ({
+                id: EventId.make(`event:queued-provider-switch:dead-session:${status}`),
+                type: "provider-session.updated" as const,
+                threadId: queuedThreadId,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: now,
+                payload: {
+                  ...activeSession!,
+                  id: ProviderSessionId.make(`provider-session:queued-provider-switch:${status}`),
+                  status,
+                },
+              })),
               {
                 id: EventId.make("event:queued-provider-switch:first-response"),
                 type: "turn-item.updated",
@@ -961,23 +982,52 @@ describe("orchestration v2 provider switching", () => {
             Stream.runHead,
           );
           yield* worker.drain();
+          const detachEvents = yield* eventSink.stream({ threadId: queuedThreadId }).pipe(
+            Stream.filter((stored) => stored.event.type === "provider-session.detached"),
+            Stream.take(1),
+            Stream.runCollect,
+          );
+          assert.equal(
+            detachEvents[0]?.event.type === "provider-session.detached"
+              ? detachEvents[0].event.payload.providerSessionId
+              : null,
+            activeSession?.id,
+          );
+          const startCommandId = CommandId.make(
+            `command:system:start-queued:${queued.runs[3]!.id}`,
+          );
+          const detachEffects = (yield* effectOutbox.listByCommandId(startCommandId)).filter(
+            (effect) => effect.request.type === "provider-session.detach",
+          );
+          assert.deepEqual(
+            detachEffects.map((effect) =>
+              effect.request.type === "provider-session.detach"
+                ? effect.request.providerSessionId
+                : null,
+            ),
+            [activeSession?.id],
+          );
           return yield* orchestrator.getThreadProjection(queuedThreadId);
         }).pipe(
           Effect.provide(
-            makeOrchestratorV2ReplayLayerWithRegistry(
-              {
-                name: "queued-provider-switch",
-                runtimePolicyOverride: {
-                  cwd,
-                  approvalPolicy: "never",
-                  sandboxPolicy: {
-                    type: "readOnly",
-                    access: { type: "fullAccess" },
-                    networkAccess: false,
+            Layer.merge(
+              makeOrchestratorV2ReplayLayerWithRegistry(
+                {
+                  name: "queued-provider-switch",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
                   },
                 },
-              },
-              registryLayer,
+                registryLayer,
+                { databaseLayer },
+              ),
+              outboxProvided,
             ),
           ),
         );
