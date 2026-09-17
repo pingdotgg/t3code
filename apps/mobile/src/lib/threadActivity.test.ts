@@ -1,4 +1,5 @@
 import {
+  ContextHandoffId,
   MessageId,
   CheckpointId,
   CheckpointScopeId,
@@ -22,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isContextHandoffActivityGroup,
   buildThreadFeed,
   deriveThreadFeedPresentation,
   threadFeedActivityIsVisible,
@@ -1158,6 +1160,47 @@ describe("retained v2 feed presentation", () => {
           },
         ],
       });
+    },
+  );
+
+  it.each(["running", "completed", "failed"] as const)(
+    "keeps a %s handoff separate from commands and visible through folds",
+    (status) => {
+      const handoff = projected(
+        {
+          ...base("handoff", "2026-06-20T00:00:02.000Z", 1),
+          type: "handoff",
+          status,
+          contextHandoffId: ContextHandoffId.make("handoff"),
+          fromProviderThreadIds: [],
+          toProviderThreadId: ProviderThreadId.make("target"),
+          fromProviderInstanceIds: [ProviderInstanceId.make("codex")],
+          toProviderInstanceId: ProviderInstanceId.make("claudeAgent"),
+          strategy: "full_thread_summary",
+          summary: "Private full conversation summary",
+        },
+        1,
+      );
+      const feed = buildThreadFeed([
+        projected(userMessage(), 0),
+        handoff,
+        projected(command("2026-06-20T00:00:03.000Z"), 2),
+        projected(assistantMessage("2026-06-20T00:00:04.000Z"), 3),
+      ]);
+      for (const expanded of [new Set<RunId>(), new Set([runId])]) {
+        const rows = deriveThreadFeedPresentation(feed, null, expanded);
+        const divider = rows.filter(
+          (entry) => entry.type === "activity-group" && isContextHandoffActivityGroup(entry),
+        );
+        expect(divider).toHaveLength(1);
+        expect(divider[0]).toMatchObject({ activities: [{ projectedItem: handoff }] });
+      }
+      const alone = deriveThreadFeedPresentation(
+        buildThreadFeed([projected(userMessage(), 0), handoff]),
+        null,
+        new Set(),
+      );
+      expect(alone.map((entry) => entry.type)).toEqual(["message", "activity-group"]);
     },
   );
 
