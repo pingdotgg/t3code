@@ -4133,6 +4133,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
       );
       const now = yield* DateTime.now;
+      if (
+        !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+        projection.thread.providerInstanceId !== modelSelection.instanceId
+      ) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type:
+            projection.thread.providerInstanceId === modelSelection.instanceId
+              ? "thread.model-selection-updated"
+              : "thread.provider-switched",
+          threadId: command.threadId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            ...projection.thread,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            updatedAt: now,
+          },
+        });
+      }
       const ordinal = nextRunOrdinal(projection);
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
       const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");

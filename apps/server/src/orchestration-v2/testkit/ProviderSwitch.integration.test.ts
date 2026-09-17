@@ -1193,8 +1193,16 @@ describe("orchestration v2 provider switching", () => {
           yield* orchestrator.dispatch(commands[1]!);
           yield* waitForIdle(threadId);
           yield* orchestrator.dispatch(commands[2]!);
+          assert.deepEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
+            CLAUDE_MODEL_SELECTION,
+          );
           yield* waitForIdle(threadId);
           yield* orchestrator.dispatch(commands[3]!);
+          assert.deepEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.modelSelection,
+            CODEX_MODEL_SELECTION,
+          );
           return yield* waitForIdle(threadId);
         }).pipe(
           Effect.provide(
