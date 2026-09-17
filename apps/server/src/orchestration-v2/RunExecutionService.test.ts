@@ -2939,6 +2939,8 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
       written.map((item) => item.type),
       ["error"],
     );
+    const error = written.find((item) => item.type === "error");
+    assert.equal(error?.failure.message, "Provider turn failed.");
   }),
 );
 
@@ -3003,19 +3005,11 @@ function captureRootRunTermination(input: {
       driver,
       status: "running",
     });
-    const writtenItems = yield* Ref.make<
-      ReadonlyArray<{ readonly type: string; readonly parentItemId: string | null }>
-    >([]);
+    const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
     const ingestionDone = yield* Deferred.make<void>();
-    const captureTurnItem = (payload: {
-      readonly type: string;
-      readonly parentItemId: string | null;
-    }) =>
-      Ref.update(writtenItems, (current) => [
-        ...current,
-        { type: payload.type, parentItemId: payload.parentItemId },
-      ]);
+    const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
+      Ref.update(writtenItems, (current) => [...current, payload]);
     const testLayer = runExecutionServiceLayer.pipe(
       Layer.provide(
         Layer.mergeAll(

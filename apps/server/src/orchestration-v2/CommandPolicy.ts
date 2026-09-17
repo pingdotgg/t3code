@@ -137,6 +137,9 @@ export function resolveMessageDispatchIntent(
   if (deliveryIntent === "restart") {
     return { type: "restart_active", targetRunId: activeRun.id };
   }
+  if (activeRun.status === "preparing" || activeRun.status === "starting") {
+    return { type: "queue_after_active" };
+  }
 
   const providerThread = projection.providerThreads.find(
     (candidate) => candidate.id === activeRun.providerThreadId,
