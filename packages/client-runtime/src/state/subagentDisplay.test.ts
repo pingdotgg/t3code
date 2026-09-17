@@ -1,6 +1,6 @@
 import type { OrchestrationV2TurnItemStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { subagentGroupSummary } from "./subagentDisplay";
+import { subagentGroupSummary } from "./subagentDisplay.js";
 
 describe("subagentGroupSummary", () => {
   it.each(["pending", "running", "waiting"] as const)(
