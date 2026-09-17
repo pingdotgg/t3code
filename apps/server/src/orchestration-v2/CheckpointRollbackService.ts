@@ -8,9 +8,14 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import {
+  isCheckpointRestoreIsolated,
+  SHARED_WORKSPACE_RESTORE_MESSAGE,
+} from "./CheckpointRestoreSafety.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
@@ -27,6 +32,7 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
       "active-provider-changed",
       "provider-turn-unavailable",
       "unexpected-failure",
+      "shared-workspace",
     ]),
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
@@ -42,6 +48,8 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
         return `Active provider changed before rollback target ${this.checkpointId} could execute on thread ${this.threadId}.`;
       case "provider-turn-unavailable":
         return `Provider turn for rollback target ${this.checkpointId} is unavailable on provider thread ${this.providerThreadId}.`;
+      case "shared-workspace":
+        return SHARED_WORKSPACE_RESTORE_MESSAGE;
       case "unexpected-failure":
         return `Failed to execute rollback target ${this.checkpointId} on provider thread ${this.providerThreadId} for thread ${this.threadId}.`;
     }
@@ -74,6 +82,7 @@ export const layer: Layer.Layer<
   | ProjectionStoreV2
   | ProviderSessionManagerV2
   | RuntimePolicyV2
+  | FileSystem.FileSystem
 > = Layer.effect(
   CheckpointRollbackServiceV2,
   Effect.gen(function* () {
@@ -83,6 +92,7 @@ export const layer: Layer.Layer<
     const projections = yield* ProjectionStoreV2;
     const sessions = yield* ProviderSessionManagerV2;
     const runtimePolicy = yield* RuntimePolicyV2;
+    const fileSystem = yield* FileSystem.FileSystem;
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -120,6 +130,18 @@ export const layer: Layer.Layer<
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "active-provider-changed",
+          threadId: input.threadId,
+          providerThreadId: input.providerThreadId,
+          checkpointId: input.checkpointId,
+        });
+      }
+
+      if (
+        input.restoreFiles !== false &&
+        !(yield* isCheckpointRestoreIsolated(projection.thread, scope, { fileSystem, projections }))
+      ) {
+        return yield* new CheckpointRollbackExecutionError({
+          reason: "shared-workspace",
           threadId: input.threadId,
           providerThreadId: input.providerThreadId,
           checkpointId: input.checkpointId,
