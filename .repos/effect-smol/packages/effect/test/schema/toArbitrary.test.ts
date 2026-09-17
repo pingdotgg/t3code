@@ -1,10 +1,14 @@
-import { BigDecimal, Chunk, DateTime, Effect, HashMap, HashSet, Option, Order, Schema, SchemaIssue } from "effect"
+import { BigDecimal, Chunk, DateTime, Effect, HashMap, HashSet, Order, Schema, SchemaIssue } from "effect"
 import { FastCheck, TestSchema } from "effect/testing"
 import { describe, it } from "vitest"
 import { assertInclude, assertInstanceOf, deepStrictEqual, strictEqual, throws } from "../utils/assert.ts"
 
+function toArbitrary<S extends Schema.Constraint>(schema: S) {
+  return Schema.toArbitrary(schema)(FastCheck)
+}
+
 function assertUnsupportedSchema(schema: Schema.Constraint, message: string) {
-  throws(() => Schema.toArbitrary(schema), message)
+  throws(() => toArbitrary(schema), message)
 }
 
 function verifyGeneration<S extends Schema.ConstraintCodec<unknown, unknown>>(schema: S, numRuns?: number) {
@@ -19,12 +23,12 @@ function verifyGeneration<S extends Schema.ConstraintCodec<unknown, unknown>>(sc
 // Guard for "fast but wrong" regressions: samples the derived arbitrary and
 // asserts an output invariant (length/size/property-count bounds) over many runs.
 function assertInvariant(schema: Schema.Constraint, predicate: (value: any) => boolean, numRuns = 200) {
-  FastCheck.assert(FastCheck.property(Schema.toArbitrary(schema), predicate), { numRuns })
+  FastCheck.assert(FastCheck.property(toArbitrary(schema), predicate), { numRuns })
 }
 
 function assertRecursiveNoFiniteGenerationPath(schema: Schema.Constraint) {
   throws(
-    () => Schema.toArbitrary(schema),
+    () => toArbitrary(schema),
     (e) => {
       assertInstanceOf(e, Error)
       assertInclude(
@@ -55,7 +59,7 @@ function CustomArray<A extends Schema.Constraint>(
     () => (input, ast) =>
       globalThis.Array.isArray(input)
         ? Effect.succeed(input as ReadonlyArray<A["Type"]>)
-        : Effect.fail(new SchemaIssue.InvalidType(ast, Option.some(input))),
+        : Effect.fail(new SchemaIssue.InvalidType(ast)),
     { toArbitrary }
   )
 }
@@ -174,9 +178,9 @@ describe("Arbitrary generation", () => {
       }
     )
 
-    Schema.toArbitraryLazy(Schema.Number.check(noNaN))(fc)
-    Schema.toArbitraryLazy(Schema.Number.check(noInfinity))(fc)
-    Schema.toArbitraryLazy(Schema.Finite)(fc)
+    Schema.toArbitrary(Schema.Number.check(noNaN))(fc)
+    Schema.toArbitrary(Schema.Number.check(noInfinity))(fc)
+    Schema.toArbitrary(Schema.Finite)(fc)
 
     deepStrictEqual(constraints, [
       { noNaN: true },
@@ -185,7 +189,16 @@ describe("Arbitrary generation", () => {
     ])
   })
 
-  describe("report and candidates", () => {
+  it("should enforce opaque filters", () => {
+    const schema = Schema.Struct({
+      a: Schema.String.check(Schema.makeFilter((s: string) => s.length > 0, { expected: "a custom string" }))
+    })
+    const arbitrary = toArbitrary(schema)
+
+    FastCheck.assert(FastCheck.property(arbitrary, (a) => a.a.length > 0), { numRuns: 5 })
+  })
+
+  describe("candidates", () => {
     it("should use filter candidates with the merged constraint context", () => {
       let constraint: Schema.Annotations.ToArbitrary.GenerationConstraint | undefined
       const schema = Schema.String.check(
@@ -202,11 +215,31 @@ describe("Arbitrary generation", () => {
           }
         })
       )
-      const result = Schema.toArbitrary(schema, { report: true })
+      const arbitrary = toArbitrary(schema)
 
-      deepStrictEqual(result.report.warnings, [])
       deepStrictEqual(constraint, { minLength: 9 })
-      FastCheck.assert(FastCheck.property(result.value, (s) => s === "candidate"), { numRuns: 20 })
+      FastCheck.assert(FastCheck.property(arbitrary, (s) => s === "candidate"), { numRuns: 20 })
+    })
+
+    it("should use filter group candidates", () => {
+      const schema = Schema.String.check(
+        Schema.makeFilterGroup(
+          [
+            Schema.makeFilter((s: string) => s.startsWith("a"), { expected: "starts with a" }),
+            Schema.makeFilter((s: string) => s.endsWith("a"), { expected: "ends with a" })
+          ],
+          {
+            arbitrary: {
+              candidate: {
+                make: (fc) => fc.constant("a")
+              }
+            }
+          }
+        )
+      )
+      const arbitrary = toArbitrary(schema)
+
+      FastCheck.assert(FastCheck.property(arbitrary, (s) => s.startsWith("a") && s.endsWith("a")), { numRuns: 20 })
     })
 
     it("should allow candidates to be disabled for a context", () => {
@@ -223,10 +256,9 @@ describe("Arbitrary generation", () => {
           }
         })
       )
-      const result = Schema.toArbitrary(schema, { report: true })
+      toArbitrary(schema)
 
       strictEqual(calls, 1)
-      deepStrictEqual(result.report.warnings, [])
     })
 
     it("should fail fast for invalid candidate weights", () => {
@@ -243,60 +275,13 @@ describe("Arbitrary generation", () => {
         )
 
       throws(
-        () => Schema.toArbitrary(makeSchema(0)),
+        () => toArbitrary(makeSchema(0)),
         "Unable to derive an arbitrary for a candidate with an invalid weight"
       )
       throws(
-        () => Schema.toArbitrary(makeSchema(0.5)),
+        () => toArbitrary(makeSchema(0.5)),
         "Unable to derive an arbitrary for a candidate with an invalid weight"
       )
-    })
-
-    it("should report opaque filters", () => {
-      const schema = Schema.Struct({
-        a: Schema.String.check(Schema.makeFilter((s: string) => s.length > 0, { expected: "a custom string" }))
-      })
-      const result = Schema.toArbitrary(schema, { report: true })
-
-      deepStrictEqual(result.report.warnings, [
-        { _tag: "OpaqueFilter", path: ["a"], description: "a custom string" }
-      ])
-      FastCheck.assert(FastCheck.property(result.value, (a) => a.a.length > 0), { numRuns: 5 })
-    })
-
-    it("should not report child filters when a filter group provides arbitrary metadata", () => {
-      const schema = Schema.String.check(
-        Schema.makeFilterGroup(
-          [
-            Schema.makeFilter((s: string) => s.startsWith("a"), { expected: "starts with a" }),
-            Schema.makeFilter((s: string) => s.endsWith("a"), { expected: "ends with a" })
-          ],
-          {
-            arbitrary: {
-              candidate: {
-                make: (fc) => fc.constant("a")
-              }
-            }
-          }
-        )
-      )
-      const result = Schema.toArbitrary(schema, { report: true })
-
-      deepStrictEqual(result.report.warnings, [])
-      FastCheck.assert(FastCheck.property(result.value, (s) => s === "a"), { numRuns: 20 })
-    })
-
-    it("should not report warnings for constructive built-in filters", () => {
-      const schema = Schema.Struct({
-        string: Schema.String.check(Schema.isMinLength(1), Schema.isStartsWith("a")),
-        number: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10 })),
-        array: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isUnique()),
-        object: Schema.Record(Schema.String, Schema.Number).check(Schema.isMinProperties(1), Schema.isMaxProperties(3)),
-        set: Schema.ReadonlySet(Schema.String).check(Schema.isMinSize(1), Schema.isMaxSize(3))
-      })
-      const result = Schema.toArbitrary(schema, { report: true })
-
-      deepStrictEqual(result.report.warnings, [])
     })
   })
 
@@ -308,7 +293,7 @@ describe("Arbitrary generation", () => {
         c: Schema.optionalKey(Schema.String)
       }).check(Schema.isMinProperties(2))
       FastCheck.assert(
-        FastCheck.property(Schema.toArbitrary(schema), (o) => globalThis.Object.keys(o).length >= 2),
+        FastCheck.property(toArbitrary(schema), (o) => globalThis.Object.keys(o).length >= 2),
         { numRuns: 100 }
       )
       verifyGeneration(schema)
@@ -321,7 +306,7 @@ describe("Arbitrary generation", () => {
         c: Schema.optionalKey(Schema.String)
       }).check(Schema.isMaxProperties(1))
       FastCheck.assert(
-        FastCheck.property(Schema.toArbitrary(schema), (o) => globalThis.Object.keys(o).length <= 1),
+        FastCheck.property(toArbitrary(schema), (o) => globalThis.Object.keys(o).length <= 1),
         { numRuns: 100 }
       )
       verifyGeneration(schema)
@@ -334,7 +319,7 @@ describe("Arbitrary generation", () => {
         b: Schema.optionalKey(Schema.String)
       }).check(Schema.isMinProperties(2))
       FastCheck.assert(
-        FastCheck.property(Schema.toArbitrary(schema), (o) =>
+        FastCheck.property(toArbitrary(schema), (o) =>
           globalThis.Reflect.ownKeys(o).length >= 2 &&
           globalThis.Object.hasOwn(o, key)),
         { numRuns: 100 }
@@ -350,7 +335,7 @@ describe("Arbitrary generation", () => {
         c: Schema.optionalKey(Schema.String)
       }).check(Schema.isPropertiesLengthBetween(2, 3))
       FastCheck.assert(
-        FastCheck.property(Schema.toArbitrary(schema), (o) => {
+        FastCheck.property(toArbitrary(schema), (o) => {
           const n = globalThis.Object.keys(o).length
           return n >= 2 && n <= 3
         }),
@@ -384,7 +369,7 @@ describe("Arbitrary generation", () => {
       }
       const schema = Schema.Struct(fields).check(Schema.isMinProperties(64))
       FastCheck.assert(
-        FastCheck.property(Schema.toArbitrary(schema), (o) => globalThis.Object.keys(o).length === 64),
+        FastCheck.property(toArbitrary(schema), (o) => globalThis.Object.keys(o).length === 64),
         { numRuns: 100 }
       )
     })
@@ -591,6 +576,18 @@ describe("Arbitrary generation", () => {
         Schema.Tuple([Schema.String, Schema.optional(Schema.Number)])
       )
     })
+
+    it("generates values valid for optional tuple positions", () => {
+      const schema = Schema.Tuple([
+        Schema.optionalKey(Schema.String),
+        Schema.optionalKey(Schema.Number)
+      ])
+
+      FastCheck.assert(FastCheck.property(toArbitrary(schema), Schema.is(schema)), {
+        numRuns: 100,
+        seed: 17
+      })
+    })
   })
 
   describe("Array", () => {
@@ -741,7 +738,7 @@ describe("Arbitrary generation", () => {
         a: Rec
       })
       throws(
-        () => Schema.toArbitrary(schema),
+        () => toArbitrary(schema),
         (e) => {
           assertInstanceOf(e, Error)
           assertInclude(
@@ -757,7 +754,7 @@ describe("Arbitrary generation", () => {
       const Rec = Schema.suspend((): Schema.Codec<unknown> => schema)
       const schema: any = Schema.Array(Rec).check(Schema.isMinLength(1))
       throws(
-        () => Schema.toArbitrary(schema),
+        () => toArbitrary(schema),
         (e) => {
           assertInstanceOf(e, Error)
           assertInclude(
@@ -799,7 +796,7 @@ describe("Arbitrary generation", () => {
         [Schema.Union([Schema.Number, Rec])]
       ).check(Schema.isMinLength(2))
       FastCheck.assert(
-        FastCheck.property(Schema.toArbitrary(schema), (a) => (a as Array<unknown>).length >= 2),
+        FastCheck.property(toArbitrary(schema), (a) => (a as Array<unknown>).length >= 2),
         { numRuns: 100 }
       )
     })
@@ -1649,7 +1646,7 @@ describe("Arbitrary generation", () => {
 
     it("isBetweenBigDecimal with impossible exclusive bounds", () => {
       throws(() =>
-        Schema.toArbitrary(Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
+        toArbitrary(Schema.BigDecimal.check(Schema.isBetweenBigDecimal({
           minimum: BigDecimal.fromStringUnsafe("1.01"),
           maximum: BigDecimal.fromStringUnsafe("1.01"),
           exclusiveMinimum: true,
@@ -1659,7 +1656,7 @@ describe("Arbitrary generation", () => {
 
     it("isGreaterThanBigDecimal + isLessThanBigDecimal with impossible bounds", () => {
       throws(() =>
-        Schema.toArbitrary(Schema.BigDecimal.check(
+        toArbitrary(Schema.BigDecimal.check(
           Schema.isGreaterThanBigDecimal(BigDecimal.fromStringUnsafe("1.01")),
           Schema.isLessThanBigDecimal(BigDecimal.fromStringUnsafe("1.01"))
         )), "Unable to derive an arbitrary for the ordered BigDecimal constraints")

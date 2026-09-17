@@ -10,6 +10,7 @@ import {
   IsoDateTime,
   MessageId,
   ModelSelection,
+  OrchestrationMessageContext,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -50,6 +51,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   messageId: MessageId,
   commandId: CommandId,
   text: Schema.String,
+  context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
@@ -79,6 +81,7 @@ export interface QueuedThreadMessage {
   readonly messageId: MessageId;
   readonly commandId: CommandId;
   readonly text: string;
+  readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
@@ -251,14 +254,30 @@ function errorMessage(error: unknown): string | null {
   return typeof error === "string" ? error : null;
 }
 
+/**
+ * Only a failure the server actually decided (`OrchestrationDispatchCommandError`,
+ * or an authorization rejection) means the payload itself is bad. The other
+ * typed failures a queued send can hit are transport-shaped: a socket that
+ * dropped mid-request (`RpcClientError` wrapping a Socket read/write/close
+ * reason), or an environment that is not connected or not registered. Those
+ * are matched by tag, not by message text, because a `SocketReadError` message
+ * is just "An error occurred during Read". A wrong answer here restores the
+ * pending task into a draft and it disappears from the list.
+ */
 export function shouldRetryThreadOutboxDelivery(error: unknown): boolean {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "_tag" in error &&
-    error._tag === "ConnectionTransientError"
-  ) {
-    return true;
+  if (typeof error === "object" && error !== null && "_tag" in error) {
+    switch (error._tag) {
+      case "OrchestrationDispatchCommandError":
+      case "EnvironmentAuthorizationError":
+        return false;
+      case "ConnectionTransientError":
+      case "RpcClientError":
+      case "EnvironmentRpcUnavailableError":
+      case "EnvironmentNotRegisteredError":
+        return true;
+      default:
+        break;
+    }
   }
   return isTransportConnectionErrorMessage(errorMessage(error));
 }

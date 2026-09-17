@@ -291,9 +291,8 @@ export interface UserPoolAdminClient {
  * for user management and admin auth flows. The binding grants the
  * corresponding `cognito-idp:*` IAM actions scoped to the pool's ARN and
  * injects the pool ID into every call.
- * @binding
- * @section Managing Users
- * @example Create a User with a Permanent Password
+ * ### Managing Users
+ * **Example:** Create a User with a Permanent Password
  * ```typescript
  * const admin = yield* Cognito.UserPoolAdmin(pool);
  *
@@ -312,14 +311,14 @@ export interface UserPoolAdminClient {
  * });
  * ```
  *
- * @example Look Up and Delete a User
+ * **Example:** Look Up and Delete a User
  * ```typescript
  * const user = yield* admin.adminGetUser({ Username: "user@example.com" });
  * yield* admin.adminDeleteUser({ Username: "user@example.com" });
  * ```
  *
- * @section Groups
- * @example Manage Group Membership
+ * ### Groups
+ * **Example:** Manage Group Membership
  * ```typescript
  * yield* admin.adminAddUserToGroup({
  *   Username: "user@example.com",
@@ -331,8 +330,8 @@ export interface UserPoolAdminClient {
  * });
  * ```
  *
- * @section Federation and Devices
- * @example Link a Federated Identity to a Native User
+ * ### Federation and Devices
+ * **Example:** Link a Federated Identity to a Native User
  * ```typescript
  * yield* admin.adminLinkProviderForUser({
  *   DestinationUser: {
@@ -347,12 +346,14 @@ export interface UserPoolAdminClient {
  * });
  * ```
  *
- * @example List a User's Remembered Devices
+ * **Example:** List a User's Remembered Devices
  * ```typescript
  * const devices = yield* admin.adminListDevices({
  *   Username: "user@example.com",
  * });
  * ```
+ *
+ * @binding
  */
 export interface UserPoolAdmin extends Binding.Service<
   UserPoolAdmin,

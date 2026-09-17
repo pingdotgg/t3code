@@ -33,6 +33,22 @@ describe("jsdocs", () => {
     }
   })
 
+  it("accepts doctest metadata on TypeScript fences", () => {
+    const result = parseJSDoc(`/**
+ * Creates a value.
+ *
+ * **Example** (Creating a value)
+ *
+ * \`\`\`ts import.meta.vitest name="creates a value"
+ * const value = 1
+ * \`\`\`
+ *
+ * @category constructors
+ * @since 1.0.0
+ */`)
+    assert.strictEqual(result._tag, "Success")
+  })
+
   it("accepts practical When to use forms", () => {
     const result = parseJSDoc(`/**
  * Creates a value.

@@ -40,6 +40,7 @@ import {
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "../state/serverConfigProjection.ts";
+import { environmentMismatchError } from "../connection/errors.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -289,14 +290,20 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.mapError(mapRpcError),
         Effect.flatMap(() => Effect.fail(configSubscriptionEndedError)),
       ),
-    ).pipe(Effect.withSpan("environment.initialSync"));
+    ).pipe(
+      Effect.flatMap((config) =>
+        config.environment.environmentId === connection.environmentId
+          ? Effect.succeed(config)
+          : environmentMismatchError({
+              expected: connection.environmentId,
+              actual: config.environment.environmentId,
+            }),
+      ),
+      Effect.withSpan("environment.initialSync"),
+    );
     const serverConfigEvents = Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(serverConfigUpdates);
-        yield* Effect.raceFirst(
-          Deferred.await(initialConfigDeferred).pipe(Effect.asVoid),
-          Deferred.await(serverConfigExit),
-        );
         const snapshot = yield* Ref.get(serverConfigState);
         if (Option.isNone(snapshot)) {
           return Stream.empty;
@@ -336,10 +343,27 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         );
       }),
     );
+    const validatedInitialConfig = initialConfig.pipe(
+      Effect.mapError(
+        (cause) =>
+          new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({
+              message: `${connection.label} config subscription failed.`,
+              cause,
+            }),
+          }),
+      ),
+    );
     const subscribeServerConfig = (input: ServerConfigSubscriptionInput) =>
-      Equal.equals(input, serverConfigInput)
-        ? serverConfigEvents
-        : protocolClient[WS_METHODS.subscribeServerConfig](input);
+      Stream.unwrap(
+        validatedInitialConfig.pipe(
+          Effect.as(
+            Equal.equals(input, serverConfigInput)
+              ? serverConfigEvents
+              : protocolClient[WS_METHODS.subscribeServerConfig](input),
+          ),
+        ),
+      );
     const probe = initialConfig.pipe(
       Effect.flatMap((config) =>
         (config.environment.capabilities.connectionProbe === true

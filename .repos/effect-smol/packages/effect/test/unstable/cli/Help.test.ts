@@ -1,7 +1,8 @@
-import { describe, expect, it } from "@effect/vitest"
+import { assert, describe, expect, it } from "@effect/vitest"
 import { Effect, FileSystem, Layer, Path, Stdio } from "effect"
 import { TestConsole } from "effect/testing"
-import { CliOutput, Command, Flag } from "effect/unstable/cli"
+import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli"
+import { toImpl } from "effect/unstable/cli/internal/command"
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner"
 import * as Cli from "./fixtures/ComprehensiveCli.ts"
 import * as MockTerminal from "./services/MockTerminal.ts"
@@ -38,6 +39,38 @@ const runCommand = Effect.fnUntraced(
 )
 
 describe("Command help output", () => {
+  it("marks omittable flags as not required in structured help", () => {
+    const command = Command.make("app", {
+      required: Flag.string("required"),
+      optional: Flag.string("optional").pipe(Flag.optional),
+      defaulted: Flag.string("defaulted").pipe(Flag.withDefault("output.txt"))
+    })
+    const help = toImpl(command).buildHelpDoc(["app"])
+
+    assert.deepStrictEqual(help.flags.map((flag) => flag.required), [true, false, false])
+  })
+
+  it("marks omittable arguments as not required in structured help", () => {
+    const requiredVariadic = Command.make("app", {
+      files: Argument.string("files").pipe(Argument.variadic({ min: 1 }))
+    })
+    const optionalVariadic = Command.make("app", {
+      files: Argument.string("files").pipe(Argument.variadic())
+    })
+    const defaulted = Command.make("app", {
+      output: Argument.string("output").pipe(Argument.withDefault("output.txt"))
+    })
+
+    assert.deepStrictEqual(
+      [
+        toImpl(requiredVariadic).buildHelpDoc(["app"]).args![0].required,
+        toImpl(optionalVariadic).buildHelpDoc(["app"]).args![0].required,
+        toImpl(defaulted).buildHelpDoc(["app"]).args![0].required
+      ],
+      [true, false, false]
+    )
+  })
+
   it.effect("renders root command help", () =>
     Effect.gen(function*() {
       const helpText = yield* runCommand(["--help"])
@@ -97,6 +130,29 @@ describe("Command help output", () => {
       expect(shortLine!.indexOf("Short flag description")).toBe(longLine!.indexOf("Long flag description"))
     }).pipe(Effect.provide(TestLayer)))
 
+  it.effect("separates long subcommand and argument names from their descriptions", () =>
+    Effect.gen(function*() {
+      const child = Command.make("account:set-password", {
+        account: Argument.string("existing-account-identifier").pipe(
+          Argument.withDescription("Account to update")
+        )
+      }).pipe(Command.withDescription("Rewrite the credential hash"))
+      const command = Command.make("demo").pipe(Command.withSubcommands([child]))
+      const run = Command.runWith(command, { version: "1.0.0" })
+
+      yield* run(["--help"])
+      const rootHelp = yield* TestConsole.logLines
+
+      yield* run(["account:set-password", "--help"])
+      const allHelp = yield* TestConsole.logLines
+      const childHelp = allHelp.slice(rootHelp.length)
+
+      assert.isTrue(rootHelp.some((line) => String(line).includes("account:set-password Rewrite the credential hash")))
+      assert.isTrue(
+        childHelp.some((line) => String(line).includes("existing-account-identifier string Account to update"))
+      )
+    }).pipe(Effect.provide(TestLayer)))
+
   it.effect("hides flags marked with withHidden from help output", () =>
     Effect.gen(function*() {
       const command = Command.make("tool", {
@@ -148,14 +204,14 @@ describe("Command help output", () => {
       expect(errorText + helpText).not.toContain("experimental-foo")
     }).pipe(Effect.provide(TestLayer)))
 
-  it.effect("hides subcommands marked with withHidden from help output", () =>
+  it.effect("hides unlisted subcommands from help output", () =>
     Effect.gen(function*() {
       const visible = Command.make("visible").pipe(
         Command.withDescription("A visible subcommand")
       )
       const secret = Command.make("experimental-foo").pipe(
         Command.withDescription("Should not appear"),
-        Command.withHidden
+        Command.unlisted
       )
       const root = Command.make("tool").pipe(
         Command.withSubcommands([visible, secret])
@@ -170,11 +226,11 @@ describe("Command help output", () => {
       expect(helpText).not.toContain("Should not appear")
     }).pipe(Effect.provide(TestLayer)))
 
-  it.effect("hidden subcommand still parses on the command line", () =>
+  it.effect("unlisted subcommand still parses on the command line", () =>
     Effect.gen(function*() {
       let invoked = false
       const secret = Command.make("experimental-foo").pipe(
-        Command.withHidden,
+        Command.unlisted,
         Command.withHandler(() =>
           Effect.sync(() => {
             invoked = true
@@ -191,9 +247,9 @@ describe("Command help output", () => {
       expect(invoked).toBe(true)
     }).pipe(Effect.provide(TestLayer)))
 
-  it.effect("hidden subcommand name does not leak through unknown-subcommand suggestions", () =>
+  it.effect("unlisted subcommand name does not leak through unknown-subcommand suggestions", () =>
     Effect.gen(function*() {
-      const secret = Command.make("experimental-foo").pipe(Command.withHidden)
+      const secret = Command.make("experimental-foo").pipe(Command.unlisted)
       const root = Command.make("tool").pipe(
         Command.withSubcommands([secret])
       )
@@ -208,9 +264,9 @@ describe("Command help output", () => {
       expect(errorText + helpText).not.toContain("experimental-foo")
     }).pipe(Effect.provide(TestLayer)))
 
-  it.effect("subcommand group with only hidden commands disappears entirely", () =>
+  it.effect("subcommand group with only unlisted commands disappears entirely", () =>
     Effect.gen(function*() {
-      const secret = Command.make("experimental-foo").pipe(Command.withHidden)
+      const secret = Command.make("experimental-foo").pipe(Command.unlisted)
       const root = Command.make("tool").pipe(
         Command.withSubcommands([secret])
       )

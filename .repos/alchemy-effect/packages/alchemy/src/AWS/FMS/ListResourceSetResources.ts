@@ -13,9 +13,8 @@ export interface ListResourceSetResourcesRequest
  *
  * Returns an array of the resources associated with the specified Firewall Manager resource set. Provide the
  * implementation with `Effect.provide(AWS.FMS.ListResourceSetResourcesHttp)`.
- * @binding
- * @section Resource Sets
- * @example List a Resource Set's Members
+ * ### Resource Sets
+ * **Example:** List a Resource Set's Members
  * ```typescript
  * // init — account-level binding takes no resource
  * const listResourceSetResources = yield* AWS.FMS.ListResourceSetResources();
@@ -24,6 +23,8 @@ export interface ListResourceSetResourcesRequest
  * const result = yield* listResourceSetResources({ Identifier: resourceSetId });
  * console.log(result.Items.length);
  * ```
+ *
+ * @binding
  */
 export interface ListResourceSetResources extends Binding.Service<
   ListResourceSetResources,

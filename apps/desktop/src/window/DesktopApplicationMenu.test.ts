@@ -84,7 +84,9 @@ const makeDesktopWindowLayer = (selectedAction: Deferred.Deferred<string>) =>
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
+    prepareCaptureReveal: Effect.void,
     dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
+    dispatchSnapShotEvent: () => Effect.void,
     zoomMain: (direction) =>
       Deferred.succeed(selectedAction, `zoom-${direction}`).pipe(Effect.asVoid),
     syncAppearance: Effect.void,
@@ -148,6 +150,67 @@ describe("DesktopApplicationMenu", () => {
 
       settingsClick({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "open-settings");
+    }),
+  );
+
+  it.effect("owns Paste as Text and routes it through the renderer", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const editMenu = template.find((item) => item.label === "Edit");
+      assert.isDefined(editMenu);
+      if (!Array.isArray(editMenu.submenu)) {
+        throw new Error("Expected Edit menu submenu to be an array.");
+      }
+      const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
+      assert.isDefined(pasteAsTextItem);
+      assert.equal(pasteAsTextItem.accelerator, "CmdOrCtrl+Shift+V");
+      if (typeof pasteAsTextItem.click !== "function") {
+        throw new Error("Expected Paste as Text menu item to have a click handler.");
+      }
+
+      pasteAsTextItem.click(
+        {} as Electron.MenuItem,
+        {} as Electron.BrowserWindow,
+        {} as KeyboardEvent,
+      );
+      assert.equal(yield* Deferred.await(selectedAction), "paste-as-text");
+    }),
+  );
+
+  // Chromium pastes as plain text for the accelerator on its own. Dispatching
+  // the action as well injects a second paste, which doubles the pasted text.
+  it.effect("leaves the accelerator to Chromium instead of injecting a paste", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const editMenu = template.find((item) => item.label === "Edit");
+      if (!Array.isArray(editMenu?.submenu)) {
+        throw new Error("Expected Edit menu submenu to be an array.");
+      }
+      const pasteAsTextItem = editMenu.submenu.find((item) => item.label === "Paste as Text");
+      if (typeof pasteAsTextItem?.click !== "function") {
+        throw new Error("Expected Paste as Text menu item to have a click handler.");
+      }
+
+      pasteAsTextItem.click(
+        {} as Electron.MenuItem,
+        {} as Electron.BrowserWindow,
+        {
+          triggeredByAccelerator: true,
+        } as unknown as KeyboardEvent,
+      );
+      assert.isFalse(yield* Deferred.isDone(selectedAction));
     }),
   );
 

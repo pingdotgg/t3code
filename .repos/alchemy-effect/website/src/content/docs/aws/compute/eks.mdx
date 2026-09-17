@@ -25,13 +25,35 @@ The Kubernetes primitives you'll meet here:
 
 Alchemy models these directly:
 [`Cluster`](/providers/aws/eks/cluster) with `compute: "auto"`
-stands up the control plane from a VPC;
-[`Deployment`](/providers/aws/eks/deployment) synthesizes a
-Kubernetes `Deployment` + `Service`;
-[`Job`](/providers/aws/eks/job) a `Job` or `CronJob`; and
-[`Manifest`](/providers/aws/eks/manifest) applies any raw
-Kubernetes object. The workloads live in the same TypeScript
-program as the cluster, with no YAML and no `kubectl apply` step.
+stands up the control plane from a VPC, and the cluster-agnostic
+`alchemy/Kubernetes` workloads target it by passing the cluster
+resource as their `cluster` prop:
+[`Kubernetes.Deployment`](/providers/kubernetes/deployment)
+synthesizes a Kubernetes `Deployment` + `Service`;
+[`Kubernetes.Job`](/providers/kubernetes/job) a `Job` or `CronJob`;
+and [`Kubernetes.Manifest`](/providers/kubernetes/manifest) applies
+any raw Kubernetes object. The workloads live in the same TypeScript
+program as the cluster, with no YAML and no `kubectl apply` step —
+and the same workloads run on any other cluster your kubeconfig can
+reach (`Kubernetes.KubeConfig(...)`).
+
+The workload providers ship in `Kubernetes.providers()` — compose it
+with `AWS.providers()` in the Stack:
+
+```typescript
+import * as AWS from "alchemy/AWS";
+import * as Kubernetes from "alchemy/Kubernetes";
+import * as Layer from "effect/Layer";
+
+export default Alchemy.Stack(
+  "my-app",
+  {
+    providers: Layer.mergeAll(AWS.providers(), Kubernetes.providers()),
+    state: Alchemy.localState(),
+  },
+  // ...
+);
+```
 
 ## Create an Auto Mode cluster
 
@@ -100,8 +122,9 @@ needs in.
 
 ## Deploy a server
 
-[`Deployment`](/providers/aws/eks/deployment) is a replicated
-Kubernetes server — the Kubernetes analog of `AWS.ECS.Service`. It
+[`Kubernetes.Deployment`](/providers/kubernetes/deployment) is a
+replicated Kubernetes server — the Kubernetes analog of
+`AWS.ECS.Service`. It
 synthesizes a Kubernetes `Deployment` + `Service` (+
 `ServiceAccount`) and applies them via server-side apply, with the
 container image coming from exactly one of three sources flat on
@@ -111,7 +134,7 @@ program). The simplest form runs a remote image with no Effect
 runtime in the container:
 
 ```typescript
-const echo = yield* AWS.EKS.Deployment("EchoServer", {
+const echo = yield* Kubernetes.Deployment("EchoServer", {
   cluster,
   image: "registry.k8s.io/echoserver:1.10",
   namespace: "default",
@@ -140,7 +163,7 @@ attaches environment variables to the Pod spec and IAM policy
 statements to a generated **Pod Identity role**:
 
 ```typescript
-const api = yield* AWS.EKS.Deployment(
+const api = yield* Kubernetes.Deployment(
   "Api",
   { cluster, main: import.meta.url, port: 3000, replicas: 2 },
   Effect.gen(function* () {
@@ -155,25 +178,26 @@ const api = yield* AWS.EKS.Deployment(
 );
 ```
 
-Every EKS platform gets Pod Identity as standard: Alchemy creates
+Every Kubernetes workload on EKS gets Pod Identity as standard:
+Alchemy creates
 the IAM role, wires it to the workload's ServiceAccount with a
 [`PodIdentityAssociation`](/providers/aws/eks/podidentityassociation),
 and Pods resolve credentials through the EKS Pod Identity
 container-credentials chain — no OIDC provider or IRSA annotation
 ceremony. The tagged form
-(`class Api extends AWS.EKS.Deployment<Api, Shape>()("Api") {}` +
+(`class Api extends Kubernetes.Deployment<Api, Shape>()("Api") {}` +
 `Api.make(props, impl)`) works exactly as it does on Lambda and
 Cloudflare Workers.
 
 ## Run-to-completion work with Job
 
-[`Job`](/providers/aws/eks/job) runs a container to completion —
-the Kubernetes analog of `AWS.ECS.Task`. Same three image sources,
+[`Kubernetes.Job`](/providers/kubernetes/job) runs a container to
+completion — the Kubernetes analog of `AWS.ECS.Task`. Same three image sources,
 same bindings and Pod Identity; an Effect impl returns `{ run }`
 instead of `{ fetch }`, executing to completion inside the Pod:
 
 ```typescript
-const migrate = yield* AWS.EKS.Job("DbMigrate", {
+const migrate = yield* Kubernetes.Job("DbMigrate", {
   cluster,
   image: "ghcr.io/acme/migrator:v3",
   backoffLimit: 2,
@@ -184,7 +208,7 @@ Set `schedule` (standard 5-field cron) and a Kubernetes `CronJob` is
 synthesized instead of a plain `Job`:
 
 ```typescript
-const nightly = yield* AWS.EKS.Job("NightlyBackfill", {
+const nightly = yield* Kubernetes.Job("NightlyBackfill", {
   cluster,
   main: import.meta.url,
   schedule: "0 3 * * *",
@@ -193,13 +217,13 @@ const nightly = yield* AWS.EKS.Job("NightlyBackfill", {
 
 ## Everything else is a Manifest
 
-[`Manifest`](/providers/aws/eks/manifest) applies any raw Kubernetes
-object — StatefulSets, Namespaces, CRDs — via server-side apply.
+[`Kubernetes.Manifest`](/providers/kubernetes/manifest) applies any
+raw Kubernetes object — StatefulSets, Namespaces, CRDs — via server-side apply.
 The manifest is a literal object, exactly as you would write it in
 YAML:
 
 ```typescript
-const namespace = yield* AWS.EKS.Manifest("DemoNamespace", {
+const namespace = yield* Kubernetes.Manifest("DemoNamespace", {
   cluster,
   manifest: {
     apiVersion: "v1",
@@ -219,13 +243,14 @@ registration.
 
 ## Install a Helm chart
 
-[`HelmChart`](/providers/aws/eks/helmchart) renders a chart with the
+[`Kubernetes.HelmChart`](/providers/kubernetes/helmchart) renders a
+chart with the
 local `helm` CLI (`helm template` — install helm on your machine,
 like Docker for image builds) and applies the rendered objects
 through the same server-side-apply path as `Manifest`:
 
 ```typescript
-const ingress = yield* AWS.EKS.HelmChart("IngressNginx", {
+const ingress = yield* Kubernetes.HelmChart("IngressNginx", {
   cluster,
   chart: "ingress-nginx",
   repo: "https://kubernetes.github.io/ingress-nginx",
@@ -277,22 +302,26 @@ const hyperpod = yield* AWS.SageMaker.Cluster("HyperPod", {
 });
 ```
 
-`Deployment` and `Job` then opt onto those nodes with the
-`hyperpod` prop. The instance-group keys carry through to the
-cluster's attributes as types — `hyperpod.instanceGroups.workers`
-is typed per key and a typo'd name is a compile error — so the
-workload is connected to the fleet through the resource graph,
-and a team's `ComputeQuota` submits it through HyperPod task
-governance:
+`Kubernetes.Deployment` and `Kubernetes.Job` then opt onto those
+nodes in plain Kubernetes vocabulary — the HyperPod resources
+expose the derived values as attributes. The instance-group keys
+carry through to the cluster's attributes as types —
+`hyperpod.instanceGroups.workers` is typed per key and a typo'd
+name is a compile error — so the workload is connected to the
+fleet through the resource graph, and a team's `ComputeQuota`
+materializes the governed namespace and Kueue queue:
 
 ```typescript
-const train = yield* AWS.EKS.Job("Train", {
+const train = yield* Kubernetes.Job("Train", {
   cluster,
   main: import.meta.url,
-  hyperpod: {
-    instanceGroup: hyperpod.instanceGroups.workers,
-    quota: researchQuota, // → hyperpod-ns-research + Kueue queue label
-    priorityClass: "training",
+  namespace: researchQuota.namespace, // hyperpod-ns-research
+  labels: {
+    [AWS.SageMaker.KUEUE_QUEUE_NAME_LABEL]: researchQuota.queueName,
+    [AWS.SageMaker.KUEUE_PRIORITY_CLASS_LABEL]: "training-priority",
+  },
+  podTemplate: {
+    spec: { nodeSelector: hyperpod.instanceGroups.workers.nodeSelector },
   },
 });
 ```
@@ -311,7 +340,7 @@ surface.
 - [Choosing a runtime](/aws/compute/choosing-a-runtime) — when Lambda or ECS
   is the better fit than running your own Kubernetes workloads.
 - [`Cluster` reference](/providers/aws/eks/cluster),
-  [`Deployment` reference](/providers/aws/eks/deployment),
-  [`Job` reference](/providers/aws/eks/job),
-  [`Manifest` reference](/providers/aws/eks/manifest) — every prop
+  [`Deployment` reference](/providers/kubernetes/deployment),
+  [`Job` reference](/providers/kubernetes/job),
+  [`Manifest` reference](/providers/kubernetes/manifest) — every prop
   and attribute.

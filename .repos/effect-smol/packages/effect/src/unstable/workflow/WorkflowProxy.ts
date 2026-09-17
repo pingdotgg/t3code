@@ -22,7 +22,7 @@ import type * as Workflow from "./Workflow.ts"
  *
  * **Example** (Deriving RPC endpoints from workflows)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Layer, Schema } from "effect"
  * import { RpcServer } from "effect/unstable/rpc"
  * import { Workflow, WorkflowProxy, WorkflowProxyServer } from "effect/unstable/workflow"
@@ -46,6 +46,7 @@ import type * as Workflow from "./Workflow.ts"
  * const ApiLayer = RpcServer.layer(MyRpcs).pipe(
  *   Layer.provide(WorkflowProxyServer.layerRpcHandlers(myWorkflows))
  * )
+ * const result = [MyRpcs.requests.size, Layer.isLayer(ApiLayer)] // => [3, true]
  * ```
  *
  * @category constructors
@@ -71,7 +72,8 @@ export const toRpcGroup = <
         success: workflow.successSchema
       }).annotateMerge(workflow.annotations),
       Rpc.make(`${prefix}${workflow._tag}Discard`, {
-        payload: workflow.payloadSchema
+        payload: workflow.payloadSchema,
+        success: Schema.String
       }).annotateMerge(workflow.annotations),
       Rpc.make(`${prefix}${workflow._tag}Resume`, { payload: ResumePayload })
         .annotateMerge(workflow.annotations)
@@ -94,7 +96,7 @@ export type ConvertRpcs<Workflows extends Workflow.Any, Prefix extends string> =
   infer _Error
 > ?
     | Rpc.Rpc<`${Prefix}${_Name}`, _Payload, _Success, _Error>
-    | Rpc.Rpc<`${Prefix}${_Name}Discard`, _Payload>
+    | Rpc.Rpc<`${Prefix}${_Name}Discard`, _Payload, typeof Schema.String>
     | Rpc.Rpc<`${Prefix}${_Name}Resume`, typeof ResumePayload>
   : never
 
@@ -103,7 +105,7 @@ export type ConvertRpcs<Workflows extends Workflow.Any, Prefix extends string> =
  *
  * **Example** (Deriving HTTP API endpoints from workflows)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Layer, Schema } from "effect"
  * import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi"
  * import { Workflow, WorkflowProxy, WorkflowProxyServer } from "effect/unstable/workflow"
@@ -131,6 +133,7 @@ export type ConvertRpcs<Workflows extends Workflow.Any, Prefix extends string> =
  *     WorkflowProxyServer.layerHttpApi(MyApi, "workflows", myWorkflows)
  *   )
  * )
+ * const result = [Object.keys(MyApi.groups.workflows.endpoints).length, Layer.isLayer(ApiLayer)] // => [3, true]
  * ```
  *
  * @category constructors
@@ -151,7 +154,8 @@ export const toHttpApiGroup = <const Name extends string, const Workflows extend
         error: workflow.errorSchema
       }).annotateMerge(workflow.annotations),
       HttpApiEndpoint.post(workflow._tag + "Discard", `${path}/discard`, {
-        payload: workflow.payloadSchema
+        payload: workflow.payloadSchema,
+        success: Schema.String
       }).annotateMerge(workflow.annotations),
       HttpApiEndpoint.post(workflow._tag + "Resume", `${path}/resume`, {
         payload: ResumePayload
@@ -197,7 +201,9 @@ export type ConvertHttpApi<Workflows extends Workflow.Any> = Workflows extends W
       `/${Lowercase<_Name>}/discard`,
       never,
       never,
-      _Payload
+      _Payload,
+      never,
+      typeof Schema.String
     >
     | HttpApiEndpoint.HttpApiEndpoint<
       `${_Name}Resume`,

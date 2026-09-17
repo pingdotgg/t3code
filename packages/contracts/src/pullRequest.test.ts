@@ -7,6 +7,7 @@ import {
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
+  pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
@@ -65,6 +66,20 @@ const LIST_RESULT: PullRequestListResult = {
 };
 
 describe("PullRequestListResult", () => {
+  it("separates Forgejo HTTP ports while preserving other provider host identities", () => {
+    const identity = {
+      canonicalKey: "forge.example/team/repo",
+      locator: { remoteUrl: "http://forge.example:3000/team/repo.git" },
+    };
+    expect(pullRequestHostOf(identity, "forgejo")).toBe("forge.example:3000");
+    expect(pullRequestHostOf(identity, "gitlab")).toBe("forge.example");
+    expect(
+      pullRequestHostOf(
+        { ...identity, locator: { remoteUrl: "ssh://git@forge.example:2222/team/repo.git" } },
+        "forgejo",
+      ),
+    ).toBe("forge.example");
+  });
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record
    * with an optional value, for one — fails as an interrupted request rather than as a schema

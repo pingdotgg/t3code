@@ -99,6 +99,7 @@ const THREAD_SHELL = {
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
+  pullRequests: [],
   session: null,
   latestUserMessageAt: null,
   hasPendingApprovals: false,
@@ -150,7 +151,10 @@ function shellState(snapshot: OrchestrationShellSnapshot): EnvironmentShellState
   };
 }
 
-function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [ENVIRONMENT_ID]) {
+function makeHarness(
+  environmentIds: ReadonlyArray<EnvironmentId> = [ENVIRONMENT_ID],
+  disabledEnvironmentIds: ReadonlySet<EnvironmentId> = new Set(),
+) {
   const shellStateAtoms = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make(AsyncResult.success(shellState(SNAPSHOT))),
   );
@@ -170,6 +174,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [ENVIRONMENT
             wsBaseUrl: "wss://example.test",
           }),
           profile: Option.none(),
+          enabled: !disabledEnvironmentIds.has(environmentId),
         },
       ]),
     ),
@@ -208,6 +213,8 @@ describe("environment entity projections", () => {
       title: "Cached thread",
       branch: "stale-branch",
       worktreePath: "/repo/stale-worktree",
+      activeOrderKey: "t",
+      unsettledAt: "2026-03-09T10:00:00.000Z",
       deletedAt: null,
       messages,
       proposedPlans: [],
@@ -220,6 +227,8 @@ describe("environment entity projections", () => {
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
+      activeOrderKey: "f",
+      unsettledAt: "2026-03-09T12:00:00.000Z",
     };
 
     const merged = mergeEnvironmentThread(detail, shell);
@@ -228,6 +237,8 @@ describe("environment entity projections", () => {
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
+      activeOrderKey: "f",
+      unsettledAt: "2026-03-09T12:00:00.000Z",
     });
     expect(merged?.messages).toBe(messages);
   });
@@ -352,6 +363,23 @@ describe("environment entity projections", () => {
       disposeList();
       harness.registry.dispose();
     }
+  });
+
+  it("hides projects and threads of a switched-off environment while keeping its cache", () => {
+    const offEnvironmentId = EnvironmentId.make("off-environment");
+    const harness = makeHarness([ENVIRONMENT_ID, offEnvironmentId], new Set([offEnvironmentId]));
+    const projects = harness.registry.get(harness.projects.projectsAtom);
+    const threads = harness.registry.get(harness.threadShells.threadShellsAtom);
+
+    expect(projects.every((project) => project.environmentId === ENVIRONMENT_ID)).toBe(true);
+    expect(projects).toHaveLength(2);
+    expect(threads.every((thread) => thread.environmentId === ENVIRONMENT_ID)).toBe(true);
+    expect(threads).toHaveLength(2);
+    // The per-environment atoms still read the cached snapshot, so switching
+    // back on restores the rows without a refetch.
+    expect(
+      harness.registry.get(harness.projects.environmentProjectsAtom(offEnvironmentId)),
+    ).toHaveLength(2);
   });
 
   it("keeps scoped identities and list order across project and environment changes", () => {

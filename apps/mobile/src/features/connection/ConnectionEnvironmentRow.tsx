@@ -6,11 +6,14 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useState } from "react";
-import { Alert, Pressable, View } from "react-native";
+import { Platform, Alert, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import { MaterialButton } from "../../components/MaterialButton";
+import { MaterialIconButton } from "../../components/MaterialIconButton";
+import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
@@ -18,6 +21,9 @@ import { serverEnvironment } from "../../state/server";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 
 function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string | null {
+  if (!environment.isEnabled && environment.connectionState !== "unsupported") {
+    return "Off";
+  }
   return connectionStatusText({
     phase: environment.connectionState,
     error: environment.connectionError,
@@ -31,6 +37,7 @@ export function ConnectionEnvironmentRow(props: {
   readonly onToggle: () => void;
   readonly onReconnect: (environmentId: EnvironmentId) => void;
   readonly onRemove: (environmentId: EnvironmentId) => void;
+  readonly onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   readonly onUpdate: (
     environmentId: EnvironmentId,
     updates: { readonly label: string; readonly displayUrl: string },
@@ -41,12 +48,16 @@ export function ConnectionEnvironmentRow(props: {
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
+  const unsupported = props.environment.connectionState === "unsupported";
+  const enabled = props.environment.isEnabled && !unsupported;
   const statusLabel = connectionStatusLabel(props.environment);
-  const statusTraceId = props.environment.connectionErrorTraceId;
-  const hasConnectionFailure = props.environment.connectionError !== null;
+  const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
+  // Unsupported is a compatibility note, not a failure, so it stays muted.
+  const hasConnectionFailure = enabled && props.environment.connectionError !== null;
   const isRetrying =
-    props.environment.connectionState === "connecting" ||
-    props.environment.connectionState === "reconnecting";
+    enabled &&
+    (props.environment.connectionState === "connecting" ||
+      props.environment.connectionState === "reconnecting");
   const handleSave = useCallback(async () => {
     const result = await props.onUpdate(props.environment.environmentId, {
       label: label.trim(),
@@ -70,7 +81,7 @@ export function ConnectionEnvironmentRow(props: {
         onPress={props.onToggle}
       >
         <ConnectionStatusDot
-          state={props.environment.connectionState}
+          state={enabled || unsupported ? props.environment.connectionState : "available"}
           pulse={isRetrying}
           size={8}
         />
@@ -125,10 +136,15 @@ export function ConnectionEnvironmentRow(props: {
           ) : null}
         </View>
 
+        <ThemedSwitch
+          disabled={unsupported}
+          onValueChange={(next) => props.onSetEnabled(props.environment.environmentId, next)}
+          value={enabled}
+        />
         <SymbolView
           name="chevron.down"
           size={12}
-          tintColorClassName={"accent-icon-subtle"}
+          tintColorClassName="accent-icon-subtle"
           type="monochrome"
           style={{
             transform: [{ rotate: props.expanded ? "180deg" : "0deg" }],
@@ -179,48 +195,79 @@ export function ConnectionEnvironmentRow(props: {
             </>
           )}
 
-          <View className="flex-row justify-end gap-2">
-            {props.environment.isRelayManaged ? null : (
+          {Platform.OS === "android" ? (
+            <View className="flex-row items-center justify-end gap-2">
+              {props.environment.isRelayManaged ? null : (
+                <View className="flex-1">
+                  <MaterialButton
+                    label="Save"
+                    tone="primary"
+                    fullWidth
+                    onPress={() => {
+                      void handleSave();
+                    }}
+                  />
+                </View>
+              )}
+              <MaterialIconButton
+                accessibilityLabel="Reconnect environment"
+                icon="arrow.clockwise"
+                variant="tonal"
+                disabled={!enabled}
+                onPress={() => props.onReconnect(props.environment.environmentId)}
+              />
+              <MaterialIconButton
+                accessibilityLabel="Remove environment"
+                icon="trash"
+                variant="danger"
+                onPress={() => props.onRemove(props.environment.environmentId)}
+              />
+            </View>
+          ) : (
+            <View className="flex-row justify-end gap-2">
+              {props.environment.isRelayManaged ? null : (
+                <Pressable
+                  className="min-h-[42px] flex-1 flex-row items-center justify-center gap-1.5 rounded-[14px] bg-primary px-3.5 py-2.5 active:opacity-70"
+                  onPress={handleSave}
+                >
+                  <SymbolView
+                    name="checkmark"
+                    size={13}
+                    tintColorClassName="accent-primary-foreground"
+                    type="monochrome"
+                  />
+                  <Text className="text-xs font-t3-bold tracking-[0.8px] uppercase text-primary-foreground">
+                    Save
+                  </Text>
+                </Pressable>
+              )}
+
               <Pressable
-                className="min-h-[42px] flex-1 flex-row items-center justify-center gap-1.5 rounded-[14px] bg-primary px-3.5 py-2.5 active:opacity-70"
-                onPress={handleSave}
+                className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-input-border bg-input active:opacity-70 disabled:opacity-40"
+                disabled={!enabled}
+                onPress={() => props.onReconnect(props.environment.environmentId)}
               >
                 <SymbolView
-                  name="checkmark"
-                  size={13}
-                  tintColorClassName={"accent-primary-foreground"}
+                  name="arrow.clockwise"
+                  size={14}
+                  tintColorClassName="accent-icon-subtle"
                   type="monochrome"
                 />
-                <Text className="text-xs font-t3-bold tracking-[0.8px] uppercase text-primary-foreground">
-                  Save
-                </Text>
               </Pressable>
-            )}
 
-            <Pressable
-              className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-input-border bg-input active:opacity-70"
-              onPress={() => props.onReconnect(props.environment.environmentId)}
-            >
-              <SymbolView
-                name="arrow.clockwise"
-                size={14}
-                tintColorClassName={"accent-icon-subtle"}
-                type="monochrome"
-              />
-            </Pressable>
-
-            <Pressable
-              className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-danger-border bg-danger active:opacity-70"
-              onPress={() => props.onRemove(props.environment.environmentId)}
-            >
-              <SymbolView
-                name="trash"
-                size={14}
-                tintColorClassName={"accent-danger-foreground"}
-                type="monochrome"
-              />
-            </Pressable>
-          </View>
+              <Pressable
+                className="h-[42px] w-[42px] items-center justify-center rounded-[14px] border border-danger-border bg-danger active:opacity-70"
+                onPress={() => props.onRemove(props.environment.environmentId)}
+              >
+                <SymbolView
+                  name="trash"
+                  size={14}
+                  tintColorClassName="accent-danger-foreground"
+                  type="monochrome"
+                />
+              </Pressable>
+            </View>
+          )}
         </Animated.View>
       ) : null}
     </Animated.View>

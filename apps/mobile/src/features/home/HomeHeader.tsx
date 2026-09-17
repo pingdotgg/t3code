@@ -1,17 +1,11 @@
 import type { EnvironmentId, SidebarThreadSortOrder } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
-import Constants from "expo-constants";
+
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useCallback, useMemo, useRef } from "react";
-import { Platform, Pressable, Text as RNText, TextInput, View } from "react-native";
+import { Platform } from "react-native";
 import type { SearchBarCommands } from "react-native-screens";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { ControlPillMenu } from "../../components/ControlPill";
-import { SymbolView } from "../../components/AppSymbol";
-import { T3Wordmark } from "../../components/T3Wordmark";
-import { HOME_HORIZONTAL_INSET } from "../../lib/layoutMetrics";
-import { resolveMobileStageLabel } from "../../lib/mobileBranding";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
@@ -21,7 +15,7 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
 import type { HomeProjectSortOrder } from "./homeThreadList";
-import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
+import { MaterialThreadListToolbar } from "./MaterialThreadListToolbar";
 import {
   buildHomeListFilterMenu,
   type HomeListFilterMenuEnvironment,
@@ -66,8 +60,6 @@ function checkedMenuState(checked: boolean) {
 }
 
 function AndroidHomeHeader(props: HomeHeaderProps) {
-  const insets = useSafeAreaInsets();
-  const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   // Thread List v2 lays the list out in fixed creation order, so the
   // sort/group filter controls would be silently ignored — hide them and
   // key the "customized" icon state off the environment filter alone.
@@ -198,110 +190,15 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
   return (
     <>
       <NativeStackScreenOptions options={{ headerShown: false }} />
-      <View
-        className="border-b border-header-border bg-header pb-3"
-        style={{
-          paddingHorizontal: HOME_HORIZONTAL_INSET,
-          paddingTop: Math.max(insets.top, 12),
-        }}
-      >
-        <View className="w-full max-w-[720px] self-center gap-3">
-          <View className="flex-row items-center gap-2.5">
-            {/* Brand slot doubles as the connection status surface: while an
-                environment reconnects, the lockup fades to a status label in
-                place (no layout shift in the list below). */}
-            <WorkspaceConnectionTitle
-              grow
-              onPress={props.onOpenEnvironments}
-              brand={
-                <View className="flex-row items-center gap-2">
-                  {/* Mirrors the desktop SidebarBrand: T3 mark + muted "Code". */}
-                  <T3Wordmark colorClassName="accent-icon" height={15} />
-                  <RNText className="-ml-0.5 text-[21px] font-t3-medium tracking-[-0.5px] text-foreground-muted">
-                    Code
-                  </RNText>
-                  <View className="rounded-full bg-subtle px-2 py-0.75">
-                    <RNText className="text-[11px] font-t3-bold tracking-[1.1px] text-foreground-muted uppercase">
-                      {stageLabel}
-                    </RNText>
-                  </View>
-                </View>
-              }
-            />
-
-            <ControlPillMenu
-              actions={menuActions}
-              isAnchoredToRight
-              onPressAction={handleMenuAction}
-            >
-              <Pressable
-                accessibilityLabel="Filter and sort threads"
-                accessibilityRole="button"
-                className="size-11 items-center justify-center rounded-full bg-subtle"
-              >
-                <SymbolView
-                  name={
-                    hasCustomListOptions
-                      ? "line.3.horizontal.decrease.circle.fill"
-                      : "line.3.horizontal.decrease.circle"
-                  }
-                  size={16}
-                  tintColorClassName={"accent-icon"}
-                  type="monochrome"
-                />
-              </Pressable>
-            </ControlPillMenu>
-            {/* Built identically to the filter button so the two circles
-                match exactly (ControlPill sizes via Tailwind classes and
-                resolves to a different box). */}
-            <Pressable
-              accessibilityLabel="Open settings"
-              accessibilityRole="button"
-              onPress={props.onOpenSettings}
-              className="size-11 items-center justify-center rounded-full bg-subtle"
-            >
-              <SymbolView
-                name="gearshape"
-                size={18}
-                tintColorClassName={"accent-icon"}
-                type="monochrome"
-              />
-            </Pressable>
-          </View>
-
-          <View className="min-h-12 flex-row items-center gap-2.5 rounded-2xl border border-input-border bg-input px-3.5">
-            <SymbolView
-              name="magnifyingglass"
-              size={17}
-              tintColorClassName={"accent-foreground-muted"}
-              type="monochrome"
-            />
-            <TextInput
-              accessibilityLabel="Search threads"
-              autoCapitalize="none"
-              onChangeText={props.onSearchQueryChange}
-              placeholder="Search threads"
-              placeholderTextColorClassName="accent-placeholder"
-              className="flex-1 py-2.5 text-base font-sans text-foreground"
-              value={props.searchQuery}
-            />
-            {props.searchQuery.length > 0 ? (
-              <Pressable
-                accessibilityLabel="Clear search"
-                hitSlop={10}
-                onPress={() => props.onSearchQueryChange("")}
-              >
-                <SymbolView
-                  name="xmark.circle.fill"
-                  size={17}
-                  tintColorClassName={"accent-foreground-muted"}
-                  type="monochrome"
-                />
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
-      </View>
+      <MaterialThreadListToolbar
+        searchQuery={props.searchQuery}
+        onSearchQueryChange={props.onSearchQueryChange}
+        filterActions={menuActions}
+        filterCustomized={hasCustomListOptions}
+        onFilterAction={handleMenuAction}
+        onOpenSettings={props.onOpenSettings}
+        onOpenEnvironments={props.onOpenEnvironments}
+      />
     </>
   );
 }

@@ -6,22 +6,28 @@ import {
   type ServerSelfUpdateResult,
   type ThreadId,
 } from "@t3tools/contracts";
-import { HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HashSet from "effect/HashSet";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { HttpClient } from "effect/unstable/http";
+
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  pinnedRuntimeCommand,
   PinnedRuntimeInstallError,
   PinnedRuntimePreflightBlockedError,
 } from "./pinnedRuntime.ts";
@@ -170,7 +176,14 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const execPath = yield* HostProcessExecutablePath;
+  const platform = yield* HostProcessPlatform;
+  const arch = yield* HostProcessArchitecture;
+  // Archive-distributed targets download from GitHub Releases. The client is
+  // optional so callers without one (tests, npm-only hosts) still construct.
+  const httpClient = yield* HttpClient.HttpClient;
+  const releaseBaseUrl = Option.getOrUndefined(
+    yield* Config.string(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
+  );
   const inFlight = yield* Ref.make(false);
 
   const capability: ServerSelfUpdateCapability | null =
@@ -216,12 +229,16 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
         fs,
         path,
         runner,
+        httpClient,
+        platform,
+        arch,
+        releaseBaseUrl,
         validate: (runtime) =>
           runner
             .run({
-              command: execPath,
+              command: pinnedRuntimeCommand(runtime).command,
               args: [
-                runtime.entryPath,
+                ...pinnedRuntimeCommand(runtime).args,
                 "__service-preflight",
                 "--database-path",
                 serverConfig.dbPath,

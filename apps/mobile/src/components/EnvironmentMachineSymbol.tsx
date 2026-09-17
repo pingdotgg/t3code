@@ -6,6 +6,7 @@ import { SymbolView } from "./AppSymbol";
 const SYMBOL_BY_KIND: Record<EnvironmentMachineKind, SFSymbol> = {
   server: "server.rack",
   cloud: "cloud",
+  linux: "terminal",
   desktop: "desktopcomputer",
   laptop: "laptopcomputer",
   "mac-mini": "macmini",
@@ -15,10 +16,11 @@ const SYMBOL_BY_KIND: Record<EnvironmentMachineKind, SFSymbol> = {
 export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
   server: "Server",
   cloud: "Cloud VM",
+  linux: "Linux/WSL",
   desktop: "Desktop",
   laptop: "Laptop",
-  "mac-mini": "Mac mini",
-  "mac-studio": "Mac Studio",
+  "mac-mini": "Mini PC",
+  "mac-studio": "Workstation",
 };
 
 /** The glyph an environment wears in lists; SF Symbols on iOS, Tabler on Android. */

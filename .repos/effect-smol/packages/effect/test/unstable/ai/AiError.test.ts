@@ -64,6 +64,36 @@ describe("AiError", () => {
         const error = new AiError.AuthenticationError({ kind: "Unknown" })
         assert.strictEqual(error._tag, "AuthenticationError")
       })
+
+      it("should render the description after the kind suggestion when present", () => {
+        const error = new AiError.AuthenticationError({
+          kind: "InsufficientPermissions",
+          description: "anthropic.claude-sonnet-5 is not available for this account"
+        })
+        assert.strictEqual(
+          error.message,
+          "InsufficientPermissions: Your API key lacks required permissions. anthropic.claude-sonnet-5 is not available for this account"
+        )
+      })
+
+      it("should render the message unchanged when description is absent", () => {
+        const error = new AiError.AuthenticationError({ kind: "InsufficientPermissions" })
+        assert.strictEqual(
+          error.message,
+          "InsufficientPermissions: Your API key lacks required permissions"
+        )
+        assert.isUndefined(error.description)
+      })
+
+      it("should round-trip the description through the schema", () => {
+        const error = new AiError.AuthenticationError({
+          kind: "ExpiredKey",
+          description: "The security token included in the request is expired"
+        })
+        const encoded = Schema.encodeUnknownSync(AiError.AuthenticationError)(error)
+        const decoded = Schema.decodeUnknownSync(AiError.AuthenticationError)(encoded)
+        assert.strictEqual(decoded.description, "The security token included in the request is expired")
+      })
     })
 
     describe("ContentPolicyError", () => {
@@ -549,6 +579,18 @@ describe("AiError", () => {
         assert.strictEqual(reason._tag, "AuthenticationError")
         if (reason._tag === "AuthenticationError") {
           assert.strictEqual(reason.kind, "InsufficientPermissions")
+        }
+      })
+
+      it("should thread the description into 401/403 AuthenticationError", () => {
+        const reason = AiError.reasonFromHttpStatus({
+          status: 403,
+          description: "User is not authorized to perform: bedrock:InvokeModel"
+        })
+        assert.strictEqual(reason._tag, "AuthenticationError")
+        if (reason._tag === "AuthenticationError") {
+          assert.strictEqual(reason.description, "User is not authorized to perform: bedrock:InvokeModel")
+          assert.include(reason.message, "User is not authorized to perform: bedrock:InvokeModel")
         }
       })
 

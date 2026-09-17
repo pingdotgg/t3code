@@ -1,4 +1,4 @@
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
@@ -20,12 +20,18 @@ export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
+  readonly refine?: (
+    identity: RepositoryIdentity,
+  ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
 }
 
 export class RepositoryIdentityResolver extends Context.Service<
   RepositoryIdentityResolver,
   {
-    readonly resolve: (cwd: string) => Effect.Effect<RepositoryIdentity | null>;
+    readonly resolve: (
+      cwd: string,
+      options?: { readonly refresh?: boolean },
+    ) => Effect.Effect<RepositoryIdentity | null>;
   }
 >()("t3/project/RepositoryIdentityResolver") {}
 
@@ -155,6 +161,11 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     (cacheKey) =>
       resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.flatMap((identity) =>
+          identity !== null && options.refine
+            ? options.refine(identity).pipe(Effect.catch(() => Effect.succeed(identity)))
+            : Effect.succeed(identity),
+        ),
       ),
     {
       capacity: cacheCapacity,
@@ -170,9 +181,11 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
 
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
-  )(function* (cwd) {
+  )(function* (cwd, options) {
+    if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
     const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
     if (cacheKey === null) return null;
+    if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
     return yield* Cache.get(repositoryIdentityCache, cacheKey);
   });
 

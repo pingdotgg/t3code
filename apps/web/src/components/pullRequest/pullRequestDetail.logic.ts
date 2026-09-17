@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import {
   PullRequestDetail,
+  pullRequestHostOf,
   type PullRequestAction,
   type PullRequestActor,
   type PullRequestBaseComparison,
@@ -9,9 +10,13 @@ import {
   type PullRequestChecksState,
   type PullRequestComment,
   type PullRequestCommit,
+  type PullRequestContextMetadata,
   type PullRequestDetailView,
   type PullRequestMergeability,
+  type PullRequestMergeMethod,
   type PullRequestReaction,
+  type PullRequestRef,
+  type RepositoryIdentity,
   type PullRequestReviewThread,
   type PullRequestState,
   type PullRequestUpdateMethod,
@@ -20,6 +25,39 @@ import {
 } from "@t3tools/contracts";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
+import { reviewCommentContextId } from "~/lib/composerContextRecords";
+import { removeInlineContextReference } from "~/lib/composerContextReferences";
+
+export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
+  merge: "Merge",
+  squash: "Squash and merge",
+  rebase: "Rebase and merge",
+};
+
+/** Old environments keep their existing actions; new ones must finish stack discovery first. */
+export function allowsSinglePullRequestMerge(input: {
+  supportsStackActions: boolean;
+  hasStack: boolean;
+  stackPending: boolean;
+  stackError: string | null;
+}): boolean {
+  return (
+    !input.supportsStackActions ||
+    (!input.hasStack && !input.stackPending && input.stackError === null)
+  );
+}
+
+export function resolvePullRequestMergeMethod(
+  allowed: ReadonlyArray<PullRequestMergeMethod>,
+  current: PullRequestMergeMethod | null,
+  projectDefault: PullRequestMergeMethod | undefined,
+  lastSelected: PullRequestMergeMethod,
+): PullRequestMergeMethod {
+  for (const method of [current, projectDefault, lastSelected]) {
+    if (method && allowed.includes(method)) return method;
+  }
+  return allowed[0] ?? "merge";
+}
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
 const bitbucketRepositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
@@ -68,12 +106,17 @@ export function pullRequestCheckoutCommand(
   number: number,
   headBranch: string,
   headRepositoryNameWithOwner?: string | null,
+  repositoryUrl?: string | null,
 ): string | null {
   switch (provider) {
     case "github":
       return `gh pr checkout ${number}`;
     case "gitlab":
       return `glab mr checkout ${number}`;
+    case "forgejo":
+      return repositoryUrl
+        ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' refs/pull/${number}/head && git checkout -B pulls/${number} FETCH_HEAD`
+        : null;
     case "azure-devops":
       return `az repos pr checkout --id ${number}`;
     case "bitbucket": {
@@ -570,6 +613,20 @@ export interface FixFindingsHandoff {
  */
 const HANDOFF_COMMENT_ID_PREFIX = "pull-request-";
 
+/** Removes references owned by the previous PR handoff before its prose is replaced. */
+export function stripPullRequestHandoffReferences(
+  prompt: string,
+  comments: ReadonlyArray<ReviewCommentContext>,
+  retainedIds: ReadonlySet<string> = new Set(),
+): string {
+  let next = prompt;
+  for (const comment of comments) {
+    if (!comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX) || retainedIds.has(comment.id)) continue;
+    next = removeInlineContextReference(next, reviewCommentContextId(comment.id)).prompt;
+  }
+  return next;
+}
+
 /**
  * The prompt the composer should hold once a hand-off lands there.
  *
@@ -825,6 +882,8 @@ function pullRequestContextComment(
     readonly url: string;
     readonly headBranch: string;
     readonly baseBranch: string;
+    readonly state: PullRequestState;
+    readonly isDraft: boolean;
   },
   instructions: ReadonlyArray<string>,
 ): ReviewCommentContext {
@@ -845,7 +904,28 @@ function pullRequestContextComment(
       ...instructions,
     ].join("\n"),
     diff: "",
+    pullRequest: {
+      number: input.number,
+      title: boundedField(input.title),
+      url: boundedField(input.url),
+      headBranch: boundedField(input.headBranch),
+      baseBranch: boundedField(input.baseBranch),
+      state: input.state,
+      isDraft: input.isDraft,
+    },
   };
+}
+
+/**
+ * A neutral pull request reference inserted directly from the message composer. It is the
+ * reader's own chip, so it sits outside the `pull-request-` namespace a hand-off owns and
+ * sweeps: a later hand-off must not delete a reference the reader put there themselves.
+ */
+export function buildPullRequestReferenceContext(
+  input: PullRequestContextMetadata,
+): ReviewCommentContext {
+  const comment = pullRequestContextComment(input, []);
+  return { ...comment, id: `pr-reference:${input.number}` };
 }
 
 /** What the agent is asked to do with a question, as opposed to a task. */
@@ -864,6 +944,8 @@ export function buildAskAboutPullRequestHandoff(input: {
   readonly url: string;
   readonly headBranch: string;
   readonly baseBranch: string;
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
 }): FixFindingsHandoff {
   return {
     prompt: "",
@@ -882,6 +964,8 @@ export function buildExplainPullRequestHandoff(input: {
   readonly url: string;
   readonly headBranch: string;
   readonly baseBranch: string;
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
 }): FixFindingsHandoff {
   return {
     prompt: "Explain this pull request.",
@@ -900,6 +984,8 @@ export function buildAddSelectionToAgentHandoff(input: {
   readonly url: string;
   readonly headBranch: string;
   readonly baseBranch: string;
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
   readonly comment: ReviewCommentContext;
   readonly request: string;
 }): FixFindingsHandoff {
@@ -1008,7 +1094,17 @@ export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): bo
 
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
 
+export function resolvePullRequestReferenceHost(
+  reference: PullRequestRef,
+  identity: RepositoryIdentity | null | undefined,
+): PullRequestRef {
+  // Other providers may resolve an SSH remote to a different web authority on the server.
+  if (reference.host !== undefined || identity?.provider !== "github") return reference;
+  return { ...reference, host: pullRequestHostOf(identity, "github") };
+}
+
 export interface PullRequestDetailSnapshotRef {
+  readonly host?: string | undefined;
   readonly projectId: string;
   readonly repository: string;
   readonly number: number;
@@ -1018,7 +1114,9 @@ const pullRequestDetailSnapshotKey = (
   environmentId: string,
   reference: PullRequestDetailSnapshotRef,
 ) =>
-  `t3.pullRequests.detail:${environmentId}:${reference.projectId}:${reference.repository}#${reference.number}`;
+  reference.host
+    ? `t3.pullRequests.detail:${JSON.stringify([environmentId, reference.projectId, reference.host.toLowerCase(), reference.repository.toLowerCase(), reference.number])}`
+    : `t3.pullRequests.detail:${environmentId}:${reference.projectId}:${reference.repository}#${reference.number}`;
 
 const decodeDetailSnapshot = Schema.decodeUnknownOption(PullRequestDetail);
 
@@ -1034,10 +1132,18 @@ export function readPullRequestDetailSnapshot(
   reference: PullRequestDetailSnapshotRef,
 ): PullRequestDetail | null {
   try {
-    const raw = storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference));
+    const raw =
+      storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference)) ??
+      (reference.host === undefined
+        ? null
+        : storage?.getItem(
+            pullRequestDetailSnapshotKey(environmentId, { ...reference, host: undefined }),
+          ));
     if (!raw) return null;
     const decoded = decodeDetailSnapshot(JSON.parse(raw));
-    return decoded._tag === "Some" ? decoded.value : null;
+    return decoded._tag === "Some"
+      ? resolveDisplayedPullRequestDetail({ live: null, cached: decoded.value, reference })
+      : null;
   } catch {
     return null;
   }
@@ -1068,12 +1174,22 @@ export function resolveDisplayedPullRequestDetail(input: {
 }): PullRequestDetail | null {
   if (input.live !== null) return input.live;
   if (
-    input.cached !== null &&
-    input.cached.projectId === input.reference.projectId &&
-    input.cached.repository.toLowerCase() === input.reference.repository.toLowerCase() &&
-    input.cached.number === input.reference.number
+    input.cached === null ||
+    input.cached.projectId !== input.reference.projectId ||
+    input.cached.repository.toLowerCase() !== input.reference.repository.toLowerCase() ||
+    input.cached.number !== input.reference.number
   ) {
-    return input.cached;
+    return null;
   }
-  return null;
+  if (input.reference.host === undefined) return input.cached;
+  try {
+    const url = new URL(input.cached.url);
+    const host = input.cached.provider === "forgejo" ? url.host : url.hostname;
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      host.toLowerCase() === input.reference.host.toLowerCase()
+      ? input.cached
+      : null;
+  } catch {
+    return null;
+  }
 }

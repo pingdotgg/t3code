@@ -1,4 +1,4 @@
-import { ListTodoIcon } from "lucide-react";
+import { CheckIcon, CircleDotIcon, CircleIcon, ListTodoIcon } from "lucide-react";
 import { memo, type ComponentProps } from "react";
 
 import { formatDuration } from "../../session-logic";
@@ -18,6 +18,12 @@ export interface ComposerTaskStep {
 }
 
 const MAX_TASK_SEGMENTS = 10;
+
+const taskStatusLabels = {
+  pending: "Pending",
+  inProgress: "Running",
+  completed: "Completed",
+} satisfies Record<ComposerTaskStep["status"], string>;
 
 function keyedTaskSteps(steps: readonly ComposerTaskStep[]) {
   const occurrences = new Map<string, number>();
@@ -160,10 +166,10 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
             data-composer-tasks-list="true"
           >
             {keyedTaskSteps(steps).map(({ key, step }) => (
-              <ComposerBanner.Row key={key} render={<li />}>
+              <ComposerBanner.Row key={key} render={<li />} className="items-start py-1 pe-2">
                 <ComposerBanner.Icon
                   className={cn(
-                    "font-mono text-[10px]",
+                    "h-4",
                     step.status === "completed"
                       ? "text-success"
                       : step.status === "inProgress"
@@ -171,10 +177,17 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                         : "text-muted-foreground/40",
                   )}
                 >
-                  {step.status === "completed" ? "✓" : step.status === "inProgress" ? "●" : "○"}
+                  {step.status === "completed" ? (
+                    <CheckIcon />
+                  ) : step.status === "inProgress" ? (
+                    <CircleDotIcon />
+                  ) : (
+                    <CircleIcon />
+                  )}
                 </ComposerBanner.Icon>
                 <ComposerBanner.Content
                   className={cn(
+                    "block wrap-anywhere",
                     step.status === "completed"
                       ? "text-muted-foreground/55"
                       : step.status === "inProgress"
@@ -182,11 +195,12 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                         : "text-muted-foreground/70",
                   )}
                 >
+                  <span className="sr-only">{taskStatusLabels[step.status]}: </span>
                   {step.step}
                 </ComposerBanner.Content>
                 <ComposerBanner.Actions>
                   <span
-                    className="w-10 text-right text-[10px] text-muted-foreground/45 tabular-nums"
+                    className="w-12 text-right text-[10px]/4 text-muted-foreground/45 tabular-nums"
                     data-composer-task-duration="true"
                   >
                     {step.durationMs !== undefined

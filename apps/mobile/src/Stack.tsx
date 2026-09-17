@@ -20,9 +20,13 @@ import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRo
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
+import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
-import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKeyboardCommandProvider";
+import {
+  HardwareKeyboardCommandOverlay,
+  HardwareKeyboardCommandProvider,
+} from "./features/keyboard/HardwareKeyboardCommandProvider";
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
@@ -52,10 +56,17 @@ import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
+import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
+import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
+import {
+  SettingsOpenSourceLicenseRouteScreen,
+  SettingsOpenSourceLicensesRouteScreen,
+} from "./features/settings/SettingsOpenSourceLicensesRouteScreen";
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
+import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
@@ -185,11 +196,43 @@ const SettingsContentStack = createNativeStackNavigator({
         title: "Project Grouping",
       },
     }),
+    SettingsKeyboard: createNativeStackScreen({
+      screen: SettingsKeyboardRouteScreen,
+      linking: "keyboard",
+      options: {
+        title: "Keyboard",
+      },
+    }),
     SettingsClientStorage: createNativeStackScreen({
       screen: SettingsClientStorageRouteScreen,
       linking: "client-storage",
       options: {
         title: "Client Storage",
+      },
+    }),
+    SettingsDiagnostics: createNativeStackScreen({
+      screen: SettingsDiagnosticsRouteScreen,
+      linking: "diagnostics",
+      options: {
+        title: "Diagnostics",
+      },
+    }),
+    SettingsUsageAccount: createNativeStackScreen({
+      screen: UsageLimitAccountScreen,
+      options: { title: "Account" },
+    }),
+    SettingsOpenSourceLicenses: createNativeStackScreen({
+      screen: SettingsOpenSourceLicensesRouteScreen,
+      linking: "open-source-licenses",
+      options: {
+        title: "Open source licenses",
+      },
+    }),
+    SettingsOpenSourceLicense: createNativeStackScreen({
+      screen: SettingsOpenSourceLicenseRouteScreen,
+      linking: "open-source-licenses/:entryKey",
+      options: {
+        title: "License notice",
       },
     }),
     SettingsUsage: createNativeStackScreen({
@@ -281,6 +324,18 @@ const NewTaskSheetStack = createNativeStackNavigator({
         title: "Branch",
       },
     }),
+    // The same file view the thread composer pushes. A draft has no thread, so it names its
+    // own workspace through route params instead of resolving one from a selected thread.
+    NewTaskFile: createNativeStackScreen({
+      screen: ThreadFileScreen,
+      linking: "draft/files/:path*",
+      options: SOLID_HEADER_OPTIONS,
+    }),
+    NewTaskAttachment: createNativeStackScreen({
+      screen: AttachmentFileScreen,
+      linking: "draft/attachments/:attachmentId",
+      options: SOLID_HEADER_OPTIONS,
+    }),
     ThreadSettings: createNativeStackScreen({
       screen: NewTaskThreadSettingsRouteScreen,
       linking: "draft/settings",
@@ -337,17 +392,20 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
 ]);
 
 /**
- * Pathname of the topmost NON-overlay route — the screen the workspace is
- * actually "on", regardless of any sheets floating above it.
+ * Location of the topmost non-overlay route, including its key so thread
+ * selection can dismiss sheets without replacing the wrong destination.
  */
-function workspacePathFromState(state: NavigationState): string {
+function workspaceLocationFromState(state: NavigationState) {
   const routes = state.routes.filter((route) => !WORKSPACE_OVERLAY_ROUTES.has(route.name));
   const effectiveState =
     routes.length > 0 && routes.length !== state.routes.length
       ? ({ ...state, routes, index: routes.length - 1 } as NavigationState)
       : state;
   const path = getPathFromState(effectiveState, navigationPathConfig);
-  return path.startsWith("/") ? path : `/${path}`;
+  return {
+    pathname: path.startsWith("/") ? path : `/${path}`,
+    routeKey: effectiveState.routes[effectiveState.index]?.key,
+  };
 }
 
 // The drain hook subscribes to the outbox, all thread shells, projects, and
@@ -391,15 +449,19 @@ function RootStackLayout(props: {
   // workspace layout only reacts to the underlying non-overlay route.
   const path = getPathFromState(props.state, navigationPathConfig);
   const pathname = path.startsWith("/") ? path : `/${path}`;
-  const workspacePathname = workspacePathFromState(props.state);
+  const workspaceLocation = workspaceLocationFromState(props.state);
 
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>
       <ThreadOutboxDrainWorker />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ExistingThreadSettingsRouteProvider>
-        <AdaptiveWorkspaceLayout pathname={workspacePathname}>
+        <AdaptiveWorkspaceLayout
+          pathname={workspaceLocation.pathname}
+          workspaceRouteKey={workspaceLocation.routeKey}
+        >
           {props.children}
+          <HardwareKeyboardCommandOverlay />
         </AdaptiveWorkspaceLayout>
       </ExistingThreadSettingsRouteProvider>
     </HardwareKeyboardCommandProvider>
@@ -501,6 +563,11 @@ export const RootStack = createNativeStackNavigator({
     ThreadFile: createNativeStackScreen({
       screen: ThreadFileScreen,
       linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
+      options: SOLID_HEADER_OPTIONS,
+    }),
+    ThreadAttachment: createNativeStackScreen({
+      screen: AttachmentFileScreen,
+      linking: `${THREAD_LINKING_PREFIX}/attachments/:attachmentId`,
       options: SOLID_HEADER_OPTIONS,
     }),
     ThreadSettingsSheet: createNativeStackScreen({

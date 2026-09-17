@@ -2,7 +2,7 @@ import { Region as AwsRegion } from "@distilled.cloud/aws/Region";
 import * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import { isBindingHost } from "../Lambda/Function.ts";
-import { KVS_REGION } from "./common.ts";
+import { KVS_REGION, withKvsRegion } from "./common.ts";
 import type { Distribution } from "./Distribution.ts";
 import type { KeyValueStore } from "./KeyValueStore.ts";
 
@@ -113,10 +113,15 @@ export const makeKeyValueStoreScopedHttpBinding = <
       return Effect.fn(`${options.tag}(${store.LogicalId})`)(function* (
         request: Omit<I, "KvsARN">,
       ) {
-        return yield* op({
-          ...request,
-          KvsARN: yield* KvsARN,
-        } as I);
+        // The region must also be pinned at the call site: the yield-time
+        // snapshot is only a fallback — the calling fiber's ambient Region
+        // (the host Function's own region) wins over it.
+        return yield* withKvsRegion(
+          op({
+            ...request,
+            KvsARN: yield* KvsARN,
+          } as I),
+        );
       });
     });
   });

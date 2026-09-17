@@ -1,15 +1,17 @@
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
-import { Platform, ScrollView, View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { SettingsScreen } from "./components/SettingsScreen";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { GitHubRoutingSettings } from "../connection/GitHubRoutingSettings";
 import { splitEnvironmentSections } from "../connection/environmentSections";
 import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -28,6 +30,7 @@ export function SettingsEnvironmentsRouteScreen() {
     connectedEnvironments,
     onReconnectEnvironment,
     onRemoveEnvironmentPress,
+    onSetEnvironmentEnabled,
     onUpdateEnvironment,
   } = useRemoteConnections();
   const navigation = useNavigation();
@@ -77,28 +80,21 @@ export function SettingsEnvironmentsRouteScreen() {
   );
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          {/* Android renders its own in-screen header instead of the native bar. */}
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader
-            title="Environments"
-            onBack={() => navigation.goBack()}
-            actions={[
-              {
-                accessibilityLabel: "Add environment",
-                icon: "plus",
-                onPress: () =>
-                  navigation.navigate("SettingsSheet", {
-                    screen: "SettingsContent",
-                    params: { screen: "SettingsEnvironmentNew" },
-                  }),
-              },
-            ]}
-          />
-        </>
-      ) : (
+    <SettingsScreen
+      title="Environments"
+      actions={[
+        {
+          accessibilityLabel: "Add environment",
+          icon: "plus",
+          onPress: () =>
+            navigation.navigate("SettingsSheet", {
+              screen: "SettingsContent",
+              params: { screen: "SettingsEnvironmentNew" },
+            }),
+        },
+      ]}
+    >
+      {Platform.OS !== "android" ? (
         <NativeHeaderToolbar placement="right">
           <NativeHeaderToolbar.Button
             icon="plus"
@@ -112,7 +108,7 @@ export function SettingsEnvironmentsRouteScreen() {
             tintColor={headerIconColor}
           />
         </NativeHeaderToolbar>
-      )}
+      ) : null}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -136,6 +132,7 @@ export function SettingsEnvironmentsRouteScreen() {
                   onToggle={() => handleToggle(environment.environmentId)}
                   onReconnect={onReconnectEnvironment}
                   onRemove={onRemoveEnvironmentPress}
+                  onSetEnabled={onSetEnvironmentEnabled}
                   onUpdate={handleUpdateEnvironment}
                 />
               </View>
@@ -163,7 +160,8 @@ export function SettingsEnvironmentsRouteScreen() {
             user is signed out — the component gates discovery itself. */}
         <CloudEnvironmentRows
           connectedCloudEnvironments={connectedCloudEnvironments}
-          onReconnectEnvironment={onReconnectEnvironment}
+          onSetEnvironmentEnabled={onSetEnvironmentEnabled}
+          onRemoveEnvironment={onRemoveEnvironmentPress}
           {...(SHOWCASE_ENABLED
             ? {
                 showcaseAvailableEnvironments: SHOWCASE_AVAILABLE_CLOUD_ENVIRONMENTS,
@@ -171,7 +169,8 @@ export function SettingsEnvironmentsRouteScreen() {
               }
             : {})}
         />
+        <GitHubRoutingSettings />
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }

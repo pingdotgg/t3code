@@ -10,6 +10,12 @@ on:
   pull_request_review:
     types: [submitted]
 
+concurrency:
+  group: claude-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  # Separate @claude prompts may be independent requests; serialize them for
+  # the same issue or PR without discarding one that is already running.
+  cancel-in-progress: false
+
 jobs:
   claude:
     if: |
@@ -26,20 +32,39 @@ jobs:
       actions: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- distilled
+
+      - name: Restore Turbo cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-${{ github.workflow }}-${{ github.run_attempt }}
+          restore-keys: |
+            turbo-${{ runner.os }}-${{ github.repository_id }}-${{ github.sha }}-
+            turbo-${{ runner.os }}-${{ github.repository_id }}-
+
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
       - name: Configure AWS credentials
         id: aws
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
           output-credentials: true
 
       - name: Run Claude Code
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@e63208cb983318a44e3f945e959ef894b707dcfa # v1.0.192
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.aws.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.aws.outputs.aws-secret-access-key }}

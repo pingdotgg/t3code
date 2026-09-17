@@ -28,7 +28,7 @@ export const PersistenceErrorCorrelation = Schema.Union([
 ]);
 export type PersistenceErrorCorrelation = typeof PersistenceErrorCorrelation.Type;
 
-export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlError>()(
+export class PersistenceSqlError extends Schema.TaggedError<PersistenceSqlError>()(
   "PersistenceSqlError",
   {
     operation: Schema.String,
@@ -44,7 +44,7 @@ export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlE
   }
 }
 
-export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceDecodeError>()(
+export class PersistenceDecodeError extends Schema.TaggedError<PersistenceDecodeError>()(
   "PersistenceDecodeError",
   {
     operation: Schema.String,
@@ -75,7 +75,7 @@ const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
 /**
  * Read a SQLite condition through SQL error wrappers.
- * Use Node's fixed description or Bun's numeric code, never the driver message.
+ * Use node:sqlite's fixed description, never the driver message.
  */
 function sqliteCondition(cause: unknown): string | undefined {
   let value = cause;
@@ -87,15 +87,6 @@ function sqliteCondition(cause: unknown): string | undefined {
       typeof value.errstr === "string"
     ) {
       return `SQLITE(${value.errcode}) ${value.errstr}`;
-    }
-    if (
-      "name" in value &&
-      value.name === "SQLiteError" &&
-      "errno" in value &&
-      typeof value.errno === "number" &&
-      Number.isInteger(value.errno)
-    ) {
-      return `SQLITE(${value.errno})`;
     }
     value = "cause" in value ? value.cause : undefined;
   }
@@ -137,7 +128,7 @@ export const isPersistenceError = (u: unknown) =>
 // Provider Session Repository Errors
 // ===============================
 
-export class ProviderSessionRepositoryValidationError extends Schema.TaggedErrorClass<ProviderSessionRepositoryValidationError>()(
+export class ProviderSessionRepositoryValidationError extends Schema.TaggedError<ProviderSessionRepositoryValidationError>()(
   "ProviderSessionRepositoryValidationError",
   {
     operation: Schema.String,
@@ -150,7 +141,7 @@ export class ProviderSessionRepositoryValidationError extends Schema.TaggedError
   }
 }
 
-export class ProviderSessionRepositoryPersistenceError extends Schema.TaggedErrorClass<ProviderSessionRepositoryPersistenceError>()(
+export class ProviderSessionRepositoryPersistenceError extends Schema.TaggedError<ProviderSessionRepositoryPersistenceError>()(
   "ProviderSessionRepositoryPersistenceError",
   {
     operation: Schema.String,

@@ -13,9 +13,8 @@ export interface PutTraceSegmentsRequest extends xray.PutTraceSegmentsRequest {}
  * provide the implementation with `Effect.provide(XRay.PutTraceSegmentsHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:PutTraceSegments`, so the binding grants it on `*`.
- * @binding
- * @section Writing Traces
- * @example Upload a custom segment
+ * ### Writing Traces
+ * **Example:** Upload a custom segment
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -36,6 +35,8 @@ export interface PutTraceSegmentsRequest extends xray.PutTraceSegmentsRequest {}
  * });
  * const failed = result.UnprocessedTraceSegments ?? [];
  * ```
+ *
+ * @binding
  */
 export interface PutTraceSegments extends Binding.Service<
   PutTraceSegments,

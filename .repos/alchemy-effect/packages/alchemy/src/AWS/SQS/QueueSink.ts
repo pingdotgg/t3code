@@ -30,9 +30,8 @@ export type QueueSinkError =
  * `sqs:SendMessageBatch` on the queue. Provide the `QueueSinkHttp` layer
  * (which itself needs `SendMessageBatchHttp`) on the Function to implement
  * the binding.
- * @binding
- * @section Streaming Messages into a Queue
- * @example Run a Stream into a Queue
+ * ### Streaming Messages into a Queue
+ * **Example:** Run a Stream into a Queue
  * ```typescript
  * // init (provide SQS.QueueSinkHttp + SQS.SendMessageBatchHttp on the Function)
  * const sink = yield* SQS.QueueSink(queue);
@@ -45,7 +44,7 @@ export type QueueSinkError =
  * );
  * ```
  *
- * @example Forward Event-Source Records into a Result Queue
+ * **Example:** Forward Event-Source Records into a Result Queue
  * ```typescript
  * const sink = yield* SQS.QueueSink(resultQueue);
  *
@@ -57,6 +56,8 @@ export type QueueSinkError =
  *   ),
  * );
  * ```
+ *
+ * @binding
  */
 export interface QueueSink extends Binding.Service<
   QueueSink,

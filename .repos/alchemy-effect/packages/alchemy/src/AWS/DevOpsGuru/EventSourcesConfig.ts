@@ -38,13 +38,14 @@ export interface EventSourcesConfig extends Resource<
  * Alchemy did not create requires `--adopt`. Destroying the resource
  * restores the default (disabled).
  *
- * @section Enabling Event Sources
- * @example Consume CodeGuru Profiler Recommendations
+ * ### Enabling Event Sources
+ * **Example:** Consume CodeGuru Profiler Recommendations
  * ```typescript
  * const eventSources = yield* DevOpsGuru.EventSourcesConfig("EventSources", {
  *   amazonCodeGuruProfiler: true,
  * });
  * ```
+ *
  * @resource
  */
 export const EventSourcesConfig = Resource<EventSourcesConfig>(

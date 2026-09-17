@@ -14,6 +14,10 @@ import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import { unwrapRpcHandlers } from "../../../src/Local/RpcSerialization.ts";
 import type { RpcProxyApi } from "../../../src/Local/RpcServer.ts";
+import {
+  encodeSessionEnvironment,
+  SESSION_ENV_PARAM,
+} from "../../../src/Local/RpcServerEnvironment.ts";
 import { layerServer, RpcSpawner } from "../../../src/Local/RpcSpawner.ts";
 import { PlatformServices } from "../../../src/Util/PlatformServices.ts";
 
@@ -33,20 +37,25 @@ const program = Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
   const wsUrl = yield* http
     .post(sp.url, {
-      body: yield* HttpBody.json({
-        serverEntryUrl: sidecarEntry,
-        alchemyContext: {
-          dotAlchemy: "/tmp/.alchemy",
-          updateStateStore: false,
-          dev: true,
-          adopt: false,
-        },
-        stack: { name: "test", stage: "dev" },
-      }),
+      body: yield* HttpBody.json({ serverEntryUrl: sidecarEntry }),
     })
     .pipe(Effect.flatMap((res) => res.text));
 
-  const session = newWebSocketRpcSession<RpcProxyApi>(wsUrl);
+  // Sessions carry the stack environment (children are shared across stacks).
+  const sessionUrl = new URL(wsUrl);
+  sessionUrl.searchParams.set(
+    SESSION_ENV_PARAM,
+    encodeSessionEnvironment({
+      alchemyContext: {
+        dotAlchemy: "/tmp/.alchemy",
+        updateStateStore: false,
+        dev: true,
+        adopt: false,
+      },
+      stack: { name: "test", stage: "dev" },
+    }),
+  );
+  const session = newWebSocketRpcSession<RpcProxyApi>(sessionUrl.toString());
   const wrapped = yield* Effect.promise(
     () =>
       session.getProvider("Command.Dev") as ReturnType<

@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.UpdateSecurityControlHttp)`.
- * @binding
- * @section Standards & Controls
- * @example Tune a Control Parameter
+ * ### Standards & Controls
+ * **Example:** Tune a Control Parameter
  * ```typescript
  * // init — account-level binding, no resource argument
  * const updateSecurityControl = yield* AWS.SecurityHub.UpdateSecurityControl();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   Parameters: { daysToExpiration: { ValueType: "CUSTOM", Value: { Integer: 15 } } },
  * });
  * ```
+ *
+ * @binding
  */
 export interface UpdateSecurityControl extends Binding.Service<
   UpdateSecurityControl,

@@ -1,17 +1,14 @@
 import { useCallback, useState } from "react";
 
-export function useComposerFocusState(isMobileViewport: boolean) {
+export function useComposerFocusState() {
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [isComposerScrollCollapsed, setIsComposerScrollCollapsed] = useState(false);
 
+  // Reaching the end of the timeline lifts a scroll collapse without moving
+  // DOM focus to the editor.
   const restoreAfterTimelineReachedEnd = useCallback(() => {
     setIsComposerScrollCollapsed(false);
-    // Restore the expanded layout after a timeline control takes focus too.
-    // This state holds the layout open without moving DOM focus to the editor.
-    if (!isMobileViewport) {
-      setIsComposerFocused(true);
-    }
-  }, [isMobileViewport]);
+  }, []);
 
   return {
     isComposerFocused,

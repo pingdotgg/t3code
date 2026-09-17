@@ -163,9 +163,8 @@ export interface Key extends Resource<
  * The key ARN is auto-assigned by the service; attach an {@link Alias} for a
  * stable human-readable identifier. Deletion schedules the key for removal
  * after a waiting window (minimum 3 days) during which it can be restored.
- * @resource
- * @section Creating Keys
- * @example Symmetric data-encryption key
+ * ### Creating Keys
+ * **Example:** Symmetric data-encryption key
  * ```typescript
  * import * as PaymentCryptography from "alchemy/AWS/PaymentCryptography";
  *
@@ -179,7 +178,7 @@ export interface Key extends Resource<
  * });
  * ```
  *
- * @example HMAC key for MAC generation and verification
+ * **Example:** HMAC key for MAC generation and verification
  * ```typescript
  * const macKey = yield* PaymentCryptography.Key("MacKey", {
  *   keyAttributes: {
@@ -191,8 +190,8 @@ export interface Key extends Resource<
  * });
  * ```
  *
- * @section Managing Key State
- * @example Disable a key without deleting it
+ * ### Managing Key State
+ * **Example:** Disable a key without deleting it
  * ```typescript
  * const key = yield* PaymentCryptography.Key("DataKey", {
  *   keyAttributes: { ... },
@@ -200,8 +199,8 @@ export interface Key extends Resource<
  * });
  * ```
  *
- * @section Using Keys at Runtime
- * @example Encrypt data from a Lambda handler
+ * ### Using Keys at Runtime
+ * **Example:** Encrypt data from a Lambda handler
  * ```typescript
  * // init
  * const encrypt = yield* PaymentCryptography.EncryptData(key);
@@ -217,6 +216,8 @@ export interface Key extends Resource<
  *   }),
  * };
  * ```
+ *
+ * @resource
  */
 export const Key = Resource<Key>("AWS.PaymentCryptography.Key");
 

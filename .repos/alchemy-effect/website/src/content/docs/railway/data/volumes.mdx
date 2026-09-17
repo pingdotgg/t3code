@@ -1,0 +1,143 @@
+---
+title: Volumes
+description: Block disk in a Project. Mount it into a Service with MountVolume.
+---
+
+A [`Railway.Volume`](/providers/railway/volume) is block disk in a
+[Project](/railway/compute/projects). Create it disconnected (no
+`service`) and attach later with
+[`MountVolume`](/providers/railway/mountvolume), or pass `service` to
+attach at create time.
+
+The disk outlives deploys. `mountPath` updates in place. Changing
+`project`, `environment`, or `region` replaces the Volume.
+
+## Create a Volume
+
+Pass a Project and a mount path. Alchemy generates a unique name.
+The volume is disconnected until you attach a Service.
+
+```typescript
+const site = yield* Railway.Project("Site");
+const data = yield* Railway.Volume("Data", {
+  project: site,
+  mountPath: "/data",
+});
+```
+
+:::caution[Changing `project` replaces the Volume]
+The Volume is created in the new Project. The old Volume is deleted.
+:::
+
+## Mount into a Service
+
+Inside a [Service](/railway/compute/services)'s init, bind the Volume
+to a path and use it as a plain directory at runtime:
+
+```typescript
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  { project: Site, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    const disk = yield* Railway.MountVolume(Data, { path: "/data" });
+    const fs = yield* FileSystem.FileSystem;
+
+    return {
+      fetch: Effect.gen(function* () {
+        const text = yield* fs.readFileString(`${disk.path}/hello.txt`);
+        // ...
+      }),
+    };
+  }).pipe(Effect.provide(Railway.MountVolumeLive)),
+) {}
+```
+
+At deploy time the binding writes `{ path, volumeId }` into the
+Service. Reconcile attaches the volume via `volumeInstanceUpdate`.
+At runtime you get `disk.path`.
+
+Railway allows one volume per Service. It does not give each replica
+its own disk. A second volume on the same Service is
+`Railway.MultipleVolumes`.
+
+## Attach at create time
+
+Pass `service` to attach when the Volume is created:
+
+```typescript
+const api = yield* Railway.Service("Api", {
+  project: site,
+  image: "hashicorp/http-echo",
+  port: 5678,
+});
+const data = yield* Railway.Volume("Data", {
+  project: site,
+  mountPath: "/data",
+  service: api,
+});
+```
+
+Updating `service` attaches or moves the volume in place. The
+target Service must not already have a volume.
+
+## Environment
+
+Defaults to the Project's primary environment. Pass a
+[Environment](/railway/compute/environments) (or `{ environmentId }`)
+to target another one.
+
+```typescript
+const staging = yield* Railway.Environment("Staging", { project: site });
+const data = yield* Railway.Volume("StagingData", {
+  project: site,
+  environment: staging,
+  mountPath: "/data",
+});
+```
+
+:::caution[Changing `environment` replaces the Volume]
+The Volume is created in the new environment. The old Volume is
+deleted.
+:::
+
+## Region
+
+Omit `region` to use Railway's default. Changing it replaces the
+Volume. See [Regions](/railway/compute/regions).
+
+```typescript
+const data = yield* Railway.Volume("Data", {
+  project: site,
+  mountPath: "/data",
+  region: "us-west2",
+});
+```
+
+## Backups
+
+[`Railway.VolumeBackup`](/providers/railway/volumebackup) is a
+snapshot of a volume instance. The volume should be attached to a
+Service — Railway only backups mounted volumes. `lock` drops the
+expiration. `schedules` (`DAILY` / `WEEKLY` / `MONTHLY`) is
+volume-instance state.
+
+```typescript
+const snap = yield* Railway.VolumeBackup("Nightly", {
+  volume: data,
+  lock: true,
+  schedules: ["DAILY", "WEEKLY"],
+});
+```
+
+Restore is destructive to the volume instance. Call
+`restoreVolumeBackup` — it is not a reconciler step. Volume backups
+are Pro-plan gated (`RailwayForbidden` on Hobby).
+
+## Where next
+
+- [Tutorial part 3](/railway/tutorial/part-3) — mount a disk into a
+  Service step by step.
+- [Services](/railway/compute/services) — `MountVolume`.
+- [`Volume` reference](/providers/railway/volume),
+  [`MountVolume` reference](/providers/railway/mountvolume), and
+  [`VolumeBackup` reference](/providers/railway/volumebackup).

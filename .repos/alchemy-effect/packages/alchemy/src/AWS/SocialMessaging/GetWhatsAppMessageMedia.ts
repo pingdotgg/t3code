@@ -15,9 +15,8 @@ import type { LinkedWhatsAppBusinessAccount } from "./LinkedWhatsAppBusinessAcco
  * the deploy-time half grants `social-messaging:GetWhatsAppMessageMedia` on `*`.
  * Provide the implementation with
  * `Effect.provide(AWS.SocialMessaging.GetWhatsAppMessageMediaHttp)`.
- * @binding
- * @section Managing Message Media
- * @example Download Received Media to S3
+ * ### Managing Message Media
+ * **Example:** Download Received Media to S3
  * ```typescript
  * // init — bind the operation to the linked WABA
  * const getMedia = yield* AWS.SocialMessaging.GetWhatsAppMessageMedia(account);
@@ -29,6 +28,8 @@ import type { LinkedWhatsAppBusinessAccount } from "./LinkedWhatsAppBusinessAcco
  *   destinationS3File: { bucketName: "my-inbox", key: "media/inbound" },
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetWhatsAppMessageMedia extends Binding.Service<
   GetWhatsAppMessageMedia,

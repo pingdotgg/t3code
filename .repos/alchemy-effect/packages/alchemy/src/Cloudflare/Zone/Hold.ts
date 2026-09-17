@@ -66,18 +66,15 @@ export type Hold = Resource<
  * Destroying the resource removes the hold. The delete is idempotent —
  * removing a hold that is already gone (or whose zone was deleted
  * out-of-band) succeeds.
- * @resource
- * @product Zones
- * @category Domains & DNS
- * @section Holding a zone
- * @example Place a hold on a zone
+ * ### Holding a zone
+ * **Example:** Place a hold on a zone
  * ```typescript
  * const hold = yield* Cloudflare.Zone.Hold("MyHold", {
  *   zoneId: zone.zoneId,
  * });
  * ```
  *
- * @example Hold the zone and all of its subdomains
+ * **Example:** Hold the zone and all of its subdomains
  * ```typescript
  * yield* Cloudflare.Zone.Hold("MyHold", {
  *   zoneId: zone.zoneId,
@@ -85,8 +82,8 @@ export type Hold = Resource<
  * });
  * ```
  *
- * @section Adopting an existing hold
- * @example Take over a hold that was placed outside Alchemy
+ * ### Adopting an existing hold
+ * **Example:** Take over a hold that was placed outside Alchemy
  * ```typescript
  * import { adopt } from "alchemy/AdoptPolicy";
  * // A hold carries no ownership markers, so the engine refuses to take
@@ -97,6 +94,10 @@ export type Hold = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/fundamentals/account/account-security/zone-holds/
+ *
+ * @resource
+ * @product Zones
+ * @category Domains & DNS
  */
 export const Hold = Resource<Hold>(TypeId);
 

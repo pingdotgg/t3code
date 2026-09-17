@@ -1,8 +1,8 @@
 ---
 title: UI Consistency
-model: claude-opus-5
+model: gpt-5-6-sol
 effort: medium
-input: full_diff
+input: incremental
 tools:
   - browse_code
   - modify_pr
@@ -11,13 +11,11 @@ include:
   - "apps/web/src/**/*.css"
 exclude:
   - "apps/web/src/**/*.test.tsx"
-labels:
-  - vouch:trusted
 requires:
   - Check
-maxBudgetPerPR: 25
-conclusion: failure
-maxBudgetPerRun: 10
+maxBudgetPerRun: 2
+maxBudgetPerPR: 10
+conclusion: neutral
 ---
 
 # UI consistency review

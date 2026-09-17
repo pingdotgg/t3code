@@ -26,7 +26,7 @@ const decodeClientSettingsJson = Effect.fnUntraced(function* (raw: string) {
 });
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);
 
-export class DesktopClientSettingsReadError extends Schema.TaggedErrorClass<DesktopClientSettingsReadError>()(
+export class DesktopClientSettingsReadError extends Schema.TaggedError<DesktopClientSettingsReadError>()(
   "DesktopClientSettingsReadError",
   {
     operation: Schema.Literals(["read-file", "decode-document"]),
@@ -47,7 +47,7 @@ const DesktopClientSettingsWriteOperation = Schema.Literals([
   "replace-settings-file",
 ]);
 
-export class DesktopClientSettingsWriteError extends Schema.TaggedErrorClass<DesktopClientSettingsWriteError>()(
+export class DesktopClientSettingsWriteError extends Schema.TaggedError<DesktopClientSettingsWriteError>()(
   "DesktopClientSettingsWriteError",
   {
     operation: DesktopClientSettingsWriteOperation,

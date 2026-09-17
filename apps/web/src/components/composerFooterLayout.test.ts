@@ -7,6 +7,7 @@ import {
   COMPOSER_RESTING_EXPANSION_MIN_PX,
   getRestingComposerImagePreviewCounts,
   resolveComposerTimelineInset,
+  resolveScrollToEndClearance,
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
   shouldAnimateComposerRestingTransition,
@@ -100,47 +101,22 @@ describe("shouldUseRestingComposerLayout", () => {
   const resting = {
     isExistingThread: true,
     isMobileViewport: false,
-    isFocused: false,
-    isScrollCollapsed: false,
+    isScrollCollapsed: true,
     hasExpandedChrome: false,
-    collapseOnBlur: true,
+    hasMultilinePrompt: false,
     timelineOverflows: true,
   };
 
-  it("uses the resting layout for an unfocused desktop composer", () => {
+  it("uses the resting layout after a timeline scroll", () => {
     expect(shouldUseRestingComposerLayout(resting)).toBe(true);
   });
 
-  it("keeps an unfocused composer expanded when blur collapse is off", () => {
-    expect(shouldUseRestingComposerLayout({ ...resting, collapseOnBlur: false })).toBe(false);
-  });
-
-  it("rests a scroll-collapsed composer even while focused", () => {
-    expect(
-      shouldUseRestingComposerLayout({ ...resting, isFocused: true, isScrollCollapsed: true }),
-    ).toBe(true);
-  });
-
-  it("rests a scroll-collapsed composer regardless of the blur preference", () => {
-    expect(
-      shouldUseRestingComposerLayout({
-        ...resting,
-        isFocused: true,
-        isScrollCollapsed: true,
-        collapseOnBlur: false,
-      }),
-    ).toBe(true);
+  it("keeps the composer expanded until the timeline is scrolled", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, isScrollCollapsed: false })).toBe(false);
   });
 
   it("keeps the composer expanded while the timeline fits above it", () => {
     expect(shouldUseRestingComposerLayout({ ...resting, timelineOverflows: false })).toBe(false);
-    expect(
-      shouldUseRestingComposerLayout({
-        ...resting,
-        isScrollCollapsed: true,
-        timelineOverflows: false,
-      }),
-    ).toBe(false);
   });
 
   it("keeps new-thread composers expanded", () => {
@@ -151,13 +127,22 @@ describe("shouldUseRestingComposerLayout", () => {
     expect(shouldUseRestingComposerLayout({ ...resting, isMobileViewport: true })).toBe(false);
   });
 
-  it("expands when focus is anywhere in the composer", () => {
-    expect(shouldUseRestingComposerLayout({ ...resting, isFocused: true })).toBe(false);
-  });
-
   it("keeps drawers and composer-owned menus expanded", () => {
     expect(shouldUseRestingComposerLayout({ ...resting, hasExpandedChrome: true })).toBe(false);
   });
+
+  it.each([false, true])(
+    "keeps multiline drafts expanded when scroll collapsed is %s",
+    (isScrollCollapsed) => {
+      expect(
+        shouldUseRestingComposerLayout({
+          ...resting,
+          hasMultilinePrompt: true,
+          isScrollCollapsed,
+        }),
+      ).toBe(false);
+    },
+  );
 });
 
 describe("shouldAnimateComposerRestingTransition", () => {
@@ -438,5 +423,29 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
         previous: { hiddenCount: 2, visible: false },
       }),
     ).toEqual({ hiddenCount: 2, visible: true });
+  });
+});
+
+describe("resolveScrollToEndClearance", () => {
+  it("removes the side tab gap in both composer states while clearing overlapping attachments", () => {
+    for (const overlayHeight of [120, 214]) {
+      const layout = {
+        overlayHeight,
+        mainSurfaceTop: 534,
+        button: { left: 340, right: 460 },
+        attachments: [{ top: 500, left: 600, right: 700 }],
+      };
+      expect(resolveScrollToEndClearance(layout)).toBe(overlayHeight - 34);
+      expect(resolveScrollToEndClearance({ ...layout, attachments: [] })).toBe(overlayHeight);
+      expect(
+        resolveScrollToEndClearance({
+          ...layout,
+          attachments: [...layout.attachments, { top: 500, left: 100, right: 700 }],
+        }),
+      ).toBe(overlayHeight);
+      expect(resolveScrollToEndClearance({ ...layout, button: { left: 590, right: 710 } })).toBe(
+        overlayHeight,
+      );
+    }
   });
 });

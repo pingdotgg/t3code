@@ -8,7 +8,10 @@ import {
   createShellEnvironmentAtoms,
   type EnvironmentShellState,
 } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/connections";
+import {
+  type EnvironmentCatalogState,
+  enabledEnvironmentIds,
+} from "@t3tools/client-runtime/state/connections";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -26,7 +29,7 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   if (Option.isNone(catalog)) {
     return false;
   }
-  for (const environmentId of catalog.value.entries.keys()) {
+  for (const environmentId of enabledEnvironmentIds(catalog.value)) {
     if (Option.isSome(get(environmentShell.stateValueAtom(environmentId)).snapshot)) {
       continue;
     }
@@ -65,7 +68,7 @@ export function createAllEnvironmentProjectSnapshotsReadyAtom(input: {
     ) {
       return false;
     }
-    for (const environmentId of catalog.entries.keys()) {
+    for (const environmentId of enabledEnvironmentIds(catalog)) {
       const shell = get(input.shellStateValueAtom(environmentId));
       if (shell.status !== "live" || Option.isNone(shell.snapshot)) return false;
     }

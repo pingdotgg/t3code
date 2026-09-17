@@ -378,6 +378,24 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  it.effect("streams all stdout bytes beyond the buffered output cap", () =>
+    Effect.gen(function* () {
+      const chunks: Uint8Array[] = [];
+      const result = yield* run({
+        operation: "test.stream-output",
+        command: "node",
+        args: ["-e", "process.stdout.write('x'.repeat(131072) + '\\0S final\\0')"],
+        cwd: process.cwd(),
+        maxOutputBytes: 8,
+        onStdoutChunk: (chunk) => chunks.push(chunk),
+      });
+
+      expect(result.stdout).toBe("xxxxxxxx");
+      expect(result.stdoutTruncated).toBe(true);
+      expect(Buffer.concat(chunks).toString()).toBe("x".repeat(131072) + "\0S final\0");
+    }).pipe(provideLive),
+  );
+
   it.effect("fails with VcsProcessTimeoutError on timeout", () =>
     Effect.gen(function* () {
       const errorFiber = yield* run({

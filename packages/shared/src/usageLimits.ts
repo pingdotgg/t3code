@@ -9,12 +9,12 @@ import {
   type EnvironmentId,
   type UsageLimitsReport,
   type ProviderInstanceId,
+  type ProviderConsumeResetCreditInput,
   type ServerProviderSlashCommand,
   isProviderAvailable,
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
-  type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
@@ -41,118 +41,354 @@ export function providersWithLimits(
   );
 }
 
-export interface LimitsGroup {
-  readonly environmentId: EnvironmentId;
-  /** Null while only one environment is connected; there is nothing to tell apart. */
-  readonly environmentLabel: string | null;
-  readonly providers: readonly ServerProvider[];
-}
-
-/**
- * One group per connected environment with a provider reporting limits.
- * Provider snapshots come from the config stream every client already holds,
- * so opening the view costs no extra request.
- */
-export function collectLimitsGroups(
-  presentations: ReadonlyMap<
-    EnvironmentId,
-    {
-      readonly entry: { readonly target: { readonly label: string } };
-      readonly serverConfig: { readonly providers: readonly ServerProvider[] } | null;
-    }
-  >,
-): readonly LimitsGroup[] {
-  const groups: LimitsGroup[] = [];
-  for (const [environmentId, presentation] of presentations) {
-    const providers = providersWithLimits(presentation.serverConfig?.providers ?? []);
-    if (providers.length === 0) continue;
-    groups.push({ environmentId, environmentLabel: presentation.entry.target.label, providers });
+export type LimitPresentations = ReadonlyMap<
+  EnvironmentId,
+  {
+    readonly entry: { readonly target: { readonly label: string } };
+    readonly serverConfig: {
+      readonly providers?: readonly ServerProvider[] | undefined;
+      readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
+    } | null;
   }
-  return groups.length > 1 ? groups : groups.map((group) => ({ ...group, environmentLabel: null }));
-}
-
-/**
- * Every usage-limit source across connected environments, keyed so two
- * environments pointing at the same hub still get their own rows. The label
- * carries the environment only when more than one environment has sources.
- * A native provider with usable limits takes precedence over the same account
- * in a source, even when it belongs to another connected environment.
- */
-export function collectLimitSources(
-  presentations: ReadonlyMap<
-    EnvironmentId,
-    {
-      readonly entry: { readonly target: { readonly label: string } };
-      readonly serverConfig: {
-        readonly providers?: readonly ServerProvider[] | undefined;
-        readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
-      } | null;
-    }
-  >,
-): ReadonlyArray<
-  UsageLimitSourceSnapshot & {
-    readonly key: string;
-    readonly environmentId: EnvironmentId;
-    readonly hiddenAccountCount: number;
-  }
-> {
-  const nativeAccounts = new Set<string>();
-  for (const presentation of presentations.values()) {
-    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      const key = accountKey(provider.driver, provider.auth.email);
-      if (
-        key !== null &&
-        provider.usageLimits?.windows.length &&
-        !provider.usageLimits.unavailable
-      ) {
-        nativeAccounts.add(key);
-      }
-    }
-  }
-  const perEnvironment: Array<{
-    readonly environmentId: EnvironmentId;
-    readonly environmentLabel: string;
-    readonly sources: UsageLimitSourceSnapshots;
-  }> = [];
-  for (const [environmentId, presentation] of presentations) {
-    const sources = presentation.serverConfig?.usageLimitSources ?? [];
-    if (sources.length === 0) continue;
-    perEnvironment.push({
-      environmentId,
-      environmentLabel: presentation.entry.target.label,
-      sources,
-    });
-  }
-  const labelEnvironment = perEnvironment.length > 1;
-  return perEnvironment.flatMap(({ environmentId, environmentLabel, sources }) =>
-    sources.map((source) => {
-      const accounts = source.accounts.filter((account) => {
-        const key = accountKey(account.driver, account.email);
-        return key === null || !nativeAccounts.has(key);
-      });
-      return {
-        ...source,
-        accounts,
-        hiddenAccountCount: source.accounts.length - accounts.length,
-        environmentId,
-        key: `${environmentId}:${source.id}`,
-        label: labelEnvironment ? `${environmentLabel} · ${source.label}` : source.label,
-      };
-    }),
-  );
-}
+>;
 
 function accountKey(driver: ServerProvider["driver"], email: string | undefined): string | null {
   const normalizedEmail = email?.trim().toLowerCase();
   return normalizedEmail ? `${driver}:${normalizedEmail}` : null;
 }
 
-/** The instance's configured name, else the driver's, else its raw kind. */
-export function providerLimitsLabel(
-  provider: Pick<ServerProvider, "driver" | "displayName">,
-  driverLabel: (driver: ServerProvider["driver"]) => string | undefined,
-): string {
-  return provider.displayName?.trim() || driverLabel(provider.driver) || String(provider.driver);
+/**
+ * One subscription account as the pooled views see it, whichever way it was
+ * reported. The same email signed in natively on two environments, or reported
+ * by a hub as well as natively, is one account: its quota is one bucket, so
+ * counting it twice would misstate what is left.
+ */
+export interface LimitAccount {
+  readonly key: string;
+  readonly driver: ServerProvider["driver"];
+  /** The instance's configured name, which is not sensitive; null for hub accounts. */
+  readonly displayName: string | null;
+  readonly email: string | undefined;
+  readonly plan: string | undefined;
+  readonly accentColor: string | undefined;
+  /** Environments the account is signed in on; empty when only a hub reports it. */
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+  }>;
+  /** The hub that reported it, when no environment has it natively. */
+  readonly sourceLabel: string | null;
+  /** Where the displayed reset credit can be redeemed. */
+  readonly redeem: {
+    readonly environmentId: EnvironmentId;
+    readonly input: ProviderConsumeResetCreditInput;
+  } | null;
+  readonly limits: ServerProviderUsageLimits;
+}
+
+/**
+ * Every account with usable windows across the connected environments, one
+ * entry per distinct account. The freshest reads supply windows and credits;
+ * native instances supply names and environment labels.
+ */
+export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
+  const accounts = new Map<string, LimitAccount>();
+  const creditSources = new Map<string, LimitAccount>();
+  const hubRedeems = new Map<string, LimitAccount>();
+  const merge = (key: string, next: LimitAccount) => {
+    // Redeeming through a hub also clears the routing cooldown that hub holds
+    // for the account. Redeeming natively against the same subscription resets
+    // it upstream but leaves the hub refusing to route to the account until
+    // its own cooldown expires, so a hub target wins the redemption outright
+    // while the displayed balance still follows the freshest read.
+    const previousHub = hubRedeems.get(key);
+    if (
+      next.redeem &&
+      "sourceId" in next.redeem.input &&
+      (!previousHub || Date.parse(next.limits.checkedAt) > Date.parse(previousHub.limits.checkedAt))
+    ) {
+      hubRedeems.set(key, next);
+    }
+    const previousCredit = creditSources.get(key);
+    if (
+      next.limits.resetCredits &&
+      (!previousCredit ||
+        Date.parse(next.limits.checkedAt) > Date.parse(previousCredit.limits.checkedAt))
+    ) {
+      creditSources.set(key, next);
+    }
+    const previous = accounts.get(key);
+    if (!previous) {
+      accounts.set(key, next);
+      return;
+    }
+    const fresher = Date.parse(next.limits.checkedAt) > Date.parse(previous.limits.checkedAt);
+    // Two instances on one machine sharing an account still name it once.
+    const environments = [
+      ...previous.environments,
+      ...next.environments.filter(
+        (candidate) =>
+          !previous.environments.some((seen) => seen.environmentId === candidate.environmentId),
+      ),
+    ];
+    const winner = fresher ? next : previous;
+    // Credits and their redemption target travel together. A failed credit
+    // probe must not erase a successful read from another environment.
+    const creditSource = creditSources.get(key);
+    accounts.set(key, {
+      ...previous,
+      displayName: previous.displayName ?? next.displayName,
+      plan: previous.plan ?? next.plan,
+      accentColor: previous.accentColor ?? next.accentColor,
+      environments,
+      // A hub only names the account when no environment has it natively.
+      sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
+      redeem:
+        hubRedeems.get(key)?.redeem ??
+        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
+      limits: {
+        ...winner.limits,
+        ...(creditSource?.limits.resetCredits
+          ? { resetCredits: creditSource.limits.resetCredits }
+          : { resetCredits: undefined }),
+      },
+    });
+  };
+  for (const [environmentId, presentation] of presentations) {
+    const label = presentation.entry.target.label;
+    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
+      if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
+      merge(
+        accountKey(provider.driver, provider.auth.email) ??
+          `${environmentId}:${provider.instanceId}`,
+        {
+          key: `${environmentId}:${provider.instanceId}`,
+          driver: provider.driver,
+          displayName: provider.displayName?.trim() || null,
+          email: provider.auth.email,
+          plan: provider.auth.label,
+          accentColor: provider.accentColor,
+          environments: [{ environmentId, label }],
+          sourceLabel: null,
+          redeem: { environmentId, input: { instanceId: provider.instanceId } },
+          limits: provider.usageLimits,
+        },
+      );
+    }
+  }
+  // Every hub account, including those a native instance also knows: the hub
+  // may hold a fresher read of the same subscription, and the merge above
+  // keeps the redeem target consistent with whichever snapshot wins.
+  const labelEnvironment = presentations.size > 1;
+  for (const [environmentId, presentation] of presentations) {
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      const sourceLabel = labelEnvironment
+        ? `${presentation.entry.target.label} · ${source.label}`
+        : source.label;
+      for (const account of source.accounts) {
+        if (limitsNotice(account.usageLimits) !== null) continue;
+        merge(accountKey(account.driver, account.email) ?? `${source.id}:${account.id}`, {
+          key: `${source.id}:${account.id}`,
+          driver: account.driver,
+          displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+          email: account.email,
+          plan: account.plan,
+          accentColor: undefined,
+          environments: [],
+          sourceLabel,
+          redeem: account.usageLimits.resetCredits?.nextCreditId
+            ? {
+                environmentId,
+                input: {
+                  sourceId: source.id,
+                  accountId: account.id,
+                  creditId: account.usageLimits.resetCredits.nextCreditId,
+                },
+              }
+            : null,
+          limits: account.usageLimits,
+        });
+      }
+    }
+  }
+  return [...accounts.values()];
+}
+
+/**
+ * What the pooled views cannot draw as a bar: a hub that failed to read, a
+ * provider whose probe failed. Accounts that can never report (API keys)
+ * are left out; there is nothing for the user to act on. The environment
+ * is named only when more than one is connected.
+ */
+export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {
+  const label = (environmentLabel: string, subject: string) =>
+    presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
+  const notices: string[] = [];
+  for (const presentation of presentations.values()) {
+    const environmentLabel = presentation.entry.target.label;
+    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
+      // An account that can never report (API key) is left out; one that
+      // failed, or reported nothing at all, is worth a line.
+      if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
+      const notice = provider.usageLimits ? limitsNotice(provider.usageLimits) : null;
+      const name = provider.displayName?.trim() || String(provider.driver);
+      if (notice) notices.push(`${label(environmentLabel, name)}: ${notice}`);
+    }
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      if (source.error) {
+        notices.push(`${label(environmentLabel, source.label)}: ${source.error}`);
+      } else if (source.accounts.length === 0) {
+        notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
+      }
+    }
+  }
+  return notices;
+}
+
+export interface LimitPoolMember {
+  readonly account: LimitAccount;
+  readonly window: ServerProviderUsageWindow;
+}
+
+/**
+ * One window id across every account that reports it: the pooled share left,
+ * pace against the clock, and the resets in the order they will land, each
+ * with the share of the pool it hands back.
+ */
+export interface LimitPoolWindow {
+  readonly id: string;
+  readonly kind: ServerProviderUsageWindow["kind"];
+  readonly label: string;
+  readonly members: readonly LimitPoolMember[];
+  /** Fixed account positions across rows; a null window leaves a gap. */
+  readonly columns: ReadonlyArray<{
+    readonly account: LimitAccount;
+    readonly window: ServerProviderUsageWindow | null;
+  }>;
+  readonly remainingPercent: number;
+  readonly usedPercent: number;
+  readonly pace: LimitPace | null;
+  readonly resets: ReadonlyArray<{
+    readonly member: LimitPoolMember;
+    readonly at: number;
+    /** Points of the pool the reset restores: the member's used share over the member count. */
+    readonly restoresPercent: number;
+  }>;
+}
+
+export interface LimitPool {
+  readonly driver: ServerProvider["driver"];
+  readonly accounts: readonly LimitAccount[];
+  readonly windows: readonly LimitPoolWindow[];
+}
+
+const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
+  session: 0,
+  weekly: 1,
+  monthly: 2,
+  other: 3,
+};
+
+/**
+ * Accounts grouped by driver, each with its windows pooled by kind and id.
+ * Window ids are stable per provider, so a hub row and a native row for the
+ * same window land in the same pool; the kind is part of the key because
+ * Codex's `primary` is a position, not a duration (five hours on paid plans,
+ * a month on Free/Go), and a monthly allowance must not average into a
+ * five-hour pool. Pools order by kind, then first appearance.
+ *
+ * Accounts and columns share the session reset order, soonest first. When
+ * no account reports a session window, use the first window by kind instead.
+ * Missing reset times sort last, with account names and keys breaking ties.
+ * Each window's reset list still follows its own clock.
+ */
+export function collectLimitPools(
+  accounts: readonly LimitAccount[],
+  now: number,
+): readonly LimitPool[] {
+  const byDriver = new Map<ServerProvider["driver"], LimitAccount[]>();
+  for (const account of accounts) {
+    const list = byDriver.get(account.driver);
+    if (list) list.push(account);
+    else byDriver.set(account.driver, [account]);
+  }
+  return [...byDriver].map(([driver, members]) => {
+    const orderWindow = members
+      .flatMap((account) => account.limits.windows)
+      .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
+    const orderReset = (account: LimitAccount) => {
+      const window = account.limits.windows.find(
+        (window) => window.kind === orderWindow?.kind && window.id === orderWindow.id,
+      );
+      return (window ? resetMillis(window) : null) ?? Number.POSITIVE_INFINITY;
+    };
+    const sorted = [...members].sort(
+      (left, right) =>
+        orderReset(left) - orderReset(right) ||
+        accountSortName(left).localeCompare(accountSortName(right)) ||
+        left.key.localeCompare(right.key),
+    );
+    return { driver, accounts: sorted, windows: poolWindows(sorted, now) };
+  });
+}
+
+function accountSortName(account: LimitAccount): string {
+  return (account.displayName ?? account.email ?? account.key).toLowerCase();
+}
+
+function poolWindows(accounts: readonly LimitAccount[], now: number): readonly LimitPoolWindow[] {
+  const byKey = new Map<string, LimitPoolMember[]>();
+  for (const account of accounts) {
+    for (const window of account.limits.windows) {
+      const key = `${window.kind}:${window.id}`;
+      const list = byKey.get(key);
+      if (list) list.push({ account, window });
+      else byKey.set(key, [{ account, window }]);
+    }
+  }
+  const pools = [...byKey.values()].map((members): LimitPoolWindow => {
+    const memberByAccount = new Map(members.map((member) => [member.account.key, member]));
+    const first = members[0]!.window;
+    const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
+    // Pace compares spend against the clock, so it is judged only over the
+    // members that have a clock; a window with no reset would otherwise
+    // count as spend with no time elapsed and skew the verdict.
+    const timed = members.flatMap((m) => {
+      const share = elapsedShare(m.window, now);
+      return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
+    });
+    const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
+    const meanElapsed =
+      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+    const resets = members
+      .flatMap((member) => {
+        const at = resetMillis(member.window);
+        return at === null
+          ? []
+          : [
+              {
+                member,
+                at,
+                restoresPercent: Math.round(member.window.usedPercent / members.length),
+              },
+            ];
+      })
+      .sort((left, right) => left.at - right.at);
+    return {
+      id: first.id,
+      kind: first.kind,
+      label: first.label,
+      members,
+      columns: accounts.map(
+        (account) => memberByAccount.get(account.key) ?? { account, window: null },
+      ),
+      usedPercent: Math.round(usedPercent),
+      remainingPercent: Math.round(100 - usedPercent),
+      pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
+      resets,
+    };
+  });
+  return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
 }
 
 /** The one-line status under a provider heading when there are no bars to draw. */
@@ -195,8 +431,11 @@ export type LimitPace = "ahead" | "on" | "under";
  */
 export function paceOf(window: ServerProviderUsageWindow, now: number): LimitPace | null {
   const elapsed = elapsedShare(window, now);
-  if (elapsed === null) return null;
-  const gap = window.usedPercent - elapsed * 100;
+  return elapsed === null ? null : paceOfShares(window.usedPercent, elapsed);
+}
+
+function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
+  const gap = usedPercent - elapsed * 100;
   if (gap > 5) return "ahead";
   if (gap < -5) return "under";
   return "on";
@@ -323,16 +562,54 @@ export function collectProviderUsageLimits(
   const notices: string[] = [];
   for (const provider of native) {
     if (!provider.usageLimits) continue;
+    const key = accountKey(provider.driver, provider.auth.email);
+    const hubCredits = sources
+      .flatMap((source) => source.accounts.map((account) => ({ source, account })))
+      .filter(
+        ({ account }) =>
+          key !== null &&
+          accountKey(account.driver, account.email) === key &&
+          account.usageLimits.resetCredits &&
+          !limitsNotice(account.usageLimits),
+      )
+      .sort(
+        (a, b) =>
+          Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
+      )[0];
+    // Two independent decisions. Which balance to *display* follows whichever
+    // snapshot is fresher. Which path to *redeem through* always prefers the
+    // hub, because only the hub path clears the routing cooldown it holds for
+    // that account; redeeming natively against the same account resets the
+    // subscription upstream but leaves the hub refusing to route to it until
+    // its own cooldown expires. A hub credit id that a fresher native redeem
+    // already spent comes back as `alreadyRedeemed`, which still clears the
+    // cooldown, so preferring it is safe even when the hub snapshot is stale.
+    const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
+    const showHubCredits =
+      hubCredits &&
+      (!provider.usageLimits.resetCredits ||
+        Date.parse(hubCredits.account.usageLimits.checkedAt) >
+          Date.parse(provider.usageLimits.checkedAt));
     accounts.push({
       id: provider.instanceId,
       driver: provider.driver,
-      label: `${providerLimitsLabel(provider, () => undefined)} [${provider.instanceId}]`,
+      label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
       ...(provider.auth.label ? { plan: provider.auth.label } : {}),
       instanceId: provider.instanceId,
+      resetCreditInput:
+        hubCreditId && hubCredits
+          ? {
+              sourceId: hubCredits.source.id,
+              accountId: hubCredits.account.id,
+              creditId: hubCreditId,
+            }
+          : { instanceId: provider.instanceId },
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: provider.usageLimits,
+      limits: showHubCredits
+        ? { ...provider.usageLimits, resetCredits: hubCredits.account.usageLimits.resetCredits }
+        : provider.usageLimits,
     });
   }
   for (const source of sources) {
@@ -345,6 +622,15 @@ export function collectProviderUsageLimits(
         driver: account.driver,
         label: `${source.label} · ${account.id}`,
         sourceLabel: "CLI Proxy",
+        ...(account.usageLimits.resetCredits?.nextCreditId
+          ? {
+              resetCreditInput: {
+                sourceId: source.id,
+                accountId: account.id,
+                creditId: account.usageLimits.resetCredits.nextCreditId,
+              },
+            }
+          : {}),
         ...(account.plan ? { plan: account.plan } : {}),
         ...(account.email ? { email: account.email } : {}),
         limits: account.usageLimits,

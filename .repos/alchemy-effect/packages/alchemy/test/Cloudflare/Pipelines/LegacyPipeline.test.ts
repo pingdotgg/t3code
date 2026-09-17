@@ -4,6 +4,7 @@ import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
 import * as pipelines from "@distilled.cloud/cloudflare/pipelines";
 import * as user from "@distilled.cloud/cloudflare/user";
+import * as workers from "@distilled.cloud/cloudflare/workers";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -94,7 +95,9 @@ const legacy = (
   opts: LegacyOpts = {},
 ) =>
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2.Bucket("LegacyBucket", {});
+    const bucket = yield* Cloudflare.R2.Bucket("LegacyBucket", {
+      forceDestroy: true,
+    });
     const pipeline = yield* Cloudflare.Pipelines.LegacyPipeline("Legacy", {
       name: opts.name,
       source: [
@@ -113,6 +116,63 @@ const legacy = (
     });
     return { bucket, pipeline };
   });
+
+const asyncWorkerScript = `export default {
+  async fetch() {
+    return new Response("ok");
+  },
+};
+`;
+
+test.provider(
+  "binds a legacy pipeline to a worker by name",
+  (stack) =>
+    Effect.gen(function* () {
+      const { accountId } = yield* yield* CloudflareEnvironment;
+      const creds = yield* r2Credentials;
+
+      yield* stack.destroy();
+
+      const { pipeline, worker } = yield* retryAuthBlip(
+        stack.deploy(
+          Effect.gen(function* () {
+            const { pipeline } = yield* legacy(creds);
+            const worker = yield* Cloudflare.Worker(
+              "legacy-pipeline-binding-worker",
+              {
+                script: asyncWorkerScript,
+                env: {
+                  LEGACY: pipeline,
+                },
+              },
+            );
+            return { pipeline, worker };
+          }),
+        ),
+      );
+
+      const settings = yield* workers
+        .getScriptScriptAndVersionSetting({
+          accountId,
+          scriptName: worker.workerName,
+        })
+        .pipe(Effect.retry(forbiddenBlips));
+
+      const binding = (settings.bindings ?? []).find(
+        (b) => b.name === "LEGACY",
+      );
+
+      expect(binding).toMatchObject({
+        type: "pipelines",
+        name: "LEGACY",
+        pipeline: pipeline.pipelineId,
+      });
+
+      yield* stack.destroy();
+      yield* expectLegacyPipelineGone(accountId, pipeline.name);
+    }).pipe(logLevel),
+  { timeout: 420_000 },
+);
 
 test.provider(
   "legacy pipeline: create, in-place update, replace on name change",

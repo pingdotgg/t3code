@@ -9,6 +9,7 @@ import { describe, expect, it } from "alchemy-test";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -1022,6 +1023,201 @@ describe("Output.upstream / hasOutputs / resolveUpstream", () => {
     });
     expect(Object.keys(result).sort()).toEqual(["RA", "RB"]);
   });
+});
+
+// effect ≥4.0.0-beta.103's Context is self-referential (cacheRoot points back
+// at itself), which sent the prop walkers into unbounded recursion during
+// `Plan.make` of the Cloudflare state-store bootstrap stack (#1082). The rule
+// pinned here: Resources/Outputs are dependencies, plain data (arrays, plain
+// objects) is traversed to find them, and every other value — ANY class
+// instance, effect's or otherwise — is a leaf. Plus WeakSet cycle guards so
+// cyclic plain data terminates.
+describe("upstream walkers: cycles and non-plain leaves (#1082)", () => {
+  it("upstreamAny terminates on a cyclic plain object and still finds resources", () => {
+    const a = fakeResource("Test.A", "CY-A");
+    const cyclic: any = { name: "cycle" };
+    cyclic.self = cyclic;
+    const props = { config: cyclic, dep: Output.of(a) };
+    expect(Object.keys(Output.upstreamAny(props))).toEqual(["CY-A"]);
+  });
+
+  it("resolveUpstream terminates on mutually-cyclic objects and arrays", () => {
+    const x: any = { tag: "x" };
+    const y: any = { tag: "y", x };
+    x.y = y;
+    const arr: any[] = [x];
+    x.arr = arr;
+    expect(Output.resolveUpstream({ x, y, arr })).toEqual({});
+  });
+
+  it("a shared (diamond) sub-object still contributes its resources", () => {
+    const a = fakeResource("Test.A", "DI-A");
+    const shared = { dep: Output.of(a) };
+    const result = Output.upstreamAny({ left: shared, right: shared });
+    expect(Object.keys(result)).toEqual(["DI-A"]);
+  });
+
+  it("treats Effect, Layer, and Context values as leaves", () => {
+    const effect = Effect.succeed(1);
+    const layer = Layer.succeed(Stage, "test");
+    const context = Context.empty();
+    expect(Output.upstreamAny({ effect, layer, context })).toEqual({});
+    expect(Output.resolveUpstream({ effect, layer, context })).toEqual({});
+    expect(Output.hasOutputs({ effect, layer, context })).toBe(false);
+  });
+
+  it("traverses null-prototype objects and treats functions as leaves", () => {
+    const a = fakeResource("Test.A", "NP-A");
+    const nullProto = Object.assign(Object.create(null), { dep: Output.of(a) });
+    expect(Object.keys(Output.upstreamAny({ nullProto }))).toEqual(["NP-A"]);
+    // A function in props is a leaf — a closure capturing a resource is not
+    // a declared dependency.
+    expect(Output.upstreamAny({ fn: () => a })).toEqual({});
+  });
+
+  it("treats any class instance as a leaf (never walks its internals)", () => {
+    const a = fakeResource("Test.A", "CL-A");
+    class SdkConfig {
+      // A dependency smuggled inside a foreign class instance is invisible
+      // by design — the engine can't evaluate or persist through it.
+      dep = Output.of(a);
+      date = new Date(0);
+    }
+    expect(Output.upstreamAny({ config: new SdkConfig() })).toEqual({});
+    // ...but the same dependency in plain data right next to it is found.
+    expect(
+      Object.keys(
+        Output.upstreamAny({ config: new SdkConfig(), dep: Output.of(a) }),
+      ),
+    ).toEqual(["CL-A"]);
+  });
+
+  it("mimics a Worker `exports` entry (constructor Effect + services Context)", () => {
+    const a = fakeResource("Test.A", "EX-A");
+    const props = {
+      name: "worker",
+      exports: {
+        Store: {
+          kind: "durableObject",
+          constructor: Effect.void,
+          services: Context.empty(),
+        },
+      },
+      dep: Output.of(a),
+    };
+    expect(Object.keys(Output.upstreamAny(props))).toEqual(["EX-A"]);
+  });
+
+  it.effect("evaluate passes Effect/Layer/Context through by identity", () =>
+    provideState(
+      Effect.gen(function* () {
+        const effect = Effect.succeed(1);
+        const layer = Layer.succeed(Stage, "test");
+        const context = Context.empty();
+        const result = yield* Output.evaluate({ effect, layer, context }, {});
+        expect(result.effect).toBe(effect);
+        expect(result.layer).toBe(layer);
+        expect(result.context).toBe(context);
+      }),
+    ),
+  );
+
+  it.effect(
+    "evaluate passes Date/Redacted through by identity (prototype intact)",
+    () =>
+      provideState(
+        Effect.gen(function* () {
+          const date = new Date(0);
+          const secret = Redacted.make("hunter2");
+          const result = yield* Output.evaluate({ date, secret }, {});
+          expect(result.date).toBe(date);
+          expect(result.secret).toBe(secret);
+        }),
+      ),
+  );
+
+  it.effect("evaluate still resolves Config values (Configs are Effects)", () =>
+    provideState(
+      Effect.gen(function* () {
+        const result = yield* Output.evaluate(
+          { value: Config.succeed("resolved") },
+          {},
+        );
+        expect(result.value).toBe("resolved");
+      }),
+    ),
+  );
+
+  it.effect(
+    "evaluate resolves outputs at every nesting depth of plain data",
+    () =>
+      provideState(
+        Effect.gen(function* () {
+          const src = fakeResource("Test.A", "EV-A");
+          const out = (Output.of(src) as any).name;
+          const result = yield* Output.evaluate(
+            {
+              layers: [
+                { config: { hosts: [{ url: out }, { url: "static" }] } },
+              ],
+              matrix: [[out]],
+              mixed: [1, "x", { deep: [out] }, null],
+              nullProto: Object.assign(Object.create(null), { ref: out }),
+            },
+            { "EV-A": { name: "resolved-name" } },
+          );
+          expect(result.layers[0].config.hosts[0].url).toBe("resolved-name");
+          expect(result.layers[0].config.hosts[1].url).toBe("static");
+          expect(result.matrix[0][0]).toBe("resolved-name");
+          expect(result.mixed).toEqual([
+            1,
+            "x",
+            { deep: ["resolved-name"] },
+            null,
+          ]);
+          expect(result.nullProto.ref).toBe("resolved-name");
+        }),
+      ),
+  );
+
+  it.effect("evaluate cuts cyclic plain data but resolves siblings", () =>
+    provideState(
+      Effect.gen(function* () {
+        const src = fakeResource("Test.A", "CY-EV");
+        const out = (Output.of(src) as any).name;
+        const cyclic: any = { tag: "c" };
+        cyclic.self = cyclic;
+        const arr: any[] = [cyclic];
+        cyclic.arr = arr;
+        const result = yield* Output.evaluate(
+          { cyc: cyclic, url: out },
+          { "CY-EV": { name: "sibling" } },
+        );
+        expect(result.url).toBe("sibling");
+        expect(result.cyc.tag).toBe("c");
+        expect(result.cyc.self).toBeUndefined();
+        expect(result.cyc.arr[0]).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect(
+    "evaluate preserves diamonds — shared objects evaluate in both positions",
+    () =>
+      provideState(
+        Effect.gen(function* () {
+          const src = fakeResource("Test.A", "DI-EV");
+          const shared = { url: (Output.of(src) as any).name };
+          const result = yield* Output.evaluate(
+            { left: shared, right: shared, list: [shared] },
+            { "DI-EV": { name: "diamond" } },
+          );
+          expect(result.left).toEqual({ url: "diamond" });
+          expect(result.right).toEqual({ url: "diamond" });
+          expect(result.list[0]).toEqual({ url: "diamond" });
+        }),
+      ),
+  );
 });
 
 describe("Output.toEnvKey / toUpper", () => {

@@ -1,28 +1,31 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
+import { preloadFileTree } from "@pierre/trees";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildDiffFileTreeUpdates,
+  compareDiffFileTreeEntries,
   collectDirectoryPaths,
+  diffFileTreePositions,
   diffFileTreeEntries,
 } from "./diffFileTree.logic";
 
 function file(type: FileDiffMetadata["type"], name: string, prevName = name): FileDiffMetadata {
-  return { type, name: `b/${name}`, prevName: `a/${prevName}` } as FileDiffMetadata;
+  return { type, name, prevName } as FileDiffMetadata;
 }
 
 describe("diffFileTreeEntries", () => {
   it("maps each change type to its git status under the file's current path", () => {
     expect(
       diffFileTreeEntries([
-        file("new", "src/a.ts"),
+        file("new", "a/src/a.ts"),
         file("deleted", "src/b.ts"),
         file("rename-pure", "src/c.ts", "src/old-c.ts"),
         file("rename-changed", "src/d.ts", "src/old-d.ts"),
         file("change", "README.md"),
       ]),
     ).toEqual([
-      { path: "src/a.ts", status: "added" },
+      { path: "a/src/a.ts", status: "added" },
       { path: "src/b.ts", status: "deleted" },
       { path: "src/c.ts", status: "renamed" },
       { path: "src/d.ts", status: "renamed" },
@@ -37,6 +40,34 @@ describe("collectDirectoryPaths", () => {
       "apps/",
       "apps/web/",
       "apps/web/src/",
+    ]);
+  });
+});
+
+describe("diff tree reading order", () => {
+  it("places folders and files where their first diff appears", () => {
+    const paths = [
+      "apps/mobile/src/state/shell.ts",
+      "apps/mobile/src/features/threads/route.ts",
+      "apps/mobile/src/features/threads/screen.tsx",
+    ];
+    const positions = diffFileTreePositions(paths);
+    const tree = preloadFileTree({
+      paths,
+      initialExpansion: "open",
+      flattenEmptyDirectories: true,
+      sort: compareDiffFileTreeEntries(() => positions),
+    });
+    const rows = [...tree.shadowHtml.matchAll(/data-item-path="([^"]+)"/g)].map(
+      (match) => match[1],
+    );
+    expect(rows).toEqual([
+      "apps/mobile/src/",
+      "apps/mobile/src/state/",
+      "apps/mobile/src/state/shell.ts",
+      "apps/mobile/src/features/threads/",
+      "apps/mobile/src/features/threads/route.ts",
+      "apps/mobile/src/features/threads/screen.tsx",
     ]);
   });
 });

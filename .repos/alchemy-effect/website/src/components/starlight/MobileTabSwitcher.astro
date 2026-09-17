@@ -17,13 +17,13 @@ const current = activeTab(Astro.url.pathname);
 /**
  * Mobile taxonomy. The desktop More ▾ categories only classify the
  * overflow residents; here the whole tab list renders at once, so the
- * grouping is redesigned — e.g. PlanetScale and Neon belong under Data
- * next to Drizzle, not in the ungrouped primary run.
+ * grouping is redesigned — e.g. PlanetScale, Neon, and Prisma belong
+ * under Data next to SQL, not in the ungrouped primary run.
  */
 const MOBILE_GROUPS: { heading?: string; labels: string[] }[] = [
   { labels: ["Core", "CLI"] },
   { heading: "Clouds", labels: ["Cloudflare", "AWS"] },
-  { heading: "Data", labels: ["PlanetScale", "Neon", "Drizzle"] },
+  { heading: "Data", labels: ["PlanetScale", "Neon", "Prisma", "SQL"] },
   { heading: "Containers", labels: ["Docker", "Kubernetes"] },
   { heading: "Observability", labels: ["Axiom"] },
   { heading: "Source & CI", labels: ["GitHub"] },

@@ -62,14 +62,15 @@ export interface Organization extends Resource<
  *
  * This is a singleton-style resource. If an organization already exists,
  * Alchemy adopts and reconciles it instead of creating a second one.
- * @resource
- * @section Creating An Organization
- * @example Full Features Organization
+ * ### Creating An Organization
+ * **Example:** Full Features Organization
  * ```typescript
  * const organization = yield* Organization("Org", {
  *   featureSet: "ALL",
  * });
  * ```
+ *
+ * @resource
  */
 export const Organization = Resource<Organization>(
   "AWS.Organizations.Organization",

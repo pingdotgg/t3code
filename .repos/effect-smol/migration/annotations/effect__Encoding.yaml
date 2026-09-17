@@ -1,0 +1,24 @@
+"effect/Encoding#DecodeException":
+  replacement: "Encoding.EncodingError"
+  note: "Use the unified error class with kind Decode."
+"effect/Encoding#DecodeExceptionTypeId":
+  replacement: "Encoding.EncodingErrorTypeId"
+  note: "Decode and encode failures now share one marker."
+"effect/Encoding#decodeUriComponent":
+  replacement: "Result.try"
+  note: "Wrap decodeURIComponent in Result.try and map failure to EncodingError, or decode Schema.StringFromUriComponent."
+"effect/Encoding#EncodeException":
+  replacement: "Encoding.EncodingError"
+  note: "Use the unified error class with kind Encode."
+"effect/Encoding#EncodeExceptionTypeId":
+  replacement: "Encoding.EncodingErrorTypeId"
+  note: "Decode and encode failures now share one marker."
+"effect/Encoding#encodeUriComponent":
+  replacement: "Result.try"
+  note: "Wrap encodeURIComponent in Result.try and map failure to EncodingError, or encode Schema.StringFromUriComponent."
+"effect/Encoding#isDecodeException":
+  replacement: "Encoding.isEncodingError"
+  note: "Use the unified guard and test kind === Decode when decode-only narrowing is required."
+"effect/Encoding#isEncodeException":
+  replacement: "Encoding.isEncodingError"
+  note: "Use the unified guard and test kind === Encode when encode-only narrowing is required."

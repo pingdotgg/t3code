@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   getOnboardingProviderState,
+  resolveOnboardingProviderInstallCommand,
   resolveOnboardingProviderLoginCommand,
   selectOnboardingProvidersByDriver,
 } from "./providerReadiness.logic";
@@ -313,5 +314,25 @@ describe("resolveOnboardingProviderLoginCommand", () => {
         "unknown",
       ),
     ).toBe("codex login");
+  });
+});
+
+describe("resolveOnboardingProviderInstallCommand", () => {
+  it("uses the PowerShell installer on Windows environments", () => {
+    expect(resolveOnboardingProviderInstallCommand("codex", "windows")).toBe(
+      "irm https://chatgpt.com/codex/install.ps1 | iex",
+    );
+    expect(resolveOnboardingProviderInstallCommand("claudeAgent", "windows")).toBe(
+      "irm https://claude.ai/install.ps1 | iex",
+    );
+  });
+
+  it.each(["darwin", "linux", "unknown"] as const)("uses the shell installer on %s", (platform) => {
+    expect(resolveOnboardingProviderInstallCommand("codex", platform)).toBe(
+      "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+    );
+    expect(resolveOnboardingProviderInstallCommand("claudeAgent", platform)).toBe(
+      "curl -fsSL https://claude.ai/install.sh | bash",
+    );
   });
 });

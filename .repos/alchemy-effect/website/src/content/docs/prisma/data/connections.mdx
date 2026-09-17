@@ -1,0 +1,140 @@
+---
+title: Connections
+description: Prisma Connections materialize database credentials — a conventional databaseUrl, direct and pooled connection strings, parsed origins for Hyperdrive, and the Connect runtime binding.
+---
+
+A `Prisma.Connection` is a credential (an API key) for one
+database. The `name` prop is optional — alchemy derives one from the
+logical ID and appends the resource's instance identity so
+connections stay unambiguous — and every secret output is `Redacted`
+so nothing prints in logs or plan output.
+
+```typescript
+import * as Prisma from "alchemy/Prisma";
+
+const connection = yield* Prisma.Connection("api", {
+  database: postgres,
+});
+```
+
+## Connection outputs
+
+```typescript
+connection.databaseUrl; //                conventional app URL (pooled → direct → Accelerate)
+connection.directConnectionString; //     direct Postgres URL
+connection.pooledConnectionString; //     pooled Postgres URL
+connection.accelerateConnectionString; // Accelerate URL, when the database has one
+connection.origin; //                     parsed direct connection components
+connection.pooledOrigin; //               parsed pooled connection components
+```
+
+`databaseUrl` is the serverless-safe default for application
+traffic: it prefers the pooled endpoint, then direct, then
+Accelerate. For a standalone database under a project created with
+`createDatabase: false`, pass it (and the direct URL for migration
+tooling) straight into an app's env:
+
+```typescript
+const app = yield* Prisma.Compute("api", {
+  project,
+  path: "./app",
+  env: {
+    DATABASE_URL: connection.databaseUrl,
+    DIRECT_URL: connection.directConnectionString,
+  },
+});
+```
+
+If `Prisma.Project` created the project's default database, omit
+these env entries. Prisma injects system-managed `DATABASE_URL` and
+`DATABASE_URL_POOLED` values into Compute deployments automatically.
+
+## The origin shape
+
+`origin` and `pooledOrigin` are the same connections parsed into the
+structured shape Postgres consumers like `Cloudflare.Hyperdrive`
+accept — the same shape Neon branches and PlanetScale roles
+materialize:
+
+```typescript
+type PostgresOrigin = {
+  scheme: "postgres" | "postgresql";
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: Redacted.Redacted<string>;
+};
+```
+
+Hyperdrive is itself a pooler, so hand it the **direct** origin:
+
+```typescript
+const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("api-hd", {
+  origin: connection.origin.as<Prisma.PostgresOrigin>(),
+});
+```
+
+(The `.as<...>()` narrows the output: a connection to a legacy
+Accelerate-only database has no direct Postgres endpoint, so
+`origin` is typed optional.)
+
+## The Connect binding
+
+Inside a Prisma Compute app, AWS Lambda function, Cloudflare Worker,
+or Cloudflare Container, `Prisma.Connect` resolves the bound
+connection at runtime as a typed client:
+
+```typescript
+Effect.gen(function* () {
+  const db = yield* Prisma.Connect(connection);
+  const sql = yield* SQL.Postgres({ url: db.databaseUrl });
+
+  return {
+    fetch: Effect.gen(function* () {
+      const users = yield* sql`SELECT * FROM users`;
+      return yield* HttpServerResponse.json(users);
+    }),
+  };
+}).pipe(Effect.provide(Prisma.ConnectBinding));
+```
+
+At deploy time the binding carries the connection's outputs into the
+host's environment (env vars on Compute, Lambda, and Containers;
+secret text bindings on Workers); at runtime `db.databaseUrl` and
+friends read them back as `Redacted` values.
+
+A container is a real process with no workerd bindings, so env vars
+are its only channel — which is exactly why `Prisma.Connect` reaches
+it and `Cloudflare.Hyperdrive.Connect` does not. Start the container
+with `Cloudflare.Containers.layer(Api, { enableInternet: true })` so
+it can reach the database. See
+[Bind a capability into an effectful container](/cloudflare/compute/containers#bind-a-capability-into-an-effectful-container).
+
+## Rotation
+
+Change `rotate` from `false` to `true` to mint fresh credentials on
+the next deploy while keeping the connection's identity:
+
+```typescript
+const connection = yield* Prisma.Connection("api", {
+  database: postgres,
+  rotate: true,
+});
+```
+
+Prisma attempts to revoke the previous credentials on a best-effort
+basis. Downstream consumers receive the new secret on the same deploy
+through their bindings. To rotate again, deploy once with
+`rotate: false`, then change it back to `true`.
+
+## Where next
+
+- [Connect from Workers](/prisma/guides/cloudflare-workers) — both
+  wiring styles for Cloudflare, side by side.
+- [Hyperdrive](/cloudflare/data/hyperdrive) — the full pooling
+  walkthrough.
+
+Reference:
+
+- [Connection API reference](/providers/prisma/connection)

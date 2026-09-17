@@ -13,9 +13,8 @@ export interface GetSamplingRulesRequest extends xray.GetSamplingRulesRequest {}
  * provide the implementation with `Effect.provide(XRay.GetSamplingRulesHttp)`.
  * The action is account-scoped: X-Ray does not support resource-level
  * permissions for `xray:GetSamplingRules`, so the binding grants it on `*`.
- * @binding
- * @section Sampling
- * @example Poll the active sampling rules
+ * ### Sampling
+ * **Example:** Poll the active sampling rules
  * ```typescript
  * import * as XRay from "alchemy/AWS/XRay";
  *
@@ -28,6 +27,8 @@ export interface GetSamplingRulesRequest extends xray.GetSamplingRulesRequest {}
  *   (record) => record.SamplingRule?.RuleName,
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetSamplingRules extends Binding.Service<
   GetSamplingRules,

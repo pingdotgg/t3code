@@ -467,7 +467,7 @@ function ContainerPanel() {
     {
       icon: "logos:docker-icon",
       label: "Image",
-      sub: "built from Dockerfile · pushed to registry",
+      sub: "Dockerfile generated · platform builds",
     },
     {
       icon: "mdi:server",

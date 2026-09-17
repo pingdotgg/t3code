@@ -117,9 +117,8 @@ export interface DataLakeSettings extends Resource<
  * additively (existing admins are never removed), and destroy puts back what
  * was there before for everything this resource managed.
  *
- * @resource
- * @section Managing Administrators
- * @example Add a Data Lake Administrator
+ * ### Managing Administrators
+ * **Example:** Add a Data Lake Administrator
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -128,8 +127,8 @@ export interface DataLakeSettings extends Resource<
  * });
  * ```
  *
- * @section Default Permissions
- * @example Disable IAM-Allowed-Principals Defaults
+ * ### Default Permissions
+ * **Example:** Disable IAM-Allowed-Principals Defaults
  * ```typescript
  * const settings = yield* AWS.LakeFormation.DataLakeSettings("Settings", {
  *   dataLakeAdmins: [adminRole.roleArn],
@@ -137,6 +136,8 @@ export interface DataLakeSettings extends Resource<
  *   createTableDefaultPermissions: [],
  * });
  * ```
+ *
+ * @resource
  */
 export const DataLakeSettings = Resource<DataLakeSettings>(
   "AWS.LakeFormation.DataLakeSettings",

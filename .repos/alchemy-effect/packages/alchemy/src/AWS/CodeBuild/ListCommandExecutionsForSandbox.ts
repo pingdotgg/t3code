@@ -6,14 +6,15 @@ import type { Project } from "./Project.ts";
 /**
  * Runtime binding for `codebuild:ListCommandExecutionsForSandbox` — lists
  * the command executions run in a sandbox of the bound project.
- * @binding
- * @section Sandboxes
- * @example List Command Executions
+ * ### Sandboxes
+ * **Example:** List Command Executions
  * ```typescript
  * const listCommandExecutions = yield* AWS.CodeBuild.ListCommandExecutionsForSandbox(project);
  *
  * const { commandExecutions } = yield* listCommandExecutions({ sandboxId });
  * ```
+ *
+ * @binding
  */
 export interface ListCommandExecutionsForSandbox extends Binding.Service<
   ListCommandExecutionsForSandbox,

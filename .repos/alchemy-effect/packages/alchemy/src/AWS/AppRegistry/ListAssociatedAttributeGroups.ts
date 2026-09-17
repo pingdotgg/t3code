@@ -15,9 +15,8 @@ export interface ListAssociatedAttributeGroupsRequest extends Omit<
  * Pages through the IDs of the attribute groups associated with the bound
  * application. Provide the implementation with
  * `Effect.provide(AWS.AppRegistry.ListAssociatedAttributeGroupsHttp)`.
- * @binding
- * @section Reading Attribute Groups
- * @example List the Application's Attribute Group IDs
+ * ### Reading Attribute Groups
+ * **Example:** List the Application's Attribute Group IDs
  * ```typescript
  * // init — bind the operation to the application
  * const listAssociatedAttributeGroups =
@@ -27,6 +26,8 @@ export interface ListAssociatedAttributeGroupsRequest extends Omit<
  * const page = yield* listAssociatedAttributeGroups({ maxResults: 25 });
  * console.log(page.attributeGroups);
  * ```
+ *
+ * @binding
  */
 export interface ListAssociatedAttributeGroups extends Binding.Service<
   ListAssociatedAttributeGroups,

@@ -86,10 +86,13 @@ describe("orchestration projector", () => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        pullRequests: [],
+        branchPullRequest: null,
         latestTurn: null,
         createdAt: now,
         updatedAt: now,
         archivedAt: null,
+        activeOrderKey: null,
         settledOverride: null,
         settledAt: null,
         unsettledAt: null,
@@ -104,6 +107,91 @@ describe("orchestration projector", () => {
       },
     ]);
   });
+
+  effectIt.effect("sets and clears branch pull requests without changing manual links", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const eventFields = {
+        aggregateKind: "thread" as const,
+        aggregateId: "thread-1",
+        occurredAt: now,
+        commandId: null,
+      };
+      let model = yield* projectEvent(
+        {
+          ...createEmptyReadModel(now),
+          projects: [
+            {
+              id: ProjectId.make("project-1"),
+              title: "T3 Code",
+              workspaceRoot: "/repo",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt: now,
+              updatedAt: now,
+              deletedAt: null,
+              repositoryIdentity: {
+                canonicalKey: "github.com/pingdotgg/t3code",
+                provider: "github",
+                displayName: "pingdotgg/t3code",
+                locator: {
+                  source: "git-remote",
+                  remoteName: "origin",
+                  remoteUrl: "https://github.com/pingdotgg/t3code.git",
+                },
+              },
+            },
+          ],
+        },
+        makeEvent({
+          ...eventFields,
+          sequence: 1,
+          type: "thread.created",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "Pull request thread",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: "feature",
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      );
+      const linkedPullRequest = {
+        projectId: "project-1",
+        repository: "pingdotgg/t3code",
+        number: 42,
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+      };
+      const branchPullRequest = {
+        ...linkedPullRequest,
+        number: 43,
+        url: "https://github.com/pingdotgg/t3code/pull/43",
+      };
+      const updates = [
+        { payload: { linkedPullRequest, branchPullRequest }, expected: branchPullRequest },
+        { payload: { title: "Renamed thread" }, expected: branchPullRequest },
+        { payload: { branchPullRequest: null }, expected: null },
+      ];
+
+      for (const [index, update] of updates.entries()) {
+        model = yield* projectEvent(
+          model,
+          makeEvent({
+            ...eventFields,
+            sequence: index + 2,
+            type: "thread.meta-updated",
+            payload: { threadId: "thread-1", updatedAt: now, ...update.payload },
+          }),
+        );
+        expect(model.threads[0]?.branchPullRequest).toEqual(update.expected);
+        expect(model.threads[0]?.linkedPullRequest).toEqual(linkedPullRequest);
+      }
+    }),
+  );
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {
     const now = "2026-01-01T00:00:00.000Z";
@@ -1082,4 +1170,70 @@ describe("orchestration projector", () => {
     expect(thread?.checkpoints[0]?.turnId).toBe("turn-100");
     expect(thread?.checkpoints.at(-1)?.turnId).toBe("turn-599");
   });
+
+  effectIt.effect("keeps the worktree setup record past the activity retention cap", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-03-01T10:00:00.000Z";
+      const threadId = "thread-setup-retained";
+      const afterCreate = yield* projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: "cmd-create-setup-retained",
+          payload: {
+            threadId,
+            projectId: "project-1",
+            title: "setup retained",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      );
+      const activityEvent = (sequence: number, id: string, kind: string) =>
+        makeEvent({
+          sequence,
+          type: "thread.activity-appended",
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: `2026-03-01T10:${String(Math.floor(sequence / 60) % 60).padStart(2, "0")}:${String(sequence % 60).padStart(2, "0")}.000Z`,
+          commandId: `cmd-activity-${sequence}`,
+          payload: {
+            threadId,
+            activity: {
+              id,
+              tone: "info",
+              kind,
+              summary: kind,
+              payload: {},
+              turnId: null,
+              createdAt: `2026-03-01T10:${String(Math.floor(sequence / 60) % 60).padStart(2, "0")}:${String(sequence % 60).padStart(2, "0")}.000Z`,
+            },
+          },
+        });
+      let model = yield* projectEvent(
+        afterCreate,
+        activityEvent(2, `worktree-setup:${threadId}`, "worktree-setup"),
+      );
+      for (let index = 0; index < 600; index += 1) {
+        model = yield* projectEvent(
+          model,
+          activityEvent(3 + index, `tool-${index}`, "tool.completed"),
+        );
+      }
+      const thread = model.threads.find((entry) => entry.id === threadId);
+      expect(thread?.activities).toHaveLength(501);
+      expect(thread?.activities[0]?.id).toBe(`worktree-setup:${threadId}`);
+    }),
+  );
 });

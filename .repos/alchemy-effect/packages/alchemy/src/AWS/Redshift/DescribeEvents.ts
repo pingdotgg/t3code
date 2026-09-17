@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * days — the audit trail for operational tooling. For push delivery of the
  * same events see {@link EventSubscription}. Provide the implementation with
  * `Effect.provide(AWS.Redshift.DescribeEventsHttp)`.
- * @binding
- * @section Monitoring Clusters
- * @example List a Cluster's Recent Events
+ * ### Monitoring Clusters
+ * **Example:** List a Cluster's Recent Events
  * ```typescript
  * const describeEvents = yield* AWS.Redshift.DescribeEvents();
  *
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const messages = page.Events?.map((e) => e.Message);
  * ```
+ *
+ * @binding
  */
 export interface DescribeEvents extends Binding.Service<
   DescribeEvents,

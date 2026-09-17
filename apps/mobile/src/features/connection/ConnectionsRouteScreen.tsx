@@ -1,9 +1,10 @@
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
 import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
-import { Platform, ScrollView, View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -11,12 +12,14 @@ import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { ConnectionEnvironmentRow } from "./ConnectionEnvironmentRow";
+import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 
 export function ConnectionsRouteScreen() {
   const {
     connectedEnvironments,
     onReconnectEnvironment,
     onRemoveEnvironmentPress,
+    onSetEnvironmentEnabled,
     onUpdateEnvironment,
   } = useRemoteConnections();
   const navigation = useNavigation();
@@ -74,6 +77,7 @@ export function ConnectionsRouteScreen() {
                   onToggle={() => handleToggle(environment.environmentId)}
                   onReconnect={onReconnectEnvironment}
                   onRemove={onRemoveEnvironmentPress}
+                  onSetEnabled={onSetEnvironmentEnabled}
                   onUpdate={onUpdateEnvironment}
                 />
               </View>
@@ -95,6 +99,7 @@ export function ConnectionsRouteScreen() {
             </Text>
           </View>
         )}
+        <GitHubRoutingSettings />
       </ScrollView>
     </View>
   );

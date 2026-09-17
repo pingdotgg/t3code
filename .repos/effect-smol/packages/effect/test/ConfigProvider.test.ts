@@ -2,191 +2,316 @@ import { describe, it } from "@effect/vitest"
 import { deepStrictEqual } from "@effect/vitest/utils"
 import { ConfigProvider, Effect, FileSystem, Layer, Path, PlatformError, Result } from "effect"
 
+const notFound = (method: string): PlatformError.PlatformError =>
+  PlatformError.systemError({
+    module: "FileSystem",
+    _tag: "NotFound",
+    method
+  })
+
 async function assertSuccess(
   provider: ConfigProvider.ConfigProvider,
   path: ConfigProvider.Path,
-  expected: ConfigProvider.Node | undefined
+  expected: ConfigProvider.Node
 ) {
   const r = Effect.result(provider.load(path))
   deepStrictEqual(await Effect.runPromise(r), Result.succeed(expected))
 }
 
-// async function assertFailure(
-//   provider: ConfigProvider.ConfigProvider,
-//   path: ConfigProvider.Path,
-//   expected: ConfigProvider.SourceError
-// ) {
-//   const r = Effect.result(provider.load(path))
-//   deepStrictEqual(await Effect.runPromise(r), Result.fail(expected))
-// }
+async function assertMissing(
+  provider: ConfigProvider.ConfigProvider,
+  path: ConfigProvider.Path
+) {
+  const r = Effect.result(provider.load(path))
+  deepStrictEqual(await Effect.runPromise(r), Result.succeed(undefined))
+}
+
+async function assertFailure(
+  provider: ConfigProvider.ConfigProvider,
+  path: ConfigProvider.Path,
+  expected: ConfigProvider.SourceError
+) {
+  const r = Effect.result(provider.load(path))
+  deepStrictEqual(await Effect.runPromise(r), Result.fail(expected))
+}
 
 describe("ConfigProvider", () => {
-  it("orElse", async () => {
-    const provider1 = ConfigProvider.fromEnv({
-      env: {
-        "A": "value1"
-      }
+  describe("make", () => {
+    it.effect("exposes lookup absence and input transformation as provider behavior", () =>
+      Effect.gen(function*() {
+        const provider = ConfigProvider.fromUnknown({
+          APP: {
+            PORT: "3000"
+          }
+        })
+        const nested = provider.mapInput((path) => ["APP", ...path])
+
+        deepStrictEqual(
+          yield* nested.load(["PORT"]),
+          ConfigProvider.makeValue("3000")
+        )
+        deepStrictEqual(yield* nested.load(["MISSING"]), undefined)
+      }))
+
+    it("creates a provider from a lookup function", async () => {
+      const provider = ConfigProvider.make((path) =>
+        Effect.succeed(
+          path.join(".") === "A.B"
+            ? ConfigProvider.makeValue("value")
+            : undefined
+        )
+      )
+
+      await assertSuccess(provider, ["A", "B"], ConfigProvider.makeValue("value"))
+      await assertMissing(provider, ["missing"])
     })
-    const provider2 = ConfigProvider.fromEnv({
-      env: {
-        "B": "value2"
-      }
-    })
-    const provider = provider1.pipe(ConfigProvider.orElse(provider2))
-    await assertSuccess(provider, ["A"], ConfigProvider.makeValue("value1"))
-    await assertSuccess(provider, ["B"], ConfigProvider.makeValue("value2"))
-  })
 
-  it("orElse does not fall back on SourceError", async () => {
-    const error = new ConfigProvider.SourceError({ message: "io down" })
-    const primary = ConfigProvider.make(() => Effect.fail(error))
-    const fallback = ConfigProvider.fromEnv({ env: { KEY: "fallback" } })
-    const provider = primary.pipe(ConfigProvider.orElse(fallback))
-    const r = await Effect.runPromise(Effect.result(provider.load(["KEY"])))
-    deepStrictEqual(r, Result.fail(error))
-  })
+    it("preserves SourceError failures", async () => {
+      const error = new ConfigProvider.SourceError({ message: "source unavailable" })
+      const provider = ConfigProvider.make(() => Effect.fail(error))
 
-  it("orElse applies each operand's transformations", async () => {
-    const primary = ConfigProvider.fromEnv({
-      env: {
-        "DATABASE_HOST": "from-env"
-      }
-    }).pipe(ConfigProvider.constantCase)
-    const fallback = ConfigProvider.fromEnv({
-      env: {
-        "APP_PORT": "3000"
-      }
-    }).pipe(ConfigProvider.nested("APP"))
-    const provider = primary.pipe(ConfigProvider.orElse(fallback))
-    await assertSuccess(provider, ["databaseHost"], ConfigProvider.makeValue("from-env"))
-    await assertSuccess(provider, ["PORT"], ConfigProvider.makeValue("3000"))
-  })
-
-  it("mapInput distributes over orElse", async () => {
-    const appendSuffix = ConfigProvider.mapInput((path) =>
-      path.map((seg) => typeof seg === "string" ? `${seg}_SUFFIX` : seg)
-    )
-    const primary = ConfigProvider.fromEnv({
-      env: {
-        "prefix_SUFFIX_KEY_SUFFIX": "primary"
-      }
-    }).pipe(ConfigProvider.nested("prefix"))
-    const fallback = ConfigProvider.fromEnv({
-      env: {
-        "fallback_SUFFIX_KEY_SUFFIX": "fallback",
-        "fallback_SUFFIX_OTHER_SUFFIX": "fallback"
-      }
-    }).pipe(ConfigProvider.nested("fallback"))
-    const provider = primary.pipe(ConfigProvider.orElse(fallback), appendSuffix)
-    await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("primary"))
-    await assertSuccess(provider, ["OTHER"], ConfigProvider.makeValue("fallback"))
-  })
-
-  it("nested distributes over orElse", async () => {
-    const primary = ConfigProvider.fromEnv({
-      env: {
-        "app_DATABASE_HOST": "primary"
-      }
-    }).pipe(ConfigProvider.constantCase)
-    const fallback = ConfigProvider.fromEnv({
-      env: {
-        "app_PORT": "fallback"
-      }
-    })
-    const provider = primary.pipe(ConfigProvider.orElse(fallback), ConfigProvider.nested("app"))
-    await assertSuccess(provider, ["databaseHost"], ConfigProvider.makeValue("primary"))
-    await assertSuccess(provider, ["PORT"], ConfigProvider.makeValue("fallback"))
-  })
-
-  it("orElse falls back when the primary env value is empty", async () => {
-    const primary = ConfigProvider.fromEnv({
-      env: {
-        "KEY": ""
-      }
-    })
-    const fallback = ConfigProvider.fromUnknown({ KEY: "fallback" })
-    const provider = primary.pipe(ConfigProvider.orElse(fallback))
-    await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("fallback"))
-  })
-
-  it("constantCase", async () => {
-    const provider = ConfigProvider.constantCase(ConfigProvider.fromEnv({
-      env: {
-        "CONSTANT_CASE": "value1"
-      }
-    }))
-    await assertSuccess(provider, ["constant.case"], ConfigProvider.makeValue("value1"))
-  })
-
-  it("constantCase uses config casing for numeric word groups", async () => {
-    const provider = ConfigProvider.constantCase(ConfigProvider.fromEnv({
-      env: {
-        "API_V2_XML": "value1",
-        "FIELD2_VALUE": "value2"
-      }
-    }))
-    await assertSuccess(provider, ["api-v2 xml"], ConfigProvider.makeValue("value1"))
-    await assertSuccess(provider, ["field2Value"], ConfigProvider.makeValue("value2"))
-  })
-
-  describe("mapInput", () => {
-    it("two mappings", async () => {
-      const appendA = ConfigProvider.mapInput((path) => path.map((sn) => typeof sn === "string" ? sn + "_A" : sn))
-      const appendB = ConfigProvider.mapInput((path) => path.map((sn) => typeof sn === "string" ? sn + "_B" : sn))
-      const provider = ConfigProvider.fromEnv({
-        env: {
-          "KEY_A_B": "value"
-        }
-      }).pipe(appendA, appendB)
-      await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("value"))
+      await assertFailure(provider, ["A"], error)
     })
   })
 
-  describe("nested", () => {
-    it("should add a prefix to the path", async () => {
-      const provider = ConfigProvider.fromEnv({
-        env: {
-          "prefix_A": "value"
-        }
-      }).pipe(ConfigProvider.nested("prefix"))
-      await assertSuccess(provider, ["A"], ConfigProvider.makeValue("value"))
+  describe("combinators", () => {
+    describe("orElse", () => {
+      it("uses the fallback when the primary provider is missing the path", async () => {
+        const primary = ConfigProvider.fromEnv({
+          env: {
+            "A": "value1"
+          }
+        })
+        const fallback = ConfigProvider.fromEnv({
+          env: {
+            "B": "value2"
+          }
+        })
+        const provider = ConfigProvider.orElse(primary, fallback)
+        await assertSuccess(provider, ["A"], ConfigProvider.makeValue("value1"))
+        await assertSuccess(provider, ["B"], ConfigProvider.makeValue("value2"))
+      })
+
+      it("does not use the fallback after a SourceError", async () => {
+        const error = new ConfigProvider.SourceError({ message: "io down" })
+        const primary = ConfigProvider.make(() => Effect.fail(error))
+        const fallback = ConfigProvider.fromEnv({ env: { KEY: "fallback" } })
+        const provider = primary.pipe(ConfigProvider.orElse(fallback))
+        await assertFailure(provider, ["KEY"], error)
+      })
+
+      it("does not evaluate the fallback after the primary provider finds a node", async () => {
+        const primary = ConfigProvider.fromUnknown({ KEY: "primary" })
+        const fallback = ConfigProvider.make(() =>
+          Effect.fail(new ConfigProvider.SourceError({ message: "fallback evaluated" }))
+        )
+        const provider = primary.pipe(ConfigProvider.orElse(fallback))
+
+        await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("primary"))
+      })
+
+      it("preserves each operand's transformations", async () => {
+        const primary = ConfigProvider.fromEnv({
+          env: {
+            "DATABASE_HOST": "from-env"
+          }
+        }).pipe(ConfigProvider.constantCase)
+        const fallback = ConfigProvider.fromEnv({
+          env: {
+            "APP_PORT": "3000"
+          }
+        }).pipe(ConfigProvider.nested("APP"))
+        const provider = primary.pipe(ConfigProvider.orElse(fallback))
+        await assertSuccess(provider, ["databaseHost"], ConfigProvider.makeValue("from-env"))
+        await assertSuccess(provider, ["PORT"], ConfigProvider.makeValue("3000"))
+      })
+
+      it("distributes mapInput over both operands", async () => {
+        const appendSuffix = ConfigProvider.mapInput((path) =>
+          path.map((seg) => typeof seg === "string" ? `${seg}_SUFFIX` : seg)
+        )
+        const primary = ConfigProvider.fromEnv({
+          env: {
+            "prefix_SUFFIX_KEY_SUFFIX": "primary"
+          }
+        }).pipe(ConfigProvider.nested("prefix"))
+        const fallback = ConfigProvider.fromEnv({
+          env: {
+            "fallback_SUFFIX_KEY_SUFFIX": "fallback",
+            "fallback_SUFFIX_OTHER_SUFFIX": "fallback"
+          }
+        }).pipe(ConfigProvider.nested("fallback"))
+        const provider = primary.pipe(ConfigProvider.orElse(fallback), appendSuffix)
+        await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("primary"))
+        await assertSuccess(provider, ["OTHER"], ConfigProvider.makeValue("fallback"))
+      })
+
+      it("distributes nested over both operands", async () => {
+        const primary = ConfigProvider.fromEnv({
+          env: {
+            "app_DATABASE_HOST": "primary"
+          }
+        }).pipe(ConfigProvider.constantCase)
+        const fallback = ConfigProvider.fromEnv({
+          env: {
+            "app_PORT": "fallback"
+          }
+        })
+        const provider = primary.pipe(ConfigProvider.orElse(fallback), ConfigProvider.nested("app"))
+        await assertSuccess(provider, ["databaseHost"], ConfigProvider.makeValue("primary"))
+        await assertSuccess(provider, ["PORT"], ConfigProvider.makeValue("fallback"))
+      })
+
+      it("uses the fallback when the primary value is an empty string", async () => {
+        const primary = ConfigProvider.fromEnv({
+          env: {
+            "KEY": ""
+          }
+        })
+        const fallback = ConfigProvider.fromUnknown({ KEY: "fallback" })
+        const provider = primary.pipe(ConfigProvider.orElse(fallback))
+        await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("fallback"))
+      })
+
+      it("does not merge a fallback container into an existing primary container", async () => {
+        const primary = ConfigProvider.fromUnknown({ primary: "value1" })
+        const fallback = ConfigProvider.fromUnknown({ fallback: "value2" })
+        const provider = primary.pipe(ConfigProvider.orElse(fallback))
+
+        await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["primary"])))
+        await assertSuccess(provider, ["fallback"], ConfigProvider.makeValue("value2"))
+      })
     })
 
-    it("constantCase + nested", async () => {
-      const provider = ConfigProvider.fromEnv({
-        env: {
-          "prefix_KEY_WITH_DOTS": "value"
-        }
-      }).pipe(ConfigProvider.constantCase, ConfigProvider.nested("prefix"))
-      await assertSuccess(provider, ["key.with.dots"], ConfigProvider.makeValue("value"))
+    describe("mapInput", () => {
+      it("composes transformations in application order", async () => {
+        const appendB = ConfigProvider.mapInput((path) => path.map((sn) => typeof sn === "string" ? sn + "_B" : sn))
+        const provider = ConfigProvider.mapInput(
+          ConfigProvider.fromEnv({
+            env: {
+              "KEY_A_B": "value"
+            }
+          }),
+          (path) => path.map((sn) => typeof sn === "string" ? sn + "_A" : sn)
+        ).pipe(appendB)
+        await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("value"))
+      })
     })
 
-    it("nested + constantCase", async () => {
-      const provider = ConfigProvider.fromEnv({
-        env: {
-          "PREFIX_WITH_DOTS_KEY_WITH_DOTS": "value"
-        }
-      }).pipe(ConfigProvider.nested("prefix.with.dots"), ConfigProvider.constantCase)
-      await assertSuccess(provider, ["key.with.dots"], ConfigProvider.makeValue("value"))
+    describe("constantCase", () => {
+      it("converts string path segments to config case", async () => {
+        const provider = ConfigProvider.constantCase(ConfigProvider.fromEnv({
+          env: {
+            "CONSTANT_CASE": "value1"
+          }
+        }))
+        await assertSuccess(provider, ["constant.case"], ConfigProvider.makeValue("value1"))
+      })
+
+      it("preserves numeric word groups", async () => {
+        const provider = ConfigProvider.constantCase(ConfigProvider.fromEnv({
+          env: {
+            "API_V2_XML": "value1",
+            "FIELD2_VALUE": "value2"
+          }
+        }))
+        await assertSuccess(provider, ["api-v2 xml"], ConfigProvider.makeValue("value1"))
+        await assertSuccess(provider, ["field2Value"], ConfigProvider.makeValue("value2"))
+      })
+
+      it("leaves numeric path segments unchanged", async () => {
+        const provider = ConfigProvider.fromUnknown({
+          ITEMS: ["value"]
+        }).pipe(ConfigProvider.constantCase)
+
+        await assertSuccess(provider, ["items", 0], ConfigProvider.makeValue("value"))
+      })
     })
 
-    it("multiple nested calls compose as wrappers", async () => {
-      const provider = ConfigProvider.fromEnv({
-        env: {
-          "b_a_KEY": "value"
-        }
-      }).pipe(ConfigProvider.nested("a"), ConfigProvider.nested("b"))
-      await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("value"))
+    describe("nested", () => {
+      it("adds a string prefix to the path", async () => {
+        const provider = ConfigProvider.fromEnv({
+          env: {
+            "prefix_A": "value"
+          }
+        }).pipe(ConfigProvider.nested("prefix"))
+        await assertSuccess(provider, ["A"], ConfigProvider.makeValue("value"))
+      })
+
+      it("adds a Path prefix with string and numeric segments", async () => {
+        const provider = ConfigProvider.nested(
+          ConfigProvider.fromUnknown({
+            apps: [{ PORT: "3000" }]
+          }),
+          ["apps", 0]
+        )
+
+        await assertSuccess(provider, ["PORT"], ConfigProvider.makeValue("3000"))
+      })
+
+      it("preserves order when constantCase is applied before nested", async () => {
+        const provider = ConfigProvider.fromEnv({
+          env: {
+            "prefix_KEY_WITH_DOTS": "value"
+          }
+        }).pipe(ConfigProvider.constantCase, ConfigProvider.nested("prefix"))
+        await assertSuccess(provider, ["key.with.dots"], ConfigProvider.makeValue("value"))
+      })
+
+      it("preserves order when constantCase is applied after nested", async () => {
+        const provider = ConfigProvider.fromEnv({
+          env: {
+            "PREFIX_WITH_DOTS_KEY_WITH_DOTS": "value"
+          }
+        }).pipe(ConfigProvider.nested("prefix.with.dots"), ConfigProvider.constantCase)
+        await assertSuccess(provider, ["key.with.dots"], ConfigProvider.makeValue("value"))
+      })
+
+      it("composes multiple prefixes as wrappers", async () => {
+        const provider = ConfigProvider.fromEnv({
+          env: {
+            "b_a_KEY": "value"
+          }
+        }).pipe(ConfigProvider.nested("a"), ConfigProvider.nested("b"))
+        await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("value"))
+      })
+
+      it("allows a later mapInput to transform the prefixed path", async () => {
+        const appendLeaf = ConfigProvider.mapInput((path) => [...path, "leaf"])
+        const provider = ConfigProvider.fromEnv({
+          env: {
+            "app_KEY_leaf": "value"
+          }
+        }).pipe(ConfigProvider.nested("app"), appendLeaf)
+        await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("value"))
+      })
+    })
+  })
+
+  describe("fromEnvRecord", () => {
+    it("reads defined values and skips undefined values", async () => {
+      const env: Record<string, string | undefined> = {
+        DEFINED: "value",
+        UNDEFINED: undefined
+      }
+      const provider = ConfigProvider.fromEnvRecord(env)
+
+      await assertSuccess(provider, ["DEFINED"], ConfigProvider.makeValue("value"))
+      await assertMissing(provider, ["UNDEFINED"])
+      await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["DEFINED"])))
     })
 
-    it("mapInput after nested transforms the full path", async () => {
-      const appendLeaf = ConfigProvider.mapInput((path) => [...path, "leaf"])
-      const provider = ConfigProvider.fromEnv({
-        env: {
-          "app_KEY_leaf": "value"
-        }
-      }).pipe(ConfigProvider.nested("app"), appendLeaf)
-      await assertSuccess(provider, ["KEY"], ConfigProvider.makeValue("value"))
+    it("treats empty strings as missing by default", async () => {
+      await assertMissing(ConfigProvider.fromEnvRecord({ EMPTY: "" }), ["EMPTY"])
+    })
+
+    it("preserves empty strings when requested", async () => {
+      const provider = ConfigProvider.fromEnvRecord(
+        { EMPTY: "" },
+        { preserveEmptyStrings: true }
+      )
+
+      await assertSuccess(provider, ["EMPTY"], ConfigProvider.makeValue(""))
     })
   })
 
@@ -197,15 +322,15 @@ describe("ConfigProvider", () => {
       await assertSuccess(provider, ["A"], ConfigProvider.makeValue("value1"))
     })
 
-    it("missing key returns undefined", async () => {
+    it("missing key returns None", async () => {
       const env = { A: "value1" }
       const provider = ConfigProvider.fromEnv({ env })
-      await assertSuccess(provider, ["missing"], undefined)
+      await assertMissing(provider, ["missing"])
     })
 
     it("does not read inherited environment properties", async () => {
       const provider = ConfigProvider.fromEnv({ env: {} })
-      await assertSuccess(provider, ["constructor"], undefined)
+      await assertMissing(provider, ["constructor"])
     })
 
     it("does not traverse inherited trie properties", async () => {
@@ -223,7 +348,7 @@ describe("ConfigProvider", () => {
       const provider = ConfigProvider.fromEnv({ env })
 
       await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["A", "B"])))
-      await assertSuccess(provider, ["A"], undefined)
+      await assertMissing(provider, ["A"])
       await assertSuccess(provider, ["B"], ConfigProvider.makeValue("value1"))
     })
 
@@ -264,7 +389,7 @@ describe("ConfigProvider", () => {
       const provider = ConfigProvider.fromEnv({ env })
 
       await assertSuccess(provider, ["A"], ConfigProvider.makeArray(2))
-      await assertSuccess(provider, ["A", 0], undefined)
+      await assertMissing(provider, ["A", 0])
       await assertSuccess(provider, ["A", 1], ConfigProvider.makeValue("value1"))
     })
 
@@ -326,7 +451,7 @@ describe("ConfigProvider", () => {
       // max index is 2 => length 3 (sparse is allowed)
       await assertSuccess(provider, ["A"], ConfigProvider.makeArray(3, "root"))
       await assertSuccess(provider, ["A", 0], ConfigProvider.makeValue("value1"))
-      await assertSuccess(provider, ["A", 1], undefined)
+      await assertMissing(provider, ["A", 1])
       await assertSuccess(provider, ["A", 2], ConfigProvider.makeValue("value3"))
     })
 
@@ -390,8 +515,8 @@ describe("ConfigProvider", () => {
       const provider = ConfigProvider.fromEnv({ env })
 
       await assertSuccess(provider, ["A"], ConfigProvider.makeValue("value1"))
-      await assertSuccess(provider, ["A", "B"], undefined)
-      await assertSuccess(provider, ["A_B"], undefined)
+      await assertMissing(provider, ["A", "B"])
+      await assertMissing(provider, ["A_B"])
     })
 
     it("direct lookup and nested lookup both work for the same env var", async () => {
@@ -515,12 +640,12 @@ describe("ConfigProvider", () => {
       })
 
       await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["a", "b", "record", "array"])))
-      await assertSuccess(provider, ["a"], undefined)
+      await assertMissing(provider, ["a"])
       await assertSuccess(provider, ["b"], ConfigProvider.makeValue("value1"))
       await assertSuccess(provider, ["record"], ConfigProvider.makeRecord(new Set(["key"])))
-      await assertSuccess(provider, ["record", "key"], undefined)
+      await assertMissing(provider, ["record", "key"])
       await assertSuccess(provider, ["array"], ConfigProvider.makeArray(1))
-      await assertSuccess(provider, ["array", 0], undefined)
+      await assertMissing(provider, ["array", 0])
     })
 
     it("preserves empty string leaves when requested", async () => {
@@ -546,14 +671,25 @@ describe("ConfigProvider", () => {
       await assertSuccess(provider, ["array", 2], ConfigProvider.makeArray(1))
     })
 
-    it("should return undefined on non-existing paths", async () => {
-      await assertSuccess(provider, ["string", "non-existing"], undefined)
-      await assertSuccess(provider, ["record", "non-existing"], undefined)
-      await assertSuccess(provider, ["array", 3, "non-existing"], undefined)
+    it("should return None on non-existing paths", async () => {
+      await assertMissing(provider, ["string", "non-existing"])
+      await assertMissing(provider, ["record", "non-existing"])
+      await assertMissing(provider, ["array", 3, "non-existing"])
+    })
+
+    it("does not read inherited object properties", async () => {
+      const root = Object.assign(Object.create({ inherited: "value1" }), {
+        own: "value2"
+      })
+      const provider = ConfigProvider.fromUnknown(root)
+
+      await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["own"])))
+      await assertMissing(provider, ["inherited"])
+      await assertSuccess(provider, ["own"], ConfigProvider.makeValue("value2"))
     })
 
     it("null values", async () => {
-      await assertSuccess(provider, ["null"], undefined)
+      await assertMissing(provider, ["null"])
     })
 
     it("number values", async () => {
@@ -569,7 +705,7 @@ describe("ConfigProvider", () => {
     })
 
     it("undefined values", async () => {
-      await assertSuccess(provider, ["undefined"], undefined)
+      await assertMissing(provider, ["undefined"])
     })
 
     it("unknown values", async () => {
@@ -595,12 +731,21 @@ export NODE_ENV=production
       await assertSuccess(provider, ["NODE_ENV"], ConfigProvider.makeValue("production"))
     })
 
-    it("quoting is allowed", async () => {
+    it("supports single, double, and backtick quoted values", async () => {
       const provider = ConfigProvider.fromDotEnvContents(`
-NODE_ENV="production"
+SINGLE='value # one'
+DOUBLE="line 1\\nline 2"
+BACKTICK=\`value # two\`
 `)
-      await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["NODE"])))
-      await assertSuccess(provider, ["NODE_ENV"], ConfigProvider.makeValue("production"))
+      await assertSuccess(provider, ["SINGLE"], ConfigProvider.makeValue("value # one"))
+      await assertSuccess(provider, ["DOUBLE"], ConfigProvider.makeValue("line 1\nline 2"))
+      await assertSuccess(provider, ["BACKTICK"], ConfigProvider.makeValue("value # two"))
+    })
+
+    it("removes inline comments from unquoted values", async () => {
+      const provider = ConfigProvider.fromDotEnvContents("VALUE=value # comment")
+
+      await assertSuccess(provider, ["VALUE"], ConfigProvider.makeValue("value"))
     })
 
     it("objects are supported", async () => {
@@ -620,7 +765,7 @@ A=
 B=value1
 `)
       await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["A", "B"])))
-      await assertSuccess(provider, ["A"], undefined)
+      await assertMissing(provider, ["A"])
       await assertSuccess(provider, ["B"], ConfigProvider.makeValue("value1"))
     })
 
@@ -684,7 +829,7 @@ DB_PASS=$PASSWORD
       const provider = ConfigProvider.fromDotEnvContents(
         `
 PASSWORD="value"
-DB_PASS=$PASSWORD
+DB_PASS=\${PASSWORD}
 `,
         { expandVariables: true }
       )
@@ -693,11 +838,27 @@ DB_PASS=$PASSWORD
       await assertSuccess(provider, ["DB_PASS"], ConfigProvider.makeValue("value"))
     })
 
+    it("expansion defaults are used only for empty or unset variables", async () => {
+      const provider = ConfigProvider.fromDotEnvContents(
+        `
+SET=actual
+EMPTY=
+FROM_SET=\${SET:-fallback}
+FROM_EMPTY=\${EMPTY:-fallback}
+FROM_UNSET=\${UNSET:-fallback}
+`,
+        { expandVariables: true }
+      )
+      await assertSuccess(provider, ["FROM_SET"], ConfigProvider.makeValue("actual"))
+      await assertSuccess(provider, ["FROM_EMPTY"], ConfigProvider.makeValue("fallback"))
+      await assertSuccess(provider, ["FROM_UNSET"], ConfigProvider.makeValue("fallback"))
+    })
+
     it("does not expand missing inherited variables", async () => {
       const provider = ConfigProvider.fromDotEnvContents("VALUE=$constructor", {
         expandVariables: true
       })
-      await assertSuccess(provider, ["VALUE"], undefined)
+      await assertMissing(provider, ["VALUE"])
     })
   })
 
@@ -756,7 +917,7 @@ DB_PASS=$PASSWORD`)
       )
 
       await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["A"])))
-      await assertSuccess(provider, ["A"], undefined)
+      await assertMissing(provider, ["A"])
     })
 
     it("should support `preserveEmptyStrings` option", async () => {
@@ -770,10 +931,27 @@ DB_PASS=$PASSWORD`)
 
       await assertSuccess(provider, ["A"], ConfigProvider.makeValue(""))
     })
+
+    it("fails with the FileSystem error when the file cannot be read", async () => {
+      const error = PlatformError.systemError({
+        module: "FileSystem",
+        _tag: "PermissionDenied",
+        method: "readFileString"
+      })
+      const result = await Effect.runPromise(
+        ConfigProvider.fromDotEnv().pipe(
+          Effect.provide(FileSystem.layerNoop({
+            readFileString: () => Effect.fail(error)
+          })),
+          Effect.result
+        )
+      )
+
+      deepStrictEqual(result, Result.fail(error))
+    })
   })
 
   describe("fromDir", () => {
-    const provider = ConfigProvider.fromDir({ rootPath: "/" })
     const files: Record<string, string> = {
       "/secret": "keepitsafe\n",
       "/SHOUTING": "value",
@@ -785,78 +963,24 @@ DB_PASS=$PASSWORD`)
         if (path in files) {
           return Effect.succeed(files[path])
         }
-        return Effect.fail(
-          PlatformError.systemError({
-            module: "FileSystem",
-            _tag: "NotFound",
-            method: "readFileString"
-          })
-        )
+        return Effect.fail(notFound("readFileString"))
       },
       readDirectory(_path) {
-        // For the test, we only have files, no directories
-        return Effect.fail(
-          PlatformError.systemError({
-            module: "FileSystem",
-            _tag: "NotFound",
-            method: "readDirectory"
-          })
-        )
+        return Effect.fail(notFound("readDirectory"))
       }
     })
     const Platform = Layer.mergeAll(Fs, Path.layer)
-    const SetLayer = ConfigProvider.layer(provider).pipe(
-      Layer.provide(Platform),
-      Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({
-        env: { secret: "fail" }
-      })))
-    )
-    const AddLayer = ConfigProvider.layerAdd(provider).pipe(
-      Layer.provide(Platform),
-      Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({
-        env: {
-          secret: "shh",
-          fallback: "value"
-        }
-      })))
-    )
 
-    it("reads config", async () => {
-      const result = await Effect.runPromise(
-        Effect.gen(function*() {
-          const provider = yield* ConfigProvider.ConfigProvider
-          const secret = yield* provider.load(["secret"])
-          const shouting = yield* provider.load(["SHOUTING"])
-          const integer = yield* provider.load(["integer"])
-          const nestedConfig = yield* provider.load(["nested", "config"])
-
-          return { secret, shouting, integer, nestedConfig }
-        }).pipe(Effect.provide(SetLayer))
-      )
-
-      deepStrictEqual(result.secret, ConfigProvider.makeValue("keepitsafe"))
-      deepStrictEqual(result.shouting, ConfigProvider.makeValue("value"))
-      deepStrictEqual(result.integer, ConfigProvider.makeValue("123"))
-      deepStrictEqual(result.nestedConfig, ConfigProvider.makeValue("hello"))
-
-      const fallback = await Effect.runPromise(
-        Effect.gen(function*() {
-          const provider = yield* ConfigProvider.ConfigProvider
-          return yield* provider.load(["fallback"])
-        }).pipe(Effect.provide(SetLayer))
-      )
-
-      deepStrictEqual(fallback, undefined)
-    })
-
-    it("orElse falls back when fromDir path is missing", async () => {
+    it("reads trimmed file contents at root and nested paths", async () => {
       const provider = await Effect.runPromise(
-        ConfigProvider.fromDir({ rootPath: "/" }).pipe(
-          Effect.map((dir) => dir.pipe(ConfigProvider.orElse(ConfigProvider.fromEnv({ env: { fallback: "value" } })))),
-          Effect.provide(Platform)
-        )
+        ConfigProvider.fromDir({ rootPath: "/" }).pipe(Effect.provide(Platform))
       )
-      await assertSuccess(provider, ["fallback"], ConfigProvider.makeValue("value"))
+
+      await assertSuccess(provider, ["secret"], ConfigProvider.makeValue("keepitsafe"))
+      await assertSuccess(provider, ["SHOUTING"], ConfigProvider.makeValue("value"))
+      await assertSuccess(provider, ["integer"], ConfigProvider.makeValue("123"))
+      await assertSuccess(provider, ["nested", "config"], ConfigProvider.makeValue("hello"))
+      await assertMissing(provider, ["missing"])
     })
 
     it("treats empty files as missing by default", async () => {
@@ -864,24 +988,12 @@ DB_PASS=$PASSWORD`)
         readFileString(path) {
           return path === "/empty"
             ? Effect.succeed("")
-            : Effect.fail(
-              PlatformError.systemError({
-                module: "FileSystem",
-                _tag: "NotFound",
-                method: "readFileString"
-              })
-            )
+            : Effect.fail(notFound("readFileString"))
         },
         readDirectory(path) {
           return path === "/"
             ? Effect.succeed(["empty"])
-            : Effect.fail(
-              PlatformError.systemError({
-                module: "FileSystem",
-                _tag: "NotFound",
-                method: "readDirectory"
-              })
-            )
+            : Effect.fail(notFound("readDirectory"))
         }
       })
       const provider = await Effect.runPromise(
@@ -889,7 +1001,7 @@ DB_PASS=$PASSWORD`)
       )
 
       await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["empty"])))
-      await assertSuccess(provider, ["empty"], undefined)
+      await assertMissing(provider, ["empty"])
     })
 
     it("preserves empty files when requested", async () => {
@@ -897,22 +1009,10 @@ DB_PASS=$PASSWORD`)
         readFileString(path) {
           return path === "/empty"
             ? Effect.succeed("\n")
-            : Effect.fail(
-              PlatformError.systemError({
-                module: "FileSystem",
-                _tag: "NotFound",
-                method: "readFileString"
-              })
-            )
+            : Effect.fail(notFound("readFileString"))
         },
         readDirectory() {
-          return Effect.fail(
-            PlatformError.systemError({
-              module: "FileSystem",
-              _tag: "NotFound",
-              method: "readDirectory"
-            })
-          )
+          return Effect.fail(notFound("readDirectory"))
         }
       })
       const provider = await Effect.runPromise(
@@ -924,64 +1024,19 @@ DB_PASS=$PASSWORD`)
       await assertSuccess(provider, ["empty"], ConfigProvider.makeValue(""))
     })
 
-    it("orElse falls back when fromDir file is empty", async () => {
-      const Fs = FileSystem.layerNoop({
-        readFileString(path) {
-          return path === "/empty"
-            ? Effect.succeed("")
-            : Effect.fail(
-              PlatformError.systemError({
-                module: "FileSystem",
-                _tag: "NotFound",
-                method: "readFileString"
-              })
-            )
-        },
-        readDirectory() {
-          return Effect.fail(
-            PlatformError.systemError({
-              module: "FileSystem",
-              _tag: "NotFound",
-              method: "readDirectory"
-            })
-          )
-        }
-      })
-      const provider = await Effect.runPromise(
-        ConfigProvider.fromDir({ rootPath: "/" }).pipe(
-          Effect.map((dir) => dir.pipe(ConfigProvider.orElse(ConfigProvider.fromUnknown({ empty: "fallback" })))),
-          Effect.provide(Layer.mergeAll(Fs, Path.layer))
-        )
-      )
-
-      await assertSuccess(provider, ["empty"], ConfigProvider.makeValue("fallback"))
-    })
-
     it("reads directory entries as a record", async () => {
       const dirs: Record<string, ReadonlyArray<string>> = {
         "/app": ["host", "port"]
       }
       const Fs = FileSystem.layerNoop({
         readFileString() {
-          return Effect.fail(
-            PlatformError.systemError({
-              module: "FileSystem",
-              _tag: "NotFound",
-              method: "readFileString"
-            })
-          )
+          return Effect.fail(notFound("readFileString"))
         },
         readDirectory(path) {
           const entries = dirs[path]
           return entries
             ? Effect.succeed([...entries])
-            : Effect.fail(
-              PlatformError.systemError({
-                module: "FileSystem",
-                _tag: "NotFound",
-                method: "readDirectory"
-              })
-            )
+            : Effect.fail(notFound("readDirectory"))
         }
       })
       const provider = await Effect.runPromise(
@@ -990,21 +1045,114 @@ DB_PASS=$PASSWORD`)
       await assertSuccess(provider, ["app"], ConfigProvider.makeRecord(new Set(["host", "port"])))
     })
 
-    it("layerAdd uses fallback", async () => {
-      const result = await Effect.runPromise(
-        Effect.gen(function*() {
-          const provider = yield* ConfigProvider.ConfigProvider
-          const secret = yield* provider.load(["secret"])
-          const integer = yield* provider.load(["integer"])
-          const fallback = yield* provider.load(["fallback"])
-
-          return { secret, integer, fallback }
-        }).pipe(Effect.provide(AddLayer))
+    it("wraps non-NotFound failures in SourceError", async () => {
+      const cause = PlatformError.systemError({
+        module: "FileSystem",
+        _tag: "PermissionDenied",
+        method: "readFileString"
+      })
+      const Fs = FileSystem.layerNoop({
+        readFileString: () => Effect.fail(cause),
+        readDirectory: () => Effect.fail(notFound("readDirectory"))
+      })
+      const provider = await Effect.runPromise(
+        ConfigProvider.fromDir({ rootPath: "/config" }).pipe(
+          Effect.provide(Layer.mergeAll(Fs, Path.layer))
+        )
       )
 
-      deepStrictEqual(result.secret, ConfigProvider.makeValue("shh"))
-      deepStrictEqual(result.integer, ConfigProvider.makeValue("123"))
-      deepStrictEqual(result.fallback, ConfigProvider.makeValue("value"))
+      await assertFailure(
+        provider,
+        ["secret"],
+        new ConfigProvider.SourceError({
+          message: "Failed to read file at /config/secret",
+          cause
+        })
+      )
+    })
+  })
+
+  describe("layers", () => {
+    const loadFromContext = (path: ConfigProvider.Path) =>
+      Effect.gen(function*() {
+        const provider = yield* ConfigProvider.ConfigProvider
+        return yield* provider.load(path)
+      })
+
+    it("layer installs a provider", async () => {
+      const result = await Effect.runPromise(
+        loadFromContext(["KEY"]).pipe(
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ KEY: "value" })))
+        )
+      )
+
+      deepStrictEqual(result, ConfigProvider.makeValue("value"))
+    })
+
+    it("layer accepts an Effect that produces a provider", async () => {
+      const result = await Effect.runPromise(
+        loadFromContext(["KEY"]).pipe(
+          Effect.provide(ConfigProvider.layer(Effect.succeed(ConfigProvider.fromUnknown({ KEY: "value" }))))
+        )
+      )
+
+      deepStrictEqual(result, ConfigProvider.makeValue("value"))
+    })
+
+    it("layerAdd adds an Effect-produced provider as fallback", async () => {
+      const current = ConfigProvider.fromUnknown({
+        CURRENT: "current",
+        SHARED: "current"
+      })
+      const fallback = ConfigProvider.fromUnknown({
+        FALLBACK: "fallback",
+        SHARED: "fallback"
+      })
+      const Added = ConfigProvider.layerAdd(Effect.succeed(fallback)).pipe(
+        Layer.provide(ConfigProvider.layer(current))
+      )
+
+      const result = await Effect.runPromise(
+        Effect.all({
+          current: loadFromContext(["CURRENT"]),
+          fallback: loadFromContext(["FALLBACK"]),
+          shared: loadFromContext(["SHARED"])
+        }).pipe(Effect.provide(Added))
+      )
+
+      deepStrictEqual(result, {
+        current: ConfigProvider.makeValue("current"),
+        fallback: ConfigProvider.makeValue("fallback"),
+        shared: ConfigProvider.makeValue("current")
+      })
+    })
+
+    it("layerAdd can install the added provider as primary", async () => {
+      const current = ConfigProvider.fromUnknown({
+        CURRENT: "current",
+        SHARED: "current"
+      })
+      const primary = ConfigProvider.fromUnknown({
+        PRIMARY: "primary",
+        SHARED: "primary"
+      })
+      const Added = ConfigProvider.layerAdd(primary, { asPrimary: true }).pipe(
+        Layer.provide(ConfigProvider.layer(current))
+      )
+
+      const result = await Effect.runPromise(
+        Effect.all({
+          current: loadFromContext(["CURRENT"]),
+          primary: loadFromContext(["PRIMARY"]),
+          shared: loadFromContext(["SHARED"])
+        }).pipe(Effect.provide(Added))
+      )
+
+      deepStrictEqual(result, {
+        current: ConfigProvider.makeValue("current"),
+        primary: ConfigProvider.makeValue("primary"),
+        shared: ConfigProvider.makeValue("primary")
+      })
     })
   })
 })

@@ -69,9 +69,8 @@ export interface ParameterGroup extends Resource<
  * Parameter groups are free and provision instantly. Parameters not listed
  * keep their engine defaults; removing a parameter from `parameters` resets
  * it to the default.
- * @resource
- * @section Creating a Parameter Group
- * @example Parameter Group with an Eviction Policy
+ * ### Creating a Parameter Group
+ * **Example:** Parameter Group with an Eviction Policy
  * ```typescript
  * const params = yield* ParameterGroup("CacheParams", {
  *   family: "memorydb_valkey7",
@@ -83,6 +82,8 @@ export interface ParameterGroup extends Resource<
  *   parameterGroupName: params.parameterGroupName,
  * });
  * ```
+ *
+ * @resource
  */
 export const ParameterGroup = Resource<ParameterGroup>(
   "AWS.MemoryDB.ParameterGroup",

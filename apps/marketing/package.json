@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
+    "stage:install-scripts": "node scripts/stage-install-scripts.mjs",
+    "dev": "node scripts/stage-install-scripts.mjs && astro dev",
+    "build": "node scripts/stage-install-scripts.mjs && astro build",
     "preview": "astro preview",
     "typecheck": "astro check"
   },
@@ -17,6 +18,6 @@
   "devDependencies": {
     "@astrojs/check": "^0.9.7",
     "@vercel/config": "^0.3.0",
-    "typescript": "catalog:"
+    "typescript": "~6.0.3"
   }
 }

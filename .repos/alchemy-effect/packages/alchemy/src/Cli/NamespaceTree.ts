@@ -5,6 +5,7 @@ import type {
   ActionApply,
   ActionDelete,
 } from "../Plan.ts";
+import type { ProviderMode } from "../ProviderMode.ts";
 
 export interface TreeBinding {
   sid: string;
@@ -117,6 +118,16 @@ export interface FlattenedItem {
   hasChildren?: boolean;
   /** For task items, the Task's Type (e.g. "Sync"). */
   actionType?: string;
+  /**
+   * For resource items, the {@link ProviderMode} the node's provider was
+   * resolved for. `undefined` for mode-agnostic providers.
+   */
+  providerMode?: ProviderMode;
+  /**
+   * For resource items planned as a mode-switch replacement, the mode the
+   * old generation was created with (always differs from `providerMode`).
+   */
+  fromProviderMode?: ProviderMode;
 }
 
 export function flattenTree(
@@ -168,6 +179,14 @@ const flattenNamespace = (
       action: resource.action,
       resourceType: resource.resource.Type,
       bindingCount: resource.bindings.length,
+      providerMode: resource.mode,
+      fromProviderMode:
+        resource.action === "replace" &&
+        resource.mode !== undefined &&
+        resource.state.providerMode !== undefined &&
+        resource.state.providerMode !== resource.mode
+          ? resource.state.providerMode
+          : undefined,
     });
     for (const binding of [...resource.bindings].sort((a, b) =>
       a.sid.localeCompare(b.sid),

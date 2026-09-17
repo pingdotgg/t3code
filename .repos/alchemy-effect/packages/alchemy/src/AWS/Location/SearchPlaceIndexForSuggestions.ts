@@ -19,9 +19,8 @@ export interface SearchPlaceIndexForSuggestionsRequest extends Omit<
  * `geo:SearchPlaceIndexForSuggestions`), scoped to one {@link PlaceIndex}. Provide the implementation with
  * `Effect.provide(AWS.Location.SearchPlaceIndexForSuggestionsHttp)`.
  *
- * @binding
- * @section Searching Places
- * @example Autocomplete a Query
+ * ### Searching Places
+ * **Example:** Autocomplete a Query
  * ```typescript
  * const suggest = yield* Location.SearchPlaceIndexForSuggestions(index);
  *
@@ -32,6 +31,8 @@ export interface SearchPlaceIndexForSuggestionsRequest extends Omit<
  * });
  * // results.Results → [{ Text, PlaceId }, …]
  * ```
+ *
+ * @binding
  */
 export interface SearchPlaceIndexForSuggestions extends Binding.Service<
   SearchPlaceIndexForSuggestions,

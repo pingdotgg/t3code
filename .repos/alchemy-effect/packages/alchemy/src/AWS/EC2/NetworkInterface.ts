@@ -149,9 +149,8 @@ export interface NetworkInterface extends Resource<
  * Changing `subnetId` or the primary `privateIpAddress` replaces the interface.
  * `description`, `securityGroupIds`, and `sourceDestCheck` are applied in place.
  *
- * @resource
- * @section Creating a Network Interface
- * @example Basic ENI
+ * ### Creating a Network Interface
+ * **Example:** Basic ENI
  * ```typescript
  * const eni = yield* AWS.EC2.NetworkInterface("AppEni", {
  *   subnetId: subnet.subnetId,
@@ -164,8 +163,8 @@ export interface NetworkInterface extends Resource<
  * instance replacement — detach it from a failed instance and attach it to a
  * new one to keep the same address.
  *
- * @section Fixed Private IP
- * @example ENI with a Fixed Private IP
+ * ### Fixed Private IP
+ * **Example:** ENI with a Fixed Private IP
  * ```typescript
  * const eni = yield* AWS.EC2.NetworkInterface("FixedIpEni", {
  *   subnetId: subnet.subnetId,
@@ -177,8 +176,8 @@ export interface NetworkInterface extends Resource<
  * Pinning `privateIpAddress` gives the interface a predictable address —
  * useful for appliances and services other resources reference by IP.
  *
- * @section Forwarding Appliances
- * @example ENI with Source/Dest Check Disabled
+ * ### Forwarding Appliances
+ * **Example:** ENI with Source/Dest Check Disabled
  * ```typescript
  * const eni = yield* AWS.EC2.NetworkInterface("NatEni", {
  *   subnetId: subnet.subnetId,
@@ -189,6 +188,8 @@ export interface NetworkInterface extends Resource<
  *
  * Disable `sourceDestCheck` when the interface belongs to a NAT instance,
  * firewall, or router that forwards packets not addressed to itself.
+ *
+ * @resource
  */
 export const NetworkInterface = Resource<NetworkInterface>(
   "AWS.EC2.NetworkInterface",

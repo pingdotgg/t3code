@@ -131,6 +131,16 @@ const file = {
   fileUri: "file:///documents/report.pdf",
 } as const satisfies DraftComposerAttachment;
 
+/** A picture chosen through the document picker: typed `file`, with no usable mime. */
+const documentPickedImage = {
+  id: "file-2",
+  type: "file",
+  name: "photo.png",
+  mimeType: "application/octet-stream",
+  sizeBytes: 3,
+  fileUri: "file:///documents/photo.png",
+} as const satisfies DraftComposerAttachment;
+
 describe("validateDraftFileAttachments", () => {
   it("allows legacy image-only sends without server config", () => {
     expect(validateDraftFileAttachments({ attachments: [image], serverConfig: null })).toBeNull();
@@ -325,8 +335,39 @@ describe("prepareTurnAttachments", () => {
     ]);
   });
 
+  it("sends a document-picked picture with the mime it was uploaded under", async () => {
+    // The upload normalises `application/octet-stream` to `image/png`; the message reference
+    // has to agree, or `ChatImageAttachment` rejects the turn and nothing sends.
+    const prepared = await prepareTurnAttachments({
+      environmentId,
+      attachments: [documentPickedImage],
+    });
+
+    expect(mocks.upload).toHaveBeenCalledWith(
+      "file:///documents/photo.png",
+      "https://environment.example/api/attachments/upload/signed",
+      expect.objectContaining({ headers: { "Content-Type": "image/png" } }),
+    );
+    expect(prepared.status).toBe("ready");
+    if (prepared.status !== "ready") return;
+    expect(prepared.attachments[0]).toEqual({
+      type: "image",
+      id: MINTED_ID,
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    });
+  });
+
   it("uploads generic file bytes directly and keeps mixed attachment order", async () => {
-    const prepared = await prepareTurnAttachments({ environmentId, attachments: [file, image] });
+    const pastedFile = {
+      ...file,
+      source: { _tag: "pasted-text" as const },
+    };
+    const prepared = await prepareTurnAttachments({
+      environmentId,
+      attachments: [pastedFile, image],
+    });
 
     expect(mocks.upload).toHaveBeenCalledWith(
       "file:///documents/report.pdf",
@@ -345,11 +386,12 @@ describe("prepareTurnAttachments", () => {
       name: "report.pdf",
       mimeType: "application/pdf",
       sizeBytes: 42,
+      source: { _tag: "pasted-text" },
     });
     expect(prepared.attachments[1]?.type).toBe("image");
     expect(prepared.pendingAttachmentIds).toEqual([MINTED_ID]);
     expect(prepared.draftAttachments[0]).toEqual({
-      ...file,
+      ...pastedFile,
       uploadedAttachmentId: MINTED_ID,
       uploadEnvironmentId: environmentId,
     });
@@ -427,6 +469,33 @@ describe("prepareTurnAttachments", () => {
         uploadEnvironmentId: environmentId,
       },
       image,
+    ]);
+  });
+
+  it("keeps the uploaded id when a document-picked picture uploads as an image", () => {
+    // The draft stays `type: "file"` while the upload is promoted to `"image"`. Comparing the
+    // two types drops the id, so a later send re-uploads the bytes and the draft chip points at
+    // a local id nobody can resolve.
+    expect(
+      withUploadedMobileAttachmentReferences({
+        environmentId,
+        attachments: [documentPickedImage],
+        uploadedAttachments: [
+          {
+            type: "image",
+            id: "pending-promoted-png",
+            name: documentPickedImage.name,
+            mimeType: "image/png",
+            sizeBytes: documentPickedImage.sizeBytes,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        ...documentPickedImage,
+        uploadedAttachmentId: "pending-promoted-png",
+        uploadEnvironmentId: environmentId,
+      },
     ]);
   });
 

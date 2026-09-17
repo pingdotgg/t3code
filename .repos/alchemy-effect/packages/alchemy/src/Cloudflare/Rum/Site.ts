@@ -111,11 +111,8 @@ export type Site = Resource<
  * `zoneTag` identity models (or changing `zoneTag`) triggers a replacement.
  *
  * Web Analytics is available on free accounts.
- * @resource
- * @product RUM
- * @category Observability & Analytics
- * @section Measuring a hostname
- * @example Gray-clouded site (manual snippet embed)
+ * ### Measuring a hostname
+ * **Example:** Gray-clouded site (manual snippet embed)
  * ```typescript
  * const site = yield* Cloudflare.Rum.Site("Analytics", {
  *   host: "example.com",
@@ -125,8 +122,8 @@ export type Site = Resource<
  * const snippet = site.snippet;
  * ```
  *
- * @section Measuring a zone
- * @example Orange-clouded site with automatic snippet injection
+ * ### Measuring a zone
+ * **Example:** Orange-clouded site with automatic snippet injection
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("Zone", { name: "example.com" });
  *
@@ -136,7 +133,7 @@ export type Site = Resource<
  * });
  * ```
  *
- * @example Skip injection for EU visitors
+ * **Example:** Skip injection for EU visitors
  * ```typescript
  * yield* Cloudflare.Rum.Site("ZoneAnalytics", {
  *   zoneTag: zone.zoneId,
@@ -146,6 +143,10 @@ export type Site = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/web-analytics/
+ *
+ * @resource
+ * @product RUM
+ * @category Observability & Analytics
  */
 export const Site = Resource<Site>(TypeId);
 
@@ -327,10 +328,17 @@ const findSite = (
     Stream.runCollect,
     Effect.map((chunk) =>
       Array.from(chunk)
-        .filter(
-          (site) =>
-            (host !== undefined && site.host === host) ||
-            (zoneTag !== undefined && site.ruleset?.zoneTag === zoneTag),
+        .filter((site) =>
+          host !== undefined
+            ? site.host === host
+            : // A zone-identity site has no `host`. Host-scoped sites on the
+              // zone's subdomains ALSO carry `ruleset.zoneTag`, so a zone
+              // probe must only match true zone sites — otherwise an
+              // unrelated host site satisfies the probe and the engine
+              // refuses adoption with OwnedBySomeoneElse.
+              zoneTag !== undefined &&
+              !site.host &&
+              site.ruleset?.zoneTag === zoneTag,
         )
         .sort((a, b) => (a.created ?? "").localeCompare(b.created ?? ""))
         .at(0),

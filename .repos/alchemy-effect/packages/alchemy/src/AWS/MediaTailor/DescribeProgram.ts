@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * account-level and grants `mediatailor:DescribeProgram` on `*`. Provide the
  * implementation with `Effect.provide(AWS.MediaTailor.DescribeProgramHttp)`.
  *
- * @binding
- * @section Channel Assembly
- * @example Read a scheduled program
+ * ### Channel Assembly
+ * **Example:** Read a scheduled program
  * ```typescript
  * const describeProgram = yield* AWS.MediaTailor.DescribeProgram();
  *
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   ProgramName: `episode-${id}`,
  * });
  * ```
+ *
+ * @binding
  */
 export interface DescribeProgram extends Binding.Service<
   DescribeProgram,
