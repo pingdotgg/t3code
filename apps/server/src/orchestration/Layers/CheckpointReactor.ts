@@ -251,7 +251,7 @@ const make = Effect.gen(function* () {
           Effect.logWarning("checkpoint capture previous ref lookup failed", {
             threadId: input.threadId,
             checkpointRef: fromCheckpointRef,
-            detail: error.message,
+            category: error._tag,
           }).pipe(Effect.as(false)),
         ),
       );
