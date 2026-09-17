@@ -329,7 +329,7 @@ export const ChatHeader = memo(function ChatHeader({
             descendantThreadIds={[activeThreadId]}
           />
         ) : null}
-        <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
+        <WorkspaceBreadcrumbItem current className="min-w-10 flex-auto">
           {renamingTitle !== null ? (
             <input
               autoFocus
