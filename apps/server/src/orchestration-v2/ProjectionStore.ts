@@ -6,6 +6,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
   OrchestrationV2Subagent,
@@ -451,6 +452,16 @@ export function emptyProjection(
   };
 }
 
+// A future queued provider has a reserved thread record but is not active until delivery.
+function isQueuedProviderThreadPlaceholder(providerThread: OrchestrationV2ProviderThread): boolean {
+  return (
+    providerThread.status === "not_loaded" &&
+    providerThread.firstRunOrdinal === null &&
+    providerThread.nativeThreadRef === null &&
+    providerThread.providerSessionId === null
+  );
+}
+
 export function applyToProjection(
   projection: OrchestrationV2ThreadProjection,
   event: OrchestrationV2DomainEvent,
@@ -547,7 +558,7 @@ export function applyToProjection(
         ...base,
         thread:
           event.payload.appThreadId === base.thread.id &&
-          !(event.payload.status === "not_loaded" && event.payload.firstRunOrdinal === null)
+          !isQueuedProviderThreadPlaceholder(event.payload)
             ? {
                 ...base.thread,
                 activeProviderThreadId: event.payload.id,
@@ -1833,7 +1844,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
             if (
               event.payload.appThreadId !== null &&
-              !(event.payload.status === "not_loaded" && event.payload.firstRunOrdinal === null)
+              !isQueuedProviderThreadPlaceholder(event.payload)
             ) {
               const threadRows = yield* sql<PayloadRow>`
                 SELECT payload_json
