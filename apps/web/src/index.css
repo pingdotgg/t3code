@@ -2305,3 +2305,105 @@ code {
     visibility: visible;
   }
 }
+
+/* Rich text composer (Tiptap). The stored prompt stays markdown; only the
+   surface renders styled text. Markers (** * ` ~~) appear as non-editable
+   widgets while the caret is on styled text. */
+.composer-tiptap {
+  position: relative;
+}
+
+.composer-tiptap p {
+  margin: 0;
+}
+
+.composer-tiptap:focus,
+.composer-tiptap .ProseMirror:focus {
+  outline: none;
+}
+
+.composer-tiptap code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: color-mix(in oklab, var(--muted-foreground) 12%, transparent);
+  border-radius: 0.3em;
+  padding: 0.05em 0.25em;
+}
+
+.composer-rich-marker {
+  color: var(--muted-foreground);
+  opacity: 0.75;
+  font-weight: 400;
+  font-style: normal;
+  text-decoration: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Selected chips (node selection from arrowing into or clicking a chip). */
+.composer-tiptap .ProseMirror-selectednode {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+.composer-tiptap .composer-chip-range-selected {
+  position: relative;
+}
+
+.composer-tiptap.ProseMirror-focused .composer-chip-range-selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: Highlight;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* Rich-text task lists render as real checkboxes. Tiptap's TaskItem NodeView
+   builds the <li> imperatively with only a data-checked attribute (no
+   data-type), so items are targeted that way. Indentation comes from list
+   nesting (two spaces per level from Tab), matching the stored Markdown. */
+.composer-tiptap ul[data-type="taskList"] {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.composer-tiptap ul[data-type="taskList"] ul[data-type="taskList"] {
+  padding-left: 1.375rem;
+}
+
+.composer-tiptap li[data-checked] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+}
+
+.composer-tiptap li[data-checked] > label {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: 1lh;
+  cursor: pointer;
+}
+
+.composer-tiptap li[data-checked] > label input[type="checkbox"] {
+  display: block;
+  margin: 0;
+  width: 0.95rem;
+  height: 0.95rem;
+  cursor: pointer;
+}
+
+.composer-tiptap li[data-checked] > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composer-tiptap li[data-checked] > div > p {
+  margin: 0;
+}

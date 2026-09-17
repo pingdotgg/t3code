@@ -4,9 +4,11 @@ import {
   type RuntimeRequestId,
 } from "@t3tools/contracts";
 import { memo } from "react";
-import { TriangleAlertIcon } from "lucide-react";
+import { EllipsisIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ComposerPendingApprovalActionsProps {
   requestId: RuntimeRequestId;
@@ -19,7 +21,6 @@ interface ComposerPendingApprovalActionsProps {
   ) => Promise<unknown>;
 }
 
-const APPROVAL_ACTION_CLASS_NAME = "font-normal";
 const DEFAULT_APPROVAL_OPTIONS = [
   { decision: "cancel", label: "Cancel" },
   { decision: "decline", label: "Decline" },
@@ -43,21 +44,12 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
 
   return (
     <>
-      {options.map((option) => {
+      {primaryOptions.map((option) => {
         const button = (
           <Button
             key={option.decision}
-            size="micro"
-            variant="ghost-muted"
-            className={`${APPROVAL_ACTION_CLASS_NAME}${
-              option.decision === "decline"
-                ? " text-destructive-foreground [:hover,[data-pressed]]:text-destructive-foreground"
-                : option.decision === "accept"
-                  ? " text-foreground"
-                  : option.warning
-                    ? " text-warning"
-                    : ""
-            }`}
+            size="xs"
+            variant={option.decision === "accept" ? "default" : "outline"}
             disabled={isResponding || !canRespond}
             aria-description={option.warning}
             onClick={() => void onRespondToApproval(requestId, option.decision)}
@@ -66,8 +58,6 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             <span className="max-w-40 truncate">{option.label}</span>
           </Button>
         );
-        // A provider caution, such as a prompt injection warning on "allow
-        // always", rides along as a tooltip so the row stays one line.
         return option.warning ? (
           <Tooltip key={option.decision}>
             <TooltipTrigger render={button} />
@@ -79,6 +69,48 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
           button
         );
       })}
+      {moreOptions.length > 0 ? (
+        <Menu>
+          <MenuTrigger
+            disabled={isResponding}
+            render={<Button size="icon-xs" variant="outline" aria-label="More approval options" />}
+          >
+            <EllipsisIcon />
+          </MenuTrigger>
+          <MenuPopup
+            {...composerFloatingLayerProps}
+            side="top"
+            align="end"
+            className="w-56 max-w-[calc(100vw-2rem)]"
+          >
+            {moreOptions.map((option) => {
+              const item = (
+                <MenuItem
+                  key={option.decision}
+                  disabled={isResponding}
+                  aria-description={option.warning}
+                  onClick={() => void onRespondToApproval(requestId, option.decision)}
+                  variant="ghost"
+                  className="mb-1 last:mb-0"
+                >
+                  {option.warning ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
+                  <span className="min-w-0 whitespace-normal wrap-break-word">{option.label}</span>
+                </MenuItem>
+              );
+              return option.warning ? (
+                <Tooltip key={option.decision}>
+                  <TooltipTrigger render={item} />
+                  <TooltipPopup side="top" className="max-w-64 text-xs leading-snug">
+                    {option.warning}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : (
+                item
+              );
+            })}
+          </MenuPopup>
+        </Menu>
+      ) : null}
     </>
   );
 });
