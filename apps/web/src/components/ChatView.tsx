@@ -8817,7 +8817,7 @@ export default function ChatView(props: ChatViewProps) {
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
-        ...(ctxSelectedModel && !shouldQueueBehindActiveRun
+        ...(ctxSelectedModel && phase !== "running"
           ? { modelSelection: ctxSelectedModelSelection }
           : {}),
         ...(localCheckoutBranchMismatch

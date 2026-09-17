@@ -19,6 +19,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -28,6 +29,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ClaudeProviderCapabilitiesV2 } from "../Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
+import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "../Adapters/CursorAdapterV2.ts";
 import { layer as eventSinkLayer } from "../EventSink.ts";
 import { EventSinkV2 } from "../EventSink.ts";
@@ -58,6 +60,7 @@ import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
   CURSOR_MODEL_SELECTION,
+  GROK_MODEL_SELECTION,
 } from "./fixtures/shared.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
@@ -70,6 +73,7 @@ const returnPrompt = "Respond with exactly: codex after return";
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const GROK_DRIVER = ProviderDriverKind.make("acp");
 
 interface CapturedTurn {
   readonly driver: ProviderDriverKind;
@@ -309,6 +313,217 @@ const waitForIdle = Effect.fn("ProviderSwitchTest.waitForIdle")(function* (
 });
 
 describe("orchestration v2 provider switching", () => {
+  it.live("hands completed Grok steering context to earlier queued Codex and later Claude", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("queued-steer-provider-switch");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const registryLayer = makeProviderAdapterRegistryLayer([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 2: "Codex queued response" },
+            capturedTurns,
+            holdFirstTurn: started,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 3: "Claude queued response" },
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: GROK_MODEL_SELECTION.instanceId,
+            driver: GROK_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            modelSelection: GROK_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: "Grok steered response" },
+            capturedTurns,
+          }),
+        ]);
+        const queuedThreadId = ThreadId.make("thread:queued-steer-provider-switch");
+        const projection = yield* Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          const worker = yield* OrchestrationEffectWorkerV2;
+          const eventSink = yield* EventSinkV2;
+          const dispatch = (
+            key: string,
+            modelSelection: ModelSelection,
+            dispatchMode: Extract<
+              OrchestrationV2Command,
+              { readonly type: "message.dispatch" }
+            >["dispatchMode"],
+          ) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:queued-steer-provider-switch:${key}`),
+              threadId: queuedThreadId,
+              messageId: MessageId.make(`message:queued-steer-provider-switch:${key}`),
+              text: `Prompt ${key}`,
+              attachments: [],
+              modelSelection,
+              dispatchMode,
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:queued-steer-provider-switch:create"),
+            threadId: queuedThreadId,
+            projectId: ProjectId.make("project:queued-steer-provider-switch"),
+            title: "Queued steer provider switch",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* dispatch("first", CODEX_MODEL_SELECTION, { type: "start_immediately" });
+          yield* Deferred.await(started);
+          yield* worker.drain();
+          yield* dispatch("codex-queued", CODEX_MODEL_SELECTION, { type: "queue_after_active" });
+          yield* dispatch("claude-queued", CLAUDE_MODEL_SELECTION, { type: "queue_after_active" });
+          const beforeSteer = yield* orchestrator.getThreadProjection(queuedThreadId);
+          assert.deepEqual(
+            beforeSteer.runs.map((run) => run.status),
+            ["running", "queued", "queued"],
+          );
+          assert.equal(beforeSteer.thread.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
+          assert.lengthOf(beforeSteer.contextHandoffs, 0);
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:queued-steer-provider-switch:first-turn-running"),
+                type: "provider-turn.updated",
+                threadId: queuedThreadId,
+                runId: beforeSteer.runs[0]!.id,
+                nodeId: beforeSteer.runs[0]!.rootNodeId!,
+                driver: CODEX_DRIVER,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: now,
+                payload: {
+                  id: ProviderTurnId.make("provider-turn:queued-steer-provider-switch:first"),
+                  providerThreadId: beforeSteer.runs[0]!.providerThreadId!,
+                  nodeId: beforeSteer.runs[0]!.rootNodeId!,
+                  runAttemptId: beforeSteer.runs[0]!.activeAttemptId!,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt: now,
+                  completedAt: null,
+                },
+              },
+            ],
+          });
+          const queuedClaudeCompleted = yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.event.type === "run.updated" &&
+                event.event.runId === beforeSteer.runs[2]?.id &&
+                event.event.payload.status === "completed",
+            ),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          yield* dispatch("grok-steer", GROK_MODEL_SELECTION, {
+            type: "steer_active",
+            targetRunId: beforeSteer.runs[0]!.id,
+          });
+          const afterSteer = yield* orchestrator.getThreadProjection(queuedThreadId);
+          const interruptedTurn = afterSteer.providerTurns.find(
+            (turn) => turn.runAttemptId === beforeSteer.runs[0]?.activeAttemptId,
+          )!;
+          const interruptedAttempt = afterSteer.attempts.find(
+            (attempt) => attempt.id === beforeSteer.runs[0]?.activeAttemptId,
+          )!;
+          const interruptedAt = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:queued-steer-provider-switch:first-turn-interrupted"),
+                type: "provider-turn.updated",
+                threadId: queuedThreadId,
+                runId: beforeSteer.runs[0]!.id,
+                nodeId: beforeSteer.runs[0]!.rootNodeId!,
+                driver: CODEX_DRIVER,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: interruptedAt,
+                payload: {
+                  ...interruptedTurn,
+                  status: "interrupted",
+                  completedAt: interruptedAt,
+                },
+              },
+              {
+                id: EventId.make("event:queued-steer-provider-switch:first-attempt-interrupted"),
+                type: "run-attempt.updated",
+                threadId: queuedThreadId,
+                runId: beforeSteer.runs[0]!.id,
+                nodeId: beforeSteer.runs[0]!.rootNodeId!,
+                providerInstanceId: CODEX_MODEL_SELECTION.instanceId,
+                occurredAt: interruptedAt,
+                payload: {
+                  ...interruptedAttempt,
+                  status: "interrupted",
+                  completedAt: interruptedAt,
+                },
+              },
+            ],
+          });
+          yield* worker.drain();
+          yield* Fiber.join(queuedClaudeCompleted);
+          return yield* orchestrator.getThreadProjection(queuedThreadId);
+        }).pipe(
+          Effect.provide(
+            makeOrchestratorV2ReplayLayerWithRegistry(
+              {
+                name: "queued-steer-provider-switch",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              registryLayer,
+            ),
+          ),
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => [run.providerInstanceId, run.status]),
+          [
+            [GROK_MODEL_SELECTION.instanceId, "completed"],
+            [CODEX_MODEL_SELECTION.instanceId, "completed"],
+            [CLAUDE_MODEL_SELECTION.instanceId, "completed"],
+          ],
+        );
+        const turns = yield* Ref.get(capturedTurns);
+        assert.deepEqual(
+          turns.map((turn) => turn.driver),
+          [CODEX_DRIVER, GROK_DRIVER, CODEX_DRIVER, CLAUDE_DRIVER],
+        );
+        assert.include(turns[2]?.text ?? "", "Grok steered response");
+        assert.include(turns[3]?.text ?? "", "Grok steered response");
+        assert.include(turns[3]?.text ?? "", "Codex queued response");
+        assert.deepEqual(
+          projection.contextHandoffs.map((handoff) => handoff.targetRunId),
+          [projection.runs[0]?.id, projection.runs[1]?.id, projection.runs[2]?.id],
+        );
+      }),
+    ),
+  );
+
   it.live("resumes a queued account switch without requiring a portable handoff", () =>
     Effect.scoped(
       Effect.gen(function* () {

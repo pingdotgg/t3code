@@ -575,6 +575,15 @@ function rootProviderThreadsForProvider(
     );
 }
 
+function lastCompletedRunForProviderThread(
+  projection: OrchestrationV2ThreadProjection,
+  providerThreadId: OrchestrationV2ProviderThread["id"],
+): OrchestrationV2Run | undefined {
+  return projection.runs.findLast(
+    (run) => run.status === "completed" && run.providerThreadId === providerThreadId,
+  );
+}
+
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
@@ -988,6 +997,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
       const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
+      const targetLastCompletedRun = lastCompletedRunForProviderThread(
+        projection,
+        queuedProviderThread.id,
+      );
       const coveredRuns =
         canResumeAcrossInstances ||
         latestCompletedRun === undefined ||
@@ -996,7 +1009,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : projection.runs.filter(
               (run) =>
                 run.status === "completed" &&
-                run.ordinal > (queuedProviderThread.lastRunOrdinal ?? 0) &&
+                run.ordinal > (targetLastCompletedRun?.ordinal ?? 0) &&
                 run.ordinal <= latestCompletedRun.ordinal,
             );
       const needsFullContext = deliveryProviderThread.nativeThreadRef === null;
@@ -1244,16 +1257,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     targetThreadId: threadId,
                     sourcePoint: contextSourcePointForRun(projection, latestCompletedRun),
                     basePoint:
-                      needsFullContext || queuedProviderThread.lastRunOrdinal === null
+                      needsFullContext || targetLastCompletedRun === undefined
                         ? null
-                        : (() => {
-                            const baseRun = projection.runs.find(
-                              (run) => run.ordinal === queuedProviderThread.lastRunOrdinal,
-                            );
-                            return baseRun === undefined
-                              ? null
-                              : contextSourcePointForRun(projection, baseRun);
-                          })(),
+                        : contextSourcePointForRun(projection, targetLastCompletedRun),
                     sourceProviderInstanceId: latestCompletedRun.providerInstanceId,
                     targetProviderInstanceId: queuedRun.providerInstanceId,
                     targetRunId: queuedRun.id,
@@ -4676,6 +4682,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               );
       const requiresFullProviderSwitchContext =
         isProviderSwitch && pendingMergeBackTransfer !== undefined;
+      const targetLastCompletedRun =
+        targetProviderThread === undefined
+          ? undefined
+          : lastCompletedRunForProviderThread(projection, targetProviderThread.id);
       const providerSwitchCoveredRuns =
         !isProviderSwitch || canResumeAcrossInstances || latestCompletedRun === undefined
           ? []
@@ -4685,7 +4695,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 run.ordinal >
                   (requiresFullProviderSwitchContext
                     ? 0
-                    : (targetProviderThread?.lastRunOrdinal ?? 0)) &&
+                    : (targetLastCompletedRun?.ordinal ?? 0)) &&
                 run.ordinal <= latestCompletedRun.ordinal,
             );
       const providerSwitchItems =
@@ -5174,18 +5184,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           targetThreadId: command.threadId,
           sourcePoint: contextSourcePointForRun(projection, latestCompletedRun),
           basePoint:
-            requiresFullProviderSwitchContext ||
-            targetProviderThread?.lastRunOrdinal === null ||
-            targetProviderThread?.lastRunOrdinal === undefined
+            requiresFullProviderSwitchContext || targetLastCompletedRun === undefined
               ? null
-              : (() => {
-                  const baseRun = projection.runs.find(
-                    (run) => run.ordinal === targetProviderThread.lastRunOrdinal,
-                  );
-                  return baseRun === undefined
-                    ? null
-                    : contextSourcePointForRun(projection, baseRun);
-                })(),
+              : contextSourcePointForRun(projection, targetLastCompletedRun),
           sourceProviderInstanceId: latestCompletedRun.providerInstanceId,
           targetProviderInstanceId: modelSelection.instanceId,
           targetRunId: runId,
