@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
+  extraStatus: null as PullRequestCheck["status"] | null,
   perform: vi.fn(),
 }));
 
@@ -24,7 +25,12 @@ vi.mock("~/state/query", () => ({
       changedFiles: 1,
       additions: 1,
       deletions: 0,
-      checks: [{ name: "CI", status: state.status, description: null, url: null }],
+      checks: [state.status, ...(state.extraStatus ? [state.extraStatus] : [])].map((status) => ({
+        name: `CI-${status}`,
+        status,
+        description: null,
+        url: null,
+      })),
       capabilities: { actions: ["merge"], mergeMethods: ["merge"] },
       viewerPermissions: { actions: ["merge"] },
       mergeCapabilities: { merge: true, squash: false, rebase: false },
@@ -38,8 +44,11 @@ vi.mock("../pullRequest/usePullRequestActions", () => ({
   usePullRequestActionRunner: () => ({ actionPending: false, perform: state.perform }),
   usePullRequestHandoffs: () => ({ handoff: null, startHandoff: vi.fn() }),
 }));
-vi.mock("../pullRequest/PullRequestChecksPopover", () => ({
-  PullRequestChecksPopover: () => null,
+vi.mock("../ui/popover", () => ({
+  Popover: ({ children }: { children: ReactNode }) => children,
+  PopoverTrigger: ({ render, children }: { render: ReactElement; children: ReactNode }) =>
+    cloneElement(render, undefined, children),
+  PopoverPopup: () => null,
 }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
@@ -64,6 +73,8 @@ let renderer: ReactTestRenderer;
 afterEach(() => {
   act(() => renderer?.unmount());
   vi.unstubAllGlobals();
+  state.status = "success";
+  state.extraStatus = null;
 });
 
 it("requires a new merge click after passing checks become pending and pass again", () => {
@@ -107,4 +118,34 @@ it("requires a new merge click after passing checks become pending and pass agai
   clickMerge();
   expect(dialogs()).toHaveLength(1);
   expect(state.perform).not.toHaveBeenCalled();
+});
+
+it.each<[PullRequestCheck["status"], PullRequestCheck["status"], string]>([
+  ["success", "skipped", ""],
+  ["failure", "cancelled", ""],
+  ["success", "action-required", ""],
+  ["success", "pending", "1/2"],
+  ["failure", "pending", "1/2"],
+])("shows a count only while checks run (%s, %s)", (status, extraStatus, count) => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.status = status;
+  state.extraStatus = extraStatus;
+  act(() => {
+    renderer = create(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    );
+  });
+  const text = renderer.root
+    .findAllByType("span")
+    .map((span) => span.children.filter((child) => typeof child === "string").join(""));
+  expect(text.filter((value) => /^\d+\/\d+$/.test(value))).toEqual(count ? [count] : []);
 });
