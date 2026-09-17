@@ -8,7 +8,13 @@
  * this stays a pure fold over `runs` and `subagents`.
  */
 import * as DateTime from "effect/DateTime";
-import type { OrchestrationV2Subagent, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import type {
+  OrchestrationV2Subagent,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ShellThreadStatus,
+  ThreadId,
+} from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "./models.ts";
 import { copySorted } from "@t3tools/shared/Array";
 
 import { isActiveSubagentStatus, isTerminalSubagentStatus } from "./subagentRuntime.ts";
@@ -87,4 +93,73 @@ export function resolveSubagentPillSegment(
     label: `${total} done`,
     accessibilityLabel: `${total} ${total === 1 ? "agent" : "agents"} done`,
   };
+}
+
+export const THREAD_SUBAGENT_STATUS_LABELS = {
+  preparing: "Preparing",
+  queued: "Queued",
+  starting: "Starting",
+  running: "Running",
+  waiting: "Waiting",
+  idle: "Idle",
+  completed: "Finished",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  interrupted: "Stopped",
+  rolled_back: "Rolled back",
+} satisfies Record<OrchestrationV2ShellThreadStatus, string>;
+
+export interface ThreadSubagentTreeRow {
+  readonly thread: EnvironmentThreadShell;
+  readonly depth: number;
+  readonly status: keyof typeof THREAD_SUBAGENT_STATUS_LABELS;
+}
+
+/** Walk only subagent descendants; forks remain independent conversations. */
+export function deriveThreadSubagentTree(
+  parentThreadId: ThreadId,
+  childrenByParent: ReadonlyMap<ThreadId, ReadonlyArray<EnvironmentThreadShell>>,
+) {
+  const rows: ThreadSubagentTreeRow[] = [];
+  const visited = new Set([parentThreadId]);
+  const visit = (id: ThreadId, depth: number) => {
+    for (const thread of childrenByParent.get(id) ?? []) {
+      if (visited.has(thread.id)) continue;
+      visited.add(thread.id);
+      const shellStatus = thread.source.activityRunStatus ?? thread.source.status;
+      const status = shellStatus === "idle" ? (thread.latestRun?.status ?? "idle") : shellStatus;
+      rows.push({ thread, depth, status });
+      visit(thread.id, depth + 1);
+    }
+  };
+  visit(parentThreadId, 0);
+  let running = 0;
+  let finished = 0;
+  let waiting = 0;
+  let idle = 0;
+  for (const { status } of rows) {
+    switch (status) {
+      case "preparing":
+      case "queued":
+      case "starting":
+      case "running":
+        running += 1;
+        break;
+      case "waiting":
+        waiting += 1;
+        break;
+      case "idle":
+        idle += 1;
+        break;
+      default:
+        finished += 1;
+    }
+  }
+  const label = [
+    `${running} running`,
+    `${finished} finished`,
+    ...(waiting > 0 ? [`${waiting} waiting`] : []),
+    ...(idle > 0 ? [`${idle} idle`] : []),
+  ].join(" · ");
+  return { rows, running, finished, waiting, idle, label };
 }
