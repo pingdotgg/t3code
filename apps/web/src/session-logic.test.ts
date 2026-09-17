@@ -1,5 +1,8 @@
 import {
   MessageId,
+  RuntimeRequestId,
+  CheckpointId,
+  CheckpointScopeId,
   NodeId,
   PlanId,
   ProviderInstanceId,
@@ -14,6 +17,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { deriveMessagesTimelineRows } from "./components/chat/MessagesTimeline.logic";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -920,6 +924,91 @@ describe("native provider presentation in the v2 timeline", () => {
     sourceThreadId: item.threadId,
     sourceItemId: item.id,
     item,
+  });
+
+  it("keeps async answers in the question row, including incrementally appended replies", () => {
+    const requestId = RuntimeRequestId.make("question");
+    const question: OrchestrationV2TurnItem = {
+      ...base,
+      type: "user_input_request",
+      requestId,
+      questions: [],
+      questionAnswer: { requestId, answers: { color: "Blue" }, attachmentsByQuestionId: {} },
+    };
+    const reply: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make("answer"),
+      type: "user_message",
+      messageId: MessageId.make(`async-answer:${requestId}`),
+      inputIntent: "steer",
+      text: "Which color?\nBlue",
+      createdBy: "user",
+      creationSource: "server",
+      attachments: [],
+    };
+    const input = { visibleTurnItems: [visible(question)], optimisticMessages: [] };
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    const nextInput = { ...input, visibleTurnItems: [...input.visibleTurnItems, visible(reply)] };
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
+    expect(next.entries).toHaveLength(1);
+    const replyFirst = { ...input, visibleTurnItems: [visible(reply)] };
+    const replyProjection = deriveTimelineEntriesFromVisibleTurnItemsWithState(replyFirst);
+    const questionAfterReply = {
+      ...input,
+      visibleTurnItems: [...replyFirst.visibleTurnItems, visible(question)],
+    };
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItemsWithState(questionAfterReply, replyProjection)
+        .entries,
+    ).toEqual(deriveTimelineEntriesFromVisibleTurnItems(questionAfterReply));
+
+    expect(next.entries[0]).toMatchObject({
+      kind: "work",
+      entry: { questionAnswer: question.questionAnswer },
+    });
+    // A separately paged reply stays visible until its question history is available.
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({ ...input, visibleTurnItems: [visible(reply)] })[0]
+        ?.kind,
+    ).toBe("message");
+  });
+
+  it("excludes checkpoint-only work from the timeline", () => {
+    const message: OrchestrationV2TurnItem = {
+      ...base,
+      type: "assistant_message",
+      messageId: MessageId.make("done"),
+      text: "Done",
+      streaming: false,
+    };
+    const checkpoint: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make("checkpoint"),
+      type: "checkpoint",
+      checkpointId: CheckpointId.make("checkpoint"),
+      scopeId: CheckpointScopeId.make("scope"),
+      files: [],
+    };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [visible(message), visible(checkpoint)],
+      optimisticMessages: [],
+    });
+    expect(entries.map((entry) => entry.kind)).toEqual(["message"]);
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      latestRun: {
+        runId: base.runId,
+        status: "completed",
+        startedAt: DateTime.formatIso(timestamp),
+        completedAt: DateTime.formatIso(timestamp),
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.map((row) => row.kind)).toEqual(["message"]);
   });
 
   it.each([

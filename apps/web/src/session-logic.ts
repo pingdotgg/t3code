@@ -562,11 +562,19 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
+  const foldedAnswerMessageIds = new Set(
+    input.visibleTurnItems.flatMap(({ item }) =>
+      item.type === "user_input_request" && item.questionAnswer
+        ? [`async-answer:${item.questionAnswer.requestId}`]
+        : [],
+    ),
+  );
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item)) continue;
     // Task progress belongs in the composer, not between conversation entries.
-    if (item.type === "todo_list") continue;
+    if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
@@ -670,7 +678,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     });
   }
 
-  const retainedMessageIds = new Set(committedMessageIds);
+  const retainedMessageIds = new Set([...committedMessageIds, ...foldedAnswerMessageIds]);
   for (const message of input.anchoredMessages ?? []) {
     if (retainedMessageIds.has(message.id)) continue;
     retainedMessageIds.add(message.id);
@@ -854,6 +862,18 @@ function reuseTimelineEntries(
   ) {
     return null;
   }
+  // Answer rows can replace a message already present in the retained prefix.
+  if (
+    appended &&
+    input.visibleTurnItems
+      .slice(before.visibleTurnItems.length)
+      .some(
+        ({ item }) =>
+          (item.type === "user_input_request" && item.questionAnswer !== undefined) ||
+          (item.type === "user_message" && item.messageId.startsWith("async-answer:")),
+      )
+  )
+    return null;
   const replacements = new Map<
     OrchestrationV2ProjectedTurnItem,
     OrchestrationV2ProjectedTurnItem
