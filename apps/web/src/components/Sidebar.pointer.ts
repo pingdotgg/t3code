@@ -12,6 +12,10 @@ type Options = {
   distance: number;
   onAttach: (sensor: SidebarPointerSensor) => void;
   onFinish: (started: boolean) => void;
+  /** Return true to claim the move: the sort gesture then ignores this pointer position. */
+  onMove?: (point: { x: number; y: number }) => boolean;
+  /** Return true when the release was consumed elsewhere, so the sort is cancelled. */
+  onDrop?: (point: { x: number; y: number }) => boolean;
 };
 
 /** A sidebar gesture ends on release, cancellation, or loss of its window.
@@ -89,12 +93,17 @@ export class SidebarPointerSensor {
     }
     if (this.phase === "dragging") {
       if (event.cancelable) event.preventDefault();
+      if (this.props.options.onMove?.(coordinates) === true) return;
       this.props.onMove(coordinates);
     }
   };
 
   private end = (event: PointerEvent) => {
-    if (event.pointerId === this.pointer.pointerId) this.finish(false);
+    if (event.pointerId !== this.pointer.pointerId) return;
+    const dropped =
+      this.phase === "dragging" &&
+      this.props.options.onDrop?.({ x: event.clientX, y: event.clientY }) === true;
+    this.finish(dropped);
   };
   private pointerCancel = (event: PointerEvent) => {
     if (event.pointerId === this.pointer.pointerId) this.cancel();

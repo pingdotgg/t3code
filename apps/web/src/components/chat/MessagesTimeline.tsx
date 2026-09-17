@@ -99,6 +99,7 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import { T3Wordmark } from "../T3Wordmark";
+import { ThreadContextChip } from "../ThreadContextChip";
 import {
   BotIcon,
   BrainIcon,
@@ -3785,6 +3786,21 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             tooltip={`$${record.name}`}
             copyMarkdown={context.copyMarkdown}
             toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.skill}
+          />
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "thread",
+      canRender: (record) => record.kind === "thread",
+      render: (record, context) =>
+        record.kind === "thread" ? (
+          <ThreadContextChip
+            record={record}
+            className={CHAT_INLINE_CHIP_CLASS_NAME}
+            labelClassName={CHAT_INLINE_CHIP_LABEL_CLASS_NAME}
+            copyMarkdown={context.copyMarkdown}
           />
         ) : (
           <UnavailableUserMessageContextChip {...context} />
