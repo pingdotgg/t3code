@@ -507,15 +507,16 @@ describe("CheckpointReactor", () => {
         const harness = yield* Effect.promise(() =>
           createHarness({
             secondThreadSharingWorktree: true,
-            secondThreadWorktreePath:
-              owner === "alias"
-                ? (cwd) => {
+            ...(owner === "alias"
+              ? {
+                  secondThreadWorktreePath: (cwd: string) => {
                     const alias = `${cwd}-alias`;
                     NodeFS.symlinkSync(cwd, alias, "junction");
                     tempDirs.push(alias);
                     return alias;
-                  }
-                : undefined,
+                  },
+                }
+              : {}),
           }),
         );
         const createdAt = "2026-01-01T00:00:02.000Z";
@@ -524,7 +525,6 @@ describe("CheckpointReactor", () => {
             type: "thread.archive",
             commandId: CommandId.make("cmd-archive-owner"),
             threadId: ThreadId.make("thread-2"),
-            createdAt,
           });
         if (owner === "project-root")
           yield* harness.engine.dispatch({
@@ -532,7 +532,6 @@ describe("CheckpointReactor", () => {
             commandId: CommandId.make("cmd-root-owner"),
             threadId: ThreadId.make("thread-2"),
             worktreePath: null,
-            createdAt,
           });
         const siblingFile = NodePath.join(harness.cwd, "sibling-work.txt");
         NodeFS.writeFileSync(siblingFile, "sibling work\n");
