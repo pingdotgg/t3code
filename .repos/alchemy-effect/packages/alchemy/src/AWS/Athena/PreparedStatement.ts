@@ -62,9 +62,8 @@ export interface PreparedStatement extends Resource<
  * `(workGroup, statementName)` pair; the `queryStatement` and `description`
  * are updatable in place.
  *
- * @resource
- * @section Preparing Statements
- * @example Save a parameterized statement in a workgroup
+ * ### Preparing Statements
+ * **Example:** Save a parameterized statement in a workgroup
  * ```typescript
  * const stmt = yield* AWS.Athena.PreparedStatement("TopN", {
  *   workGroup: wg.workGroupName,
@@ -72,6 +71,8 @@ export interface PreparedStatement extends Resource<
  * });
  * // then at runtime: EXECUTE <stmt.statementName> USING 'customer-123'
  * ```
+ *
+ * @resource
  */
 export const PreparedStatement = Resource<PreparedStatement>(
   "AWS.Athena.PreparedStatement",

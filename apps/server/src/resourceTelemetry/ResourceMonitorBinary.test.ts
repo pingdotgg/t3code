@@ -11,6 +11,10 @@ import * as FileSystem from "effect/FileSystem";
 import { ServerConfig } from "../config.ts";
 import * as ResourceMonitorBinary from "./ResourceMonitorBinary.ts";
 
+// The override checks POSIX exec bits on a real file under a linux platform
+// mock; NTFS never reports those bits, so the check cannot be satisfied there.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+
 describe("ResourceMonitorBinary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -42,7 +46,7 @@ describe("ResourceMonitorBinary", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("resolves an executable override", () =>
+  it.effect.skipIf(windowsHost)("resolves an executable override", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -66,7 +70,7 @@ describe("ResourceMonitorBinary", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("resolves an executable override on an unsupported platform", () =>
+  it.effect.skipIf(windowsHost)("resolves an executable override on an unsupported platform", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({

@@ -1,9 +1,4 @@
-import type { TextGenerationPolicy, TextGenerationPolicyKind } from "./TextGenerationPolicy.ts";
-
-export const defaultTextGenerationPolicy: TextGenerationPolicy = {
-  kind: "default",
-  inferRepositoryConventions: false,
-};
+import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
 export const conventionalCommitsTextGenerationPolicy: TextGenerationPolicy = {
   kind: "conventional_commits",
@@ -30,12 +25,3 @@ export const customTextGenerationPolicy = (
   inferRepositoryConventions: false,
   ...overrides,
 });
-
-export const textGenerationPresets: Record<
-  Exclude<TextGenerationPolicyKind, "custom">,
-  TextGenerationPolicy
-> = {
-  default: defaultTextGenerationPolicy,
-  conventional_commits: conventionalCommitsTextGenerationPolicy,
-  repo_conventions: repositoryConventionsTextGenerationPolicy,
-};

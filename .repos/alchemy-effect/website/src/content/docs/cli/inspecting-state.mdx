@@ -44,6 +44,16 @@ bun alchemy state resources --stack myapp --stage dev_sam
 Prints the FQNs tracked under that stack/stage — the addresses
 `state get` takes.
 
+Or skip the drilling entirely and read the whole estate at once:
+
+```sh
+bun alchemy state export | jq '.resources[] | select(.state.resourceType == "AWS.EC2.Instance")'
+```
+
+One call returns every record across all stacks and stages as a
+single JSON document to filter locally — see
+[state export](/cli/state#state-export).
+
 ## Debugging a bad diff
 
 ```sh

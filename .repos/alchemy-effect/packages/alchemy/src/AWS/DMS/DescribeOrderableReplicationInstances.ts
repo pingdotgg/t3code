@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * classes and storage ranges orderable in the region — e.g. for tooling that
  * right-sizes migration infrastructure. Provide the implementation with
  * `Effect.provide(AWS.DMS.DescribeOrderableReplicationInstancesHttp)`.
- * @binding
- * @section Sizing Replication Instances
- * @example List Orderable Instance Classes
+ * ### Sizing Replication Instances
+ * **Example:** List Orderable Instance Classes
  * ```typescript
  * // init — account-level, no target resource
  * const orderable = yield* AWS.DMS.DescribeOrderableReplicationInstances();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { OrderableReplicationInstances } = yield* orderable();
  * ```
+ *
+ * @binding
  */
 export interface DescribeOrderableReplicationInstances extends Binding.Service<
   DescribeOrderableReplicationInstances,

@@ -112,9 +112,8 @@ export interface MetricsDestination extends Resource<
  * CloudWatch or to a CloudWatch Evidently experiment, including the metric
  * definitions themselves.
  *
- * @resource
- * @section Creating a Metrics Destination
- * @example Send Extended Metrics to CloudWatch
+ * ### Creating a Metrics Destination
+ * **Example:** Send Extended Metrics to CloudWatch
  * ```typescript
  * const monitor = yield* RUM.AppMonitor("SiteMonitor", {
  *   domain: "example.com",
@@ -134,8 +133,8 @@ export interface MetricsDestination extends Resource<
  * });
  * ```
  *
- * @section Custom Metrics
- * @example Derive a Custom Metric from Events
+ * ### Custom Metrics
+ * **Example:** Derive a Custom Metric from Events
  * ```typescript
  * const metrics = yield* RUM.MetricsDestination("CustomMetrics", {
  *   appMonitorName: monitor.appMonitorName,
@@ -152,6 +151,8 @@ export interface MetricsDestination extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const MetricsDestination = Resource<MetricsDestination>(
   "AWS.RUM.MetricsDestination",

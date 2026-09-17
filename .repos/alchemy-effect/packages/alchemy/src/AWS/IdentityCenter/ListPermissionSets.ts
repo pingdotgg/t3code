@@ -10,9 +10,8 @@ import type { Instance } from "./Instance.ts";
  * Lists the permission set ARNs in the bound Identity Center instance, one page per call (`NextToken` paginates). The instance's
  * `InstanceArn` is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.IdentityCenter.ListPermissionSetsHttp)`.
- * @binding
- * @section Reading Permission Sets
- * @example Enumerate Permission Sets
+ * ### Reading Permission Sets
+ * **Example:** Enumerate Permission Sets
  * ```typescript
  * // init — bind the operation to the Identity Center instance
  * const listPermissionSets = yield* AWS.IdentityCenter.ListPermissionSets(instance);
@@ -20,6 +19,8 @@ import type { Instance } from "./Instance.ts";
  * // runtime
  * const { PermissionSets } = yield* listPermissionSets({ MaxResults: 100 });
  * ```
+ *
+ * @binding
  */
 export interface ListPermissionSets extends Binding.Service<
   ListPermissionSets,

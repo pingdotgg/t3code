@@ -17,12 +17,12 @@
     "destroy": "alchemy destroy"
   },
   "dependencies": {
-    "@distilled.cloud/cloudflare": "catalog:",
-    "@effect/platform-node": "catalog:",
+    "@distilled.cloud/cloudflare": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
     "alchemy": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:effect"
   },
   "devDependencies": {
-    "typescript": "catalog:"
+    "typescript": "catalog:build"
   }
 }

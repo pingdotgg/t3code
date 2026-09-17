@@ -2,17 +2,27 @@ import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
-import type { ServerProviderSkill, ServerProviderSlashCommand } from "@t3tools/contracts";
+import type {
+  PullRequestContextMetadata,
+  ServerProviderSkill,
+  ServerProviderSlashCommand,
+} from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import { memo } from "react";
-import { Pressable, ScrollView, View, type ViewStyle } from "react-native";
+import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { GlassSurface } from "../../components/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
-import { useThemeColor } from "../../lib/useThemeColor";
 export type ComposerCommandItem =
+  | {
+      readonly id: string;
+      readonly type: "pull-request";
+      readonly pullRequest: PullRequestContextMetadata;
+      readonly label: string;
+      readonly description: string;
+    }
   | {
       readonly id: string;
       readonly type: "path";
@@ -47,11 +57,11 @@ interface ComposerCommandPopoverProps {
   readonly items: ReadonlyArray<ComposerCommandItem>;
   readonly triggerKind: ComposerTriggerKind | null;
   readonly isLoading: boolean;
+  readonly error?: string | null;
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
 
 function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
-  const tintColor = useThemeColor("--color-glass-surface");
   const baseStyle: ViewStyle = {
     borderRadius: 16,
     overflow: "hidden",
@@ -59,7 +69,11 @@ function PopoverSurface(props: { readonly children: React.ReactNode; readonly st
   };
 
   return (
-    <GlassSurface glassEffectStyle="clear" tintColor={tintColor} style={baseStyle}>
+    <GlassSurface
+      glassEffectStyle="clear"
+      tintColorClassName="accent-glass-surface"
+      style={baseStyle}
+    >
       {props.children}
     </GlassSurface>
   );
@@ -76,6 +90,8 @@ const SKILL_SOURCE_SYMBOL_BY_KIND: Record<ProviderSkillSourceKind, AppSymbolName
 
 function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   switch (item.type) {
+    case "pull-request":
+      return { ios: "arrow.triangle.pull", android: "merge" };
     case "slash-command":
     case "provider-slash-command":
       return "terminal";
@@ -88,6 +104,8 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
 
 function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
   switch (triggerKind) {
+    case "pull-request":
+      return "Pull requests";
     case "slash-command":
       return "Commands";
     case "skill":
@@ -104,6 +122,8 @@ function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean):
     return triggerKind === "path" ? "Searching files…" : "Loading…";
   }
   switch (triggerKind) {
+    case "pull-request":
+      return "No matching pull requests.";
     case "path":
       return "No matching files or folders.";
     case "skill":
@@ -122,27 +142,23 @@ const CommandRow = memo(function CommandRow(props: {
   readonly isSlashSkill: boolean;
 }) {
   const iconName = itemIcon(props.item);
-  const iconColor = useThemeColor("--color-icon-subtle");
-  const borderColor = useThemeColor("--color-border");
 
   return (
     <Pressable
+      accessibilityRole="button"
       onPress={props.onPress}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: 14,
-        paddingVertical: 10,
-        gap: 10,
-        opacity: pressed ? 0.6 : 1,
-        borderBottomWidth: props.isLast ? 0 : 0.5,
-        borderBottomColor: borderColor,
-      })}
+      className="flex-row items-center gap-2.5 border-border px-3.5 py-2.5 active:opacity-60"
+      style={{ borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth }}
     >
       {props.item.type === "path" ? (
         <PierreEntryIcon path={props.item.path} kind={props.item.kind} size={16} />
       ) : iconName ? (
-        <SymbolView name={iconName} size={14} tintColor={iconColor} type="monochrome" />
+        <SymbolView
+          name={iconName}
+          size={14}
+          tintColorClassName={"accent-icon-subtle"}
+          type="monochrome"
+        />
       ) : null}
       <Text className="shrink-0 text-base font-t3-medium text-foreground" numberOfLines={1}>
         {props.isSlashSkill && props.item.type === "skill" ? (
@@ -196,7 +212,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       ) : (
         <View className="px-3.5 py-2.5">
           <Text className="text-xs text-foreground-tertiary">
-            {emptyText(props.triggerKind, props.isLoading)}
+            {props.error ?? emptyText(props.triggerKind, props.isLoading)}
           </Text>
         </View>
       )}

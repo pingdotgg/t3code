@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.DescribeProductsHttp)`.
- * @binding
- * @section Product Integrations
- * @example List Available Products
+ * ### Product Integrations
+ * **Example:** List Available Products
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeProducts = yield* AWS.SecurityHub.DescribeProducts();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Products } = yield* describeProducts({ MaxResults: 10 });
  * ```
+ *
+ * @binding
  */
 export interface DescribeProducts extends Binding.Service<
   DescribeProducts,

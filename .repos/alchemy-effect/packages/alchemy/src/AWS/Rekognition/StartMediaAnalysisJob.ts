@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.StartMediaAnalysisJobHttp)`.
  *
- * @binding
- * @section Media Analysis Jobs
- * @example Start a Bulk Moderation Job
+ * ### Media Analysis Jobs
+ * **Example:** Start a Bulk Moderation Job
  * ```typescript
  * // init
  * const startMediaAnalysisJob = yield* AWS.Rekognition.StartMediaAnalysisJob();
@@ -26,6 +25,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // started.JobId
  * ```
+ *
+ * @binding
  */
 export interface StartMediaAnalysisJob extends Binding.Service<
   StartMediaAnalysisJob,

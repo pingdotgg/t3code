@@ -1,3 +1,4 @@
+import * as Floci from "@alchemy.run/floci";
 import * as DistilledAuth from "@distilled.cloud/aws/Auth";
 import { Credentials } from "@distilled.cloud/aws/Credentials";
 import * as STS from "@distilled.cloud/aws/sts";
@@ -25,14 +26,46 @@ import {
   retryOnce,
 } from "../Auth/Env.ts";
 import * as Clank from "../Util/Clank.ts";
+import * as Endpoint from "./Endpoint.ts";
 import * as Region from "./Region.ts";
 
 export const AWS_AUTH_PROVIDER_NAME = "AWS";
 
+/** Default endpoint of a local AWS emulator (floci / LocalStack). */
+export const DEFAULT_LOCAL_ENDPOINT = `http://localhost:${Floci.DEFAULT_FLOCI_PORT}`;
+
+/**
+ * Dummy account stamped on every floci / `{ method: "local" }` environment.
+ * A custom `AWS_ENDPOINT_URL` on env/sso credentials does NOT use this —
+ * those keep the real account from STS / `AWS_ACCOUNT_ID`.
+ */
+export const LOCAL_ACCOUNT_ID = "000000000000";
+
 export type AwsAuthConfig =
   | { method: "sso"; ssoProfile: string }
   | { method: "stored" }
-  | { method: "env" };
+  | { method: "env" }
+  | {
+      /**
+       * Local AWS emulator (floci, LocalStack, or any endpoint-compatible
+       * emulator). Resolves dummy credentials and points every AWS call at
+       * the configured endpoint — no AWS account required.
+       */
+      method: "local";
+      /** @default "http://localhost:4566" */
+      endpoint?: string;
+      /** @default "us-east-1" */
+      region?: string;
+      /** @default "000000000000" */
+      accountId?: string;
+      /**
+       * Ensure the floci container is running (via `@alchemy.run/floci`'s
+       * `ensureFloci`) when nothing is listening on the endpoint. Defaults to
+       * true for the default endpoint only.
+       * @default endpoint === "http://localhost:4566"
+       */
+      autoStart?: boolean;
+    };
 
 const options: Array<{
   value: AwsAuthConfig["method"];
@@ -54,6 +87,11 @@ const options: Array<{
     label: "Stored",
     hint: "stored in ~/.alchemy/credentials",
   },
+  {
+    value: "local",
+    label: "Local emulator",
+    hint: "floci / LocalStack on localhost:4566 — no AWS account",
+  },
 ];
 
 export interface AwsStoredCredentials {
@@ -70,8 +108,15 @@ export interface AwsResolvedCredentials {
     accessKeyId: Redacted.Redacted<string>;
     secretAccessKey: Redacted.Redacted<string>;
     sessionToken: Redacted.Redacted<string> | undefined;
+    region: string;
   }>;
   region: string;
+  /**
+   * Custom AWS endpoint (local emulator). Flows into
+   * `AWSEnvironment.endpoint`, which `Endpoint.fromEnvironment` applies to
+   * every AWS SDK call.
+   */
+  endpoint?: string;
   source: {
     type: AwsAuthConfig["method"];
     details?: string;
@@ -111,11 +156,13 @@ export const AwsAuth = AuthProviderLayer<
       secretAccessKey,
       sessionToken,
       region,
+      endpoint,
     }: {
       accessKeyId: Redacted.Redacted<string>;
       secretAccessKey: Redacted.Redacted<string>;
       sessionToken?: Redacted.Redacted<string>;
       region: string;
+      endpoint?: string;
     }) =>
       STS.getCallerIdentity({}).pipe(
         Effect.provide(
@@ -126,6 +173,7 @@ export const AwsAuth = AuthProviderLayer<
                 accessKeyId,
                 secretAccessKey,
                 sessionToken,
+                region,
               }),
             ),
             // Provide Region directly from the resolved inputs. Relying on the
@@ -133,6 +181,15 @@ export const AwsAuth = AuthProviderLayer<
             // deadlock: it derives the region from AWSEnvironment, which is the
             // very service still being constructed by this STS call.
             Region.of(region),
+            // A custom endpoint (local emulator) must apply to this STS call
+            // too — the default resolver would call real AWS. When there is
+            // no custom endpoint we must still provide `Endpoint.none`
+            // rather than leaving it unset: falling through to the ambient
+            // `Endpoint.fromEnvironment` reads it off AWSEnvironment — the
+            // very service this STS call is constructing — and deadlocks
+            // the fiber on its own in-flight cache (no I/O, no timer, no
+            // output). Same reason as `Region.of` above.
+            endpoint ? Endpoint.of(endpoint) : Endpoint.none,
           ),
         ),
         Effect.flatMap((self) =>
@@ -210,6 +267,25 @@ export const AwsAuth = AuthProviderLayer<
               }),
             ),
             Match.when("stored", () => loginStored(profileName)),
+            Match.when("local", () =>
+              Effect.gen(function* () {
+                const endpoint = yield* Clank.text({
+                  message: "Emulator endpoint",
+                  placeholder: DEFAULT_LOCAL_ENDPOINT,
+                  defaultValue: DEFAULT_LOCAL_ENDPOINT,
+                });
+                const region = yield* Clank.text({
+                  message: "Region",
+                  placeholder: "us-east-1",
+                  defaultValue: "us-east-1",
+                });
+                return {
+                  method: "local" as const,
+                  endpoint: endpoint || DEFAULT_LOCAL_ENDPOINT,
+                  region: region || "us-east-1",
+                };
+              }),
+            ),
             Match.exhaustive,
           ),
         ),
@@ -219,6 +295,11 @@ export const AwsAuth = AuthProviderLayer<
       Effect.gen(function* () {
         if (ctx.ci) {
           return { method: "env" as const };
+        }
+        if (ctx.reason) {
+          // e.g. the credential-demand seam (`Auth/Demand.ts`) explaining
+          // which dev-plan resources require real AWS credentials.
+          yield* Clank.info(ctx.reason);
         }
         return yield* configureInteractive(profileName);
       }).pipe(
@@ -258,6 +339,10 @@ export const AwsAuth = AuthProviderLayer<
                   }),
                 );
               }
+              // LocalStack-standard endpoint override: with
+              // AWS_ENDPOINT_URL set, every AWS call (including the STS
+              // account lookup below) targets the emulator.
+              const endpoint = yield* getEnv("AWS_ENDPOINT_URL");
               const accountId = yield* getEnvRequired("AWS_ACCOUNT_ID").pipe(
                 Effect.catch(() =>
                   getAccountId({
@@ -265,6 +350,7 @@ export const AwsAuth = AuthProviderLayer<
                     secretAccessKey,
                     sessionToken,
                     region,
+                    endpoint,
                   }),
                 ),
               );
@@ -274,9 +360,63 @@ export const AwsAuth = AuthProviderLayer<
                   accessKeyId,
                   secretAccessKey,
                   sessionToken,
+                  region,
                 }),
                 region,
+                endpoint,
                 source: { type: "env" as const },
+              } satisfies AwsResolvedCredentials;
+            }),
+          ),
+          Match.when(
+            { method: "local" },
+            Effect.fn(function* (config) {
+              const endpoint = config.endpoint ?? DEFAULT_LOCAL_ENDPOINT;
+              const autoStart =
+                config.autoStart ?? endpoint === DEFAULT_LOCAL_ENDPOINT;
+              if (autoStart) {
+                const port = yield* Effect.try({
+                  try: () =>
+                    Number.parseInt(new URL(endpoint).port, 10) ||
+                    Floci.DEFAULT_FLOCI_PORT,
+                  catch: () =>
+                    new AuthError({
+                      message: `invalid local emulator endpoint: ${endpoint}`,
+                    }),
+                });
+                // Reuses anything already serving on the endpoint (dev-mode
+                // JVM, hand-run container, previous session's container);
+                // otherwise starts the managed floci container and waits for
+                // health.
+                yield* Floci.ensureFloci({ port }).pipe(
+                  Effect.mapError(
+                    (e) => new AuthError({ message: e.message, cause: e }),
+                  ),
+                );
+              } else {
+                const serving = yield* Floci.isServing(endpoint);
+                if (!serving) {
+                  return yield* Effect.fail(
+                    new AuthError({
+                      message: `no local AWS emulator is listening at ${endpoint} — start one, or omit \`endpoint\` to auto-start floci on ${DEFAULT_LOCAL_ENDPOINT}`,
+                    }),
+                  );
+                }
+              }
+              const region = config.region ?? "us-east-1";
+              return {
+                // Fixed dummy account — emulators accept any non-empty
+                // credentials, and calling STS here would be pure overhead.
+                accountId: config.accountId ?? LOCAL_ACCOUNT_ID,
+                credentials: Effect.succeed({
+                  accessKeyId: Redacted.make("test"),
+                  secretAccessKey: Redacted.make("test"),
+                  sessionToken: undefined,
+                  region,
+                }),
+                region,
+                endpoint,
+                source: { type: "local" as const, details: endpoint },
               } satisfies AwsResolvedCredentials;
             }),
           ),
@@ -298,6 +438,7 @@ export const AwsAuth = AuthProviderLayer<
                         sessionToken: creds.sessionToken
                           ? Redacted.make(creds.sessionToken)
                           : undefined,
+                        region: creds.region,
                       }),
                       region: creds.region,
                       source: { type: "stored" as const },
@@ -414,6 +555,7 @@ export const AwsAuth = AuthProviderLayer<
     const logout = (profileName: string, config: AwsAuthConfig) =>
       Match.value(config).pipe(
         Match.when({ method: "env" }, () => Effect.void),
+        Match.when({ method: "local" }, () => Effect.void),
         Match.when({ method: "sso" }, (config) =>
           Clank.info(
             `AWS: running 'aws sso logout --profile ${config.ssoProfile}'...`,
@@ -441,6 +583,7 @@ export const AwsAuth = AuthProviderLayer<
       Match.value(config)
         .pipe(
           Match.when({ method: "env" }, () => Effect.void),
+          Match.when({ method: "local" }, () => Effect.void),
           Match.when({ method: "sso" }, loginSSO),
           Match.when({ method: "stored" }, () =>
             store

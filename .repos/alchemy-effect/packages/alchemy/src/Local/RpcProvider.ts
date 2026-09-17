@@ -165,7 +165,7 @@ export const effect = <
   LogsReq = never,
   ListReq = never,
 >(
-  cls: ResourceClassLike<R> | Platform<R, any, any, any, any>,
+  cls: ResourceClassLike<R> | Platform<R, any, any, any, any, any>,
   serverEntryUrl: string,
   eff: Effect.Effect<
     RpcProviderService<
@@ -254,16 +254,21 @@ export const providerServices = <ROut, E, RIn>(
  * Conditionally constructs a layer for use by an RpcProvider.
  * If the {@link RpcProviderProxy} is present in context, the layer is empty because it will not be used in this process.
  * Otherwise, the given layer is returned.
+ *
+ * Note that unlike earlier versions this is no longer gated on
+ * `AlchemyContext.dev`: local providers are registered via
+ * `ProviderLayer.dual` and their dependency layers are composed inside the
+ * *lazily built* local variant, so in a live run these services are only
+ * constructed when the local provider is actually demanded (e.g. deleting a
+ * `providerMode: "local"` state row during `alchemy deploy`).
  * @param self - An effect which returns a layer that is used by the RpcProvider.
  */
 export const providerServicesEffect = <A, E1, R1, E, R>(
   self: Effect.Effect<Layer.Layer<A, E1, R1>, E, R>,
 ): Layer.Layer<A, E | E1, R1 | Exclude<R, Scope> | AlchemyContext> =>
-  Effect.zip(AlchemyContext, Effect.serviceOption(RpcProviderProxy)).pipe(
-    Effect.flatMap(([context, client]) =>
-      context.dev && client._tag === "None"
-        ? self
-        : (Effect.succeed(Layer.empty) as never),
+  Effect.serviceOption(RpcProviderProxy).pipe(
+    Effect.flatMap((client) =>
+      client._tag === "None" ? self : (Effect.succeed(Layer.empty) as never),
     ),
     Layer.unwrap,
   );

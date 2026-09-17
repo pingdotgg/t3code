@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * function `comprehend:DetectSentiment` (the action has no resource-level
  * IAM).
  *
- * @binding
- * @section Real-Time Analysis
- * @example Detect Sentiment of a Sentence
+ * ### Real-Time Analysis
+ * **Example:** Detect Sentiment of a Sentence
  * ```typescript
  * // init
  * const detectSentiment = yield* AWS.Comprehend.DetectSentiment();
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  * // result.Sentiment === "POSITIVE"
  * // result.SentimentScore.Positive ~ 0.99
  * ```
+ *
+ * @binding
  */
 export interface DetectSentiment extends Binding.Service<
   DetectSentiment,

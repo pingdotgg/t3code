@@ -1,33 +1,99 @@
 {
   "name": "@alchemy.run/better-auth",
-  "version": "2.0.0-beta.65",
+  "version": "2.0.0-beta.76",
+  "description": "Better Auth integration for Alchemy.",
+  "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
+  "keywords": [
+    "alchemy",
+    "better-auth",
+    "effect",
+    "infrastructure-as-code"
+  ],
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alchemy-run/alchemy.git",
     "directory": "packages/better-auth"
   },
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
   "files": [
     "lib",
-    "src"
+    "src",
+    "NOTICE"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b && bun ../../scripts/copy-package-files.ts better-auth",
+    "test": "alchemy-test"
   },
   "exports": {
     ".": {
+      "types": "./lib/index.d.ts",
       "bun": "./src/index.ts",
-      "default": "./lib/index.js",
-      "types": "./lib/index.d.ts"
-    }
-  },
-  "dependencies": {
-    "alchemy": "workspace:*",
-    "effect": "catalog:"
+      "worker": "./src/index.ts",
+      "import": "./lib/index.js"
+    },
+    "./*": {
+      "types": "./lib/*.d.ts",
+      "bun": "./src/*.ts",
+      "worker": "./src/*.ts",
+      "import": "./lib/*.js"
+    },
+    "./package.json": "./package.json"
   },
   "peerDependencies": {
-    "better-auth": "catalog:"
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@distilled.cloud/aws": "workspace:*",
+    "@neondatabase/serverless": "catalog:database",
+    "alchemy": "workspace:*",
+    "better-auth": "catalog:auth",
+    "drizzle-orm": "catalog:database",
+    "effect": "catalog:effect",
+    "kysely": "catalog:database",
+    "mysql2": "catalog:database",
+    "pg": "catalog:database"
+  },
+  "peerDependenciesMeta": {
+    "@cloudflare/workers-types": {
+      "optional": true
+    },
+    "@distilled.cloud/aws": {
+      "optional": true
+    },
+    "@neondatabase/serverless": {
+      "optional": true
+    },
+    "drizzle-orm": {
+      "optional": true
+    },
+    "kysely": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@distilled.cloud/aws": "workspace:*",
+    "@distilled.cloud/cloudflare": "workspace:*",
+    "@effect/platform-bun": "catalog:effect",
+    "@neondatabase/serverless": "catalog:database",
+    "@types/pg": "catalog:database",
+    "alchemy": "workspace:*",
+    "alchemy-test": "workspace:*",
+    "better-auth": "catalog:auth",
+    "drizzle-orm": "catalog:database",
+    "effect": "catalog:effect",
+    "kysely": "catalog:database",
+    "mysql2": "catalog:database",
+    "pg": "catalog:database"
   },
   "publishConfig": {
     "access": "public"

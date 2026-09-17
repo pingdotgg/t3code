@@ -85,9 +85,8 @@ export interface AnomalySubscription extends Resource<
  * Cost Explorer is a global service — all calls are pinned to `us-east-1`
  * regardless of the stack region. Every property is mutable in place.
  *
- * @resource
- * @section Creating Anomaly Subscriptions
- * @example Daily email digest for anomalies over $100
+ * ### Creating Anomaly Subscriptions
+ * **Example:** Daily email digest for anomalies over $100
  * ```typescript
  * import * as CostExplorer from "alchemy/AWS/CostExplorer";
  *
@@ -110,7 +109,7 @@ export interface AnomalySubscription extends Resource<
  * });
  * ```
  *
- * @example Immediate SNS notifications
+ * **Example:** Immediate SNS notifications
  * ```typescript
  * const subscription = yield* CostExplorer.AnomalySubscription("PagerFeed", {
  *   monitorArnList: [monitor.monitorArn],
@@ -118,6 +117,8 @@ export interface AnomalySubscription extends Resource<
  *   subscribers: [{ type: "SNS", address: topic.topicArn }],
  * });
  * ```
+ *
+ * @resource
  */
 export const AnomalySubscription = Resource<AnomalySubscription>(
   "AWS.CostExplorer.AnomalySubscription",

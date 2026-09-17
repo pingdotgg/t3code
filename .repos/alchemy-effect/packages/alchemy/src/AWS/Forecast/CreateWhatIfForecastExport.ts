@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * destination role. Provide the implementation with
  * `Effect.provide(AWS.Forecast.CreateWhatIfForecastExportHttp)`.
  *
- * @binding
- * @section Exporting Forecasts
- * @example Export Scenario Forecasts
+ * ### Exporting Forecasts
+ * **Example:** Export Scenario Forecasts
  * ```typescript
  * // init
  * const createWhatIfForecastExport =
@@ -30,6 +29,8 @@ import * as Binding from "../../Binding.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateWhatIfForecastExport extends Binding.Service<
   CreateWhatIfForecastExport,

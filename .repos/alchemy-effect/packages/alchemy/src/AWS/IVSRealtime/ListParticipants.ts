@@ -13,9 +13,8 @@ export interface ListParticipantsRequest extends Omit<
  * List all participants in a session of the bound stage, optionally
  * filtered by user id, publish state, connection state, or recording state.
  *
- * @binding
- * @section Inspecting Participants
- * @example List a session's participants
+ * ### Inspecting Participants
+ * **Example:** List a session's participants
  * ```typescript
  * // init
  * const listParticipants = yield* IVSRealtime.ListParticipants(stage);
@@ -26,6 +25,8 @@ export interface ListParticipantsRequest extends Omit<
  *   filterByPublished: true,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListParticipants extends Binding.Service<
   ListParticipants,

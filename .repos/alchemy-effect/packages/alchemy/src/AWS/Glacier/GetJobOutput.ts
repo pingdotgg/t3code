@@ -22,14 +22,15 @@ export interface GetJobOutputRequest extends Omit<
  * field for chunked downloads.
  * Provide the implementation with
  * `Effect.provide(AWS.Glacier.GetJobOutputHttp)`.
- * @binding
- * @section Retrieving Archives
- * @example Download a completed job's output
+ * ### Retrieving Archives
+ * **Example:** Download a completed job's output
  * ```typescript
  * const getJobOutput = yield* AWS.Glacier.GetJobOutput(vault);
  *
  * const { body, status } = yield* getJobOutput({ jobId });
  * ```
+ *
+ * @binding
  */
 export interface GetJobOutput extends Binding.Service<
   GetJobOutput,

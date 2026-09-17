@@ -10,6 +10,35 @@ export const MOBILE_DEFAULT_THEME_ID = "t3-code";
  */
 export const MOBILE_THEME_IDS = [MOBILE_DEFAULT_THEME_ID, ...BUILT_IN_THEME_IDS] as const;
 
+/**
+ * Ids a theme may not take: the appearance keywords a stored preference uses,
+ * every built-in, and the legacy aliases older saves still carry. Taking one
+ * would either be shadowed by the built-in or capture clients that never chose
+ * it, so the client library and the publish path both consult this set.
+ */
+export const RESERVED_THEME_IDS: ReadonlySet<string> = new Set([
+  "system",
+  "light",
+  "dark",
+  ...BUILT_IN_THEME_IDS,
+  "t3-chat-dark",
+  "t3-grove",
+  "t3-ocean",
+  "t3-ember",
+  "t3-iris",
+]);
+
+/**
+ * Additionally closed to a machine publishing a theme: the mobile default is
+ * not a web or desktop built-in, so a saved theme may legitimately carry that
+ * id, but no client that follows published themes can resolve it -- publishing
+ * it would report success and change nothing.
+ */
+export const UNPUBLISHABLE_THEME_IDS: ReadonlySet<string> = new Set([
+  ...RESERVED_THEME_IDS,
+  MOBILE_DEFAULT_THEME_ID,
+]);
+
 export type BuiltInThemeId = (typeof BUILT_IN_THEME_IDS)[number];
 export type MobileThemeId = (typeof MOBILE_THEME_IDS)[number];
 export type ThemeAppearance = "light" | "dark";
@@ -734,10 +763,6 @@ export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [
   EMBER_THEME,
   IRIS_THEME,
 ];
-
-export function getBuiltInTheme(id: string): ThemeDefinition | null {
-  return BUILT_IN_THEMES.find((theme) => theme.id === id) ?? null;
-}
 
 export function getThemeColorsForAppearance(
   theme: ThemeDefinition,

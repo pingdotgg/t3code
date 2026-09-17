@@ -14,9 +14,8 @@ export interface GetCostAndUsageComparisonsRequest
  * Compare cost and usage between two periods within the last 13
  * months (up to 38 months with multi-year data enabled). Provide the implementation with
  * `Effect.provide(AWS.CostExplorer.GetCostAndUsageComparisonsHttp)`.
- * @binding
- * @section Querying Cost and Usage
- * @example Compare Two Billing Periods
+ * ### Querying Cost and Usage
+ * **Example:** Compare Two Billing Periods
  * ```typescript
  * // init — account-level binding takes no resource
  * const getCostAndUsageComparisons = yield* AWS.CostExplorer.GetCostAndUsageComparisons();
@@ -28,6 +27,8 @@ export interface GetCostAndUsageComparisonsRequest
  *   MetricForComparison: "UnblendedCost",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetCostAndUsageComparisons extends Binding.Service<
   GetCostAndUsageComparisons,

@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 
-import {
-  isRelayManagedConnection,
-  redactPairingCredential,
-  toStableSavedRemoteConnection,
-} from "./connection";
+import { isRelayManagedConnection, toStableSavedRemoteConnection } from "./connection";
 import { authClientMetadata } from "./authClientMetadata";
 
 const mobilePlatform = vi.hoisted(() => ({ OS: "ios" as "ios" | "android" }));
 const mobileDevice = vi.hoisted(() => ({
+  deviceType: 1,
+  DeviceType: {
+    UNKNOWN: 0,
+    PHONE: 1,
+    TABLET: 2,
+    DESKTOP: 3,
+    TV: 4,
+  },
   osVersion: "18.4.1",
   modelName: "iPhone 15 Pro",
 }));
@@ -29,6 +33,7 @@ vi.mock("expo-device", () => mobileDevice);
 describe("mobile remote connection records", () => {
   afterEach(() => {
     mobilePlatform.OS = "ios";
+    mobileDevice.deviceType = mobileDevice.DeviceType.PHONE;
     mobileDevice.osVersion = "18.4.1";
     mobileDevice.modelName = "iPhone 15 Pro";
   });
@@ -56,28 +61,22 @@ describe("mobile remote connection records", () => {
     });
   });
 
+  it("identifies native tablets separately from phones", () => {
+    mobileDevice.deviceType = mobileDevice.DeviceType.TABLET;
+    mobileDevice.modelName = "iPad Pro 13-inch";
+
+    expect(authClientMetadata()).toMatchObject({
+      deviceType: "tablet",
+      os: "iOS",
+      deviceModel: "iPad Pro 13-inch",
+    });
+  });
+
   it("includes the mobile app version when the client provides it", () => {
     expect(authClientMetadata("1.2.3")).toMatchObject({
       surface: "mobile",
       appVersion: "1.2.3",
     });
-  });
-
-  it("removes one-time bootstrap credentials before persisting pairing URLs", () => {
-    expect(redactPairingCredential("https://desktop.example/#token=bootstrap-token")).toBe(
-      "https://desktop.example/",
-    );
-    expect(redactPairingCredential("https://desktop.example/?token=bootstrap-token")).toBe(
-      "https://desktop.example/",
-    );
-  });
-
-  it("removes hosted pairing credentials while keeping the advertised host", () => {
-    expect(
-      redactPairingCredential(
-        "https://app.t3.codes/pair?host=https%3A%2F%2Fdesktop.example&token=bootstrap-token&label=Desktop",
-      ),
-    ).toBe("https://app.t3.codes/pair?host=https%3A%2F%2Fdesktop.example&label=Desktop");
   });
 
   it("recognizes explicitly managed relay connections", () => {

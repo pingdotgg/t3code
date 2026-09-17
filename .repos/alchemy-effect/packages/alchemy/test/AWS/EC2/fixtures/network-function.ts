@@ -29,7 +29,7 @@ export class NetworkTestFunction extends Lambda.Function<Lambda.Function>()(
 export default NetworkTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     const network = yield* EC2.Network("Network", {

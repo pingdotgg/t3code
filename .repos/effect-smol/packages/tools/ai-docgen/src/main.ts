@@ -25,7 +25,8 @@ const output = Flag.path("output").pipe(
 
 const watch = Flag.boolean("watch").pipe(
   Flag.withAlias("w"),
-  Flag.withDescription("Watch for file changes and regenerate documentation")
+  Flag.withDescription("Watch for file changes and regenerate documentation"),
+  Flag.withDefault(false)
 )
 
 Command.make("effect-ai-docgen", { directory, output, watch }).pipe(

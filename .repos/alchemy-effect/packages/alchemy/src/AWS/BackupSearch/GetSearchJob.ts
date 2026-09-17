@@ -12,9 +12,8 @@ import type { SearchJob } from "./SearchJob.ts";
  * operation until `Status` is terminal is how a consumer knows the results
  * returned by `ListSearchJobResults` are final. Provide the implementation
  * with `Effect.provide(AWS.BackupSearch.GetSearchJobHttp)`.
- * @binding
- * @section Polling Search Progress
- * @example Wait for the Search Job to Complete
+ * ### Polling Search Progress
+ * **Example:** Wait for the Search Job to Complete
  * ```typescript
  * // init — bind the operation to the search job
  * const getSearchJob = yield* AWS.BackupSearch.GetSearchJob(search);
@@ -29,6 +28,8 @@ import type { SearchJob } from "./SearchJob.ts";
  * );
  * console.log(job.Status, job.SearchProgress?.ItemsMatchedCount);
  * ```
+ *
+ * @binding
  */
 export interface GetSearchJob extends Binding.Service<
   GetSearchJob,

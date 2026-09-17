@@ -1,0 +1,220 @@
+---
+title: "Part 3: Persist Data with a Volume"
+description: Mount a Railway disk into your Service with MountVolume and store files that survive deploys.
+sidebar:
+  order: 3
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+Your Service from [Part 2](/railway/tutorial/part-2) is stateless.
+Writes to the container's root disk die with the container. In this
+part you mount a Volume so files survive deploys.
+
+## Declare a Volume
+
+A Volume is a standalone resource on the Project. Add it next to
+the Project:
+
+```diff lang="typescript"
+// src/project.ts
+import * as Railway from "alchemy/Railway";
+
+export const Site = Railway.Project("Site");
++
++export const Data = Railway.Volume("Data", {
++  project: Site,
++  mountPath: "/data",
++});
+```
+
+The volume is disconnected until a Service mounts it. `mountPath` is
+the path in the container.
+
+## Mount a disk into the Service
+
+Inside the Service's init, `Railway.MountVolume(Data, { path })`
+attaches that Volume at deploy time and hands you the path at
+runtime:
+
+```diff lang="typescript"
+// src/api.ts
+import * as Railway from "alchemy/Railway";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+-import { Site } from "./project.ts";
++import { Data, Site } from "./project.ts";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+    region: "us-west2",
+    port: 3000,
+  },
+  Effect.gen(function* () {
++    const mount = yield* Railway.MountVolume(Data, { path: "/data" });
+
+    return {
+      fetch: /* ... */,
+    };
+  }),
+) {}
+```
+
+`MountVolume` is a **binding**: at deploy time it tells the Service
+"attach this Volume at `/data`", and at runtime it hands you the
+resolved `mount.path`.
+
+## Provide the binding layer
+
+Bindings declare a capability; layers implement it. Provide
+`MountVolumeLive` on the Service's init Effect:
+
+```diff lang="typescript"
+  Effect.gen(function* () {
+    const mount = yield* Railway.MountVolume(Data, { path: "/data" });
+
+    return {
+      fetch: /* ... */,
+    };
+-  }),
++  }).pipe(Effect.provide(Railway.MountVolumeLive)),
+) {}
+```
+
+## Resolve FileSystem in init
+
+Yield `FileSystem` in the outer Effect. Close over it in `fetch`.
+Do not yield it per request.
+
+```diff lang="typescript"
+// src/api.ts
++import * as FileSystem from "effect/FileSystem";
+// ...
+  Effect.gen(function* () {
+    const mount = yield* Railway.MountVolume(Data, { path: "/data" });
++    const fs = yield* FileSystem.FileSystem;
+
+    return {
+      fetch: /* ... */,
+    };
+  }).pipe(Effect.provide(Railway.MountVolumeLive)),
+```
+
+## Write files with `PUT /:name`
+
+The Volume is a directory. Use `fs` from init:
+
+```diff lang="typescript"
+fetch: Effect.gen(function* () {
+  const request = yield* HttpServerRequest;
+  const url = new URL(request.url, "http://service");
+  if (url.pathname === "/health") {
+    return HttpServerResponse.json({ ok: true });
+  }
++  const file = `${mount.path}${url.pathname}`;
++
++  if (request.method === "PUT") {
++    const body = yield* request.text;
++    yield* fs.writeFileString(file, body).pipe(Effect.orDie);
++    return HttpServerResponse.empty({ status: 204 });
++  }
++
+  return HttpServerResponse.text("Hello from Railway!");
+}),
+```
+
+## Read files with `GET /:name`
+
+Add the read branch, turning a missing file into a 404:
+
+```diff lang="typescript"
+if (request.method === "PUT") {
+  const body = yield* request.text;
+  yield* fs.writeFileString(file, body).pipe(Effect.orDie);
+  return HttpServerResponse.empty({ status: 204 });
+}
+
++if (request.method === "GET") {
++  const text = yield* fs.readFileString(file).pipe(
++    Effect.catchAll(() => Effect.succeed(undefined)),
++  );
++  if (text === undefined) {
++    return HttpServerResponse.text("Not found", { status: 404 });
++  }
++  return HttpServerResponse.text(text);
++}
+
+return HttpServerResponse.text("Hello from Railway!");
+```
+
+## Yield the Volume from the Stack
+
+```diff lang="typescript"
+// alchemy.run.ts
+-import { Site } from "./src/project.ts";
++import { Data, Site } from "./src/project.ts";
+
+  Effect.gen(function* () {
+    const site = yield* Site;
++    yield* Data;
+    const api = yield* Api;
+```
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]1 to create[/g], [y]1 to update[/y]
+
+[g]+[/g] [b]Data[/b] [d](Railway.Volume)[/d]
+[y]~[/y] [b]Api[/b] [d](Railway.Service)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]Data[/b] [d](Railway.Volume)[/d] [g]created[/g]
+[g]✓[/g] [b]Api[/b] [d](Railway.Service)[/d] [y]updated[/y]`} />
+
+During the Service's deploy, Alchemy attaches the Volume at `/data`.
+
+## Try it out
+
+```sh
+# Store a file on the Volume
+curl -X PUT https://myapp-api-dev-a1b2c3d4.up.railway.app/hello.txt -d 'Hello, Volume!'
+
+# Read it back
+curl https://myapp-api-dev-a1b2c3d4.up.railway.app/hello.txt
+# → Hello, Volume!
+```
+
+Ship another code change and deploy — the file is still there.
+
+## Recap
+
+You now have:
+
+- A Volume in the Project mounted at `/data` on the API Service
+- A Service reading and writing it through Effect's `FileSystem` —
+  no SDK, just files
+- Data that outlives deploys
+
+In [Part 4](/railway/tutorial/part-4), you'll store a Variable on
+the Project and read it from the Service, then tear the stack down.

@@ -10,6 +10,14 @@ import path from "pathe";
 
 const main = path.resolve(import.meta.dirname, "handler.ts");
 
+const failureJson = (failure: { readonly _tag: string }) => ({
+  errorTag: failure._tag,
+  errorMessage:
+    "message" in failure && typeof failure.message === "string"
+      ? failure.message
+      : undefined,
+});
+
 export class KinesisVideoTestFunction extends AWS.Lambda.Function<AWS.Lambda.Function>()(
   "KinesisVideoTestFunction",
 ) {}
@@ -17,7 +25,7 @@ export class KinesisVideoTestFunction extends AWS.Lambda.Function<AWS.Lambda.Fun
 export default KinesisVideoTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // every route fans out to GetDataEndpoint/GetSignalingChannelEndpoint
     // plus the data-plane call; the 3s default is too tight
     timeout: Duration.seconds(30),
@@ -64,9 +72,7 @@ export default KinesisVideoTestFunction.make(
               url: result.success.HLSStreamingSessionURL,
             });
           }
-          return yield* HttpServerResponse.json({
-            errorTag: result.failure._tag,
-          });
+          return yield* HttpServerResponse.json(failureJson(result.failure));
         }
 
         if (request.method === "GET" && pathname === "/dash") {
@@ -81,7 +87,7 @@ export default KinesisVideoTestFunction.make(
             });
           }
           return yield* HttpServerResponse.json({
-            errorTag: result.failure._tag,
+            ...failureJson(result.failure),
           });
         }
 
@@ -109,7 +115,7 @@ export default KinesisVideoTestFunction.make(
           }
           return yield* HttpServerResponse.json({
             ok: false,
-            errorTag: result.failure._tag,
+            ...failureJson(result.failure),
           });
         }
 
@@ -134,7 +140,7 @@ export default KinesisVideoTestFunction.make(
           }
           return yield* HttpServerResponse.json({
             ok: false,
-            errorTag: result.failure._tag,
+            ...failureJson(result.failure),
           });
         }
 
@@ -157,7 +163,7 @@ export default KinesisVideoTestFunction.make(
           }
           return yield* HttpServerResponse.json({
             ok: false,
-            errorTag: result.failure._tag,
+            ...failureJson(result.failure),
           });
         }
 
@@ -178,7 +184,7 @@ export default KinesisVideoTestFunction.make(
           }
           return yield* HttpServerResponse.json({
             ok: false,
-            errorTag: result.failure._tag,
+            ...failureJson(result.failure),
           });
         }
 
@@ -190,7 +196,7 @@ export default KinesisVideoTestFunction.make(
           return yield* HttpServerResponse.json(
             Result.isSuccess(result)
               ? { ok: true }
-              : { ok: false, errorTag: result.failure._tag },
+              : { ok: false, ...failureJson(result.failure) },
           );
         }
 
@@ -201,7 +207,7 @@ export default KinesisVideoTestFunction.make(
           return yield* HttpServerResponse.json(
             Result.isSuccess(result)
               ? { ok: true }
-              : { ok: false, errorTag: result.failure._tag },
+              : { ok: false, ...failureJson(result.failure) },
           );
         }
 
@@ -230,14 +236,22 @@ export default KinesisVideoTestFunction.make(
           }
           return yield* HttpServerResponse.json({
             ok: false,
-            errorTag: result.failure._tag,
+            ...failureJson(result.failure),
           });
         }
 
         if (request.method === "GET" && pathname === "/ice") {
-          const config = yield* getIceServers({ ClientId: "alchemy-test" });
+          const result = yield* Effect.result(
+            getIceServers({ ClientId: "alchemy-test" }),
+          );
+          if (Result.isFailure(result)) {
+            return yield* HttpServerResponse.json({
+              ok: false,
+              ...failureJson(result.failure),
+            });
+          }
           return yield* HttpServerResponse.json({
-            servers: (config.IceServerList ?? []).map((server) => ({
+            servers: (result.success.IceServerList ?? []).map((server) => ({
               uris: server.Uris ?? [],
               hasCredentials:
                 server.Username !== undefined && server.Password !== undefined,
@@ -270,7 +284,7 @@ export default KinesisVideoTestFunction.make(
           }
           return yield* HttpServerResponse.json({
             ok: false,
-            errorTag: result.failure._tag,
+            ...failureJson(result.failure),
           });
         }
 

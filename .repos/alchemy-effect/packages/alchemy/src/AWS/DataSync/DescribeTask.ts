@@ -12,9 +12,8 @@ import type { Task } from "./Task.ts";
  * function can monitor the task's health. The task ARN is injected from the
  * binding. Provide the implementation with
  * `Effect.provide(AWS.DataSync.DescribeTaskHttp)`.
- * @binding
- * @section Monitoring Tasks
- * @example Check The Task's Status
+ * ### Monitoring Tasks
+ * **Example:** Check The Task's Status
  * ```typescript
  * // init — bind the operation to the task
  * const describeTask = yield* AWS.DataSync.DescribeTask(task);
@@ -23,6 +22,8 @@ import type { Task } from "./Task.ts";
  * const detail = yield* describeTask();
  * yield* Effect.log(`task ${detail.Name} is ${detail.Status}`);
  * ```
+ *
+ * @binding
  */
 export interface DescribeTask extends Binding.Service<
   DescribeTask,

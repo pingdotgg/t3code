@@ -18,9 +18,8 @@ export interface GetMediaForFragmentListRequest extends Omit<
  * and downloads MKV-packaged media for an explicit list of fragment
  * numbers (typically discovered via `ListFragments`). The response
  * `Payload` is a streaming body.
- * @binding
- * @section Reading Media
- * @example Fetch Media for Specific Fragments
+ * ### Reading Media
+ * **Example:** Fetch Media for Specific Fragments
  * ```typescript
  * // init
  * const getFragmentMedia =
@@ -31,6 +30,8 @@ export interface GetMediaForFragmentListRequest extends Omit<
  *   Fragments: fragments.map((f) => f.FragmentNumber!),
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetMediaForFragmentList extends Binding.Service<
   GetMediaForFragmentList,

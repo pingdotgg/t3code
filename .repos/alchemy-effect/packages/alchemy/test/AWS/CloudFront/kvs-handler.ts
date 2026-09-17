@@ -21,7 +21,7 @@ const unwrap = (value: string | Redacted.Redacted<string>): string =>
 export default CloudFrontKvsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

@@ -6,7 +6,7 @@ import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
-import { Resource } from "../../Resource.ts";
+import { isResourceOfType, Resource } from "../../Resource.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import type { Providers } from "../Providers.ts";
 
@@ -97,11 +97,8 @@ export type VpcService = Resource<
 /**
  * A Cloudflare VPC service that exposes a private host (IP or hostname)
  * reachable through a Cloudflare Tunnel for Workers VPC.
- * @resource
- * @product Workers VPC
- * @category Network
- * @section Creating a VPC Service
- * @example Hostname through a tunnel
+ * ### Creating a VPC Service
+ * **Example:** Hostname through a tunnel
  * ```typescript
  * const tunnel = yield* Cloudflare.Tunnel.Tunnel("MyTunnel");
  * const service = yield* Cloudflare.VpcService.VpcService("Internal", {
@@ -112,18 +109,25 @@ export type VpcService = Resource<
  * });
  * ```
  *
- * @example IPv4 with explicit ports
+ * **Example:** IPv4 with explicit ports
  * ```typescript
  * const service = yield* Cloudflare.VpcService.VpcService("DevServer", {
  *   httpPort: 5173,
  *   host: { ipv4: "192.168.1.100", network: { tunnelId: tunnel.tunnelId } },
  * });
  * ```
+ *
+ * @resource
+ * @product Workers VPC
+ * @category Network
  */
 export const VpcService = Resource<VpcService>(
   "Cloudflare.VpcService.VpcService",
   { aliases: ["Cloudflare.VpcService"] },
 );
+
+export const isVpcService = (value: unknown): value is VpcService =>
+  isResourceOfType(value, "Cloudflare.VpcService.VpcService");
 
 const createServiceName = (id: string, name: string | undefined) =>
   Effect.gen(function* () {

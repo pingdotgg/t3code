@@ -11,9 +11,8 @@ export interface GetMetricWidgetImageRequest
  *
  * Provide `CloudWatch.GetMetricWidgetImageHttp` on the hosting Lambda
  * Function to satisfy the requirement.
- * @binding
- * @section Rendering Metric Graphs
- * @example Render a Metric Graph as PNG
+ * ### Rendering Metric Graphs
+ * **Example:** Render a Metric Graph as PNG
  * ```typescript
  * // init — grants cloudwatch:GetMetricWidgetImage
  * const getMetricWidgetImage = yield* AWS.CloudWatch.GetMetricWidgetImage();
@@ -29,6 +28,8 @@ export interface GetMetricWidgetImageRequest
  * });
  * const png = result.MetricWidgetImage; // image bytes
  * ```
+ *
+ * @binding
  */
 export interface GetMetricWidgetImage extends Binding.Service<
   GetMetricWidgetImage,

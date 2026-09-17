@@ -8,5 +8,6 @@ export * from "./ExecuteSql.ts";
 export * from "./ExecuteSqlHttp.ts";
 export * from "./ExecuteStatement.ts";
 export * from "./ExecuteStatementHttp.ts";
+export * from "./Marshall.ts";
 export * from "./RollbackTransaction.ts";
 export * from "./RollbackTransactionHttp.ts";

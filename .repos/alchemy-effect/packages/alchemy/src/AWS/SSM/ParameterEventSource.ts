@@ -73,8 +73,8 @@ export interface ParameterEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Parameter Events
- * @example React To Parameter Changes
+ * ### Consuming Parameter Events
+ * **Example:** React To Parameter Changes
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

@@ -18,7 +18,7 @@ import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts"
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
-import { setWslBackendEnabled, setWslDistro, setWslOnly } from "./wsl.ts";
+import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./wsl.ts";
 
 const decodeWslState = Schema.decodeUnknownEffect(DesktopWslStateSchema);
 
@@ -85,6 +85,42 @@ const unusedLifecycleRuntimeLayer = Layer.mergeAll(
 );
 
 describe("WSL IPC", () => {
+  it.effect("does not probe WSL when local execution is disabled", () =>
+    Effect.gen(function* () {
+      const wsl = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+      const state = yield* getWslState.handler(undefined).pipe(
+        Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, {
+          ...wsl,
+          isAvailable: Effect.die("must not probe WSL"),
+          listDistros: Effect.die("must not enumerate distros"),
+        }),
+        Effect.flatMap(decodeWslState),
+      );
+      assert.deepEqual(state, {
+        enabled: true,
+        distro: "Ubuntu",
+        available: false,
+        wslOnly: true,
+        distros: [],
+        preflightError: null,
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopAppSettings.layerTest({
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: false,
+            wslBackendEnabled: true,
+            wslDistro: "Ubuntu",
+            wslOnly: true,
+          }),
+          DesktopWslEnvironment.layerTest(),
+          makeWslBackendLayer(),
+        ),
+      ),
+    ),
+  );
+
   it.effect("stages dual-backend preferences before enabling without relaunching", () => {
     const relaunchReasons: Array<string> = [];
     const layer = Layer.mergeAll(

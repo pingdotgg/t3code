@@ -1,6 +1,13 @@
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
-import { WS_METHODS } from "@t3tools/contracts";
+import {
+  WS_METHODS,
+  type EnvironmentId,
+  type OrchestrationShellSnapshot,
+} from "@t3tools/contracts";
+
+import { createOptimisticThreadLifecycle } from "./threadLifecycle.ts";
+import { canSnooze } from "./threadSettled.ts";
 
 import {
   createAtomCommandScheduler,
@@ -12,18 +19,22 @@ import {
   type CreateThreadInput,
   type DeleteThreadInput,
   type InterruptThreadTurnInput,
+  type LinkThreadPullRequestInput,
   type RespondToThreadApprovalInput,
   type RespondToThreadUserInputInput,
+  type DismissThreadUserInputInput,
   type RevertThreadCheckpointInput,
   type SetThreadInteractionModeInput,
   type SetThreadRuntimeModeInput,
   type PinThreadInput,
   type ReorderPinnedThreadInput,
+  type ReorderActiveThreadInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
   type StopThreadSessionInput,
   type UnarchiveThreadInput,
+  type UnlinkThreadPullRequestInput,
   type UnpinThreadInput,
   type UnsettleThreadInput,
   type UnsnoozeThreadInput,
@@ -32,18 +43,22 @@ import {
   createThread,
   deleteThread,
   interruptThreadTurn,
+  linkThreadPullRequest,
   respondToThreadApproval,
   respondToThreadUserInput,
+  dismissThreadUserInput,
   revertThreadCheckpoint,
   setThreadInteractionMode,
   setThreadRuntimeMode,
   pinThread,
   reorderPinnedThread,
+  reorderActiveThread,
   settleThread,
   snoozeThread,
   startThreadTurn,
   stopThreadSession,
   unarchiveThread,
+  unlinkThreadPullRequest,
   unpinThread,
   unsettleThread,
   unsnoozeThread,
@@ -56,18 +71,22 @@ export type {
   CreateThreadInput,
   DeleteThreadInput,
   InterruptThreadTurnInput,
+  LinkThreadPullRequestInput,
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
+  DismissThreadUserInputInput,
   RevertThreadCheckpointInput,
   SetThreadInteractionModeInput,
   SetThreadRuntimeModeInput,
   PinThreadInput,
   ReorderPinnedThreadInput,
+  ReorderActiveThreadInput,
   SettleThreadInput,
   SnoozeThreadInput,
   StartThreadTurnInput,
   StopThreadSessionInput,
   UnarchiveThreadInput,
+  UnlinkThreadPullRequestInput,
   UnpinThreadInput,
   UnsettleThreadInput,
   UnsnoozeThreadInput,
@@ -76,6 +95,7 @@ export type {
 
 export function createThreadEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | Crypto.Crypto | R, E>,
+  snapshotAtom: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationShellSnapshot | null>,
 ) {
   const scheduler = createAtomCommandScheduler();
   const concurrency = {
@@ -83,7 +103,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
       JSON.stringify([environmentId, input.threadId]),
   };
-  return {
+  const commands = {
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),
@@ -150,9 +170,27 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    reorderActive: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:reorder-active",
+      execute: (input: ReorderActiveThreadInput) => reorderActiveThread(input),
+      scheduler,
+      concurrency,
+    }),
     updateMetadata: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:update-metadata",
       execute: (input: UpdateThreadMetadataInput) => updateThreadMetadata(input),
+      scheduler,
+      concurrency,
+    }),
+    linkPullRequest: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:link-pull-request",
+      execute: (input: LinkThreadPullRequestInput) => linkThreadPullRequest(input),
+      scheduler,
+      concurrency,
+    }),
+    unlinkPullRequest: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:unlink-pull-request",
+      execute: (input: UnlinkThreadPullRequestInput) => unlinkThreadPullRequest(input),
       scheduler,
       concurrency,
     }),
@@ -192,6 +230,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    dismissUserInput: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:dismiss-user-input",
+      execute: (input: DismissThreadUserInputInput) => dismissThreadUserInput(input),
+      scheduler,
+      concurrency,
+    }),
     revertCheckpoint: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:revert-checkpoint",
       execute: (input: RevertThreadCheckpointInput) => revertThreadCheckpoint(input),
@@ -210,5 +254,80 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+  };
+  const optimistic = createOptimisticThreadLifecycle(snapshotAtom);
+  return {
+    ...commands,
+    snapshotAtom: optimistic.snapshotAtom,
+    settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
+      !accepted &&
+      (!canSnooze(thread, { now }) ||
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running")
+        ? thread
+        : {
+            ...thread,
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            settledOverride: "settled",
+            settledAt: thread.settledOverride === "settled" ? (thread.settledAt ?? now) : now,
+            unsettledAt: null,
+            activeOrderKey: null,
+            pinnedAt: null,
+            pinOrderKey: null,
+            snoozedAt: null,
+            snoozedUntil: null,
+          },
+    ),
+    unsettle: optimistic.wrap(commands.unsettle, (thread, input, now) => ({
+      ...thread,
+      settledOverride: input.reason === "user" ? "active" : null,
+      settledAt: null,
+      unsettledAt: thread.settledOverride === "active" ? (thread.unsettledAt ?? null) : now,
+    })),
+    snooze: optimistic.wrap(commands.snooze, (thread, input, now, accepted) =>
+      (!accepted && !canSnooze(thread, { now })) ||
+      !(Date.parse(input.snoozedUntil) > Date.parse(now))
+        ? thread
+        : {
+            ...thread,
+            hasPendingApprovals: false,
+            hasPendingUserInput: false,
+            snoozedUntil: input.snoozedUntil,
+            snoozedAt: thread.snoozedUntil === input.snoozedUntil ? (thread.snoozedAt ?? now) : now,
+          },
+    ),
+    unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({
+      ...thread,
+      snoozedUntil: null,
+      snoozedAt: null,
+    })),
+    pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
+      ...thread,
+      pinnedAt: thread.pinnedAt ?? now,
+      pinOrderKey: thread.pinnedAt == null ? (input.orderKey ?? null) : thread.pinOrderKey,
+      ...(thread.settledOverride === "settled"
+        ? {
+            settledOverride: "active" as const,
+            settledAt: null,
+            unsettledAt: now,
+          }
+        : {}),
+      snoozedUntil: null,
+      snoozedAt: null,
+    })),
+    unpin: optimistic.wrap(commands.unpin, (thread) => ({
+      ...thread,
+      pinnedAt: null,
+      pinOrderKey: null,
+    })),
+    reorderPin: optimistic.wrap(commands.reorderPin, (thread, input) => ({
+      ...thread,
+      pinOrderKey: input.orderKey,
+    })),
+    reorderActive: optimistic.wrap(commands.reorderActive, (thread, input) => ({
+      ...thread,
+      activeOrderKey: input.orderKey,
+    })),
   };
 }

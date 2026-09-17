@@ -29,7 +29,7 @@ import * as Telemetry from "effect/unstable/ai/Telemetry"
 export type OpenAiTelemetryAttributes = Simplify<
   & Telemetry.GenAITelemetryAttributes
   & Telemetry.AttributesWithPrefix<RequestAttributes, "gen_ai.openai.request">
-  & Telemetry.AttributesWithPrefix<ResponseAttributes, "gen_ai.openai.request">
+  & Telemetry.AttributesWithPrefix<ResponseAttributes, "gen_ai.openai.response">
 >
 
 /**

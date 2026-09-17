@@ -11,13 +11,14 @@ export interface GetSMSSandboxAccountStatusRequest
  * An account-scoped operation — reports whether the account is still in
  * the SMS sandbox (only verified destination numbers deliverable).
  * Provide the `GetSMSSandboxAccountStatusHttp` layer on the Function to implement the binding.
- * @binding
- * @section SMS Sandbox
- * @example Check Sandbox Status
+ * ### SMS Sandbox
+ * **Example:** Check Sandbox Status
  * ```typescript
  * const getSandboxStatus = yield* SNS.GetSMSSandboxAccountStatus();
  * const { IsInSandbox } = yield* getSandboxStatus();
  * ```
+ *
+ * @binding
  */
 export interface GetSMSSandboxAccountStatus extends Binding.Service<
   GetSMSSandboxAccountStatus,

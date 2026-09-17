@@ -58,7 +58,7 @@ export interface SubagentRunHandles {
 
 export interface RuntimeSubagent {
   readonly id: string;
-  readonly kind: "subagent" | "workflow" | "workflow_agent";
+  readonly kind: "subagent" | "subagent_batch" | "workflow" | "workflow_agent";
   readonly title: string;
   readonly role: string | null;
   readonly model: string | null;
@@ -259,6 +259,9 @@ function kindFromPayload(
   payload: Record<string, unknown>,
   agentId: string,
 ): RuntimeSubagent["kind"] {
+  if (payload.taskType === "subagent_batch") {
+    return "subagent_batch";
+  }
   if (asString(payload.taskType) === "local_workflow") {
     return "workflow";
   }
@@ -314,6 +317,7 @@ function getOrCreate(
 
 /** Metadata fill from any payload: never downgrades known values to null. */
 function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): void {
+  if (payload.taskType === "subagent_batch") agent.kind = "subagent_batch";
   const title = asString(payload.title);
   if (title) agent.title = title;
   const role = asString(payload.role);
@@ -546,6 +550,8 @@ export function foldSubagentActivities(
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
+        const detail = asString(payload.detail);
+        if (detail) agent.progress = bounded(detail);
         // A task first seen via task.updated (start row aged out) has run at
         // least once — zero activations would misreport "run 0" and let a
         // later start row treat it as never-started (review finding).
@@ -853,61 +859,6 @@ export function deriveAgentPanelModel({
     hasAgents: true,
     liveCount: runningCount + waitingCount,
   };
-}
-
-/**
- * Members ordered by urgency for the capped inline workflow card: running and
- * failed first, then waiting, then most recently updated.
- */
-export function workflowCardMembers(
-  group: AgentPanelWorkflowGroup,
-  limit: number,
-): { readonly visible: ReadonlyArray<RuntimeSubagent>; readonly overflow: number } {
-  const all = [...group.phases.flatMap((phase) => phase.members), ...group.unphasedMembers];
-  const urgency = (agent: RuntimeSubagent): number => {
-    if (agent.status === "failed") return 0;
-    if (agent.status === "running") return 1;
-    if (agent.status === "waiting") return 2;
-    return 3;
-  };
-  const ordered = all
-    .slice()
-    .sort((a, b) => urgency(a) - urgency(b) || b.updatedAt.localeCompare(a.updatedAt));
-  return {
-    visible: ordered.slice(0, limit),
-    overflow: Math.max(0, ordered.length - limit),
-  };
-}
-
-/** Kinds the timeline should not render as generic rows (fold input only). */
-export function isSubagentActivityKind(kind: string): boolean {
-  return (
-    kind === "task.started" ||
-    kind === "task.progress" ||
-    kind === "task.updated" ||
-    kind === "task.completed" ||
-    kind === "tool.progress"
-  );
-}
-
-/**
- * Quiet-timeline guarantee: tool rows attributed to an owning agent belong in
- * the Agents surface, not the parent chat. Unattributed rows must stay.
- */
-export function isAgentAttributedToolActivity(activity: OrchestrationThreadActivity): boolean {
-  if (typeof activity.payload !== "object" || activity.payload === null) {
-    return false;
-  }
-  const payload = activity.payload as Record<string, unknown>;
-  return typeof payload.agentId === "string" && payload.agentId.trim().length > 0;
-}
-
-/** Timeline-bypassing synthesized rows (Codex children, workflow members). */
-export function isTimelineBypassActivity(activity: OrchestrationThreadActivity): boolean {
-  if (typeof activity.payload !== "object" || activity.payload === null) {
-    return false;
-  }
-  return (activity.payload as Record<string, unknown>).timelineBypass === true;
 }
 
 /**

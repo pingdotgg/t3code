@@ -4,13 +4,13 @@ import { describe, expect, it } from "tstyche"
 describe("Schema built-in Error and collection declaration revivers", () => {
   it("exposes exact payload and declaration reviver types", () => {
     const revivers: ReadonlyArray<SchemaRepresentation.AnyReviver> = [
-      Schema.ErrorReviver,
+      Schema.ErrorInstanceReviver,
       Schema.ReadonlyMapReviver,
       Schema.ReadonlySetReviver
     ]
 
     expect(revivers).type.toBe<ReadonlyArray<SchemaRepresentation.AnyReviver>>()
-    expect(Schema.ErrorReviver).type.toBe<
+    expect(Schema.ErrorInstanceReviver).type.toBe<
       SchemaRepresentation.DeclarationReviver<
         | null
         | {

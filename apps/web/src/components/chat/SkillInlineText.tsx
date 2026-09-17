@@ -6,11 +6,13 @@ import {
   CHAT_INLINE_CHIP_CLASS_NAME,
   CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+  CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES,
   SKILL_CHIP_ICON_SVG,
 } from "../composerInlineChip";
 import { cn } from "~/lib/utils";
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+const SKILL_TOKEN_REGEX =
+  /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
 type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
@@ -75,12 +77,7 @@ export function renderSkillInlineMarkdownChildren(
 function SkillChip(props: { skill: InlineSkill; rawText: string }) {
   return (
     <span className="inline-flex align-middle leading-none" data-markdown-copy={props.rawText}>
-      <span
-        className={cn(
-          CHAT_INLINE_CHIP_CLASS_NAME,
-          "border-fuchsia-500/25 bg-fuchsia-500/12 text-fuchsia-700 dark:text-fuchsia-300",
-        )}
-      >
+      <span className={cn(CHAT_INLINE_CHIP_CLASS_NAME, CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.skill)}>
         <span
           aria-hidden="true"
           className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}

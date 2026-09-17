@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * {@link CreateSnapshot}. Pass `Options: ["DELETE_INTERMEDIATE_SNAPSHOTS"]`
  * to roll back past newer snapshots. Provide the implementation with
  * `Effect.provide(AWS.FSx.RestoreVolumeFromSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots at Runtime
- * @example Roll back a failed batch of writes
+ * ### Managing Snapshots at Runtime
+ * **Example:** Roll back a failed batch of writes
  * ```typescript
  * const restoreVolumeFromSnapshot =
  *   yield* AWS.FSx.RestoreVolumeFromSnapshot();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`volume ${response.VolumeId} restoring`);
  * ```
+ *
+ * @binding
  */
 export interface RestoreVolumeFromSnapshot extends Binding.Service<
   RestoreVolumeFromSnapshot,

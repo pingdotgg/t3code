@@ -27,7 +27,7 @@ import * as SqlSchema from "./SqlSchema.ts"
  * supplied, reads ignore soft-deleted rows and delete updates that column
  * instead of removing the row.
  *
- * @category repository
+ * @category constructors
  * @since 4.0.0
  */
 export const makeRepository = <
@@ -224,7 +224,7 @@ select * from ${sql(options.tableName)} where ${withSoftDeleteFilter(sql`${sql(i
  * Creates batched request resolvers for a schema model's insert, insert-void,
  * find-by-id, and delete operations, honoring the optional soft-delete column.
  *
- * @category repository
+ * @category constructors
  * @since 4.0.0
  */
 export const makeResolvers = <

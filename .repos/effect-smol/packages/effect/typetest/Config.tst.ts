@@ -1,4 +1,4 @@
-import { Config, Schema } from "effect"
+import { Config, ConfigProvider, Schema } from "effect"
 import { describe, expect, it } from "tstyche"
 
 describe("Config", () => {
@@ -39,5 +39,14 @@ describe("Config", () => {
     const c = Config.schema(Config.Array(Schema.FiniteFromString))
 
     expect(c).type.toBe<Config.Config<ReadonlyArray<number>>>()
+  })
+
+  it("parse", () => {
+    const config = Config.string("a")
+    const provider = ConfigProvider.fromUnknown({ a: "value" })
+
+    config.parse(provider)
+    // @ts-expect-error Expected 1 arguments, but got 2.
+    config.parse(provider, ["prefix"])
   })
 })

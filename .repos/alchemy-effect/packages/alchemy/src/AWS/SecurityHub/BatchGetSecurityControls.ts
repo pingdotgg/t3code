@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.SecurityHub.BatchGetSecurityControlsHttp)`.
- * @binding
- * @section Standards & Controls
- * @example Hydrate Control Details
+ * ### Standards & Controls
+ * **Example:** Hydrate Control Details
  * ```typescript
  * // init — account-level binding, no resource argument
  * const batchGetSecurityControls = yield* AWS.SecurityHub.BatchGetSecurityControls();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   SecurityControlIds: ["IAM.1", "S3.1"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchGetSecurityControls extends Binding.Service<
   BatchGetSecurityControls,

@@ -15,9 +15,8 @@ export interface GetResourcePolicyRequest extends Omit<
  * it (set via the stream's `resourcePolicy` prop) — the stream ARN is
  * injected automatically. Provide the implementation with
  * `Effect.provide(AWS.Kinesis.GetResourcePolicyHttp)`.
- * @binding
- * @section Inspecting Streams
- * @example Read the Stream's Resource Policy
+ * ### Inspecting Streams
+ * **Example:** Read the Stream's Resource Policy
  * ```typescript
  * // init
  * const getResourcePolicy = yield* AWS.Kinesis.GetResourcePolicy(stream);
@@ -26,6 +25,8 @@ export interface GetResourcePolicyRequest extends Omit<
  * const result = yield* getResourcePolicy();
  * const policy = JSON.parse(result.Policy);
  * ```
+ *
+ * @binding
  */
 export interface GetResourcePolicy extends Binding.Service<
   GetResourcePolicy,

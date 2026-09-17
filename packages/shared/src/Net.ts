@@ -63,6 +63,7 @@ export class NetService extends Context.Service<NetService, NetServiceShape>()(
   "@t3tools/shared/Net/NetService",
 ) {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = () => {
   /**
    * Returns true when a TCP server can bind to {host, port}.

@@ -58,7 +58,7 @@ export const FixtureClusterLive = Layer.effect(
 );
 
 export default KafkaTestFunction.make(
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const { cluster } = yield* FixtureCluster;
 

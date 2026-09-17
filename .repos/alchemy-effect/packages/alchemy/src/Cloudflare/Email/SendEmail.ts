@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { ProviderModePolicy } from "../../ProviderMode.ts";
 
 type SendEmailTypeId = typeof SendEmailTypeId;
 const SendEmailTypeId = "Cloudflare.Email.SendEmail" as const;
@@ -34,10 +35,15 @@ export type SendEmailProps = {
  * destination/sender restrictions; the actual `send_email` entry is attached
  * to the Worker via {@link SendBinding}.
  *
- * @resource
+ * Under `alchemy dev` the binding is lowered onto the local email simulator:
+ * `send()` validates the message and persists it as a `.eml` under
+ * `.alchemy/local/email` instead of delivering mail. Pipe the descriptor
+ * through `Alchemy.remote()` to send through the live Cloudflare Email
+ * service in dev — the same opt-out aspect resources use.
  *
- * @section Binding to a Worker
- * @example Send to any verified destination
+ *
+ * ### Binding to a Worker
+ * **Example:** Send to any verified destination
  * ```typescript
  * const Email = Cloudflare.Email.SendEmail("Email");
  *
@@ -51,17 +57,36 @@ export type SendEmailProps = {
  * });
  * ```
  *
- * @example Restrict the sender address
+ * **Example:** Restrict the sender address
  * ```typescript
  * const Ops = Cloudflare.Email.SendEmail("OpsEmail", {
  *   allowedSenderAddresses: ["noreply@example.com"],
  *   destinationAddress: "ops@example.com",
  * });
  * ```
+ *
+ * ### Local development
+ * **Example:** Send real mail from the dev loop
+ * ```typescript
+ * // Default: `send()` lands in the local simulator under `alchemy dev`.
+ * // Alchemy.remote() opts into the live Email service instead:
+ * const Email = Cloudflare.Email.SendEmail("Email", {
+ *   allowedSenderAddresses: ["noreply@example.com"],
+ * }).pipe(Alchemy.remote());
+ * ```
+ *
+ * @resource
  */
 export type SendEmail = SendEmailProps & {
   kind: SendEmailTypeId;
   name: string;
+  /**
+   * Alchemy-internal: opt-out of local emulation in `alchemy dev` — the
+   * `Alchemy.remote()` decoration captured at registration time. Registered
+   * on the host Worker via the binding-data `devRemote` channel, never on
+   * the wire binding itself.
+   */
+  devRemote?: boolean;
 };
 
 export const isSendEmail = (value: unknown): value is SendEmail =>
@@ -77,11 +102,17 @@ export const SendEmail: (
   id: string,
   props?: SendEmailProps,
 ) {
+  // Capture the `Alchemy.remote()` decoration the same way resources do —
+  // at registration time, from the ambient ProviderModePolicy reference.
+  // `send_email` has no cloud-side resource (and thus no provider mode to
+  // stamp), so the captured flag rides on the descriptor instead.
+  const devRemote = (yield* ProviderModePolicy) === true || undefined;
   return {
     kind: SendEmailTypeId,
     name: id,
     destinationAddress: props?.destinationAddress,
     allowedDestinationAddresses: props?.allowedDestinationAddresses,
     allowedSenderAddresses: props?.allowedSenderAddresses,
+    devRemote,
   } satisfies SendEmail;
 });

@@ -8,9 +8,103 @@ import {
   nativeMarkdownListItemBlocks,
   nativeMarkdownTextRuns,
   nativeMarkdownWithPreservedSoftBreaks,
+  nativeMarkdownContextCopyRanges,
+  contextChipPresentation,
 } from "@t3tools/mobile-markdown-text/markdown";
 
 describe("nativeMarkdownTextRuns", () => {
+  it("distinguishes video and pull-request context from generic file and review chips", () => {
+    expect(
+      contextChipPresentation("file", {
+        name: "recording.webm",
+        mimeType: "application/octet-stream",
+      }),
+    ).toEqual(contextChipPresentation("video"));
+    expect(contextChipPresentation("review-comment", { sectionId: "pull-request:284" })).toEqual(
+      contextChipPresentation("pull-request"),
+    );
+    expect(contextChipPresentation("review-comment", { sectionId: "git:working-tree" })).toEqual(
+      contextChipPresentation("review-comment"),
+    );
+  });
+
+  it("renders a video-named file with a declared document MIME type as a file chip", () => {
+    expect(
+      contextChipPresentation("file", {
+        name: "recording.mp4",
+        mimeType: "application/pdf",
+      }),
+    ).toEqual(contextChipPresentation("file"));
+  });
+
+  it("maps rendered selection offsets back to canonical references without losing repeated chips", () => {
+    const href = "t3-context://v1/image/screenshot";
+    expect(
+      nativeMarkdownContextCopyRanges([
+        { run: { text: "😀 " }, text: "😀 ", inlineImageLength: 0 },
+        { run: { href, text: "Checkout" }, text: "Checkout", inlineImageLength: 1 },
+        { run: { text: " then " }, text: " then ", inlineImageLength: 0 },
+        { run: { href, text: "Checkout" }, text: "\uFFFC\u00A0Checkout", inlineImageLength: 0 },
+      ]),
+    ).toEqual([
+      { start: 3, end: 12, text: "![Checkout](t3-context://v1/image/screenshot)" },
+      { start: 18, end: 28, text: "![Checkout](t3-context://v1/image/screenshot)" },
+    ]);
+  });
+  it("restores canonical skill and context text from Android's single-image chips", () => {
+    expect(
+      nativeMarkdownContextCopyRanges([
+        { run: { text: "Use " }, text: "Use ", inlineImageLength: 0 },
+        { run: { text: "Playwright", skillName: "playwright" }, text: "", inlineImageLength: 1 },
+        { run: { text: " on " }, text: " on ", inlineImageLength: 0 },
+        {
+          run: { text: "Screenshot", href: "t3-context://v1/image/screenshot" },
+          text: "",
+          inlineImageLength: 1,
+        },
+      ]),
+    ).toEqual([
+      { start: 4, end: 5, text: "$playwright" },
+      { start: 9, end: 10, text: "![Screenshot](t3-context://v1/image/screenshot)" },
+    ]);
+  });
+  it("links a path-shaped code span without changing the same path in prose", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          { type: "text", content: "/tmp/frame.png " },
+          { type: "code_inline", content: "/tmp/frame.png" },
+        ],
+      }),
+    ).toEqual([
+      { text: "/tmp/frame.png " },
+      { text: "frame.png", href: "/tmp/frame.png", fileIcon: "image" },
+    ]);
+  });
+
+  it("preserves the destination of a link with a code-formatted label", () => {
+    expect(
+      nativeMarkdownTextRuns({
+        type: "paragraph",
+        children: [
+          {
+            type: "link",
+            href: "https://example.com/docs",
+            children: [{ type: "code_inline", content: "src/main.ts" }],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        text: "src/main.ts",
+        code: true,
+        href: "https://example.com/docs",
+        externalHost: "example.com",
+      },
+    ]);
+  });
+
   it("preserves inline emphasis and code styles", () => {
     const node: MarkdownNode = {
       type: "paragraph",
@@ -58,7 +152,7 @@ describe("nativeMarkdownTextRuns", () => {
       {
         text: "README.md:12",
         href: "file:///repo/README.md#L12",
-        fileIcon: "readme",
+        fileIcon: "markdown",
       },
     ]);
   });
@@ -166,6 +260,53 @@ describe("nativeMarkdownTextRuns", () => {
 });
 
 describe("nativeMarkdownDocumentRuns", () => {
+  it("renders a file mention without swallowing sentence punctuation or changing package references", () => {
+    const runs = nativeMarkdownDocumentRuns({
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [
+            { type: "text", content: "Inspect @src/Checkout.tsx. Use @t3tools/contracts." },
+          ],
+        },
+      ],
+    });
+    expect(runs).toEqual([
+      { text: "Inspect ", role: "body" },
+      {
+        text: "Checkout.tsx",
+        role: "body",
+        href: "src/Checkout.tsx",
+        fileIcon: "react",
+        sourceText: "@src/Checkout.tsx",
+      },
+      { text: ". Use @t3tools/contracts.", role: "body" },
+    ]);
+  });
+
+  it("copies collapsed skill and file chips back to their original references", () => {
+    expect(
+      nativeMarkdownContextCopyRanges([
+        { run: { text: "$ui", skillName: "ui" }, text: "\uFFFC", inlineImageLength: 0 },
+        { run: { text: " and " }, text: " and ", inlineImageLength: 0 },
+        {
+          run: {
+            text: "Checkout.tsx",
+            href: "src/Checkout.tsx",
+            fileIcon: "react",
+            sourceText: "@src/Checkout.tsx",
+          },
+          text: "\uFFFC",
+          inlineImageLength: 0,
+        },
+      ]),
+    ).toEqual([
+      { start: 0, end: 1, text: "$ui" },
+      { start: 6, end: 7, text: "@src/Checkout.tsx" },
+    ]);
+  });
+
   it("decorates known skill references as selectable skill links", () => {
     const node: MarkdownNode = {
       type: "document",
@@ -184,6 +325,29 @@ describe("nativeMarkdownDocumentRuns", () => {
         role: "body",
         skillName: "ui",
         skillLabel: "UI",
+      },
+      { text: " for this.", role: "body" },
+    ]);
+  });
+
+  it("decorates known skill references that begin with a digit", () => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "text", content: "Use $2spec for this." }],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownDocumentRuns(node, [{ name: "2spec", displayName: "2Spec" }])).toEqual([
+      { text: "Use ", role: "body" },
+      {
+        text: "$2spec",
+        role: "body",
+        skillName: "2spec",
+        skillLabel: "2Spec",
       },
       { text: " for this.", role: "body" },
     ]);
@@ -411,6 +575,26 @@ describe("nativeMarkdownDocumentRuns", () => {
         .join(""),
     ).toBe("BASH\npnpm install");
   });
+
+  it("keeps adjacent context links with the same href in separate runs", () => {
+    const href = "t3-context://v1/terminal/ctx-1";
+    const link = (content: string): MarkdownNode => ({
+      type: "link",
+      href,
+      children: [{ type: "text", content }],
+    });
+    const runs = nativeMarkdownDocumentRuns({
+      type: "document",
+      children: [{ type: "paragraph", children: [link("First"), link("Second")] }],
+    });
+
+    // Merging these would render one chip and emit one copy range with a
+    // combined label for two distinct references.
+    expect(runs).toEqual([
+      { text: "First", role: "body", href, fileIcon: "bash" },
+      { text: "Second", role: "body", href, fileIcon: "bash" },
+    ]);
+  });
 });
 
 describe("nativeMarkdownListItemBlocks", () => {
@@ -476,7 +660,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     ).toEqual([
       {
         kind: "rich",
-        key: "rich:blockquote:0:120",
+        key: "rich:blockquote:offset:0",
         node: blockquote,
       },
     ]);
@@ -603,7 +787,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:code_block:11:35",
+      key: "rich:code_block:offset:11",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
@@ -640,7 +824,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(nativeMarkdownDocumentChunks(document)).toEqual([
       {
         kind: "rich",
-        key: "rich:list:0:45",
+        key: "rich:list:offset:0",
         node: document.children?.[0],
       },
     ]);
@@ -668,7 +852,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:horizontal_rule:1:1",
+      key: "rich:horizontal_rule:index:1",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
@@ -714,7 +898,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:list:1:1",
+      key: "rich:list:index:1",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
@@ -762,6 +946,89 @@ describe("nativeMarkdownDocumentChunks", () => {
       kind: "rich",
       node: { type: "blockquote" },
     });
+  });
+
+  it("keys positioned and offset-free siblings in separate namespaces", () => {
+    const positioned: MarkdownNode = {
+      type: "blockquote",
+      beg: 1,
+      end: 10,
+      children: [{ type: "paragraph", children: [{ type: "text", content: "Positioned" }] }],
+    };
+    const offsetFree: MarkdownNode = {
+      type: "blockquote",
+      children: [{ type: "paragraph", children: [{ type: "text", content: "Generated" }] }],
+    };
+    const chunks = nativeMarkdownDocumentChunks({
+      type: "document",
+      children: [
+        { type: "paragraph", beg: 0, end: 0, children: [] },
+        offsetFree,
+        positioned,
+        { type: "paragraph", children: [{ type: "text", content: "Tail" }] },
+      ],
+    });
+
+    expect(chunks.map((chunk) => chunk.key)).toEqual([
+      "selectable:offset:0",
+      "rich:blockquote:index:1",
+      "rich:blockquote:offset:1",
+      "selectable:index:3",
+    ]);
+  });
+
+  it("gives every offset-free selectable group its own key", () => {
+    const chunks = nativeMarkdownDocumentChunks({
+      type: "document",
+      children: [
+        { type: "paragraph", children: [{ type: "text", content: "One" }] },
+        { type: "horizontal_rule" },
+        { type: "paragraph", children: [{ type: "text", content: "Two" }] },
+        { type: "horizontal_rule" },
+        { type: "paragraph", children: [{ type: "text", content: "Three" }] },
+      ],
+    });
+
+    expect(chunks.map((chunk) => chunk.key)).toEqual([
+      "selectable:index:0",
+      "rich:horizontal_rule:index:1",
+      "selectable:index:2",
+      "rich:horizontal_rule:index:3",
+      "selectable:index:4",
+    ]);
+  });
+
+  it("keeps positioned chunk keys stable while text streams in", () => {
+    const before: MarkdownNode = {
+      type: "document",
+      children: [
+        { type: "paragraph", beg: 0, end: 5, children: [{ type: "text", content: "Intro" }] },
+        {
+          type: "code_block",
+          language: "ts",
+          beg: 7,
+          end: 20,
+          children: [{ type: "text", content: "const a" }],
+        },
+      ],
+    };
+    const after: MarkdownNode = {
+      type: "document",
+      children: [
+        { type: "paragraph", beg: 0, end: 5, children: [{ type: "text", content: "Intro" }] },
+        {
+          type: "code_block",
+          language: "ts",
+          beg: 7,
+          end: 40,
+          children: [{ type: "text", content: "const a = 1;\nconst b" }],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownDocumentChunks(after).map((chunk) => chunk.key)).toEqual(
+      nativeMarkdownDocumentChunks(before).map((chunk) => chunk.key),
+    );
   });
 
   it("keeps a plain list in one selectable native text container", () => {
@@ -818,5 +1085,89 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(nativeMarkdownChunkSpacing(headingChunk, firstList)).toBe(10);
     expect(nativeMarkdownChunkSpacing(firstList, secondList)).toBe(12);
     expect(nativeMarkdownChunkSpacing(firstList, headingChunk)).toBe(20);
+  });
+});
+
+describe("composerChipSizeSuffix", () => {
+  it("labels attachment records with a human size, matching web's chip", async () => {
+    const { composerChipSizeSuffix } = await import("@t3tools/mobile-markdown-text/markdown");
+    expect(composerChipSizeSuffix({ kind: "file", sizeBytes: 1024 })).toBe("1 KB");
+    expect(composerChipSizeSuffix({ kind: "file", sizeBytes: 3_700_000 })).toBe("3.5 MB");
+    expect(composerChipSizeSuffix({ kind: "image", sizeBytes: 2048 })).toBe("2 KB");
+  });
+
+  it("adds nothing for records that carry no bytes", async () => {
+    const { composerChipSizeSuffix } = await import("@t3tools/mobile-markdown-text/markdown");
+    // Terminal/review/PR chips have no size to show.
+    expect(composerChipSizeSuffix({ kind: "terminal" })).toBe("");
+    expect(composerChipSizeSuffix({ kind: "file" })).toBe("");
+    expect(composerChipSizeSuffix(undefined)).toBe("");
+  });
+});
+
+describe("contextChipPresentation image detection", () => {
+  it("treats a picture attached through the file picker as an image", async () => {
+    const { contextChipPresentation } = await import("@t3tools/mobile-markdown-text/markdown");
+    // The document picker types every pick as `file`, so the name has to carry the intent.
+    expect(
+      contextChipPresentation("file", { kind: "file", name: "IMG_4997.PNG", mimeType: "" }),
+    ).toEqual({ accent: "#d55665", symbol: "photo" });
+    expect(
+      contextChipPresentation("file", {
+        kind: "file",
+        name: "shot",
+        mimeType: "image/jpeg",
+      }),
+    ).toEqual({ accent: "#d55665", symbol: "photo" });
+  });
+
+  it("leaves genuine documents and videos alone", async () => {
+    const { contextChipPresentation } = await import("@t3tools/mobile-markdown-text/markdown");
+    expect(
+      contextChipPresentation("file", { kind: "file", name: "notes.txt", mimeType: "text/plain" }),
+    ).toEqual({ accent: "#0090cd", symbol: "doc" });
+    expect(
+      contextChipPresentation("file", { kind: "file", name: "clip.mp4", mimeType: "video/mp4" }),
+    ).toEqual({ accent: "#d06217", symbol: "play.rectangle" });
+  });
+});
+
+describe("pull request chip status", () => {
+  const chip = async (state: string, isDraft = false) => {
+    const { contextChipPresentation } = await import("@t3tools/mobile-markdown-text/markdown");
+    return contextChipPresentation("review-comment", {
+      kind: "review-comment",
+      sectionId: "pull-request:10978",
+      pullRequest: { state, isDraft },
+    });
+  };
+
+  it("colours a pull request by its state, the way web and the forge do", async () => {
+    expect((await chip("open")).accent).toBe("#009f6e");
+    expect((await chip("open", true)).accent).toBe("#7f8793");
+    expect((await chip("merged")).accent).toBe("#8a70dd");
+    expect((await chip("closed")).accent).toBe("#d55665");
+  });
+
+  it("keeps one glyph across every state, so only colour carries the status", async () => {
+    // Web draws a fixed `git-pull-request` and encodes state in colour alone. A per-state glyph
+    // here would put mobile out of step with it.
+    const symbols = await Promise.all(
+      [chip("open"), chip("open", true), chip("merged"), chip("closed")].map(
+        async (pending) => (await pending).symbol,
+      ),
+    );
+    expect(new Set(symbols)).toEqual(new Set(["git-pull-request"]));
+  });
+
+  it("falls back to the generic pull request chip when the state is unknown", async () => {
+    const { contextChipPresentation } = await import("@t3tools/mobile-markdown-text/markdown");
+    // An older server may send no metadata at all; the chip still has to render.
+    expect(
+      contextChipPresentation("review-comment", {
+        kind: "review-comment",
+        sectionId: "pull-request:1",
+      }).accent,
+    ).toBe("#7079e4");
   });
 });

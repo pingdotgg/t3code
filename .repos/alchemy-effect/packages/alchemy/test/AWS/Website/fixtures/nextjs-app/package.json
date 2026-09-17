@@ -1,0 +1,19 @@
+{
+  "name": "alchemy-nextjs-aws-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build"
+  },
+  "dependencies": {
+    "next": "catalog:frontend",
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend"
+  },
+  "devDependencies": {
+    "@opennextjs/aws": "catalog:frontend",
+    "@types/node": "catalog:tooling",
+    "@types/react": "catalog:frontend",
+    "typescript": "catalog:frontend"
+  }
+}

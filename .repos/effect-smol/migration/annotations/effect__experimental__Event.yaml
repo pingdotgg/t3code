@@ -1,0 +1,42 @@
+"@effect/experimental/Event#Event.AddError":
+  replacement: effect/unstable/eventlog/Event#AddError
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#Event.Any":
+  replacement: effect/unstable/eventlog/Event#Any
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#Event.Context":
+  replacement: effect/unstable/eventlog/Event#Services
+  note: Event schema context is now represented by decoding and encoding Services.
+"@effect/experimental/Event#Event.ContextWithTag":
+  replacement: effect/unstable/eventlog/Event#Services<effect/unstable/eventlog/Event#WithTag<Events, Tag>>
+  note: Filter with WithTag and derive its decoding and encoding Services.
+"@effect/experimental/Event#Event.Error":
+  replacement: effect/unstable/eventlog/Event#Error
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#Event.ErrorSchema":
+  replacement: effect/unstable/eventlog/Event#ErrorSchema
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#Event.Payload":
+  replacement: effect/unstable/eventlog/Event#Payload
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#Event.PayloadSchema":
+  replacement: effect/unstable/eventlog/Event#PayloadSchema
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#Event.Success":
+  replacement: effect/unstable/eventlog/Event#Success
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#Event.SuccessSchema":
+  replacement: effect/unstable/eventlog/Event#SuccessSchema
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#Event.Tag":
+  replacement: effect/unstable/eventlog/Event#Tag
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#Event.ToService":
+  replacement: effect/unstable/eventlog/Event#ToService
+  note: This type moved from the Event namespace to a top-level export.
+"@effect/experimental/Event#make":
+  replacement: effect/unstable/eventlog/Event#make
+  note: Import make from the v4 unstable Event module.
+"@effect/experimental/Event#TypeId":
+  replacement: effect/unstable/eventlog/Event#TypeId
+  note: Import TypeId from the v4 unstable Event module; its runtime representation is now a string brand.

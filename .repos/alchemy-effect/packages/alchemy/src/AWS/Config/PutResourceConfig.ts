@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `Config.PutResourceConfigHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Recording Custom Resources
- * @example Record a Custom Resource
+ * ### Recording Custom Resources
+ * **Example:** Record a Custom Resource
  * ```typescript
  * // init — grants config:PutResourceConfig
  * const putResourceConfig = yield* AWS.Config.PutResourceConfig();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  *   Configuration: JSON.stringify({ color: "teal" }),
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutResourceConfig extends Binding.Service<
   PutResourceConfig,

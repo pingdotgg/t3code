@@ -46,21 +46,22 @@ const builder = await vite.createBuilder({
 await builder.buildApp();
 ```
 
-A framework is supported if — and only if — a `vite build` of your
-`vite.config.ts` builds the whole app. Frameworks whose build is
-orchestrated by their own CLI (`astro build`, `nuxi build`) never
-enter this path, so they are not yet supported by this resource —
-see [Astro](/cloudflare/frontend/astro) and
-[Nuxt](/cloudflare/frontend/nuxt) for their current status and
-workarounds, or [StaticSite](/cloudflare/frontend/static-site) as
-the general fallback for any build command that produces a
-directory of files.
+A framework is supported by this resource if — and only if — a
+`vite build` of your `vite.config.ts` builds the whole app.
+Frameworks that drive their own build never enter this path; they
+have dedicated resources instead — see
+[Astro](/cloudflare/frontend/astro),
+[Nuxt](/cloudflare/frontend/nuxt),
+[SvelteKit](/cloudflare/frontend/sveltekit), and
+[Waku](/cloudflare/frontend/waku). For any other build command that
+produces a directory of files, use
+[StaticSite](/cloudflare/frontend/static-site).
 
 ## Remove `@cloudflare/vite-plugin`
 
 :::caution[Remove @cloudflare/vite-plugin if present]
 Alchemy appends its own Cloudflare Vite plugin
-(`@distilled.cloud/cloudflare-vite-plugin`) and is **not
+(`@alchemy.run/cloudflare-runtime/vite`) and is **not
 compatible** with `@cloudflare/vite-plugin` in your
 `vite.config.ts`. Remove it — this applies to every framework
 deployed with this resource:
@@ -84,10 +85,13 @@ export default defineConfig({
 (`main`, the directory-shaped `assets`), plus Vite-specific options:
 
 ```typescript
+// an SPA whose Worker serves the /api/* routes
 const site = yield* Cloudflare.Website.Vite("Website", {
   rootDir: "./web",
-  compatibility: { flags: ["nodejs_compat"] },
-  assets: { runWorkerFirst: true },
+  assets: {
+    notFoundHandling: "single-page-application",
+    runWorkerFirst: ["/api/*"],
+  },
 });
 ```
 
@@ -98,12 +102,24 @@ const site = yield* Cloudflare.Website.Vite("Website", {
   server environment (see
   [Multiple server environments](#multiple-server-environments-rsc)).
 - **`assets`** — a flat `AssetsConfig` for routing behavior:
-  `runWorkerFirst`, `htmlHandling`, `notFoundHandling`, etc. The
-  built asset directory is supplied by the build, so unlike a plain
-  Worker there is no `directory` to configure.
+  `runWorkerFirst`, `htmlHandling`, `notFoundHandling`, etc. SSR
+  apps need none of it: server routes and API paths match no built
+  asset, so they already fall through to the Worker. The glob array
+  matters for SPAs — with `notFoundHandling:
+  "single-page-application"`, whether an unmatched path serves the
+  app shell or reaches the Worker depends on the request's
+  `Sec-Fetch-Mode`, so `runWorkerFirst: ["/api/*"]` pins your API
+  namespace to the Worker deterministically. `true` routes every
+  request through the Worker, for handlers that intercept asset
+  requests. The built asset directory is supplied by the build, so
+  unlike a plain Worker there is no `directory` to configure.
 - Everything else is inherited from the Worker — `domain`, `env`,
   `compatibility`, `crons`, and so on. See
   [Workers](/cloudflare/compute/workers).
+
+SSR server bundles routinely use Node APIs at runtime — the
+`nodejs_compat` compatibility flag covers that, and it is enabled by
+default for every Worker, so there is nothing to pass.
 
 :::caution[index.html must be at rootDir]
 Vite resolves `index.html` relative to its project root. `rootDir`
@@ -113,18 +129,16 @@ See Vite's
 [project structure docs](https://vite.dev/guide/#index-html-and-project-root).
 :::
 
-Like `Worker`, the resource also has a class form — useful when
-other resources bind to the site, or when you want to derive its
-`env` types:
+Like `Worker`, the resource also has a class form — only needed
+when *other* resources bind to the site (the class gives it a named
+type they can reference):
 
 ```typescript
-export class Website extends Cloudflare.Website.Vite<Website>()("Website", {
-  compatibility: { flags: ["nodejs_compat"] },
-}) {}
+export class Website extends Cloudflare.Website.Vite<Website>()("Website", {}) {}
 ```
 
-See [TanStack Start](/cloudflare/frontend/tanstack-start) for the
-class form in a real app.
+For everything else — including deriving `env` types — a plain
+`const` is enough; see [Runtime bindings](#runtime-bindings) below.
 
 ## Environment
 
@@ -152,19 +166,39 @@ the build runs, so the client reads a concrete
 when `VITE_`-prefixed — the prefix means you are opting the value
 into the public bundle, so don't prefix secrets with `VITE_`.
 
+### The site's own URL
+
+`backend.url` works for *another* Worker's URL, but a site can't
+reference its own `url` Output. `Worker.URL` closes the loop:
+Alchemy resolves the URL the Worker will be served at — its first
+custom domain, otherwise its `workers.dev` URL — before the build
+and injects it:
+
+```typescript
+const web = yield* Cloudflare.Website.Vite("Website", {
+  env: {
+    VITE_PUBLIC_URL: Cloudflare.Worker.URL,
+  },
+});
+```
+
+The client bundle reads a concrete
+`import.meta.env.VITE_PUBLIC_URL`, and server code sees the same
+value on `env.VITE_PUBLIC_URL` (typed `string` by `InferEnv`).
+Under `alchemy dev` it resolves to the local dev server's URL.
+
 ### Runtime bindings
 
 Non-`VITE_` values become native Worker bindings, available to SSR
 code and typed via `Cloudflare.InferEnv`:
 
 ```typescript
-export class Website extends Cloudflare.Website.Vite<Website>()("Website", {
-  compatibility: { flags: ["nodejs_compat"] },
+export const Website = Cloudflare.Website.Vite("Website", {
   env: {
     BUCKET: Bucket,
     BACKEND: Backend,
   },
-}) {}
+});
 
 export type WebsiteEnv = Cloudflare.InferEnv<typeof Website>;
 ```
@@ -181,7 +215,6 @@ produces the Worker entry chunk and which are bundled alongside it:
 
 ```typescript
 const app = yield* Cloudflare.Website.Vite("ReactRouterRSC", {
-  compatibility: { flags: ["nodejs_compat"] },
   viteEnvironments: { entry: "rsc", children: ["ssr"] },
 });
 ```
@@ -242,9 +275,15 @@ resource:
 - [Vue](/cloudflare/frontend/vue) — Vue 3 SPAs.
 - [SolidStart](/cloudflare/frontend/solidstart) — SolidStart and
   hand-rolled SolidJS SSR.
+- [Octane](/cloudflare/frontend/octane#octane-spas-use-vite-instead) —
+  client-only OctaneJS SPAs (the `octane()` compiler plugin composes
+  with the injected Cloudflare plugin).
 
-Not yet supported by this resource: [Astro](/cloudflare/frontend/astro)
-and [Nuxt](/cloudflare/frontend/nuxt) — their builds are driven by
-their own CLIs, not `vite build`. Their pages document the current
-workarounds, generally deploying build output with
-[StaticSite](/cloudflare/frontend/static-site).
+[Astro](/cloudflare/frontend/astro),
+[Nuxt](/cloudflare/frontend/nuxt),
+[SvelteKit](/cloudflare/frontend/sveltekit),
+[Waku](/cloudflare/frontend/waku), and fullstack
+[Octane](/cloudflare/frontend/octane) drive their own builds, so they
+have dedicated resources (`Website.Astro`, `Website.Nuxt`,
+`Website.SvelteKit`, `Website.Waku`, `Website.Octane`) instead of
+this one.

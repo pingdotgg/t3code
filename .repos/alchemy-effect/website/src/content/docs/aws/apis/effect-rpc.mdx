@@ -18,7 +18,7 @@ a different angle — you define **procedures** instead of HTTP
 endpoints, and you get a fully typed client for free with no URL
 construction or manual serialization.
 [Effect RPC](/apis/effect-rpc) covers the host-agnostic core; this
-page covers the Lambda side — a public Function URL via `url: true`,
+page covers the Lambda side — a public Function URL via `functionUrl: true`,
 and binding implementations provided with
 `Layer.mergeAll(AWS.DynamoDB.GetItemHttp, AWS.DynamoDB.PutItemHttp)`.
 
@@ -117,7 +117,7 @@ import * as Effect from "effect/Effect";
 
 export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
   "JobFunction",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     return {};
   }),
@@ -254,7 +254,7 @@ import { JobRpcs } from "./JobRpcs.ts";
 
 export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
   "JobFunction",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const table = yield* AWS.DynamoDB.Table("JobsTable", {
       partitionKey: "id",

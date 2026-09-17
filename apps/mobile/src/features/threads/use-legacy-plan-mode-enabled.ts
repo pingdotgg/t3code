@@ -9,10 +9,6 @@ import { resolveLegacyPlanModeEnabled } from "./legacy-plan-mode";
  * Keep the legacy composer mode hidden until the preference has loaded and is
  * explicitly enabled.
  */
-export function useLegacyPlanModeEnabled(): boolean {
-  return useLegacyPlanModeState().enabled;
-}
-
 export function useLegacyPlanModeState(): { readonly enabled: boolean; readonly loaded: boolean } {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const loaded = AsyncResult.isSuccess(preferences);

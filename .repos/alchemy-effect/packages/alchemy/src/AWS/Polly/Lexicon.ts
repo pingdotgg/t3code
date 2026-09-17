@@ -59,9 +59,8 @@ export interface Lexicon extends Resource<
  * Identity is the region-scoped `lexiconName`; the PLS `content` is
  * updatable in place.
  *
- * @resource
- * @section Managing Lexicons
- * @example Store a pronunciation lexicon
+ * ### Managing Lexicons
+ * **Example:** Store a pronunciation lexicon
  * ```typescript
  * const lexicon = yield* AWS.Polly.Lexicon("Acronyms", {
  *   lexiconName: "acronyms",
@@ -73,7 +72,7 @@ export interface Lexicon extends Resource<
  * });
  * ```
  *
- * @example Synthesize speech with the lexicon applied
+ * **Example:** Synthesize speech with the lexicon applied
  * ```typescript
  * const synthesizeSpeech = yield* AWS.Polly.SynthesizeSpeech();
  * const result = yield* synthesizeSpeech({
@@ -83,6 +82,8 @@ export interface Lexicon extends Resource<
  *   LexiconNames: [lexicon.lexiconName],
  * });
  * ```
+ *
+ * @resource
  */
 export const Lexicon = Resource<Lexicon>("AWS.Polly.Lexicon");
 

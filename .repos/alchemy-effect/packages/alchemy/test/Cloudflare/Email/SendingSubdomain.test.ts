@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import { emailRoutingScoped } from "./scope.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers() });
 
@@ -92,99 +93,103 @@ const purgeSubdomain = (zoneId: string, name: string) =>
     ),
   );
 
-test.provider("create and destroy a sending subdomain", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider.skipIf(!emailRoutingScoped)(
+  "create and destroy a sending subdomain",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeSubdomain(zoneId, NAME_DEFAULT);
+      yield* stack.destroy();
+      yield* purgeSubdomain(zoneId, NAME_DEFAULT);
 
-    const sending = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Email.SendingSubdomain("Sending", {
-          zoneId,
-          name: NAME_DEFAULT,
-        });
-      }),
-    );
+      const sending = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Email.SendingSubdomain("Sending", {
+            zoneId,
+            name: NAME_DEFAULT,
+          });
+        }),
+      );
 
-    expect(sending.subdomainId).toBeDefined();
-    expect(sending.zoneId).toEqual(zoneId);
-    expect(sending.name).toEqual(NAME_DEFAULT);
-    // CF-hosted zone — DNS records are auto-created and validate
-    // immediately; the reconciler polls briefly for `enabled`.
-    expect(sending.enabled).toEqual(true);
-    expect(sending.dkimSelector).toBeDefined();
-    expect(sending.returnPathDomain).toContain(NAME_DEFAULT);
+      expect(sending.subdomainId).toBeDefined();
+      expect(sending.zoneId).toEqual(zoneId);
+      expect(sending.name).toEqual(NAME_DEFAULT);
+      // CF-hosted zone — DNS records are auto-created and validate
+      // immediately; the reconciler polls briefly for `enabled`.
+      expect(sending.enabled).toEqual(true);
+      expect(sending.dkimSelector).toBeDefined();
+      expect(sending.returnPathDomain).toContain(NAME_DEFAULT);
 
-    // Out-of-band verification against the live API.
-    const live = yield* getSubdomain(zoneId, sending.subdomainId);
-    expect(live.tag).toEqual(sending.subdomainId);
-    expect(live.name).toEqual(NAME_DEFAULT);
+      // Out-of-band verification against the live API.
+      const live = yield* getSubdomain(zoneId, sending.subdomainId);
+      expect(live.tag).toEqual(sending.subdomainId);
+      expect(live.name).toEqual(NAME_DEFAULT);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    // Gone after destroy — the typed not-found is the success signal.
-    const gone = yield* getSubdomain(zoneId, sending.subdomainId).pipe(
-      Effect.map(() => "still-there" as const),
-      Effect.catchTag("SendingSubdomainNotFound", () =>
-        Effect.succeed("gone" as const),
-      ),
-    );
-    expect(gone).toEqual("gone");
+      // Gone after destroy — the typed not-found is the success signal.
+      const gone = yield* getSubdomain(zoneId, sending.subdomainId).pipe(
+        Effect.map(() => "still-there" as const),
+        Effect.catchTag("SendingSubdomainNotFound", () =>
+          Effect.succeed("gone" as const),
+        ),
+      );
+      expect(gone).toEqual("gone");
 
-    // Destroy again — delete is idempotent.
-    yield* stack.destroy();
-  }).pipe(logLevel),
+      // Destroy again — delete is idempotent.
+      yield* stack.destroy();
+    }).pipe(logLevel),
 );
 
-test.provider("changing the name triggers replacement", (stack) =>
-  Effect.gen(function* () {
-    const zoneId = yield* resolveZoneId;
+test.provider.skipIf(!emailRoutingScoped)(
+  "changing the name triggers replacement",
+  (stack) =>
+    Effect.gen(function* () {
+      const zoneId = yield* resolveZoneId;
 
-    yield* stack.destroy();
-    yield* purgeSubdomain(zoneId, NAME_REPLACE_A);
-    yield* purgeSubdomain(zoneId, NAME_REPLACE_B);
+      yield* stack.destroy();
+      yield* purgeSubdomain(zoneId, NAME_REPLACE_A);
+      yield* purgeSubdomain(zoneId, NAME_REPLACE_B);
 
-    const initial = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Email.SendingSubdomain("ReplaceSending", {
-          zoneId,
-          name: NAME_REPLACE_A,
-        });
-      }),
-    );
+      const initial = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Email.SendingSubdomain("ReplaceSending", {
+            zoneId,
+            name: NAME_REPLACE_A,
+          });
+        }),
+      );
 
-    expect(initial.name).toEqual(NAME_REPLACE_A);
+      expect(initial.name).toEqual(NAME_REPLACE_A);
 
-    const replaced = yield* stack.deploy(
-      Effect.gen(function* () {
-        return yield* Cloudflare.Email.SendingSubdomain("ReplaceSending", {
-          zoneId,
-          name: NAME_REPLACE_B,
-        });
-      }),
-    );
+      const replaced = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* Cloudflare.Email.SendingSubdomain("ReplaceSending", {
+            zoneId,
+            name: NAME_REPLACE_B,
+          });
+        }),
+      );
 
-    // The name is the subdomain's identity — a new physical resource.
-    expect(replaced.subdomainId).not.toEqual(initial.subdomainId);
-    expect(replaced.name).toEqual(NAME_REPLACE_B);
+      // The name is the subdomain's identity — a new physical resource.
+      expect(replaced.subdomainId).not.toEqual(initial.subdomainId);
+      expect(replaced.name).toEqual(NAME_REPLACE_B);
 
-    // The old subdomain was deleted as part of the replacement.
-    const old = yield* findByName(zoneId, NAME_REPLACE_A);
-    expect(old).toBeUndefined();
+      // The old subdomain was deleted as part of the replacement.
+      const old = yield* findByName(zoneId, NAME_REPLACE_A);
+      expect(old).toBeUndefined();
 
-    const live = yield* findByName(zoneId, NAME_REPLACE_B);
-    expect(live?.tag).toEqual(replaced.subdomainId);
+      const live = yield* findByName(zoneId, NAME_REPLACE_B);
+      expect(live?.tag).toEqual(replaced.subdomainId);
 
-    yield* stack.destroy();
+      yield* stack.destroy();
 
-    const gone = yield* findByName(zoneId, NAME_REPLACE_B);
-    expect(gone).toBeUndefined();
-  }).pipe(logLevel),
+      const gone = yield* findByName(zoneId, NAME_REPLACE_B);
+      expect(gone).toBeUndefined();
+    }).pipe(logLevel),
 );
 
-test.provider(
+test.provider.skipIf(!emailRoutingScoped)(
   "adoption — existing subdomain errors without adopt, takes over with adopt(true)",
   (stack) =>
     Effect.gen(function* () {
@@ -244,7 +249,7 @@ test.provider(
   { timeout: 180_000 },
 );
 
-test.provider(
+test.provider.skipIf(!emailRoutingScoped)(
   "list enumerates the deployed sending subdomain",
   (stack) =>
     Effect.gen(function* () {

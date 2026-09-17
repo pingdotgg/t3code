@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import * as NodeFS from "node:fs";
-
-import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
-import { DEFAULT_MOBILE_THEME_VARIABLES } from "./mobileDefaultTheme";
+import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES, T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
+import { readDefaultMobileThemeVariables } from "./mobileTheme.test-support";
 
 import {
   createMobileThemePairPatch,
@@ -11,7 +9,6 @@ import {
   DEFAULT_MOBILE_THEME_ID,
   getMobileThemePreviewColors,
   getMobileThemeVariables,
-  MOBILE_THEME_IDS,
   normalizeMobileThemeId,
   normalizeMobileThemeMode,
   resolveMobileThemeIds,
@@ -52,13 +49,12 @@ function compositeOver(overlay: string, background: string): string {
 
 describe("mobile themes", () => {
   it("declares every runtime theme variable in the static stylesheet", () => {
-    const stylesheet = NodeFS.readFileSync(new URL("../../global.css", import.meta.url), "utf8");
-    const stylesheetVariables = new Set(
-      Array.from(stylesheet.matchAll(/--color-[a-z0-9-]+/g), ([variable]) => variable),
+    const generatedVariables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
+    expect(Object.keys(readDefaultMobileThemeVariables("light")).sort()).toEqual(
+      Object.keys(generatedVariables).sort(),
     );
-
-    expect(Array.from(stylesheetVariables).sort()).toEqual(
-      Object.keys(DEFAULT_MOBILE_THEME_VARIABLES.light).sort(),
+    expect(Object.keys(readDefaultMobileThemeVariables("dark")).sort()).toEqual(
+      Object.keys(generatedVariables).sort(),
     );
   });
 
@@ -71,17 +67,11 @@ describe("mobile themes", () => {
   });
 
   it("preserves the existing mobile palette as the default", () => {
-    expect(getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "light")["--color-screen"]).toBe(
-      "#f2f2f7",
+    expect(readDefaultMobileThemeVariables("light")["--color-screen"]).toBe("#f2f2f7");
+    expect(readDefaultMobileThemeVariables("dark")["--color-screen"]).toBe("#0a0a0a");
+    expect(readDefaultMobileThemeVariables("light")["--color-user-bubble-skill-foreground"]).toBe(
+      "#2563eb",
     );
-    expect(getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "dark")["--color-screen"]).toBe(
-      "#0a0a0a",
-    );
-    expect(
-      getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, "light")[
-        "--color-user-bubble-skill-foreground"
-      ],
-    ).toBe("#f0abfc");
   });
 
   it("applies palette overrides on top of the selected built-in theme", () => {
@@ -162,27 +152,27 @@ describe("mobile themes", () => {
   });
 
   it("maps semantic palette roles onto every mobile color variable", () => {
-    const variables = createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light");
-    expect(Object.keys(variables)).toHaveLength(65);
+    const variables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
+    expect(Object.keys(variables)).toHaveLength(75);
     expect(variables["--color-sheet-solid"]).toBe(
-      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.chrome),
+      themeColorToNativeColor(T3_CHAT_THEME.colors.chrome),
+    );
+    expect(variables["--color-warning"]).toBe(
+      themeColorToNativeColor(T3_CHAT_THEME.colors.warningSurface),
+    );
+    expect(variables["--color-warning-foreground"]).toBe(
+      themeColorToNativeColor(T3_CHAT_THEME.colors.warningForeground),
     );
     expect(variables["--color-primary"]).not.toBe(variables["--color-screen"]);
     expect(variables["--color-primary-shadow"]).toBe("#000000");
     expect(variables["--color-backdrop"]).toBe("rgba(0, 0, 0, 0.22)");
     expect(variables["--color-drawer-shadow"]).toBe("rgba(0, 0, 0, 0.12)");
     expect(variables["--color-user-bubble-foreground"]).toMatch(/^#/);
-    expect(Object.keys(DEFAULT_MOBILE_THEME_VARIABLES.light).sort()).toEqual(
-      Object.keys(variables).sort(),
-    );
-    expect(Object.keys(DEFAULT_MOBILE_THEME_VARIABLES.dark).sort()).toEqual(
-      Object.keys(variables).sort(),
-    );
   });
 
   it("keeps every built-in shadow and backdrop black-based in dark mode", () => {
-    for (const theme of BUILT_IN_THEMES) {
-      const variables = getMobileThemeVariables(normalizeMobileThemeId(theme.id), "dark");
+    for (const themeId of BUILT_IN_THEME_IDS) {
+      const variables = getMobileThemeVariables(themeId, "dark");
       expect(variables["--color-primary-shadow"]).toBe("#000000");
       expect(variables["--color-backdrop"]).toBe("rgba(0, 0, 0, 0.48)");
       expect(variables["--color-drawer-shadow"]).toBe("rgba(0, 0, 0, 0.32)");
@@ -190,7 +180,7 @@ describe("mobile themes", () => {
   });
 
   it("keeps placeholders and selected-row labels readable on their mobile surfaces", () => {
-    for (const themeId of MOBILE_THEME_IDS) {
+    for (const themeId of BUILT_IN_THEME_IDS) {
       for (const appearance of ["light", "dark"] as const) {
         const variables = getMobileThemeVariables(themeId, appearance);
         expect(
@@ -227,5 +217,52 @@ describe("mobile themes", () => {
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
+  });
+
+  // The default palette lives in global.css rather than BUILT_IN_THEMES, so the loops above
+  // never reached it; it kept an unreadable hardcoded bubble until this covered it.
+  it("keeps the default user bubble readable in both appearances", () => {
+    for (const appearance of ["light", "dark"] as const) {
+      const variables = readDefaultMobileThemeVariables(appearance);
+      const bubble = variables["--color-user-bubble"];
+      expect(
+        contrastRatio(variables["--color-user-bubble-foreground"], bubble),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(variables["--color-user-bubble-skill-foreground"], bubble),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(variables["--color-user-bubble-skill-foreground"]).not.toBe(
+        variables["--color-user-bubble-foreground"],
+      );
+      const fenceSurface = compositeOver(variables["--color-md-user-fence-bg"], bubble);
+      expect(fenceSurface).not.toBe(bubble);
+      expect(
+        contrastRatio(variables["--color-md-user-fence-text"], fenceSurface),
+      ).toBeGreaterThanOrEqual(4.5);
+      const codeSurface = compositeOver(variables["--color-md-user-code-bg"], bubble);
+      expect(
+        contrastRatio(variables["--color-md-user-code-text"], codeSurface),
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
+describe("flattenThemeColor", () => {
+  it("composites a translucent border over its surface", async () => {
+    const { flattenThemeColor } = await import("./mobileTheme");
+    // `--color-border` in the dark theme, over the surface a chip sits on. Native chip drawing
+    // parses opaque hex only, so this has to resolve before it crosses the bridge.
+    expect(flattenThemeColor("rgba(255, 255, 255, 0.06)", "#171717")).toBe("#252525");
+    expect(flattenThemeColor("rgba(0, 0, 0, 0.08)", "#ffffff")).toBe("#ebebeb");
+  });
+
+  it("leaves an already opaque colour alone", async () => {
+    const { flattenThemeColor } = await import("./mobileTheme");
+    expect(flattenThemeColor("#171717", "#ffffff")).toBe("#171717");
+  });
+
+  it("treats a colour with no alpha as fully opaque", async () => {
+    const { flattenThemeColor } = await import("./mobileTheme");
+    expect(flattenThemeColor("rgb(255, 0, 0)", "#000000")).toBe("#ff0000");
   });
 });

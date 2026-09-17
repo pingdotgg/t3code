@@ -173,19 +173,6 @@ export function readThreadPreviewState(ref: ScopedThreadRef): ThreadPreviewState
   return appAtomRegistry.get(previewStateAtom(scopedThreadKey(ref)));
 }
 
-export function subscribeThreadPreviewState(
-  ref: ScopedThreadRef,
-  listener: (state: ThreadPreviewState, previous: ThreadPreviewState) => void,
-): () => void {
-  const atom = previewStateAtom(scopedThreadKey(ref));
-  let previous = appAtomRegistry.get(atom);
-  return appAtomRegistry.subscribe(atom, (state) => {
-    const prior = previous;
-    previous = state;
-    listener(state, prior);
-  });
-}
-
 export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEvent): void {
   updateThreadPreviewState(ref, (current) => {
     if (current.serverEpoch !== null && event.serverEpoch !== current.serverEpoch) return current;
@@ -368,12 +355,39 @@ export function reconcilePreviewServerSessions(
   });
 }
 
+function isPreviewStateEqual(
+  previous: DesktopPreviewOverlay | null,
+  next: DesktopPreviewOverlay | null,
+) {
+  return (
+    previous === next ||
+    (previous !== null &&
+      next !== null &&
+      previous.hasWebContents === next.hasWebContents &&
+      previous.canGoBack === next.canGoBack &&
+      previous.canGoForward === next.canGoForward &&
+      previous.loading === next.loading &&
+      previous.zoomFactor === next.zoomFactor &&
+      previous.pictureInPicture === next.pictureInPicture &&
+      previous.colorScheme === next.colorScheme &&
+      previous.audioMuted === next.audioMuted &&
+      previous.audible === next.audible &&
+      previous.controller === next.controller &&
+      previous.favicon?.dataUrl === next.favicon?.dataUrl &&
+      previous.favicon?.pageUrl === next.favicon?.pageUrl &&
+      previous.favicon?.capturedAt === next.favicon?.capturedAt)
+  );
+}
+
 export function applyPreviewDesktopState(
   ref: ScopedThreadRef,
   tabId: string,
   overlay: DesktopPreviewOverlay | null,
 ): void {
   updateThreadPreviewState(ref, (current) => {
+    if (isPreviewStateEqual(current.desktopByTabId[tabId] ?? null, overlay)) {
+      return current;
+    }
     const desktopByTabId = { ...current.desktopByTabId };
     if (overlay) desktopByTabId[tabId] = overlay;
     else delete desktopByTabId[tabId];
@@ -443,13 +457,6 @@ export function rememberPreviewUrl(ref: ScopedThreadRef, url: string): void {
     ...current,
     recentlySeenUrls: dedupeRecentUrls(current.recentlySeenUrls, url),
   }));
-}
-
-export function removePreviewThread(ref: ScopedThreadRef): void {
-  const threadKey = scopedThreadKey(ref);
-  appAtomRegistry.set(previewStateAtom(threadKey), EMPTY_THREAD_PREVIEW_STATE);
-  syncActivePreviewThread(threadKey, EMPTY_THREAD_PREVIEW_STATE);
-  changedPreviewThreadKeys.delete(threadKey);
 }
 
 export function isPreviewSupportedInRuntime(): boolean {

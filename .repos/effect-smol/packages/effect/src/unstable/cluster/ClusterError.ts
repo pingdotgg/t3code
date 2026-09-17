@@ -26,7 +26,7 @@ const TypeId = "~effect/cluster/ClusterError"
  * @since 4.0.0
  */
 export class EntityNotAssignedToRunner
-  extends Schema.ErrorClass<EntityNotAssignedToRunner>(`${TypeId}/EntityNotAssignedToRunner`)({
+  extends Schema.Error<EntityNotAssignedToRunner>(`${TypeId}/EntityNotAssignedToRunner`)({
     _tag: Schema.tag("EntityNotAssignedToRunner"),
     address: EntityAddress
   })
@@ -60,7 +60,7 @@ export class EntityNotAssignedToRunner
  * @category errors
  * @since 4.0.0
  */
-export class MalformedMessage extends Schema.ErrorClass<MalformedMessage>(`${TypeId}/MalformedMessage`)({
+export class MalformedMessage extends Schema.Error<MalformedMessage>(`${TypeId}/MalformedMessage`)({
   _tag: Schema.tag("MalformedMessage"),
   cause: Schema.Defect()
 }) {
@@ -99,7 +99,7 @@ export class MalformedMessage extends Schema.ErrorClass<MalformedMessage>(`${Typ
  * @category errors
  * @since 4.0.0
  */
-export class PersistenceError extends Schema.ErrorClass<PersistenceError>(`${TypeId}/PersistenceError`)({
+export class PersistenceError extends Schema.Error<PersistenceError>(`${TypeId}/PersistenceError`)({
   _tag: Schema.tag("PersistenceError"),
   cause: Schema.Defect()
 }) {
@@ -127,7 +127,7 @@ export class PersistenceError extends Schema.ErrorClass<PersistenceError>(`${Typ
  * @category errors
  * @since 4.0.0
  */
-export class RunnerNotRegistered extends Schema.ErrorClass<RunnerNotRegistered>(`${TypeId}/RunnerNotRegistered`)({
+export class RunnerNotRegistered extends Schema.Error<RunnerNotRegistered>(`${TypeId}/RunnerNotRegistered`)({
   _tag: Schema.tag("RunnerNotRegistered"),
   address: RunnerAddress
 }) {
@@ -145,7 +145,7 @@ export class RunnerNotRegistered extends Schema.ErrorClass<RunnerNotRegistered>(
  * @category errors
  * @since 4.0.0
  */
-export class RunnerUnavailable extends Schema.ErrorClass<RunnerUnavailable>(`${TypeId}/RunnerUnavailable`)({
+export class RunnerUnavailable extends Schema.Error<RunnerUnavailable>(`${TypeId}/RunnerUnavailable`)({
   _tag: Schema.tag("RunnerUnavailable"),
   address: RunnerAddress
 }) {
@@ -171,7 +171,9 @@ export class RunnerUnavailable extends Schema.ErrorClass<RunnerUnavailable>(`${T
  *
  * **Details**
  *
- * Carries the `address` whose bounded mailbox is at capacity.
+ * Carries the `address` whose bounded mailbox is at capacity. It is also used
+ * when the runner has reached `ShardingConfig.maxResidentEntities` and cannot
+ * spawn a new entity for the `address`.
  *
  * **Gotchas**
  *
@@ -181,7 +183,7 @@ export class RunnerUnavailable extends Schema.ErrorClass<RunnerUnavailable>(`${T
  * @category errors
  * @since 4.0.0
  */
-export class MailboxFull extends Schema.ErrorClass<MailboxFull>(`${TypeId}/MailboxFull`)({
+export class MailboxFull extends Schema.Error<MailboxFull>(`${TypeId}/MailboxFull`)({
   _tag: Schema.tag("MailboxFull"),
   address: EntityAddress
 }) {
@@ -214,7 +216,7 @@ export class MailboxFull extends Schema.ErrorClass<MailboxFull>(`${TypeId}/Mailb
  * @since 4.0.0
  */
 export class AlreadyProcessingMessage
-  extends Schema.ErrorClass<AlreadyProcessingMessage>(`${TypeId}/AlreadyProcessingMessage`)({
+  extends Schema.Error<AlreadyProcessingMessage>(`${TypeId}/AlreadyProcessingMessage`)({
     _tag: Schema.tag("AlreadyProcessingMessage"),
     envelopeId: SnowflakeFromString,
     address: EntityAddress

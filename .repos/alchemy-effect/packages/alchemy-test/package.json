@@ -2,6 +2,7 @@
   "name": "alchemy-test",
   "version": "0.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Minimal Effect-native, vitest-compatible test harness and single-process runner for alchemy",
   "type": "module",
   "sideEffects": false,
@@ -24,12 +25,12 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@effect/platform-bun": "catalog:",
-    "@opentui/core": "catalog:",
-    "effect": "catalog:"
+    "@effect/platform-bun": "catalog:effect",
+    "@opentui/core": "catalog:shared",
+    "effect": "catalog:effect"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "catalog:"
+    "@types/bun": "catalog:tooling",
+    "typescript": "catalog:build"
   }
 }

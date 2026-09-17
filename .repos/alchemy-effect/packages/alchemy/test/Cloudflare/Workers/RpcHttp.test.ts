@@ -51,8 +51,6 @@ const retryReadyN =
       Effect.retry({ schedule: readinessSchedule, times }),
     );
 
-const retryReady = retryReadyN(15);
-
 const stack = beforeAll(
   deploy(Stack).pipe(
     // Ping the Worker to ensure it's ready.
@@ -60,16 +58,9 @@ const stack = beforeAll(
     Effect.tap(({ url }) =>
       Effect.gen(function* () {
         const client = yield* RpcClient.make(WorkerRpcs);
-        const result = yield* client.Ping({ message: "warmup" }).pipe(
-          Effect.tapError(Console.log),
-          Effect.retry({
-            schedule: Schedule.min([
-              Schedule.exponential("500 millis"),
-              Schedule.spaced("3 seconds"),
-            ]),
-            times: 12,
-          }),
-        );
+        const result = yield* client
+          .Ping({ message: "warmup" })
+          .pipe(Effect.tapError(Console.log), retryReadyN(20));
         expect(result.echo).toBe("warmup");
         expect(result.n).toBeGreaterThan(0);
       }).pipe(Effect.scoped, Effect.provide(clientLayer(url))),
@@ -77,17 +68,25 @@ const stack = beforeAll(
     // Gate on the worker→DO pathway too: under full-suite parallel load the
     // DO namespace binding propagates noticeably slower than the worker
     // itself, and the `*DO` tests below would otherwise race that window.
+    // While the binding is still propagating, the worker's internal DO client
+    // fails with an `HttpError` that the fixture's `Effect.orDie` turns into a
+    // server-sent Defect — so this gate has to both promote defects AND carry
+    // enough budget (~2 min of capped backoff) to outlast the slow windows a
+    // full-suite run produces; a 15-attempt/~40s budget was observed to
+    // exhaust and fail the whole file.
     Effect.tap(({ url }) =>
       Effect.gen(function* () {
         const client = yield* RpcClient.make(WorkerRpcs);
-        yield* client.PingDO({ message: "warmup" }).pipe(retryReady);
-        yield* client.CountDO({ upto: 1 }).pipe(Stream.runCollect, retryReady);
+        yield* client.PingDO({ message: "warmup" }).pipe(retryReadyN(40));
+        yield* client
+          .CountDO({ upto: 1 })
+          .pipe(Stream.runCollect, retryReadyN(40));
       }).pipe(Effect.scoped, Effect.provide(clientLayer(url))),
     ),
     // Let edge propagation settle before the (mostly un-retried) bodies run.
     Effect.tap(() => Effect.sleep("5 seconds")),
   ),
-  { timeout: 180_000 },
+  { timeout: 300_000 },
 );
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 

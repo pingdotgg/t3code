@@ -1,0 +1,51 @@
+{
+  "name": "prisma-tanstack-start",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/prisma-tanstack-start"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "db:migrate": "bun run emit && prisma-next migration apply --no-interactive --yes && prisma-next db verify --no-interactive --strict",
+    "db:setup": "bun run db:migrate && bun run seed",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "dev": "alchemy dev",
+    "dev:start": "vite dev --host 0.0.0.0",
+    "emit": "prisma-next contract emit",
+    "seed": "tsx scripts/seed.ts",
+    "start": "node .output/server/index.mjs",
+    "tail": "alchemy tail",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@prisma-next/postgres": "^0.8.0",
+    "@tanstack/react-router": "catalog:frontend",
+    "@tanstack/react-start": "catalog:frontend",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect",
+    "nitro": "^3.0.260415-beta",
+    "pg": "catalog:database",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@prisma-next/cli": "^0.8.0",
+    "@prisma-next/target-postgres": "^0.8.0",
+    "@prisma-next/vite-plugin-contract-emit": "^0.8.0",
+    "@types/node": "catalog:tooling",
+    "@types/pg": "catalog:database",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "dotenv": "^17.4.2",
+    "tsx": "catalog:tooling",
+    "typescript": "catalog:build",
+    "vite": "catalog:build"
+  }
+}

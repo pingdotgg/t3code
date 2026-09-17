@@ -77,24 +77,23 @@ export interface CodeInterpreter extends Resource<
  * role. All configuration is create-only (the API has no update operation);
  * property changes trigger a replacement.
  *
- * @resource
- * @section Creating Code Interpreters
- * @example Sandboxed Interpreter (no network egress)
+ * ### Creating Code Interpreters
+ * **Example:** Sandboxed Interpreter (no network egress)
  * ```typescript
  * import * as AgentCore from "alchemy/AWS/BedrockAgentCore";
  *
  * const interpreter = yield* AgentCore.CodeInterpreter("Sandbox", {});
  * ```
  *
- * @example Interpreter with Public Egress
+ * **Example:** Interpreter with Public Egress
  * ```typescript
  * const interpreter = yield* AgentCore.CodeInterpreter("PublicSandbox", {
  *   networkConfiguration: { networkMode: "PUBLIC" },
  * });
  * ```
  *
- * @section Executing Code from a Function
- * @example Start a Session and Run Code
+ * ### Executing Code from a Function
+ * **Example:** Start a Session and Run Code
  * ```typescript
  * // init
  * const startSession = yield* AgentCore.StartCodeInterpreterSession(interpreter);
@@ -116,6 +115,8 @@ export interface CodeInterpreter extends Resource<
  *   }),
  * };
  * ```
+ *
+ * @resource
  */
 export const CodeInterpreter = Resource<CodeInterpreter>(
   "AWS.BedrockAgentCore.CodeInterpreter",

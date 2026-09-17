@@ -6,8 +6,15 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 
-import { browserDefaultOpenViewport, resolveBrowserDefaults } from "~/browser/browserDefaults";
+import {
+  browserDefaultOpenProfileId,
+  browserDefaultOpenViewport,
+  resolveBrowserDefaults,
+} from "~/browser/browserDefaults";
+import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
 interface OpenPreviewSessionInput<E> {
@@ -19,17 +26,28 @@ interface OpenPreviewSessionInput<E> {
   url?: string;
   /** Overrides the configured default; automation passes an explicit size. */
   viewport?: PreviewViewportSetting;
+  /** Overrides the configured default profile. */
+  profileId?: string;
 }
 
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
-): Promise<AtomCommandResult<PreviewSessionSnapshot, E>> {
+): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
+  // Resolved once: a tab opened before client settings hydrate would otherwise
+  // be born at the schema defaults and never corrected.
+  const defaults = await resolveBrowserDefaults().catch(
+    (cause: unknown) => new BrowserSettingsReadError({ cause }),
+  );
+  if (defaults instanceof BrowserSettingsReadError) {
+    return AsyncResult.failure(Cause.fail(defaults));
+  }
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
-      viewport: input.viewport ?? browserDefaultOpenViewport(await resolveBrowserDefaults()),
+      viewport: input.viewport ?? browserDefaultOpenViewport(defaults),
+      profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
     },
   });
   if (result._tag === "Failure") {

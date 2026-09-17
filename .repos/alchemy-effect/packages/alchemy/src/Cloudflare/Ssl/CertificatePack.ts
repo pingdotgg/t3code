@@ -187,11 +187,8 @@ export type CertificatePack = Resource<
  * The pack's `certificateAuthority`, `hosts`, and `validityDays` are
  * immutable — changing any of them replaces the pack (a new order).
  * `validationMethod` and `cloudflareBranding` are updated in place.
- * @resource
- * @product SSL/TLS
- * @category SSL/TLS & Certificates
- * @section Ordering a certificate pack
- * @example Order an advanced certificate for the apex and a wildcard
+ * ### Ordering a certificate pack
+ * **Example:** Order an advanced certificate for the apex and a wildcard
  * ```typescript
  * const pack = yield* Cloudflare.Ssl.CertificatePack("ApexCert", {
  *   zoneId: zone.zoneId,
@@ -202,7 +199,7 @@ export type CertificatePack = Resource<
  * });
  * ```
  *
- * @example Order from Let's Encrypt with a short validity
+ * **Example:** Order from Let's Encrypt with a short validity
  * ```typescript
  * yield* Cloudflare.Ssl.CertificatePack("ShortLivedCert", {
  *   zoneId: zone.zoneId,
@@ -213,8 +210,8 @@ export type CertificatePack = Resource<
  * });
  * ```
  *
- * @section Completing validation
- * @example Create the DCV TXT records the order asks for
+ * ### Completing validation
+ * **Example:** Create the DCV TXT records the order asks for
  * ```typescript
  * const pack = yield* Cloudflare.Ssl.CertificatePack("ApexCert", {
  *   zoneId: zone.zoneId,
@@ -228,6 +225,10 @@ export type CertificatePack = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/ssl/edge-certificates/advanced-certificate-manager/
+ *
+ * @resource
+ * @product SSL/TLS
+ * @category SSL/TLS & Certificates
  */
 export const CertificatePack = Resource<CertificatePack>(TypeId);
 

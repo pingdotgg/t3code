@@ -22,6 +22,9 @@ export const IDENTIFIER_FALLBACK_KEY = "~identifier"
 export const SENTINELS_ANNOTATION_KEY = "~sentinels"
 
 /** @internal */
+export const CONSTRUCTOR_ANNOTATION_KEY = "~constructor"
+
+/** @internal */
 export const jsonSchemaAnnotationKeys = [
   "title",
   "description",
@@ -52,7 +55,7 @@ export const resolveBrands = resolveAt<ReadonlyArray<string>>("brands")
 
 /** @internal */
 export const getExpected = memoize((ast: SchemaAST.AST): string => {
-  const identifier = resolveIdentifier(ast)
+  const identifier = resolve(ast)?.identifier
   if (typeof identifier === "string") return identifier
   return ast.getExpected(getExpected)
 })
