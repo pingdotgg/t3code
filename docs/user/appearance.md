@@ -25,7 +25,8 @@ of the selected theme.
 
 If you launch the desktop app with `--force-device-scale-factor=2` (or another positive
 scale factor), T3 remembers it for later launches, including restarts after an update.
-A new explicit flag takes precedence over the saved value.
+A valid explicit flag takes precedence over the saved value. Invalid flags fall back to
+the saved value, or automatic scaling when no value is saved.
 
 To return to automatic display scaling, quit T3 and remove `linuxDeviceScaleFactor` from
 `~/.t3/userdata/desktop-settings.json`, or the corresponding file under your custom T3 home.

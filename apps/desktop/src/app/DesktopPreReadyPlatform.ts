@@ -101,7 +101,10 @@ export const make = Effect.gen(function* () {
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
       }
-      if (linux.deviceScaleFactor !== null && !hasDeviceScaleFactor) {
+      if (hasDeviceScaleFactor && linuxDeviceScaleFactorCommandLine === null) {
+        Electron.app.commandLine.removeSwitch("force-device-scale-factor");
+      }
+      if (linux.deviceScaleFactor !== null && linuxDeviceScaleFactorCommandLine === null) {
         Electron.app.commandLine.appendSwitch(
           "force-device-scale-factor",
           String(linux.deviceScaleFactor),
