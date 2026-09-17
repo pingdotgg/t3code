@@ -198,6 +198,8 @@ function stripShellWrapper(value: string): string {
 
 /** Expanded work rows keep their detail while compact rows show a stable one-line label. */
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
+  if (expanded && entry.itemType === "reasoning")
+    return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
   if (expanded && entry.command?.trim()) return "Command";
@@ -681,6 +683,7 @@ function toFeedActivity(
 }
 
 function singleToolCallLabel(activity: ThreadFeedActivity): string {
+  if (activity.workEntry.itemType === "reasoning") return "Thought";
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
@@ -1232,6 +1235,8 @@ function appendToolGroupRows(
 
 function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boolean): string {
   const status = liveActivityToolStatus(activity.lifecycleStatus, presentTense);
+  if (activity.workEntry.itemType === "reasoning")
+    return status === "inProgress" ? "Thinking" : "Thought";
   const presentation = resolveWorkEntryToolPresentation({
     ...activity.workEntry,
     toolLifecycleStatus: status,

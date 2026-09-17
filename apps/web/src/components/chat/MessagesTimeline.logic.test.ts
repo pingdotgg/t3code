@@ -29,6 +29,7 @@ import {
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
   workEntryDisplayLabel,
+  workEntryIsVisibleInGroup,
 } from "./MessagesTimeline.logic";
 
 describe("expanded tool group scrolling", () => {
@@ -87,6 +88,24 @@ describe("work entry labels", () => {
     label: "Tool call",
     tone: "tool" as const,
   };
+
+  it("keeps a stable live reasoning label and exposes the trace in grouped rows", () => {
+    const thought = {
+      ...entry,
+      itemType: "reasoning" as const,
+      tone: "thinking" as const,
+      detail: "Check **ordering** first.",
+      toolLifecycleStatus: "inProgress" as const,
+    };
+    expect(liveWorkEntryLabel(thought, undefined, true)).toBe("Thinking");
+    expect(
+      liveWorkEntryLabel({ ...thought, toolLifecycleStatus: "completed" }, undefined, false),
+    ).toBe("Thought");
+    expect(workEntryDisplayLabel(thought, undefined)).toBe(thought.detail);
+    expect(workEntryIsVisibleInGroup(thought)).toBe(true);
+    expect(workEntryIsVisibleInGroup({ ...thought, toolLifecycleStatus: "completed" })).toBe(true);
+    expect(workEntryIsVisibleInGroup({ ...thought, detail: "  " })).toBe(false);
+  });
 
   it.each([
     ["inProgress", "Clicking in the preview browser"],

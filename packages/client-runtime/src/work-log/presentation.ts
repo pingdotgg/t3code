@@ -97,6 +97,7 @@ export type ToolGroupSummaryKind =
   | "pull-request"
   | ToolGroupAction
   | "dynamic-tool"
+  | "reasoning"
   | "agent-tool"
   | "tone-tool"
   | "mixed";
@@ -627,6 +628,14 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   summary: string;
   hasFailure: boolean;
 } {
+  const toolEntries = entries.filter((entry) => entry.itemType !== "reasoning");
+  if (entries.length > 0 && toolEntries.length === 0) {
+    return {
+      summary: entries.length === 1 ? "Thought" : `Thought (×${entries.length})`,
+      hasFailure: false,
+    };
+  }
+  entries = toolEntries;
   const groups = new Map<
     ToolGroupAction | T3McpToolSummaryAction,
     {
@@ -707,6 +716,9 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
 export function toolGroupSummaryKind(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): ToolGroupSummaryKind {
+  const toolEntries = entries.filter((entry) => entry.itemType !== "reasoning");
+  if (entries.length > 0 && toolEntries.length === 0) return "reasoning";
+  entries = toolEntries;
   if (
     entries.length > 0 &&
     entries.every((entry) => resolveWorkEntryToolPresentation(entry)?.icon === "pull-request")
