@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getAnchoredTurnMetrics,
   getRowBottom,
+  readTimelinePosition,
+  rememberTimelinePosition,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 
@@ -169,5 +171,21 @@ describe("timeline scroll anchoring", () => {
 
     expect(withoutComposer?.overflowsUsableViewport).toBe(false);
     expect(withComposer?.overflowsUsableViewport).toBe(true);
+  });
+});
+
+describe("remembered timeline positions", () => {
+  it("keeps reading positions and end-follow independent across threads and environments", () => {
+    const reading = { rowId: "message-4", offsetWithinRow: 32, scrollOffset: 932, atEnd: false };
+    const following = { rowId: "message-9", offsetWithinRow: 10, scrollOffset: 2010, atEnd: true };
+    rememberTimelinePosition("scroll-test-a:thread-1", reading);
+    rememberTimelinePosition("scroll-test-a:thread-2", following);
+    rememberTimelinePosition("scroll-test-b:thread-1", following);
+    expect(readTimelinePosition("scroll-test-a:thread-1")).toEqual(reading);
+    expect(readTimelinePosition("scroll-test-a:thread-2")).toEqual(following);
+    expect(readTimelinePosition("scroll-test-b:thread-1")).toEqual(following);
+    expect(readTimelinePosition("scroll-test-a:unvisited")).toBeUndefined();
+    rememberTimelinePosition("scroll-test-a:thread-1", following);
+    expect(readTimelinePosition("scroll-test-a:thread-1")).toEqual(following);
   });
 });

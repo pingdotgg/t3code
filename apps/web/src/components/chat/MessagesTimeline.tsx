@@ -153,6 +153,8 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  readTimelinePosition,
+  rememberTimelinePosition,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -452,6 +454,7 @@ interface MessagesTimelineProps {
   onContentOverflowChange?: (overflows: boolean) => void;
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
+  cancelPositionRestoreRef?: React.RefObject<(() => void) | null>;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
@@ -510,6 +513,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onContentOverflowChange,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
+  cancelPositionRestoreRef,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
@@ -518,16 +522,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   steerQueuedMessageShortcutLabel = null,
   onRemoveQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
 }: MessagesTimelineProps) {
-  const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
-  const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
-  // Preserve member disclosure state across virtualization.
+  const listIdentityKey = displayThreadKey ?? routeThreadKey;
+  const rememberedPosition = useMemo(
+    () => readTimelinePosition(listIdentityKey),
+    [listIdentityKey],
+  );
+  const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(
+    () => rememberedPosition?.disclosures?.turns ?? new Set(),
+  );
+  const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(
+    () => rememberedPosition?.disclosures?.workGroups ?? new Set(),
+  );
   const [expandedSpawnEntryIds, setExpandedSpawnEntryIds] = useState<ReadonlySet<string>>(
-    new Set(),
+    () => rememberedPosition?.disclosures?.spawnEntries ?? new Set(),
   );
   const [expandedReasoningMessageIds, setExpandedReasoningMessageIds] = useState<
     ReadonlySet<string>
-  >(new Set());
-  const listIdentityKey = displayThreadKey ?? routeThreadKey;
+  >(() => rememberedPosition?.disclosures?.reasoningMessages ?? new Set());
+  const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(() =>
+    rememberedPosition?.atEnd === false ? null : listIdentityKey,
+  );
+  const restoringThreadPosition = positionedThreadKey !== listIdentityKey;
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestTurnRef = useRef(latestTurn);
@@ -540,12 +555,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   let paintedExpandedReasoningMessageIds = expandedReasoningMessageIds;
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
+    setPositionedThreadKey(null);
     previousLatestTurnRef.current = latestTurn;
     setSettlingListIdentity(listIdentityKey);
-    paintedExpandedTurnIds = new Set();
-    paintedExpandedWorkGroupIds = new Set();
-    paintedExpandedSpawnEntryIds = new Set();
-    paintedExpandedReasoningMessageIds = new Set();
+    paintedExpandedTurnIds = rememberedPosition?.disclosures?.turns ?? new Set();
+    paintedExpandedWorkGroupIds = rememberedPosition?.disclosures?.workGroups ?? new Set();
+    paintedExpandedSpawnEntryIds = rememberedPosition?.disclosures?.spawnEntries ?? new Set();
+    paintedExpandedReasoningMessageIds =
+      rememberedPosition?.disclosures?.reasoningMessages ?? new Set();
     setExpandedTurnIds(paintedExpandedTurnIds);
     setExpandedWorkGroupIds(paintedExpandedWorkGroupIds);
     setExpandedSpawnEntryIds(paintedExpandedSpawnEntryIds);
@@ -567,10 +584,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       current.has(turnId) ? current : new Set([...current, turnId]),
     );
   }, []);
-  // Scroll/disclosure state outlives virtualized rows, but never the current thread.
+  // Nested tool state shares the bounded thread-position cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
-    () => ({ scrollPositions: new Map(), expandedEntries: new Set() }),
-    [listIdentityKey],
+    () =>
+      rememberedPosition?.disclosures?.workGroupState ?? {
+        scrollPositions: new Map(),
+        expandedEntries: new Set(),
+      },
+    [listIdentityKey, rememberedPosition],
   );
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
@@ -786,6 +807,130 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const restoreRowIndex =
+    restoringThreadPosition && rememberedPosition?.atEnd === false
+      ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
+      : -1;
+  const restoringAlwaysRender = useMemo(
+    () =>
+      restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
+    [restoreRowIndex, restoringThreadPosition],
+  );
+  useLayoutEffect(() => {
+    if (!restoringThreadPosition || rows.length === 0) return;
+    const list = listRef.current;
+    if (!list) return;
+    if (citationRequest !== null) {
+      setPositionedThreadKey(listIdentityKey);
+      return;
+    }
+    let cancelled = false;
+    let settleFrame: number | null = null;
+    const viewport: HTMLElement | null = list.getScrollableNode();
+    const cancelRestoration = () => {
+      if (cancelled) return;
+      cancelled = true;
+      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
+      // Supersede any pending estimated-index scroll before the browser applies the gesture.
+      if (viewport) void list.scrollToOffset({ offset: viewport.scrollTop, animated: false });
+      setPositionedThreadKey(listIdentityKey);
+    };
+    const cancelForNavigation = () => {
+      cancelRestoration();
+      onManualNavigation();
+    };
+    const onScrollKey = (event: globalThis.KeyboardEvent) => {
+      if (
+        ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key) &&
+        !(
+          event.target instanceof Element &&
+          event.target.closest("input, textarea, [contenteditable=true]")
+        )
+      )
+        cancelForNavigation();
+    };
+    viewport?.addEventListener("wheel", cancelForNavigation, { passive: true });
+    viewport?.addEventListener("touchmove", cancelForNavigation, { passive: true });
+    viewport?.addEventListener("pointerdown", cancelForNavigation, { passive: true });
+    viewport?.ownerDocument.addEventListener("keydown", onScrollKey);
+    const position = rememberedPosition;
+    const index = position ? rows.findIndex((row) => row.id === position.rowId) : -1;
+    if (position?.atEnd === false) onManualNavigation();
+    if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
+    const scrolling =
+      position?.atEnd === false
+        ? index >= 0
+          ? list.scrollToIndex({
+              index,
+              animated: false,
+              viewPosition: 0,
+              viewOffset: -position.offsetWithinRow,
+            })
+          : list.scrollToOffset({ offset: position.scrollOffset, animated: false })
+        : list.scrollToEnd({ animated: false });
+    void Promise.resolve(scrolling).then(() => {
+      if (cancelled) return;
+      if (position?.atEnd !== false || index < 0) {
+        setPositionedThreadKey(listIdentityKey);
+        return;
+      }
+      // Index scrolling starts from estimates. Keep the saved row mounted
+      // until its measured position and the DOM agree for two layout frames.
+      let stableFrames = 0;
+      const reconcile = () => {
+        if (cancelled) return;
+        const state = list.getState();
+        const rowIndex = state.indexByKey(position.rowId);
+        const row = rowIndex === undefined ? undefined : state.elementAtIndex(rowIndex);
+        const element = list.getScrollableNode();
+        if (!row || !element) return;
+        const offset = Math.max(
+          0,
+          Math.min(
+            element.scrollTop +
+              row.getBoundingClientRect().top -
+              element.getBoundingClientRect().top +
+              position.offsetWithinRow,
+            element.scrollHeight - element.clientHeight,
+          ),
+        );
+        if (Math.abs(element.scrollTop - offset) > 1) {
+          stableFrames = 0;
+          void list.scrollToOffset({ offset, animated: false }).then(() => {
+            if (!cancelled) settleFrame = requestAnimationFrame(reconcile);
+          });
+          return;
+        }
+        if (++stableFrames >= 2) {
+          setPositionedThreadKey(listIdentityKey);
+        } else {
+          settleFrame = requestAnimationFrame(reconcile);
+        }
+      };
+      settleFrame = requestAnimationFrame(reconcile);
+    });
+    return () => {
+      cancelled = true;
+      if (cancelPositionRestoreRef?.current === cancelRestoration) {
+        cancelPositionRestoreRef.current = null;
+      }
+      if (settleFrame !== null) cancelAnimationFrame(settleFrame);
+      viewport?.removeEventListener("wheel", cancelForNavigation);
+      viewport?.removeEventListener("touchmove", cancelForNavigation);
+      viewport?.removeEventListener("pointerdown", cancelForNavigation);
+      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
+    };
+  }, [
+    citationRequest,
+    cancelPositionRestoreRef,
+    listIdentityKey,
+    listRef,
+    onManualNavigation,
+    rememberedPosition,
+    restoringThreadPosition,
+    rows,
+  ]);
+
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
@@ -806,6 +951,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onManualNavigation,
   });
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
+  const alwaysRender = citationAlwaysRender ?? restoringAlwaysRender;
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = useCallback(
@@ -868,7 +1014,30 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
+    if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
+    const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
+    if (position && state && isAtEnd !== undefined) {
+      const index = state.indexByKey(position.rowId);
+      const row = index === undefined ? undefined : state.elementAtIndex(index);
+      const element = listRef.current?.getScrollableNode();
+      if (row && element) {
+        rememberTimelinePosition(listIdentityKey, {
+          ...position,
+          // DOM geometry includes the header and the virtualizer's layout adjustment.
+          offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
+          scrollOffset: element.scrollTop,
+          atEnd: isAtEnd,
+          disclosures: {
+            turns: paintedExpandedTurnIds,
+            workGroups: paintedExpandedWorkGroupIds,
+            spawnEntries: paintedExpandedSpawnEntryIds,
+            reasoningMessages: paintedExpandedReasoningMessageIds,
+            workGroupState: workGroupViewState,
+          },
+        });
+      }
+    }
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
     }
@@ -909,6 +1078,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }, [
     citationPositioning,
+    paintedExpandedTurnIds,
+    paintedExpandedWorkGroupIds,
+    paintedExpandedSpawnEntryIds,
+    paintedExpandedReasoningMessageIds,
+    workGroupViewState,
+    rows,
+    listIdentityKey,
+    restoringThreadPosition,
     listRef,
     minimapItems,
     minimapStripMap,
@@ -1101,15 +1278,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             getItemType={getItemType}
             renderItem={renderItem}
             estimatedItemSize={90}
-            initialScrollAtEnd={citationRequest === null}
+            initialScrollAtEnd={citationRequest === null && rememberedPosition?.atEnd !== false}
             // Legend needs a data refresh to mount new pins without a scroll event.
-            {...(readyCitationRequest ? { dataVersion: readyCitationRequest.key } : {})}
-            {...(citationAlwaysRender ? { alwaysRender: citationAlwaysRender } : {})}
+            dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+            {...(alwaysRender ? { alwaysRender } : {})}
             onLoad={onCitationListLoad}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
             maintainScrollAtEnd={
               citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
               anchoredEndSpace ||
               !liveFollowEnabled ||
               disclosureToggleSettling
@@ -1119,7 +1297,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   : TIMELINE_MAINTAIN_SCROLL_AT_END
             }
             maintainVisibleContentPosition={
-              citationPositioning ? false : maintainVisibleContentPosition
+              citationPositioning ||
+              (restoringThreadPosition && rememberedPosition?.atEnd === false)
+                ? false
+                : maintainVisibleContentPosition
             }
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
