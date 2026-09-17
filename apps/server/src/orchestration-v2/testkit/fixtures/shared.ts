@@ -466,7 +466,7 @@ export function materializeFixtureInput(input: {
         ids,
         scenario: input.scenario,
         modelSelection: input.modelSelection,
-        worktreePath: input.worktreePath,
+        ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
         ...(input.fixtureInput.interactionMode === undefined
           ? {}
           : { interactionMode: input.fixtureInput.interactionMode }),
