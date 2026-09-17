@@ -1235,8 +1235,12 @@ function appendToolGroupRows(
 
 function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boolean): string {
   const status = liveActivityToolStatus(activity.lifecycleStatus, presentTense);
-  if (activity.workEntry.itemType === "reasoning")
-    return status === "inProgress" ? "Thinking" : "Thought";
+  if (activity.workEntry.itemType === "reasoning") {
+    return (
+      activity.workEntry.detail?.trim().replace(/\s+/g, " ") ||
+      (status === "inProgress" ? "Thinking" : "Thought")
+    );
+  }
   const presentation = resolveWorkEntryToolPresentation({
     ...activity.workEntry,
     toolLifecycleStatus: status,
