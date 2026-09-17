@@ -139,6 +139,21 @@ export async function listTranscriptFiles(
 }
 
 /**
+ * Stats a provider store that is a single file (OpenCode's `opencode.db`)
+ * rather than a directory of transcripts, applying the same mtime prefilter as
+ * the walk. In-place updates still bump the mtime, so an older file cannot be
+ * hiding in-window usage. Returns `null` when the file is older than
+ * `sinceMs`; a missing file rejects, which the caller distinguishes.
+ */
+export async function statTranscriptFile(
+  path: string,
+  sinceMs: number,
+): Promise<TranscriptFile | null> {
+  const stats = await NodeFSP.stat(path);
+  return stats.mtimeMs >= sinceMs ? { path, size: stats.size, mtimeMs: stats.mtimeMs } : null;
+}
+
+/**
  * Filesystem identity of a directory, as `device:inode`.
  *
  * Used to tell "two servers reading the same transcript directory" apart from

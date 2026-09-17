@@ -3,6 +3,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -100,6 +101,8 @@ const serviceLayers = (input: {
     Layer.provideMerge(
       Layer.succeed(HostProcessEnvironment, {
         GROK_HOME: NodePath.join(input.home, "grok"),
+        // Keeps OpenCode off the real default store on the test machine.
+        XDG_DATA_HOME: NodePath.join(input.home, "xdg-data"),
         ...input.environment,
       }),
     ),
@@ -330,6 +333,64 @@ describe("UsageService", () => {
           NodePath.join(home, "grok", "sessions"),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("reports OpenCode usage read from its local SQLite store", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const dataHome = NodePath.join(home, "xdg-data");
+      yield* Effect.promise(async () => {
+        const opencodeDir = NodePath.join(dataHome, "opencode");
+        await NodeFSP.mkdir(opencodeDir, { recursive: true });
+        const timestampMs = Date.parse("2026-08-01T10:00:00Z");
+        const db = new NodeSqlite.DatabaseSync(NodePath.join(opencodeDir, "opencode.db"));
+        db.exec(
+          "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)",
+        );
+        db.prepare(
+          "INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES ('msg_oc1', 'ses_oc1', ?, ?, ?)",
+        ).run(
+          timestampMs,
+          timestampMs,
+          encodeUnknownJsonString({
+            role: "assistant",
+            modelID: "kimi-latest",
+            providerID: "fireworks-ai",
+            cost: 0.4,
+            tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 1000, write: 10 } },
+            time: { created: timestampMs },
+          }),
+        );
+        db.close();
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-opencode-test",
+            home,
+            settings,
+            environment: { XDG_DATA_HOME: dataHome },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const bucket = summary.buckets.find((candidate) => candidate.provider === "opencode");
+      assert.strictEqual(bucket?.model, "kimi-latest");
+      assert.deepStrictEqual(bucket?.totals, {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 1000,
+        cacheCreationTokens: 10,
+        outputTokens: 25,
+        reasoningTokens: 5,
+      });
+      assert.strictEqual(bucket?.costSource, "providerReported");
+      assert.strictEqual(bucket?.costUsd, 0.4);
+      const source = summary.sources.find(
+        (candidate) => candidate.fingerprint.provider === "opencode",
+      );
+      assert.strictEqual(source?.status, "ok");
+      assert.strictEqual(source?.scannedFiles, 1);
+    }).pipe(Effect.scoped),
   );
 
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>

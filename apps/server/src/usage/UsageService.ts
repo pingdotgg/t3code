@@ -1,9 +1,10 @@
 /**
  * UsageService - scans provider transcripts and returns priced usage buckets.
  *
- * The scan reads the provider CLIs' own session files (Claude Code, Codex, and
- * Grok Build) rather than T3 Code's orchestration projections, so usage covers
- * turns driven outside T3 Code too. This is the approach `ccusage` takes.
+ * The scan reads the provider CLIs' own session history (Claude Code, Codex,
+ * and Grok Build transcripts, plus OpenCode's local SQLite store) rather than
+ * T3 Code's orchestration projections, so usage covers turns driven outside T3
+ * Code too. This is the approach `ccusage` takes.
  *
  * Transcripts are append-only, so parsed records are memoised per file by
  * `(size, mtime)`. A cold 30-day scan of ~1.4 GB lands around 2-3 seconds; warm
@@ -49,10 +50,12 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import { readOpenCodeUsageRecords } from "./opencodeUsageStore.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
   readTranscriptRecords,
+  statTranscriptFile,
 } from "./usageTranscriptReader.ts";
 import {
   decodeScanCache,
@@ -242,9 +245,15 @@ export const make = Effect.gen(function* () {
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
     settings: ServerSettingsValue,
   ) {
-    const dirs: Array<{ provider: UsageProviderKind; dir: string; fileName?: string }> = [];
+    const dirs: Array<{
+      provider: UsageProviderKind;
+      dir: string;
+      fileName?: string;
+      /** Store is one SQLite file inside `dir` (OpenCode), not a transcript tree. */
+      dbFileName?: string;
+    }> = [];
     const seen = new Set<string>();
-    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
+    for (const driver of ["claudeAgent", "codex", "grok", "opencode"] as const) {
       // Disabled accounts still have history. Explicit default slots replace
       // the legacy settings, just as they do in the provider registry.
       const instances: Array<Pick<ProviderInstanceConfig, "config" | "environment">> =
@@ -274,12 +283,21 @@ export const make = Effect.gen(function* () {
           home = configured
             ? expandHomePath(configured)
             : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+        } else if (driver === "opencode") {
+          // OpenCode resolves its data directory as `$XDG_DATA_HOME/opencode`.
+          const xdgDataHome = environment.XDG_DATA_HOME?.trim();
+          home = xdgDataHome
+            ? path.join(xdgDataHome, "opencode")
+            : path.join(NodeOS.homedir(), ".local", "share", "opencode");
         } else {
           home = expandHomePath(
             environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
           );
         }
-        const directory = path.resolve(home, provider === "claude" ? "projects" : "sessions");
+        const directory =
+          provider === "opencode"
+            ? path.resolve(home)
+            : path.resolve(home, provider === "claude" ? "projects" : "sessions");
         // Account aliases and Codex auth overlays can share the same history.
         const dir = yield* fileSystem
           .realPath(directory)
@@ -287,7 +305,12 @@ export const make = Effect.gen(function* () {
         const key = `${provider}\0${dir}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        dirs.push({ provider, dir, ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}) });
+        dirs.push({
+          provider,
+          dir,
+          ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}),
+          ...(provider === "opencode" ? { dbFileName: "opencode.db" } : {}),
+        });
       }
     }
     return dirs;
@@ -361,8 +384,12 @@ export const make = Effect.gen(function* () {
           ? cached.position
           : undefined;
 
+      // OpenCode's store is re-read wholesale; it has no byte position to
+      // resume from, so `resumeFrom` only applies to transcript providers.
       const parsed = yield* Effect.promise(() =>
-        readTranscriptRecords(filePath, provider, resumeFrom),
+        provider === "opencode"
+          ? readOpenCodeUsageRecords(filePath)
+          : readTranscriptRecords(filePath, provider, resumeFrom),
       );
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
@@ -410,13 +437,37 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
     const scanned: ScannedDir[] = [];
-    for (const { provider, dir, fileName } of dirs) {
+    for (const { provider, dir, fileName, dbFileName } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
       if (!exists) {
         scanned.push({ provider, dir, volumeId, files: null });
+        continue;
+      }
+      if (dbFileName !== undefined) {
+        const dbPath = path.join(dir, dbFileName);
+        const dbExists = yield* fileSystem
+          .exists(dbPath)
+          .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        if (!dbExists) {
+          scanned.push({ provider, dir, volumeId, files: null });
+          continue;
+        }
+        const stat = yield* Effect.promise(() =>
+          statTranscriptFile(dbPath, windowStartMs).catch(() => null),
+        );
+        const dbFiles =
+          stat === null
+            ? []
+            : [
+                {
+                  path: stat.path,
+                  records: yield* readFileRecords(stat.path, stat.size, stat.mtimeMs, provider),
+                },
+              ];
+        scanned.push({ provider, dir, volumeId, files: dbFiles });
         continue;
       }
       const files = yield* Effect.promise(() =>

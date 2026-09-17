@@ -88,13 +88,24 @@ describe("scan cache round trip", () => {
       }),
     });
 
+    original.set("/opencode/opencode.db", {
+      size: 90,
+      mtimeMs: 500,
+      provider: "opencode",
+      records: [record({ provider: "opencode", model: "kimi-latest", dedupeKey: "msg_oc1" })],
+      tailRecords: [],
+      // The SQLite store has no byte position to resume from.
+      position: position({ resumeOffset: 0, guardLength: 0, guardHash: 0 }),
+    });
+
     const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
 
-    expect(restored.size).toBe(4);
+    expect(restored.size).toBe(5);
     expect(restored.get("/a.jsonl")).toEqual(original.get("/a.jsonl"));
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
     expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
     expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
+    expect(restored.get("/opencode/opencode.db")).toEqual(original.get("/opencode/opencode.db"));
   });
 
   it("drops an entry whose persisted parse state is corrupt", () => {

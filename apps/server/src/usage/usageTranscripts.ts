@@ -70,6 +70,7 @@ export function totalTokens(totals: UsageTokenTotals): number {
 export function mightCarryUsage(line: string, provider: UsageProviderKind): boolean {
   if (provider === "claude") return line.includes('"usage"');
   if (provider === "grok") return line.includes('"turn_completed"');
+  // OpenCode is read from its SQLite store, not from transcript lines.
   return line.includes('"token_count"');
 }
 
@@ -483,6 +484,83 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
     });
   }
   return results;
+}
+
+/* -------------------------------------------------------------------------- */
+/* OpenCode                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One row of OpenCode's `message` table as read by `opencodeUsageStore`. The
+ * timestamp comes from the `time_created` column rather than the JSON payload:
+ * the column is canonical (OpenCode's projector writes both from the same
+ * field) and needs no parsing.
+ */
+export interface OpenCodeMessageRow {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly timestampMs: number;
+  /** Raw `data` column JSON for one message. */
+  readonly data: string;
+}
+
+/**
+ * Parses one OpenCode `message` row into a usage record.
+ *
+ * OpenCode's token counts are disjoint: `input` excludes cached reads,
+ * `output` excludes reasoning, and `cache.read`/`cache.write` are separate.
+ * The shared contract requires reasoning to be a subset of output, and
+ * providers bill reasoning at the output rate, so reasoning is folded into
+ * `outputTokens` here.
+ *
+ * A `cost` of 0 means OpenCode could not price the model (subscription or
+ * free), so it becomes `null` and falls through to the rate table, matching
+ * how Claude Code subscription turns carry no `costUSD`.
+ */
+export function parseOpenCodeMessage(row: OpenCodeMessageRow): UsageRecord | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.data);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const record = parsed as Record<string, unknown>;
+  if (record["role"] !== "assistant") return null;
+
+  const model = typeof record["modelID"] === "string" ? record["modelID"] : "";
+  if (model.length === 0) return null;
+
+  const tokens = record["tokens"];
+  if (typeof tokens !== "object" || tokens === null) return null;
+  const tokensRecord = tokens as Record<string, unknown>;
+  const cache = tokensRecord["cache"];
+  const cacheRecord =
+    typeof cache === "object" && cache !== null ? (cache as Record<string, unknown>) : {};
+
+  const reasoningTokens = int(tokensRecord["reasoning"]);
+  const totals: UsageTokenTotals = {
+    uncachedInputTokens: int(tokensRecord["input"]),
+    cachedInputTokens: int(cacheRecord["read"]),
+    cacheCreationTokens: int(cacheRecord["write"]),
+    outputTokens: int(tokensRecord["output"]) + reasoningTokens,
+    reasoningTokens,
+  };
+  // Mid-stream rows upsert with zero tokens; the next scan re-reads them once
+  // the file's mtime moves.
+  if (totalTokens(totals) === 0) return null;
+
+  const cost = record["cost"];
+
+  return {
+    provider: "opencode",
+    timestampMs: row.timestampMs,
+    model,
+    sessionId: row.sessionId,
+    totals,
+    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null,
+    dedupeKey: row.id,
+  };
 }
 
 export { EMPTY_TOTALS };

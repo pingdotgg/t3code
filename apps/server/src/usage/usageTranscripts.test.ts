@@ -6,7 +6,9 @@ import {
   parseClaudeLine,
   parseCodexLine,
   parseGrokLine,
+  parseOpenCodeMessage,
   totalTokens,
+  type OpenCodeMessageRow,
 } from "./usageTranscripts.ts";
 
 /** Shaped after a real Claude Code assistant record. */
@@ -562,5 +564,93 @@ describe("parseGrokLine", () => {
 
     const records = parseGrokLine(line);
     expect(records[0]?.timestampMs).toBe(1_786_372_566_000);
+  });
+});
+
+/** Shaped after a real OpenCode `message` row: columns plus raw `data` JSON. */
+function openCodeRow(data: Record<string, unknown>, id = "msg_oc1"): OpenCodeMessageRow {
+  return {
+    id,
+    sessionId: "ses_oc1",
+    timestampMs: Date.parse("2026-08-01T10:00:00Z"),
+    data: JSON.stringify(data),
+  };
+}
+
+function openCodeAssistant(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    role: "assistant",
+    modelID: "kimi-latest",
+    providerID: "fireworks-ai",
+    cost: 0.4,
+    tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 1000, write: 10 } },
+    time: { created: Date.parse("2026-08-01T10:00:00Z") },
+    ...overrides,
+  };
+}
+
+describe("parseOpenCodeMessage", () => {
+  it("normalizes disjoint tokens into the shared totals", () => {
+    const record = parseOpenCodeMessage(openCodeRow(openCodeAssistant()));
+
+    expect(record).not.toBeNull();
+    expect(record?.provider).toBe("opencode");
+    expect(record?.model).toBe("kimi-latest");
+    expect(record?.sessionId).toBe("ses_oc1");
+    expect(record?.timestampMs).toBe(Date.parse("2026-08-01T10:00:00Z"));
+    expect(record?.dedupeKey).toBe("msg_oc1");
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 100,
+      cachedInputTokens: 1000,
+      cacheCreationTokens: 10,
+      // Reasoning is reported disjoint from output but the contract requires it
+      // to be a subset, and providers bill it at the output rate.
+      outputTokens: 25,
+      reasoningTokens: 5,
+    });
+    expect(record?.reportedCostUsd).toBe(0.4);
+  });
+
+  it("treats a zero cost as unreported so the rate table applies", () => {
+    const record = parseOpenCodeMessage(openCodeRow(openCodeAssistant({ cost: 0 })));
+    expect(record?.reportedCostUsd).toBeNull();
+  });
+
+  it("drops mid-stream rows that carry no tokens yet", () => {
+    const record = parseOpenCodeMessage(
+      openCodeRow(
+        openCodeAssistant({
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        }),
+      ),
+    );
+    expect(record).toBeNull();
+  });
+
+  it("ignores non-assistant rows", () => {
+    expect(parseOpenCodeMessage(openCodeRow(openCodeAssistant({ role: "user" })))).toBeNull();
+  });
+
+  it("drops rows without a model or token payload", () => {
+    expect(parseOpenCodeMessage(openCodeRow(openCodeAssistant({ modelID: "" })))).toBeNull();
+    expect(parseOpenCodeMessage(openCodeRow(openCodeAssistant({ tokens: undefined })))).toBeNull();
+  });
+
+  it("defaults a missing cache breakdown to zero", () => {
+    const record = parseOpenCodeMessage(
+      openCodeRow(openCodeAssistant({ tokens: { input: 100, output: 20, reasoning: 5 } })),
+    );
+    expect(record?.totals).toEqual({
+      uncachedInputTokens: 100,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 25,
+      reasoningTokens: 5,
+    });
+  });
+
+  it("drops malformed JSON instead of failing the scan", () => {
+    expect(parseOpenCodeMessage({ ...openCodeRow({}), data: "not json" })).toBeNull();
   });
 });
