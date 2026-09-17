@@ -19,7 +19,12 @@ export function TimelineSystemDivider(props: {
       {Icon ? <Icon className="size-3 shrink-0" /> : null}
       <span className="font-medium">{props.label}</span>
       {props.detail ? (
-        <span className="inline-flex min-w-0 max-w-80 items-center truncate opacity-70">
+        <span
+          className={cn(
+            "inline-flex min-w-0 max-w-80 items-center opacity-70",
+            typeof props.detail === "string" && "truncate",
+          )}
+        >
           {props.showDetailSeparator === false ? null : "·\u00a0"}
           {props.detail}
         </span>
@@ -52,7 +57,9 @@ export function TimelineSystemDivider(props: {
           <TooltipPopup side="top">{props.actionLabel}</TooltipPopup>
         </Tooltip>
       ) : (
-        <span className="flex min-w-0 items-center gap-1.5 rounded-full px-2 py-1">{content}</span>
+        <span className="flex min-w-0 flex-wrap items-center justify-center gap-1.5 rounded-full px-2 py-1">
+          {content}
+        </span>
       )}
       <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
     </div>

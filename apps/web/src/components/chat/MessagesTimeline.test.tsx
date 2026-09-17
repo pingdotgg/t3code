@@ -229,6 +229,8 @@ function buildProps() {
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
     turnDiffSummaries: [],
+    providerStatuses: [],
+    runs: [],
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
