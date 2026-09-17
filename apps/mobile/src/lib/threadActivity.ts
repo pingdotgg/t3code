@@ -6,7 +6,10 @@ import type {
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
-import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
+import {
+  commandDisplayText,
+  commandProgramName,
+} from "@t3tools/client-runtime/work-log/command-label";
 import {
   contextCompactionLabel,
   toolItemForDisplay,
@@ -125,7 +128,9 @@ type RawThreadFeedEntry =
       readonly activity: ThreadFeedActivity;
     };
 
-export type ThreadFeedEntry =
+export type ThreadFeedEntry = ThreadFeedEntryContent & { readonly continuesWorkLog?: boolean };
+
+type ThreadFeedEntryContent =
   | Extract<RawThreadFeedEntry, { type: "message" }>
   | {
       readonly type: "activity-group";
@@ -190,19 +195,13 @@ function compactWorkEntryText(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
 }
 
-function stripShellWrapper(value: string): string {
-  const trimmed = value.trim();
-  const match = /^\/bin\/zsh -lc ['"]?([\s\S]*?)['"]?$/u.exec(trimmed);
-  return (match?.[1] ?? trimmed).trim();
-}
-
 /** Expanded work rows keep their detail while compact rows show a stable one-line label. */
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
   if (expanded && entry.itemType === "reasoning")
     return entry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought";
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
-  if (expanded && entry.command?.trim()) return "Command";
+  if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
   const preview =
     entry.command ??
     entry.detail ??
@@ -212,7 +211,7 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
         : `${entry.changedFiles[0]!} +${entry.changedFiles.length - 1} more`
       : null);
   if (expanded) return preview?.trim() || entry.label;
-  return preview ? compactWorkEntryText(stripShellWrapper(preview)) || entry.label : entry.label;
+  return preview ? compactWorkEntryText(preview) || entry.label : entry.label;
 }
 
 type ThreadFeedActivityGroup = Extract<ThreadFeedEntry, { readonly type: "activity-group" }>;
@@ -356,12 +355,7 @@ function itemIsToolLike(item: OrchestrationV2TurnItem): boolean {
 }
 
 function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
-  return (
-    item.type === "fork" ||
-    item.type === "thread_created" ||
-    item.type === "subagent" ||
-    item.type === "system_notice"
-  );
+  return item.type === "fork" || item.type === "thread_created" || item.type === "system_notice";
 }
 
 function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
@@ -682,8 +676,11 @@ function toFeedActivity(
   };
 }
 
-function singleToolCallLabel(activity: ThreadFeedActivity): string {
-  if (activity.workEntry.itemType === "reasoning") return "Thought";
+function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): string {
+  if (activity.workEntry.itemType === "reasoning")
+    return expanded
+      ? "Thought"
+      : compactWorkEntryText(activity.workEntry.detail ?? "") || "Thought";
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
@@ -745,8 +742,11 @@ function groupAdjacentActivities(entries: ReadonlyArray<RawThreadFeedEntry>): Th
     if (
       isStandaloneActivity ||
       entry.activity.prominent ||
+      (entry.activity.projectedItem.item.type === "subagent") !==
+        (firstActivityEntry?.activity.projectedItem.item.type === "subagent") ||
       firstActivityEntry?.runId !== entry.runId ||
-      firstActivityEntry?.activity.attemptId !== entry.activity.attemptId
+      (entry.activity.projectedItem.item.type !== "subagent" &&
+        firstActivityEntry?.activity.attemptId !== entry.activity.attemptId)
     ) {
       flushGroup();
     }
@@ -1015,7 +1015,31 @@ export function deriveThreadFeedPresentation(
   ) {
     result.push(thinkingRow(activeWorkStartedAt, activeRunId));
   }
-  return result;
+  return result.map((row, index) => {
+    if (!isWorkLogFeedRow(row) || !isWorkLogFeedRow(result[index + 1])) return row;
+    let continued = continuedWorkLogRows.get(row);
+    if (!continued) {
+      continued = { ...row, continuesWorkLog: true };
+      continuedWorkLogRows.set(row, continued);
+    }
+    return continued;
+  });
+}
+
+const continuedWorkLogRows = new WeakMap<ThreadFeedEntry, ThreadFeedEntry>();
+
+function isWorkLogFeedRow(row: ThreadFeedEntry | undefined): boolean {
+  return (
+    row !== undefined &&
+    (row.type === "work-toggle" ||
+      row.type === "thinking" ||
+      (row.type === "activity-group" &&
+        !isContextCompactionActivityGroup(row) &&
+        !isContextHandoffActivityGroup(row) &&
+        row.activities.every(
+          (activity) => !activity.prominent && activity.projectedItem.item.type !== "notification",
+        )))
+  );
 }
 
 /** Shared by the trailing live tool row and its Thinking fallback. */
@@ -1043,7 +1067,8 @@ function appendPresentedFeedEntry(
   if (
     isContextCompactionActivityGroup(entry) ||
     isContextHandoffActivityGroup(entry) ||
-    isUserInputActivityGroup(entry)
+    isUserInputActivityGroup(entry) ||
+    entry.activities[0]?.projectedItem.item.type === "subagent"
   ) {
     result.push(entry);
     return;
@@ -1155,11 +1180,15 @@ function appendToolGroupRows(
   const singleActivity = activities.length === 1 ? latestActivity : null;
   const groupSummary = summarizeToolGroup(activities.map((activity) => activity.workEntry));
   const summary = live
-    ? liveToolActivitySummary(latestActivity, live)
+    ? expanded && latestActivity.workEntry.itemType === "reasoning"
+      ? latestActivity.lifecycleStatus === "inProgress"
+        ? "Thinking"
+        : "Thought"
+      : liveToolActivitySummary(latestActivity, live)
     : singleActivity !== null &&
         singleActivity.toolLike &&
         toolGroupAction(singleActivity.workEntry) !== "edit"
-      ? singleToolCallLabel(singleActivity)
+      ? singleToolCallLabel(singleActivity, expanded)
       : singleActivity !== null && !singleActivity.toolLike
         ? singleActivity.workEntry.label
         : groupSummary.summary;

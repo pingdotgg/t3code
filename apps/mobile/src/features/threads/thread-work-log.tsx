@@ -1,3 +1,13 @@
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "../../state/server";
+import { ProviderIcon } from "../../components/ProviderIcon";
+import {
+  WorkLogLabel,
+  WorkLogBlock,
+  WorkLogRows,
+  WorkLogIconSlot,
+  WorkLogPressable,
+} from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import {
   getQuestionAnswerPreview,
@@ -9,7 +19,11 @@ import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { useIsFocused } from "@react-navigation/native";
+import { useIsFocused, useNavigation } from "@react-navigation/native";
+import {
+  formatSubagentDisplayTitle,
+  subagentGroupSummary,
+} from "@t3tools/client-runtime/state/subagent-display";
 import {
   memo,
   useCallback,
@@ -399,18 +413,26 @@ function workLogRowsHeight(
   return activities.length * rowHeight + Math.max(0, activities.length - 1) * WORK_ROW_GAP;
 }
 
-export function collapsedWorkLogHeight(activities: ReadonlyArray<ThreadFeedActivity>): number {
+export function collapsedWorkLogHeight(
+  activities: ReadonlyArray<ThreadFeedActivity>,
+  continues = false,
+): number {
+  const bottomMargin = continues ? 0 : WORK_LOG_BOTTOM_MARGIN;
   if (activities.length === 0) {
     return 0;
   }
+  if (activities[0]?.projectedItem.item.type === "subagent") {
+    return bottomMargin + WORK_ROW_HEIGHT;
+  }
   const height = workLogRowsHeight(activities);
   return (
-    WORK_LOG_BOTTOM_MARGIN +
+    bottomMargin +
     (activities[0]?.groupedToolDetail ? Math.min(height, WORK_GROUP_MAX_HEIGHT) : height)
   );
 }
 
 interface ThreadWorkLogProps {
+  readonly continuesWorkLog?: boolean | undefined;
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly anchorKey: string;
   readonly environmentId: EnvironmentId;
@@ -464,6 +486,10 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
     return null;
   }
 
+  if (props.activities[0]?.projectedItem.item.type === "subagent") {
+    return <ThreadSubagentGroup {...props} />;
+  }
+
   if (
     props.activities[0]?.groupedToolDetail &&
     props.activities.every((row) => row.projectedItem.item.type === "reasoning")
@@ -478,7 +504,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
   }
 
   return (
-    <View className="-mx-1 mb-1 px-1 py-0">
+    <WorkLogBlock continues={props.continuesWorkLog}>
       {props.activities[0]?.groupedToolDetail ? (
         <ThreadWorkGroupList
           activities={props.activities}
@@ -490,9 +516,95 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
           renderRow={renderRow}
         />
       ) : (
-        <View className="gap-px">{props.activities.map(renderRow)}</View>
+        <WorkLogRows>{props.activities.map(renderRow)}</WorkLogRows>
       )}
-    </View>
+    </WorkLogBlock>
+  );
+}
+
+function ThreadSubagentGroup(props: ThreadWorkLogProps) {
+  const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const navigation = useNavigation();
+  const members = props.activities.flatMap(({ projectedItem }) =>
+    projectedItem.item.type === "subagent" ? [projectedItem.item] : [],
+  );
+  const summary = subagentGroupSummary(members);
+  const expanded = props.expandedRows[props.anchorKey] ?? false;
+  return (
+    <WorkLogBlock continues={props.continuesWorkLog}>
+      <WorkLogPressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityLabel={summary.label}
+        onPress={() => props.onToggleRow(props.anchorKey, props.anchorKey)}
+        rowSizing={props.rowSizing}
+      >
+        <WorkLogIconSlot>
+          <SymbolView
+            name={workRowSymbolName("agent")}
+            size={14}
+            tintColor={props.iconSubtleColor}
+          />
+        </WorkLogIconSlot>
+        <WorkLogLabel tone={summary.failed ? "danger" : "default"}>{summary.label}</WorkLogLabel>
+        <ThreadDisclosureChevron
+          expanded={expanded}
+          collapsedDirection="down"
+          size={11}
+          tintColor={props.iconSubtleColor}
+        />
+      </WorkLogPressable>
+      {expanded ? (
+        <WorkLogRows>
+          {members.map((item) => {
+            const title = formatSubagentDisplayTitle(item.title ?? "Subagent");
+            const threadId = item.childThreadId;
+            return (
+              <WorkLogPressable
+                key={item.id}
+                accessibilityRole={threadId === null ? undefined : "button"}
+                accessibilityLabel={threadId === null ? title : `Open ${title}`}
+                accessibilityHint={item.status.replaceAll("_", " ")}
+                disabled={threadId === null}
+                onPress={() => {
+                  if (threadId !== null)
+                    navigation.navigate("Thread", {
+                      environmentId: String(props.environmentId),
+                      threadId: String(threadId),
+                    });
+                }}
+                rowSizing={props.rowSizing}
+              >
+                <WorkLogIconSlot>
+                  <ProviderIcon
+                    provider={item.driver}
+                    iconUrl={
+                      config?.providers.find(
+                        (provider) => provider.instanceId === item.providerInstanceId,
+                      )?.iconUrl
+                    }
+                    size={14}
+                  />
+                  <View
+                    className={cn(
+                      "absolute bottom-0.5 right-0.5 h-1.5 w-1.5 rounded-full",
+                      item.status === "failed"
+                        ? "bg-adaptive-rose-600-400"
+                        : item.status === "completed"
+                          ? "bg-adaptive-emerald-600-400"
+                          : item.status === "cancelled" || item.status === "interrupted"
+                            ? "bg-foreground-muted"
+                            : "bg-adaptive-sky-600-400",
+                    )}
+                  />
+                </WorkLogIconSlot>
+                <WorkLogLabel>{title}</WorkLogLabel>
+              </WorkLogPressable>
+            );
+          })}
+        </WorkLogRows>
+      ) : null}
+    </WorkLogBlock>
   );
 }
 
@@ -747,6 +859,7 @@ function workLogRowKey(row: ThreadFeedActivity): string {
 const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   props: Omit<
     ThreadWorkLogProps,
+    | "continuesWorkLog"
     | "activities"
     | "copiedRowId"
     | "edgeFadeColor"
@@ -783,7 +896,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
       className="overflow-hidden"
       {...(isFreshRow(row.createdAt) ? { entering: FadeIn.duration(200) } : {})}
     >
-      <Pressable
+      <WorkLogPressable
         accessibilityRole={canExpand ? "button" : undefined}
         accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
         accessibilityHint={
@@ -792,7 +905,6 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
             : "Long press to copy."
         }
         accessibilityState={canExpand ? { expanded } : undefined}
-        hitSlop={4}
         onPress={() => {
           if (canExpand) {
             void Haptics.selectionAsync();
@@ -800,100 +912,91 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           }
         }}
         onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
-        className="rounded-md px-0.5 py-0 active:bg-subtle"
       >
-        <View className="min-h-8 flex-row items-center gap-1.5">
-          {row.live && !expanded ? (
-            <ShimmeringWorkContent
-              environmentId={props.environmentId}
-              icon={icon}
-              iconSubtleColor={props.iconSubtleColor}
-              label={displayText}
-              showIcon
-              themeAppearance={props.themeAppearance}
-              toolIcon={toolIcon}
-            />
-          ) : (
-            <>
-              <View className="h-6 w-6 shrink-0 items-center justify-center">
-                {toolIcon ? (
-                  <ToolActivityIconView
-                    environmentId={props.environmentId}
-                    icon={toolIcon}
-                    fallback={icon}
-                    fallbackColor={props.iconSubtleColor}
-                    themeAppearance={props.themeAppearance}
-                  />
-                ) : (
-                  <WorkLogIcon
-                    icon={icon}
-                    color={props.iconSubtleColor}
-                    colorClassName={
-                      iconIsDestructive
-                        ? "accent-adaptive-rose-600-400"
-                        : failed
-                          ? "accent-danger-foreground/40"
-                          : undefined
-                    }
-                  />
-                )}
-              </View>
-              <Text
-                className={cn(
-                  "min-w-0 flex-1 text-sm text-foreground-muted",
-                  iconIsDestructive && "font-t3-medium text-adaptive-rose-600-400",
-                )}
-                numberOfLines={expanded ? undefined : 1}
-              >
-                {isSystemNotice ? row.summary : displayText}
-                {answerPreview ? (
-                  <Text
-                    className={
-                      !expanded &&
-                      row.workEntry.questionAnswer &&
-                      hasQuestionAnswer(row.workEntry.questionAnswer)
-                        ? "text-foreground"
-                        : "text-foreground-subtle"
-                    }
-                  >{`  ${answerPreview}`}</Text>
-                ) : null}
-              </Text>
-            </>
-          )}
-
-          <View className="shrink-0 flex-row items-center gap-px">
-            {props.copied ? (
-              <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
-                Copied
-              </Text>
-            ) : null}
-            {failed && toolIcon !== undefined ? (
-              <View
-                className="h-4 w-4 items-center justify-center"
-                accessibilityElementsHidden
-                importantForAccessibility="no-hide-descendants"
-              >
-                <SymbolView
-                  name="xmark"
-                  size={11}
-                  tintColorClassName="accent-danger-foreground/40"
-                  type="monochrome"
+        {row.live && !expanded ? (
+          <ShimmeringWorkContent
+            environmentId={props.environmentId}
+            icon={icon}
+            iconSubtleColor={props.iconSubtleColor}
+            label={displayText}
+            showIcon
+            themeAppearance={props.themeAppearance}
+            toolIcon={toolIcon}
+          />
+        ) : (
+          <>
+            <WorkLogIconSlot>
+              {toolIcon ? (
+                <ToolActivityIconView
+                  environmentId={props.environmentId}
+                  icon={toolIcon}
+                  fallback={icon}
+                  fallbackColor={props.iconSubtleColor}
+                  themeAppearance={props.themeAppearance}
                 />
-              </View>
-            ) : null}
-            <View className="h-4 w-4 items-center justify-center">
-              {canExpand ? (
-                <ThreadDisclosureChevron
-                  expanded={expanded}
-                  collapsedDirection="down"
-                  size={11}
-                  tintColor={props.iconSubtleColor}
+              ) : (
+                <WorkLogIcon
+                  icon={icon}
+                  color={props.iconSubtleColor}
+                  colorClassName={
+                    iconIsDestructive
+                      ? "accent-adaptive-rose-600-400"
+                      : failed
+                        ? "accent-danger-foreground/40"
+                        : undefined
+                  }
                 />
+              )}
+            </WorkLogIconSlot>
+            <WorkLogLabel tone={iconIsDestructive ? "danger" : "default"}>
+              {isSystemNotice ? row.summary : displayText}
+              {answerPreview ? (
+                <Text
+                  className={
+                    !expanded &&
+                    row.workEntry.questionAnswer &&
+                    hasQuestionAnswer(row.workEntry.questionAnswer)
+                      ? "text-foreground"
+                      : "text-foreground-subtle"
+                  }
+                >{`  ${answerPreview}`}</Text>
               ) : null}
+            </WorkLogLabel>
+          </>
+        )}
+
+        <View className="shrink-0 flex-row items-center gap-px">
+          {props.copied ? (
+            <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
+              Copied
+            </Text>
+          ) : null}
+          {failed && toolIcon !== undefined ? (
+            <View
+              className="h-4 w-4 items-center justify-center"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <SymbolView
+                name="xmark"
+                size={11}
+                tintColorClassName="accent-danger-foreground/40"
+                type="monochrome"
+              />
             </View>
+          ) : null}
+          <View className="h-4 w-4 items-center justify-center">
+            {canExpand ? (
+              <ThreadDisclosureChevron
+                expanded={expanded}
+                collapsedDirection="down"
+                size={11}
+                tintColor={props.iconSubtleColor}
+              />
+            ) : null}
           </View>
         </View>
-      </Pressable>
+      </WorkLogPressable>
 
       {expanded && (reasoning || fullDetail || viewedImagePath || row.workEntry.questionAnswer) ? (
         <Animated.View
@@ -964,19 +1067,17 @@ export function ThreadWorkGroupToggle(props: {
       : toolGroupSummarySymbolName(props.summaryKind));
 
   return (
-    <View className="-mx-1 px-1 py-0">
-      <Pressable
+    <WorkLogBlock layout="group-header">
+      <WorkLogPressable
         accessibilityRole="button"
         accessibilityState={{ expanded: props.expanded }}
         accessibilityLabel={accessibilityLabel}
         accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} ${props.hiddenCount} tool ${props.hiddenCount === 1 ? "call" : "calls"}.`}
-        hitSlop={4}
         onPress={() => {
           void Haptics.selectionAsync();
           props.onToggle();
         }}
-        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
-        style={{ minHeight: props.rowSizing.estimatedRowHeight }}
+        rowSizing={props.rowSizing}
       >
         {props.shimmer ? (
           <ShimmeringWorkContent
@@ -991,7 +1092,7 @@ export function ThreadWorkGroupToggle(props: {
           />
         ) : (
           <>
-            <View className="h-6 w-6 items-center justify-center">
+            <WorkLogIconSlot>
               <ToolActivityIconView
                 environmentId={props.environmentId}
                 icon={props.toolIcon}
@@ -999,14 +1100,8 @@ export function ThreadWorkGroupToggle(props: {
                 fallbackColor={props.iconSubtleColor}
                 themeAppearance={props.themeAppearance}
               />
-            </View>
-            <Text
-              key={props.rowSizing.textSizeKey}
-              className="min-w-0 flex-1 text-sm text-foreground-muted"
-              numberOfLines={1}
-            >
-              {props.summary}
-            </Text>
+            </WorkLogIconSlot>
+            <WorkLogLabel key={props.rowSizing.textSizeKey}>{props.summary}</WorkLogLabel>
           </>
         )}
         <ThreadDisclosureChevron
@@ -1015,8 +1110,8 @@ export function ThreadWorkGroupToggle(props: {
           size={11}
           tintColor={props.iconSubtleColor}
         />
-      </Pressable>
-    </View>
+      </WorkLogPressable>
+    </WorkLogBlock>
   );
 }
 
