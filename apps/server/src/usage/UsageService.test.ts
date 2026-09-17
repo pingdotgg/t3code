@@ -126,8 +126,7 @@ describe("UsageService", () => {
         );
         await NodeFSP.mkdir(NodePath.join(codexHome, "sessions"), { recursive: true });
         await NodeFSP.symlink(codexHome, alias, "junction");
-        await NodeFSP.writeFile(
-          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
+        const codexRollout =
           [
             { type: "session_meta", payload: { id: "codex-account-session" } },
             { type: "turn_context", payload: { model: "gpt-5.6-sol" } },
@@ -141,7 +140,16 @@ describe("UsageService", () => {
             },
           ]
             .map((line) => encodeUnknownJsonString(line))
-            .join("\n") + "\n",
+            .join("\n") + "\n";
+        await NodeFSP.writeFile(
+          NodePath.join(codexHome, "sessions", "rollout.jsonl"),
+          codexRollout,
+        );
+        // An identical archived copy must be scanned but charged only once.
+        await NodeFSP.mkdir(NodePath.join(codexHome, "archived_sessions"), { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(codexHome, "archived_sessions", "rollout.jsonl"),
+          codexRollout,
         );
         await NodeFSP.mkdir(NodePath.join(grokHome, "sessions", "session"), { recursive: true });
         await NodeFSP.writeFile(
@@ -200,14 +208,14 @@ describe("UsageService", () => {
       const summary = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(summary), 36);
       const sources = summary.sources.filter((source) => source.status === "ok");
-      assert.strictEqual(sources.length, 4);
+      assert.strictEqual(sources.length, 5);
       assert.strictEqual(
         sources.reduce((sum, source) => sum + source.scannedFiles, 0),
-        4,
+        5,
       );
       assert.strictEqual(
         sources.filter((source) => source.fingerprint.provider === "codex").length,
-        1,
+        2,
       );
     }).pipe(Effect.scoped),
   );
