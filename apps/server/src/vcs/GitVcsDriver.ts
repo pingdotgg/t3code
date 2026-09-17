@@ -934,45 +934,46 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             env: commitEnv,
           });
         yield* stageFiles([]).pipe(
-          Effect.catchTag("VcsProcessExitError", (error) =>
-            Effect.gen(function* () {
-              // Git cannot stage an embedded repository until it has a commit. Discover these
-              // only after staging fails so ordinary checkpoints do not need another file scan.
-              const untracked = yield* execute({
-                operation,
-                cwd: input.cwd,
-                args: ["ls-files", "--others", "--exclude-standard", "-z", "--", "."],
-                env: commitEnv,
-                maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
-              });
-              if (untracked.stdoutTruncated) return yield* error;
-              const candidates = splitNullSeparatedGitStdoutPaths(untracked).filter((entry) =>
-                entry.endsWith("/"),
-              );
-              // Refuse excessive recovery work before probing any nested repositories.
-              if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
-              const exclusions: Array<string> = [];
-              for (const entry of candidates) {
-                const nestedCwd = path.join(input.cwd, entry);
-                if (
-                  (yield* fileSystem
-                    .exists(path.join(nestedCwd, ".git"))
-                    .pipe(Effect.mapError(() => error))) &&
-                  !(yield* hasHeadCommit(nestedCwd))
-                ) {
-                  exclusions.push(`:(exclude,literal)${entry}`);
+          Effect.catchTags({
+            VcsProcessExitError: (error) =>
+              Effect.gen(function* () {
+                // Git cannot stage an embedded repository until it has a commit. Discover these
+                // only after staging fails so ordinary checkpoints do not need another file scan.
+                const untracked = yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: ["ls-files", "--others", "--exclude-standard", "-z", "--", "."],
+                  env: commitEnv,
+                  maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+                });
+                if (untracked.stdoutTruncated) return yield* error;
+                const candidates = splitNullSeparatedGitStdoutPaths(untracked).filter((entry) =>
+                  entry.endsWith("/"),
+                );
+                // Refuse excessive recovery work before probing any nested repositories.
+                if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
+                const exclusions: Array<string> = [];
+                for (const entry of candidates) {
+                  const nestedCwd = path.join(input.cwd, entry);
+                  if (
+                    (yield* fileSystem
+                      .exists(path.join(nestedCwd, ".git"))
+                      .pipe(Effect.mapError(() => error))) &&
+                    !(yield* hasHeadCommit(nestedCwd))
+                  ) {
+                    exclusions.push(`:(exclude,literal)${entry}`);
+                  }
                 }
-              }
-              if (exclusions.length === 0) return yield* error;
-              return yield* stageFiles(exclusions);
-            }).pipe(
-              // One budget covers discovery, queued Git admission, probes, and the staging retry.
-              Effect.timeoutOrElse({
-                duration: CHECKPOINT_RECOVERY_TIMEOUT,
-                orElse: () => Effect.fail(error),
-              }),
-            ),
-          ),
+                if (exclusions.length === 0) return yield* error;
+                return yield* stageFiles(exclusions);
+              }).pipe(
+                // One budget covers discovery, queued Git admission, probes, and the staging retry.
+                Effect.timeoutOrElse({
+                  duration: CHECKPOINT_RECOVERY_TIMEOUT,
+                  orElse: () => Effect.fail(error),
+                }),
+              ),
+          }),
         );
 
         const writeTreeResult = yield* execute({
