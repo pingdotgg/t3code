@@ -275,7 +275,7 @@ struct FeatureRootModelTests {
     }
 
     @Test
-    func foregroundRecoveryIgnoresInitialActivationAndReplacesLongSuspendedSockets() async {
+    func foregroundRecoveryIgnoresInitialActivationAndReplacesEverySuspendedSocket() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)
         let start = Date(timeIntervalSince1970: 100)
@@ -286,7 +286,7 @@ struct FeatureRootModelTests {
         model.applicationDidEnterBackground(at: start)
         await model.applicationDidBecomeActive(at: start.addingTimeInterval(10))
         await model.applicationDidBecomeActive(at: start.addingTimeInterval(11))
-        #expect(client.foregroundReconnects == [false, true])
+        #expect(client.foregroundReconnects == [true, true])
     }
 
     @Test
