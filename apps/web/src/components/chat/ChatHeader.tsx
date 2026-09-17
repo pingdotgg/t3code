@@ -5,6 +5,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { Link } from "@tanstack/react-router";
 import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
@@ -22,6 +23,8 @@ import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { readLocalApi } from "~/localApi";
 import { threadEnvironment } from "../../state/threads";
+import { useThreadShell } from "../../state/entities";
+import { buildThreadRouteParams } from "../../threadRoutes";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
@@ -35,12 +38,65 @@ interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
+  parentThreadId: ThreadId | null;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
   activeProject: EnvironmentProject | null;
   rightPanelOpen: boolean;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
+}
+
+/** Subscribe only to ancestors, so unrelated thread updates leave the header alone. */
+function AncestorBreadcrumbs({
+  environmentId,
+  threadId,
+  descendantThreadIds,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly descendantThreadIds: ReadonlyArray<ThreadId>;
+}) {
+  const threadRef = useMemo(
+    () => scopeThreadRef(environmentId, threadId),
+    [environmentId, threadId],
+  );
+  const thread = useThreadShell(threadRef);
+  if (thread === null || descendantThreadIds.includes(threadId)) return null;
+
+  const parentThreadId =
+    thread.lineage.relationshipToParent === "subagent" ? thread.lineage.parentThreadId : null;
+  const title = thread.title;
+  return (
+    <>
+      {parentThreadId !== null ? (
+        <AncestorBreadcrumbs
+          environmentId={environmentId}
+          threadId={parentThreadId}
+          descendantThreadIds={[...descendantThreadIds, threadId]}
+        />
+      ) : null}
+      <WorkspaceBreadcrumbItem className="shrink">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Link
+                to="/$environmentId/$threadId"
+                params={buildThreadRouteParams(threadRef)}
+                aria-label={`Open parent thread: ${title}`}
+                onContextMenu={(event) => event.stopPropagation()}
+                className="min-w-0 max-w-40 truncate rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            }
+          >
+            {title}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{title}</TooltipPopup>
+        </Tooltip>
+      </WorkspaceBreadcrumbItem>
+      <WorkspaceBreadcrumbSeparator />
+    </>
+  );
 }
 
 /**
@@ -68,6 +124,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
+  parentThreadId,
   isServerThread,
   activeProject,
   rightPanelOpen,
@@ -265,7 +322,14 @@ export const ChatHeader = memo(function ChatHeader({
             <WorkspaceBreadcrumbSeparator />
           </>
         ) : null}
-        <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
+        {parentThreadId !== null ? (
+          <AncestorBreadcrumbs
+            environmentId={activeThreadEnvironmentId}
+            threadId={parentThreadId}
+            descendantThreadIds={[activeThreadId]}
+          />
+        ) : null}
+        <WorkspaceBreadcrumbItem current className="min-w-10 flex-auto">
           {renamingTitle !== null ? (
             <input
               autoFocus
@@ -274,11 +338,11 @@ export const ChatHeader = memo(function ChatHeader({
               defaultValue={renamingTitle}
               onBlur={(event) => {
                 if (renameCommittedRef.current) return;
-                // Focus landing on a navigation button means the rename was
+                // Focus landing on a navigation control means the rename was
                 // abandoned — discard it rather than persisting a half-draft.
                 if (
                   event.relatedTarget instanceof HTMLElement &&
-                  event.relatedTarget.closest("button")
+                  event.relatedTarget.closest("a, button")
                 ) {
                   setRenaming(null);
                   return;
