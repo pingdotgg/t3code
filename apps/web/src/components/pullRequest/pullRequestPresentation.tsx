@@ -14,7 +14,7 @@ import {
   CircleXIcon,
   UserCheckIcon,
 } from "lucide-react";
-import { Children, isValidElement, type ReactNode } from "react";
+import { Children, isValidElement, type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
@@ -352,8 +352,9 @@ export function PullRequestActorAvatar({
 }) {
   const login = actor?.login ?? "ghost";
   const avatarUrl = actor?.avatarUrl ?? null;
-  return avatarUrl === null ? (
-    // Not every host reports an avatar, so the initial stands in where none arrives.
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
+  return avatarUrl === null || failedAvatarUrl === avatarUrl ? (
+    // Not every host reports an avatar, and a private host may refuse the browser's request.
     <span
       aria-hidden
       className={cn(
@@ -370,6 +371,7 @@ export function PullRequestActorAvatar({
       src={avatarUrl}
       loading="lazy"
       className={cn("size-4 shrink-0 rounded-full bg-muted object-cover", className)}
+      onError={() => setFailedAvatarUrl(avatarUrl)}
     />
   );
 }
