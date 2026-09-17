@@ -2508,7 +2508,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     };
   });
 
-  /** Send text, images, and authorized skill paths to the thread's Codex session. */
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
     // Codex ingests images only. Anything else would be base64-encoded as an
     // image and rejected or misread; generic files reach the agent through the

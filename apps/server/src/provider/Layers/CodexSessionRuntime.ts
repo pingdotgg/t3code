@@ -1292,7 +1292,6 @@ export const rollbackCodexThread = Effect.fn("rollbackCodexThread")(function* (
   return { threadId, turns: snapshot.turns.slice(0, retainedCount) };
 });
 
-/** Own a Codex app-server session, translating its requests and notifications into provider events. */
 export const makeCodexSessionRuntime = (
   options: CodexSessionRuntimeOptions,
 ): Effect.Effect<
@@ -2441,7 +2440,6 @@ export const makeCodexSessionRuntime = (
         const providerThreadId = yield* readProviderThreadId;
         yield* client.request("thread/compact/start", { threadId: providerThreadId });
       }),
-      /** Start a turn with the selected model, prompt, attachments, and authorized skill paths. */
       sendTurn: (input) =>
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;

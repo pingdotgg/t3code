@@ -412,7 +412,6 @@ class ComposerSkillNode extends DecoratorNode<React.ReactElement> {
   }
 }
 
-/** Create a Lexical skill chip that retains the invocation source independently of its label. */
 function $createComposerSkillNode(
   skillName: string,
   skillLabel: string,

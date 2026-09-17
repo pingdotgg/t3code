@@ -466,7 +466,6 @@ const correlateRuntimeEventWithInstance = (
   return { ...event, providerInstanceId: source.instanceId };
 };
 
-/** Route thread operations through provider instances and manage session recovery and event delivery. */
 const makeProviderService = Effect.fn("makeProviderService")(function* (
   options?: ProviderServiceLiveOptions,
 ) {
@@ -1569,7 +1568,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
-  /** Validate a turn and its selected skill sources before preparing input for the routed adapter. */
   const sendTurn: ProviderServiceMethod<"sendTurn"> = Effect.fn("sendTurn")(function* (rawInput) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
