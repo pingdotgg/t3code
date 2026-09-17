@@ -17,6 +17,7 @@ import {
   AppearancePreferencesProvider,
   useAppearancePreferences,
 } from "./features/settings/appearance/AppearancePreferencesProvider";
+import { VoiceInputProvider } from "./features/voice-input/VoiceInputProvider";
 import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/OverlayPortal";
@@ -87,7 +88,9 @@ function AppContent() {
                 the system is in dark mode. */}
             <View style={{ flex: 1 }}>
               <IncomingShareProvider>
-                <Navigation linking={appLinking} theme={navigationTheme} />
+                <VoiceInputProvider>
+                  <Navigation linking={appLinking} theme={navigationTheme} />
+                </VoiceInputProvider>
               </IncomingShareProvider>
               <ConfirmDialogHost />
               <ThreadArrangementHost />
