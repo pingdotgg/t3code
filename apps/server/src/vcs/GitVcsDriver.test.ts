@@ -86,6 +86,76 @@ const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
   return { git, checkpointRef };
 });
 
+it.effect("checkpoint capture skips untracked nested repositories without a commit", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-unborn-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    const nested = "scratch/empty [repo]";
+    yield* git(["init", nested]);
+    yield* git(["init", "another empty"]);
+    yield* fileSystem.writeFileString(path.join(cwd, nested, "private.txt"), "nested\n");
+    yield* git(["init", "committed"]);
+    yield* git([
+      "-C",
+      "committed",
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@test.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ]);
+    const nestedHead = (yield* git(["-C", "committed", "rev-parse", "HEAD"])).stdout.trim();
+    yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
+    const originalIndex = yield* fileSystem.readFile(path.join(cwd, ".git", "index"));
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
+    assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", nested])).stdout, "");
+    assert.strictEqual((yield* git(["ls-tree", checkpointRef, "--", "another empty"])).stdout, "");
+    assert.strictEqual(
+      (yield* git(["ls-tree", checkpointRef, "--", "committed"])).stdout,
+      `160000 commit ${nestedHead}\tcommitted\n`,
+    );
+    assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(cwd, nested, "private.txt")),
+      "nested\n",
+    );
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("checkpoint capture still fails when a clean filter rejects a file", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-checkpoint-filter-failure-",
+    });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitattributes"), "file.txt filter=reject\n");
+    yield* git(["config", "filter.reject.clean", "false"]);
+    yield* git(["config", "filter.reject.required", "true"]);
+    const originalIndex = yield* fileSystem.readFile(path.join(cwd, ".git", "index"));
+
+    const result = yield* Effect.result(
+      driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
+    assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
+    assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("checkpoint capture does not rerun clean filters for unchanged indexed files", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

@@ -914,21 +914,52 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          // Preserve absent skipped entries, but capture present nonignored files outside the cone.
-          args: [
-            ...indexConfig,
-            ...durableWrite,
-            "add",
-            ...(sparseCheckout ? ["--sparse"] : []),
-            "-A",
-            "--",
-            ".",
-          ],
-          env: commitEnv,
-        });
+        const stageFiles = (exclusions: ReadonlyArray<string>) =>
+          execute({
+            operation,
+            cwd: input.cwd,
+            // Preserve absent skipped entries, but capture present nonignored files outside the cone.
+            args: [
+              ...indexConfig,
+              ...durableWrite,
+              "add",
+              ...(sparseCheckout ? ["--sparse"] : []),
+              "-A",
+              "--",
+              ".",
+              ...exclusions,
+            ],
+            env: commitEnv,
+          });
+        yield* stageFiles([]).pipe(
+          Effect.catchTag("VcsProcessExitError", (error) =>
+            Effect.gen(function* () {
+              // Git cannot stage an embedded repository until it has a commit. Discover these
+              // only after staging fails so ordinary checkpoints do not need another file scan.
+              const untracked = yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: ["ls-files", "--others", "--exclude-standard", "-z", "--", "."],
+                env: commitEnv,
+              });
+              const exclusions: Array<string> = [];
+              for (const entry of splitNullSeparatedGitStdoutPaths(untracked)) {
+                if (!entry.endsWith("/")) continue;
+                const nestedCwd = path.join(input.cwd, entry);
+                if (
+                  (yield* fileSystem
+                    .exists(path.join(nestedCwd, ".git"))
+                    .pipe(Effect.mapError(() => error))) &&
+                  !(yield* hasHeadCommit(nestedCwd))
+                ) {
+                  exclusions.push(`:(exclude,literal)${entry}`);
+                }
+              }
+              if (exclusions.length === 0) return yield* error;
+              return yield* stageFiles(exclusions);
+            }),
+          ),
+        );
 
         const writeTreeResult = yield* execute({
           operation,
