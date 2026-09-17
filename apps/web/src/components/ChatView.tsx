@@ -210,7 +210,7 @@ import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
-import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
+import { pullRequestPanelContext } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
@@ -9627,22 +9627,15 @@ export default function ChatView(props: ChatViewProps) {
           repository: renderedRightPanelSurface.repository,
           number: renderedRightPanelSurface.number,
         }}
-        context={
-          isThreadOwnPullRequest(
-            {
-              projectId: linkedThreadPullRequest?.projectId ?? null,
-              repository: linkedThreadPullRequest?.repository ?? null,
-              number: linkedThreadPullRequest?.number ?? null,
-            },
-            {
-              projectId: renderedRightPanelSurface.projectId,
-              repository: renderedRightPanelSurface.repository,
-              number: renderedRightPanelSurface.number,
-            },
-          )
-            ? "thread"
-            : "page"
-        }
+        context={pullRequestPanelContext(
+          {
+            projectId: activeThreadMetadata?.projectId ?? null,
+            pullRequests: activeThreadMetadata?.pullRequests,
+            linkedPullRequest: activeThreadMetadata?.linkedPullRequest,
+            branchPullRequest: activeThreadMetadata?.branchPullRequest,
+          },
+          renderedRightPanelSurface,
+        )}
         composerDraftTarget={composerDraftTarget}
         onBack={
           activeThreadRef !== null && pullRequestsSurfaceAvailable && visiblePullRequestCount > 1

@@ -8,6 +8,7 @@ import {
   type PullRequestDetail,
   type PullRequestDetailView,
   type PullRequestReviewThread,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
@@ -26,7 +27,7 @@ import {
   stripPullRequestHandoffReferences,
   isPullRequestVerdictStale,
   isStackedPullRequestBase,
-  isThreadOwnPullRequest,
+  pullRequestPanelContext,
   latestPullRequestReviewOutcomes,
   newestPullRequestCommitAt,
   mergePullRequestThreadComments,
@@ -34,9 +35,7 @@ import {
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
-  pullRequestComposerTarget,
   pullRequestFindingKey,
-  pullRequestHandoffLabels,
   pullRequestReviewOutcome,
   readableFailure,
   readPullRequestDetailSnapshot,
@@ -247,33 +246,6 @@ describe("pull request primary control", () => {
       "resolve",
     );
     expect(resolvePullRequestPrimaryControl({ ...open, isDraft: true })).toBe("ready");
-  });
-});
-
-describe("pull request handoff labels", () => {
-  it("names the open thread when actions write to its composer", () => {
-    expect(pullRequestHandoffLabels(true)).toEqual({
-      fixFinding: "Fix in this thread",
-      fixCheck: "Fix in this thread",
-      fixFindings: "Fix findings in this thread",
-    });
-  });
-
-  it("keeps the standalone pull request page labels", () => {
-    expect(pullRequestHandoffLabels(false)).toEqual({
-      fixFinding: "Fix in a thread",
-      fixCheck: "Fix",
-      fixFindings: "Fix findings in a thread",
-    });
-  });
-});
-
-describe("pull request composer target", () => {
-  it("rejects a page composer so agent comments cannot open another thread", () => {
-    const target = { environmentId: "env-1", threadId: "thread-1" };
-
-    expect(pullRequestComposerTarget("page", target)).toBeNull();
-    expect(pullRequestComposerTarget("thread", target)).toBe(target);
   });
 });
 
@@ -1373,40 +1345,124 @@ describe("how the branch stands against its base", () => {
   });
 });
 
-describe("whether the panel is showing the thread's own pull request", () => {
-  const surface = { projectId: "proj-a", repository: "acme/app", number: 7 };
+describe("pull request panel context beside a thread", () => {
+  // Shapes copied from real threads: a thread that opened a stack holds the top layer as a
+  // manual link and every lower layer as a "stack" link, with the legacy field pointing at
+  // whichever one the server chose. Snapshots are null until the sync reactor's first pass.
+  const link = (
+    number: number,
+    overrides: Partial<ThreadPullRequestLink> = {},
+  ): ThreadPullRequestLink => ({
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number,
+    url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+    source: "manual",
+    linkedAt: "2026-09-09T00:00:00Z",
+    snapshot: null,
+    stack: null,
+    ...overrides,
+  });
+  const surface = (
+    number: number,
+    overrides: Partial<Parameters<typeof pullRequestPanelContext>[1]> = {},
+  ) => ({
+    projectId: "proj-a",
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number,
+    ...overrides,
+  });
+  const stackThread = {
+    projectId: "proj-a",
+    pullRequests: [
+      link(10856),
+      link(10832, { source: "stack" }),
+      link(10677, { source: "stack" }),
+      link(10854, { source: "stack" }),
+      link(10855, { source: "stack" }),
+    ],
+    linkedPullRequest: {
+      projectId: "proj-a",
+      repository: "pingdotgg/t3code",
+      number: 10856,
+      url: "https://github.com/pingdotgg/t3code/pull/10856",
+    },
+  };
 
-  it("matches on project, repository and number together", () => {
-    expect(
-      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/app", number: 7 }, surface),
-    ).toBe(true);
+  it("treats every layer of the thread's stack as its own, not only the one the legacy field names", () => {
+    for (const number of [10856, 10832, 10677, 10854, 10855]) {
+      expect(pullRequestPanelContext(stackThread, surface(number)), `#${number}`).toBe("thread");
+    }
   });
 
-  it("rejects a second checkout of the same repository under another project", () => {
-    expect(
-      isThreadOwnPullRequest({ projectId: "proj-b", repository: "acme/app", number: 7 }, surface),
-    ).toBe(false);
+  it("does not let the legacy field decide when the thread holds a link list", () => {
+    // Every prior regression flipped here: a server-side change to which link the legacy field
+    // resolves to must not turn the thread's own second link into a checkout-able stranger.
+    const thread = {
+      projectId: "proj-a",
+      pullRequests: [link(11101, { source: "created" }), link(11105, { source: "stack" })],
+      linkedPullRequest: {
+        projectId: "proj-a",
+        repository: "pingdotgg/t3code",
+        number: 11105,
+        url: "https://github.com/pingdotgg/t3code/pull/11105",
+      },
+    };
+    expect(pullRequestPanelContext(thread, surface(11101))).toBe("thread");
+    expect(pullRequestPanelContext(thread, surface(11105))).toBe("thread");
+    expect(pullRequestPanelContext({ ...thread, linkedPullRequest: null }, surface(11101))).toBe(
+      "thread",
+    );
   });
 
-  it("rejects another repository or another number", () => {
-    expect(
-      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/web", number: 7 }, surface),
-    ).toBe(false);
-    expect(
-      isThreadOwnPullRequest({ projectId: "proj-a", repository: "acme/app", number: 8 }, surface),
-    ).toBe(false);
+  it("is the page for a pull request the thread is not linked to", () => {
+    expect(pullRequestPanelContext(stackThread, surface(12320))).toBe("page");
+    expect(pullRequestPanelContext(stackThread, surface(10856, { repository: "acme/web" }))).toBe(
+      "page",
+    );
   });
 
-  it("rejects a thread with no project or no pull request of its own", () => {
+  it("is the page under another project's checkout of the same repository", () => {
+    expect(pullRequestPanelContext(stackThread, surface(10856, { projectId: "proj-b" }))).toBe(
+      "page",
+    );
+  });
+
+  it("recognizes an unsynced manual link, and matches host and repository case-insensitively", () => {
+    const thread = { projectId: "proj-a", pullRequests: [link(7, { host: "GitHub.com" })] };
+    expect(pullRequestPanelContext(thread, surface(7, { repository: "PingDotGG/T3Code" }))).toBe(
+      "thread",
+    );
+    expect(pullRequestPanelContext(thread, surface(7, { host: undefined }))).toBe("thread");
+    expect(pullRequestPanelContext(thread, surface(7, { host: "gitlab.com" }))).toBe("page");
+  });
+
+  it("ignores a dismissed stack member the reader chose not to see", () => {
+    const thread = {
+      projectId: "proj-a",
+      pullRequests: [link(1), link(2, { source: "stack-dismissed" })],
+    };
+    expect(pullRequestPanelContext(thread, surface(2))).toBe("page");
+  });
+
+  it("falls back to the legacy fields only for a thread with no link list", () => {
+    const legacy = {
+      projectId: "proj-a",
+      repository: "pingdotgg/t3code",
+      number: 3,
+      url: "https://github.com/pingdotgg/t3code/pull/3",
+    };
     expect(
-      isThreadOwnPullRequest({ projectId: null, repository: "acme/app", number: 7 }, surface),
-    ).toBe(false);
+      pullRequestPanelContext({ projectId: "proj-a", linkedPullRequest: legacy }, surface(3)),
+    ).toBe("thread");
     expect(
-      isThreadOwnPullRequest(
-        { projectId: "proj-a", repository: "acme/app", number: null },
-        surface,
-      ),
-    ).toBe(false);
+      pullRequestPanelContext({ projectId: "proj-a", branchPullRequest: legacy }, surface(3)),
+    ).toBe("thread");
+    expect(pullRequestPanelContext({ projectId: "proj-a", pullRequests: [] }, surface(3))).toBe(
+      "page",
+    );
+    expect(pullRequestPanelContext({ projectId: null }, surface(3))).toBe("page");
   });
 });
 
