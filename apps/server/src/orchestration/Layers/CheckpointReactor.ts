@@ -802,7 +802,7 @@ const make = Effect.gen(function* () {
           detail:
             "File restore requires an isolated worktree. This workspace may contain changes from another thread. Rewind the conversation without restoring files instead.",
           createdAt: now,
-        });
+        }).pipe(Effect.catch(() => Effect.void));
         return;
       }
 
