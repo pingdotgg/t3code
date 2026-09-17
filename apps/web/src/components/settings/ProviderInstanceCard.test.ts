@@ -110,9 +110,8 @@ describe("deriveProviderModelsForDisplay", () => {
         hiddenModels: [],
         favoriteModels: [],
         modelOrder: [],
-        onHiddenModelsChange: () => undefined,
+        onModelPreferencesChange: () => undefined,
         onFavoriteModelsChange: () => undefined,
-        onModelOrderChange: () => undefined,
       }),
     );
 
@@ -149,9 +148,8 @@ describe("deriveProviderModelsForDisplay", () => {
       hiddenModels: [],
       favoriteModels: [],
       modelOrder: [],
-      onHiddenModelsChange: () => undefined,
+      onModelPreferencesChange: () => undefined,
       onFavoriteModelsChange: () => undefined,
-      onModelOrderChange: () => undefined,
     } as const;
 
     for (const mode of ["list", "editor"] as const) {
