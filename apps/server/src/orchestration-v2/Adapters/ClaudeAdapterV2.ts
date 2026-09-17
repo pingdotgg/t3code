@@ -1,3 +1,4 @@
+import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
@@ -217,7 +218,7 @@ export const ClaudeProviderCapabilitiesV2 = {
   },
   streaming: {
     streamsAssistantText: true,
-    streamsReasoning: false,
+    streamsReasoning: true,
     streamsToolOutput: false,
     streamsPlanText: false,
     emitsMessageCompleted: true,
@@ -741,6 +742,12 @@ export function makeClaudeQueryOptions(input: {
     "dangerously-skip-permissions": launchArgSkipPermissions,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
+  const requestThinkingSummaries =
+    compiledSelection.settings.alwaysThinkingEnabled !== false &&
+    extraArgs["thinking-display"] !== "omitted";
+  if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
+    extraArgs["thinking-display"] = "summarized";
+  }
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
     ? { resume: input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
@@ -784,7 +791,20 @@ export function makeClaudeQueryOptions(input: {
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
-    ...(effectiveQuerySettings === undefined ? {} : { settings: effectiveQuerySettings }),
+    ...(requestThinkingSummaries
+      ? {
+          thinking: { type: "adaptive" as const, display: "summarized" as const },
+          settings:
+            typeof effectiveQuerySettings === "string"
+              ? effectiveQuerySettings
+              : {
+                  ...effectiveQuerySettings,
+                  showThinkingSummaries: true,
+                },
+        }
+      : effectiveQuerySettings === undefined
+        ? {}
+        : { settings: effectiveQuerySettings }),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
     ...(input.supportedDialogKinds === undefined
       ? {}
@@ -2304,6 +2324,17 @@ interface ActiveClaudeTurnContext {
     fallbackText: string;
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
+  };
+  readonly reasoning: {
+    messageId: string | null;
+    readonly streamBlocks: Map<number, string>;
+    readonly nextBlockIndex: Map<string, number>;
+    readonly snapshotBlockIndex: Map<string, number>;
+    readonly snapshots: Set<string>;
+    readonly blocks: Map<
+      string,
+      { readonly startedAt: DateTime.Utc; readonly ordinal: number; text: string }
+    >;
   };
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
   readonly ignoredTaskIds: Set<string>;
@@ -3913,6 +3944,61 @@ export function makeClaudeAdapterV2(
           return { node, request, turnItem };
         });
 
+        const ensureReasoningBlock = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          itemId: string,
+        ) {
+          if (!context.reasoning.blocks.has(itemId)) {
+            context.reasoning.blocks.set(itemId, {
+              startedAt: yield* DateTime.now,
+              ordinal: yield* resolveItemOrdinal(context, itemId),
+              text: "",
+            });
+          }
+        });
+        const reasoningDeltas = yield* makeProviderTextDeltaCoalescer({
+          flushIntervalMs: 50,
+          emit: (update) =>
+            Effect.gen(function* () {
+              const context = yield* Ref.get(activeTurn);
+              if (context === null || context.nativeTurnId !== update.turnId) return;
+              const block = context.reasoning.blocks.get(update.itemId);
+              if (block === undefined || update.text.length === 0) return;
+              block.text = update.text;
+              const now = yield* DateTime.now;
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId: update.itemId,
+                  }),
+                  threadId: context.input.threadId,
+                  runId: context.input.runId,
+                  nodeId: context.input.rootNodeId,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: update.itemId,
+                    strength: "strong",
+                  },
+                  parentItemId: null,
+                  ordinal: block.ordinal,
+                  type: "reasoning",
+                  title: "Thinking",
+                  text: update.text,
+                  streaming: !update.completed,
+                  status: update.completed ? "completed" : "running",
+                  startedAt: block.startedAt,
+                  completedAt: update.completed ? now : null,
+                  updatedAt: now,
+                },
+              });
+            }),
+        });
+
         const finalizeActiveTurn = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
@@ -3924,6 +4010,7 @@ export function makeClaudeAdapterV2(
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           for (const toolCall of input.context.toolCalls.values()) {
             const artifacts = buildToolCallArtifacts({
               context: input.context,
@@ -4548,6 +4635,77 @@ export function makeClaudeAdapterV2(
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
             }
             return;
+          }
+
+          // Subagent narration belongs to its child thread, never the parent log.
+          if (message.type === "stream_event" && !message.parent_tool_use_id) {
+            const event = message.event;
+            const reasoning = context.reasoning;
+            if (event.type === "message_start") {
+              reasoning.messageId = event.message.id;
+              reasoning.streamBlocks.clear();
+            } else if (
+              event.type === "content_block_start" &&
+              event.content_block.type === "thinking" &&
+              reasoning.messageId !== null
+            ) {
+              const index = reasoning.nextBlockIndex.get(reasoning.messageId) ?? 0;
+              reasoning.nextBlockIndex.set(reasoning.messageId, index + 1);
+              const itemId = `${reasoning.messageId}:thinking:${index}`;
+              reasoning.streamBlocks.set(event.index, itemId);
+              yield* ensureReasoningBlock(context, itemId);
+              yield* reasoningDeltas.append({
+                turnId: context.nativeTurnId,
+                itemId,
+                delta: event.content_block.thinking,
+              });
+            } else if (
+              event.type === "content_block_delta" &&
+              event.delta.type === "thinking_delta"
+            ) {
+              const itemId = reasoning.streamBlocks.get(event.index);
+              if (itemId !== undefined) {
+                yield* reasoningDeltas.append({
+                  turnId: context.nativeTurnId,
+                  itemId,
+                  delta: event.delta.thinking,
+                });
+              }
+            } else if (event.type === "content_block_stop") {
+              const itemId = reasoning.streamBlocks.get(event.index);
+              if (itemId !== undefined) {
+                yield* reasoningDeltas.complete({
+                  turnId: context.nativeTurnId,
+                  itemId,
+                  emitEmpty: false,
+                });
+                reasoning.streamBlocks.delete(event.index);
+              }
+            }
+            return;
+          }
+          if (
+            message.type === "assistant" &&
+            !message.parent_tool_use_id &&
+            !context.reasoning.snapshots.has(message.uuid)
+          ) {
+            context.reasoning.snapshots.add(message.uuid);
+            // The SDK emits one assistant snapshot per completed content block.
+            // Count thinking blocks separately so snapshots share the streamed ID.
+            for (const block of message.message.content) {
+              if (block.type !== "thinking") continue;
+              const index = context.reasoning.snapshotBlockIndex.get(message.message.id) ?? 0;
+              context.reasoning.snapshotBlockIndex.set(message.message.id, index + 1);
+              const itemId = `${message.message.id}:thinking:${index}`;
+              yield* ensureReasoningBlock(context, itemId);
+              const finalText = block.thinking || context.reasoning.blocks.get(itemId)?.text;
+              yield* reasoningDeltas.complete({
+                turnId: context.nativeTurnId,
+                itemId,
+                ...(finalText ? { finalText } : {}),
+                emitEmpty: false,
+              });
+            }
           }
 
           if (message.type === "assistant") {
@@ -5503,6 +5661,14 @@ export function makeClaudeAdapterV2(
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
+              },
+              reasoning: {
+                messageId: null,
+                streamBlocks: new Map(),
+                nextBlockIndex: new Map(),
+                snapshotBlockIndex: new Map(),
+                snapshots: new Set(),
+                blocks: new Map(),
               },
               toolCalls: new Map(),
               ignoredTaskIds: new Set(),
