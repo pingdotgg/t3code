@@ -95,7 +95,7 @@ function SidebarControl() {
       if (
         isRichTextBoldShortcut(event) &&
         event.target instanceof HTMLElement &&
-        event.target.closest(".composer-tiptap")
+        event.target.closest('[data-composer-rich-text="true"]')
       ) {
         // The rich-text composer claims Mod+B for bold; the toggle stays
         // available everywhere else, including the plain-text composer.

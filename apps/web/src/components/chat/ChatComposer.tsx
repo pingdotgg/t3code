@@ -3265,7 +3265,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [setIsComposerScrollCollapsed]);
 
   /**
-   * Payloads for chips the prompt no longer references. Lexical's history restores the
+   * Payloads for chips the prompt no longer references. History undo restores the
    * reference text but knows nothing about the draft records behind it, so a delete keeps its
    * payload here and an undo puts it back rather than leaving a dangling chip.
    */
@@ -3971,8 +3971,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitComposer(undefined, submissionIntent);
       return true;
     }
-    // List continuation and indentation run as store replacements so the
-    // Lexical and Tiptap surfaces behave (and serialize) identically.
+    // List continuation and indentation run as store replacements so both
+    // composer modes behave (and serialize) identically.
     if (key === "Enter" || (key === "Tab" && !event.shiftKey)) {
       const selection = composerEditorRef.current?.readSelectionRange();
       const snapshot = readComposerSnapshot();

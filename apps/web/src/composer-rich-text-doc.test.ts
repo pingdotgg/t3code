@@ -65,6 +65,56 @@ function roundTrip(value: string) {
   return serializeEditorDoc(doc);
 }
 
+// Plain mode: the same engine with the mark extensions off. Markers stay
+// literal characters and task lines stay paragraphs.
+const plainSchema = getSchemaByResolvedExtensions(
+  resolveExtensions([
+    StarterKit.configure({
+      blockquote: false,
+      bulletList: false,
+      codeBlock: false,
+      heading: false,
+      horizontalRule: false,
+      listItem: false,
+      orderedList: false,
+      dropcursor: false,
+      gapcursor: false,
+      trailingNode: false,
+      bold: false,
+      italic: false,
+      strike: false,
+      code: false,
+    }),
+    stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
+    stubAtom("composer-skill", {
+      skillName: { default: "" },
+      skillLabel: { default: "" },
+      skillDescription: { default: null },
+    }),
+    stubAtom("composer-citation", {
+      citation: { default: null },
+      source: { default: "" },
+      citeKey: { default: "" },
+    }),
+    stubAtom("composer-context-reference", {
+      kind: { default: "" },
+      contextId: { default: "" },
+      label: { default: "" },
+      source: { default: "" },
+    }),
+    TaskList,
+    ComposerTaskItemExtension,
+  ]),
+);
+
+function roundTripPlain(value: string) {
+  const json = buildDocJson(value, (name) => ({ label: name, description: null }), {
+    styling: false,
+  });
+  const doc = ProseMirrorNode.fromJSON(plainSchema, json);
+  return serializeEditorDoc(doc);
+}
+
 describe("composer rich text document model", () => {
   it.each([
     "plain text",
@@ -102,6 +152,21 @@ describe("composer rich text document model", () => {
 
   it("normalizes uppercase checkboxes to lowercase", () => {
     expect(roundTrip("- [X] done").value).toBe("- [x] done");
+  });
+
+  it.each([
+    "plain text",
+    "hello **bold** stays literal",
+    "a *italic* stays literal",
+    "some `code` stays literal",
+    "struck ~~out~~ stays literal",
+    "- [ ] stays a paragraph",
+    "- [x] stays a paragraph",
+    "line one\nline two",
+    "@README.md explain this",
+    "**bold** then @README.md then *italic*",
+  ])("round-trips %s byte-identically in plain mode", (value) => {
+    expect(roundTripPlain(value).value).toBe(value);
   });
 
   it("maps every document offset through collapsed coordinates and back", () => {

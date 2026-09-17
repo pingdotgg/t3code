@@ -123,7 +123,12 @@ function atomJsonForSegment(
   };
 }
 
-function pushSpans(inline: InlineJson[], text: string): void {
+function pushSpans(inline: InlineJson[], text: string, styling: boolean): void {
+  if (!styling) {
+    // Plain-text mode: markers stay literal characters, no marks anywhere.
+    if (text) inline.push({ type: "text", text });
+    return;
+  }
   for (const span of parseInlineMarkdown(text)) {
     inline.push(textJsonForSpan(span.text, span.marks));
   }
@@ -163,7 +168,9 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 export function buildTiptapContent(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
+  options?: { styling?: boolean },
 ): Record<string, unknown>[] {
+  const styling = options?.styling ?? true;
   // Pass 1: the segment stream becomes lines. A line is a task line only
   // when its leading text — before any chip — is a complete `- [ ]` marker;
   // the marker is decided at a chip, a newline, or the end of input so a
@@ -174,12 +181,12 @@ export function buildTiptapContent(
   const endLine = () => {
     const line = currentLine();
     if (head !== null) {
-      const parsed = parseTaskPrefix(head);
+      const parsed = styling ? parseTaskPrefix(head) : null;
       if (parsed) {
         line.task = parsed.prefix;
-        pushSpans(line.inline, head.slice(parsed.markerLength).replace(/^[ \t]*/, ""));
+        pushSpans(line.inline, head.slice(parsed.markerLength).replace(/^[ \t]*/, ""), styling);
       } else {
-        pushSpans(line.inline, head);
+        pushSpans(line.inline, head, styling);
       }
     }
     lines.push({ task: null, inline: [] });
@@ -190,7 +197,7 @@ export function buildTiptapContent(
       head += piece;
       return;
     }
-    pushSpans(currentLine().inline, piece);
+    pushSpans(currentLine().inline, piece, styling);
   };
 
   for (const segment of splitPromptIntoComposerSegments(value)) {
@@ -203,12 +210,12 @@ export function buildTiptapContent(
     } else {
       if (head !== null) {
         const line = currentLine();
-        const parsed = parseTaskPrefix(head);
+        const parsed = styling ? parseTaskPrefix(head) : null;
         if (parsed) {
           line.task = parsed.prefix;
-          pushSpans(line.inline, head.slice(parsed.markerLength).replace(/^[ \t]*/, ""));
+          pushSpans(line.inline, head.slice(parsed.markerLength).replace(/^[ \t]*/, ""), styling);
         } else {
-          pushSpans(line.inline, head);
+          pushSpans(line.inline, head, styling);
         }
         head = null;
       }
@@ -219,12 +226,12 @@ export function buildTiptapContent(
   // which endLine already pushed — drop the spare blank it would add.
   if (head !== null) {
     const line = currentLine();
-    const parsed = parseTaskPrefix(head);
+    const parsed = styling ? parseTaskPrefix(head) : null;
     if (parsed) {
       line.task = parsed.prefix;
-      pushSpans(line.inline, head.slice(parsed.markerLength).replace(/^[ \t]*/, ""));
+      pushSpans(line.inline, head.slice(parsed.markerLength).replace(/^[ \t]*/, ""), styling);
     } else {
-      pushSpans(line.inline, head);
+      pushSpans(line.inline, head, styling);
     }
   } else if (lines.length > 1) {
     const last = lines[lines.length - 1]!;
@@ -282,8 +289,12 @@ export function buildTiptapContent(
   return blocks;
 }
 
-export function buildDocJson(value: string, skillLabelFor: (name: string) => SkillMeta) {
-  return { type: "doc", content: buildTiptapContent(value, skillLabelFor) };
+export function buildDocJson(
+  value: string,
+  skillLabelFor: (name: string) => SkillMeta,
+  options?: { styling?: boolean },
+) {
+  return { type: "doc", content: buildTiptapContent(value, skillLabelFor, options) };
 }
 
 export interface RichRun {

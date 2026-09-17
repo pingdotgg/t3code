@@ -6,7 +6,11 @@ import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import type { AssistantCitation, ServerProviderSkill } from "@t3tools/contracts";
+import type {
+  AssistantCitation,
+  ComposerContextClipboardFragment,
+  ServerProviderSkill,
+} from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
@@ -70,23 +74,80 @@ import {
   ComposerContextReferenceChip,
   ComposerContextRecordsContext,
 } from "./composerContextPresentation";
-import {
-  ComposerCitationCommentContext,
-  type ComposerCitationCommentTarget,
-} from "./ComposerCitationNode";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { importPastedComposerText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
-import type {
-  ComposerPromptEditorHandle,
-  ComposerPromptEditorProps as LexicalComposerPromptEditorProps,
-} from "./ComposerPromptEditor";
+import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
-export type ComposerPromptEditorProps = LexicalComposerPromptEditorProps;
+export interface ComposerPromptEditorHandle {
+  focus: () => void;
+  focusAt: (cursor: number) => void;
+  focusAtEnd: () => void;
+  readSelectionRange: () => { start: number; end: number };
+  requestCitationComment: (request: ComposerCitationCommentRequest) => void;
+  readSnapshot: () => {
+    value: string;
+    cursor: number;
+    expandedCursor: number;
+    contextIds: string[];
+  };
+  /**
+   * True when a collapsed caret sits on the first ("start") or last ("end")
+   * visual line, counting soft wraps. Prompt history only claims ArrowUp and
+   * ArrowDown at these edges so arrows still move the caret inside multiline
+   * text.
+   */
+  isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
+}
 
-type ComposerCitationCommentRequest = {
+export interface ComposerPromptEditorProps {
+  value: string;
+  cursor: number;
+  /**
+   * Render Markdown styling (bold, italic, code, strike, task checkboxes).
+   * Off renders the same Tiptap engine as plain text: every marker stays a
+   * literal character.
+   */
+  richTextEnabled?: boolean;
+  /** Draft records behind the prompt's context references, keyed by context id. */
+  contextRecords: ComposerDraftContextRecords;
+  /** Structured clipboard payload for the given referenced ids, or null to skip. */
+  buildContextClipboardFragment?:
+    | ((contextIds: ReadonlyArray<string>) => string | null)
+    | undefined;
+  /** Imports a structured paste's records; returns ids that changed. */
+  importContextFragment?:
+    | ((fragment: ComposerContextClipboardFragment) => ReadonlyMap<string, string>)
+    | undefined;
+  skills: ReadonlyArray<ServerProviderSkill>;
+  disabled: boolean;
+  placeholder: string;
+  containerClassName?: string;
+  className?: string;
+  placeholderClassName?: string;
+  onChange: (
+    nextValue: string,
+    nextCursor: number,
+    expandedCursor: number,
+    cursorAdjacentToMention: boolean,
+    contextIds: string[],
+  ) => void;
+  onVisibleSelectionChange?: () => void;
+  onCommandKeyDown?: (
+    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    event: KeyboardEvent,
+  ) => boolean;
+  onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
+  onPageScrollKeyUp?: (key: string) => void;
+  onPageScrollRelease?: () => void;
+  onCitationSubmitAndSend?: () => void;
+  onPaste: React.ClipboardEventHandler<HTMLElement>;
+  editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
+}
+
+export type ComposerCitationCommentRequest = {
   previousValue: string;
   value: string;
   citationStart: number;
@@ -98,6 +159,12 @@ type OpenCitationComment = {
   sourceAnchor?: AssistantCitationSourceAnchor;
   removeOnCancel?: boolean;
 };
+
+const ComposerCitationCommentContext = createContext<{
+  openComment: OpenCitationComment | null;
+  onOpenChange: (citeKey: string, open: boolean) => void;
+  onSubmitAndSend: () => void;
+}>({ openComment: null, onOpenChange: () => {}, onSubmitAndSend: () => {} });
 
 const RichComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
 
@@ -273,12 +340,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   const citation = node.attrs.citation as AssistantCitation;
   const citeKey = node.attrs.citeKey as string;
   const commentTarget =
-    commentContext.openComment !== null &&
-    typeof commentContext.openComment === "object" &&
-    "key" in (commentContext.openComment as Record<string, unknown>) &&
-    (commentContext.openComment as unknown as OpenCitationComment).key === citeKey
-      ? (commentContext.openComment as unknown as OpenCitationComment)
-      : null;
+    commentContext.openComment?.key === citeKey ? commentContext.openComment : null;
 
   const nodePos = useCallback(() => {
     const pos = typeof getPos === "function" ? getPos() : null;
@@ -471,9 +533,19 @@ const ComposerMarkersExtension = Extension.create({
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
 export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
+  // Extensions are creation-time: flipping the setting remounts the editor.
+  // Both halves initialize from the controlled Markdown value, so the draft
+  // survives the flip.
+  return (
+    <ComposerPromptEditorTiptapInner key={props.richTextEnabled ? "rich" : "plain"} {...props} />
+  );
+}
+
+function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const {
     value,
     cursor,
+    richTextEnabled,
     contextRecords,
     buildContextClipboardFragment,
     importContextFragment,
@@ -493,6 +565,9 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
     onPaste,
     editorRef,
   } = props;
+  // The setting toggles styling, not the engine: both modes are Tiptap.
+  // Plain mode disables the mark extensions, so markers stay literal text.
+  const richText = richTextEnabled ?? false;
 
   const onChangeRef = useRef(onChange);
   const onVisibleSelectionChangeRef = useRef(onVisibleSelectionChange);
@@ -556,7 +631,7 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
 
   const citationCommentActions = useMemo(
     () => ({
-      openComment: (openCitation ?? null) as unknown as ComposerCitationCommentTarget | null,
+      openComment: openCitation,
       onOpenChange: (nodeKey: string, open: boolean) => {
         setOpenCitation((current) => {
           if (open) {
@@ -642,6 +717,8 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
           dropcursor: false,
           gapcursor: false,
           trailingNode: false,
+          // Plain mode has no marks: typed markers stay literal characters.
+          ...(richText ? {} : { bold: false, italic: false, strike: false, code: false }),
         }),
         ComposerMentionExtension,
         ComposerSkillExtension,
@@ -651,18 +728,25 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
         ComposerTaskItemExtension,
         ComposerMarkersExtension,
       ],
-      content: buildDocJson(value, (name) => {
-        const normalized = name.startsWith("$") ? name.slice(1) : name;
-        const found = skills.find((candidate) => candidate.name === normalized);
-        if (!found) {
-          return { label: formatProviderSkillDisplayName({ name: normalized }), description: null };
-        }
-        const shortDescription = found.shortDescription?.trim();
-        return {
-          label: formatProviderSkillDisplayName(found),
-          description: shortDescription || found.description?.trim() || null,
-        };
-      }),
+      content: buildDocJson(
+        value,
+        (name) => {
+          const normalized = name.startsWith("$") ? name.slice(1) : name;
+          const found = skills.find((candidate) => candidate.name === normalized);
+          if (!found) {
+            return {
+              label: formatProviderSkillDisplayName({ name: normalized }),
+              description: null,
+            };
+          }
+          const shortDescription = found.shortDescription?.trim();
+          return {
+            label: formatProviderSkillDisplayName(found),
+            description: shortDescription || found.description?.trim() || null,
+          };
+        },
+        { styling: richText },
+      ),
       editable: !disabled,
       editorProps: {
         attributes: {
@@ -671,6 +755,7 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
             className,
           ),
           "data-testid": "composer-editor",
+          "data-composer-rich-text": richText ? "true" : "false",
           "aria-placeholder": placeholder,
         },
         handleKeyDown: (view, event) => {
@@ -696,10 +781,11 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
             // shortcut says otherwise) must be one visible line. Letting it
             // fall through inserts a native trailing `<br>`, which renders
             // no visible line, so the caret looks stuck until a second press.
-            // Splitting the paragraph matches the Lexical surface: one press,
-            // one line. Enter on a list line never gets here — the parent
-            // claims it for continuation — so Tiptap's list splitting stays
-            // shadowed and both surfaces serialize identically.
+            // Splitting the paragraph gives one press, one visible line:
+            // letting it fall through would insert a native trailing `<br>`,
+            // which renders no visible line. Enter on a list line never gets
+            // here — the parent claims it for continuation — so Tiptap's
+            // list splitting stays shadowed.
             event.preventDefault();
             return splitBlockKeepMarks(view.state, (tr) => {
               // The split is programmatic, so the browser won't follow the
@@ -759,7 +845,7 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
             : pastedText;
           const editorInstance = editorHolder.current;
           if (editorInstance) {
-            insertMarkdownParagraphs(text, skillLabelFor, (content) => {
+            insertMarkdownParagraphs(text, skillLabelFor, { styling: richText }, (content) => {
               editorInstance.commands.insertContent(content);
             });
             scrollTiptapCaretIntoView(editorInstance);
@@ -833,7 +919,9 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
     isApplyingControlledUpdateRef.current = true;
     const pendingCitation =
       citationRequestRef.current?.value === value ? citationRequestRef.current : null;
-    editor.commands.setContent(buildDocJson(value, skillLabelFor), { emitUpdate: false });
+    editor.commands.setContent(buildDocJson(value, skillLabelFor, { styling: richText }), {
+      emitUpdate: false,
+    });
     const map = serializeEditorDoc(editor.state.doc);
     const flat = collapsedToFlat(map, normalizedCursor);
     editor.commands.setTextSelection(flatToPm(map, flat));
@@ -1072,7 +1160,7 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
 
 /**
  * Insert pasted markdown at the selection, rebuilding inline tokens as chips
- * and styled spans as marks. Mirrors the Lexical inline-token paste plugin.
+ * and styled spans as marks.
  *
  * Newlines always become paragraph splits — never trailing hard breaks, which
  * render no visible line — so pasted text lands exactly as typed.
@@ -1080,9 +1168,10 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
 function insertMarkdownParagraphs(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
+  options: { styling: boolean },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {
-  const blocks = buildTiptapContent(value, skillLabelFor);
+  const blocks = buildTiptapContent(value, skillLabelFor, options);
   if (blocks.length === 1 && blocks[0]?.type === "paragraph") {
     const inline = (blocks[0]?.content ?? []) as JSONContent[];
     if (inline.length === 0) return;
@@ -1102,9 +1191,8 @@ function scrollTiptapCaretIntoView(editor: TiptapEditor): void {
 }
 
 /**
- * Client rect of the caret's visual line. Mirrors the Lexical composer's edge
- * detection so prompt history keeps claiming ArrowUp/Down only at the first
- * and last soft-wrapped lines.
+ * Client rect of the caret's visual line, so prompt history keeps claiming
+ * ArrowUp/Down only at the first and last soft-wrapped lines.
  */
 function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {
   const collapsedRects = Array.from(range.getClientRects()).filter((rect) => rect.height > 0);
@@ -1151,5 +1239,3 @@ function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {
   const containerRect = container.getBoundingClientRect();
   return containerRect.height > 0 ? containerRect : null;
 }
-
-export type { ComposerPromptEditorHandle };
