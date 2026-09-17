@@ -2585,7 +2585,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("composer-rich-text")}
-          description="Render markdown styling in the composer: **bold**, *italic*, `code`, and ~~strikethrough~~ show styled while the prompt keeps its markers. Place the cursor on styled text to reveal its markers."
+          description="Show formatted Markdown as you type."
           resetAction={
             settings.composerRichTextEnabled !==
             DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled ? (
