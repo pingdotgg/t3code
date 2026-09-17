@@ -1,11 +1,18 @@
 ---
 name: ios-debugger-agent
-description: Build, launch, inspect, and drive iOS apps with the repository-configured XcodeBuildMCP server. Use on macOS for iOS Simulator builds, focused native test runs, semantic UI automation, screenshots, logs, or debugging, including T3 Code Mobile verification.
+description: Build, launch, inspect, and drive iOS apps with the repository-configured XcodeBuildMCP server. Use on macOS for iOS Simulator builds, focused native test runs, semantic UI automation, screenshots, logs, or debugging, including either the React Native T3 client in apps/mobile or the separate native SwiftUI client in apps/swift-ios.
 ---
 
 # iOS Debugger Agent
 
 Use the repository-configured `xcodebuildmcp` tools instead of requiring a globally installed Codex plugin. Prefer MCP tools over raw `xcodebuild`, `xcrun`, or `simctl` when the client exposes them.
+
+T3 Code has two separate iOS clients. Identify the affected one before setting session defaults:
+
+- React Native mobile: `apps/mobile/ios/T3CodeDev.xcworkspace`, scheme `T3CodeDev`
+- Native SwiftUI mobile: `apps/swift-ios/T3Code.xcodeproj`, scheme `T3Code`
+
+Do not assume an installed React Native build verifies SwiftUI behavior, or vice versa. Use [`test-t3-mobile`](../test-t3-mobile/SKILL.md) for the full isolated-backend and pairing workflow.
 
 ## Confirm availability
 
@@ -31,7 +38,7 @@ Avoid generic Mac window automation for switching among Simulator windows. Expli
 
 ## Choose build or launch
 
-For T3 Code Mobile, run `node scripts/mobile-native-client.ts ensure ios <simulator-udid>` from the checkout on the simulator host first. It checks the local Expo native fingerprint against the installed client and builds/installs when stale, missing, or unknown. Then launch with the intended Metro bundle. Authorized verification includes native builds and installs; do not stop because the existing client is old. Use `check` instead of `ensure` only when the user explicitly prohibits rebuilding or requests a read-only check.
+For React Native mobile, run `node scripts/mobile-native-client.ts ensure ios <simulator-udid>` from the checkout on the simulator host first. It checks the local Expo native fingerprint against the installed client and builds/installs when stale, missing, or unknown. Then launch with the intended Metro bundle. This helper does not apply to SwiftUI mobile. Authorized verification includes native builds and installs; do not stop because the existing client is old. Use `check` instead of `ensure` only when the user explicitly prohibits rebuilding or requests a read-only check.
 
 - Use `build_run_sim` when native source, native dependencies, entitlements, or project configuration changed.
 - Use `test_sim` for the smallest relevant native test target or test cases; do not run an entire workspace test matrix routinely.

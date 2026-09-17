@@ -10,8 +10,9 @@ Use **Change appearance** in the command palette to choose System, Light, or Dar
 the theme. **Cmd+Option+Shift+A** on macOS or **Ctrl+Alt+Shift+A** on Windows/Linux cycles through
 those modes. Customize these shortcuts under **Settings → Keybindings**.
 
-Mobile has its own themes and text, code, and terminal preferences. It does not follow environment
-themes or defaults.
+React Native mobile has its own themes and text, code, and terminal preferences. SwiftUI mobile
+supports system, light, and dark appearance without custom themes. Neither mobile app follows
+environment themes or defaults.
 
 On Android 12 or newer, choose the **Material You** theme in Appearance to use colors from
 your wallpaper. Selecting another theme replaces those colors. Like other themes, Material You
