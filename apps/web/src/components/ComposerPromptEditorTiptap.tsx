@@ -216,8 +216,8 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
   const chip = (
-    <button
-      type="button"
+    <Button
+      variant="chip"
       onClick={() => actions.openMention(path)}
       aria-label={`Preview ${path}`}
       className={`${FILE_TAG_CHIP_CLASS_NAME} cursor-pointer focus-visible:outline-2`}
@@ -230,7 +230,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
         label={basenameOfPath(path)}
         theme={resolvedThemeFromDocument()}
       />
-    </button>
+    </Button>
   );
   return (
     <NodeViewWrapper as="span" className={COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME}>

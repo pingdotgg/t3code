@@ -16,9 +16,10 @@ Only replace editor content when the controlled text changes. Replacing it for a
 move creates undo entries and regenerates citation identities. Pending citation popovers
 must wait until the requested draft has reached the editor before locating their chip.
 
-List continuation uses the same [store edits](../../apps/web/src/composer-list-continuation.ts)
-in both modes. Newlines become paragraph splits: trailing hard breaks otherwise appear
-to require two presses. Programmatic moves must explicitly scroll the caret into view.
+Rich tasks split through native editor commands so marks and chips survive. Literal
+lists use [store edits](../../apps/web/src/composer-list-continuation.ts). Newlines become
+paragraph splits: trailing hard breaks otherwise appear to require two presses.
+Programmatic moves must explicitly scroll the caret into view.
 
 Clipboard text must come from the Markdown serializer, not DOM text: chip labels omit
 the source and marker decorations are not content. Structured context records accompany
