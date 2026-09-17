@@ -3,6 +3,7 @@ import { Platform, Pressable } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
+import { MaterialButton } from "../../components/MaterialButton";
 
 const CARD_SHADOW = Platform.select({
   ios: {
@@ -32,8 +33,19 @@ export function ConnectionSheetButton(props: {
   readonly disabled?: boolean;
   readonly tone?: "primary" | "secondary" | "danger";
   readonly compact?: boolean;
+  readonly fullWidth?: boolean;
   readonly onPress: () => void;
 }) {
+  if (Platform.OS === "android")
+    return (
+      <MaterialButton
+        label={props.label}
+        disabled={props.disabled}
+        onPress={props.onPress}
+        tone={props.tone}
+        fullWidth={props.fullWidth}
+      />
+    );
   const tone = props.tone ?? "secondary";
 
   const textColorClassName =

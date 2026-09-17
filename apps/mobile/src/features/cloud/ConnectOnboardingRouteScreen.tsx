@@ -1,8 +1,9 @@
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useAuth } from "@clerk/expo";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Platform, Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";

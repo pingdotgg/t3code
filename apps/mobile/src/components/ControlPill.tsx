@@ -19,12 +19,13 @@ import {
 } from "react-native";
 import { withUniwind } from "uniwind";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-
 import { cn } from "../lib/cn";
 import { withMenuActionIconColors } from "../lib/menu-action-colors";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
+import { MaterialIconButton } from "./MaterialIconButton";
+import { MaterialButton } from "./MaterialButton";
 
 const ThemedMenuView = withUniwind(
   function NativeMenuView({
@@ -121,6 +122,47 @@ export function ControlPill(props: {
       : "",
   );
 
+  if (
+    Platform.OS === "android" &&
+    (variant === "pill" || variant === "primary") &&
+    props.label &&
+    props.onPress &&
+    !props.icon &&
+    !props.iconNode &&
+    !props.className &&
+    !props.activateOnPressIn &&
+    (!props.accessibilityLabel || props.accessibilityLabel === props.label)
+  ) {
+    return (
+      <MaterialButton
+        label={props.label}
+        onPress={props.onPress}
+        disabled={props.disabled}
+        tone={variant === "primary" ? "primary" : "secondary"}
+      />
+    );
+  }
+
+  if (
+    Platform.OS === "android" &&
+    props.accessibilityLabel &&
+    props.icon &&
+    !props.iconNode &&
+    !props.label &&
+    !props.className &&
+    !props.activateOnPressIn
+  ) {
+    return (
+      <MaterialIconButton
+        accessibilityLabel={props.accessibilityLabel}
+        icon={props.icon}
+        onPress={props.onPress}
+        disabled={props.disabled}
+        variant={variant === "primary" ? "primary" : variant === "danger" ? "danger" : "tonal"}
+      />
+    );
+  }
+
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
@@ -146,10 +188,8 @@ export function ControlPill(props: {
   );
 }
 
-// iOS renders the native UIMenu (standard checkmark for `state: "on"`);
-// Android renders the token-styled AndroidAnchoredMenu, since the native
-// AppCompat popup can't be themed past its stock animation, metrics, and
-// submenu chrome.
+// iOS renders UIMenu; AndroidAnchoredMenu adapts the same actions to the
+// selected Android appearance and keeps editor menus above the keyboard.
 export function ControlPillMenu(
   props: Omit<ComponentProps<typeof MenuView>, "children" | "themeVariant"> &
     Pick<AccessibilityProps, "accessible" | "accessibilityLabel" | "accessibilityRole"> & {

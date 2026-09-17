@@ -1,4 +1,6 @@
 export interface NativeMarkdownTextStyle {
+  readonly selectionColor?: string;
+  readonly selectionHandleColor?: string;
   readonly color: string;
   readonly strongColor: string;
   readonly mutedColor: string;

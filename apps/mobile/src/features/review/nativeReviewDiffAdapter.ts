@@ -19,7 +19,7 @@ import type { ReviewInlineComment } from "./reviewCommentSelection";
 
 const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
-const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i;
+const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})([\da-f]{2})?$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
 
@@ -44,15 +44,19 @@ export function buildNativeReviewSnippetRows(
 
 function opaqueNativeHexColor(color: string, background: string): string {
   const hex = NATIVE_HEX_COLOR.exec(color);
-  if (hex) return color;
+  if (hex && !hex[4]) return color;
 
   const rgba = NATIVE_RGBA_COLOR.exec(color);
   const backgroundHex = NATIVE_HEX_COLOR.exec(background);
-  if (!rgba || !backgroundHex) return background;
+  if ((!hex && !rgba) || !backgroundHex) return background;
 
-  const alpha = rgba[4] === undefined ? 1 : Math.min(1, Math.max(0, Number(rgba[4])));
+  const alpha = hex
+    ? Number.parseInt(hex[4] ?? "ff", 16) / 255
+    : rgba?.[4] === undefined
+      ? 1
+      : Math.min(1, Math.max(0, Number(rgba[4])));
   const channels = [1, 2, 3].map((index) => {
-    const foreground = Number(rgba[index]);
+    const foreground = hex ? Number.parseInt(hex[index] ?? "0", 16) : Number(rgba?.[index]);
     const behind = Number.parseInt(backgroundHex[index] ?? "0", 16);
     return Math.round(foreground * alpha + behind * (1 - alpha));
   });
@@ -169,7 +173,11 @@ export function createNativeReviewDiffTheme(
   // Swift expects #RRGGBB/#RRGGBBAA while Android expects #RRGGBB/#AARRGGBB.
   // Flatten translucent app tokens onto the code surface so both native
   // implementations receive the one unambiguous shared format.
-  const background = opaqueNativeHexColor(appTheme["--color-sheet"], appTheme["--color-screen"]);
+  const screen = opaqueNativeHexColor(
+    appTheme["--color-screen"],
+    scheme === "dark" ? "#000000" : "#ffffff",
+  );
+  const background = opaqueNativeHexColor(appTheme["--color-sheet"], screen);
   const nativeColor = (color: string) => opaqueNativeHexColor(color, background);
 
   if (scheme === "dark") {

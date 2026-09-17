@@ -880,6 +880,7 @@ function MarkdownCodeBlock(props: {
       >
         <NativeText
           selectable
+          selectionColorClassName={Platform.OS === "android" ? "accent-primary/32" : undefined}
           className="font-mono"
           style={{
             color: props.textColor,

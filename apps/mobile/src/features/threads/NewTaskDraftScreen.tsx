@@ -27,12 +27,10 @@ import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
-
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   resolveEnvironmentMachineKind,
-  type EnvironmentId,
 } from "@t3tools/contracts";
 
 import {
@@ -51,6 +49,7 @@ import {
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
+import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { composerStripAttachments } from "../../lib/composerImages";
@@ -81,7 +80,6 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
-
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import {
   convertPastedImagesToAttachments,
@@ -140,7 +138,7 @@ function NewTaskWorkspaceIcon(props: {
       <SymbolView
         name="folder"
         size={16}
-        tintColorClassName={"accent-icon-muted"}
+        tintColorClassName="accent-icon-muted"
         type="monochrome"
       />
     );
@@ -151,14 +149,14 @@ function NewTaskWorkspaceIcon(props: {
       <SymbolView
         name="folder"
         size={16}
-        tintColorClassName={"accent-icon-muted"}
+        tintColorClassName="accent-icon-muted"
         type="monochrome"
       />
       <View className="absolute -right-1 -bottom-1">
         <SymbolView
           name="arrow.triangle.branch"
           size={9}
-          tintColorClassName={"accent-icon-muted"}
+          tintColorClassName="accent-icon-muted"
           type="monochrome"
         />
       </View>
@@ -1322,7 +1320,11 @@ export function NewTaskDraftScreen(props: {
         {Platform.OS === "android" ? (
           <>
             <NativeStackScreenOptions options={{ headerShown: false }} />
-            <AndroidScreenHeader title="New Thread" onBack={() => navigation.goBack()} />
+            <AndroidScreenHeader
+              title="New thread"
+              hideBottomBorder
+              onBack={() => navigation.goBack()}
+            />
           </>
         ) : (
           <NativeStackScreenOptions options={{ title: "Loading task" }} />
@@ -1540,7 +1542,12 @@ export function NewTaskDraftScreen(props: {
   );
 
   const composerDock = (
-    <View className="bg-sheet px-[12px] pt-1" style={{ paddingBottom: controlsBottomPadding }}>
+    <View
+      className={
+        Platform.OS === "android" ? "bg-sheet-solid px-[12px] pt-1" : "bg-sheet px-[12px] pt-1"
+      }
+      style={{ paddingBottom: controlsBottomPadding }}
+    >
       {!voiceInput.isBusy &&
       composerMenu.trigger &&
       (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
@@ -1754,15 +1761,17 @@ export function NewTaskDraftScreen(props: {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="New task" onBack={closeNewTask} />
-        {heroViewport}
+        <AndroidScreenHeader title="New thread" hideBottomBorder onBack={closeNewTask} />
+        <MaterialScreenContent>
+          {heroViewport}
 
-        <KeyboardStickyView
-          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-          offset={{ closed: 0, opened: keyboardOpenedOffset }}
-        >
-          {composerDock}
-        </KeyboardStickyView>
+          <KeyboardStickyView
+            style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+            offset={{ closed: 0, opened: keyboardOpenedOffset }}
+          >
+            {composerDock}
+          </KeyboardStickyView>
+        </MaterialScreenContent>
       </View>
     );
   }

@@ -32,17 +32,17 @@ import { recoverFailedThreadDraft } from "../../state/recover-failed-thread-draf
 import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
-
 import { EmptyState } from "../../components/EmptyState";
 import {
+  AndroidHeaderIconButton,
   AndroidScreenHeader,
   type AndroidHeaderAction,
 } from "../../components/AndroidScreenHeader";
+import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolbar";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
-
 import {
   useRemoteConnections,
   useRemoteConnectionStatus,
@@ -225,7 +225,7 @@ function ThreadRouteContent(
     readonly selectedThreadDetailState: ReturnType<typeof useSelectedThreadDetailState>;
   },
 ) {
-  const { materialYouStyleLayoutActive, themeVariables } = useAppearancePreferences();
+  const { themeVariables } = useAppearancePreferences();
   const headerColor = themeVariables["--color-header"];
   const {
     fileInspector,
@@ -746,10 +746,12 @@ function ThreadRouteContent(
       });
     }
     if (selectedThreadCwd !== null) {
+      const filesVisible = inspectorMode === "files" && panes.auxiliaryPaneVisible;
       actions.push({
-        accessibilityLabel: "Open files",
+        accessibilityLabel: filesVisible ? "Close files" : "Open files",
+        selected: filesVisible,
         icon: "folder",
-        onPress: handleOpenFilesInspector,
+        onPress: filesVisible ? toggleAuxiliaryPane : handleOpenFilesInspector,
       });
     }
     if (selectedThreadProject?.workspaceRoot) {
@@ -764,20 +766,14 @@ function ThreadRouteContent(
       icon: "point.topleft.down.curvedto.point.bottomright.up",
       onPress: handleOpenGitInspector,
     });
-    if (fileInspector.supported && selectedThreadCwd !== null) {
-      actions.push({
-        accessibilityLabel: "Toggle inspector",
-        icon: "sidebar.right",
-        onPress: handleToggleInspector,
-      });
-    }
     return actions;
   }, [
-    fileInspector.supported,
+    inspectorMode,
+    panes.auxiliaryPaneVisible,
     handleOpenFilesInspector,
     handleOpenTerminal,
     handleOpenGitInspector,
-    handleToggleInspector,
+    toggleAuxiliaryPane,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
@@ -891,13 +887,12 @@ function ThreadRouteContent(
       <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
 
       <View
-        className={materialYouStyleLayoutActive ? "flex-1 bg-thread-canvas" : "flex-1 bg-screen"}
+        className={Platform.OS === "android" ? "flex-1 bg-thread-canvas" : "flex-1 bg-screen"}
         style={
-          materialYouStyleLayoutActive
+          Platform.OS === "android"
             ? {
                 borderTopLeftRadius: 28,
                 borderTopRightRadius: 28,
-                marginRight: layout.usesSplitView ? 8 : 0,
                 overflow: "hidden",
               }
             : undefined
@@ -996,9 +991,7 @@ function ThreadRouteContent(
               : undefined,
           unstable_headerSubtitle: usesNativeHeaderGlass ? headerSubtitle : undefined,
           contentStyle:
-            Platform.OS === "android" && materialYouStyleLayoutActive
-              ? { backgroundColor: headerColor }
-              : undefined,
+            Platform.OS === "android" && true ? { backgroundColor: headerColor } : undefined,
         }}
       />
 
@@ -1006,6 +999,21 @@ function ThreadRouteContent(
         <AndroidScreenHeader
           title={selectedThread.title}
           subtitle={headerSubtitle}
+          leading={<AndroidWorkspaceSidebarButton />}
+          trailing={
+            fileInspector.supported && selectedThreadCwd !== null ? (
+              <AndroidHeaderIconButton
+                accessibilityLabel={
+                  inspectorMode !== null && panes.auxiliaryPaneVisible
+                    ? "Hide inspector"
+                    : "Show inspector"
+                }
+                icon="sidebar.right"
+                selected={inspectorMode !== null && panes.auxiliaryPaneVisible}
+                onPress={handleToggleInspector}
+              />
+            ) : null
+          }
           onBack={
             layout.usesSplitView
               ? undefined
@@ -1017,7 +1025,7 @@ function ThreadRouteContent(
                 }
           }
           actions={androidHeaderActions}
-          hideBottomBorder={materialYouStyleLayoutActive}
+          hideBottomBorder
         />
       ) : null}
 

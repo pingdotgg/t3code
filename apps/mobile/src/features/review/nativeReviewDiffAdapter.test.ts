@@ -255,6 +255,31 @@ describe("createNativeReviewDiffTheme", () => {
     }
   });
 
+  it.each(["light", "dark"] as const)(
+    "preserves Material You RGBA hex channels and composites alpha in %s",
+    (appearance) => {
+      const variables = {
+        ...appTheme("material-you", appearance),
+        "--color-screen": "#101214FF",
+        "--color-sheet": "#20222480",
+        "--color-md-code-text": "#E3E2E6FF",
+        "--color-foreground-muted": "#C7C5D080",
+        "--color-border": "#44464F80",
+        "--color-primary": "#A8C7FAFF",
+      };
+      const theme = createNativeReviewDiffTheme(appearance, "material-you", variables);
+      expect(theme.background).toBe("#181a1c");
+      expect(theme.headerBackground).toBe(theme.background);
+      expect(theme.text).toBe("#e3e2e6");
+      expect(theme.mutedText).toBe("#707076");
+      expect(theme.border).toBe("#2e3036");
+      expect(theme.hunkText).toBe("#a8c7fa");
+      for (const color of Object.values(theme)) {
+        expect(color).toMatch(/^#[\da-f]{6}$/i);
+      }
+    },
+  );
+
   it("uses the selected app palette for native code surfaces", () => {
     const standard = createNativeReviewDiffTheme("dark", "t3-code", appTheme("t3-code", "dark"));
     const iris = createNativeReviewDiffTheme("dark", "iris", appTheme("iris", "dark"));
