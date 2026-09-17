@@ -118,7 +118,7 @@ export function V2LifecycleRow(props: {
         showDetailSeparator={false}
         tone={item.status === "failed" ? "danger" : "neutral"}
         detail={
-          <span className="inline-flex min-w-0 items-center gap-1.5">
+          <span className="inline-flex min-w-0 flex-wrap items-center justify-center gap-1.5">
             {fromEndpoints.map((endpoint, index) => (
               <Fragment key={`${endpoint.instanceId}:${endpoint.model ?? ""}`}>
                 {index > 0 ? (
@@ -289,7 +289,6 @@ function SubagentTimelineLink(props: {
   );
 }
 
-/** Provider icon with the resolved handoff model available on hover or focus. */
 function HandoffEndpoint(props: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly instanceId: ProviderInstanceId;
@@ -313,9 +312,7 @@ function HandoffEndpoint(props: {
         render={
           <span
             tabIndex={0}
-            role="img"
-            aria-label={label}
-            className="inline-flex shrink-0 items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex min-w-0 items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <ProviderInstanceIcon
               driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
@@ -324,10 +321,13 @@ function HandoffEndpoint(props: {
               acpRegistryIconUrl={entry?.acpRegistryIconUrl}
               iconClassName="size-3"
             />
+            <span className="truncate">{label}</span>
           </span>
         }
       />
-      <TooltipPopup>{label}</TooltipPopup>
+      <TooltipPopup>
+        {entry?.displayName ?? props.instanceId} · {label}
+      </TooltipPopup>
     </Tooltip>
   );
 }

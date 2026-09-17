@@ -55,6 +55,34 @@ describe("threadAllowsProviderSwitch", () => {
     expect(threadAllowsProviderSwitch({ thread: unstartedThread, projection: null })).toBe(true);
   });
 
+  it("allows an imported thread to hand off before opening a provider session", () => {
+    expect(
+      threadAllowsProviderSwitch({
+        thread: startedThread,
+        projection: {
+          thread: { id: "thread", activeProviderThreadId: null, historyOrigin: "v1_import" },
+          runs: [],
+          providerThreads: [],
+          providerSessions: [],
+        } as unknown as OrchestrationV2ThreadProjection,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a preparing turn bound before its provider session appears", () => {
+    expect(
+      threadAllowsProviderSwitch({
+        thread: startedThread,
+        projection: {
+          thread: { id: "thread", activeProviderThreadId: null, historyOrigin: "v1_import" },
+          runs: [{ status: "preparing", providerThreadId: "provider-thread" }],
+          providerThreads: [],
+          providerSessions: [],
+        } as unknown as OrchestrationV2ThreadProjection,
+      }),
+    ).toBe(false);
+  });
+
   it("keeps a started thread bound until its projection resolves a session", () => {
     expect(threadAllowsProviderSwitch({ thread: startedThread, projection: null })).toBe(false);
   });
