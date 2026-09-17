@@ -10,7 +10,11 @@ import {
 import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
 import type { EnvironmentThread } from "./models.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
-import { derivePendingThreadRequests, type PendingThreadRequests } from "./threadRequests.ts";
+import {
+  createQuestionHistoryProjector,
+  derivePendingThreadRequests,
+  type PendingThreadRequests,
+} from "./threadRequests.ts";
 import { arrayElementsEqual, parseThreadKey, threadKey } from "./entities.ts";
 
 const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItems"] = Object.freeze(
@@ -46,13 +50,13 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread:${key}`));
   });
 
-  const visibleTurnItemsAtomFamily = Atom.family((key: string) =>
-    Atom.make(
-      (get): OrchestrationV2ThreadProjection["visibleTurnItems"] =>
-        Option.getOrNull(get(threadStateValueAtomFamily(key)).data)?.visibleTurnItems ??
-        EMPTY_VISIBLE_TURN_ITEMS,
-    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-visible-turn-items:${key}`)),
-  );
+  const visibleTurnItemsAtomFamily = Atom.family((key: string) => {
+    const projectQuestionHistory = createQuestionHistoryProjector();
+    return Atom.make((get): OrchestrationV2ThreadProjection["visibleTurnItems"] => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      return projection === null ? EMPTY_VISIBLE_TURN_ITEMS : projectQuestionHistory(projection);
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-visible-turn-items:${key}`));
+  });
 
   const queueWorkflowAtomFamily = Atom.family((key: string) => {
     let previous: Pick<

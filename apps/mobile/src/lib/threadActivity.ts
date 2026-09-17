@@ -1363,10 +1363,18 @@ export function buildThreadFeed(
     }
     return null;
   };
+  const foldedAnswerMessageIds = new Set(
+    visibleTurnItems.flatMap(({ item }) =>
+      item.type === "user_input_request" && item.questionAnswer
+        ? [`async-answer:${item.questionAnswer.requestId}`]
+        : [],
+    ),
+  );
   for (const row of visibleTurnItems) {
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item)) continue;
-    if (item.type === "todo_list") continue;
+    if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     // Match the web timeline: only the terminal interrupt result is useful to
     // users; the preceding request is transient bookkeeping.
     if (item.type === "run_interrupt_request") {
@@ -1423,9 +1431,10 @@ export function buildThreadFeed(
     projectedEntriesCache.set(row, { attemptId, entry });
     entries.push(entry);
   }
-  const retainedMessageIds = new Set(
-    entries.flatMap((entry) => (entry.type === "message" ? [entry.id] : [])),
-  );
+  const retainedMessageIds = new Set([
+    ...foldedAnswerMessageIds,
+    ...entries.flatMap((entry) => (entry.type === "message" ? [entry.id] : [])),
+  ]);
   const appendLocalMessage = (message: OrchestrationMessage): RawThreadFeedEntry => {
     const cached = localMessageEntriesCache.get(message);
     if (cached) return cached;
