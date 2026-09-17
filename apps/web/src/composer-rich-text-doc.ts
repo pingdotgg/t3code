@@ -343,7 +343,7 @@ function appendInlineRuns(
 ): void {
   const children: ProseMirrorNode[] = [];
   container.forEach((child) => {
-    if (!child.isText) {
+    if (!child.isText || child.marks.some((mark) => mark.type.name === "code")) {
       children.push(child);
       return;
     }
@@ -375,7 +375,11 @@ function appendInlineRuns(
           !child.marks.some((item) => item.type.name === mark)
         ) {
           hasContent = false;
-        } else if (child.isText && /^\s+$/.test(child.text!)) {
+        } else if (
+          child.isText &&
+          !child.marks.some((item) => item.type.name === "code") &&
+          /^\s+$/.test(child.text!)
+        ) {
           if (!hasContent)
             children[index] = child.mark(child.marks.filter((item) => item.type.name !== mark));
         } else {

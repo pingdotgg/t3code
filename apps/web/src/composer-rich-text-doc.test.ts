@@ -261,6 +261,8 @@ describe("composer rich text document model", () => {
       expected: "**hello *world*** ",
     },
     { parts: [{ text: " hello ", marks: ["code"] }], expected: "` hello `" },
+    { parts: [{ text: " hello ", marks: ["bold", "code"] }], expected: "**` hello `**" },
+    { parts: [{ text: " ", marks: ["bold", "code"] }], expected: "**` `**" },
   ])("keeps boundary whitespace outside emphasis in $expected", ({ parts, expected }) => {
     const doc = schema.node("doc", null, [
       schema.node(
