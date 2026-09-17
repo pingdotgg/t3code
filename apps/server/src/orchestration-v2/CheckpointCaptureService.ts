@@ -139,9 +139,8 @@ export const layer: Layer.Layer<
         commandType: "checkpoint.capture",
         acceptedAt: capturedAt,
         effects:
-          checkpoint.status === "ready"
-            ? []
-            : [
+          checkpoint.status === "error"
+            ? [
                 {
                   id: `effect:checkpoint.baseline.cleanup:${run.id}`,
                   commandId,
@@ -152,7 +151,8 @@ export const layer: Layer.Layer<
                     scopeId: scope.id,
                   },
                 },
-              ],
+              ]
+            : [],
         events: [
           ...(threadStartCheckpoint === null
             ? []
@@ -268,6 +268,10 @@ export const layer: Layer.Layer<
               candidate.runId === run.id,
           );
           if (checkpoint?.status === "ready") return;
+          // A "missing" row means capture found no usable VCS for the scope, so
+          // no start ref was ever written. Skipping keeps replayed cleanups off
+          // the workspace lock for workspaces that never checkpoint.
+          if (checkpoint?.status === "missing") return;
           // A completed run only abandons its baseline once capture has actually
           // run and failed, which commits a non-ready row alongside this effect.
           // No row means capture is still queued behind us and would lose the

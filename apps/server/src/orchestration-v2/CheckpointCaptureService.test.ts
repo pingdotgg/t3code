@@ -48,6 +48,9 @@ it.effect.each([
   // A completed run reclaims its baseline only once capture recorded a failure.
   { status: "completed", checkpoint: "error", removed: true },
   { status: "completed", checkpoint: "ready", removed: false },
+  // A "missing" row means capture found no usable VCS, so no start ref exists.
+  { status: "completed", checkpoint: "missing", removed: false },
+  { status: "cancelled", checkpoint: "missing", removed: false },
   // Capture is still queued behind this cleanup and needs the baseline.
   { status: "completed", checkpoint: null, removed: false },
   { status: "running", checkpoint: null, removed: false },
@@ -408,9 +411,12 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
       }),
   );
 
-  it.effect.each(["error", "missing"] as const)(
-    "enqueues baseline cleanup when capture records a %s checkpoint",
-    (captureStatus) =>
+  it.effect.each([
+    { captureStatus: "error", enqueued: true },
+    { captureStatus: "missing", enqueued: false },
+  ] as const)(
+    "enqueues baseline cleanup only for capture status %s",
+    ({ captureStatus, enqueued }) =>
       Effect.gen(function* () {
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
@@ -632,9 +638,10 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           yield* service.execute({ threadId, runId, scopeId });
         }).pipe(Effect.provide(captureLayer));
 
-        assert.deepEqual(yield* Ref.get(committedEffects), [
-          { type: "checkpoint.baseline.cleanup", runId, scopeId },
-        ]);
+        assert.deepEqual(
+          yield* Ref.get(committedEffects),
+          enqueued ? [{ type: "checkpoint.baseline.cleanup", runId, scopeId }] : [],
+        );
       }),
   );
 });
