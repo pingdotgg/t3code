@@ -3421,6 +3421,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       replacement: string,
       options?: {
         expectedText?: string;
+        expandedCursorAfterReplace?: number;
         focusEditorAfterReplace?: boolean;
         citationComment?: { start: number; sourceAnchor: AssistantCitationSourceAnchor };
       },
@@ -3441,7 +3442,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return false;
       }
       const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
-      const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
+      const nextCursor = collapseExpandedComposerCursor(
+        next.text,
+        options?.expandedCursorAfterReplace ?? next.cursor,
+      );
       const nextExpandedCursor = expandCollapsedComposerCursor(next.text, nextCursor);
       if (options?.citationComment) {
         composerEditorRef.current?.requestCitationComment({
@@ -3981,7 +3985,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           key === "Enter"
             ? listContinuationForEnter(snapshot.value, selection.start)
             : listIndentForTab(snapshot.value, selection.start, selection.end);
-        if (edit && applyPromptReplacement(edit.start, edit.end, edit.replacement)) {
+        if (
+          edit &&
+          applyPromptReplacement(
+            edit.start,
+            edit.end,
+            edit.replacement,
+            key === "Tab"
+              ? { expandedCursorAfterReplace: selection.start + edit.replacement.length }
+              : undefined,
+          )
+        ) {
           return true;
         }
       }

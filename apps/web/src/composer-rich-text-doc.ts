@@ -25,16 +25,16 @@ import { collectInlineContextIds } from "~/lib/composerContextReferences";
 export type SkillMeta = { label: string; description: string | null };
 
 /** Outermost mark first, so closers mirror openers when nested. */
-export const MARK_NESTING_ORDER: RichTextMark[] = ["strike", "bold", "italic", "code"];
+const MARK_NESTING_ORDER: RichTextMark[] = ["strike", "bold", "italic", "code"];
 
-export const MARK_TO_TIPTAP: Record<RichTextMark, string> = {
+const MARK_TO_TIPTAP: Record<RichTextMark, string> = {
   bold: "bold",
   italic: "italic",
   strike: "strike",
   code: "code",
 };
 
-export const TIPTAP_TO_MARK: Record<string, RichTextMark> = {
+const TIPTAP_TO_MARK: Record<string, RichTextMark> = {
   bold: "bold",
   italic: "italic",
   strike: "strike",
@@ -51,28 +51,34 @@ export const ComposerTaskItemExtension = TaskItem.extend({
     return {
       ...this.parent?.(),
       indent: { default: "" },
+      markerSpace: { default: " " },
+      contentSpace: { default: null },
     };
   },
 }).configure({ nested: true });
 
-export function randomNodeKey(): string {
+function randomNodeKey(): string {
   return `tiptap-${Math.random().toString(36).slice(2)}`;
 }
 
 interface TaskLinePrefix {
   indent: string;
   checked: boolean;
+  markerSpace: string;
+  contentSpace: string;
 }
 
 function parseTaskPrefix(head: string): { prefix: TaskLinePrefix; markerLength: number } | null {
-  const match = head.match(/^([ \t]*)-[ \t]+\[([ xX])\]/);
+  const match = head.match(/^([ \t]*)-([ \t]+)\[([ xX])\]([ \t]*)/);
   if (!match) return null;
   const after = head.slice(match[0].length);
-  if (after.length > 0 && after[0] !== " " && after[0] !== "\t") return null;
+  if (after.length > 0 && !match[4]) return null;
   return {
     prefix: {
       indent: match[1] ?? "",
-      checked: (match[2] ?? " ").toLowerCase() === "x",
+      checked: (match[3] ?? " ").toLowerCase() === "x",
+      markerSpace: match[2]!,
+      contentSpace: match[4]!,
     },
     markerLength: match[0].length,
   };
@@ -123,20 +129,7 @@ function atomJsonForSegment(
   };
 }
 
-function pushSpans(inline: InlineJson[], text: string, styling: boolean): void {
-  if (!styling) {
-    // Plain-text mode: markers stay literal characters, no marks anywhere.
-    if (text) inline.push({ type: "text", text });
-    return;
-  }
-  for (const span of parseInlineMarkdown(text)) {
-    inline.push(textJsonForSpan(span.text, span.marks));
-  }
-}
-
-interface PendingTaskItem {
-  checked: boolean;
-  indent: string;
+interface PendingTaskItem extends TaskLinePrefix {
   content: InlineJson[];
   children: PendingTaskItem[];
 }
@@ -146,7 +139,12 @@ function taskListJson(items: PendingTaskItem[]): InlineJson {
     type: "taskList",
     content: items.map((item) => ({
       type: "taskItem",
-      attrs: { checked: item.checked, indent: item.indent },
+      attrs: {
+        checked: item.checked,
+        indent: item.indent,
+        markerSpace: item.markerSpace,
+        contentSpace: item.contentSpace,
+      },
       content: [
         { type: "paragraph", content: item.content },
         ...(item.children.length > 0 ? [taskListJson(item.children)] : []),
@@ -171,72 +169,37 @@ export function buildTiptapContent(
   options?: { styling?: boolean },
 ): Record<string, unknown>[] {
   const styling = options?.styling ?? true;
-  // Pass 1: the segment stream becomes lines. A line is a task line only
-  // when its leading text — before any chip — is a complete `- [ ]` marker;
-  // the marker is decided at a chip, a newline, or the end of input so a
-  // partial marker (`- [ ]` + `foo`) can never commit early.
-  const lines: DocLine[] = [{ task: null, inline: [] }];
-  let head: string | null = "";
-  const currentLine = () => lines[lines.length - 1]!;
-  const endLine = () => {
-    const line = currentLine();
-    if (head !== null) {
-      const parsed = styling ? parseTaskPrefix(head) : null;
-      if (parsed) {
-        line.task = parsed.prefix;
-        pushSpans(line.inline, head.slice(parsed.markerLength).replace(/^[ \t]*/, ""), styling);
-      } else {
-        pushSpans(line.inline, head, styling);
-      }
-    }
-    lines.push({ task: null, inline: [] });
-    head = "";
-  };
-  const appendTextPiece = (piece: string) => {
-    if (head !== null) {
-      head += piece;
-      return;
-    }
-    pushSpans(currentLine().inline, piece, styling);
-  };
-
-  for (const segment of splitPromptIntoComposerSegments(value)) {
-    if (segment.type === "text") {
-      const parts = segment.text.split("\n");
-      parts.forEach((part, index) => {
-        if (index > 0) endLine();
-        appendTextPiece(part);
-      });
-    } else {
-      if (head !== null) {
-        const line = currentLine();
-        const parsed = styling ? parseTaskPrefix(head) : null;
-        if (parsed) {
-          line.task = parsed.prefix;
-          pushSpans(line.inline, head.slice(parsed.markerLength).replace(/^[ \t]*/, ""), styling);
-        } else {
-          pushSpans(line.inline, head, styling);
+  // Hide token source from the markdown parser, then restore the atoms with
+  // the marks of their surrounding text. Choose a sentinel absent from input.
+  let sentinel = "\uFFFC";
+  for (let codePoint = 0xe000; value.includes(sentinel); codePoint += 1) {
+    sentinel = String.fromCodePoint(codePoint);
+  }
+  const atoms: InlineJson[] = [];
+  const text = splitPromptIntoComposerSegments(value)
+    .map((segment) => {
+      if (segment.type === "text") return segment.text;
+      atoms.push(atomJsonForSegment(segment, skillLabelFor));
+      return sentinel;
+    })
+    .join("");
+  let atomIndex = 0;
+  const lines: DocLine[] = text.split("\n").map((line) => {
+    const parsed = styling ? parseTaskPrefix(line) : null;
+    const content = parsed ? line.slice(parsed.markerLength) : line;
+    const spans = styling ? parseInlineMarkdown(content) : [{ text: content, marks: [] }];
+    const inline: InlineJson[] = [];
+    for (const span of spans) {
+      span.text.split(sentinel).forEach((piece, index) => {
+        if (index > 0) {
+          const atom = atoms[atomIndex++]!;
+          inline.push({ ...atom, marks: textJsonForSpan("", span.marks).marks });
         }
-        head = null;
-      }
-      currentLine().inline.push(atomJsonForSegment(segment, skillLabelFor));
+        if (piece) inline.push(textJsonForSpan(piece, span.marks));
+      });
     }
-  }
-  // Decide the final line. A trailing newline leaves a fresh empty line,
-  // which endLine already pushed — drop the spare blank it would add.
-  if (head !== null) {
-    const line = currentLine();
-    const parsed = styling ? parseTaskPrefix(head) : null;
-    if (parsed) {
-      line.task = parsed.prefix;
-      pushSpans(line.inline, head.slice(parsed.markerLength).replace(/^[ \t]*/, ""), styling);
-    } else {
-      pushSpans(line.inline, head, styling);
-    }
-  } else if (lines.length > 1) {
-    const last = lines[lines.length - 1]!;
-    if (!last.task && last.inline.length === 0) lines.pop();
-  }
+    return { task: parsed?.prefix ?? null, inline };
+  });
 
   // Pass 2: consecutive task lines group into (possibly nested) task lists
   // by indent prefix; everything else stays a paragraph.
@@ -255,8 +218,7 @@ export function buildTiptapContent(
       continue;
     }
     const item: PendingTaskItem = {
-      checked: line.task.checked,
-      indent: line.task.indent,
+      ...line.task,
       content: line.inline,
       children: [],
     };
@@ -264,7 +226,7 @@ export function buildTiptapContent(
       const top = stack[stack.length - 1];
       if (!top) {
         // A leading indented item with no parent flattens but keeps indent.
-        stack.push({ indent: "", items: [] });
+        stack.push({ indent: item.indent, items: [] });
         continue;
       }
       if (top.indent === item.indent) {
@@ -272,8 +234,13 @@ export function buildTiptapContent(
         break;
       }
       if (top.indent !== "" && !item.indent.startsWith(top.indent)) {
-        stack.pop();
-        continue;
+        if (stack.length > 1) {
+          stack.pop();
+          continue;
+        }
+        top.indent = item.indent;
+        top.items.push(item);
+        break;
       }
       const parent = top.items[top.items.length - 1];
       if (!parent) {
@@ -323,19 +290,6 @@ export interface RichDocMap {
   contextIds: string[];
 }
 
-function textRunDelimiters(marks: RichTextMark[]): { open: string; close: string } {
-  let open = "";
-  let close = "";
-  for (const mark of [...marks].sort(
-    (a, b) => MARK_NESTING_ORDER.indexOf(a) - MARK_NESTING_ORDER.indexOf(b),
-  )) {
-    const delimiter = RICH_TEXT_DELIMITERS[mark];
-    open = open + delimiter;
-    close = delimiter + close;
-  }
-  return { open, close };
-}
-
 function readAtomSource(node: ProseMirrorNode): string {
   const attrs = node.attrs as Record<string, unknown>;
   switch (node.type.name) {
@@ -360,7 +314,9 @@ interface RichAccumulator {
   md: number;
 }
 
-function pushBreakRun(acc: RichAccumulator, pmPos: number): void {
+function pushBreakRun(acc: RichAccumulator, position?: number): void {
+  const previous = acc.runs[acc.runs.length - 1];
+  const pmPos = position ?? (previous ? previous.pmPos + previous.docLen : 1);
   // Block boundary: one newline in every coordinate space.
   acc.runs.push({
     kind: "break",
@@ -385,59 +341,99 @@ function appendInlineRuns(
   contentStart: number,
   acc: RichAccumulator,
 ): void {
-  let inlineOffset = 0;
-  container.content.forEach((child) => {
-    const pmPos = contentStart + inlineOffset;
-    if (child.isText && child.text) {
-      const marks = (child.marks ?? [])
-        .map((mark) => TIPTAP_TO_MARK[mark.type.name])
-        .filter((mark): mark is RichTextMark => Boolean(mark));
-      const { open, close } = textRunDelimiters(marks);
-      const mdText = `${open}${child.text}${close}`;
-      acc.runs.push({
-        kind: "text",
-        flatStart: acc.flat,
-        docLen: child.text.length,
-        collapsedLen: mdText.length,
-        mdLen: mdText.length,
-        openLen: open.length,
-        closeLen: close.length,
-        pmPos,
-        mdStart: acc.md,
-        collapsedStart: acc.collapsed,
-      });
-      acc.value += mdText;
-      acc.flat += child.text.length;
-      acc.collapsed += mdText.length;
-      acc.md += mdText.length;
-      inlineOffset += child.nodeSize;
-    } else if (child.type.name === "hardBreak") {
-      pushBreakRun(acc, pmPos);
-      inlineOffset += child.nodeSize;
-    } else if (child.isAtom || child.isInline) {
-      const source = readAtomSource(child);
-      acc.runs.push({
-        kind: "token",
-        flatStart: acc.flat,
-        docLen: 1,
-        collapsedLen: 1,
-        mdLen: source.length,
-        openLen: 0,
-        closeLen: 0,
-        pmPos,
-        mdStart: acc.md,
-        collapsedStart: acc.collapsed,
-        nodeName: child.type.name,
-      });
-      acc.value += source;
-      acc.flat += 1;
-      acc.collapsed += 1;
-      acc.md += source.length;
-      inlineOffset += child.nodeSize;
-    } else {
-      inlineOffset += child.nodeSize;
+  const children: ProseMirrorNode[] = [];
+  container.forEach((child) => children.push(child));
+  // Longer shared marks surround shorter ones. This keeps both nested
+  // formatting and formatting across chips inside a single delimiter pair.
+  const markEnds = new Map<RichTextMark, number>();
+  const orderedMarks: RichTextMark[][] = [];
+  for (let index = children.length - 1; index >= 0; index -= 1) {
+    const child = children[index]!;
+    const marks =
+      child.type.name === "hardBreak"
+        ? []
+        : child.marks
+            .map((mark) => TIPTAP_TO_MARK[mark.type.name])
+            .filter((mark): mark is RichTextMark => Boolean(mark));
+    for (const mark of MARK_NESTING_ORDER) {
+      if (!marks.includes(mark)) markEnds.delete(mark);
+      else if (!markEnds.has(mark)) markEnds.set(mark, index);
     }
+    orderedMarks[index] = marks.sort(
+      (a, b) =>
+        markEnds.get(b)! - markEnds.get(a)! ||
+        MARK_NESTING_ORDER.indexOf(a) - MARK_NESTING_ORDER.indexOf(b),
+    );
+  }
+  for (let index = 1; index < orderedMarks.length; index += 1) {
+    const marks = orderedMarks[index]!;
+    const retained: RichTextMark[] = [];
+    for (const mark of orderedMarks[index - 1]!) {
+      if (!marks.includes(mark)) break;
+      retained.push(mark);
+    }
+    orderedMarks[index] = [...retained, ...marks.filter((mark) => !retained.includes(mark))];
+  }
+  const commonLength = (left: RichTextMark[], right: RichTextMark[]) => {
+    let index = 0;
+    while (index < left.length && left[index] === right[index]) index += 1;
+    return index;
+  };
+  let inlineOffset = 0;
+  children.forEach((child, index) => {
+    const pmPos = contentStart + inlineOffset;
+    inlineOffset += child.nodeSize;
+    if (child.type.name === "hardBreak") {
+      pushBreakRun(acc, pmPos);
+      return;
+    }
+    const marks = orderedMarks[index]!;
+    const open = marks
+      .slice(commonLength(marks, orderedMarks[index - 1] ?? []))
+      .map((mark) => RICH_TEXT_DELIMITERS[mark])
+      .join("");
+    const close = marks
+      .slice(commonLength(marks, orderedMarks[index + 1] ?? []))
+      .toReversed()
+      .map((mark) => RICH_TEXT_DELIMITERS[mark])
+      .join("");
+    const source = child.isText ? child.text! : readAtomSource(child);
+    const docLen = child.isText ? source.length : 1;
+    const mdText = open + source + close;
+    const collapsedLen = open.length + docLen + close.length;
+    acc.runs.push({
+      kind: child.isText ? "text" : "token",
+      flatStart: acc.flat,
+      docLen,
+      collapsedLen,
+      mdLen: mdText.length,
+      openLen: open.length,
+      closeLen: close.length,
+      pmPos,
+      mdStart: acc.md,
+      collapsedStart: acc.collapsed,
+      ...(child.isText ? {} : { nodeName: child.type.name }),
+    });
+    acc.value += mdText;
+    acc.flat += docLen;
+    acc.collapsed += collapsedLen;
+    acc.md += mdText.length;
   });
+  // Empty paragraphs have an editable position even though they emit no text.
+  if (children.length === 0) {
+    acc.runs.push({
+      kind: "text",
+      flatStart: acc.flat,
+      docLen: 0,
+      collapsedLen: 0,
+      mdLen: 0,
+      openLen: 0,
+      closeLen: 0,
+      pmPos: contentStart,
+      mdStart: acc.md,
+      collapsedStart: acc.collapsed,
+    });
+  }
 }
 
 function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumulator): void {
@@ -445,15 +441,21 @@ function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumul
   let firstItem = true;
   list.content.forEach((item) => {
     // Sibling items are separated by one newline in every coordinate space.
-    if (!firstItem) pushBreakRun(acc, itemPos - 1);
+    if (!firstItem) pushBreakRun(acc);
     firstItem = false;
     const itemContentStart = itemPos + 1;
     const first = item.firstChild;
-    const empty =
-      item.childCount === 1 && first?.type.name === "paragraph" && first.content.childCount === 0;
-    const attrs = item.attrs as { checked?: unknown; indent?: unknown };
+    const empty = first?.type.name === "paragraph" && first.content.childCount === 0;
+    const attrs = item.attrs as Record<string, unknown>;
     const indent = typeof attrs.indent === "string" ? attrs.indent : "";
-    const prefix = `${indent}- [${attrs.checked === true ? "x" : " "}]${empty ? "" : " "}`;
+    const markerSpace = typeof attrs.markerSpace === "string" ? attrs.markerSpace : " ";
+    const contentSpace =
+      typeof attrs.contentSpace === "string"
+        ? attrs.contentSpace || (empty ? "" : " ")
+        : empty
+          ? ""
+          : " ";
+    const prefix = `${indent}-${markerSpace}[${attrs.checked === true ? "x" : " "}]${contentSpace}`;
     // The checkbox owns no document characters; every prefix offset clamps
     // to the start of the item text, exactly like style markers.
     acc.runs.push({
@@ -474,7 +476,7 @@ function walkTaskList(list: ProseMirrorNode, listStart: number, acc: RichAccumul
     let childPos = itemContentStart;
     let firstBlock = true;
     item.content.forEach((child) => {
-      if (!firstBlock) pushBreakRun(acc, childPos - 1);
+      if (!firstBlock) pushBreakRun(acc);
       firstBlock = false;
       if (child.type.name === "taskList") {
         walkTaskList(child, childPos, acc);
@@ -496,7 +498,7 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
 
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
-    if (blockIndex > 0) pushBreakRun(acc, pmBlockStart - 1);
+    if (blockIndex > 0) pushBreakRun(acc);
     if (block.type.name === "taskList") {
       walkTaskList(block, pmBlockStart, acc);
     } else if (block.type.name === "paragraph") {
@@ -525,7 +527,7 @@ export function flatToCollapsed(map: RichDocMap, flatOffset: number): number {
   const bounded = Math.max(0, Math.min(flatOffset, map.docLength));
   for (const run of map.runs) {
     if (bounded < run.flatStart + run.docLen) {
-      if (run.kind === "text") {
+      if (run.kind === "text" || run.kind === "token") {
         return run.collapsedStart + run.openLen + (bounded - run.flatStart);
       }
       return run.collapsedStart + (bounded - run.flatStart);
@@ -538,7 +540,7 @@ export function flatToMarkdown(map: RichDocMap, flatOffset: number): number {
   const bounded = Math.max(0, Math.min(flatOffset, map.docLength));
   for (const run of map.runs) {
     if (bounded < run.flatStart + run.docLen) {
-      if (run.kind === "text") {
+      if (run.kind === "text" || run.kind === "token") {
         return run.mdStart + run.openLen + (bounded - run.flatStart);
       }
       return run.mdStart + (bounded - run.flatStart);
@@ -553,7 +555,7 @@ export function collapsedToFlat(map: RichDocMap, collapsedOffset: number): numbe
       // Checkbox prefixes and style markers are shown, never edited: every
       // offset inside them clamps to the adjacent document position.
       if (run.kind === "prefix") return run.flatStart;
-      if (run.kind === "text") {
+      if (run.kind === "text" || run.kind === "token") {
         const within = collapsedOffset - run.collapsedStart;
         // Marker characters clamp to the styled edge: they are shown, never edited.
         if (within <= run.openLen) return run.flatStart;
@@ -574,7 +576,7 @@ export function flatToPm(map: RichDocMap, flatOffset: number): number {
     }
   }
   const last = map.runs[map.runs.length - 1];
-  if (!last) return 0;
+  if (!last) return 1;
   return last.pmPos + last.docLen;
 }
 

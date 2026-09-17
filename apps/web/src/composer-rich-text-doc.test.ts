@@ -10,6 +10,8 @@ import {
   ComposerTaskItemExtension,
   flatToCollapsed,
   flatToMarkdown,
+  flatToPm,
+  pmToFlat,
   serializeEditorDoc,
 } from "./composer-rich-text-doc";
 
@@ -117,6 +119,8 @@ function roundTripPlain(value: string) {
 
 describe("composer rich text document model", () => {
   it.each([
+    "",
+    "\n\n",
     "plain text",
     "hello **bold** world",
     "a *italic* word and `code` here",
@@ -126,6 +130,15 @@ describe("composer rich text document model", () => {
     "trailing newline\n",
     "1. foo\n2. asdf\n",
     "- [ ] buy milk",
+    "-   [ ]  buy milk",
+    "\t-\t[x]\t\titem",
+    "- [ ]  ",
+    "- [ ]\n  - [ ] child",
+    "  - [ ] first\n - [ ] second\n  - [ ] child",
+    "**before @README.md after**",
+    "*a **b** c*",
+    "**a *b* c**",
+    "literal \uFFFC **before @README.md after**",
     "- [x] done\n- [ ] next",
     "- [ ] parent\n  - [ ] child\n  - [ ] sibling\n- [ ] uncle",
     "- [ ] empty task follows\n- [ ]",
@@ -140,6 +153,63 @@ describe("composer rich text document model", () => {
     "**bold** then @README.md then *italic*",
   ])("round-trips %s through a real ProseMirror document", (value) => {
     expect(roundTrip(value).value).toBe(value);
+  });
+
+  it.each([
+    "",
+    "\n",
+    "text\n\n",
+    "- [ ]\n- [ ] next\n",
+    "- [ ] parent\n  - [ ] child\n- [ ]",
+    "para\n- [ ] task\npara",
+    "**before @README.md after**",
+  ])("maps editable positions in %s", (value) => {
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(value, (name) => ({ label: name, description: null })),
+    );
+    const map = serializeEditorDoc(doc);
+    for (let flat = 0; flat <= map.docLength; flat += 1) {
+      const position = flatToPm(map, flat);
+      expect(doc.resolve(position).parent.isTextblock).toBe(true);
+      expect(pmToFlat(map, position)).toBe(flat);
+      expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+    }
+  });
+
+  it("keeps the caret after a trailing hard break inside the same paragraph", () => {
+    const doc = schema.node("doc", null, [
+      schema.node("paragraph", null, [schema.text("a"), schema.node("hardBreak")]),
+    ]);
+    const map = serializeEditorDoc(doc);
+    expect(flatToPm(map, map.docLength)).toBe(3);
+    expect(doc.resolve(flatToPm(map, map.docLength)).parent.isTextblock).toBe(true);
+  });
+
+  it("renders a leading task dedent as siblings and nests under the new indent", () => {
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson("  - [ ] first\n - [ ] second\n  - [ ] child", (name) => ({
+        label: name,
+        description: null,
+      })),
+    );
+    const list = doc.firstChild!;
+    expect(list.childCount).toBe(2);
+    expect(list.child(0).childCount).toBe(1);
+    expect(list.child(1).child(1).firstChild!.textContent).toBe("child");
+  });
+
+  it("applies a shared mark to text on both sides of a chip", () => {
+    const doc = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson("**before @README.md after**", (name) => ({ label: name, description: null })),
+    );
+    expect(doc.firstChild!.childCount).toBe(3);
+    doc.firstChild!.forEach((child) =>
+      expect(child.marks.map((mark) => mark.type.name)).toContain("bold"),
+    );
+    expect(serializeEditorDoc(doc).value).toBe("**before @README.md after**");
   });
 
   it("keeps chip sources canonical through the document", () => {

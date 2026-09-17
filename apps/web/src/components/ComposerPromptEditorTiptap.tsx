@@ -1,4 +1,4 @@
-import { Extension, Node, type JSONContent } from "@tiptap/core";
+import { Extension, Node, wrappingInputRule, type JSONContent } from "@tiptap/core";
 import { TaskList } from "@tiptap/extension-task-list";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -38,8 +38,10 @@ import {
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
 } from "~/composer-logic";
-import { selectionTouchesMentionBoundary } from "~/composer-editor-mentions";
-import { RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
+import {
+  collectComposerPromptInlineTokens,
+  selectionTouchesMentionBoundary,
+} from "~/composer-editor-mentions";
 import {
   buildDocJson,
   buildTiptapContent,
@@ -48,14 +50,12 @@ import {
   flatToCollapsed,
   flatToMarkdown,
   flatToPm,
-  MARK_NESTING_ORDER,
   pmToFlat,
   serializeEditorDoc,
-  TIPTAP_TO_MARK,
   type SkillMeta,
 } from "~/composer-rich-text-doc";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
   COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME,
@@ -453,29 +453,39 @@ function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
 type StyledRange = {
   from: number;
   to: number;
-  delimiter: string;
+  markers: { at: number; side: number; text: string }[];
 };
 
 function collectStyledRanges(doc: ProseMirrorNode): StyledRange[] {
   const ranges: StyledRange[] = [];
-  doc.descendants((node, pos) => {
-    if (!node.isText || !node.text) return true;
-    const marks = (node.marks ?? [])
-      .map((mark) => TIPTAP_TO_MARK[mark.type.name])
-      .filter((mark): mark is RichTextMark => Boolean(mark));
-    if (marks.length === 0) return false;
-    const ordered = [...marks].sort(
-      (a, b) => MARK_NESTING_ORDER.indexOf(a) - MARK_NESTING_ORDER.indexOf(b),
-    );
-    const delimiter = ordered.map((mark) => RICH_TEXT_DELIMITERS[mark]).join("");
-    const last = ranges[ranges.length - 1];
-    if (last && last.to === pos && last.delimiter === delimiter) {
-      last.to = pos + (node.text?.length ?? 0);
-    } else {
-      ranges.push({ from: pos, to: pos + (node.text?.length ?? 0), delimiter });
+  const map = serializeEditorDoc(doc);
+  let range: StyledRange | null = null;
+  let openLength = 0;
+  for (const run of map.runs) {
+    if (run.openLen > 0) {
+      range ??= { from: run.pmPos, to: run.pmPos, markers: [] };
+      range.markers.push({
+        at: run.pmPos,
+        side: -1,
+        text: map.value.slice(run.mdStart, run.mdStart + run.openLen),
+      });
     }
-    return false;
-  });
+    if (range === null) continue;
+    range.to = run.pmPos + run.docLen;
+    if (run.closeLen > 0) {
+      const end = run.mdStart + run.mdLen;
+      range.markers.push({
+        at: range.to,
+        side: -2,
+        text: map.value.slice(end - run.closeLen, end),
+      });
+    }
+    openLength += run.openLen - run.closeLen;
+    if (openLength === 0) {
+      ranges.push(range);
+      range = null;
+    }
+  }
   return ranges;
 }
 
@@ -500,20 +510,30 @@ function decorationsForSelection(
   selection: { from: number; to: number; empty: boolean },
 ): DecorationSet {
   const decorations: Decoration[] = [];
+  if (!selection.empty) {
+    doc.nodesBetween(selection.from, selection.to, (node, pos) => {
+      if (node.type.name.startsWith("composer-")) {
+        decorations.push(
+          Decoration.node(pos, pos + node.nodeSize, { class: "composer-chip-range-selected" }),
+        );
+        return false;
+      }
+      return true;
+    });
+  }
   for (const range of collectStyledRanges(doc)) {
     const active = selection.empty
       ? selection.from >= range.from && selection.from <= range.to
       : selection.from < range.to && selection.to > range.from;
     if (!active) continue;
-    for (const [at, side] of [
-      [range.from, -1],
-      [range.to, 1],
-    ] as const) {
+    for (const { at, side, text } of range.markers) {
       const marker = document.createElement("span");
       marker.className = "composer-rich-marker";
-      marker.textContent = range.delimiter;
+      marker.textContent = text;
       marker.setAttribute("aria-hidden", "true");
-      decorations.push(Decoration.widget(at, marker, { side, key: `marker-${at}-${side}` }));
+      decorations.push(
+        Decoration.widget(at, marker, { side, key: `marker-${at}-${side}-${marker.textContent}` }),
+      );
     }
   }
   return DecorationSet.create(doc, decorations);
@@ -713,7 +733,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           heading: false,
           horizontalRule: false,
           listItem: false,
+          link: false,
           orderedList: false,
+          underline: false,
           dropcursor: false,
           gapcursor: false,
           trailingNode: false,
@@ -724,9 +746,23 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         ComposerSkillExtension,
         ComposerCitationExtension,
         ComposerContextReferenceExtension,
-        TaskList,
-        ComposerTaskItemExtension,
         ComposerMarkersExtension,
+        ...(richText
+          ? [
+              TaskList,
+              ComposerTaskItemExtension.extend({
+                addInputRules() {
+                  return [
+                    wrappingInputRule({
+                      find: /^- \[([ xX])\] $/,
+                      type: this.type,
+                      getAttributes: (match) => ({ checked: match[1]?.toLowerCase() === "x" }),
+                    }),
+                  ];
+                },
+              }),
+            ]
+          : []),
       ],
       content: buildDocJson(
         value,
@@ -759,6 +795,68 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           "aria-placeholder": placeholder,
         },
         handleKeyDown: (view, event) => {
+          if (
+            isMacPlatform(navigator.platform) &&
+            (event.key === "Home" || event.key === "End") &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.isComposing
+          ) {
+            const selection = window.getSelection();
+            if (
+              selection?.anchorNode &&
+              view.dom.contains(selection.anchorNode) &&
+              typeof selection.modify === "function"
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              selection.modify(
+                event.shiftKey ? "extend" : "move",
+                event.key === "Home" ? "backward" : "forward",
+                "lineboundary",
+              );
+              if (selection.anchorNode && selection.focusNode) {
+                view.dispatch(
+                  view.state.tr
+                    .setSelection(
+                      TextSelection.create(
+                        view.state.doc,
+                        view.posAtDOM(selection.anchorNode, selection.anchorOffset),
+                        view.posAtDOM(selection.focusNode, selection.focusOffset),
+                      ),
+                    )
+                    .scrollIntoView(),
+                );
+              }
+              return true;
+            }
+          }
+          if (
+            (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+            !event.shiftKey &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.isComposing &&
+            view.state.selection.empty
+          ) {
+            const { $from } = view.state.selection;
+            const direction = event.key === "ArrowLeft" ? -1 : 1;
+            const adjacent = direction === -1 ? $from.nodeBefore : $from.nodeAfter;
+            if (adjacent?.type.name.startsWith("composer-")) {
+              event.preventDefault();
+              event.stopPropagation();
+              view.dispatch(
+                view.state.tr
+                  .setSelection(
+                    TextSelection.create(view.state.doc, $from.pos + direction * adjacent.nodeSize),
+                  )
+                  .scrollIntoView(),
+              );
+              return true;
+            }
+          }
           if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) {
             event.stopPropagation();
             return true;
@@ -777,15 +875,8 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               event.stopPropagation();
               return true;
             }
-            // A newline the parent declined (Shift+Enter, or Enter while the
-            // shortcut says otherwise) must be one visible line. Letting it
-            // fall through inserts a native trailing `<br>`, which renders
-            // no visible line, so the caret looks stuck until a second press.
-            // Splitting the paragraph gives one press, one visible line:
-            // letting it fall through would insert a native trailing `<br>`,
-            // which renders no visible line. Enter on a list line never gets
-            // here — the parent claims it for continuation — so Tiptap's
-            // list splitting stays shadowed.
+            // Split the paragraph so a single newline visibly advances the
+            // caret. The parent handles list continuation before this point.
             event.preventDefault();
             return splitBlockKeepMarks(view.state, (tr) => {
               // The split is programmatic, so the browser won't follow the
@@ -840,9 +931,26 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           if (!pastedText) return false;
           event.preventDefault();
           const importFragment = importFragmentRef.current;
-          const text = importFragment
+          let text = importFragment
             ? importPastedComposerText(clipboardData, importFragment)
             : pastedText;
+          // Complete chips at paste boundaries just as autocomplete does.
+          const tokens = collectComposerPromptInlineTokens(`${text}\n`);
+          const lastToken = tokens.at(-1);
+          if (
+            (lastToken?.type === "mention" || lastToken?.type === "skill") &&
+            lastToken.end === text.length
+          ) {
+            text += " ";
+          }
+          if (
+            (tokens[0]?.type === "mention" || tokens[0]?.type === "skill") &&
+            tokens[0].start === 0
+          ) {
+            const map = serializeEditorDoc(view.state.doc);
+            const offset = flatToMarkdown(map, pmToFlat(map, view.state.selection.from));
+            if (offset > 0 && !/\s/.test(map.value[offset - 1]!)) text = ` ${text}`;
+          }
           const editorInstance = editorHolder.current;
           if (editorInstance) {
             insertMarkdownParagraphs(text, skillLabelFor, { styling: richText }, (content) => {
@@ -919,9 +1027,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     isApplyingControlledUpdateRef.current = true;
     const pendingCitation =
       citationRequestRef.current?.value === value ? citationRequestRef.current : null;
-    editor.commands.setContent(buildDocJson(value, skillLabelFor, { styling: richText }), {
-      emitUpdate: false,
-    });
+    if (previousSnapshot.value !== value) {
+      editor.commands.setContent(buildDocJson(value, skillLabelFor, { styling: richText }), {
+        emitUpdate: false,
+      });
+    }
     const map = serializeEditorDoc(editor.state.doc);
     const flat = collapsedToFlat(map, normalizedCursor);
     editor.commands.setTextSelection(flatToPm(map, flat));
@@ -949,7 +1059,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
-  }, [cursor, editor, skillLabelFor, value]);
+  }, [cursor, editor, richText, skillLabelFor, value]);
 
   const focusAt = useCallback(
     (nextCursor: number) => {
@@ -1009,6 +1119,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         citationRequestRef.current = request;
         if (!editor) return;
         const map = serializeEditorDoc(editor.state.doc);
+        if (map.value !== request.value) return;
         const target = map.runs.find(
           (run) =>
             run.kind === "token" &&
@@ -1065,22 +1176,19 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const handleCopyCut = useCallback(
     (event: React.ClipboardEvent, cut: boolean) => {
       const build = buildFragmentRef.current;
-      if (!editor || !build) return;
+      if (!editor || (cut && !editor.isEditable)) return;
       const clipboardData = event.clipboardData;
       const { from, to } = editor.state.selection;
       if (from === to) return;
-      const map = serializeEditorDoc(editor.state.doc);
-      const startMd = flatToMarkdown(map, pmToFlat(map, from));
-      const endMd = flatToMarkdown(map, pmToFlat(map, to));
-      const text = map.value.slice(Math.min(startMd, endMd), Math.max(startMd, endMd));
+      const text = serializeEditorDoc(editor.state.doc.cut(from, to)).value;
       const contextIds = Array.from(new Set(collectInlineContextIds(text)));
-      if (contextIds.length === 0) return;
-      const fragment = build(contextIds);
-      if (!fragment) return;
+      const fragment = contextIds.length > 0 ? build?.(contextIds) : null;
       event.preventDefault();
       clipboardData.setData("text/plain", text);
-      clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
-      clipboardData.setData("text/html", encodeComposerContextClipboardHtml(text, fragment));
+      if (fragment) {
+        clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
+        clipboardData.setData("text/html", encodeComposerContextClipboardHtml(text, fragment));
+      }
       if (cut) {
         editor.chain().focus().deleteSelection().run();
       }
@@ -1138,8 +1246,8 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               onKeyUp={(event) => onPageScrollKeyUp?.(event.key)}
               onBlur={onPageScrollRelease}
               onPasteCapture={onPaste}
-              onCopy={(event) => handleCopyCut(event, false)}
-              onCut={(event) => handleCopyCut(event, true)}
+              onCopyCapture={(event) => handleCopyCut(event, false)}
+              onCutCapture={(event) => handleCopyCut(event, true)}
             />
             {isEmpty && contextRecords.size === 0 && placeholder ? (
               <div
