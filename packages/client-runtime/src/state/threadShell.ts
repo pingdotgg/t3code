@@ -11,6 +11,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentThreadShell } from "./models.ts";
 import { presentThreadShell } from "./models.ts";
+import { deriveThreadSubagentTree } from "./threadSubagents.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import {
   arrayElementsEqual,
@@ -214,6 +215,51 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-navigation-thread-shells"));
 
+  const subagentChildrenAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const byParent = new Map<ThreadId, EnvironmentThreadShell[]>();
+      for (const source of get(environmentThreadsAtom(environmentId))) {
+        const parentId = source.lineage.parentThreadId;
+        if (
+          source.lineage.relationshipToParent !== "subagent" ||
+          parentId === null ||
+          source.archivedAt !== null ||
+          source.deletedAt !== null
+        )
+          continue;
+        const siblings = byParent.get(parentId) ?? [];
+        siblings.push(scopedThread(environmentId, source));
+        byParent.set(parentId, siblings);
+      }
+      for (const siblings of byParent.values()) {
+        siblings.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+      }
+      return byParent;
+    }).pipe(Atom.withLabel(`environment-subagent-children:${environmentId}`)),
+  );
+  const subagentTreeAtomFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    let previous = deriveThreadSubagentTree(ref.threadId, new Map());
+    return Atom.make((get) => {
+      const next = deriveThreadSubagentTree(
+        ref.threadId,
+        get(subagentChildrenAtom(ref.environmentId)),
+      );
+      if (
+        next.rows.length === previous.rows.length &&
+        next.rows.every(
+          (row, index) =>
+            row.thread === previous.rows[index]?.thread &&
+            row.depth === previous.rows[index]?.depth,
+        )
+      ) {
+        return previous;
+      }
+      previous = next;
+      return next;
+    }).pipe(Atom.withLabel(`thread-subagent-tree:${key}`));
+  });
+
   return {
     environmentThreadsAtom,
     environmentThreadIndexAtom,
@@ -222,6 +268,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     threadRefsAtom,
     threadShellsAtom,
     navigationThreadShellsAtom,
+    subagentTreeAtom: (ref: ScopedThreadRef) => subagentTreeAtomFamily(threadKey(ref)),
     threadShellsForProjectRefsAtom: (refs: ReadonlyArray<ScopedProjectRef>) =>
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),
     threadShellAtom: (ref: ScopedThreadRef) => threadShellAtomFamily(threadKey(ref)),

@@ -1,3 +1,4 @@
+import { ThreadSubagents } from "./thread-subagents";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -821,6 +822,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     );
 
   return (
+    <>
     <ThreadSwipeable
       threadKey={`${thread.environmentId}:${thread.id}`}
       backgroundColor={backgroundColor}
@@ -859,5 +861,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         </ControlPillMenu>
       )}
     </ThreadSwipeable>
+      <ThreadSubagents key={`${thread.environmentId}:${thread.id}`} thread={thread} />
+    </>
   );
 });

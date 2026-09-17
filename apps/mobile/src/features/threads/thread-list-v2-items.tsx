@@ -1,3 +1,4 @@
+import { ThreadSubagents } from "./thread-subagents";
 import { resolveThreadProviderInstance } from "./thread-provider-instance";
 import { RowPressable } from "../../components/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
@@ -1177,6 +1178,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </ControlPillMenu>
         )}
       </ThreadSwipeable>
+      <ThreadSubagents key={`${thread.environmentId}:${thread.id}`} thread={thread} />
     </View>
   );
 });
