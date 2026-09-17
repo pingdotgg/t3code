@@ -276,15 +276,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
   },
   pairingLink: {
-    setReady: (ready) => ipcRenderer.invoke(IpcChannels.PAIRING_LINK_READY_CHANNEL, ready),
-    onLink: (listener) => {
-      const wrappedListener = (_event: Electron.IpcRendererEvent, url: unknown) => {
-        if (typeof url !== "string") return;
-        listener(url);
+    takePending: () => ipcRenderer.invoke(IpcChannels.TAKE_PAIRING_LINKS_CHANNEL),
+    onAvailable: (listener) => {
+      const wrappedListener = () => {
+        listener();
       };
-      ipcRenderer.on(IpcChannels.PAIRING_LINK_CHANNEL, wrappedListener);
+      ipcRenderer.on(IpcChannels.PAIRING_LINK_AVAILABLE_CHANNEL, wrappedListener);
       return () => {
-        ipcRenderer.removeListener(IpcChannels.PAIRING_LINK_CHANNEL, wrappedListener);
+        ipcRenderer.removeListener(IpcChannels.PAIRING_LINK_AVAILABLE_CHANNEL, wrappedListener);
       };
     },
   },

@@ -227,6 +227,7 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
     desktopApplicationRuntimeLayer.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),
   ),
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
+  Layer.provideMerge(DesktopPairingLink.layerOpenUrls),
 );
 
 DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);

@@ -48,7 +48,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
   MENU_ACTION_CHANNEL,
-  PAIRING_LINK_CHANNEL,
+  PAIRING_LINK_AVAILABLE_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
@@ -1469,12 +1469,11 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("dispatches pairing links to the main window and reveals it", () =>
+  it.effect("notifies the main window of a queued pairing link and reveals it", () =>
     Effect.gen(function* () {
       const splash = makeFakeBrowserWindow();
       const main = makeFakeBrowserWindow();
       const scenario = yield* makeSplashScenario([splash.window, null, main.window]);
-      const link = "t3code://pair?host=https%3A%2F%2Fbackend.example.com#token=ABCD1234";
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
@@ -1482,9 +1481,9 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.showConnectingSplash;
         yield* Effect.exit(desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773")));
 
-        yield* desktopWindow.dispatchPairingLink(link);
+        yield* desktopWindow.dispatchPairingLinkAvailable;
 
-        assert.deepEqual(main.send.mock.calls, [[PAIRING_LINK_CHANNEL, link]]);
+        assert.deepEqual(main.send.mock.calls, [[PAIRING_LINK_AVAILABLE_CHANNEL, null]]);
         assert.equal(splash.send.mock.calls.length, 0);
       }).pipe(Effect.provide(scenario.layer));
     }),

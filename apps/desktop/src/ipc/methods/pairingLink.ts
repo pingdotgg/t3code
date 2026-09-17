@@ -5,12 +5,12 @@ import * as DesktopPairingLink from "../../app/DesktopPairingLink.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
-export const setReady = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.PAIRING_LINK_READY_CHANNEL,
-  payload: Schema.Boolean,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.pairingLink.setReady")(function* (ready) {
+export const takePending = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.TAKE_PAIRING_LINKS_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(Schema.String),
+  handler: Effect.fn("desktop.ipc.pairingLink.takePending")(function* () {
     const pairingLink = yield* DesktopPairingLink.DesktopPairingLink;
-    yield* pairingLink.setRendererReady(ready);
+    return yield* pairingLink.takePending;
   }),
 });

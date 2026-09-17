@@ -1,11 +1,10 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
-import type * as Electron from "electron";
+import * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
@@ -41,19 +40,52 @@ export function extractPairingLink(
   return null;
 }
 
+/**
+ * macOS delivers a cold-start URL through `open-url` moments after launch,
+ * before async startup reaches `DesktopPairingLink.register`. This listener is
+ * installed with the synchronous pre-ready setup and holds URLs until the
+ * service subscribes.
+ */
+export class DesktopOpenUrls extends Context.Service<
+  DesktopOpenUrls,
+  {
+    readonly subscribe: (listener: (url: string) => void) => Effect.Effect<void>;
+  }
+>()("@t3tools/desktop/app/DesktopPairingLink/DesktopOpenUrls") {}
+
+export const layerOpenUrls = Layer.effect(
+  DesktopOpenUrls,
+  Effect.sync(() => {
+    const buffered: Array<string> = [];
+    let subscriber: ((url: string) => void) | null = null;
+    Electron.app.on("open-url", (_event, url) => {
+      if (subscriber === null) {
+        buffered.push(url);
+        return;
+      }
+      subscriber(url);
+    });
+    return DesktopOpenUrls.of({
+      subscribe: (listener) =>
+        Effect.sync(() => {
+          subscriber = listener;
+          for (const url of buffered.splice(0)) listener(url);
+        }),
+    });
+  }),
+);
+
 export class DesktopPairingLink extends Context.Service<
   DesktopPairingLink,
   {
-    /**
-     * Start listening for pairing deep links. Registers before `ready` so a
-     * macOS `open-url` delivered at cold start is not missed.
-     */
+    /** Start collecting pairing deep links from the OS. */
     readonly register: Effect.Effect<void, never, Scope.Scope>;
     /**
-     * The renderer signals when its coordinator is mounted; a link that
-     * arrived earlier (cold start) is delivered then.
+     * Hand every queued link to the renderer, oldest first. Links only leave
+     * the queue this way, so a renderer that is reloading or not yet mounted
+     * cannot lose one; it drains the queue when its coordinator mounts.
      */
-    readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
+    readonly takePending: Effect.Effect<ReadonlyArray<string>>;
   }
 >()("@t3tools/desktop/app/DesktopPairingLink") {}
 
@@ -63,29 +95,19 @@ const { logInfo, logWarning } = makeComponentLogger("desktop-pairing-link");
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const electronApp = yield* ElectronApp.ElectronApp;
+  const openUrls = yield* DesktopOpenUrls;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const scheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
 
-  const pendingRef = yield* Ref.make(Option.none<string>());
-  const rendererReadyRef = yield* Ref.make(false);
+  const queueRef = yield* Ref.make<ReadonlyArray<string>>([]);
 
-  const deliver = Effect.fn("desktop.pairingLink.deliver")(function* (link: string) {
-    yield* logInfo("delivering pairing link to renderer");
-    yield* desktopWindow.dispatchPairingLink(link);
-  });
-
-  // Reveal the window right away so the click feels acknowledged, but hold
-  // the link until the renderer says it can act on it.
+  // Queue first, then nudge. A running renderer pulls on the nudge; one that
+  // is still loading pulls when it mounts and finds the link waiting.
   const receive = Effect.fn("desktop.pairingLink.receive")(function* (link: string) {
-    yield* Ref.set(pendingRef, Option.some(link));
-    if (yield* Ref.get(rendererReadyRef)) {
-      yield* Ref.set(pendingRef, Option.none());
-      yield* deliver(link);
-      return;
-    }
-    yield* logInfo("holding pairing link until renderer is ready");
-    yield* desktopWindow.activate;
+    yield* Ref.update(queueRef, (queue) => [...queue, link]);
+    yield* logInfo("queued pairing link");
+    yield* desktopWindow.dispatchPairingLinkAvailable;
   });
 
   const receiveFromCandidates = (candidates: ReadonlyArray<string>) => {
@@ -99,9 +121,9 @@ export const make = Effect.gen(function* () {
   };
 
   const register = Effect.gen(function* () {
-    // macOS hands URLs to the running (or launching) app via open-url. The
-    // Clerk bridge also listens here but only claims its own renderer origin.
-    yield* electronApp.on<[Electron.Event, string]>("open-url", (_event, url) => {
+    // macOS: open-url, including any buffered from before this service existed.
+    // The Clerk bridge also listens here but only claims its own renderer origin.
+    yield* openUrls.subscribe((url) => {
       receiveFromCandidates([url]);
     });
     // Windows and Linux launch a second process with the URL in argv; the
@@ -116,20 +138,11 @@ export const make = Effect.gen(function* () {
     receiveFromCandidates(process.argv);
   }).pipe(Effect.withSpan("desktop.pairingLink.register"));
 
-  const setRendererReady = Effect.fn("desktop.pairingLink.setRendererReady")(function* (
-    ready: boolean,
-  ) {
-    yield* Ref.set(rendererReadyRef, ready);
-    if (!ready) return;
-    const pending = yield* Ref.getAndSet(pendingRef, Option.none());
-    if (Option.isSome(pending)) {
-      yield* deliver(pending.value).pipe(
-        Effect.catchCause((cause) => logWarning("failed to deliver pairing link", { cause })),
-      );
-    }
-  });
+  const takePending = Ref.getAndSet(queueRef, []).pipe(
+    Effect.withSpan("desktop.pairingLink.takePending"),
+  );
 
-  return DesktopPairingLink.of({ register, setRendererReady });
+  return DesktopPairingLink.of({ register, takePending });
 });
 
 export const layer = Layer.effect(DesktopPairingLink, make);

@@ -20,7 +20,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
   MENU_ACTION_CHANNEL,
-  PAIRING_LINK_CHANNEL,
+  PAIRING_LINK_AVAILABLE_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
@@ -129,8 +129,8 @@ export class DesktopWindow extends Context.Service<
     readonly dispatchSnapShotEvent: (
       event: DesktopSnapShotEvent,
     ) => Effect.Effect<void, DesktopWindowError>;
-    /** Hand a `t3code://pair` deep link to the renderer and bring the window forward. */
-    readonly dispatchPairingLink: (url: string) => Effect.Effect<void, DesktopWindowError>;
+    /** Tell the renderer a `t3code://pair` link is queued and bring the window forward. */
+    readonly dispatchPairingLinkAvailable: Effect.Effect<void, DesktopWindowError>;
     // Zooms the main window's own webContents. The Electron `zoomIn`/`zoomOut`
     // menu roles act on whichever webContents has keyboard focus, so with an
     // embedded preview WebContentsView (or DevTools) focused they zoom the
@@ -1003,9 +1003,9 @@ export const make = Effect.gen(function* () {
         reveal: event.type === "started",
       });
     }),
-    dispatchPairingLink: Effect.fn("desktop.window.dispatchPairingLink")(function* (url) {
-      yield* dispatchRendererEvent(PAIRING_LINK_CHANNEL, url);
-    }),
+    dispatchPairingLinkAvailable: dispatchRendererEvent(PAIRING_LINK_AVAILABLE_CHANNEL, null).pipe(
+      Effect.withSpan("desktop.window.dispatchPairingLinkAvailable"),
+    ),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
       const window = yield* focusedMainWindow;

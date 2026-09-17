@@ -12,10 +12,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 /**
- * Turns a `t3code://pair?host=...&label=...#token=...` deep link, forwarded by
- * the Electron main process, into a saved remote environment. The link is
+ * Turns `t3code://pair?host=...&label=...#token=...` deep links, queued by the
+ * Electron main process, into saved remote environments. The link is
  * attacker-influenceable input and its token is one-time, so the user confirms
- * the host before the token is exchanged.
+ * the host before the token is exchanged. Links are pulled from the main
+ * process rather than pushed, so nothing is lost while the renderer loads.
  */
 export function DesktopPairingLinkCoordinator() {
   const pairingLink = window.desktopBridge?.pairingLink;
@@ -72,19 +73,18 @@ export function DesktopPairingLinkCoordinator() {
 
   useEffect(() => {
     if (pairingLink === undefined) return;
-    let subscribed = true;
-    const unsubscribe = pairingLink.onLink((link) => {
-      queueRef.current = queueRef.current.then(() => handleLink(link)).catch(() => undefined);
-    });
-    // Skip readiness if React runs cleanup before this subscription can receive links.
-    queueMicrotask(() => {
-      if (subscribed) void pairingLink.setReady(true).catch(() => undefined);
-    });
-    return () => {
-      subscribed = false;
-      void pairingLink.setReady(false).catch(() => undefined);
-      unsubscribe();
+    // Each link gets its own confirm dialog, one at a time, in arrival order.
+    const drain = () => {
+      queueRef.current = queueRef.current
+        .then(() => pairingLink.takePending())
+        .then(async (links) => {
+          for (const link of links) await handleLink(link);
+        })
+        .catch(() => undefined);
     };
+    const unsubscribe = pairingLink.onAvailable(drain);
+    drain();
+    return unsubscribe;
   }, [pairingLink]);
 
   return null;
