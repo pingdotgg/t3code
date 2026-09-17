@@ -1627,3 +1627,38 @@ it("uses a compact reasoning preview and a short expanded heading", () => {
   expect(workEntryRowLabel(entry, true)).toBe("Thinking");
   expect(workEntryRowLabel({ ...entry, toolLifecycleStatus: "completed" }, true)).toBe("Thought");
 });
+
+it.each(["First paragraph.\n\nSecond paragraph.", ""])(
+  "previews live reasoning text %j",
+  (text) => {
+    const thought: OrchestrationV2TurnItem = {
+      ...base("live-thought", "2026-06-20T00:00:02.000Z", 1),
+      type: "reasoning",
+      status: "running",
+      completedAt: null,
+      streaming: true,
+      text,
+    };
+    const feed = buildThreadFeed([projected(userMessage(), 0), projected(thought, 1)]);
+    const rows = deriveThreadFeedPresentation(
+      feed,
+      { runId, status: "running", startedAt: "2026-06-20T00:00:01.000Z", completedAt: null },
+      new Set(),
+      new Set(),
+      "2026-06-20T00:00:01.000Z",
+    );
+    if (text) {
+      expect(rows.find((row) => row.type === "work-toggle")).toMatchObject({
+        summary: "First paragraph. Second paragraph.",
+        live: true,
+      });
+    } else {
+      expect(
+        rows.some(
+          (row) =>
+            row.type === "thinking" || (row.type === "work-toggle" && row.summary === "Thinking"),
+        ),
+      ).toBe(true);
+    }
+  },
+);
