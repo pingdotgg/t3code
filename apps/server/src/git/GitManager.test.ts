@@ -2259,6 +2259,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status.refName).toBe("feature/pushed-plain");
       expect(status.pr?.number).toBe(88);
       expect(ghCalls.some((call) => call.includes("--head main"))).toBe(false);
+    }),
+  );
+
   it.effect(
     "status finds a fork PR pushed under the branch's own name despite a default upstream",
     () =>
@@ -2834,6 +2837,52 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["remote", "add", "replacement", replacementRemoteDir]);
       yield* runGit(repoDir, ["push", "replacement", "feature/pr-repointed"]);
       yield* runGit(repoDir, ["remote", "set-url", "origin", replacementRemoteDir]);
+      yield* manager.invalidateStatus(repoDir);
+
+      const second = yield* manager.status({ cwd: repoDir });
+      expect(second.pr).toBeNull();
+    }),
+  );
+
+  it.effect("status drops the last known PR when only the base remote is repointed", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-base-repointed"]);
+      const headRemoteDir = yield* createBareRemote();
+      const baseRemoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", headRemoteDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", baseRemoteDir]);
+      yield* runGit(repoDir, ["config", "remote.upstream.gh-resolved", "base"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-base-repointed"]);
+
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            encodeCliJson([
+              {
+                number: 218,
+                title: "Old base PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/218",
+                baseRefName: "main",
+                headRefName: "feature/pr-base-repointed",
+              },
+            ]),
+          ],
+          failWith: new GitHubCli.GitHubCliUnavailableError({
+            command: "gh",
+            cwd: repoDir,
+            cause: new Error("rate limited"),
+          }),
+          failAfterCalls: 1,
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      expect(first.pr?.number).toBe(218);
+
+      const replacementRemoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "set-url", "upstream", replacementRemoteDir]);
       yield* manager.invalidateStatus(repoDir);
 
       const second = yield* manager.status({ cwd: repoDir });

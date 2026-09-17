@@ -1129,6 +1129,7 @@ export const make = Effect.gen(function* () {
     readonly headBranch: string;
     readonly remoteName: string | null;
     readonly headRemoteUrlKey: string | null;
+    readonly targetRemoteUrlKey: string | null;
   }
   const lastKnownPrByBranchKey = new Map<string, LastKnownPr>();
   const rememberLastKnownPr = (branchKey: string, entry: LastKnownPr) => {
@@ -1145,11 +1146,21 @@ export const make = Effect.gen(function* () {
   };
   const resolveLastKnownPr = (
     branchKey: string,
-    current: Pick<LastKnownPr, "upstreamRef" | "headBranch" | "remoteName" | "headRemoteUrlKey">,
+    current: Pick<
+      LastKnownPr,
+      "upstreamRef" | "headBranch" | "remoteName" | "headRemoteUrlKey" | "targetRemoteUrlKey"
+    >,
   ): ReturnType<typeof toStatusPr> | null => {
     const lastKnown = lastKnownPrByBranchKey.get(branchKey);
     if (!lastKnown) return null;
     if (lastKnown.headBranch !== current.headBranch) {
+      return null;
+    }
+    if (
+      lastKnown.targetRemoteUrlKey !== null &&
+      current.targetRemoteUrlKey !== null &&
+      lastKnown.targetRemoteUrlKey !== current.targetRemoteUrlKey
+    ) {
       return null;
     }
 
@@ -1217,6 +1228,7 @@ export const make = Effect.gen(function* () {
             headBranch: headContext.headBranch,
             remoteName: headContext.remoteName,
             headRemoteUrlKey: headContext.headRemoteUrlKey,
+            targetRemoteUrlKey: headContext.targetRemoteUrlKey,
           }),
         ),
       ),
@@ -1246,6 +1258,7 @@ export const make = Effect.gen(function* () {
               headBranch: headContext.headBranch,
               remoteName: headContext.remoteName,
               headRemoteUrlKey: headContext.headRemoteUrlKey,
+              targetRemoteUrlKey: headContext.targetRemoteUrlKey,
             }),
           ),
         ),
