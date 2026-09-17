@@ -2468,6 +2468,37 @@ it.effect("mutations proceed while the pinned authorizing run is still active", 
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
+it.effect(
+  "update succeeds on a paused task bound to an archived thread when pinned modes match",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService;
+      yield* setBoundThreadState(archiveBoundThreadId, "active");
+      // Stored task modes deliberately differ from the bound thread's so the
+      // resolved expectation can only match the thread's modes.
+      const { task: paused } = yield* tasks.upsert({
+        ...boundTaskInput,
+        enabled: false,
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      });
+      yield* setBoundThreadState(archiveBoundThreadId, "archived");
+
+      // MCP's scheduledTaskExecutionModes resolves the archived shell's modes
+      // and pins them; bindingExecutionModes resolves the same row inside the
+      // transaction, so the pinned expectation must hold.
+      const edited = yield* tasks.update({
+        id: paused.id,
+        projectId: archivedBindingProjectId,
+        title: "still editable",
+        expectedExecutionRuntimeMode: "full-access",
+        expectedExecutionInteractionMode: "default",
+      });
+      assert.isTrue(Option.isSome(edited));
+      if (Option.isSome(edited)) assert.equal(edited.value.task.title, "still editable");
+    }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
 it.effect("upsert rejects when the bound destination's modes drifted since authorization", () =>
   Effect.gen(function* () {
     const tasks = yield* ScheduledTaskService;
