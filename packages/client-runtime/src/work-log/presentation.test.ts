@@ -204,6 +204,25 @@ describe("summarizeToolGroup", () => {
     ...overrides,
   });
 
+  it("excludes reasoning from mixed tool counts and icons", () => {
+    const thought = entry("thought", {
+      itemType: "reasoning",
+      tone: "thinking",
+      detail: "Check the source",
+    });
+    const command = entry("command", { itemType: "command_execution", command: "vp test run" });
+    expect(summarizeToolGroup([thought, command, { ...thought, id: "thought-2" }])).toEqual({
+      summary: "Ran 1 command",
+      hasFailure: false,
+    });
+    expect(toolGroupSummaryKind([thought, command])).toBe("command");
+    expect(summarizeToolGroup([thought]).summary).toBe("Thought");
+    expect(summarizeToolGroup([thought, { ...thought, id: "thought-2" }]).summary).toBe(
+      "Thought (×2)",
+    );
+    expect(toolGroupSummaryKind([thought])).toBe("reasoning");
+  });
+
   it("counts created threads alongside adjacent commands", () => {
     expect(
       summarizeToolGroup([

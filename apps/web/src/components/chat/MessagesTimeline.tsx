@@ -2904,6 +2904,9 @@ const WorkGroupSection = memo(function WorkGroupSection({
   );
 
   if (nonEmptyEntries.length === 0) return null;
+  if (isExpandedToolGroup && nonEmptyEntries.every((entry) => entry.itemType === "reasoning")) {
+    return <ReasoningTraceContent entries={nonEmptyEntries} />;
+  }
   if (isExpandedToolGroup) {
     return (
       <ExpandedWorkGroupEntries
@@ -3403,6 +3406,8 @@ function toolGroupSummaryIconName(
       return "wrench";
     case "dynamic-tool":
       return "hammer";
+    case "reasoning":
+      return "brain";
     case "agent-tool":
       return "bot";
     case "tone-tool":
@@ -4705,6 +4710,37 @@ const stopRowToggleWhileSelectingText = (e: MouseEvent<HTMLElement>) => {
   }
 };
 
+function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
+  const ctx = use(TimelineRowCtx);
+  const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
+  return (
+    <div
+      className="ms-7 flex max-h-96 cursor-auto flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
+      onClick={stopRowToggle}
+      onPointerDown={stopRowToggle}
+      onKeyDown={stopRowToggle}
+    >
+      {entries.map((entry) => (
+        <ChatMarkdown
+          key={entry.id}
+          className="text-foreground"
+          text={entry.detail ?? ""}
+          cwd={ctx.markdownCwd}
+          threadRef={ctx.threadRef ?? undefined}
+          skills={ctx.skills}
+          isStreaming={
+            isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress"
+          }
+          headingLevelOffset={MESSAGE_HEADING_LEVEL}
+          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onImageExpand={ctx.onImageExpand}
+          lineBreaks
+        />
+      ))}
+    </div>
+  );
+}
+
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
@@ -4746,7 +4782,13 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     showWarningIndicator || showDestructiveRowStyle
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
-  const previewText = displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot);
+  const isReasoning = workEntry.itemType === "reasoning";
+  const previewText =
+    isReasoning && expanded
+      ? workEntry.toolLifecycleStatus === "inProgress"
+        ? "Thinking"
+        : "Thought"
+      : (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
   const answerPreview = workEntry.questionAnswer
     ? getQuestionAnswerPreview(workEntry.questionAnswer)
     : null;
@@ -4768,14 +4810,15 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       workEntry.changedFiles?.length ||
       viewedImage,
     );
-  const expandedBody = expanded
-    ? buildToolCallExpandedBody(
-        workEntry,
-        workspaceRoot,
-        previewText,
-        viewedImage ? viewedImagePath : null,
-      )
-    : null;
+  const expandedBody =
+    expanded && !isReasoning
+      ? buildToolCallExpandedBody(
+          workEntry,
+          workspaceRoot,
+          previewText,
+          viewedImage ? viewedImagePath : null,
+        )
+      : null;
   const canExpandProjectedItem = canExpand || workEntry.projectedItem !== undefined;
   // Reserve destructive row styling for severe failures, not routine tool errors.
   const iconWrapperClass = cn(
@@ -4929,7 +4972,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       {expanded && workEntry.questionAnswer ? (
         <QuestionAnswerHistory answer={workEntry.questionAnswer} />
       ) : null}
+      {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
       {expanded &&
+      !isReasoning &&
       !workEntry.questionAnswer &&
       canExpandProjectedItem &&
       (expandedBody || workEntry.projectedItem) ? (

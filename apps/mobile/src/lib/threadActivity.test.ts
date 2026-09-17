@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  workEntryRowLabel,
   isContextHandoffActivityGroup,
   buildThreadFeed,
   deriveThreadFeedPresentation,
@@ -1610,4 +1611,19 @@ it("renders automatic completion as a neutral activity while retaining its detai
     ),
   ).toBe(true);
   expect(buildThreadFeed([projected(userMessage(), 0)])[0]?.type).toBe("message");
+});
+
+it("uses a compact reasoning preview and a short expanded heading", () => {
+  const entry = {
+    id: "thought",
+    label: "Thinking",
+    createdAt: "2026-09-17T12:00:00Z",
+    itemType: "reasoning" as const,
+    tone: "thinking" as const,
+    detail: "Check **ordering**.\nThen run the test.",
+    toolLifecycleStatus: "inProgress" as const,
+  };
+  expect(workEntryRowLabel(entry)).toBe("Check **ordering**. Then run the test.");
+  expect(workEntryRowLabel(entry, true)).toBe("Thinking");
+  expect(workEntryRowLabel({ ...entry, toolLifecycleStatus: "completed" }, true)).toBe("Thought");
 });

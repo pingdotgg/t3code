@@ -1475,6 +1475,7 @@ function renderFeedEntry(
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly renderViewedImage: MarkdownImageRenderer;
+    readonly renderReasoning: (text: string) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly screenColor: string;
     readonly userBubbleColor: string | import("react-native").ColorValue;
@@ -1867,6 +1868,7 @@ function renderFeedEntry(
       onCopyRow={props.onCopyWorkRow}
       onToggleRow={props.onToggleWorkRow}
       renderImage={props.renderViewedImage}
+      renderReasoning={props.renderReasoning}
     />
   );
 }
@@ -2376,6 +2378,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [props.environmentId, props.threadId, props.workspaceRoot],
   );
   const markdownStyles = useMarkdownStyles(onMarkdownLinkPress, renderMarkdownImage);
+  const renderReasoning = useCallback(
+    (text: string) => (
+      <AssistantMarkdownContent
+        markdown={text}
+        markdownStyles={markdownStyles.assistant}
+        linkHandlers={markdownLinkHandlers}
+        renderImage={renderMarkdownImage}
+        skills={props.skills}
+      />
+    ),
+    [markdownStyles.assistant, markdownLinkHandlers, renderMarkdownImage, props.skills],
+  );
   const reviewCommentColors = useReviewCommentColors();
   const unsettledTurnId = threadFeedRunIsUnsettled(props.latestRun) ? props.latestRun.runId : null;
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
@@ -2795,6 +2809,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           if (isContextCompactionActivityGroup(entry) || isContextHandoffActivityGroup(entry)) {
             return undefined;
           }
+          if (
+            entry.activities[0]?.groupedToolDetail &&
+            entry.activities.every((activity) => activity.workEntry.itemType === "reasoning")
+          ) {
+            return undefined;
+          }
           // Expanded rows append a variable detail block — fall back to
           // measurement for those groups.
           return entry.activities.some(
@@ -2839,6 +2859,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             markdownLinkHandlers,
             renderMarkdownImage,
             renderViewedImage,
+            renderReasoning,
             iconSubtleColor,
             screenColor,
             userBubbleColor,
@@ -2898,6 +2919,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.workspaceRoot,
       renderMarkdownImage,
       renderViewedImage,
+      renderReasoning,
     ],
   );
 
