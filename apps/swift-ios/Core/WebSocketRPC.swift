@@ -374,6 +374,8 @@ public actor WebSocketRPCClient {
         loopTask?.cancel()
         loopTask = nil
         await disconnected()
+        // Closing suspends: a later stop must remain authoritative.
+        guard desired else { return }
         start()
     }
 
