@@ -727,13 +727,15 @@ const make = Effect.gen(function* () {
           ),
         );
       if (otherCwd === null) continue;
-      const relative = path.relative(canonicalCwd, otherCwd);
-      // An owner in a subdirectory is still affected by a restore of the whole checkout.
-      if (
-        relative === "" ||
-        (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
-      )
-        return false;
+      const isWithin = (parent: string, child: string) => {
+        const relative = path.relative(parent, child);
+        return (
+          relative === "" ||
+          (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+        );
+      };
+      // Parent and nested owners can both have files inside the restore target.
+      if (isWithin(canonicalCwd, otherCwd) || isWithin(otherCwd, canonicalCwd)) return false;
     }
     return true;
   });

@@ -512,7 +512,7 @@ describe("CheckpointReactor", () => {
       const harness = yield* Effect.promise(() =>
         createHarness({
           secondThreadSharingWorktree: true,
-          ...(owner === "alias" || owner === "nested"
+          ...(owner === "alias" || owner === "nested" || owner === "ancestor"
             ? {
                 secondThreadWorktreePath: (cwd: string) => {
                   if (owner === "nested") {
