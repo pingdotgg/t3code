@@ -292,10 +292,9 @@ const parseTypeAliasDeclaration = (ta: ast.TypeAliasDeclaration) =>
       return []
     }
     const name = ta.getName()
-    const len = ta.getTypeParameters().length
-    const type = parseType(ta)
+    const typeParameters = ta.getTypeParameters().map((parameter) => parameter.getText()).join(", ")
     const definition = ta.getTypeNode()?.getText()
-    const signature = `type ${len > 0 ? type : name} = ${definition}`
+    const signature = `type ${name}${typeParameters.length > 0 ? `<${typeParameters}>` : ""} = ${definition}`
     const position = yield* parsePosition(ta)
     return [
       new Domain.TypeAlias(

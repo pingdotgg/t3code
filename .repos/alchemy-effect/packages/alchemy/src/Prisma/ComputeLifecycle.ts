@@ -1,16 +1,44 @@
+import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Category from "@distilled.cloud/core/category";
 import {
-  isConflict,
-  isNotFound,
-  PrismaApiError,
-  type PrismaManagementClient,
-} from "./Client.ts";
+  type GetServicesResponse,
+  deleteService,
+  deleteDeployment,
+  deleteProject,
+  getServices,
+} from "@distilled.cloud/prisma/management";
 import { stopDeploymentIdempotent } from "./Internal/DeploymentActions.ts";
 import { observeDeployment } from "./Internal/DeploymentObserve.ts";
-import type { Deployment } from "./Types.ts";
+import type { ObservedDeployment } from "./Internal/Observed.ts";
+import { PrismaPaginationError } from "./Internal/Pagination.ts";
 export { isConflict } from "./Client.ts";
+
+/**
+ * A wait exceeded its `timeoutSeconds` budget before the deployment reached
+ * the requested status.
+ */
+export class PrismaDeploymentWaitTimeout extends Data.TaggedError(
+  "PrismaDeploymentWaitTimeout",
+)<{
+  message: string;
+}> {}
+
+/** `waitForDeploymentStatus` was called with a non-positive timeout or poll interval. */
+export class PrismaDeploymentWaitInvalidOptions extends Data.TaggedError(
+  "PrismaDeploymentWaitInvalidOptions",
+)<{
+  message: string;
+}> {}
+
+/** The deployment reached the terminal `failed` status while being waited on. */
+export class PrismaDeploymentFailed extends Data.TaggedError(
+  "PrismaDeploymentFailed",
+)<{
+  message: string;
+}> {}
 
 export interface WaitForDeploymentStatusOptions {
   /**
@@ -85,29 +113,16 @@ const ensureError = (error: unknown): Error =>
         cause: error,
       });
 
-const isProjectDeleteBlocked = (error: unknown): boolean =>
-  isConflict(error) ||
-  (error instanceof PrismaApiError &&
-    error.method === "DELETE" &&
-    error.path.startsWith("/v1/projects/") &&
-    error.status === 400);
-
 const deploymentDeleteFailed = (
   deploymentId: string,
   statusAtDelete: string | undefined,
   error: unknown,
 ) => {
   const format = (error: unknown) =>
-    error instanceof PrismaApiError
-      ? `Prisma API returned HTTP ${error.status}: ${error.message}`
-      : error instanceof Error
-        ? error.message
-        : String(error);
+    error instanceof Error ? error.message : String(error);
   const detail = format(error);
   const isKnownStoppedDeleteFailure =
-    statusAtDelete === "stopped" &&
-    error instanceof PrismaApiError &&
-    error.status >= 500;
+    statusAtDelete === "stopped" && Category.hasCategory(error, "ServerError");
   return new Error(
     [
       `Failed to delete Prisma deployment '${deploymentId}' while it was in status '${statusAtDelete ?? "unknown"}'.`,
@@ -129,12 +144,11 @@ const deploymentWaitTimedOut = (
   targetStatus: "running" | "stopped",
   lastStatus: string | undefined,
 ) =>
-  new Error(
-    `Timed out waiting for Prisma deployment '${deploymentId}' to reach '${targetStatus}' (last status: '${lastStatus ?? "unknown"}')`,
-  );
+  new PrismaDeploymentWaitTimeout({
+    message: `Timed out waiting for Prisma deployment '${deploymentId}' to reach '${targetStatus}' (last status: '${lastStatus ?? "unknown"}')`,
+  });
 
 export const waitForDeploymentStatus = Effect.fn(function* (
-  client: PrismaManagementClient,
   deploymentId: string,
   targetStatus: "running" | "stopped",
   options: WaitForDeploymentStatusOptions = {},
@@ -143,12 +157,16 @@ export const waitForDeploymentStatus = Effect.fn(function* (
   const intervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
     return yield* Effect.fail(
-      new Error("timeoutSeconds must be a positive finite number."),
+      new PrismaDeploymentWaitInvalidOptions({
+        message: "timeoutSeconds must be a positive finite number.",
+      }),
     );
   }
   if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
     return yield* Effect.fail(
-      new Error("pollIntervalMs must be a positive finite number."),
+      new PrismaDeploymentWaitInvalidOptions({
+        message: "pollIntervalMs must be a positive finite number.",
+      }),
     );
   }
   const timeoutMs = timeoutSeconds * 1_000;
@@ -165,10 +183,9 @@ export const waitForDeploymentStatus = Effect.fn(function* (
         deploymentWaitTimedOut(deploymentId, targetStatus, lastStatus),
       );
     }
-    const deploymentOption = yield* observeDeployment(
-      client,
-      deploymentId,
-    ).pipe(Effect.timeoutOption(Duration.millis(remainingBeforeObservation)));
+    const deploymentOption = yield* observeDeployment(deploymentId).pipe(
+      Effect.timeoutOption(Duration.millis(remainingBeforeObservation)),
+    );
     if (Option.isNone(deploymentOption)) {
       return yield* Effect.fail(
         deploymentWaitTimedOut(deploymentId, targetStatus, lastStatus),
@@ -177,11 +194,13 @@ export const waitForDeploymentStatus = Effect.fn(function* (
     const deployment = deploymentOption.value;
     lastStatus = deployment.status;
     if (deployment.status === targetStatus) {
-      return deployment as Deployment;
+      return deployment satisfies ObservedDeployment;
     }
     if (deployment.status === "failed") {
       return yield* Effect.fail(
-        new Error(`Prisma deployment '${deploymentId}' failed`),
+        new PrismaDeploymentFailed({
+          message: `Prisma deployment '${deploymentId}' failed`,
+        }),
       );
     }
 
@@ -204,81 +223,60 @@ export const waitForDeploymentStatus = Effect.fn(function* (
  * Uses the canonical deployment lifecycle routes. Errors include the observed
  * status and exact manual route for cleanup.
  */
-export const destroyDeployment: (
-  client: PrismaManagementClient,
+export const destroyDeployment = Effect.fn(function* (
   deploymentId: string,
-  options?: WaitForDeploymentStatusOptions,
-) => Effect.Effect<DestroyDeploymentResult, Error, never> = Effect.fn(
-  function* (
-    client: PrismaManagementClient,
-    deploymentId: string,
-    options: WaitForDeploymentStatusOptions = {},
-  ) {
-    const deployment = yield* observeDeployment(client, deploymentId).pipe(
-      Effect.catchIf(isNotFound, () => Effect.succeed(undefined)),
-    );
-    if (!deployment) {
-      return {
-        deploymentId,
-        previousStatus: undefined,
-        stopped: false,
-        // The postcondition is already satisfied. Report this consistently
-        // with delete calls whose 404 is observed after cleanup starts.
-        deleted: true,
-      } satisfies DestroyDeploymentResult;
-    }
-
-    const previousStatus = deployment.status;
-    let statusAtDelete = previousStatus;
-    let stopped = false;
-    if (
-      deployment.status === "running" ||
-      deployment.status === "provisioning"
-    ) {
-      yield* stopDeploymentIdempotent(client, deploymentId).pipe(
-        Effect.catchIf(
-          (e) => isNotFound(e),
-          () => Effect.void,
-        ),
-        Effect.mapError(ensureError),
-      );
-      const stoppedVersion = yield* waitForDeploymentStatus(
-        client,
-        deploymentId,
-        "stopped",
-        options,
-      ).pipe(Effect.catchIf(isNotFound, () => Effect.succeed(undefined)));
-      statusAtDelete = stoppedVersion?.status ?? "stopped";
-      stopped = true;
-    }
-
-    yield* client.deleteDeployment(deploymentId).pipe(
-      Effect.catchIf(isNotFound, () => Effect.void),
-      Effect.catch((error) =>
-        Effect.fail(
-          deploymentDeleteFailed(deploymentId, statusAtDelete, error),
-        ),
-      ),
-    );
-
+  options: WaitForDeploymentStatusOptions = {},
+) {
+  const deployment = yield* observeDeployment(deploymentId).pipe(
+    Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+  );
+  if (!deployment) {
     return {
       deploymentId,
-      previousStatus,
-      stopped,
+      previousStatus: undefined,
+      stopped: false,
+      // The postcondition is already satisfied. Report this consistently
+      // with delete calls whose 404 is observed after cleanup starts.
       deleted: true,
     } satisfies DestroyDeploymentResult;
-  },
-);
+  }
+
+  const previousStatus = deployment.status;
+  let statusAtDelete = previousStatus;
+  let stopped = false;
+  if (deployment.status === "running" || deployment.status === "provisioning") {
+    yield* stopDeploymentIdempotent(deploymentId).pipe(
+      Effect.catchTag("NotFound", () => Effect.void),
+      Effect.mapError(ensureError),
+    );
+    const stoppedVersion = yield* waitForDeploymentStatus(
+      deploymentId,
+      "stopped",
+      options,
+    ).pipe(Effect.catchTag("NotFound", () => Effect.succeed(undefined)));
+    statusAtDelete = stoppedVersion?.status ?? "stopped";
+    stopped = true;
+  }
+
+  yield* deleteDeployment({ deploymentId }).pipe(
+    Effect.catchTag("NotFound", () => Effect.void),
+    Effect.catch((error) =>
+      Effect.fail(deploymentDeleteFailed(deploymentId, statusAtDelete, error)),
+    ),
+  );
+
+  return {
+    deploymentId,
+    previousStatus,
+    stopped,
+    deleted: true,
+  } satisfies DestroyDeploymentResult;
+});
 
 /**
  * Deletes an App. The canonical App delete endpoint cascades its deployments.
  */
-export const destroyApp: (
-  client: PrismaManagementClient,
-  appId: string,
-  options?: WaitForDeploymentStatusOptions & { keepApp?: boolean },
-) => Effect.Effect<DestroyAppResult, Error, never> = Effect.fn(function* (
-  client: PrismaManagementClient,
+export const destroyApp = Effect.fn(function* (
   appId: string,
   options: WaitForDeploymentStatusOptions & {
     keepApp?: boolean;
@@ -287,10 +285,10 @@ export const destroyApp: (
   let appDeleted = false;
   if (!options.keepApp) {
     for (let attempt = 0; attempt < DELETE_CONFLICT_RETRY_ATTEMPTS; attempt++) {
-      const deleted = yield* client.deleteApp(appId).pipe(
+      const deleted = yield* deleteService({ serviceId: appId }).pipe(
         Effect.as(true),
-        Effect.catchIf(isNotFound, () => Effect.succeed(true)),
-        Effect.catchIf(isConflict, (error) =>
+        Effect.catchTag("NotFound", () => Effect.succeed(true)),
+        Effect.catchTag("Conflict", (error) =>
           attempt + 1 < DELETE_CONFLICT_RETRY_ATTEMPTS
             ? deleteRetryDelay(attempt).pipe(Effect.as(false))
             : Effect.fail(error),
@@ -314,74 +312,95 @@ export const destroyApp: (
  *
  * Callers can start from the project ID and let Alchemy discover the App IDs.
  */
-export const destroyProjectApps: (
-  client: PrismaManagementClient,
+export const destroyProjectApps = Effect.fn(function* (
   projectId: string,
-  options?: WaitForDeploymentStatusOptions & {
+  options: WaitForDeploymentStatusOptions & {
     keepProject?: boolean;
     keepApp?: boolean;
-  },
-) => Effect.Effect<DestroyProjectAppsResult, Error, never> = Effect.fn(
-  function* (
-    client: PrismaManagementClient,
-    projectId: string,
-    options: WaitForDeploymentStatusOptions & {
-      keepProject?: boolean;
-      keepApp?: boolean;
-    } = {},
-  ) {
-    const deletedAppIds = new Set<string>();
+  } = {},
+) {
+  const deletedAppIds = new Set<string>();
 
-    const cleanupApps = Effect.fn(function* () {
-      const apps = yield* client
-        .listApps({
-          projectId,
-          limit: 100,
-        })
-        .pipe(Effect.catchIf(isNotFound, () => Effect.succeed(undefined)));
-      if (!apps) return false;
-      for (const app of apps) {
-        const result = yield* destroyApp(client, app.id, options);
-        if (result.appDeleted) deletedAppIds.add(app.id);
-      }
-      return true;
-    });
-
-    yield* cleanupApps();
-
-    let projectDeleted = false;
-    if (!options.keepProject) {
-      for (
-        let attempt = 0;
-        attempt < DELETE_CONFLICT_RETRY_ATTEMPTS;
-        attempt++
-      ) {
-        const deleted = yield* client.deleteProject(projectId).pipe(
-          Effect.as(true),
-          Effect.catchIf(isNotFound, () => Effect.succeed(true)),
-          Effect.catchIf(isProjectDeleteBlocked, (error) =>
-            attempt + 1 < DELETE_CONFLICT_RETRY_ATTEMPTS
-              ? cleanupApps().pipe(
-                  Effect.andThen(deleteRetryDelay(attempt)),
-                  Effect.as(false),
-                )
-              : Effect.fail(error),
-          ),
+  const cleanupApps = Effect.fn(function* () {
+    // Distilled emits the cursor-paginated list operations as plain ops, so
+    // callers walk `pagination` themselves (see `src/Neon/Project.ts`). A 404
+    // from the project-filtered listing means the project is already gone.
+    const apps = yield* Effect.gen(function* () {
+      const items: GetServicesResponse["data"][number][] = [];
+      let cursor: string | undefined;
+      while (true) {
+        const page = yield* getServices(
+          cursor === undefined
+            ? { projectId, limit: 100 }
+            : { projectId, limit: 100, cursor },
         );
-        if (deleted) {
-          projectDeleted = true;
-          break;
+        items.push(...page.data);
+        const nextCursor = page.pagination.nextCursor;
+        if (!page.pagination.hasMore) break;
+        if (nextCursor === null) {
+          return yield* Effect.fail(
+            new PrismaPaginationError({
+              message:
+                "Invalid Prisma Management API pagination response from getServices: hasMore was true without a non-empty nextCursor",
+            }),
+          );
         }
+        cursor = nextCursor;
+      }
+      return items;
+    }).pipe(Effect.catchTag("NotFound", () => Effect.succeed(undefined)));
+    if (!apps) return false;
+    for (const app of apps) {
+      const result = yield* destroyApp(app.id, options);
+      if (result.appDeleted) deletedAppIds.add(app.id);
+    }
+    return true;
+  });
+
+  yield* cleanupApps();
+
+  let projectDeleted = false;
+  if (!options.keepProject) {
+    for (let attempt = 0; attempt < DELETE_CONFLICT_RETRY_ATTEMPTS; attempt++) {
+      // A 409, or the API's 400 on a still-populated project, means the
+      // delete is blocked on remaining member resources: re-clean and retry.
+      const deleted = yield* deleteProject({ id: projectId }).pipe(
+        Effect.as(true),
+        Effect.catchTag("NotFound", () => Effect.succeed(true)),
+        Effect.catchTag("Conflict", (error) =>
+          Effect.gen(function* () {
+            if (attempt + 1 >= DELETE_CONFLICT_RETRY_ATTEMPTS) {
+              return yield* Effect.fail(error);
+            }
+            yield* cleanupApps();
+            yield* deleteRetryDelay(attempt);
+            return false;
+          }),
+        ),
+        Effect.catchTag("BadRequest", (error) =>
+          Effect.gen(function* () {
+            if (attempt + 1 >= DELETE_CONFLICT_RETRY_ATTEMPTS) {
+              return yield* Effect.fail(error);
+            }
+            yield* cleanupApps();
+            yield* deleteRetryDelay(attempt);
+            return false;
+          }),
+        ),
+      );
+      if (deleted) {
+        projectDeleted = true;
+        break;
       }
     }
+  }
 
-    return {
-      projectId,
-      deletedAppIds: Array.from(deletedAppIds),
-      projectDeleted,
-    } satisfies DestroyProjectAppsResult;
-  },
-);
+  return {
+    projectId,
+    deletedAppIds: Array.from(deletedAppIds),
+    projectDeleted,
+  } satisfies DestroyProjectAppsResult;
+});
 
 export const toDeploymentUrl = (domain: string | null | undefined) =>
   domain

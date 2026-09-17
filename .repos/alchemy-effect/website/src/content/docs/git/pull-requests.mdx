@@ -1,0 +1,99 @@
+---
+title: Pull requests
+description: Server-side merge base, tree diffs, and fast-forward or three-way merges, computed inside the repository.
+---
+
+Pull requests are computed where the objects are. Merge base, diffs,
+and the merge itself run inside the repository's Durable Object, so
+nothing clones a history to answer what changed.
+
+## Opening
+
+```typescript
+const pull = yield* client.pulls.create({
+  params: { owner: "acme", repo: "web" },
+  payload: {
+    title: "Add the pricing page",
+    body: "Closes the last gap in the marketing site.",
+    base: "main",
+    head: "pricing",
+  },
+});
+```
+
+Branch names may be short or fully qualified. Numbers are per
+repository and start at 1. A missing branch, or `base` equal to
+`head`, is a typed failure.
+
+## Listing and reading
+
+```typescript
+const page = yield* client.pulls.list({
+  params: { owner: "acme", repo: "web" },
+  query: { state: "open" }, // "open" | "closed" | "merged" | "all"
+});
+```
+
+Listing is keyset-paginated, newest first. Reading one pull request
+computes its state live: merge base, ahead and behind counts, and the
+changed files, as the branches are now. If the head branch is deleted
+while it is open, the comparison fields read as null.
+
+## Diffs
+
+The same machinery works without a pull request:
+
+```typescript
+// what one commit changed
+yield* client.objects.commitDiff({
+  params: { owner: "acme", repo: "web", oid },
+});
+
+// three-dot comparison between two refs
+yield* client.objects.compare({
+  params: { owner: "acme", repo: "web" },
+  query: { base: "main", head: "pricing" },
+});
+```
+
+Comparison finds the merge base in the commit graph and diffs the two
+trees. Identical subtrees are pruned on entry, so the cost tracks what
+changed rather than the size of the repository.
+
+## Merging
+
+```typescript
+yield* client.pulls.merge({
+  params: { owner: "acme", repo: "web", number: 1 },
+  payload: { message: "Add the pricing page (#1)" },
+});
+```
+
+The strategy is chosen for you. When the base has not moved, the ref
+fast-forwards and `message` is ignored. Otherwise, if the two sides
+changed disjoint files, a merge commit is written with both parents.
+
+Overlapping edits to one file are a typed `409`. The host does not
+merge hunks or write conflict markers. Resolve locally and push.
+
+Merging is terminal. A merged pull request cannot be reopened, and
+merging it twice is a typed conflict.
+
+## Races
+
+Pass `expectedHeadOid` so a branch that moved between the review and
+the click is refused rather than merged:
+
+```typescript
+yield* client.pulls.merge({
+  params: { owner: "acme", repo: "web", number: 1 },
+  payload: { expectedHeadOid: headOidTheUserSaw },
+});
+```
+
+## Not included
+
+Reviews, comments, approvals, and required checks. A pull request here
+is a branch comparison with a title and a merge, and the review
+workflow is yours to build with these endpoints.
+[Part 4 of the tutorial](/git/tutorial/part-4) starts there.

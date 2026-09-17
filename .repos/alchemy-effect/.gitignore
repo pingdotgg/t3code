@@ -46,8 +46,8 @@ packages/cloudflare-runtime/src/rolldown/out/
 !packages/cloudflare-runtime/src/rolldown/test/fixtures/**/*.js
 !packages/cloudflare-frameworks/src/nextjs/wrangler-stub/*.js
 !packages/cloudflare-*/src/**/*.d.ts
-!fixtures/**/*.d.ts
-!fixtures/**/*.js
+!packages/frontend-frameworks/fixtures/**/*.d.ts
+!packages/frontend-frameworks/fixtures/**/*.js
 
 .attest
 .cache
@@ -67,13 +67,16 @@ examples/cloudflare-worker/src/scratch.ts
 /packages/alchemy/README.md
 
 !/packages/alchemy/bin/cli.js
-.vendor/*
+!/packages/alchemy/bin/register-dev-mode.js
+!/packages/alchemy/bin/register-oxc.js
 .tmp
 # the lockfile-pinning test fixture is a checked-in lockfile, not a generated one
 !packages/alchemy/test/AWS/Lambda/fixtures/lockfile-pinning/pnpm/pnpm-lock.yaml
-!.vendor/distilled
-!.vendor/floci
 
 .ai-workspace/
 /processes/
 .probe
+!packages/alchemy/src/Cloudflare/Workers/worker-module.d.ts
+
+# pkg pack output (CI artifact hand-off)
+.pkg

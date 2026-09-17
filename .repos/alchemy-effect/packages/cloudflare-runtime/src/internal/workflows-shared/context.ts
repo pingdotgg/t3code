@@ -1,5 +1,6 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+// Alchemy modifications: uses Array<T> syntax for non-tuple array types to match the repository convention.
 import { RpcTarget } from "cloudflare:workers";
 import { ms } from "itty-time";
 import {
@@ -9,8 +10,15 @@ import {
 } from "./instance.ts";
 import { computeHash } from "./lib/cache.ts";
 import {
+  DEFAULT_RETRY_DELAY_MS,
+  DELAY_FUNCTION_TIMEOUT_MS,
+  invokeDelayFunction,
+  raceAgainstAbort,
+} from "./lib/delay.ts";
+import {
   ABORT_REASONS,
   InvalidStepReadableStreamError,
+  NonRetryableDelayError,
   OversizedStreamChunkError,
   PreservedNonRetryableError,
   shouldPreserveNonRetryableError,
@@ -20,10 +28,9 @@ import {
   WorkflowInternalError,
   WorkflowTimeoutError,
 } from "./lib/errors.ts";
-import { calcRetryDuration } from "./lib/retries.ts";
+import { calcRetryDuration, DelayFunctionError } from "./lib/retries.ts";
 import {
   parseRollbackOptions,
-  registerRollbackFn,
   ROLLBACK_CACHE_KEY_PREFIX,
 } from "./lib/rollback.ts";
 import {
@@ -40,6 +47,7 @@ import {
   isValidStepConfig,
   isValidStepName,
   MAX_STEP_NAME_LENGTH,
+  SENSITIVE_STEP_OUTPUT,
 } from "./lib/validators.ts";
 import { MODIFIER_KEYS } from "./modifier.ts";
 import type { Engine } from "./engine.ts";
@@ -50,9 +58,14 @@ import type {
 } from "./lib/rollback.ts";
 import type { StreamOutputMeta } from "./lib/streams.ts";
 import type {
+  WorkflowBackoff,
+  WorkflowDelayDuration,
+  WorkflowDelayFunction,
   WorkflowSleepDuration,
   WorkflowStepConfig,
   WorkflowStepEvent,
+  WorkflowStepSensitivity,
+  WorkflowTimeoutDuration,
 } from "cloudflare:workers";
 
 export type Event = {
@@ -61,10 +74,74 @@ export type Event = {
   type: string;
 };
 
-export type ResolvedStepConfig = Required<
-  Pick<WorkflowStepConfig, "retries" | "timeout">
-> &
-  Pick<WorkflowStepConfig, "sensitive">;
+// Persisted in place of a dynamic delay function (functions can't be
+// serialized); the live function is re-read from the user's step config on each
+// execution.
+const SERIALIZABLE_DELAY_MARKER = "[dynamic]";
+type SerializableDelayMarker = typeof SERIALIZABLE_DELAY_MARKER;
+
+export const REDACTED_STEP_OUTPUT = "[REDACTED]";
+
+// The persisted, fully-merged config. A dynamic delay is stored as the marker.
+export type ResolvedStepConfig = {
+  retries: {
+    limit: number;
+    delay: WorkflowDelayDuration | SerializableDelayMarker;
+    backoff?: WorkflowBackoff;
+  };
+  timeout: WorkflowTimeoutDuration;
+  sensitive?: WorkflowStepSensitivity;
+};
+
+// The user-facing config (passed to step callbacks). The dynamic-delay marker is
+// never exposed: `delay` is omitted entirely when the delay is a function.
+export type EngineStepConfig = {
+  retries: {
+    limit: number;
+    delay?: WorkflowDelayDuration;
+    backoff?: WorkflowBackoff;
+  };
+  timeout: WorkflowTimeoutDuration;
+  sensitive?: WorkflowStepSensitivity;
+};
+
+export function toEngineStepConfig(
+  config: ResolvedStepConfig,
+): EngineStepConfig {
+  const { delay, ...retries } = config.retries;
+  if (
+    typeof delay === "number" ||
+    (typeof delay === "string" && delay !== SERIALIZABLE_DELAY_MARKER)
+  ) {
+    return { ...config, retries: { ...retries, delay } };
+  }
+  return { ...config, retries };
+}
+
+// Signal-aware wrapper around the global `scheduler.wait`. `scheduler.wait`
+// can't itself be cancelled, so an aborted signal resolves the returned promise
+// early and the dangling timer becomes a no-op.
+function schedulerWait(
+  durationMs: number,
+  opts?: { signal?: AbortSignal },
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const signal = opts?.signal;
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    let done = false;
+    const finish = (): void => {
+      if (!done) {
+        done = true;
+        resolve();
+      }
+    };
+    void scheduler.wait(durationMs).then(finish);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+}
 
 const defaultConfig: ResolvedStepConfig = {
   retries: {
@@ -186,7 +263,7 @@ export type WorkflowStepContext = {
     count: number;
   };
   attempt: number;
-  config: ResolvedStepConfig;
+  config: EngineStepConfig;
 };
 
 const PAUSE_DATETIME = "PAUSE_DATETIME";
@@ -256,7 +333,7 @@ export class Context extends RpcTarget {
     const { cacheKey, rollbackFn, stepContext, output, rollbackConfig } =
       options;
     if (rollbackFn && this.#rollbackStep === undefined) {
-      registerRollbackFn(this.#engine.rollbackRegistry, {
+      this.#engine.registerRollbackFn({
         cacheKey,
         fn: rollbackFn,
         stepContext,
@@ -306,6 +383,12 @@ export class Context extends RpcTarget {
     const { rollback: rollbackFn, rollbackConfig } = rollbackOptions ?? {};
 
     const isRollback = this.#rollbackStep !== undefined;
+    if (this.#engine.rollbackPhase === "rollback" && !isRollback) {
+      throw new WorkflowFatalError(
+        "Cannot execute steps during rollback phase",
+      );
+    }
+
     const events = isRollback
       ? {
           start: InstanceEvent.ROLLBACK_STEP_START,
@@ -355,12 +438,19 @@ export class Context extends RpcTarget {
       throw error;
     }
 
+    let liveDelay: WorkflowDelayDuration | WorkflowDelayFunction =
+      stepConfig.retries?.delay ?? DEFAULT_RETRY_DELAY_MS;
+
     let config: ResolvedStepConfig = {
       ...defaultConfig,
       ...stepConfig,
       retries: {
         ...defaultConfig.retries,
         ...stepConfig.retries,
+        delay:
+          typeof liveDelay === "function"
+            ? SERIALIZABLE_DELAY_MARKER
+            : liveDelay,
       },
     };
 
@@ -426,7 +516,7 @@ export class Context extends RpcTarget {
         stepContext: {
           step: { name, count },
           attempt: cachedState?.attemptedCount ?? 1,
-          config: cachedConfig ?? config,
+          config: toEngineStepConfig(cachedConfig ?? config),
         },
         output: result,
         rollbackConfig,
@@ -450,7 +540,7 @@ export class Context extends RpcTarget {
         stepContext: {
           step: { name, count },
           attempt: cachedState?.attemptedCount ?? 1,
-          config: cachedConfig ?? config,
+          config: toEngineStepConfig(cachedConfig ?? config),
         },
         output: result,
         rollbackConfig,
@@ -463,6 +553,17 @@ export class Context extends RpcTarget {
     ) as Error | undefined;
 
     if (maybeError) {
+      const cachedState = maybeMap.get(stepStateKey) as StepState | undefined;
+      this.#registerRollback({
+        cacheKey,
+        rollbackFn,
+        stepContext: {
+          step: { name, count },
+          attempt: cachedState?.attemptedCount ?? 1,
+          config: toEngineStepConfig(cachedConfig ?? config),
+        },
+        rollbackConfig,
+      });
       maybeError.isUserError = true;
       throw maybeError;
     }
@@ -472,6 +573,29 @@ export class Context extends RpcTarget {
       await this.#state.storage.put(configKey, config);
     } else {
       config = cachedConfig;
+      // Recover the live delay from the (non-serializable) user config: a
+      // persisted marker means the user passed a function, so re-read it.
+      liveDelay =
+        config.retries.delay === SERIALIZABLE_DELAY_MARKER
+          ? typeof stepConfig.retries?.delay === "function"
+            ? stepConfig.retries.delay
+            : DEFAULT_RETRY_DELAY_MS
+          : config.retries.delay;
+    }
+
+    if (this.#engine.rollbackPhase === "replay" && !isRollback) {
+      const cachedState = maybeMap.get(stepStateKey) as StepState | undefined;
+      this.#registerRollback({
+        cacheKey,
+        rollbackFn,
+        stepContext: {
+          step: { name, count },
+          attempt: cachedState?.attemptedCount ?? 1,
+          config: toEngineStepConfig(config),
+        },
+        rollbackConfig,
+      });
+      return undefined;
     }
 
     const attemptLogs = this.#engine
@@ -534,7 +658,7 @@ export class Context extends RpcTarget {
       const forwardStepContext = (): WorkflowStepContext => ({
         step: { name, count },
         attempt: stepState.attemptedCount,
-        config,
+        config: toEngineStepConfig(config),
       });
 
       // NOTE(caio): this might be a stream returning step - if so cleanup stale data from previous lifetimes
@@ -546,7 +670,8 @@ export class Context extends RpcTarget {
 
       if (stepState.attemptedCount == 0) {
         this.#engine.writeLog(events.start, cacheKey, stepNameWithCounter, {
-          config,
+          config: toEngineStepConfig(config),
+          ...(!isRollback && rollbackFn ? { hasRollback: true } : {}),
         });
       } else {
         // in case the engine dies while retrying and wakes up before the retry period
@@ -632,6 +757,12 @@ export class Context extends RpcTarget {
           },
         );
         stepState.attemptedCount++;
+        this.#registerRollback({
+          cacheKey,
+          rollbackFn,
+          stepContext: forwardStepContext(),
+          rollbackConfig,
+        });
         await this.#state.storage.put(stepStateKey, stepState);
         const priorityQueueHash = `${cacheKey}-${stepState.attemptedCount}`;
 
@@ -742,7 +873,7 @@ export class Context extends RpcTarget {
             doWrapperClosure({
               step: { name, count },
               attempt: stepState.attemptedCount,
-              config: structuredClone(config),
+              config: toEngineStepConfig(config),
             }),
             timeoutTask,
           ]);
@@ -946,7 +1077,7 @@ export class Context extends RpcTarget {
             events.failure,
             cacheKey,
             stepNameWithCounter,
-            {},
+            !isRollback && rollbackFn ? { hasRollback: true } : {},
           );
           this.#registerRollback({
             cacheKey,
@@ -956,6 +1087,68 @@ export class Context extends RpcTarget {
           });
 
           throw error;
+        }
+
+        await this.#state.storage.put(stepStateKey, stepState);
+
+        const willRetry = stepState.attemptedCount <= config.retries.limit;
+        const priorityQueueHash = `${cacheKey}-${stepState.attemptedCount}`;
+
+        // Resolve the delay once per attempt. A broken delay function turns
+        // the retry into a non-retryable failure.
+        let retryDelayMs: number | undefined;
+        let delayFailure: (Error & UserErrorField) | undefined;
+        if (willRetry) {
+          try {
+            let resolvedDelay: unknown;
+            if (typeof liveDelay === "function") {
+              // Park a default-delayed retry before invoking the user's
+              // delay function so a crash while the function is in flight
+              // still reschedules the step. The PQ table is append-only
+              // with a UNIQUE(action, entryType, hash) constraint, so this
+              // exact entry is reused as the retry entry below — it is
+              // never removed and re-added (that would violate UNIQUE).
+              // @ts-expect-error priorityQueue is initiated in init
+              await this.#engine.priorityQueue.add({
+                hash: priorityQueueHash,
+                targetTimestamp: Date.now() + DEFAULT_RETRY_DELAY_MS,
+                type: "retry",
+              });
+
+              const stepCtx: WorkflowStepContext = {
+                step: { name, count },
+                attempt: stepState.attemptedCount,
+                config: toEngineStepConfig(config),
+              };
+
+              resolvedDelay = await invokeDelayFunction(
+                liveDelay,
+                { ctx: stepCtx, error },
+                {
+                  timeoutMs: DELAY_FUNCTION_TIMEOUT_MS,
+                  wait: schedulerWait,
+                  signal: this.#engine.engineAbortController.signal,
+                },
+              );
+            } else {
+              resolvedDelay = liveDelay;
+            }
+            retryDelayMs = calcRetryDuration(config, stepState, resolvedDelay);
+          } catch (delayErr) {
+            if (!(delayErr instanceof DelayFunctionError)) {
+              throw delayErr;
+            }
+            // @ts-expect-error priorityQueue is initiated in init
+            this.#engine.priorityQueue.remove({
+              hash: priorityQueueHash,
+              type: "retry",
+            });
+            const userError = new NonRetryableDelayError(
+              `The delay function for step "${stepNameWithCounter}" ${delayErr.message}`,
+            ) as Error & UserErrorField;
+            userError.isUserError = true;
+            delayFailure = userError;
+          }
         }
 
         this.#engine.writeLog(
@@ -970,14 +1163,13 @@ export class Context extends RpcTarget {
               // TODO (WOR-79): Stacks are all incorrect over RPC and need work
               // stack: error.stack,
             },
+            ...(retryDelayMs !== undefined ? { retryDelayMs } : {}),
           },
         );
 
-        await this.#state.storage.put(stepStateKey, stepState);
-
-        if (stepState.attemptedCount <= config.retries.limit) {
+        if (willRetry && delayFailure === undefined) {
           // TODO (WOR-71): Think through if every Error should transition
-          const durationMs = calcRetryDuration(config, stepState);
+          const durationMs = retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
           const disableAllRetryDelays = await this.#state.storage.get(
             MODIFIER_KEYS.DISABLE_ALL_RETRY_DELAYS,
           );
@@ -987,40 +1179,44 @@ export class Context extends RpcTarget {
             disableAllRetryDelays || disableThisRetryDelay;
           const effectiveDuration = disableRetryDelay ? 0 : durationMs;
 
-          const priorityQueueHash = `${cacheKey}-${stepState.attemptedCount}`;
-          // @ts-expect-error priorityQueue is initiated in init
-          await this.#engine.priorityQueue.add({
-            hash: priorityQueueHash,
-            targetTimestamp: Date.now() + effectiveDuration,
-            type: "retry",
-          });
+          // A dynamic delay already parked its retry entry under this hash
+          // above (the append-only PQ rejects re-adding the same hash), so
+          // only static delays add here. The live wait below uses
+          // effectiveDuration regardless; the parked entry's timestamp only
+          // drives crash recovery.
+          //
+          // Known trade-off: for a dynamic delay the parked entry keeps the
+          // DEFAULT_RETRY_DELAY_MS placeholder timestamp set before the delay
+          // function ran (see the add above) — the UNIQUE(action, entryType,
+          // hash) constraint means it can't be overwritten in place with the
+          // computed value without a remove+re-add that would violate the
+          // constraint. So if the engine crashes mid-wait, recovery resumes
+          // the step at the placeholder delay rather than the computed one.
+          // This is accepted for local dev: the step still retries with the
+          // correct semantics, only the post-crash wait can be shorter.
+          if (typeof liveDelay !== "function") {
+            // @ts-expect-error priorityQueue is initiated in init
+            await this.#engine.priorityQueue.add({
+              hash: priorityQueueHash,
+              targetTimestamp: Date.now() + effectiveDuration,
+              type: "retry",
+            });
+          }
           await this.#engine.timeoutHandler.release(this.#engine);
           // Race retry wait against the pause signal so pause
           // takes effect immediately during retries
           {
             const retryPauseSignal = this.#engine.pauseController.signal;
-            let pausedDuringRetry = false;
-            await Promise.race([
+            await raceAgainstAbort(
               scheduler.wait(effectiveDuration),
-              new Promise<void>((resolve) => {
-                if (retryPauseSignal.aborted) {
-                  resolve();
-                  return;
-                }
-                retryPauseSignal.addEventListener("abort", () => resolve(), {
-                  once: true,
-                });
-              }),
-            ]);
+              retryPauseSignal,
+            );
             const retryStatus = await this.#engine.getStatus();
-            if (
+            const pausedDuringRetry =
               retryStatus === InstanceStatus.Paused ||
-              retryStatus === InstanceStatus.WaitingForPause
-            ) {
-              pausedDuringRetry = true;
-            }
+              retryStatus === InstanceStatus.WaitingForPause;
             if (pausedDuringRetry) {
-              throw new Error(ABORT_REASONS.USER_PAUSE, { cause: e });
+              throw new Error(ABORT_REASONS.USER_PAUSE);
             }
           }
 
@@ -1048,7 +1244,7 @@ export class Context extends RpcTarget {
             events.failure,
             cacheKey,
             stepNameWithCounter,
-            {},
+            !isRollback && rollbackFn ? { hasRollback: true } : {},
           );
           this.#registerRollback({
             cacheKey,
@@ -1057,17 +1253,25 @@ export class Context extends RpcTarget {
             rollbackConfig,
           });
 
-          await this.#state.storage.put(errorKey, error);
-          throw error;
+          const finalError = delayFailure ?? error;
+          await this.#state.storage.put(errorKey, finalError);
+          throw finalError;
         }
       }
 
+      const redactOutput = config.sensitive === SENSITIVE_STEP_OUTPUT;
       this.#engine.writeLog(events.success, cacheKey, stepNameWithCounter, {
         // TODO (WOR-86): Add limits, figure out serialization
-        result: lastStreamMeta ? undefined : result,
-        ...(lastStreamMeta && {
-          streamOutput: { cacheKey, meta: lastStreamMeta },
-        }),
+        result: redactOutput
+          ? REDACTED_STEP_OUTPUT
+          : lastStreamMeta
+            ? undefined
+            : result,
+        ...(!redactOutput &&
+          lastStreamMeta && {
+            streamOutput: { cacheKey, meta: lastStreamMeta },
+          }),
+        ...(!isRollback && rollbackFn ? { hasRollback: true } : {}),
       });
       this.#registerRollback({
         cacheKey,
@@ -1082,13 +1286,21 @@ export class Context extends RpcTarget {
 
     const result = await doWrapper(closure);
 
-    // Check if a pause was requested while this step was running
-    await this.#checkForPendingPause();
+    // Check if a pause was requested while this step was running.
+    // Rollback steps may run while the instance is paused; don't let stale pause
+    // state abort rollback cleanup after the rollback step itself succeeds.
+    if (!isRollback) {
+      await this.#checkForPendingPause();
+    }
 
     return result;
   }
 
   async sleep(name: string, duration: WorkflowSleepDuration): Promise<void> {
+    if (this.#engine.rollbackPhase === "replay") {
+      return;
+    }
+
     if (typeof duration == "string") {
       duration = ms(duration);
     }
@@ -1169,28 +1381,13 @@ export class Context extends RpcTarget {
     const pauseSignal = this.#engine.pauseController.signal;
     const sleepDuration = disableSleep ? 0 : duration;
 
-    let pausedDuringSleep = false;
-    await Promise.race([
-      scheduler.wait(sleepDuration),
-      new Promise<void>((resolve) => {
-        if (pauseSignal.aborted) {
-          resolve();
-          return;
-        }
-        pauseSignal.addEventListener("abort", () => resolve(), {
-          once: true,
-        });
-      }),
-    ]);
+    await raceAgainstAbort(scheduler.wait(sleepDuration), pauseSignal);
 
     // Check if we were paused during the sleep
     const statusAfterSleep = await this.#engine.getStatus();
-    if (
+    const pausedDuringSleep =
       statusAfterSleep === InstanceStatus.Paused ||
-      statusAfterSleep === InstanceStatus.WaitingForPause
-    ) {
-      pausedDuringSleep = true;
-    }
+      statusAfterSleep === InstanceStatus.WaitingForPause;
 
     if (pausedDuringSleep) {
       // Throw pause error
@@ -1210,6 +1407,10 @@ export class Context extends RpcTarget {
   }
 
   async sleepUntil(name: string, timestamp: Date | number): Promise<void> {
+    if (this.#engine.rollbackPhase === "replay") {
+      return;
+    }
+
     if (timestamp instanceof Date) {
       timestamp = timestamp.valueOf();
     }
@@ -1232,6 +1433,12 @@ export class Context extends RpcTarget {
       timeout?: string | number;
     },
   ): Promise<WorkflowStepEvent<T>> {
+    if (this.#engine.rollbackPhase === "rollback") {
+      throw new WorkflowFatalError(
+        "Cannot execute steps during rollback phase",
+      );
+    }
+
     if (!options.timeout) {
       options.timeout = "24 hours";
     }
@@ -1250,6 +1457,10 @@ export class Context extends RpcTarget {
     ) as Error & UserErrorField;
 
     const maybeResult = await this.#state.storage.get<Event>(waitForEventKey);
+
+    if (this.#engine.rollbackPhase === "replay") {
+      return maybeResult as WorkflowStepEvent<T>;
+    }
 
     if (maybeResult) {
       const shouldWriteLog =
@@ -1366,26 +1577,17 @@ export class Context extends RpcTarget {
       this.#engine.waiters.set(options.type, callbacks);
     });
 
-    // Race event, timeout, and pause signal. The pause promise resolves
-    // when the race settles via event/timeout before the pause signal fires
+    // Race event and timeout against the pause signal.
     const pauseSignal = this.#engine.pauseController.signal;
-    const pausePromise = new Promise<void>((resolve) => {
-      if (pauseSignal.aborted) {
-        resolve();
-        return;
-      }
-      pauseSignal.addEventListener("abort", () => resolve(), {
-        once: true,
-      });
-    });
-
-    const raceResult = await Promise.race([
-      eventPromise,
-      timeoutEntryPQ !== undefined
-        ? timeoutPromise(timeoutEntryPQ.targetTimestamp - Date.now(), false)
-        : timeoutPromise(ms(options.timeout), true),
-      pausePromise,
-    ]).catch(async (error) => {
+    const raceResult = await raceAgainstAbort(
+      Promise.race([
+        eventPromise,
+        timeoutEntryPQ !== undefined
+          ? timeoutPromise(timeoutEntryPQ.targetTimestamp - Date.now(), false)
+          : timeoutPromise(ms(options.timeout), true),
+      ]),
+      pauseSignal,
+    ).catch(async (error) => {
       const callbacks = this.#engine.waiters.get(options.type);
       if (callbacks) {
         const idx = callbacks.findIndex(([key]) => key === cacheKey);
@@ -1405,18 +1607,19 @@ export class Context extends RpcTarget {
     });
 
     // Pause signal won the race — throw to stop the workflow
-    if (raceResult === undefined) {
+    if (raceResult.aborted) {
       throw new Error(ABORT_REASONS.USER_PAUSE);
     }
+    const event = raceResult.value;
 
     this.#engine.writeLog(
       InstanceEvent.WAIT_COMPLETE,
       cacheKey,
       waitForEventNameWithCounter,
-      raceResult as Event,
+      event,
     );
-    await this.#state.storage.put(waitForEventKey, raceResult);
+    await this.#state.storage.put(waitForEventKey, event);
 
-    return raceResult as WorkflowStepEvent<T>;
+    return event as WorkflowStepEvent<T>;
   }
 }

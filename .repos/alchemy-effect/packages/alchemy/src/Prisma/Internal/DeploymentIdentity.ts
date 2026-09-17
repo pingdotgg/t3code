@@ -1,15 +1,41 @@
 import * as Effect from "effect/Effect";
-import type { PrismaManagementClient } from "../Client.ts";
+import {
+  type GetServiceDeploymentsResponse,
+  getServiceDeployments,
+} from "@distilled.cloud/prisma/management";
+import { PrismaPaginationError } from "./Pagination.ts";
 
 /** Prove that a deployment belongs to an App before mutating or deleting it. */
 export const ensureDeploymentMembership = Effect.fn(function* (
-  client: PrismaManagementClient,
   appId: string,
   deployment: { id: string; foundryVersionId: string },
   knownLatestDeploymentId?: string | null,
 ) {
   if (knownLatestDeploymentId === deployment.id) return;
-  const matches = (yield* client.listAppDeployments(appId)).filter(
+  // Distilled emits the cursor-paginated list operations as plain ops, so
+  // callers walk `pagination` themselves (see `src/Neon/Project.ts`).
+  const deployments: GetServiceDeploymentsResponse["data"][number][] = [];
+  let cursor: string | undefined;
+  while (true) {
+    const page = yield* getServiceDeployments(
+      cursor === undefined
+        ? { serviceId: appId }
+        : { serviceId: appId, cursor },
+    );
+    deployments.push(...page.data);
+    const nextCursor = page.pagination.nextCursor;
+    if (!page.pagination.hasMore) break;
+    if (nextCursor === null) {
+      return yield* Effect.fail(
+        new PrismaPaginationError({
+          message:
+            "Invalid Prisma Management API pagination response from getServiceDeployments: hasMore was true without a non-empty nextCursor",
+        }),
+      );
+    }
+    cursor = nextCursor;
+  }
+  const matches = deployments.filter(
     (candidate) => candidate.id === deployment.id,
   );
   if (

@@ -1,4 +1,4 @@
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import path from "node:path";
 import { loadEnv } from "vite";
 import { defineConfig } from "vitest/config";

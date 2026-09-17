@@ -15,7 +15,7 @@ import WriteHttpWorker from "./write-http.ts";
  * it can be deployed by the test suite AND inspected directly, e.g.
  *
  * ```sh
- * alchemy tail --stage test ./test/Cloudflare/R2/fixtures/stack.ts
+ * alchemy logs --tail --stage test --config ./test/Cloudflare/R2/fixtures/stack.ts
  * ```
  */
 export default Alchemy.Stack(

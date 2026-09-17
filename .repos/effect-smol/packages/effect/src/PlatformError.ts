@@ -11,7 +11,7 @@
  */
 import * as Data from "./Data.ts"
 
-const TypeId = "~effect/platform/PlatformError"
+const TypeId = "~effect/PlatformError"
 
 /**
  * Error data for an invalid argument passed to a platform API.

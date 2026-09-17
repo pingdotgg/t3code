@@ -4,6 +4,20 @@ import * as Schema from "effect/Schema"
 import * as Sse from "effect/unstable/encoding/Sse"
 
 describe("Sse", () => {
+  it("parses mixed CRLF and LF line endings", () => {
+    const events: Array<Sse.AnyEvent> = []
+    const parser = Sse.makeParser((event) => events.push(event))
+
+    parser.feed("data: first\r\ndata: second\n\n")
+
+    assert.deepStrictEqual(events, [{
+      _tag: "Event",
+      event: "message",
+      id: undefined,
+      data: "first\nsecond"
+    }])
+  })
+
   it("treats CRLF split across chunks as one line ending", () => {
     const events: Array<Sse.AnyEvent> = []
     const parser = Sse.makeParser((event) => events.push(event))

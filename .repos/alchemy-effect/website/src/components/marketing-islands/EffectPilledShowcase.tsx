@@ -261,7 +261,7 @@ export default function EffectPilledShowcase() {
   const splitKey = tab;
 
   return (
-    <div ref={wrapRef} className="eff-showcase">
+    <div ref={wrapRef} className="eff-showcase" data-nosnippet="">
       <div className="eff-showcase__chrome">
         <div className="eff-showcase__header">
           <span

@@ -36,7 +36,7 @@ import type * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
-import fg from "fast-glob";
+import { glob } from "tinyglobby";
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 import { fileURLToPath } from "node:url";
@@ -231,7 +231,7 @@ const sha256Stable = (input: unknown): Effect.Effect<string> =>
   sha256Hex(JSON.stringify(stableValue(input) ?? null));
 
 /**
- * Convert gitignore-style rules into fast-glob `ignore` patterns — a copy of
+ * Convert gitignore-style rules into glob `ignore` patterns — a copy of
  * alchemy's `Util/gitignore-rules-to-globs.ts` (common cases only).
  */
 const gitignoreRulesToGlobs = (rules: ReadonlyArray<string>): Array<string> => {
@@ -326,7 +326,13 @@ const hashDirectory = Effect.fnUntraced(function* (
   const [files, lockfilePath] = yield* Effect.all(
     [
       Effect.promise(() =>
-        fg.glob(include, { cwd, ignore: exclude, onlyFiles: true, dot: true }),
+        glob(include, {
+          cwd,
+          ignore: exclude,
+          onlyFiles: true,
+          expandDirectories: false,
+          dot: true,
+        }),
       ),
       lockfile
         ? Effect.map(
@@ -443,7 +449,7 @@ const readAssetsDirectory = Effect.fnUntraced(function* (
     maybeReadString(fs, NodePath.join(directory, "_redirects")),
   ]);
   const files = yield* Effect.promise(() =>
-    fg.glob(["**/*"], {
+    glob(["**/*"], {
       cwd: directory,
       ignore: [
         ".assetsignore",
@@ -452,6 +458,7 @@ const readAssetsDirectory = Effect.fnUntraced(function* (
         ...gitignoreRulesToGlobs(ignore?.split("\n") ?? []),
       ],
       onlyFiles: true,
+      expandDirectories: false,
       dot: true,
     }),
   );

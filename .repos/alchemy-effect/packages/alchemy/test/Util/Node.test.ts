@@ -1,14 +1,30 @@
-import { findAvailablePort, isTransformTypesSupported } from "@/Util/Node";
+import { findAvailablePort, nodeLoaderArgs } from "@/Util/Node";
 import { describe, expect, test } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as NodeNet from "node:net";
 
 describe("Node utilities", () => {
-  test("detects versions that support --experimental-transform-types", () => {
-    expect(isTransformTypesSupported("22.6.0")).toBe(false);
-    expect(isTransformTypesSupported("22.7.0")).toBe(true);
-    expect(isTransformTypesSupported("25.9.0")).toBe(true);
-    expect(isTransformTypesSupported("26.0.0")).toBe(false);
+  test("checkout .ts entries get the dev-mode hooks", () => {
+    for (const entry of [
+      "/repo/packages/alchemy/src/Cloudflare/Local.ts",
+      "/repo/src/Runner.tsx",
+      "/repo/src/Runner.mts",
+    ]) {
+      const args = nodeLoaderArgs(entry);
+      expect(args[0]).toBe("--import");
+      expect(args[1]).toMatch(/\/bin\/register-dev-mode\.js$/);
+    }
+  });
+
+  test("published .js entries get the Oxc loader alone", () => {
+    for (const entry of [
+      "/app/node_modules/alchemy/lib/Cloudflare/Local.js",
+      "/app/lib/Runner.mjs",
+    ]) {
+      const args = nodeLoaderArgs(entry);
+      expect(args[0]).toBe("--import");
+      expect(args[1]).toMatch(/\/bin\/register-oxc\.js$/);
+    }
   });
 
   test("finds and releases an available port", async () => {

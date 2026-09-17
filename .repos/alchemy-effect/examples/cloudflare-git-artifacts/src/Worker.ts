@@ -32,8 +32,7 @@ export default class Worker extends Cloudflare.Worker<Worker>()(
     main: import.meta.url,
     observability: { enabled: true },
     compatibility: {
-      flags: ["nodejs_compat"],
-      date: "2026-03-17",
+      date: "2026-08-31",
     },
   },
   Effect.gen(function* () {
