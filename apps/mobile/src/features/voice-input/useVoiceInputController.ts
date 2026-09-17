@@ -23,6 +23,10 @@ import {
   type VoiceDraftSnapshot,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
+import {
+  reconcileVoiceDraftRender,
+  type VoiceDraftRenderSnapshot,
+} from "./voiceDraftRenderReconciliation";
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
@@ -75,17 +79,43 @@ export function useVoiceInputController(input: {
   const audioLevelsRef = useRef(Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0));
   const audioLevels = useSharedValue(audioLevelsRef.current);
   const controllerRef = useRef<VoiceInputController | null>(null);
-  const previousDraftRef = useRef({ ownerKey: input.ownerKey, text: input.draftMessage });
   const revisionRef = useRef(0);
-  if (
-    previousDraftRef.current.ownerKey !== input.ownerKey ||
-    previousDraftRef.current.text !== input.draftMessage
-  ) {
-    previousDraftRef.current = { ownerKey: input.ownerKey, text: input.draftMessage };
-    revisionRef.current += 1;
-  }
   const latestInputRef = useRef(input);
-  latestInputRef.current = input;
+  const acknowledgedDraftsRef = useRef<VoiceDraftRenderSnapshot[]>([]);
+  const renderedDraftRef = useRef<VoiceDraftRenderSnapshot>({
+    ownerKey: input.ownerKey,
+    text: input.draftMessage,
+    selection: input.selection,
+  });
+  const reconciledDraft = reconcileVoiceDraftRender(
+    renderedDraftRef.current,
+    {
+      ownerKey: latestInputRef.current.ownerKey,
+      text: latestInputRef.current.draftMessage,
+      selection: latestInputRef.current.selection,
+    },
+    {
+      ownerKey: input.ownerKey,
+      text: input.draftMessage,
+      selection: input.selection,
+    },
+    acknowledgedDraftsRef.current,
+  );
+  if (reconciledDraft.externalDraftChange) revisionRef.current += 1;
+  acknowledgedDraftsRef.current = reconciledDraft.externalDraftChange
+    ? []
+    : acknowledgedDraftsRef.current.slice(reconciledDraft.consumedAcknowledgements);
+  renderedDraftRef.current = {
+    ownerKey: input.ownerKey,
+    text: input.draftMessage,
+    selection: input.selection,
+  };
+  latestInputRef.current = {
+    ...input,
+    ownerKey: reconciledDraft.current.ownerKey,
+    draftMessage: reconciledDraft.current.text,
+    selection: reconciledDraft.current.selection,
+  };
 
   const handleRecorderStatus = useCallback((status: RecordingStatus) => {
     controllerRef.current?.handleRecorderStatus({
@@ -120,6 +150,11 @@ export function useVoiceInputController(input: {
       },
       commitDraft: (text, selection) => {
         const current = latestInputRef.current;
+        // Native hypotheses may arrive before React renders the previous one.
+        // Acknowledge our own write synchronously, preserving stale-edit detection.
+        revisionRef.current += 1;
+        acknowledgedDraftsRef.current.push({ ownerKey: current.ownerKey, text, selection });
+        latestInputRef.current = { ...current, draftMessage: text, selection };
         current.onChangeSelection(selection);
         current.onChangeDraftMessage(text);
       },
@@ -171,7 +206,7 @@ export function useVoiceInputController(input: {
 
     const sampleRecording = () => {
       if (controller.currentState.phase !== "recording") return;
-      const status = recorder.getStatus();
+      const status = controller.streamingStatus ?? recorder.getStatus();
       if (!status.isRecording) return;
 
       const level = normalizeVoiceInputDecibels(status.metering);
