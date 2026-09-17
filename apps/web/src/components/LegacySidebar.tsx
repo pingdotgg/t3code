@@ -1,3 +1,4 @@
+import { SidebarSubagents } from "./SidebarSubagents";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -937,6 +938,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           </div>
         </div>
       </SidebarMenuSubButton>
+      <SidebarSubagents thread={thread} />
     </SidebarMenuSubItem>
   );
 });

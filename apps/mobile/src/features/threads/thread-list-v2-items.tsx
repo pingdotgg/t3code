@@ -1,4 +1,5 @@
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
+import { ThreadSubagents } from "./thread-subagents";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
@@ -1215,6 +1216,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </ControlPillMenu>
         )}
       </ThreadSwipeable>
+      <ThreadSubagents key={`${thread.environmentId}:${thread.id}`} thread={thread} />
     </View>
   );
 });

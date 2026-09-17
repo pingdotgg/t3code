@@ -171,3 +171,10 @@ Choose **Snooze → Custom…** from a thread's menu to pick a date and time in 
 local time zone, or a duration in minutes, hours, or days. Durations start when
 you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
+
+## Subagents
+
+Expand **Subagents** beneath a thread to see its agents and their current status.
+The summary shows running and finished counts, with separate counts for waiting and idle
+agents. Finished includes failed, cancelled, and stopped agents; expand the list to see
+each outcome. Nested agents appear beneath their parent.
