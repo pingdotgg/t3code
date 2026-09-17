@@ -73,7 +73,6 @@ function segmentSource(
   segment: ReturnType<typeof splitPromptIntoComposerSegments>[number],
 ): string {
   if (segment.type === "text") return segment.text;
-  if (segment.type === "skill") return `$${segment.name}`;
   return segment.source;
 }
 

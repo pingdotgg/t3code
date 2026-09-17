@@ -154,7 +154,7 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: " " },
       { type: "citation", citation, source },
       { type: "text", text: "\n" },
-      { type: "skill", name: "review" },
+      { type: "skill", name: "review", source: "$review" },
       { type: "text", text: " " },
       {
         type: "context-reference",
@@ -217,7 +217,7 @@ describe("splitPromptIntoComposerSegments", () => {
   it("splits skill tokens followed by whitespace into skill segments", () => {
     expect(splitPromptIntoComposerSegments("Use $review-follow-up please")).toEqual([
       { type: "text", text: "Use " },
-      { type: "skill", name: "review-follow-up" },
+      { type: "skill", name: "review-follow-up", source: "$review-follow-up" },
       { type: "text", text: " please" },
     ]);
   });
@@ -225,7 +225,7 @@ describe("splitPromptIntoComposerSegments", () => {
   it("splits digit-leading skill tokens into skill segments", () => {
     expect(splitPromptIntoComposerSegments("Use $2spec please")).toEqual([
       { type: "text", text: "Use " },
-      { type: "skill", name: "2spec" },
+      { type: "skill", name: "2spec", source: "$2spec" },
       { type: "text", text: " please" },
     ]);
   });
@@ -278,7 +278,7 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: "Inspect " },
       terminalSegment,
       { type: "text", text: " " },
-      { type: "skill", name: "review-follow-up" },
+      { type: "skill", name: "review-follow-up", source: "$review-follow-up" },
       { type: "text", text: " after " },
       { type: "mention", path: "AGENTS.md", source: "@AGENTS.md" },
       { type: "text", text: " " },

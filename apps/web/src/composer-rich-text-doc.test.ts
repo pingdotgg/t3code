@@ -118,6 +118,16 @@ function roundTripPlain(value: string) {
 }
 
 describe("composer rich text document model", () => {
+  it.each(["€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
+    "canonicalizes %s skill aliases while preserving amounts",
+    (prefix) => {
+      const value = `Use ${prefix}my-skill for ${prefix}20 please`;
+      const expected = `Use $my-skill for ${prefix}20 please`;
+      expect(roundTrip(value).value).toBe(expected);
+      expect(roundTripPlain(value).value).toBe(expected);
+    },
+  );
+
   it.each([
     "",
     "\n\n",

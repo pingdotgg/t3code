@@ -307,28 +307,31 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
-  it("decorates known skill references as selectable skill links", () => {
-    const node: MarkdownNode = {
-      type: "document",
-      children: [
-        {
-          type: "paragraph",
-          children: [{ type: "text", content: "Use $ui for this." }],
-        },
-      ],
-    };
+  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
+    "decorates %s skill references as selectable skill links",
+    (prefix) => {
+      const node: MarkdownNode = {
+        type: "document",
+        children: [
+          {
+            type: "paragraph",
+            children: [{ type: "text", content: `Use ${prefix}ui for this.` }],
+          },
+        ],
+      };
 
-    expect(nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }])).toEqual([
-      { text: "Use ", role: "body" },
-      {
-        text: "$ui",
-        role: "body",
-        skillName: "ui",
-        skillLabel: "UI",
-      },
-      { text: " for this.", role: "body" },
-    ]);
-  });
+      expect(nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }])).toEqual([
+        { text: "Use ", role: "body" },
+        {
+          text: `${prefix}ui`,
+          role: "body",
+          skillName: "ui",
+          skillLabel: "UI",
+        },
+        { text: " for this.", role: "body" },
+      ]);
+    },
+  );
 
   it("decorates known skill references that begin with a digit", () => {
     const node: MarkdownNode = {
