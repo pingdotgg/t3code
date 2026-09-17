@@ -91,16 +91,24 @@ function HandoffEndpoint(props: {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityHint="Show handoff model"
-      className="size-6 items-center justify-center"
+      accessibilityHint="Show provider account"
+      className="min-h-6 max-w-full flex-row items-center justify-center gap-1"
       hitSlop={{ top: 8, bottom: 8 }}
-      onPress={() => Alert.alert(label)}
+      onPress={() =>
+        Alert.alert(
+          label,
+          provider ? resolveProviderInstanceDisplayName(provider) : props.instanceId,
+        )
+      }
     >
       <ProviderIcon
         provider={provider?.driver ?? props.instanceId}
         iconUrl={provider?.iconUrl}
         size={12}
       />
+      <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
+        {label}
+      </Text>
     </Pressable>
   );
 }
