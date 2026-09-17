@@ -105,7 +105,7 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
   );
 }
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settingsService = yield* Settings.ServerSettingsService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
