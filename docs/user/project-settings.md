@@ -41,14 +41,42 @@ on each selected environment, and reset returns to the environment's shared list
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
+## Storage cleanup
+
+Open **Settings → Storage** to enable automatic cleanup on one machine or all connected
+environments. Policies are off by default and run on the server at startup, when changed, and
+hourly. Offline machines keep their existing policies.
+
+Select a project to set **Automatic worktree cleanup** to **Inherit**, **Off**, or **Custom**.
+Inherit follows each machine's rules; Off keeps that project's worktrees until you remove them
+manually. Custom applies separate worktree rules to the selected project or checkout. Browser
+captures and log retention remain machine-wide.
+
+Worktrees can be removed after a chosen number of inactive days, after merging, or when they
+have no commits beyond the default branch. Only T3-managed worktrees are eligible. Active
+sessions, shared worktrees, uncommitted changes, and ignored files other than `node_modules`
+prevent removal. Branches and thread history stay; starting another turn recreates the checkout.
+Merge cleanup requires the commits to be included in the remote default branch, so squash merges
+may need the inactivity rule instead.
+
+Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
+thread is deleted, including archived threads and worktrees left by earlier deletions. The
+server waits for sessions and terminals to stop and retries skipped worktrees after restart.
+Existing prompts for deleting a worktree manually remain available when this policy is off.
+
+Browser captures and rotated logs have separate retention periods. Expired capture links stop
+working. Current logs, message attachments, and browser profiles are kept.
+
 ## Project icons
 
-Select the project and open Project to choose an icon, emoji, or image. The choice applies to
+Select the project and open Project to choose an icon, emoji, monogram, or image. The choice applies to
 every checkout in the project group and appears on connected clients. Choose **Automatic** to let
 T3 Code detect an icon again.
 
-When no image is found, web and desktop show a two-character monogram with colors
-derived from the saved project name. For example, `Nebula` becomes `NA`,
+Choose **Monogram** in the icon picker to set one or two letters or numbers and a color.
+
+When no image is found, web and desktop show a two-character monogram with a color
+from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
 
 ## Keep the default branch current

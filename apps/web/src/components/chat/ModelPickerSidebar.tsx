@@ -203,7 +203,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   displayName={entry.displayName}
                   accentColor={entry.accentColor}
                   showBadge={showInstanceBadge}
-                  className="size-6"
+                  className="size-6 z-30"
                   iconClassName="size-5"
                   indicatorBackground={
                     isHovered && !isDisabled

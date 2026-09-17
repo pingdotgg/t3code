@@ -9,6 +9,7 @@ import IconAlertTriangle from "@tabler/icons-react-native/IconAlertTriangle";
 import IconApps from "@tabler/icons-react-native/IconApps";
 import IconArchive from "@tabler/icons-react-native/IconArchive";
 import IconArrowBackUp from "@tabler/icons-react-native/IconArrowBackUp";
+import IconArrowLeft from "@tabler/icons-react-native/IconArrowLeft";
 import IconArrowDownCircle from "@tabler/icons-react-native/IconArrowDownCircle";
 import IconArrowRightCircle from "@tabler/icons-react-native/IconArrowRightCircle";
 import IconArrowUp from "@tabler/icons-react-native/IconArrowUp";
@@ -36,8 +37,10 @@ import IconClock from "@tabler/icons-react-native/IconClock";
 import IconCode from "@tabler/icons-react-native/IconCode";
 import IconCopy from "@tabler/icons-react-native/IconCopy";
 import IconDeviceDesktop from "@tabler/icons-react-native/IconDeviceDesktop";
+import IconDatabase from "@tabler/icons-react-native/IconDatabase";
 import IconDeviceLaptop from "@tabler/icons-react-native/IconDeviceLaptop";
 import IconDots from "@tabler/icons-react-native/IconDots";
+import IconDotsVertical from "@tabler/icons-react-native/IconDotsVertical";
 import IconDotsCircleHorizontal from "@tabler/icons-react-native/IconDotsCircleHorizontal";
 import IconEdit from "@tabler/icons-react-native/IconEdit";
 import IconExternalLink from "@tabler/icons-react-native/IconExternalLink";
@@ -79,6 +82,8 @@ import IconServer from "@tabler/icons-react-native/IconServer";
 import IconSettings from "@tabler/icons-react-native/IconSettings";
 import IconSparkles from "@tabler/icons-react-native/IconSparkles";
 import IconStack2 from "@tabler/icons-react-native/IconStack2";
+import IconStar from "@tabler/icons-react-native/IconStar";
+import IconStarFilled from "@tabler/icons-react-native/IconStarFilled";
 import IconStethoscope from "@tabler/icons-react-native/IconStethoscope";
 import IconSun from "@tabler/icons-react-native/IconSun";
 import IconTerminal2 from "@tabler/icons-react-native/IconTerminal2";
@@ -97,6 +102,7 @@ import { withUniwind } from "uniwind";
 
 const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "arrow.branch": IconGitBranch,
+  "arrow.left": IconArrowLeft,
   "arrow.clockwise": IconRefresh,
   "arrow.down.circle": IconArrowDownCircle,
   "arrow.right.circle": IconArrowRightCircle,
@@ -142,7 +148,10 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "folder.badge.plus": IconFolderPlus,
   "folder.fill": IconFolder,
   gearshape: IconSettings,
+  hammer: IconHammer,
   "info.circle": IconInfoCircle,
+  internaldrive: IconDatabase,
+  keyboard: IconKeyboard,
   laptopcomputer: IconDeviceLaptop,
   link: IconLink,
   "line.3.horizontal": IconMenu2,
@@ -160,6 +169,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "pin.slash": IconPinnedOff,
   play: IconPlayerPlay,
   plus: IconPlus,
+  minus: IconMinus,
   "qrcode.viewfinder": IconQrcode,
   "point.3.connected.trianglepath.dotted": IconNetwork,
   "point.topleft.down.curvedto.point.bottomright.up": IconGitMerge,
@@ -172,6 +182,8 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "square.and.pencil": IconEdit,
   "square.grid.2x2": IconApps,
   "square.split.2x1": IconLayoutColumns,
+  star: IconStar,
+  "star.fill": IconStarFilled,
   "sun.max": IconSun,
   "stop.fill": IconPlayerStopFilled,
   terminal: IconTerminal2,
@@ -209,6 +221,7 @@ const ANDROID_ICON_BY_MATERIAL_NAME: Record<string, Icon> = {
   keyboard_arrow_down: IconChevronDown,
   keyboard_arrow_up: IconChevronUp,
   keyboard_hide: IconKeyboardHide,
+  more_vert: IconDotsVertical,
   public: IconWorld,
   remove: IconMinus,
   terminal: IconTerminal2,

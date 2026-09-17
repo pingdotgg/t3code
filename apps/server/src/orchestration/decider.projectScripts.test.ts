@@ -248,6 +248,35 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         name: "alarm-clock",
         color: "violet",
       });
+
+      for (const text of ["T3", "e\u0301", "किखि", "क्ष्म", "\u1100\u1161\u11a8"]) {
+        const monogram = { kind: "monogram", text, color: "violet" } as const;
+        const result = yield* decideOrchestrationCommand({
+          command: {
+            type: "project.meta.update",
+            commandId: CommandId.make("cmd-monogram"),
+            projectId: asProjectId("project-favicon"),
+            projectIcon: monogram,
+          },
+          readModel,
+        });
+        const updated = Array.isArray(result) ? result[0] : result;
+        expect(updated.payload).toMatchObject({ projectIcon: monogram });
+      }
+      for (const text of ["ABC", "किखिगि"]) {
+        const failure = yield* Effect.flip(
+          decideOrchestrationCommand({
+            command: {
+              type: "project.meta.update",
+              commandId: CommandId.make("cmd-monogram-invalid"),
+              projectId: asProjectId("project-favicon"),
+              projectIcon: { kind: "monogram", text, color: "violet" },
+            },
+            readModel,
+          }),
+        );
+        expect(failure).toMatchObject({ _tag: "OrchestrationCommandInvariantError" });
+      }
     }),
   );
 
