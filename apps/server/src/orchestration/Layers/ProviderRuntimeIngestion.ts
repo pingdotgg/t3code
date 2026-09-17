@@ -126,6 +126,8 @@ type TurnStartRequestedDomainEvent = Extract<
   { type: "thread.turn-start-requested" }
 >;
 
+type ProviderDiffEvent = Extract<ProviderRuntimeEvent, { type: "turn.diff.updated" }>;
+
 type RuntimeIngestionInput =
   | {
       source: "runtime";
@@ -134,6 +136,11 @@ type RuntimeIngestionInput =
   | {
       source: "domain";
       event: TurnStartRequestedDomainEvent;
+    }
+  | {
+      /** A diff whose workspace the diff worker confirmed is a Git repository. */
+      source: "diff";
+      event: ProviderDiffEvent;
     };
 
 function toTurnId(value: TurnId | string | undefined): TurnId | undefined {
@@ -2436,48 +2443,6 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (event.type === "turn.diff.updated") {
-        const turnId = toTurnId(event.turnId);
-        const checkpointContext = turnId
-          ? yield* projectionSnapshotQuery
-              .getThreadCheckpointContext(thread.id)
-              .pipe(Effect.map(Option.getOrUndefined))
-          : undefined;
-        const workspaceCwd =
-          checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot ?? undefined;
-        if (
-          turnId &&
-          checkpointContext &&
-          workspaceCwd &&
-          (yield* checkpointStore.isGitRepository(workspaceCwd))
-        ) {
-          // Skip if a checkpoint already exists for this turn. A real
-          // (non-placeholder) capture from CheckpointReactor should not
-          // be clobbered, and dispatching a duplicate placeholder for the
-          // same turnId would produce an unstable checkpointTurnCount.
-          if (hasCheckpointForTurn(checkpointContext.checkpoints, turnId)) {
-            // Already tracked; no-op.
-          } else {
-            const assistantMessageId = MessageId.make(
-              `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
-            );
-            yield* orchestrationEngine.dispatch({
-              type: "thread.turn.diff.complete",
-              commandId: yield* providerCommandId(event, "thread-turn-diff-complete"),
-              threadId: thread.id,
-              turnId,
-              completedAt: now,
-              checkpointRef: CheckpointRef.make(`provider-diff:${event.eventId}`),
-              status: "missing",
-              files: [],
-              assistantMessageId,
-              checkpointTurnCount: maxCheckpointTurnCount(checkpointContext.checkpoints) + 1,
-              createdAt: now,
-            });
-          }
-        }
-      }
-
       if (event.type === "task.started" || event.type === "task.progress") {
         const description = event.payload.description?.trim();
         if (description) {
@@ -2626,31 +2591,100 @@ const make = Effect.gen(function* () {
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
 
-  const processInput = (input: RuntimeIngestionInput) =>
-    input.source === "runtime" ? processRuntimeEvent(input.event) : processDomainEvent(input.event);
+  // Records a mid-turn placeholder checkpoint for a provider diff. Runs on the
+  // lifecycle worker, after repository detection, so the running-turn check
+  // and the dispatch are ordered with the turn's terminal events: a diff that
+  // resolved after turn.completed must not rewrite the settled turn's state or
+  // move the latest-turn pointer back.
+  const recordProviderDiff = Effect.fn("recordProviderDiff")(function* (event: ProviderDiffEvent) {
+    const thread = yield* resolveThreadRuntimeContext(event.threadId);
+    const turnId = toTurnId(event.turnId);
+    if (!thread || !turnId) return;
+    const turn = yield* projectionTurnRepository.getByTurnId({ threadId: thread.id, turnId });
+    if (Option.isNone(turn) || turn.value.state !== "running") return;
+    const checkpointContext = yield* projectionSnapshotQuery
+      .getThreadCheckpointContext(thread.id)
+      .pipe(Effect.map(Option.getOrUndefined));
+    // Skip if a checkpoint already exists for this turn. A real
+    // (non-placeholder) capture from CheckpointReactor should not
+    // be clobbered, and dispatching a duplicate placeholder for the
+    // same turnId would produce an unstable checkpointTurnCount.
+    if (!checkpointContext || hasCheckpointForTurn(checkpointContext.checkpoints, turnId)) return;
+    const now = event.createdAt;
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.diff.complete",
+      commandId: yield* providerCommandId(event, "thread-turn-diff-complete"),
+      threadId: thread.id,
+      turnId,
+      completedAt: now,
+      checkpointRef: CheckpointRef.make(`provider-diff:${event.eventId}`),
+      status: "missing",
+      files: [],
+      assistantMessageId: MessageId.make(
+        `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,
+      ),
+      checkpointTurnCount: maxCheckpointTurnCount(checkpointContext.checkpoints) + 1,
+      createdAt: now,
+    });
+  });
 
-  const processInputSafely = (input: RuntimeIngestionInput) =>
-    processInput(input).pipe(
-      Effect.catchCause((cause) => {
-        if (Cause.hasInterruptsOnly(cause)) {
-          return Effect.failCause(cause);
-        }
-        return Effect.logWarning("provider runtime ingestion failed to process event", {
-          source: input.source,
-          eventId: input.event.eventId,
-          eventType: input.event.type,
-          cause: Cause.pretty(cause),
-        });
-      }),
-    );
+  const processInput = (input: RuntimeIngestionInput) => {
+    switch (input.source) {
+      case "runtime":
+        return processRuntimeEvent(input.event);
+      case "domain":
+        return processDomainEvent(input.event);
+      case "diff":
+        return recordProviderDiff(input.event);
+    }
+  };
 
-  const worker = yield* makeDrainableWorker(processInputSafely);
+  const logIngestionFailure =
+    (source: string, event: { readonly eventId: string; readonly type: string }) =>
+    <E, R>(effect: Effect.Effect<void, E, R>) =>
+      effect.pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.failCause(cause);
+          }
+          return Effect.logWarning("provider runtime ingestion failed to process event", {
+            source,
+            eventId: event.eventId,
+            eventType: event.type,
+            cause: Cause.pretty(cause),
+          });
+        }),
+      );
+
+  const worker = yield* makeDrainableWorker((input: RuntimeIngestionInput) =>
+    processInput(input).pipe(logIngestionFailure(input.source, input.event)),
+  );
+
+  // Repository detection for a diff goes through VCS subprocesses, which can
+  // stall behind slow or hung git. It runs on its own worker so a stuck diff
+  // never delays the lifecycle worker; confirmed diffs are handed back to it.
+  const detectProviderDiffRepository = Effect.fn("detectProviderDiffRepository")(function* (
+    event: ProviderDiffEvent,
+  ) {
+    if (!toTurnId(event.turnId)) return;
+    const checkpointContext = yield* projectionSnapshotQuery
+      .getThreadCheckpointContext(event.threadId)
+      .pipe(Effect.map(Option.getOrUndefined));
+    const workspaceCwd = checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot;
+    if (!workspaceCwd || !(yield* checkpointStore.isGitRepository(workspaceCwd))) return;
+    yield* worker.enqueue({ source: "diff", event });
+  });
+  const diffWorker = yield* makeDrainableWorker((event: ProviderDiffEvent) =>
+    detectProviderDiffRepository(event).pipe(logIngestionFailure("diff", event)),
+  );
 
   const start: ProviderRuntimeIngestionShape["start"] = () =>
     Effect.gen(function* () {
       yield* forkParked(
         Stream.runForEach(providerService.streamEvents, (event) =>
-          worker.enqueue({ source: "runtime", event }),
+          event.type === "turn.diff.updated"
+            ? diffWorker.enqueue(event)
+            : worker.enqueue({ source: "runtime", event }),
         ),
       );
       yield* forkParked(
@@ -2665,7 +2699,8 @@ const make = Effect.gen(function* () {
 
   return {
     start,
-    drain: worker.drain,
+    // The diff worker feeds the lifecycle worker, so drain it first.
+    drain: diffWorker.drain.pipe(Effect.andThen(worker.drain)),
   } satisfies ProviderRuntimeIngestionShape;
 });
 
