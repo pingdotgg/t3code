@@ -1,9 +1,5 @@
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
-import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
-import {
-  getComposerDraftSnapshot,
-  clearComposerDraftContent,
-} from "../../state/use-composer-drafts";
+import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -16,8 +12,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import {
-  CommandId,
-  MessageId,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ThreadId,
@@ -875,15 +869,17 @@ function ThreadRouteContent(
       }),
     );
   }, [navigation, routeThreadIdentity, selectedThreadCreation, selectedThreadProject]);
-  const worktreeSetup = useWorktreeSetup({
+  const setupTurnStartedAt = composer.selectedThreadActivityRun?.startedAt ?? null;
+  const { snapshot: worktreeSetupSnapshot, visible: worktreeSetup } = useWorktreeSetup({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
-    activities: [],
     preparing:
+      composer.selectedThreadActivityRun?.status === "preparing" ||
+      selectedThread?.runtime?.status === "preparing" ||
       selectedThread?.worktreePath != null ||
       (selectedThreadCreation?.message.creation?.workspaceMode === "worktree" &&
         selectedThreadCreation.outcome == null),
-    turnStarted: selectedThread?.latestRun?.startedAt != null,
+    turnStarted: setupTurnStartedAt !== null,
     followUpSent:
       composer.selectedThreadFeed.filter(
         (entry) => entry.type === "message" && entry.message.role === "user",
@@ -903,75 +899,59 @@ function ThreadRouteContent(
       input: { threadId: selectedThread.id },
     });
   }, [cancelWorktreeSetup, selectedThread]);
-  const [localResendMessageId, setLocalResendMessageId] = useState<string | null>(null);
+  const startLocalThread = useAtomCommand(threadEnvironment.startTurn, "work locally");
+  const localResendBusy = useRef(false);
+  const setupMessage = selectedThreadDetail?.messages.find((message) => message.role === "user");
   const handleWorkLocally = useCallback(async () => {
-    if (!selectedThread || !selectedThreadCreation) return;
-    const result = await cancelWorktreeSetup({
-      environmentId: selectedThread.environmentId,
-      input: { threadId: selectedThread.id },
-    });
-    if (result._tag === "Success" && result.value.cancelled) {
-      setLocalResendMessageId(selectedThreadCreation.message.messageId);
-    }
-  }, [cancelWorktreeSetup, selectedThread, selectedThreadCreation]);
-  // Wait for the outbox to restore the cancelled send before queuing its replacement.
-  useEffect(() => {
-    const pending = selectedThreadCreation;
-    if (
-      !localResendMessageId ||
-      pending?.message.messageId !== localResendMessageId ||
-      pending.outcome?.kind !== "failed"
-    )
+    if (!selectedThread || !selectedThreadProject || !setupMessage || localResendBusy.current)
       return;
-    setLocalResendMessageId(null);
-    const original = pending.message;
-    if (!original.creation) return;
-    const metadata = makeTurnCommandMetadata();
-    const replacement = {
-      ...original,
-      commandId: CommandId.make(metadata.commandId),
-      messageId: MessageId.make(metadata.messageId),
-      threadId: ThreadId.make(metadata.threadId),
-      createdAt: metadata.createdAt,
-      creation: {
-        ...original.creation,
-        workspaceMode: "local" as const,
-        branch: null,
-        worktreePath: null,
-      },
-    };
-    void enqueueThreadOutboxMessage(replacement)
-      .then(() => {
-        const draftKey = restoredNewTaskDraftKey(original.messageId);
-        const restored = getComposerDraftSnapshot(draftKey);
-        // Leave any edits made during cancellation in their recovery draft.
-        if (
-          restored.text === original.text &&
-          JSON.stringify(restored.context) === JSON.stringify(original.context) &&
-          restored.attachments.length === original.attachments.length &&
-          restored.attachments.every(
-            (attachment, index) => attachment.id === original.attachments[index]?.id,
-          )
-        ) {
-          clearComposerDraftContent(draftKey, { deferAttachmentCleanup: true });
-        }
-        clearPendingThreadCreationOutcome(
-          scopedThreadKey(original.environmentId, original.threadId),
-        );
-        navigation.dispatch(
-          StackActions.replace("Thread", {
-            environmentId: String(replacement.environmentId),
-            threadId: String(replacement.threadId),
-          }),
-        );
-      })
-      .catch((error) =>
-        Alert.alert(
-          "Could not work locally",
-          error instanceof Error ? error.message : String(error),
-        ),
+    localResendBusy.current = true;
+    try {
+      const result = await cancelWorktreeSetup({
+        environmentId: selectedThread.environmentId,
+        input: { threadId: selectedThread.id },
+      });
+      if (result._tag !== "Success" || !result.value.cancelled) return;
+      // V2 accepts the launch before setup runs, so cancellation never rejects
+      // the original outbox delivery. Reuse the server-owned prompt and uploads.
+      const metadata = makeTurnCommandMetadata();
+      const launched = await startLocalThread({
+        environmentId: selectedThread.environmentId,
+        input: buildProjectThreadStartTurnInput({
+          ...metadata,
+          projectId: selectedThread.projectId,
+          projectCwd: selectedThreadProject.workspaceRoot,
+          text: setupMessage.text,
+          ...(setupMessage.context ? { context: setupMessage.context } : {}),
+          uploadedAttachments: setupMessage.attachments,
+          modelSelection: selectedThread.modelSelection,
+          runtimeMode: selectedThread.runtimeMode,
+          interactionMode: selectedThread.interactionMode,
+          workspaceMode: "local",
+          branch: null,
+          worktreePath: null,
+          startFromOrigin: false,
+          worktreeBranchName: "",
+        }),
+      });
+      if (launched._tag !== "Success") return;
+      navigation.dispatch(
+        StackActions.replace("Thread", {
+          environmentId: String(selectedThread.environmentId),
+          threadId: metadata.threadId,
+        }),
       );
-  }, [localResendMessageId, navigation, selectedThreadCreation]);
+    } finally {
+      localResendBusy.current = false;
+    }
+  }, [
+    cancelWorktreeSetup,
+    navigation,
+    selectedThread,
+    selectedThreadProject,
+    setupMessage,
+    startLocalThread,
+  ]);
   const creationState = ((): ThreadDetailScreenProps["creationState"] => {
     if (selectedThreadCreation === null) {
       return awaitingBootstrapTurn ? { kind: "preparing", preparingWorktree: true } : null;
@@ -1054,12 +1034,17 @@ function ThreadRouteContent(
           onDismissFeedback={composer.dismissFeedback}
           selectedThreadFeed={composer.selectedThreadFeed}
           activityRun={composer.selectedThreadActivityRun}
-          activeWorkStartedAt={composer.activeWorkStartedAt}
+          activeWorkStartedAt={
+            creationState?.kind === "preparing" ||
+            (worktreeSetup !== null && setupTurnStartedAt === null)
+              ? null
+              : composer.activeWorkStartedAt
+          }
           isCompacting={composer.isCompacting}
           creationState={creationState}
           setupWorkingStartedAt={
             composer.activeWorkStartedAt !== null &&
-            worktreeSetup !== null &&
+            worktreeSetupSnapshot !== null &&
             composer.selectedThreadFeed.filter(
               (entry) => entry.type === "message" && entry.message.role === "user",
             ).length <= 1
@@ -1070,14 +1055,11 @@ function ThreadRouteContent(
             worktreeSetup
               ? {
                   snapshot: worktreeSetup,
-                  turnStartedAt: selectedThread?.latestRun?.startedAt ?? null,
+                  turnStartedAt: setupTurnStartedAt,
                   working: composer.activeWorkStartedAt !== null,
-                  turnStarted: selectedThread?.latestRun?.startedAt != null,
+                  turnStarted: setupTurnStartedAt !== null,
                   onCancel: handleCancelWorktreeSetup,
-                  onWorkLocally:
-                    selectedThreadCreation?.outcome == null && selectedThreadCreation
-                      ? handleWorkLocally
-                      : null,
+                  onWorkLocally: setupMessage && selectedThreadProject ? handleWorkLocally : null,
                 }
               : null
           }
@@ -1093,7 +1075,7 @@ function ThreadRouteContent(
           threadSyncStatus={selectedThreadDetailState.status}
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
-          canStopThread={composer.interruptibleRunId !== null}
+          canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
           queuedRunEdit={composer.queuedRunEdit}
           composerDraftKey={composer.composerDraftKey}
           followUpBehavior={composer.followUpBehavior}
