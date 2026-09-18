@@ -147,6 +147,15 @@ export class ProcessRunner extends Context.Service<
 >()("t3/processRunner") {}
 
 const DEFAULT_TIMEOUT = "60 seconds";
+/**
+ * Runs are short-lived helpers (`gh`, `git`, probes) that must not outlive the
+ * backend. They stay in the backend's process group instead of the spawner's
+ * default detached group, so the group-wide SIGTERM and SIGKILL the desktop
+ * sends at quit reach them even when the backend is hard-killed before its
+ * scope finalizers run. A helper that ignores SIGTERM on timeout or
+ * interruption is SIGKILLed after this grace instead of being left behind.
+ */
+const FORCE_KILL_AFTER = "1 second";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
@@ -310,6 +319,8 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
             }
           : {}),
         shell: spawnCommand.shell,
+        detached: false,
+        forceKillAfter: FORCE_KILL_AFTER,
       }),
     )
     .pipe(

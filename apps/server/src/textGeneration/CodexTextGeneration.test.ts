@@ -1,11 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { TestClock } from "effect/testing";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vite-plus/test";
 
@@ -15,6 +18,7 @@ import * as ServerConfig from "../config.ts";
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 import { writeFakeCli } from "../testUtils/fakeCli.ts";
+import { killQuietly, readPidFile, waitForProcessExit } from "../testUtils/processProbe.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
@@ -38,6 +42,8 @@ interface FakeCodexInput {
   forbidArg?: string;
   stdinMustContain?: string;
   stdinMustNotContain?: string;
+  /** Stall after reading the prompt: ignore SIGTERM and write the pid here. */
+  hangPidFile?: string;
 }
 
 // The stub walks argv the way the shell script it replaced did: `--image`,
@@ -57,6 +63,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
+    hangPidFile: input.hangPidFile ?? null,
   });
   return Effect.gen(function* () {
     const path = yield* Path.Path;
@@ -89,6 +96,12 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "const chunks = [];",
         "for await (const chunk of process.stdin) chunks.push(chunk);",
         'const stdinContent = Buffer.concat(chunks).toString("utf8");',
+        "if (check.hangPidFile !== null) {",
+        '  process.on("SIGTERM", () => {});',
+        "  setInterval(() => {}, 1_000);",
+        "  NodeFS.writeFileSync(check.hangPidFile, String(process.pid));",
+        "  await new Promise(() => {});",
+        "}",
         "function fail(message, code) {",
         '  process.stderr.write(message + "\\n");',
         "  process.exit(code);",
@@ -181,6 +194,38 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
       ),
     );
   }
+  it.effect("SIGKILLs a Codex CLI that ignores SIGTERM after the request times out", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-hang-" });
+      const pidFile = path.join(tempDir, "codex.pid");
+      return yield* withFakeCodexEnv({ output: "", hangPidFile: pidFile }, (textGeneration) =>
+        Effect.gen(function* () {
+          const fiber = yield* textGeneration
+            .generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Describe this change",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            })
+            .pipe(Effect.exit, Effect.forkScoped);
+          const pid = yield* readPidFile(pidFile);
+          expect(pid).toBeDefined();
+          yield* Effect.addFinalizer(() => Effect.sync(() => killQuietly(pid!)));
+
+          // The Codex request timeout; the kill grace after it runs on native time.
+          yield* TestClock.adjust(Duration.minutes(3));
+
+          // Without the force kill the release waits on the CLI forever, so the
+          // request would hang here instead of failing; check the process first.
+          expect(yield* waitForProcessExit(pid!)).toBe(true);
+          const exit = yield* Fiber.join(fiber);
+          expect(exit._tag).toBe("Failure");
+        }),
+      );
+    }),
+  );
+
   it.effect("generates and sanitizes commit messages without branch by default", () =>
     withFakeCodexEnv(
       {
