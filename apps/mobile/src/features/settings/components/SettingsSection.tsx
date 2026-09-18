@@ -7,8 +7,6 @@ export function SettingsSection(props: {
   readonly title?: string;
   readonly trailing?: ReactNode;
   readonly children: ReactNode;
-  /** Force the grouped card background; Android otherwise lists options flat. */
-  readonly card?: boolean;
 }) {
   return (
     <View className="gap-2">
@@ -30,9 +28,7 @@ export function SettingsSection(props: {
         className={
           Platform.OS === "android"
             ? "overflow-hidden rounded-[28px] bg-card"
-            : props.card
-              ? "overflow-hidden rounded-[24px] border-continuous bg-card"
-              : "overflow-hidden rounded-[24px] border-continuous bg-card android:bg-transparent"
+            : "overflow-hidden rounded-[24px] border-continuous bg-card"
         }
       >
         {props.children}
