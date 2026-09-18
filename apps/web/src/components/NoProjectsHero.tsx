@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import { ImportIcon, PlusIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 import { useCallback } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus";
@@ -24,16 +24,20 @@ export function NoProjectsHero() {
                 What should we work on?
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Add a project to start your first thread.
+                Add a project to start your first thread, or{" "}
+                <button
+                  type="button"
+                  onClick={openWelcome}
+                  className="inline cursor-pointer border-muted-foreground/35 border-b border-dotted transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  import from Claude Code or Codex
+                </button>
+                .
               </EmptyDescription>
-              <div className="mt-6 flex flex-col items-center gap-2">
+              <div className="mt-6 flex justify-center">
                 <Button size="sm" onClick={openAddProject}>
                   <PlusIcon className="size-4" />
                   Add project
-                </Button>
-                <Button size="sm" variant="ghost-muted" onClick={openWelcome}>
-                  <ImportIcon className="size-4" />
-                  Import from Claude Code or Codex
                 </Button>
               </div>
             </EmptyHeader>
