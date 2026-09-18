@@ -914,6 +914,8 @@ const make = Effect.gen(function* () {
                 }),
             ),
           );
+          // A store operation may mutate before reporting an error (for example chmod after rename).
+          applied.push({ ...change, previousValue });
           yield* (
             change.kind === "write"
               ? secretStore.set(change.secretName, change.value)
@@ -930,7 +932,6 @@ const make = Effect.gen(function* () {
                 }),
             ),
           );
-          applied.push({ ...change, previousValue });
         }),
       { discard: true },
     ).pipe(
