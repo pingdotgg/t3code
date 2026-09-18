@@ -78,6 +78,7 @@ export interface OrchestrationEventStoreShape {
     readonly throughSequence?: number;
     readonly threadId?: ThreadId;
     readonly commandId?: CommandId;
+    readonly eventType?: OrchestrationV2DomainEvent["type"];
     readonly limit?: number;
   }) => Stream.Stream<OrchestrationV2StoredEvent, OrchestrationEventStoreError>;
 
