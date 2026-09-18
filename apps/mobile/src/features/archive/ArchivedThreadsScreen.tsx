@@ -8,9 +8,8 @@ import {
   type EnvironmentMachineKind,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { ArchivedThreadsHeader } from "./ArchivedThreadsHeader";
-import type { ArchivedThreadsHeaderEnvironment } from "./ArchivedThreadsHeader.types";
-export type { ArchivedThreadsHeaderEnvironment } from "./ArchivedThreadsHeader.types";
+import { useNavigation } from "@react-navigation/native";
+import { ScreenHeader } from "../../components/ScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useMemo, useRef, type ComponentProps } from "react";
 import {
@@ -33,6 +32,90 @@ import { useServerConfigs } from "../../state/entities";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
+
+export interface ArchivedThreadsHeaderEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+}
+
+function ArchivedThreadsHeader(props: {
+  readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
+  readonly searchQuery: string;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly sortOrder: ArchivedThreadSortOrder;
+  readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
+  readonly onRefresh: () => void;
+  readonly onSearchQueryChange: (query: string) => void;
+  readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
+}) {
+  const navigation = useNavigation();
+  const { width } = useWindowDimensions();
+  const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
+  return (
+    <ScreenHeader
+      title="Archived threads"
+      sidebar={false}
+      onBack={() => navigation.goBack()}
+      search={{
+        value: props.searchQuery,
+        onChangeText: props.onSearchQueryChange,
+        placeholder: "Search archived threads",
+        compactPlaceholder: "Search",
+        mode: "inline",
+        compactToolbar: width < 700,
+        onRefresh: props.onRefresh,
+        refreshInToolbar: true,
+        refreshAccessibilityLabel: "Refresh archived threads",
+      }}
+      menus={[
+        {
+          title: "Archived thread options",
+          icon: hasCustomFilter
+            ? "line.3.horizontal.decrease.circle.fill"
+            : "line.3.horizontal.decrease.circle",
+          items: [
+            {
+              id: "environment",
+              title: "Environment",
+              items: [
+                {
+                  id: "environment:all",
+                  title: "All environments",
+                  selected: props.selectedEnvironmentId === null,
+                  onPress: () => props.onEnvironmentChange(null),
+                },
+                ...props.environments.map((environment) => ({
+                  id: `environment:${environment.environmentId}`,
+                  title: environment.label,
+                  selected: props.selectedEnvironmentId === environment.environmentId,
+                  onPress: () => props.onEnvironmentChange(environment.environmentId),
+                })),
+              ],
+            },
+            {
+              id: "sort",
+              title: "Sort by archived date",
+              items: [
+                {
+                  id: "sort:newest",
+                  title: "Newest first",
+                  selected: props.sortOrder === "newest",
+                  onPress: () => props.onSortOrderChange("newest"),
+                },
+                {
+                  id: "sort:oldest",
+                  title: "Oldest first",
+                  selected: props.sortOrder === "oldest",
+                  onPress: () => props.onSortOrderChange("oldest"),
+                },
+              ],
+            },
+          ],
+        },
+      ]}
+    />
+  );
+}
 
 type ArchivedThreadListItem =
   | {
