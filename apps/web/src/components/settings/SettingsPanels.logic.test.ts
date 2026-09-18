@@ -16,7 +16,9 @@ import {
   getChangedTypographySettingLabels,
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
+  normalizeProviderHealthIntervalSeconds,
   projectGroupingModeFromToggle,
+  PROVIDER_HEALTH_INTERVAL_MIN_SECONDS,
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
 
@@ -279,5 +281,28 @@ describe("getChangedBrowserSettingLabels", () => {
       "Open links in",
       "Floating preview",
     ]);
+  });
+});
+
+describe("normalizeProviderHealthIntervalSeconds", () => {
+  const min = PROVIDER_HEALTH_INTERVAL_MIN_SECONDS;
+
+  it("keeps zero and values at or above the minimum", () => {
+    expect(normalizeProviderHealthIntervalSeconds(0, min)).toBe(0);
+    expect(normalizeProviderHealthIntervalSeconds(min, 0)).toBe(min);
+    expect(normalizeProviderHealthIntervalSeconds(600, min)).toBe(600);
+  });
+
+  it("jumps to disabled when stepping down from the minimum", () => {
+    expect(normalizeProviderHealthIntervalSeconds(min - 30, min)).toBe(0);
+  });
+
+  it("jumps to the minimum when stepping up from disabled", () => {
+    expect(normalizeProviderHealthIntervalSeconds(30, 0)).toBe(min);
+  });
+
+  it("treats an empty or negative value as disabled", () => {
+    expect(normalizeProviderHealthIntervalSeconds(null, min)).toBe(0);
+    expect(normalizeProviderHealthIntervalSeconds(-5, min)).toBe(0);
   });
 });

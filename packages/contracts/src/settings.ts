@@ -912,6 +912,13 @@ export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyle
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
+/**
+ * Shortest allowed gap between provider health probes. Zero still disables
+ * them. Matches the 90 second probe timeout of the slowest process-based
+ * check (Antigravity spawns its full ACP server), so a short interval cannot
+ * respawn that process back-to-back.
+ */
+export const MIN_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.seconds(90);
 
 export const BackgroundActivityProfile = Schema.Literals([
   "balanced",

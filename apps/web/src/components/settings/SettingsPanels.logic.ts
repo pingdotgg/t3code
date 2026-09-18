@@ -9,7 +9,10 @@ import type {
   SidebarProjectGroupingMode,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  MIN_PROVIDER_HEALTH_REFRESH_INTERVAL,
+} from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -306,6 +309,26 @@ export function normalizeIntervalSeconds(value: number | null, minimum = 0): num
     return minimum;
   }
   return Math.max(minimum, Math.round(value));
+}
+
+export const PROVIDER_HEALTH_INTERVAL_MIN_SECONDS = durationToSeconds(
+  MIN_PROVIDER_HEALTH_REFRESH_INTERVAL,
+);
+
+/**
+ * Zero disables probes and any other value must reach the minimum, so the
+ * steppers jump between 0 and the minimum instead of stalling in between. A
+ * value typed into the gap snaps in the direction the user was moving.
+ */
+export function normalizeProviderHealthIntervalSeconds(
+  value: number | null,
+  previousSeconds: number,
+): number {
+  const seconds = normalizeIntervalSeconds(value);
+  if (seconds === 0 || seconds >= PROVIDER_HEALTH_INTERVAL_MIN_SECONDS) {
+    return seconds;
+  }
+  return seconds < previousSeconds ? 0 : PROVIDER_HEALTH_INTERVAL_MIN_SECONDS;
 }
 
 export function backgroundActivityOverrideSettings(

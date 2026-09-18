@@ -150,6 +150,8 @@ import {
   getChangedBrowserSettingLabels,
   getChangedTypographySettingLabels,
   normalizeIntervalSeconds,
+  normalizeProviderHealthIntervalSeconds,
+  PROVIDER_HEALTH_INTERVAL_MIN_SECONDS,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
@@ -983,7 +985,8 @@ function BackgroundActivityAdvancedDialog({
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">Provider health interval</div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  Refresh provider availability, versions, auth state, and model metadata.
+                  Refresh provider availability, versions, auth state, and model metadata. Set to 0
+                  to disable. Minimum {PROVIDER_HEALTH_INTERVAL_MIN_SECONDS} seconds.
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -1000,7 +1003,10 @@ function BackgroundActivityAdvancedDialog({
                         resolvedBackgroundActivity,
                         {
                           providerHealthRefreshInterval: Duration.seconds(
-                            normalizeIntervalSeconds(value),
+                            normalizeProviderHealthIntervalSeconds(
+                              value,
+                              providerHealthRefreshIntervalSeconds,
+                            ),
                           ),
                         },
                       ),

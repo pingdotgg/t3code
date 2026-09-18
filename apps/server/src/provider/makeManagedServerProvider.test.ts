@@ -1,6 +1,7 @@
 import { describe, it, assert } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  MIN_PROVIDER_HEALTH_REFRESH_INTERVAL,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -329,13 +330,15 @@ describe("makeManagedServerProvider", () => {
         yield* Deferred.await(initialCheckDone);
         const nextServerSettings = {
           ...initialServerSettings,
-          providerHealthRefreshInterval: Duration.seconds(1),
+          providerHealthRefreshInterval: MIN_PROVIDER_HEALTH_REFRESH_INTERVAL,
         };
         yield* Ref.set(serverSettingsRef, nextServerSettings);
         yield* PubSub.publish(serverSettingsChanges, nextServerSettings);
         yield* Effect.yieldNow;
 
-        yield* TestClock.adjust("999 millis");
+        yield* TestClock.adjust(
+          Duration.subtract(MIN_PROVIDER_HEALTH_REFRESH_INTERVAL, Duration.millis(1)),
+        );
         assert.strictEqual(yield* Ref.get(checkCalls), 1);
         yield* TestClock.adjust("1 millis");
         yield* Deferred.await(periodicCheckDone);
@@ -654,5 +657,77 @@ describe("makeManagedServerProvider", () => {
         assert.deepStrictEqual(refreshed.usageLimits?.windows, [liveWindow]);
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
+  it.effect("floors a short settings interval and skips ticks while a probe is in flight", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverSettings = {
+          ...DEFAULT_SERVER_SETTINGS,
+          backgroundActivity: {
+            schemaVersion: 1 as const,
+            profile: "custom" as const,
+            baseProfile: "balanced" as const,
+            overrides: { providerHealthRefreshInterval: Duration.seconds(30) },
+          },
+        };
+        const serverSettingsLayer = Layer.succeed(
+          ServerSettingsService,
+          ServerSettingsService.of({
+            start: Effect.void,
+            ready: Effect.void,
+            getSettings: Effect.succeed(serverSettings),
+            updateSettings: () => Effect.die(new Error("unused in this test")),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.succeed(Stream.empty),
+          }),
+        );
+        const checkCalls = yield* Ref.make(0);
+        const firstCheckStarted = yield* Deferred.make<void>();
+        const releaseFirstCheck = yield* Deferred.make<void>();
+        const secondCheckDone = yield* Deferred.make<void>();
+
+        yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Deferred.succeed(firstCheckStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseFirstCheck)),
+                  )
+                : Deferred.succeed(secondCheckDone, undefined).pipe(Effect.ignore),
+            ),
+            Effect.as(refreshedSnapshot),
+          ),
+        }).pipe(Effect.provide(Layer.merge(BackgroundPolicyAlwaysRunLayer, serverSettingsLayer)));
+
+        yield* Deferred.await(firstCheckStarted);
+
+        // The persisted 30s override is floored, so no tick fires at 30s.
+        yield* TestClock.adjust("30 seconds");
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+
+        // The floored tick fires while the first probe is still running and is
+        // skipped rather than queued behind it.
+        yield* TestClock.adjust(
+          Duration.subtract(MIN_PROVIDER_HEALTH_REFRESH_INTERVAL, Duration.seconds(30)),
+        );
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+
+        yield* Deferred.succeed(releaseFirstCheck, undefined);
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+
+        // The next full interval after the skipped tick probes again.
+        yield* TestClock.adjust(MIN_PROVIDER_HEALTH_REFRESH_INTERVAL);
+        yield* Deferred.await(secondCheckDone);
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
   );
 });
