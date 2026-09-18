@@ -12,7 +12,7 @@ import serverPackageJson from "../../apps/server/package.json" with { type: "jso
 import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
 
 import {
-  CLI_RUNTIME_EXTERNAL_PREFIXES,
+  isRuntimeExternalCliDependency,
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
   shouldBundleCliDependency,
@@ -82,7 +82,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
   it("selects every external root declared by the server", () => {
     assert.deepStrictEqual(
       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
-      ["@ff-labs/fff-node", "node-pty"],
+      ["@cursor/sdk", "@ff-labs/fff-node", "node-pty"],
     );
   });
 });
@@ -146,8 +146,7 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
 
   // Runtime-external only. The build-only entries resolve `bun:*` and are never
   // loaded by Node, so their closure genuinely does not need to be external.
-  const isRuntimeExternal = (name: string) =>
-    CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => name.startsWith(prefix));
+  const isRuntimeExternal = isRuntimeExternalCliDependency;
 
   // A cold walk of the pnpm store can exceed the root timeout when the Windows
   // lane runs four filesystem-heavy workspace suites at once.

@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.276",
-    "@cursor/sdk": "1.0.22",
+    "@cursor/sdk": "1.0.31",
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
     "@ff-labs/fff-node": "0.9.4",
