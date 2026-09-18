@@ -78,7 +78,7 @@ const OrchestratorMcpTargetOptionsFromRecord = Schema.Record(
 ).pipe(
   Schema.decodeTo(
     Schema.Array(ProviderOptionSelection),
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (record) =>
         Effect.succeed(Object.entries(record).map(([id, value]) => ({ id, value }))),
       encode: (selections: ReadonlyArray<ProviderOptionSelection>) =>
