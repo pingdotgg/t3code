@@ -95,6 +95,18 @@ describe("readFullEnvironmentFromLoginShell", () => {
     expect(readFullEnvironmentFromLoginShell("/bin/bash", execFile)).toEqual({ REAL: "kept" });
   });
 
+  it("does not let a value containing the end marker truncate the capture", () => {
+    const execFile = vi.fn<FullEnvExecFile>(() =>
+      fullEnvOutput(["LEADING=kept", "TRAP=__T3CODE_ENV_ALL_END__", "TRAILING=also kept"]),
+    );
+
+    expect(readFullEnvironmentFromLoginShell("/bin/zsh", execFile)).toEqual({
+      LEADING: "kept",
+      TRAP: "__T3CODE_ENV_ALL_END__",
+      TRAILING: "also kept",
+    });
+  });
+
   it("returns nothing when the markers are absent", () => {
     const execFile = vi.fn<FullEnvExecFile>(() => "profile noise without markers\n");
 

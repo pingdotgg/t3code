@@ -324,7 +324,7 @@ function parseFullEnvironmentOutput(output: string): Partial<Record<string, stri
   if (startIndex === -1) return {};
 
   const bodyStartIndex = startIndex + FULL_ENV_CAPTURE_START.length;
-  const endIndex = output.indexOf(FULL_ENV_CAPTURE_END, bodyStartIndex);
+  const endIndex = output.indexOf(`\0${FULL_ENV_CAPTURE_END}`, bodyStartIndex);
   if (endIndex === -1) return {};
 
   const environment: Partial<Record<string, string>> = {};
