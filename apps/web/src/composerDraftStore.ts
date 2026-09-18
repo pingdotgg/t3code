@@ -4390,7 +4390,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 
 export const useComposerDraftStore = composerDraftStore;
 
-function clearBackgroundDraftSubmissionByRef(threadRef: ScopedThreadRef): void {
+export function beginBackgroundDraftSubmissionByRef(threadRef: ScopedThreadRef): void {
+  const threadKey = scopedThreadKey(threadRef);
+  useComposerDraftStore.setState((state) => ({
+    backgroundSubmissionThreadKeys: { ...state.backgroundSubmissionThreadKeys, [threadKey]: true },
+  }));
+}
+
+export function clearBackgroundDraftSubmissionByRef(threadRef: ScopedThreadRef): void {
   const threadKey = scopedThreadKey(threadRef);
   useComposerDraftStore.setState((state) => {
     if (!state.backgroundSubmissionThreadKeys[threadKey]) {
@@ -4555,6 +4562,23 @@ export function markPromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {
       draftStore.markDraftThreadPromoting(DraftId.make(draftId), threadRef);
     }
   }
+}
+
+export function restoreFailedBackgroundDraftThread(
+  draftId: DraftId,
+  draftThread: DraftThreadState,
+  threadId: ThreadId,
+): void {
+  useComposerDraftStore.setState((state) => ({
+    draftThreadsByThreadKey: {
+      ...state.draftThreadsByThreadKey,
+      [draftId]: {
+        ...draftThread,
+        threadId,
+        promotedTo: null,
+      },
+    },
+  }));
 }
 
 export function finalizePromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {
