@@ -19,7 +19,11 @@ import {
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import {
+  isCommandAvailable,
+  resolveSpawnCommand,
+  withCommandDirectoryCache,
+} from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -417,6 +421,11 @@ function buildBrowserLaunch(
   };
 }
 
+/**
+ * Discover installed editors while sharing PATH listings across command probes.
+ * Return completed probes after four seconds so the caller can cache partial
+ * results before server.getConfig's five-second deadline.
+ */
 const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
@@ -427,19 +436,21 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
 > {
   const available: EditorId[] = [];
 
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
+  yield* Effect.gen(function* () {
+    for (const editor of EDITORS) {
+      if (editor.commands === null) {
+        if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
+          available.push(editor.id);
+        }
+        continue;
+      }
+
+      const command = yield* resolveAvailableCommand(editor.commands, env);
+      if (Option.isSome(command)) {
         available.push(editor.id);
       }
-      continue;
     }
-
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
-  }
+  }).pipe(withCommandDirectoryCache, Effect.timeoutOption("4 seconds"));
 
   return available;
 });

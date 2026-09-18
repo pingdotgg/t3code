@@ -512,6 +512,20 @@ export const CommandResolutionCache = Context.Reference<Map<string, CommandResol
   },
 );
 
+const CommandDirectoryCache = Context.Reference<
+  Map<string, ReadonlySet<string> | null> | undefined
+>("@t3tools/shared/shell/CommandDirectoryCache", { defaultValue: () => undefined });
+
+/**
+ * Run a batch of command lookups with a shared PATH directory listing cache.
+ * Each execution creates a fresh cache so later batches see directory changes.
+ *
+ * @param effect - The command lookups that should share directory listings.
+ * @returns The effect with a fresh directory cache provided for its execution.
+ */
+export const withCommandDirectoryCache = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.suspend(() => effect.pipe(Effect.provideService(CommandDirectoryCache, new Map())));
+
 function cacheCommandResolution(
   cache: Map<string, CommandResolutionCacheEntry>,
   cacheKey: string,
@@ -550,6 +564,11 @@ const isExecutableFile = Effect.fnUntraced(function* (
   return canExecuteFile(filePath);
 });
 
+/**
+ * Resolve an executable using the supplied platform and PATH in search order.
+ * When a directory cache is provided, use its listings to skip absent candidates;
+ * probe candidates directly when a directory cannot be listed.
+ */
 const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
@@ -603,8 +622,29 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     pathEntries.push(pathEntry);
   }
 
+  const directoryCache = yield* CommandDirectoryCache;
   for (const pathEntry of pathEntries) {
+    const directoryKey = `${platform}:${pathEntry}`;
+    let names = directoryCache?.get(directoryKey);
+    if (directoryCache && names === undefined) {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const entries = yield* fileSystem.readDirectory(pathEntry).pipe(
+        Effect.catch((error) =>
+          // A non-listable directory may still allow access to a known file.
+          Effect.succeed(error.reason._tag === "NotFound" ? [] : null),
+        ),
+      );
+      // Case sensitivity belongs to the filesystem, not the host platform.
+      // Keep possible matches here and let stat check the original spelling.
+      names = entries === null ? null : new Set(entries.map((name) => name.toLowerCase()));
+      directoryCache.set(directoryKey, names);
+    }
     for (const candidate of commandCandidates) {
+      if (names && !names.has(candidate.toLowerCase())) {
+        continue;
+      }
+      // Verify the original candidate spelling for case-sensitive filesystems,
+      // and exclude folders or broken links from the directory listing.
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
         cacheCommandResolution(cache, cacheKey, candidatePath, nowNanos);
