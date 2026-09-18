@@ -194,22 +194,32 @@ function requestTypeForAction(
 }
 
 /**
- * v2 tool names → canonical tool item types. Names differ from v1 (bash →
- * shell); the glob/grep read-only tools group under file_change per the v2
- * docs table.
+ * Read-only v2 tools. They must never map to `file_change`: clients group that
+ * item type — and any `path` their input contributes to `changedFiles` — as an
+ * edit, which rendered reads as "Changed N files".
  */
-function toOpenCode2ToolItemType(toolName: string | undefined): ToolLifecycleItemType {
+const OPENCODE2_READ_ONLY_TOOLS = new Set(["read", "glob", "grep"]);
+
+/**
+ * v2 tool names → canonical tool item types. Names differ from v1 (bash →
+ * shell). Read-only tools become `dynamic_tool_call` with the canonical
+ * "Read file" title, the same shape ACP adapters emit, so both clients group
+ * them under "Read N files" instead of the edit bucket.
+ */
+export function toOpenCode2ToolItemType(toolName: string | undefined): ToolLifecycleItemType {
   const normalized = (toolName ?? "").toLowerCase();
-  if (normalized === "todowrite" || normalized === "todoread" || normalized === "todo") {
+  if (
+    OPENCODE2_READ_ONLY_TOOLS.has(normalized) ||
+    normalized === "todowrite" ||
+    normalized === "todoread" ||
+    normalized === "todo"
+  ) {
     return "dynamic_tool_call";
   }
   if (normalized === "shell" || normalized.includes("bash") || normalized.includes("command")) {
     return "command_execution";
   }
   if (
-    normalized === "read" ||
-    normalized === "glob" ||
-    normalized === "grep" ||
     normalized.includes("edit") ||
     normalized.includes("write") ||
     normalized.includes("patch") ||
@@ -234,6 +244,14 @@ function toOpenCode2ToolItemType(toolName: string | undefined): ToolLifecycleIte
     return "collab_agent_tool_call";
   }
   return "dynamic_tool_call";
+}
+
+/** Activity title for a v2 tool; see {@link toOpenCode2ToolItemType}. */
+export function openCode2ToolTitle(toolName: string | undefined): { title?: string } {
+  if (toolName === undefined) {
+    return {};
+  }
+  return { title: OPENCODE2_READ_ONLY_TOOLS.has(toolName.toLowerCase()) ? "Read file" : toolName };
 }
 
 const OPENCODE2_DEFAULT_TITLE_PATTERN =
@@ -1818,7 +1836,7 @@ export function makeOpenCode2Adapter(
                 payload: {
                   itemType: toOpenCode2ToolItemType(toolName),
                   status: "inProgress",
-                  ...(toolName ? { title: toolName } : {}),
+                  ...openCode2ToolTitle(toolName),
                   data: {
                     ...(toolName ? { tool: toolName } : {}),
                     input: event.data.input,
@@ -1844,7 +1862,7 @@ export function makeOpenCode2Adapter(
                 payload: {
                   itemType: toOpenCode2ToolItemType(toolName),
                   status: "inProgress",
-                  ...(toolName ? { title: toolName } : {}),
+                  ...openCode2ToolTitle(toolName),
                   data: event.data.metadata,
                 },
               });
@@ -1871,7 +1889,7 @@ export function makeOpenCode2Adapter(
                 payload: {
                   itemType,
                   status: "completed",
-                  ...(toolName ? { title: toolName } : {}),
+                  ...openCode2ToolTitle(toolName),
                   ...(output.length > 0 ? { detail: output } : {}),
                   data: {
                     ...(toolName ? { tool: toolName } : {}),
@@ -1899,7 +1917,7 @@ export function makeOpenCode2Adapter(
                 payload: {
                   itemType: toOpenCode2ToolItemType(toolName),
                   status: "failed",
-                  ...(toolName ? { title: toolName } : {}),
+                  ...openCode2ToolTitle(toolName),
                   detail: event.data.error.message,
                 },
               });

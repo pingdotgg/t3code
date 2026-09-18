@@ -203,6 +203,20 @@ describe("summarizeToolGroup", () => {
       ]),
     ).toBe("Used Browser and Computer Use");
   });
+
+  it("summarizes reads carrying input paths as reads, not edits", () => {
+    // OpenCode 2 reads arrive with the file path in changedFiles; before the
+    // adapter stopped typing them as file_change, this group said "Changed 2
+    // files" for calls that never wrote.
+    const read = (path: string): WorkLogPresentationEntry => ({
+      label: "read",
+      tone: "tool",
+      itemType: "dynamic_tool_call",
+      toolTitle: "Read file",
+      changedFiles: [path],
+    });
+    expect(summarizeToolGroup([read("/repo/a.ts"), read("/repo/b.ts")])).toBe("Read 2 files");
+  });
 });
 
 describe("resolveWorkEntryToolPresentation", () => {
@@ -549,6 +563,21 @@ describe("toolGroupAction", () => {
         tone: "tool",
         itemType: "dynamic_tool_call",
         viewedImagePath: "/workspace/reference.png",
+      }),
+    ).toBe("read");
+  });
+
+  it("keeps a titled read out of the edit bucket when its input carries a path", () => {
+    // OpenCode 2 emits reads as dynamic_tool_call with a "Read file" title, but
+    // their input path also lands in changedFiles. Read must win, or the group
+    // renders "Changed N files" for calls that only read.
+    expect(
+      toolGroupAction({
+        label: "read",
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        toolTitle: "Read file",
+        changedFiles: ["/repo/src/index.ts"],
       }),
     ).toBe("read");
   });
