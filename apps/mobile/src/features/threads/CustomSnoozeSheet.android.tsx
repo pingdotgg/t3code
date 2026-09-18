@@ -1,7 +1,6 @@
 import { MaterialSegmentedButtons } from "../../components/MaterialSegmentedButtons.android";
 import {
   BasicAlertDialog,
-  Button,
   Column,
   DateTimePicker,
   Host,
@@ -240,19 +239,16 @@ export function CustomSnoozeSheet(props: Props) {
                 <Row horizontalArrangement="end" modifiers={[fillMaxWidth()]}>
                   <TextButton
                     onClick={props.onClose}
-                    colors={{ contentColor: colors["--color-primary"] }}
+                    colors={{ contentColor: colors["--color-foreground"] }}
                   >
                     <Text style={bodyTypography}>Cancel</Text>
                   </TextButton>
-                  <Button
+                  <TextButton
                     onClick={submit}
-                    colors={{
-                      containerColor: colors["--color-primary"],
-                      contentColor: colors["--color-primary-foreground"],
-                    }}
+                    colors={{ contentColor: colors["--color-foreground"] }}
                   >
                     <Text style={bodyTypography}>Snooze</Text>
-                  </Button>
+                  </TextButton>
                 </Row>
               </Column>
             </Column>

@@ -412,7 +412,7 @@ function ProviderSection(props: {
   );
 
   return (
-    <SettingsSection title="Providers" card>
+    <SettingsSection title="Providers">
       {ordered.map((provider, index) => {
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
         return (
@@ -463,7 +463,7 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
   return (
-    <SettingsSection title="Totals" card>
+    <SettingsSection title="Totals">
       <View className="flex-row flex-wrap">
         <MetricCell
           label="Processed tokens"
@@ -524,7 +524,7 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
   if (merged.models.length === 0) return null;
 
   return (
-    <SettingsSection title="By model" card>
+    <SettingsSection title="By model">
       {merged.models.map((model, index) => (
         <View
           key={`${model.provider}:${model.model}`}

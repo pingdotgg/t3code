@@ -152,7 +152,7 @@ export function CustomSnoozeSheet(props: {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              className="min-h-12 justify-center rounded-xl bg-primary px-3"
+              className="min-h-12 justify-center rounded-xl bg-subtle px-3"
               onPress={() => {
                 const input: CustomSnoozeInput =
                   mode === "date"
@@ -171,7 +171,7 @@ export function CustomSnoozeSheet(props: {
                 props.onClose();
               }}
             >
-              <AppText className="text-primary-foreground">Snooze</AppText>
+              <AppText className="text-foreground">Snooze</AppText>
             </Pressable>
           </View>
         </ScrollView>
