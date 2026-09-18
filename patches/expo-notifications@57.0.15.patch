@@ -1,0 +1,119 @@
+diff --git a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift b/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
+--- a/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
++++ b/ios/ExpoNotifications/Notifications/NotificationCenterManager.swift
+@@ -42,8 +42,10 @@
+   @objc
+   public static let shared = NotificationCenterManager()
+ 
+-  var delegates: [NotificationDelegate] = []
+-  var pendingResponses: [UNNotificationResponse] = []
++  // Module creation and destruction can overlap across React runtimes.
++  private let stateLock = NSLock()
++  private var delegates: [NotificationDelegate] = []
++  private var pendingResponses: [UNNotificationResponse] = []
+   let userNotificationCenter: UNUserNotificationCenter = UNUserNotificationCenter.current()
+ 
+   private override init() {
+@@ -62,32 +64,49 @@
+   }
+ 
+   public func addDelegate(_ delegate: NotificationDelegate) {
+-    delegates.append(delegate)
++    let responses = stateLock.withLock {
++      delegates.append(delegate)
++      return pendingResponses
++    }
+     var handled = false
+-    for pendingResponse in pendingResponses {
++    for pendingResponse in responses {
+       handled = delegate.didReceive(pendingResponse, completionHandler: {}) || handled
+     }
+     if handled {
+-      pendingResponses.removeAll()
++      removePendingResponses(responses)
+     }
+   }
+ 
+   public func removeDelegate(_ delegate: AnyObject) {
+-    if let index = delegates.firstIndex(where: { $0 === delegate }) {
+-      delegates.remove(at: index)
++    stateLock.withLock {
++      if let index = delegates.firstIndex(where: { $0 === delegate }) {
++        delegates.remove(at: index)
++      }
++    }
++  }
++
++  private func snapshotDelegates() -> [NotificationDelegate] {
++    stateLock.withLock { delegates }
++  }
++
++  private func removePendingResponses(_ responses: [UNNotificationResponse]) {
++    let identifiers = Set(responses.map(ObjectIdentifier.init))
++    stateLock.withLock {
++      // Keep responses received while delegate callbacks were running.
++      pendingResponses.removeAll { identifiers.contains(ObjectIdentifier($0)) }
+     }
+   }
+ 
+   // MARK: - Called by PushTokenAppDelegateSubscriber
+ 
+   public func didFailRegistration(_ error: any Error) {
+-    for delegate in delegates {
++    for delegate in snapshotDelegates() {
+       delegate.didFailRegistration(error)
+     }
+   }
+ 
+   public func didRegister(_ deviceToken: String) {
+-    for delegate in delegates {
++    for delegate in snapshotDelegates() {
+       delegate.didRegister(deviceToken)
+     }
+   }
+@@ -100,7 +119,7 @@
+     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+   ) {
+     var handled = false
+-    for delegate in delegates {
++    for delegate in snapshotDelegates() {
+       handled = delegate.willPresent(notification, completionHandler: completionHandler) || handled
+     }
+     if !handled {
+@@ -113,18 +132,23 @@
+     didReceive response: UNNotificationResponse,
+     withCompletionHandler completionHandler: @escaping () -> Void
+   ) {
++    let currentDelegates = stateLock.withLock {
++      // A delegate registering during delivery must see this response too.
++      pendingResponses.append(response)
++      return delegates
++    }
+     var handled = false
+-    for delegate in delegates {
++    for delegate in currentDelegates {
+       handled = delegate.didReceive(response, completionHandler: completionHandler) || handled
+     }
+-    if !handled {
+-      pendingResponses.append(response)
++    if handled {
++      removePendingResponses([response])
+     }
+     completionHandler()
+   }
+ 
+   public func userNotificationCenter(_ center: UNUserNotificationCenter, openSettingsFor notification: UNNotification?) {
+-    for delegate in delegates {
++    for delegate in snapshotDelegates() {
+       delegate.openSettings(notification)
+     }
+   }
+@@ -132,7 +156,7 @@
+   // MARK: - Called from NotificationsAppDelegateSubscriber
+   public func didReceive(_ userInfo: [AnyHashable: Any], completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+     var handled = false
+-    for delegate in delegates {
++    for delegate in snapshotDelegates() {
+       handled = delegate.didReceive(userInfo, completionHandler: completionHandler) || handled
+     }
+     if !handled {
