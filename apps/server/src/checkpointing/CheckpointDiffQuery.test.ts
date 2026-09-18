@@ -98,6 +98,44 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("diffs a single-turn thread from the root baseline, not the turn-start ref", () => {
+  const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed("patch"),
+  );
+  const firstRef = checkpointRefForScopeOrdinal({
+    scopeId: firstScopeId,
+    ordinalWithinScope: 1,
+  });
+  const layer = makeLayer({
+    hasStartSnapshot: true,
+    diffCheckpoints,
+    projection: Effect.succeed({
+      runs: [{ id: firstRunId, ordinal: 1, status: "completed" }],
+      checkpointScopes: [{ id: firstScopeId, runId: firstRunId, kind: "root_run", cwd: "/repo" }],
+      checkpoints: [
+        {
+          scopeId: firstScopeId,
+          runId: firstRunId,
+          appRunOrdinal: 1,
+          status: "ready",
+          ref: firstRef,
+        },
+      ],
+    }),
+  });
+
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 1 });
+
+    assert.equal(result.diff, "patch");
+    assert.equal(
+      diffCheckpoints.mock.calls[0]?.[0].fromCheckpointRef,
+      checkpointRefForScopeOrdinal({ scopeId: firstScopeId, ordinalWithinScope: 0 }),
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("preserves the typed missing-thread error contract", () => {
   const layer = makeLayer({
     projection: Effect.fail(new OrchestratorProjectionError({ threadId })),
