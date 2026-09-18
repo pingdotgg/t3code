@@ -143,7 +143,7 @@ overrides:
   "@expo/dom-webview": 57.0.1
   "@expo/metro-config": 57.0.12
   expo-constants: 57.0.16
-  # Keep fresh lockfile resolution on the version carrying our permissions race fix.
+  # Keep fresh resolution on the version carrying the permissions registry fix.
   expo-modules-core: 57.0.14
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   # Keep one copy of these native-binary packages. lightningcss ships 11 platform binaries per

@@ -749,7 +749,6 @@ it.effect("backs off and logs failed fetch attempts across linked worktrees", ()
         driver
           .statusDetailsRemote(workingDirectory)
           .pipe(Effect.provideService(Logger.CurrentLoggers, new Set([logger])));
-      const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* makeTmpDir();
       const remote = yield* makeTmpDir("git-vcs-driver-remote-");
       const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
@@ -867,6 +866,18 @@ for (const scenario of [
     name: "lock file",
     stderr: "fatal: Unable to create '/repo/.git/FETCH_HEAD.lock': File exists.",
     expected: "could not update a local reference",
+  },
+  {
+    name: "unrelated remote chatter",
+    stderr:
+      "remote: Help: authentication failed, connection refused, cannot lock ref\nremote: unrelated service error",
+    expected: "git fetch origin failed",
+  },
+  {
+    name: "HTTPS DNS failure",
+    stderr:
+      "fatal: unable to access 'https://example.com/repo.git/': Could not resolve host: example.com",
+    expected: "could not reach the remote",
   },
   {
     name: "unknown failure",
