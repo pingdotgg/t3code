@@ -1184,6 +1184,34 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     );
   }
 
+  for (const sensitiveLast of [true, false]) {
+    it.effect(`preserves duplicate secret operation order (sensitive last: ${sensitiveLast})`, () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("codex_duplicate");
+        const secret = { name: "API_TOKEN", value: "secret-last", sensitive: true };
+        const plain = { name: "API_TOKEN", value: "plain-last", sensitive: false };
+        const next = yield* service.updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: sensitiveLast ? [plain, secret] : [secret, plain],
+              config: {},
+            },
+          },
+        });
+        assert.equal(
+          next.providerInstances[instanceId]?.environment?.at(-1)?.value,
+          sensitiveLast ? "secret-last" : "plain-last",
+        );
+        assert.equal(
+          next.providerInstances[instanceId]?.environment?.find((v) => v.sensitive)?.value,
+          sensitiveLast ? "secret-last" : "",
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+    );
+  }
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
