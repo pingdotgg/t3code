@@ -448,6 +448,54 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
+  it.effect("passes image attachments to Codex by path instead of base64", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-image-attachment");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      runtime.sendTurnImpl.mockClear();
+
+      const serverConfig = yield* ServerConfig;
+      const attachmentsDir = serverConfig.attachmentsDir;
+      const attachmentId = "attachment-local-image-1";
+      const attachmentPath = NodePath.join(attachmentsDir, `${attachmentId}.png`);
+      NodeFS.writeFileSync(attachmentPath, Buffer.alloc(4, 0x89));
+
+      try {
+        yield* adapter.sendTurn({
+          threadId,
+          input: "Use this image.",
+          attachments: [
+            {
+              type: "image",
+              id: attachmentId,
+              name: "generated.png",
+              mimeType: "image/png",
+              sizeBytes: NodeFS.statSync(attachmentPath).size,
+            },
+          ],
+        });
+
+        const input = runtime.sendTurnImpl.mock.calls[0]?.[0];
+        NodeAssert.ok(input);
+        NodeAssert.deepStrictEqual(input.attachments, [
+          {
+            type: "localImage",
+            path: attachmentPath,
+          },
+        ]);
+      } finally {
+        NodeFS.rmSync(attachmentPath, { force: true });
+      }
+    }),
+  );
+
   it.effect("passes configured launch args into the session runtime", () => {
     const runtimeFactory = makeRuntimeFactory();
     const layer = Layer.effect(
