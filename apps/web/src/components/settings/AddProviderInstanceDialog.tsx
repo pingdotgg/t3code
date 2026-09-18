@@ -46,8 +46,6 @@ import { AddProviderInstanceWizardSteps } from "./AddProviderInstanceWizardSteps
 import { AcpRegistrySearchStep } from "./AcpRegistrySearchStep";
 import { resolveOfficialAcpRegistryIconUrl } from "./AcpRegistryIcon";
 
-
-
 /**
  * Normalize a user-provided label into a slug suffix for the instance id.
  * The full id is formed by prefixing the driver slug. For example, label "Work" on
