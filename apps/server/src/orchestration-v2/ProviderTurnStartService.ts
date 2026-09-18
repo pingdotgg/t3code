@@ -931,15 +931,16 @@ export const layer: Layer.Layer<
             ),
           );
         }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterTurnStartError({
-                driver: session.driver,
-                threadId: projection.thread.id,
-                providerThreadId: providerThread.id,
-                runId: run.id,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            cause._tag === "ProviderAdapterTurnStartError"
+              ? cause
+              : new ProviderAdapterTurnStartError({
+                  driver: session.driver,
+                  threadId: projection.thread.id,
+                  providerThreadId: providerThread.id,
+                  runId: run.id,
+                  cause,
+                }),
           ),
         );
       const deliverySession =
