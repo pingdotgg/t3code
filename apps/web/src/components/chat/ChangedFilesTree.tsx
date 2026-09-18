@@ -1,5 +1,5 @@
 import { type RunId } from "@t3tools/contracts";
-import { memo, useCallback, useMemo, useState } from "react";
+import { type MouseEvent, memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import {
   buildTurnDiffTree,
@@ -22,6 +22,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
+/** Opens the OS-level context menu for a changed file (reveal in file manager, open in editor). */
+export type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
+
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
@@ -29,6 +32,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   resolvedTheme: "light" | "dark";
   onToggleAllDirectories: () => void;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
 }) {
   const {
     runId,
@@ -37,6 +41,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     resolvedTheme,
     onToggleAllDirectories,
     onOpenTurnDiff,
+    onFileContextMenu,
   } = props;
   const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
   const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
@@ -117,6 +122,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
         allDirectoriesExpanded={allDirectoriesExpanded}
         resolvedTheme={resolvedTheme}
         onOpenTurnDiff={onOpenTurnDiff}
+        onFileContextMenu={onFileContextMenu}
       />
     </div>
   );
@@ -128,8 +134,10 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onFileContextMenu?: ChangedFileContextMenuHandler | undefined;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, runId } = props;
+  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, runId, onFileContextMenu } =
+    props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -214,6 +222,14 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
         className="group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
         style={{ paddingLeft: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(runId, node.path)}
+        onContextMenu={
+          onFileContextMenu
+            ? (event) => {
+                event.preventDefault();
+                onFileContextMenu(node.path, event);
+              }
+            : undefined
+        }
       >
         {hasDirectoryNodes || depth > 0 ? (
           <span aria-hidden="true" className="size-3.5 shrink-0" />
