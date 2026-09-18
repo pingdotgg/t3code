@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   ProjectId,
+  RunId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
@@ -249,6 +250,35 @@ describe("subagent thread trees", () => {
     registry.set(snapshotAtom(environmentId), { ...snapshot, threads: [root, finish, resume] });
     expect(registry.get(atom).label).toBe("1 running · 1 finished");
     expect(registry.get(atom).rows.map((row) => row.status)).toEqual(["completed", "running"]);
+    dispose();
+    registry.dispose();
+  });
+
+  it("keeps background work idle until its pending task roster clears", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const a = child("a", "completed");
+    const background = {
+      ...child("background", "completed", a.id),
+      latestRunId: RunId.make("background-run"),
+      pendingBackgroundTasks: [{ taskId: "bg-1", description: "Run checks" }],
+    };
+    const snapshot = { ...v2ShellSnapshot, threads: [root, a, background] };
+    registry.set(snapshotAtom(environmentId), snapshot);
+    const atom = threads.subagentTreeAtom({ environmentId, threadId: root.id });
+    const dispose = registry.mount(atom);
+    const before = registry.get(atom);
+    expect(before.label).toBe("0 running · 1 finished · 1 idle");
+    expect(before.rows[0]?.descendants.label).toBe("0 running · 0 finished · 1 idle");
+    expect(before.rows[1]?.status).toBe("idle");
+
+    registry.set(snapshotAtom(environmentId), {
+      ...snapshot,
+      threads: [root, a, { ...background, status: "idle", pendingBackgroundTasks: [] }],
+    });
+    const after = registry.get(atom);
+    expect(after.label).toBe("0 running · 2 finished");
+    expect(after.rows[0]?.descendants.label).toBe("0 running · 1 finished");
+    expect(after.rows[1]?.status).toBe("completed");
     dispose();
     registry.dispose();
   });
