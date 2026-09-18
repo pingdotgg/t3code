@@ -79,6 +79,7 @@ it.effect("refreshes checks without permissions or comparison reads", () =>
               reads++;
               return {
                 ...snapshot,
+                ...coreFields,
                 state: reads === 3 ? ("merged" as const) : ("open" as const),
                 checks: [
                   {
