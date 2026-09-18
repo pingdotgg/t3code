@@ -923,10 +923,10 @@ export const layer: Layer.Layer<
           // The provider already accepted the turn. A stale pending marker
           // can force a fresh thread later, but must not stop live ingestion.
           yield* delivery.delivered.pipe(
-            Effect.catchCause((cause) =>
+            Effect.catchCause(() =>
               Effect.logWarning("Failed to record accepted context handoff delivery", {
                 runId: run.id,
-                cause: Cause.pretty(cause),
+                deliveryStatus: "pending",
               }),
             ),
           );
