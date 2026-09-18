@@ -1,3 +1,4 @@
+import { useThreadSubagents } from "./thread-subagents";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -473,6 +474,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const compact = props.variant === "compact";
   const selected = props.selected === true;
   const visuallySelected = selected && (!compact || Platform.OS === "android");
+  const subagents = useThreadSubagents(props.thread, visuallySelected);
   const theme = useUniwindTheme();
   const screenColor = theme["--color-screen"];
   const drawerColor = theme["--color-drawer"];
@@ -584,8 +586,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   ) : null;
 
   const subtitleRow =
-    subtitleParts.length > 0 || pr !== null ? (
+    subtitleParts.length > 0 || pr !== null || subagents.toggle !== null ? (
       <View className="mt-px flex-row items-center gap-1.5">
+        {subagents.toggle}
         {subtitleParts.length > 0 ? (
           <>
             {props.environmentLabel && props.environmentMachine ? (
@@ -821,43 +824,46 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
     );
 
   return (
-    <ThreadSwipeable
-      threadKey={`${thread.environmentId}:${thread.id}`}
-      backgroundColor={backgroundColor}
-      containerStyle={
-        Platform.OS === "android"
-          ? { borderRadius: 20, overflow: "hidden", marginHorizontal: 8, marginVertical: 2 }
-          : compact
-            ? undefined
-            : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
-      }
-      enableTrackpadSwipe
-      fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
-      onDelete={handleDelete}
-      onSwipeableClose={props.onSwipeableClose}
-      onSwipeableWillOpen={props.onSwipeableWillOpen}
-      primaryAction={primaryAction}
-      resetKey={`${thread.environmentId}:${thread.id}`}
-      simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
-      threadTitle={thread.title}
-    >
-      {(close) => (
-        // Messages-style row actions on long-press. iOS: a real
-        // UIContextMenuInteraction with the row as the zoom preview (needs the
-        // patched @react-native-menu, see
-        // patches/@react-native-menu__menu@2.0.0.patch — in long-press mode the
-        // interaction is hosted by the component view and the underlying
-        // UIButton passes touches through, so row taps keep working). Android:
-        // ControlPillMenu injects onLongPress into the row and anchors the
-        // token-styled dropdown to it; taps and swipes are untouched.
-        <ControlPillMenu
-          actions={menuActions}
-          onPressAction={handleMenuAction}
-          shouldOpenOnLongPress
-        >
-          {rowContent(close)}
-        </ControlPillMenu>
-      )}
-    </ThreadSwipeable>
+    <>
+      <ThreadSwipeable
+        threadKey={`${thread.environmentId}:${thread.id}`}
+        backgroundColor={backgroundColor}
+        containerStyle={
+          Platform.OS === "android"
+            ? { borderRadius: 20, overflow: "hidden", marginHorizontal: 8, marginVertical: 2 }
+            : compact
+              ? undefined
+              : { borderRadius: SIDEBAR_ROW_RADIUS, overflow: "hidden" }
+        }
+        enableTrackpadSwipe
+        fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
+        onDelete={handleDelete}
+        onSwipeableClose={props.onSwipeableClose}
+        onSwipeableWillOpen={props.onSwipeableWillOpen}
+        primaryAction={primaryAction}
+        resetKey={`${thread.environmentId}:${thread.id}`}
+        simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
+        threadTitle={thread.title}
+      >
+        {(close) => (
+          // Messages-style row actions on long-press. iOS: a real
+          // UIContextMenuInteraction with the row as the zoom preview (needs the
+          // patched @react-native-menu, see
+          // patches/@react-native-menu__menu@2.0.0.patch — in long-press mode the
+          // interaction is hosted by the component view and the underlying
+          // UIButton passes touches through, so row taps keep working). Android:
+          // ControlPillMenu injects onLongPress into the row and anchors the
+          // token-styled dropdown to it; taps and swipes are untouched.
+          <ControlPillMenu
+            actions={menuActions}
+            onPressAction={handleMenuAction}
+            shouldOpenOnLongPress
+          >
+            {rowContent(close)}
+          </ControlPillMenu>
+        )}
+      </ThreadSwipeable>
+      {subagents.tree}
+    </>
   );
 });

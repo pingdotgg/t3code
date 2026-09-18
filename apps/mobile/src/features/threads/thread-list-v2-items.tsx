@@ -1,3 +1,4 @@
+import { useThreadSubagents } from "./thread-subagents";
 import { resolveThreadProviderInstance } from "./thread-provider-instance";
 import { RowPressable } from "../../components/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
@@ -421,6 +422,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     typeof ThreadSwipeable
   >["simultaneousWithExternalGesture"];
 }) {
+  const subagents = useThreadSubagents(props.thread, props.selected);
   const { width: windowWidth } = useWindowDimensions();
   const {
     thread,
@@ -823,6 +825,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         </View>
       ) : null}
       <View className="mt-1 flex-row items-center gap-2">
+        {subagents.toggle}
         {status === "failed" && thread.runtime?.lastError ? (
           <Text
             className={cn(
@@ -1093,6 +1096,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          {subagents.toggle}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           <Text
             className={cn(
@@ -1177,6 +1181,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </ControlPillMenu>
         )}
       </ThreadSwipeable>
+      {subagents.tree}
     </View>
   );
 });
