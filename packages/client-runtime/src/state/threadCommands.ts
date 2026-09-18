@@ -18,6 +18,7 @@ import {
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
 import {
+  type ThreadCommandInput,
   type ArchiveThreadInput,
   type CancelQueuedRunInput,
   type CreateThreadInput,
@@ -61,6 +62,7 @@ import {
   mergeThreadBack,
   promoteQueuedRun,
   reorderQueuedRun,
+  resumeThreadQueue,
   linkThreadPullRequest,
   respondToThreadApproval,
   respondToThreadUserInput,
@@ -315,6 +317,12 @@ export function createThreadEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) =>
           JSON.stringify([environmentId, input.sourceThreadId, input.targetThreadId]),
       },
+    }),
+    resumeThreadQueue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:resume-queue",
+      execute: (input: ThreadCommandInput) => resumeThreadQueue(input),
+      scheduler,
+      concurrency,
     }),
     reorderQueuedRun: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:reorder-queued-run",
