@@ -31,6 +31,7 @@ import {
   handoffBudget,
   attachmentTokenAllowance,
   historicalMessage,
+  latestNativeContextUsage,
 } from "./ContextHandoffBudget.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import {
@@ -556,18 +557,24 @@ export const layer: Layer.Layer<
       const now = yield* DateTime.now;
       // Only started runs reached the provider-thread update below. Queued runs and
       // failures during session setup cannot establish a new telemetry selection.
-      const previousSelection = projection.runs.findLast(
-        (source) =>
-          source.ordinal < run.ordinal &&
-          source.startedAt !== null &&
-          source.providerThreadId === providerThread.id,
-      )?.modelSelection;
+      const measuredContext = latestNativeContextUsage(projection, providerThread);
+      const previousSelection =
+        measuredContext?.modelSelection ??
+        projection.runs.findLast(
+          (source) =>
+            source.ordinal < run.ordinal &&
+            source.startedAt !== null &&
+            source.providerThreadId === providerThread.id,
+        )?.modelSelection;
       const sameSelection =
         previousSelection === undefined ||
         modelSelectionsEqual(previousSelection, run.modelSelection);
       const sameNativeThread =
         loadedProviderThread.nativeThreadRef?.nativeId === providerThread.nativeThreadRef?.nativeId;
-      const previousUsage = loadedProviderThread.contextUsage ?? providerThread.contextUsage;
+      const threadUsage = loadedProviderThread.contextUsage ?? providerThread.contextUsage;
+      const previousUsage = measuredContext
+        ? { ...threadUsage, ...measuredContext.usage }
+        : threadUsage;
       const compatibleUsage =
         previousSelection !== undefined &&
         session.canReuseContextUsage?.(previousSelection, run.modelSelection) &&
@@ -583,11 +590,11 @@ export const layer: Layer.Layer<
         ...loadedProviderThread,
         // Persist invalidation before delivery: a failed start must not let the next
         // attempt mistake old-model telemetry for usage of the new selection.
-        contextUsage: sameSelection
-          ? (loadedProviderThread.contextUsage ?? null)
-          : sameNativeThread
-            ? compatibleUsage
-            : null,
+        contextUsage: sameNativeThread
+          ? sameSelection
+            ? (previousUsage ?? null)
+            : compatibleUsage
+          : null,
         id: providerThread.id,
         driver: session.driver,
         providerInstanceId: run.providerInstanceId,
@@ -800,9 +807,7 @@ export const layer: Layer.Layer<
               );
             }, 0)
           : 0;
-      const reportedUsage = sameSelection
-        ? (runningProviderThread.contextUsage ?? providerThread.contextUsage)
-        : compatibleUsage;
+      const reportedUsage = sameSelection ? previousUsage : compatibleUsage;
       const modelContextWindow =
         session.getModelContextWindow?.(run.modelSelection) ?? reportedUsage?.maxTokens;
       // Replacing a native thread clears its usage, not the selected model's capacity.

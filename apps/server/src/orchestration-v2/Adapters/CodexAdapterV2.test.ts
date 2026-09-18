@@ -2021,6 +2021,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           questionNode?.type === "node.updated" && questionNode.node.countsForRun,
           false,
         );
+        const contextReport = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined,
+        );
+        assert.equal(contextReport?.type, "provider_turn.updated");
+        if (contextReport?.type === "provider_turn.updated") {
+          assert.equal(
+            contextReport.providerTurn.runAttemptId,
+            RunAttemptId.make("async-question-attempt"),
+          );
+          assert.equal(contextReport.providerTurn.providerThreadId, harness.providerThread.id);
+          assert.equal(contextReport.providerTurn.tokenUsage?.usedTokens, 15);
+          assert.equal(contextReport.providerTurn.tokenUsage?.maxTokens, 200_000);
+        }
         const completed = harness.events.find(
           (event) =>
             event.type === "provider_turn.updated" && event.providerTurn.status === "completed",

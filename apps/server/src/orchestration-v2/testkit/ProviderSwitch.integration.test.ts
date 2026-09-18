@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurnTokenUsage,
   ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
@@ -119,6 +120,9 @@ function makeTestAdapter(input: {
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
   readonly canReuseContextUsage?: ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
+  readonly tokenUsageByRunOrdinal?: Readonly<
+    Record<number, Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">>
+  >;
   readonly failedRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
@@ -331,6 +335,19 @@ function makeTestAdapter(input: {
                   threadDisposition: "reusable",
                 },
               ];
+              const reportedUsage = input.tokenUsageByRunOrdinal?.[turnInput.runOrdinal];
+              const turnEvent = providerEvents[0];
+              if (reportedUsage && turnEvent?.type === "provider_turn.updated") {
+                yield* PubSub.publish(events, {
+                  ...turnEvent,
+                  providerTurn: {
+                    ...turnEvent.providerTurn,
+                    status: "running",
+                    completedAt: null,
+                    tokenUsage: { ...reportedUsage, updatedAt: DateTime.formatIso(eventTime) },
+                  },
+                });
+              }
               for (const event of providerEvents) {
                 yield* PubSub.publish(events, event);
               }
@@ -389,6 +406,10 @@ describe("orchestration v2 provider switching", () => {
     "prior-images-reasoning-change-replacement-native",
     "prior-images-reasoning-change-replacement-small-native",
     "prior-images-reasoning-change-native",
+    "prior-images-turn-usage-native",
+    "prior-images-turn-usage-replacement-native",
+    "prior-images-turn-usage-model-change-native",
+    "prior-images-turn-usage-option-change-retry-native",
     "prior-images-reasoning-change-retry-native",
     "prior-images-native",
     "prior-images-fallback",
@@ -407,6 +428,9 @@ describe("orchestration v2 provider switching", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
           const reasoningScenario = scenario.includes("reasoning-change");
+          const turnUsageScenario = reasoningScenario || scenario.includes("turn-usage");
+          const incompatibleTurnUsage =
+            scenario.includes("turn-usage") && scenario.includes("-change-");
           const modelScenario =
             scenario.includes("model") || scenario.includes("option-change") || reasoningScenario;
           const failStartOnce = yield* Ref.make(false);
@@ -450,8 +474,20 @@ describe("orchestration v2 provider switching", () => {
               ...(scenario.includes("reported-capacity")
                 ? { initialContextUsage: { usedTokens: 999_999, maxTokens: 1_000_000 } }
                 : {}),
-              ...(reasoningScenario
-                ? { canReuseContextUsage: canReuseCodexContextUsage }
+              ...(turnUsageScenario
+                ? {
+                    canReuseContextUsage: canReuseCodexContextUsage,
+                    tokenUsageByRunOrdinal: {
+                      2: {
+                        usedTokens: replaceNative ? 30_000 : 37_321,
+                        maxTokens: replaceNative
+                          ? scenario.includes("small")
+                            ? 32_000
+                            : 64_000
+                          : 258_400,
+                      },
+                    },
+                  }
                 : modelScenario
                   ? {
                       getModelContextWindow: (selection: ModelSelection) =>
@@ -503,12 +539,12 @@ describe("orchestration v2 provider switching", () => {
                 creationSource: "web",
                 text,
                 attachments:
-                  reasoningScenario && ordinal === 2
+                  turnUsageScenario && ordinal === 2
                     ? Array.from({ length: 8 }, (_, index) => ({
                         ...screenshot,
                         id: `prior-${index}`,
                       }))
-                    : reasoningScenario && ordinal >= targetOrdinal
+                    : turnUsageScenario && ordinal >= targetOrdinal
                       ? [screenshot, { ...screenshot, id: "current-2" }]
                       : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
                         ? screenshots
@@ -566,7 +602,7 @@ describe("orchestration v2 provider switching", () => {
             yield* Effect.addFinalizer(() => Effect.sync(() => spy?.mockRestore()));
             const current = scenario.startsWith("compact")
               ? "/compact"
-              : capacityScenario && !reasoningScenario
+              : capacityScenario && !turnUsageScenario
                 ? "x".repeat(70_000)
                 : scenario === "large-current-input"
                   ? "x".repeat(9_000)
@@ -577,11 +613,11 @@ describe("orchestration v2 provider switching", () => {
               if (scenario.includes("unsent")) yield* Ref.set(failStartOnce, true);
               yield* dispatch(
                 2,
-                reasoningScenario ? "x".repeat(27_460) : "Establish target",
+                turnUsageScenario ? "x".repeat(27_460) : "Establish target",
                 CLAUDE_MODEL_SELECTION,
               );
               yield* wait(2);
-              if (modelScenario) {
+              if (modelScenario && !turnUsageScenario) {
                 const target = (yield* orchestrator.getThreadProjection(
                   threadId,
                 )).providerThreads.find(
@@ -597,18 +633,8 @@ describe("orchestration v2 provider switching", () => {
                       payload: {
                         ...target,
                         contextUsage: {
-                          usedTokens: reasoningScenario
-                            ? replaceNative
-                              ? 63_000
-                              : 37_321
-                            : 30_000,
-                          maxTokens: reasoningScenario
-                            ? replaceNative
-                              ? scenario.includes("small")
-                                ? 32_000
-                                : 64_000
-                              : 258_400
-                            : 32_000,
+                          usedTokens: 30_000,
+                          maxTokens: 32_000,
                           autoCompactThreshold: 31_000,
                         },
                       },
@@ -701,6 +727,17 @@ describe("orchestration v2 provider switching", () => {
               yield* dispatch(targetOrdinal + 1, current, targetSelection);
               yield* wait(targetOrdinal + 1);
             }
+            if (incompatibleTurnUsage) {
+              const invalidated = yield* orchestrator.getThreadProjection(threadId);
+              assert.equal(invalidated.runs.at(-1)?.status, "failed");
+              assert.isNull(
+                invalidated.providerThreads.find(
+                  (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+                )!.contextUsage,
+              );
+              assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CODEX_DRIVER);
+              return;
+            }
             if (reasoningScenario && replaceNative) {
               const replaced = yield* orchestrator.getThreadProjection(threadId);
               assert.equal(
@@ -765,7 +802,7 @@ describe("orchestration v2 provider switching", () => {
                 ? yield* encodeJson(yield* Ref.get(injectedHistory))
                 : (yield* Ref.get(capturedTurns)).at(-1)!.text;
               const shouldFit =
-                reasoningScenario ||
+                turnUsageScenario ||
                 scenario.startsWith("imported") ||
                 scenario.includes("telemetry") ||
                 scenario.includes("unsent") ||
@@ -802,8 +839,10 @@ describe("orchestration v2 provider switching", () => {
                 (thread) => thread.id === latestAttempt.providerThreadId,
               )!;
               assert.equal(latestAttempt.nativeThreadId, target.nativeThreadRef!.nativeId);
-              if (reasoningScenario) {
-                assert.deepEqual(target.contextUsage, { usedTokens: 37_321, maxTokens: 258_400 });
+              if (turnUsageScenario) {
+                if (replaceNative) assert.isNull(target.contextUsage);
+                else
+                  assert.deepEqual(target.contextUsage, { usedTokens: 37_321, maxTokens: 258_400 });
                 assert.lengthOf((yield* Ref.get(capturedTurns)).at(-1)!.attachments, 2);
               }
               if (replaceNative) assert.equal(yield* Ref.get(generation), 2);

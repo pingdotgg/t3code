@@ -1,5 +1,8 @@
 import type {
   ChatAttachment,
+  ModelSelection,
+  OrchestrationV2ThreadProjection,
+  ThreadTokenUsageSnapshot,
   OrchestrationV2ContextHandoff,
   OrchestrationV2HistoricalMessage,
   OrchestrationV2ProviderThread,
@@ -14,6 +17,53 @@ export const handoffTokenCapConfig = Config.Int("T3CODE_CONTEXT_HANDOFF_TOKEN_CA
   Config.withDefault(DEFAULT_HANDOFF_TOKEN_CAP),
   Config.map((value) => Math.max(1_024, Math.min(HANDOFF_BYTE_CAP, value))),
 );
+
+// Live reports belong to provider turns. Use only accepted root attempts whose
+// durable native identity matches this thread; row reuse must not revive old usage.
+export function latestNativeContextUsage(
+  projection: Pick<OrchestrationV2ThreadProjection, "providerTurns" | "attempts" | "runs">,
+  providerThread: OrchestrationV2ProviderThread,
+) {
+  const nativeId = providerThread.nativeThreadRef?.nativeId;
+  if (nativeId === undefined) return undefined;
+  const attempts = new Map(projection.attempts.map((attempt) => [attempt.id, attempt]));
+  const runs = new Map(projection.runs.map((run) => [run.id, run]));
+  let latest:
+    | {
+        usage: ThreadTokenUsageSnapshot;
+        modelSelection: ModelSelection;
+        reportedAt: string;
+      }
+    | undefined;
+  for (const turn of projection.providerTurns) {
+    if (
+      turn.providerThreadId !== providerThread.id ||
+      turn.runAttemptId === null ||
+      !turn.tokenUsage
+    )
+      continue;
+    const attempt = attempts.get(turn.runAttemptId);
+    if (
+      attempt?.nativeThreadId !== nativeId ||
+      attempt.providerThreadId !== providerThread.id ||
+      attempt.rootNodeId !== turn.nodeId
+    )
+      continue;
+    const run = runs.get(attempt.runId);
+    if (!run || (latest && latest.reportedAt >= turn.tokenUsage.updatedAt)) continue;
+    latest = {
+      usage: {
+        usedTokens: turn.tokenUsage.usedTokens,
+        ...(turn.tokenUsage.maxTokens != null && turn.tokenUsage.maxTokens > 0
+          ? { maxTokens: turn.tokenUsage.maxTokens }
+          : {}),
+      },
+      modelSelection: run.modelSelection,
+      reportedAt: turn.tokenUsage.updatedAt,
+    };
+  }
+  return latest;
+}
 
 export function attachmentTokenAllowance(attachments: ReadonlyArray<ChatAttachment>): number {
   // Encoded image bytes are not model tokens. Without dimensions/detail metadata,
