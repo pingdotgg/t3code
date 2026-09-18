@@ -86,7 +86,7 @@ const makeHarness = Effect.fn("makeOpenCode2AdapterHarness")(function* () {
               client,
               url: "http://127.0.0.1:4096",
               external: true,
-              version: "2.0.5",
+              version: "2.0.8",
             }),
           loadInventory: () => Effect.succeed({ models: [], skills: [] }),
         }),

@@ -25,7 +25,7 @@ export interface OpenCode2Connection {
   readonly client: OpenCodeClient;
   readonly url: string;
   readonly external: boolean;
-  /** Server version from `server.status`, resolved at connect time. */
+  /** Server version from `server.info`, resolved at connect time. */
   readonly version: string;
 }
 
@@ -224,12 +224,12 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
     );
 
   /**
-   * `server.status` is the connection's liveness + version probe in v2. A v1
+   * `server.info` is the connection's liveness + version probe in v2. A v1
    * server does not serve it, so adopting one fails here with "did not
    * respond"; the version gate below stays as a second line of defense.
    */
   const probeConnection = (client: OpenCodeClient) =>
-    client.server.status().pipe(
+    client.server.info().pipe(
       Effect.timeout(OPENCODE2_CONNECT_TIMEOUT),
       Effect.mapError((cause) =>
         ensureRuntimeError(

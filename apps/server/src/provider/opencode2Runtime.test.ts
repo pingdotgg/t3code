@@ -20,13 +20,19 @@ import {
   withOpenCode2Variant,
 } from "./opencode2Runtime.ts";
 
-const HEALTH_BODY = { version: "2.0.5", pid: 1234, urls: [] as Array<string> };
+// `server.info` (2.0.8) reports the server paths alongside the version.
+const HEALTH_BODY = {
+  version: "2.0.8",
+  pid: 1234,
+  urls: [] as Array<string>,
+  paths: { tmp: "/tmp/opencode" },
+};
 
 /**
  * Records every request URL while answering the health probe. Recording the
  * request is the point: the external-server path used to normalize the
  * configured URL with `url.parse(...).toString()`, which evaluates to the
- * string "[object Object]" — the probe then requested "[object Object]/api/status"
+ * string "[object Object]" — the probe then requested "[object Object]/api/info"
  * and every external server looked unreachable. Asserting on the runtime's own
  * arguments would not have caught that.
  */
@@ -65,8 +71,8 @@ it.effect("probes an external server at its configured URL", () =>
     NodeAssert.equal(exit._tag, "Success");
     if (exit._tag !== "Success") return;
     NodeAssert.equal(exit.value.url, "http://127.0.0.1:49374");
-    NodeAssert.equal(exit.value.version, "2.0.5");
-    NodeAssert.deepEqual(requestedUrls, ["http://127.0.0.1:49374/api/status"]);
+    NodeAssert.equal(exit.value.version, "2.0.8");
+    NodeAssert.deepEqual(requestedUrls, ["http://127.0.0.1:49374/api/info"]);
   }),
 );
 
@@ -75,7 +81,7 @@ it.effect("keeps a trailing slash from corrupting the probe URL", () =>
     const { requestedUrls } = yield* connectWithRequestLog("http://127.0.0.1:49374/");
 
     NodeAssert.equal(requestedUrls.length, 1);
-    NodeAssert.ok(requestedUrls[0]?.includes("127.0.0.1:49374/api/status"));
+    NodeAssert.ok(requestedUrls[0]?.includes("127.0.0.1:49374/api/info"));
     NodeAssert.ok(!requestedUrls[0]?.includes("[object Object]"));
   }),
 );
