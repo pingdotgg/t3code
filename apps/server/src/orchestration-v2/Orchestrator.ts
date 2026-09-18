@@ -583,12 +583,16 @@ function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
   return run.status === "completed" || run.status === "failed" || run.status === "interrupted";
 }
 
-function lastCompletedRunForProviderThread(
+function lastDeliveredRunForProviderThread(
   projection: OrchestrationV2ThreadProjection,
   providerThreadId: OrchestrationV2ProviderThread["id"],
 ): OrchestrationV2Run | undefined {
   return projection.runs.findLast(
-    (run) => run.status === "completed" && run.providerThreadId === providerThreadId,
+    (run) =>
+      isHandoffSourceRun(run) &&
+      run.providerThreadId === providerThreadId &&
+      (run.status === "completed" ||
+        projection.providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId)),
   );
 }
 
@@ -1108,7 +1112,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
       const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
-      const targetLastCompletedRun = lastCompletedRunForProviderThread(
+      const targetLastCompletedRun = lastDeliveredRunForProviderThread(
         projection,
         queuedProviderThread.id,
       );
@@ -1181,6 +1185,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   from: coveredRuns[0]!.ordinal,
                   to: coveredRuns.at(-1)!.ordinal,
                 },
+                runs: projection.runs,
                 strategy: handoffStrategy,
                 items: [
                   ...(needsFullContext && latestCompletedRun !== undefined
@@ -3463,6 +3468,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             coveredRunOrdinals: { from: 1, to: targetRun.ordinal },
             strategy: "full_thread_summary",
             items: input.projection.turnItems,
+            runs: input.projection.runs,
             createdAt: now,
           })
           .pipe(mapDispatchError(input.command));
@@ -4914,6 +4920,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 coveredRunOrdinals: visibleDeltaRunOrdinals(sourceProjection, portableForkItems),
                 strategy: "full_thread_summary",
                 items: portableForkItems,
+                runs: sourceProjection.runs,
                 createdAt: now,
               })
               .pipe(
@@ -4931,7 +4938,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const targetLastCompletedRun =
         targetProviderThread === undefined
           ? undefined
-          : lastCompletedRunForProviderThread(projection, targetProviderThread.id);
+          : lastDeliveredRunForProviderThread(projection, targetProviderThread.id);
       const providerSwitchCoveredRuns =
         !isProviderSwitch || canResumeAcrossInstances || latestHandoffRun === undefined
           ? []
@@ -5009,6 +5016,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ? "full_thread_summary"
                     : "delta_since_target_last_seen",
                 items: providerSwitchItems,
+                runs: projection.runs,
                 createdAt: now,
               })
               .pipe(

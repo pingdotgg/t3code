@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2DomainEvent,
+  OrchestrationV2ContextHandoff,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -66,6 +67,10 @@ function summarizeDynamicValue(value: unknown): unknown {
 
 export function projectTurnItemForWire(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   switch (item.type) {
+    case "handoff": {
+      const { summary: _summary, ...projected } = item;
+      return projected;
+    }
     case "command_execution": {
       const { output, ...projected } = item;
       // Clients used this preview to recognize provider-reported failures. Keep
@@ -104,6 +109,13 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
   }
 }
 
+export function projectContextHandoffForWire(
+  handoff: OrchestrationV2ContextHandoff,
+): OrchestrationV2ContextHandoff {
+  const { history: _history, delivery: _delivery, ...projected } = handoff;
+  return { ...projected, summaryText: "" };
+}
+
 export function projectThreadProjectionForWire(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection {
@@ -118,6 +130,7 @@ export function projectThreadProjectionForWire(
   };
   return {
     ...projection,
+    contextHandoffs: projection.contextHandoffs.map(projectContextHandoffForWire),
     turnItems: projection.turnItems.map(project),
     visibleTurnItems: projection.visibleTurnItems.map((row) => ({
       ...row,
@@ -131,5 +144,7 @@ export function projectDomainEventForWire(
 ): OrchestrationV2DomainEvent {
   return event.type === "turn-item.updated"
     ? { ...event, payload: projectTurnItemForWire(event.payload) }
-    : event;
+    : event.type === "context-handoff.updated"
+      ? { ...event, payload: projectContextHandoffForWire(event.payload) }
+      : event;
 }

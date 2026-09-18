@@ -474,6 +474,8 @@ export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
 export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
+  // Provider-thread rows can be reused after recovery; retain the native input destination.
+  nativeThreadId: Schema.optional(Schema.String),
   runId: RunId,
   attemptOrdinal: PositiveInt,
   rootNodeId: NodeId,
@@ -670,6 +672,19 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
 });
 export type OrchestrationV2ProviderThread = typeof OrchestrationV2ProviderThread.Type;
 
+export const OrchestrationV2HistoricalMessage = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"]),
+  text: Schema.String,
+  runStatus: Schema.optional(Schema.String),
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  itemId: TurnItemId,
+  providerThreadId: Schema.NullOr(ProviderThreadId),
+  status: Schema.String,
+  kind: Schema.String,
+});
+export type OrchestrationV2HistoricalMessage = typeof OrchestrationV2HistoricalMessage.Type;
+
 export const OrchestrationV2ContextHandoff = Schema.Struct({
   id: ContextHandoffId,
   transferId: Schema.optional(Schema.NullOr(ContextTransferId)),
@@ -691,6 +706,25 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   status: Schema.Literals(["pending", "ready", "failed", "superseded"]),
   summaryMessageId: Schema.NullOr(MessageId),
   summaryText: Schema.String,
+  // Optional fields keep existing preview events and projections readable without a migration.
+  history: Schema.optional(
+    Schema.Struct({
+      messages: Schema.Array(OrchestrationV2HistoricalMessage),
+      coverage: Schema.String,
+      omittedItems: NonNegativeInt,
+      // IDs omitted during preparation, before the target's delivery budget is known.
+      omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
+    }),
+  ),
+  delivery: Schema.optional(
+    Schema.Struct({
+      nativeThreadId: Schema.String,
+      status: Schema.Literals(["pending", "injected", "inline"]),
+      itemIds: Schema.Array(TurnItemId),
+      // Covered by recovery instructions, but not present in native model history.
+      omittedItemIds: Schema.optional(Schema.Array(TurnItemId)),
+    }),
+  ),
   detailInTurnItem: Schema.optional(Schema.Literal(true)),
   createdByProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   createdAt: Schema.DateTimeUtc,

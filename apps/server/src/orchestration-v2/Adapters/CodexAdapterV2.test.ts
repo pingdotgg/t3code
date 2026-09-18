@@ -1,3 +1,5 @@
+import { historyResponseItems } from "../ContextHandoffBudget.ts";
+import type { ProviderAdapterV2HistoricalContext } from "../ProviderAdapter.ts";
 import {
   makeProviderTextDeltaCoalescer,
   type ProviderTextDeltaUpdate,
@@ -22,6 +24,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -31,6 +34,7 @@ import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -57,6 +61,7 @@ import {
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import {
   buildCodexTurnStartParams,
+  canReuseCodexContextUsage,
   CODEX_DEFAULT_INSTANCE_ID,
   CODEX_DRIVER_KIND,
   codexBackgroundCommandDetail,
@@ -81,6 +86,33 @@ const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerRep
 const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
 const decodeReplayTranscriptJson = Schema.decodeUnknownEffect(replayTranscriptJson);
 const encodeStringJson = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+
+describe("Codex context usage compatibility", () => {
+  const previous: ModelSelection = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-6-astra",
+  };
+  it("retains measured usage for reasoning-only changes in either direction", () => {
+    const low: ModelSelection = { ...previous, options: [{ id: "reasoningEffort", value: "low" }] };
+    assert.isTrue(canReuseCodexContextUsage(previous, low));
+    assert.isTrue(canReuseCodexContextUsage(low, previous));
+    assert.isTrue(
+      canReuseCodexContextUsage(low, {
+        ...low,
+        options: [{ id: "reasoningEffort", value: "high" }],
+      }),
+    );
+  });
+  it("invalidates usage for model, instance, context-window and unknown option changes", () => {
+    for (const next of [
+      { ...previous, model: "other-model" },
+      { ...previous, instanceId: ProviderInstanceId.make("other-codex") },
+      { ...previous, options: [{ id: "contextWindow", value: "32k" }] },
+      { ...previous, options: [{ id: "customOption", value: "value" }] },
+    ])
+      assert.isFalse(canReuseCodexContextUsage(previous, next));
+  });
+});
 
 describe("CodexAdapterV2 file change approvals", () => {
   it("uses nonblank reasons before sorted file operations and renamed paths", () => {
@@ -1540,6 +1572,111 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  for (const response of ["supported", "unsupported", "invalid"] as const) {
+    it.effect(`delivers native history with ${response} app-server protocol`, () =>
+      Effect.gen(function* () {
+        const nativeThreadId = `inject-${response}`;
+        const prompt = "Only the current request";
+        const history: ProviderAdapterV2HistoricalContext = {
+          context: "Historical conversation",
+          messages: (["user", "assistant"] as const).map((role) => ({
+            role,
+            text:
+              role === "user"
+                ? "Original request\n" + "界".repeat(300)
+                : "Partial interrupted work",
+            threadId: ThreadId.make("source"),
+            runId: RunId.make("source-run"),
+            itemId: TurnItemId.make(`source-${role}`),
+            providerThreadId: null,
+            kind: `${role}_message`,
+            status: "interrupted",
+          })),
+        };
+        const items = historyResponseItems(history.messages, history.context);
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "current-turn",
+          prompt,
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario: `inject-${response}`,
+          entries: [
+            ...preamble.slice(0, -3),
+            {
+              type: "expect_outbound",
+              label: "inject",
+              frame: {
+                id: 3,
+                method: "thread/inject_items",
+                params: { threadId: nativeThreadId, items },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "inject-result",
+              frame:
+                response === "supported"
+                  ? { id: 3, result: {} }
+                  : {
+                      id: 3,
+                      error: {
+                        code: response === "unsupported" ? -32601 : -32602,
+                        message: "Injection rejected",
+                      },
+                    },
+            },
+            ...(response === "invalid"
+              ? []
+              : preamble
+                  .slice(-3)
+                  .map((entry) =>
+                    "frame" in entry && Predicate.isObject(entry.frame) && "id" in entry.frame
+                      ? { ...entry, frame: { ...entry.frame, id: 4 } }
+                      : entry,
+                  )),
+          ],
+        });
+        const requests: string[] = [];
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          () => Effect.void,
+          (method) =>
+            Effect.sync(() => {
+              requests.push(method);
+            }),
+        );
+        const injection = yield* harness.runtime.injectHistory!({
+          providerThread: harness.providerThread,
+          ...history,
+        }).pipe(Effect.result);
+        if (response === "invalid") {
+          assert.equal(injection._tag, "Failure");
+          if (injection._tag === "Failure") {
+            assert.equal(injection.failure._tag, "ProviderAdapterProtocolError");
+            assert.propertyVal(injection.failure.cause, "code", -32602);
+            assert.notProperty(injection.failure, "payload");
+          }
+          assert.notInclude(requests, "turn/start");
+          return;
+        }
+        assert.equal(injection._tag, "Success");
+        if (injection._tag === "Success") assert.equal(injection.success, response === "supported");
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("inject-attempt"),
+            text: prompt,
+          }),
+        );
+        assert.equal(requests.filter((method) => method === "turn/start").length, 1);
+        assert.isBelow(requests.indexOf("thread/inject_items"), requests.indexOf("turn/start"));
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    );
+  }
+
   it.effect("waits for native start before interrupting an acknowledged queued turn", () =>
     Effect.gen(function* () {
       const nativeThreadId = "early-stop-thread";
@@ -1884,6 +2021,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           questionNode?.type === "node.updated" && questionNode.node.countsForRun,
           false,
         );
+        const contextReport = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined,
+        );
+        assert.equal(contextReport?.type, "provider_turn.updated");
+        if (contextReport?.type === "provider_turn.updated") {
+          assert.equal(
+            contextReport.providerTurn.runAttemptId,
+            RunAttemptId.make("async-question-attempt"),
+          );
+          assert.equal(contextReport.providerTurn.providerThreadId, harness.providerThread.id);
+          assert.equal(contextReport.providerTurn.tokenUsage?.usedTokens, 15);
+          assert.equal(contextReport.providerTurn.tokenUsage?.maxTokens, 200_000);
+        }
         const completed = harness.events.find(
           (event) =>
             event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
