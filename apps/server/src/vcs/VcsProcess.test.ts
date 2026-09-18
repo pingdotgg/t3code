@@ -61,10 +61,6 @@ describe("VcsProcess.run", () => {
       stderr: "fatal: Unable to create '/private/repo/index.lock': Permission denied",
       retryable: false,
     },
-    {
-      stderr: "fatal: cannot lock ref 'refs/t3/test': is at abc123 but expected def456",
-      retryable: true,
-    },
     { stderr: 'error: open("/private/repo/file"): No such file or directory', retryable: true },
     {
       stderr: "fatal: unable to stat '/private/repo/file': No such file or directory",
@@ -120,7 +116,7 @@ describe("VcsProcess.run", () => {
         const error = yield* service
           .run({
             ...baseInput,
-            operation: "GitVcsDriver.checkpoints.captureCheckpoint",
+            operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
           })
           .pipe(Effect.flip);
         expect(attempts).toBe(1);
@@ -202,7 +198,7 @@ describe("VcsProcess.run", () => {
         const fiber = yield* service
           .run({
             ...baseInput,
-            operation: capture ? "GitVcsDriver.checkpoints.captureCheckpoint" : baseInput.operation,
+            operation: capture ? VcsProcess.CHECKPOINT_CAPTURE_OPERATION : baseInput.operation,
             ...(streaming ? { onStdoutChunk: () => {} } : {}),
           })
           .pipe(Effect.exit, Effect.forkScoped);

@@ -60,6 +60,8 @@ const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const VCS_PROCESS_CONCURRENCY = 8;
 const GITHUB_PROCESS_CONCURRENCY = 4;
 
+export const CHECKPOINT_CAPTURE_OPERATION = "GitVcsDriver.checkpoints.captureCheckpoint";
+
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
 
@@ -109,7 +111,6 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
 // Classify before discarding stderr; keep paths and process output out of errors.
 const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
-  /cannot lock ref [^\n]+: is at [0-9a-f]+ but expected [0-9a-f]+/i.test(stderr) ||
   /(?:unable to stat|lstat\(|error: open\()[^\n]+: no such file or directory/i.test(stderr);
 
 export const make = Effect.gen(function* () {
@@ -205,7 +206,7 @@ export const make = Effect.gen(function* () {
     const bounded = vcsProcesses.withPermits(1)(runUnbounded(input));
     if (
       input.command === "git" &&
-      input.operation === "GitVcsDriver.checkpoints.captureCheckpoint" &&
+      input.operation === CHECKPOINT_CAPTURE_OPERATION &&
       input.onStdoutChunk === undefined
     ) {
       // Retry the failed command, retaining the private index/tree and recovery's outer deadline.
