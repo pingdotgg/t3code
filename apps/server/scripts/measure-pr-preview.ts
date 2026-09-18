@@ -67,7 +67,16 @@ const graphqlCost = Effect.fn("measurePrPreview.graphqlCost")(function* (read: R
       operation: "measurePrPreview.cost",
       command: "gh",
       cwd: process.cwd(),
-      args: ["api", "graphql", "--input", "-", "--jq", ".data.rateLimit.cost"],
+      args: [
+        "api",
+        "graphql",
+        "--hostname",
+        "github.com",
+        "--input",
+        "-",
+        "--jq",
+        ".data.rateLimit.cost",
+      ],
       stdin: encodeJson({ query, variables: decodeJson(match[2]!) }),
       env: { GH_DEBUG: "" },
     });
