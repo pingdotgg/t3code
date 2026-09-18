@@ -13,13 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  type NativeSyntheticEvent,
-  type TextLayoutEventData,
-  View,
-} from "react-native";
+import { ActivityIndicator, Pressable, type TextLayoutEvent, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -348,7 +342,7 @@ function CloudEnvironmentRowShell(props: {
   const isErrorExpanded = errorCanExpand && props.errorExpanded;
   const StatusContainer = errorCanExpand ? Pressable : View;
   const onMeasuredErrorTextLayout = useCallback(
-    (event: NativeSyntheticEvent<TextLayoutEventData>) => {
+    (event: TextLayoutEvent) => {
       if (!props.connectionError) {
         return;
       }

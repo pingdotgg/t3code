@@ -867,3 +867,70 @@ index 833acbe78f1b1245251ddd3431d6546decdd0ade..8f7c10cb6ab392f10df4ca43549b89c2
    );
  }
  
+diff --git a/ios/views/ClippingScrollViewDecoratorViewManager.mm b/ios/views/ClippingScrollViewDecoratorViewManager.mm
+--- a/ios/views/ClippingScrollViewDecoratorViewManager.mm
++++ b/ios/views/ClippingScrollViewDecoratorViewManager.mm
+@@ -188,4 +188,13 @@
+ #ifdef RCT_NEW_ARCH_ENABLED
++- (instancetype)initWithFrame:(CGRect)frame
++{
++  if (self = [super initWithFrame:frame]) {
++    static const auto defaultProps = std::make_shared<const ClippingScrollViewDecoratorViewProps>();
++    _props = defaultProps;
++  }
++  return self;
++}
++
+ + (ComponentDescriptorProvider)componentDescriptorProvider
+ {
+   return concreteComponentDescriptorProvider<ClippingScrollViewDecoratorViewComponentDescriptor>();
+diff --git a/ios/views/KeyboardBackgroundViewManager.mm b/ios/views/KeyboardBackgroundViewManager.mm
+--- a/ios/views/KeyboardBackgroundViewManager.mm
++++ b/ios/views/KeyboardBackgroundViewManager.mm
+@@ -99,6 +99,10 @@
+ {
+   self = [super initWithFrame:frame];
+   if (self) {
++#ifdef RCT_NEW_ARCH_ENABLED
++    static const auto defaultProps = std::make_shared<const KeyboardBackgroundViewProps>();
++    _props = defaultProps;
++#endif
+     [self setupBackdropView];
+   }
+   self.clipsToBounds = YES;
+diff --git a/ios/views/OverKeyboardViewManager.mm b/ios/views/OverKeyboardViewManager.mm
+--- a/ios/views/OverKeyboardViewManager.mm
++++ b/ios/views/OverKeyboardViewManager.mm
+@@ -89,6 +89,8 @@
+ - (instancetype)init
+ {
+   if (self = [super init]) {
++    static const auto defaultProps = std::make_shared<const OverKeyboardViewProps>();
++    _props = defaultProps;
+     _touchHandler = [RCTSurfaceTouchHandler new];
+     _contentView = [[UIView alloc] initWithFrame:CGRectZero];
+   }
+diff --git a/ios/views/KeyboardExtenderManager.mm b/ios/views/KeyboardExtenderManager.mm
+--- a/ios/views/KeyboardExtenderManager.mm
++++ b/ios/views/KeyboardExtenderManager.mm
+@@ -87,6 +87,8 @@
+ - (instancetype)init
+ {
+   if (self = [super init]) {
++    static const auto defaultProps = std::make_shared<const KeyboardExtenderProps>();
++    _props = defaultProps;
+     _touchHandler = [RCTSurfaceTouchHandler new];
+     _contentView = [[UIView alloc] initWithFrame:CGRectZero];
+   }
+diff --git a/ios/views/KeyboardGestureAreaManager.mm b/ios/views/KeyboardGestureAreaManager.mm
+--- a/ios/views/KeyboardGestureAreaManager.mm
++++ b/ios/views/KeyboardGestureAreaManager.mm
+@@ -83,6 +83,8 @@
+ - (instancetype)init
+ {
+   if (self = [super init]) {
++    static const auto defaultProps = std::make_shared<const KeyboardGestureAreaProps>();
++    _props = defaultProps;
+   }
+   return self;
+ }

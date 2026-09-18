@@ -1,0 +1,72 @@
+diff --git a/build/GlassContainer.types.d.ts b/build/GlassContainer.types.d.ts
+index 502f9b037900d62aa5875dc37f0fcb517dec7a44..cc521dcb7e411cba7dfe99f191bbc42ac979849f 100644
+--- a/build/GlassContainer.types.d.ts
++++ b/build/GlassContainer.types.d.ts
+@@ -1,5 +1,5 @@
+ import type { Ref } from 'react';
+-import type { View, ViewProps } from 'react-native';
++import type { ViewInstance, ViewProps } from 'react-native';
+ export type GlassContainerProps = {
+     /**
+      * The distance at which glass elements start affecting each other.
+@@ -7,5 +7,5 @@ export type GlassContainerProps = {
+      * @default undefined
+      */
+     spacing?: number;
+-    ref?: Ref<View>;
++    ref?: Ref<ViewInstance>;
+ } & ViewProps;
+diff --git a/build/GlassView.types.d.ts b/build/GlassView.types.d.ts
+index a09487b1b3ef2e4d89b19e2bad81f99fc532d94d..eeadfff1dcd891bf581ef6be0493e2a6eda0849a 100644
+--- a/build/GlassView.types.d.ts
++++ b/build/GlassView.types.d.ts
+@@ -1,5 +1,5 @@
+ import type { Ref } from 'react';
+-import type { ColorValue, View, ViewProps } from 'react-native';
++import type { ColorValue, ViewInstance, ViewProps } from 'react-native';
+ export type GlassStyle = 'clear' | 'regular' | 'none';
+ export type GlassEffectStyleConfig = {
+     /**
+@@ -40,5 +40,5 @@ export type GlassViewProps = {
+      * @default 'auto'
+      */
+     colorScheme?: GlassColorScheme;
+-    ref?: Ref<View>;
++    ref?: Ref<ViewInstance>;
+ } & ViewProps;
+diff --git a/src/GlassContainer.types.ts b/src/GlassContainer.types.ts
+index f57a30713a4a2c1769e4f213a43d29fa17d8c411..fa934d45d488dcbc8cb6396e88f0a2996834367b 100644
+--- a/src/GlassContainer.types.ts
++++ b/src/GlassContainer.types.ts
+@@ -1,5 +1,5 @@
+ import type { Ref } from 'react';
+-import type { View, ViewProps } from 'react-native';
++import type { ViewInstance, ViewProps } from 'react-native';
+ 
+ export type GlassContainerProps = {
+   /**
+@@ -8,5 +8,5 @@ export type GlassContainerProps = {
+    * @default undefined
+    */
+   spacing?: number;
+-  ref?: Ref<View>;
++  ref?: Ref<ViewInstance>;
+ } & ViewProps;
+diff --git a/src/GlassView.types.ts b/src/GlassView.types.ts
+index 7fc30003a9337a12ffb12ffb44a050aae99e9b40..413db6b698055dd00d6ec2cf7b71e4370c85054c 100644
+--- a/src/GlassView.types.ts
++++ b/src/GlassView.types.ts
+@@ -1,5 +1,5 @@
+ import type { Ref } from 'react';
+-import type { ColorValue, View, ViewProps } from 'react-native';
++import type { ColorValue, ViewInstance, ViewProps } from 'react-native';
+ 
+ export type GlassStyle = 'clear' | 'regular' | 'none';
+ 
+@@ -44,5 +44,5 @@ export type GlassViewProps = {
+    * @default 'auto'
+    */
+   colorScheme?: GlassColorScheme;
+-  ref?: Ref<View>;
++  ref?: Ref<ViewInstance>;
+ } & ViewProps;

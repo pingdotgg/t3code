@@ -465,9 +465,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly titleRegenerationSupported: boolean;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
-  readonly simultaneousSwipeGesture?: ComponentProps<
-    typeof ThreadSwipeable
-  >["simultaneousWithExternalGesture"];
+  readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const { themeAppearance: colorScheme } = useAppearancePreferences();
@@ -843,7 +841,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       onSwipeableWillOpen={props.onSwipeableWillOpen}
       primaryAction={primaryAction}
       resetKey={`${thread.environmentId}:${thread.id}`}
-      simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
+      simultaneousWith={props.simultaneousSwipeGesture}
       threadTitle={thread.title}
     >
       {(close) => (
