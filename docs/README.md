@@ -57,5 +57,6 @@ source alone does not explain. Most code changes do not need an internal documen
 - [T3 Connect setup](./operations/connect-setup.md)
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)
+- [Activity webhook](./operations/activity-webhook.md)
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
