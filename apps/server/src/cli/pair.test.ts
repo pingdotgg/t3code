@@ -8,10 +8,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
+import { vi } from "vite-plus/test";
 
 import { cli } from "../bin.ts";
 import {
@@ -144,6 +146,73 @@ const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A,
   );
 
 describe("t3 pair", () => {
+  it.effect.each(["missing", "stale", "local", "explicit", "checkout"] as const)(
+    "isolates pairing discovery: %s",
+    (scenario) =>
+      withDescriptorServer((origin) =>
+        Effect.gen(function* () {
+          const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-pair-worktree-"));
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+          );
+          const worktree = NodePath.join(root, "worktree");
+          const sharedHome = NodePath.join(root, "shared");
+          NodeFS.mkdirSync(worktree);
+          if (scenario === "checkout") {
+            NodeFS.mkdirSync(NodePath.join(worktree, ".git"));
+          } else {
+            NodeFS.writeFileSync(
+              NodePath.join(worktree, ".git"),
+              "gitdir: /elsewhere/.git/worktrees/pair-test\n",
+            );
+          }
+          const nested = NodePath.join(worktree, "src");
+          NodeFS.mkdirSync(nested);
+          const cwd = vi.spyOn(process, "cwd").mockReturnValue(nested);
+          yield* Effect.addFinalizer(() => Effect.sync(() => cwd.mockRestore()));
+          const state = yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: Number(new URL(origin).port),
+          });
+          yield* persistServerRuntimeState({
+            path: NodePath.join(sharedHome, "userdata", "server-runtime.json"),
+            state,
+          });
+          if (scenario === "stale" || scenario === "local") {
+            yield* persistServerRuntimeState({
+              path: NodePath.join(worktree, ".t3", "userdata", "server-runtime.json"),
+              state: scenario === "stale" ? { ...state, pid: 4_194_305 } : state,
+            });
+          }
+
+          const outcome = yield* captureStdout(
+            runCli(scenario === "explicit" ? ["pair", "--base-dir", sharedHome] : ["pair"]),
+          ).pipe(
+            Effect.catch((error) => Effect.succeed(String(error))),
+            Effect.provide(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: sharedHome } })),
+            ),
+          );
+
+          assert.equal(
+            NodeFS.existsSync(NodePath.join(sharedHome, "userdata", "state.sqlite")),
+            scenario === "explicit" || scenario === "checkout",
+          );
+          if (scenario === "local" || scenario === "explicit" || scenario === "checkout") {
+            assert.include(outcome, `Pairing URL: ${origin}/pair#token=`);
+            return;
+          }
+          assert.include(outcome, "No running T3 Code server found.");
+          assert.include(
+            outcome,
+            NodePath.join(worktree, ".t3", "userdata", "server-runtime.json"),
+          );
+          assert.include(outcome, NodePath.join(worktree, ".t3", "dev", "server-runtime.json"));
+          assert.notInclude(outcome, sharedHome);
+        }),
+      ).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
     withDescriptorServer((origin) =>
       Effect.gen(function* () {
