@@ -869,6 +869,11 @@ function TaskForm({
               <Text className="px-4 pb-3 text-sm text-danger-foreground">
                 Intervals must be at least 1 minute. Update this interval before saving.
               </Text>
+            ) : draft.task?.schedule.type === "interval" && draft.task.schedule.everyMs < 60_000 ? (
+              <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                This task previously ran more than once per minute. Saving requires an interval of
+                at least 1 minute.
+              </Text>
             ) : null}
           </>
         )}

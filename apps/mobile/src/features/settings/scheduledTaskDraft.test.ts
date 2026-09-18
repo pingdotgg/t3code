@@ -4,8 +4,22 @@ import {
   createDraft,
   DEFAULT_SCHEDULE,
   hasScheduledTaskDraftChanges,
+  scheduleDraftForTask,
   scheduleFromDraft,
 } from "./scheduledTaskDraft";
+
+describe("scheduleDraftForTask", () => {
+  it("opens legacy sub-minute schedules at the writable minimum", () => {
+    const draft = scheduleDraftForTask({ schedule: { type: "interval", everyMs: 30_000 } });
+    expect(draft.intervalMinutes).toBe("1");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "interval", everyMs: 60_000 });
+  });
+
+  it("preserves valid fractional-minute schedules through an edit", () => {
+    const schedule = { type: "interval" as const, everyMs: 65_000 };
+    expect(scheduleFromDraft(scheduleDraftForTask({ schedule }))).toEqual(schedule);
+  });
+});
 
 describe("hasScheduledTaskDraftChanges", () => {
   it("leaves an untouched form clean and clears changes when edits are reverted", () => {

@@ -20,7 +20,7 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   intervalMinutes: "15",
 };
 
-export function scheduleDraftForTask(task: ScheduledTask): ScheduleDraft {
+export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
   return task.schedule.type === "fixed_time"
     ? {
         ...DEFAULT_SCHEDULE,
@@ -32,7 +32,7 @@ export function scheduleDraftForTask(task: ScheduledTask): ScheduleDraft {
     : {
         ...DEFAULT_SCHEDULE,
         mode: "interval",
-        intervalMinutes: String(task.schedule.everyMs / 60_000),
+        intervalMinutes: String(Math.max(1, task.schedule.everyMs / 60_000)),
       };
 }
 
