@@ -180,10 +180,14 @@ export function decodeScanCache(document: unknown): ScanCache {
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
+      const sessionId = typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined;
       if (
         typeof timestampMs !== "number" ||
         !Number.isFinite(timestampMs) ||
         model === undefined ||
+        sessionId === undefined ||
+        (dedupeKey !== null && typeof dedupeKey !== "string") ||
+        (reportedCostUsd !== null && !Number.isFinite(reportedCostUsd)) ||
         !Number.isFinite(uncached) ||
         !Number.isFinite(cached) ||
         !Number.isFinite(cacheCreation) ||
@@ -197,7 +201,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         provider,
         timestampMs,
         model,
-        sessionId: (typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined) ?? "",
+        sessionId,
         totals: {
           uncachedInputTokens: uncached,
           cachedInputTokens: cached,
@@ -205,8 +209,8 @@ export function decodeScanCache(document: unknown): ScanCache {
           outputTokens: output,
           reasoningTokens: reasoning,
         },
-        reportedCostUsd: typeof reportedCostUsd === "number" ? reportedCostUsd : null,
-        dedupeKey: typeof dedupeKey === "string" ? dedupeKey : null,
+        reportedCostUsd,
+        dedupeKey,
       });
     }
     return records;
