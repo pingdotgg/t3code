@@ -9,7 +9,6 @@ import {
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadReadInput,
   OrchestratorMcpThreadSendInput,
-  OrchestratorMcpThreadStartInput,
   OrchestratorMcpThreadWaitInput,
 } from "./orchestratorMcp.ts";
 
@@ -20,7 +19,6 @@ const decodeThreadInterruptInput = Schema.decodeUnknownSync(OrchestratorMcpThrea
 const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
 const decodeThreadReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
 const decodeThreadSendInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSendInput);
-const decodeThreadStartInput = Schema.decodeUnknownSync(OrchestratorMcpThreadStartInput);
 const decodeThreadWaitInput = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitInput);
 
 describe("orchestrator MCP contracts", () => {
@@ -129,12 +127,6 @@ describe("orchestrator MCP contracts", () => {
   });
 
   it("decodes project-scoped thread orchestration requests", () => {
-    expect(
-      decodeThreadStartInput({
-        prompt: "Run the first loop iteration.",
-        clientRequestId: "start-loop-1",
-      }).prompt,
-    ).toBe("Run the first loop iteration.");
     expect(
       decodeThreadListInput({
         statuses: ["running", "completed"],
