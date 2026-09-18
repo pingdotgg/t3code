@@ -84,6 +84,11 @@ function buildSshHostSpec(target: DesktopSshEnvironmentTarget): string {
   if (destination.length === 0) {
     throw new Error("SSH target is missing its alias/hostname.");
   }
+  if (target.username && destination.startsWith("ssh://")) {
+    const uri = new URL(destination);
+    uri.username = target.username;
+    return uri.toString();
+  }
   return target.username ? `${target.username}@${destination}` : destination;
 }
 
