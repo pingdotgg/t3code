@@ -2318,7 +2318,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
-        let exitedDuringStartup = false;
+        let unregisteredExitObserved = false;
         // Fork into the adapter scope, not the calling fiber. This keeps the
         // consumer alive after startSession returns and lets an exit event
         // close the runtime's narrower session scope without self-interrupting.
@@ -2442,18 +2442,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
 
             if (event.method === "session/exited" || event.method === "session/closed") {
-              const exitedSession = sessions.get(event.threadId);
-              if (!exitedSession) {
-                exitedDuringStartup = true;
-                yield* runtime.close.pipe(Effect.ignore);
-                yield* Scope.close(sessionScope, Exit.void).pipe(Effect.ignore);
-                return;
+              const registered = sessions.get(event.threadId);
+              if (registered?.runtime === runtime) {
+                registered.stopped = true;
+                sessions.delete(event.threadId);
+              } else {
+                unregisteredExitObserved = true;
               }
 
-              exitedSession.stopped = true;
-              sessions.delete(event.threadId);
-              yield* exitedSession.runtime.close.pipe(Effect.ignore);
-              yield* Scope.close(exitedSession.scope, Exit.void).pipe(Effect.ignore);
+              yield* runtime.close.pipe(Effect.ignore);
+              yield* Scope.close(sessionScope, Exit.void).pipe(Effect.ignore);
             }
           }),
         ).pipe(Effect.forkIn(adapterScope));
@@ -2477,8 +2475,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
-        if (exitedDuringStartup || started.status === "closed") {
-          if (!exitedDuringStartup) {
+        if (unregisteredExitObserved || started.status === "closed") {
+          if (!unregisteredExitObserved) {
             yield* runtime.close.pipe(Effect.ignore);
             yield* Scope.close(sessionScope, Exit.void).pipe(Effect.ignore);
           }

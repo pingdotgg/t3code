@@ -370,22 +370,27 @@ const decodeInputOrValidationError = <S extends Schema.Top>(input: {
   );
 };
 
+function isCodexWakeBinding(
+  binding: ProviderSessionDirectory.ProviderRuntimeBinding,
+  input: ProviderSessionWakeRequest,
+): boolean {
+  if (binding.provider !== "codex") {
+    return false;
+  }
+  if (
+    input.providerInstanceId !== undefined &&
+    binding.providerInstanceId !== input.providerInstanceId
+  ) {
+    return false;
+  }
+  return readCodexResumeCursorThreadId(binding.resumeCursor) === input.providerThreadId;
+}
+
 function matchCodexWakeBindings(
   bindings: ReadonlyArray<ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata>,
   input: ProviderSessionWakeRequest,
 ): Array<ProviderSessionDirectory.ProviderRuntimeBindingWithMetadata> {
-  return bindings.filter((binding) => {
-    if (binding.provider !== "codex") {
-      return false;
-    }
-    if (
-      input.providerInstanceId !== undefined &&
-      binding.providerInstanceId !== input.providerInstanceId
-    ) {
-      return false;
-    }
-    return readCodexResumeCursorThreadId(binding.resumeCursor) === input.providerThreadId;
-  });
+  return bindings.filter((binding) => isCodexWakeBinding(binding, input));
 }
 
 function toRuntimeStatus(session: ProviderSession): "starting" | "running" | "stopped" | "error" {
@@ -533,7 +538,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         (lock) =>
           Effect.sync(() => {
             lock.users -= 1;
-            if (lock.users === 0 && threadLifecycleLocks.get(threadId) === lock) {
+            if (lock.users === 0) {
               threadLifecycleLocks.delete(threadId);
             }
           }),
@@ -2215,16 +2220,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
     const candidate = matches[0]!;
     return yield* Effect.gen(function* () {
-      const currentBindings = yield* directory.listBindings();
-      const currentMatches = matchCodexWakeBindings(currentBindings, input);
-      if (currentMatches.length === 0) {
-        return yield* wakeTargetError("not_found");
-      }
-      if (currentMatches.length > 1) {
-        return yield* wakeTargetError("ambiguous");
-      }
-      const binding = currentMatches[0]!;
-      if (binding.threadId !== candidate.threadId) {
+      const binding = Option.getOrUndefined(yield* directory.getBinding(candidate.threadId));
+      if (!binding || !isCodexWakeBinding(binding, input)) {
         return yield* wakeTargetError("not_found");
       }
       if (Option.isNone(projectionQuery)) {

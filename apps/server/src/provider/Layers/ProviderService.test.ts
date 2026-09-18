@@ -4947,8 +4947,6 @@ validation.layer("ProviderServiceLive validation", (it) => {
 
 const activeSessionThreadId = asThreadId("thread-active-session");
 const historicalSessionThreadId = asThreadId("thread-historical-session");
-const idleSessionThreadId = asThreadId("thread-idle-session");
-const idleSessionLastSeenAt = "2026-01-01T00:00:00.000Z";
 const listThreadIds = vi.fn(() =>
   Effect.succeed([activeSessionThreadId, historicalSessionThreadId]),
 );
@@ -4961,24 +4959,13 @@ const getBinding = vi.fn((threadId: ThreadId) =>
     }),
   ),
 );
-const getBindingWithMetadata = vi.fn((threadId: ThreadId) =>
-  Effect.succeed(
-    Option.some({
-      threadId,
-      provider: CODEX_DRIVER,
-      providerInstanceId: codexInstanceId,
-      status: "running" as const,
-      lastSeenAt: idleSessionLastSeenAt,
-    }),
-  ),
-);
 const boundedListing = makeProviderServiceLayer({
   directory: {
     upsert: () => Effect.void,
     recordImportedTranscript: () => Effect.die("unused"),
     getProvider: () => Effect.die("ProviderService.listSessions does not use getProvider"),
     getBinding,
-    getBindingWithMetadata,
+    getBindingWithMetadata: () => Effect.die("ProviderService.listSessions does not use metadata"),
     listThreadIds,
     listBindings: () => Effect.die("ProviderService.listSessions does not use listBindings"),
   },
@@ -5003,30 +4990,6 @@ boundedListing.layer("ProviderServiceLive session listing", (it) => {
       assert.equal(sessions.length, 1);
       assert.equal(listThreadIds.mock.calls.length, 0);
       assert.deepEqual(getBinding.mock.calls, [[activeSessionThreadId]]);
-    }),
-  );
-
-  it.effect("reads only the idle session binding before stopping it", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-      yield* boundedListing.codex.startSession({
-        provider: CODEX_DRIVER,
-        providerInstanceId: codexInstanceId,
-        threadId: idleSessionThreadId,
-        cwd: fixtureCwd("project-idle-session"),
-        runtimeMode: "full-access",
-      });
-      getBinding.mockClear();
-      getBindingWithMetadata.mockClear();
-
-      const stopped = yield* provider.stopIdleSession({
-        threadId: idleSessionThreadId,
-        observedLastSeenAt: idleSessionLastSeenAt,
-      });
-
-      assert.equal(stopped, true);
-      assert.deepEqual(getBindingWithMetadata.mock.calls, [[idleSessionThreadId]]);
-      assert.deepEqual(getBinding.mock.calls, [[idleSessionThreadId]]);
     }),
   );
 });
