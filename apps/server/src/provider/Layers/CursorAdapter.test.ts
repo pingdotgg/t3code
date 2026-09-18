@@ -184,23 +184,27 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
     }),
   );
 
-  it.effect("rejects a Cursor transport error returned as a successful assistant answer", () =>
+  it.effect("recycles a Cursor session after a transport error answer", () =>
     Effect.gen(function* () {
       const adapter = yield* CursorAdapter;
       const settings = yield* ServerSettingsService;
       const threadId = ThreadId.make("cursor-transport-error-answer");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-transport-error-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      const exitLogPath = NodePath.join(tempDir, "exit.log");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
       const wrapperPath = yield* Effect.promise(() =>
-        makeMockAgentWrapper({
-          T3_ACP_PROMPT_RESPONSE_TEXT: "Error: RetriableError: WritableIterable is closed",
+        makeProbeWrapper(requestLogPath, argvLogPath, {
+          T3_ACP_EXIT_LOG_PATH: exitLogPath,
+          T3_ACP_PROMPT_RESPONSE_TEXT:
+            "Error: RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
         }),
       );
       yield* settings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
-      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
-        Stream.takeUntil((event) => event.type === "session.exited"),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      yield* adapter.startSession({
+      const session = yield* adapter.startSession({
         threadId,
         provider: ProviderDriverKind.make("cursor"),
         cwd: process.cwd(),
@@ -212,11 +216,42 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       assert.equal(error._tag, "ProviderAdapterRequestError");
       if (error._tag === "ProviderAdapterRequestError") {
         assert.equal(error.detail, "Cursor reported a transport failure.");
-        assert.equal(error.cause, "Error: RetriableError: WritableIterable is closed");
+        assert.equal(
+          error.cause,
+          "Error: RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+        );
       }
+
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      assert.isFalse((yield* adapter.listSessions()).some((entry) => entry.threadId === threadId));
+      if (!windowsHost) {
+        const exitLog = yield* Effect.promise(() => waitForFileContent(exitLogPath));
+        assert.equal(exitLog.match(/SIGTERM/g)?.length ?? 0, 1);
+      }
+
+      const requestsAfterFailure = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.equal(
+        requestsAfterFailure.filter((entry) => entry.method === "session/prompt").length,
+        1,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        resumeCursor: session.resumeCursor,
+      });
+      const requestsAfterResume = yield* waitForJsonLogMatch(
+        requestLogPath,
+        (entry) => entry.method === "session/load",
+      );
+      assert.isTrue(requestsAfterResume.some((entry) => entry.method === "session/load"));
+      assert.equal(
+        requestsAfterResume.filter((entry) => entry.method === "session/prompt").length,
+        1,
+      );
       yield* adapter.stopSession(threadId);
-      const runtimeEvents = yield* Fiber.join(runtimeEventsFiber);
-      assert.isFalse(runtimeEvents.some((event) => event.type === "turn.completed"));
     }),
   );
 
