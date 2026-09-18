@@ -190,7 +190,7 @@ function StageRow({
       data-worktree-setup-stage={stage.id}
       data-worktree-setup-status={stage.status}
       icon={
-        <span className="text-icon-muted">
+        <span className={cn("text-icon-muted", stage.status === "pending" && "opacity-40")}>
           <StageIcon status={stage.status} />
         </span>
       }
