@@ -366,7 +366,7 @@ interface OpenCode2Subagent {
   effort: string | undefined;
   /** The child's most recent assistant message, surfaced as its result. */
   lastText: string | undefined;
-  readonly turnId: TurnId | undefined;
+  turnId: TurnId | undefined;
   /** Assistant message ids whose step tokens were already counted. */
   readonly usageStepIds: Set<string>;
   /** Cumulative tokens, mirroring the root turn accumulator. */
@@ -1632,20 +1632,20 @@ export function makeOpenCode2Adapter(
     const subagentEventBase = (
       context: OpenCode2SessionContext,
       subagent: OpenCode2Subagent,
-      event: OpenCodeEvent,
+      event: OpenCodeEvent | undefined,
     ) =>
       buildEventBase({
         threadId: context.session.threadId,
         ...(subagent.turnId ? { turnId: subagent.turnId } : {}),
         itemId: subagent.taskId,
-        raw: event,
+        ...(event ? { raw: event } : {}),
       });
 
     /** Opens the roster row for a newly tracked subagent. */
     const emitSubagentStarted = (
       context: OpenCode2SessionContext,
       subagent: OpenCode2Subagent,
-      event: OpenCodeEvent,
+      event: OpenCodeEvent | undefined,
     ) =>
       Effect.gen(function* () {
         yield* emit({
@@ -1742,7 +1742,7 @@ export function makeOpenCode2Adapter(
         readonly model?: string | undefined;
         readonly effort?: string | undefined;
       },
-      event: OpenCodeEvent,
+      event?: OpenCodeEvent,
     ) {
       if (context.subagentsBySessionId.has(sessionId)) return;
       const subagent: OpenCode2Subagent = {
@@ -1864,6 +1864,7 @@ export function makeOpenCode2Adapter(
             // must not multiply running rows.
             if (subagent.status === "running") return;
             // A new run must not inherit the previous run's outcome.
+            subagent.turnId = context.activeTurnId;
             subagent.lastText = undefined;
             subagent.status = "running";
             yield* emitSubagentProgress(context, subagent, { summary: "Working" }, event);
@@ -2463,6 +2464,40 @@ export function makeOpenCode2Adapter(
           })
           .pipe(Effect.timeout("5 seconds"), Effect.ignoreCause);
       }
+      // The stream may have missed child creation events while it was down.
+      // Rebuild the related-session set from the server's session inventory so
+      // later child lifecycle events are not filtered as unrelated traffic.
+      const sessions = yield* context.client.session
+        .list({ directory: toDirectory(context.directory) })
+        .pipe(
+          Effect.timeout("5 seconds"),
+          Effect.orElseSucceed(() => undefined),
+        );
+      if (sessions !== undefined) {
+        const byId = new Map(sessions.data.map((session) => [session.id, session]));
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const session of byId.values()) {
+            if (
+              session.parentID !== undefined &&
+              context.relatedSessionIds.has(session.parentID) &&
+              !context.relatedSessionIds.has(session.id)
+            ) {
+              addRelatedSession(context, session.id);
+              if (session.fork === undefined) {
+                yield* trackSubagent(context, session.id, {
+                  description: trimText(session.title),
+                  agent: session.agent,
+                  model: session.model?.id,
+                  effort: session.model?.variant,
+                });
+              }
+              changed = true;
+            }
+          }
+        }
+      }
       // A restarted server has forgotten the thread's MCP registration too;
       // `mcp.add` is a plain upsert, so re-sending it is safe when it has not.
       yield* registerThreadMcp(context).pipe(Effect.ignoreCause);
@@ -2526,7 +2561,12 @@ export function makeOpenCode2Adapter(
               // (re)connect needs no extra guard, and it will not override a
               // failure already recorded by `emitUnexpectedExit`.
               event.type === "server.connected"
-                ? Deferred.succeed(context.firstConnection, undefined).pipe(Effect.ignore)
+                ? Effect.all([
+                    Deferred.succeed(context.firstConnection, undefined).pipe(Effect.ignore),
+                    Effect.sync(() => {
+                      attempt = 0;
+                    }),
+                  ]).pipe(Effect.asVoid)
                 : Effect.void,
             ),
             Stream.runForEach((event) => handleSubscribedEvent(context, event)),
@@ -2556,7 +2596,7 @@ export function makeOpenCode2Adapter(
           if (reconciled === "gone") {
             return;
           }
-          attempt = reconciled === "alive" ? 0 : attempt + 1;
+          attempt = reconciled === "alive" ? attempt : attempt + 1;
         }
       }).pipe(Effect.ignoreCause);
       yield* run.pipe(Effect.forkIn(context.sessionScope));
@@ -2941,70 +2981,67 @@ export function makeOpenCode2Adapter(
           yield* releaseContext(context, { interruptRemote: created });
         }).pipe(Effect.ensuring(Effect.sync(() => deleteContextIfCurrent(context))));
 
-        // Session environment (v2's analog of the spawned-server env merge).
-        // `options.environment` is already the merged instance env; the start
-        // input carries no per-session env, so there is nothing further to fold
-        // in here.
-        const environmentVariables = Object.fromEntries(
-          Object.entries(options?.environment ?? {}).filter(
-            (entry): entry is [string, string] => typeof entry[1] === "string",
-          ),
-        );
-        if (Object.keys(environmentVariables).length > 0) {
-          yield* context.client.session
-            .environment({
-              sessionID: toSessionId(context.openCodeSessionId),
-              variables: environmentVariables,
-            })
-            .pipe(Effect.timeout("5 seconds"), Effect.ignoreCause);
-        }
+        const startupExit = yield* Effect.exit(
+          Effect.gen(function* () {
+            // Session environment (v2's analog of the spawned-server env
+            // merge). `options.environment` is already the merged instance
+            // env; the start input carries no per-session env.
+            const environmentVariables = Object.fromEntries(
+              Object.entries(options?.environment ?? {}).filter(
+                (entry): entry is [string, string] => typeof entry[1] === "string",
+              ),
+            );
+            if (Object.keys(environmentVariables).length > 0) {
+              yield* context.client.session
+                .environment({
+                  sessionID: toSessionId(context.openCodeSessionId),
+                  variables: environmentVariables,
+                })
+                .pipe(Effect.timeout("5 seconds"), Effect.ignoreCause);
+            }
 
-        // Registration failure must not kill the session, but a silent loss of
-        // the whole t3-code toolkit is the kind of thing users notice hours
-        // later — surface it as a runtime warning instead.
-        yield* registerThreadMcp(context).pipe(
-          Effect.catch((cause) =>
-            Effect.gen(function* () {
-              yield* emit({
-                ...(yield* buildEventBase({ threadId: input.threadId })),
-                type: "runtime.warning",
-                payload: {
-                  message:
-                    "Failed to register the T3 Code MCP server; agents will not see t3-code tools this session.",
-                },
-              });
-              void cause;
-            }),
-          ),
+            // Registration failure must not kill the session, but a silent
+            // loss of the whole t3-code toolkit should be visible to the user.
+            yield* registerThreadMcp(context).pipe(
+              Effect.catch((cause) =>
+                Effect.gen(function* () {
+                  yield* emit({
+                    ...(yield* buildEventBase({ threadId: input.threadId })),
+                    type: "runtime.warning",
+                    payload: {
+                      message:
+                        "Failed to register the T3 Code MCP server; agents will not see t3-code tools this session.",
+                    },
+                  });
+                  void cause;
+                }),
+              ),
+            );
+            yield* startEventPump(context);
+            // Wait for a live subscription, bounded so an unreachable-but-
+            // answering server fails session start rather than hanging it.
+            yield* Deferred.await(context.firstConnection).pipe(
+              Effect.timeoutOrElse({
+                duration: OPENCODE2_STREAM_READY_TIMEOUT,
+                orElse: () =>
+                  Effect.fail(
+                    new ProviderAdapterRequestError({
+                      provider: PROVIDER,
+                      method: "event.subscribe",
+                      detail: `OpenCode 2 event stream did not connect within ${OPENCODE2_STREAM_READY_TIMEOUT}.`,
+                    }),
+                  ),
+              }),
+            );
+            yield* awaitContextReady(context);
+            if (!created) {
+              yield* recoverPendingRequests(context);
+            }
+          }).pipe(Effect.onInterrupt(() => cleanupStartingContext)),
         );
-        const connectionExit = yield* Effect.gen(function* () {
-          yield* startEventPump(context);
-          // Wait for a live subscription, bounded so an unreachable-but-
-          // answering server fails session start rather than hanging it.
-          yield* Deferred.await(context.firstConnection).pipe(
-            Effect.timeoutOrElse({
-              duration: OPENCODE2_STREAM_READY_TIMEOUT,
-              orElse: () =>
-                Effect.fail(
-                  new ProviderAdapterRequestError({
-                    provider: PROVIDER,
-                    method: "event.subscribe",
-                    detail: `OpenCode 2 event stream did not connect within ${OPENCODE2_STREAM_READY_TIMEOUT}.`,
-                  }),
-                ),
-            }),
-          );
-        }).pipe(
-          Effect.onInterrupt(() => cleanupStartingContext),
-          Effect.exit,
-        );
-        if (Exit.isFailure(connectionExit)) {
+        if (Exit.isFailure(startupExit)) {
           yield* cleanupStartingContext;
-          return yield* Effect.failCause(connectionExit.cause);
-        }
-        yield* awaitContextReady(context);
-        if (!created) {
-          yield* recoverPendingRequests(context);
+          return yield* Effect.failCause(startupExit.cause);
         }
 
         yield* emit({

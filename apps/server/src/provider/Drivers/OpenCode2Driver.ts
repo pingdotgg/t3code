@@ -95,10 +95,12 @@ export const OpenCode2Driver: ProviderDriver<OpenCode2Settings, OpenCode2DriverE
 
       const textGeneration = yield* makeOpenCode2TextGeneration(effectiveConfig);
 
-      const checkProvider = checkOpenCode2ProviderStatus(effectiveConfig, serverConfig.cwd).pipe(
-        Effect.map(stampIdentity),
-        Effect.provideService(OpenCode2Runtime, openCode2Runtime),
-      );
+      const checkProviderForCwd = (cwd: string) =>
+        checkOpenCode2ProviderStatus(effectiveConfig, cwd).pipe(
+          Effect.map(stampIdentity),
+          Effect.provideService(OpenCode2Runtime, openCode2Runtime),
+        );
+      const checkProvider = checkProviderForCwd(serverConfig.cwd);
 
       const snapshotSettings = makeProviderSnapshotSettingsSource(effectiveConfig, serverSettings);
       const snapshot = yield* makeManagedServerProvider<
@@ -133,6 +135,18 @@ export const OpenCode2Driver: ProviderDriver<OpenCode2Settings, OpenCode2DriverE
         accentColor,
         enabled,
         snapshot,
+        snapshotForCwd: (cwd) =>
+          checkProviderForCwd(cwd).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: `Failed to probe OpenCode 2 for '${cwd}'`,
+                  cause,
+                }),
+            ),
+          ),
         adapter,
         textGeneration,
       } satisfies ProviderInstance;
