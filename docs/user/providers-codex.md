@@ -86,6 +86,14 @@ A successful response means the session is available. It does not mean Codex
 consumed the queue item or finished a turn. Codex can process the item on a
 later watcher pass.
 
+On the environment host, issue an access token and keep it private. The token
+includes the required `orchestration:operate` scope. See
+[Manage or revoke access](./remote-access.md#manage-or-revoke-access).
+
+```bash
+export T3_ACCESS_TOKEN="$(t3 auth session issue --token-only)"
+```
+
 ```bash
 curl -X POST "$T3_ENVIRONMENT_URL/api/orchestration/provider-session/wake" \
   -H "Authorization: Bearer $T3_ACCESS_TOKEN" \

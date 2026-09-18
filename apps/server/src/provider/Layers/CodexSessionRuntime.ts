@@ -2452,7 +2452,7 @@ export const makeCodexSessionRuntime = (
         if (merged.emitReady) {
           yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
         }
-        return yield* Ref.get(sessionRef);
+        return merged.session;
       }).pipe(
         Effect.tapError((error) =>
           updateSession(sessionRef, {

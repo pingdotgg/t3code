@@ -5209,9 +5209,6 @@ describe("agent browser access", () => {
 });
 
 const wakeRestoreThreadId = asThreadId("thread-wake-restore");
-const wakeLoadedThreadId = asThreadId("thread-wake-loaded");
-const wakeErrorThreadId = asThreadId("thread-wake-error");
-const wakeActivityThreadId = asThreadId("thread-wake-activity");
 const wakeRunningThreadId = asThreadId("thread-wake-running");
 const wakeDeadThreadId = asThreadId("thread-wake-dead");
 const wakeConcurrentThreadId = asThreadId("thread-wake-concurrent");
@@ -5225,9 +5222,6 @@ const wakeMissingWorkspaceThreadId = asThreadId("thread-wake-missing-workspace")
 const wake = makeProviderServiceLayer({
   threadIds: [
     wakeRestoreThreadId,
-    wakeLoadedThreadId,
-    wakeErrorThreadId,
-    wakeActivityThreadId,
     wakeRunningThreadId,
     wakeDeadThreadId,
     wakeConcurrentThreadId,
@@ -5285,30 +5279,6 @@ wake.layer("ProviderServiceLive Codex session wake", (it) => {
     }),
   );
 
-  it.effect("reuses a loaded idle session on repeated wake", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-      const providerThreadId = "codex-wake-loaded";
-      yield* startCodex(wakeLoadedThreadId, providerThreadId, "wake-loaded");
-      wake.codex.startSession.mockClear();
-      wake.codex.sendTurn.mockClear();
-
-      const first = yield* provider.wakeSession({
-        provider: "codex",
-        providerThreadId,
-      });
-      const second = yield* provider.wakeSession({
-        provider: "codex",
-        providerThreadId,
-      });
-
-      assert.equal(first.outcome, "already-loaded");
-      assert.equal(second.outcome, "already-loaded");
-      assert.equal(wake.codex.startSession.mock.calls.length, 0);
-      assert.equal(wake.codex.sendTurn.mock.calls.length, 0);
-    }),
-  );
-
   it.effect("does not replace a healthy running session", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -5338,79 +5308,6 @@ wake.layer("ProviderServiceLive Codex session wake", (it) => {
       assert.equal(result.outcome, "already-loaded");
       assert.equal(wake.codex.startSession.mock.calls.length, 0);
       assert.deepEqual(yield* Ref.get(received), []);
-      yield* Fiber.interrupt(subscriber);
-    }),
-  );
-
-  it.effect("reuses a loaded session after a failed turn", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-      const providerThreadId = "codex-wake-error";
-      yield* startCodex(wakeErrorThreadId, providerThreadId, "wake-error");
-      wake.codex.updateSession(wakeErrorThreadId, (session) => ({
-        ...session,
-        status: "error",
-        activeTurnId: undefined,
-        lastError: "queued turn failed",
-      }));
-      wake.codex.startSession.mockClear();
-
-      const received = yield* Ref.make<string[]>([]);
-      const subscriber = yield* Stream.runForEach(provider.streamEvents, (event) =>
-        event.type === "session.state.changed"
-          ? Ref.update(received, (current) => [...current, event.payload.state])
-          : Effect.void,
-      ).pipe(Effect.forkChild);
-      yield* advanceTestClock(50);
-
-      const result = yield* provider.wakeSession({
-        provider: "codex",
-        providerThreadId,
-      });
-      yield* advanceTestClock(50);
-
-      assert.equal(result.outcome, "already-loaded");
-      assert.equal(wake.codex.startSession.mock.calls.length, 0);
-      assert.deepEqual(yield* Ref.get(received), ["starting", "error"]);
-      yield* Fiber.interrupt(subscriber);
-    }),
-  );
-
-  it.effect("counts an explicit wake of a loaded idle session as session activity", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-      const providerThreadId = "codex-wake-activity";
-      yield* startCodex(wakeActivityThreadId, providerThreadId, "wake-activity");
-      wake.codex.startSession.mockClear();
-
-      const received = yield* Ref.make<
-        Array<{ readonly state: string; readonly preserveActiveTurn: boolean }>
-      >([]);
-      const subscriber = yield* Stream.runForEach(provider.streamEvents, (event) =>
-        event.type === "session.state.changed"
-          ? Ref.update(received, (current) => [
-              ...current,
-              {
-                state: event.payload.state,
-                preserveActiveTurn: event.payload.preserveActiveTurn === true,
-              },
-            ])
-          : Effect.void,
-      ).pipe(Effect.forkChild);
-      yield* advanceTestClock(50);
-
-      const result = yield* provider.wakeSession({
-        provider: "codex",
-        providerThreadId,
-      });
-      yield* advanceTestClock(50);
-
-      assert.equal(result.outcome, "already-loaded");
-      assert.equal(wake.codex.startSession.mock.calls.length, 0);
-      assert.deepEqual(yield* Ref.get(received), [
-        { state: "starting", preserveActiveTurn: false },
-        { state: "ready", preserveActiveTurn: true },
-      ]);
       yield* Fiber.interrupt(subscriber);
     }),
   );
@@ -5488,7 +5385,7 @@ wake.layer("ProviderServiceLive Codex session wake", (it) => {
     }),
   );
 
-  it.effect("leaves the saved provider identity unchanged when resume fails", () =>
+  it.effect("reports a failed restore without changing the saved provider identity", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
@@ -5504,6 +5401,17 @@ wake.layer("ProviderServiceLive Codex session wake", (it) => {
             detail: "thread not found",
           }),
         )) as unknown as typeof wake.codex.startSession);
+      const failureEventFiber = yield* provider.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === wakeFailedThreadId &&
+            event.type === "session.state.changed" &&
+            event.payload.state === "error",
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
 
       const error = yield* provider
         .wakeSession({ provider: "codex", providerThreadId })
@@ -5514,6 +5422,12 @@ wake.layer("ProviderServiceLive Codex session wake", (it) => {
       assert.equal(after.provider, before.provider);
       assert.equal(after.providerInstanceId, before.providerInstanceId);
       assert.deepEqual(after.resumeCursor, before.resumeCursor);
+      const failureEvent = Option.getOrThrow(yield* Fiber.join(failureEventFiber));
+      assert.equal(failureEvent.type, "session.state.changed");
+      if (failureEvent.type === "session.state.changed") {
+        assert.equal(failureEvent.payload.state, "error");
+        assert.match(failureEvent.payload.reason ?? "", /thread not found/);
+      }
     }),
   );
 
@@ -5716,121 +5630,5 @@ it.effect("wakeSession rejects a disabled Codex instance before restore", () =>
     assert.instanceOf(error, ProviderSessionWakeTargetError);
     assert.equal(error.reason, "instance_unavailable");
     assert.equal(codex.startSession.mock.calls.length, 0);
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.effect("wakeSession does not overwrite a newer provider instance binding", () =>
-  Effect.gen(function* () {
-    const threadId = asThreadId("thread-wake-stale-binding");
-    const providerThreadId = "codex-wake-stale";
-    const personalInstanceId = ProviderInstanceId.make("codex-personal");
-    const primary = makeFakeCodexAdapter();
-    const personal = makeFakeCodexAdapter();
-    const listed = yield* Deferred.make<void>();
-    const continueWake = yield* Deferred.make<void>();
-    let listCalls = 0;
-    const registryBase = makeStaticInstanceRegistry([
-      [codexInstanceId, primary.adapter],
-      [personalInstanceId, personal.adapter],
-    ]);
-    const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
-      ...registryBase,
-      getInstanceInfo: (instanceId) =>
-        Effect.succeed({
-          instanceId,
-          driverKind: CODEX_DRIVER,
-          displayName: undefined,
-          enabled: true,
-          continuationIdentity: {
-            driverKind: CODEX_DRIVER,
-            continuationKey: "codex:home:shared",
-          },
-        }),
-    };
-    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
-      Layer.provide(SqlitePersistenceMemory),
-    );
-    const innerDirectoryLayer = ProviderSessionDirectoryLive.pipe(
-      Layer.provide(runtimeRepositoryLayer),
-    );
-    const directoryScope = yield* Scope.make();
-    const innerContext = yield* Layer.build(innerDirectoryLayer).pipe(
-      Scope.provide(directoryScope),
-    );
-    const innerDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
-      Effect.provide(innerContext),
-    );
-    const wrappedDirectory: ProviderSessionDirectory.ProviderSessionDirectory["Service"] = {
-      ...innerDirectory,
-      listBindings: () =>
-        Effect.gen(function* () {
-          const result = yield* innerDirectory.listBindings();
-          listCalls += 1;
-          if (listCalls === 1) {
-            yield* Deferred.succeed(listed, undefined);
-            yield* Deferred.await(continueWake);
-          }
-          return result;
-        }),
-    };
-    const directoryLayer = Layer.succeed(
-      ProviderSessionDirectory.ProviderSessionDirectory,
-      wrappedDirectory,
-    );
-    const layer = Layer.mergeAll(
-      makeProviderServiceLive().pipe(
-        Layer.provide(NodeServices.layer),
-        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
-        Layer.provide(directoryLayer),
-        Layer.provide(makeProjectionLayer([threadId])),
-        Layer.provide(defaultServerSettingsLayer),
-        Layer.provide(serverConfigTestLayer),
-        Layer.provide(AnalyticsService.layerTest),
-        Layer.provide(
-          Layer.succeed(
-            ProviderEventLoggers.ProviderEventLoggers,
-            ProviderEventLoggers.NoOpProviderEventLoggers,
-          ),
-        ),
-      ),
-      directoryLayer,
-    );
-
-    const binding = yield* Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
-      yield* provider.startSession(threadId, {
-        provider: CODEX_DRIVER,
-        providerInstanceId: codexInstanceId,
-        threadId,
-        cwd: fixtureCwd("wake-stale-primary"),
-        runtimeMode: "full-access",
-        resumeCursor: { threadId: providerThreadId },
-      });
-      yield* provider.stopSession({ threadId });
-      primary.startSession.mockClear();
-      personal.startSession.mockClear();
-
-      const wakeFiber = yield* provider
-        .wakeSession({ provider: "codex", providerThreadId })
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(listed);
-      yield* provider.startSession(threadId, {
-        provider: CODEX_DRIVER,
-        providerInstanceId: personalInstanceId,
-        threadId,
-        cwd: fixtureCwd("wake-stale-personal"),
-        runtimeMode: "full-access",
-        resumeCursor: { threadId: providerThreadId },
-      });
-      yield* Deferred.succeed(continueWake, undefined);
-      yield* Fiber.join(wakeFiber);
-      return Option.getOrThrow(yield* directory.getBinding(threadId));
-    }).pipe(Effect.provide(layer));
-    yield* Scope.close(directoryScope, Exit.void);
-
-    assert.equal(binding.providerInstanceId, personalInstanceId);
-    assert.deepEqual(binding.resumeCursor, { threadId: providerThreadId });
-    assert.equal(primary.startSession.mock.calls.length, 0);
   }).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -55,7 +55,6 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -513,28 +512,31 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const pendingCompactions = new Map<ThreadId, PendingCompaction>();
   const timedOutNativeCompactions = new Set<ThreadId>();
-  const threadLifecycleLocks = yield* SynchronizedRef.make(
-    new Map<ThreadId, Semaphore.Semaphore>(),
-  );
-  const getThreadLifecycleLock = (threadId: ThreadId) =>
-    SynchronizedRef.modifyEffect(threadLifecycleLocks, (current) => {
-      const existing = current.get(threadId);
-      if (existing !== undefined) {
-        return Effect.succeed([existing, current] as const);
-      }
-      return Semaphore.make(1).pipe(
-        Effect.map((semaphore) => {
-          const next = new Map(current);
-          next.set(threadId, semaphore);
-          return [semaphore, next] as const;
-        }),
-      );
-    });
+  const threadLifecycleLocks = new Map<
+    ThreadId,
+    { readonly semaphore: Semaphore.Semaphore; users: number }
+  >();
   const withThreadLifecycle =
     (threadId: ThreadId) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-      Effect.flatMap(getThreadLifecycleLock(threadId), (semaphore) =>
-        semaphore.withPermits(1)(effect),
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const lock = threadLifecycleLocks.get(threadId) ?? {
+            semaphore: Semaphore.makeUnsafe(1),
+            users: 0,
+          };
+          lock.users += 1;
+          threadLifecycleLocks.set(threadId, lock);
+          return lock;
+        }),
+        (lock) => lock.semaphore.withPermits(1)(effect),
+        (lock) =>
+          Effect.sync(() => {
+            lock.users -= 1;
+            if (lock.users === 0 && threadLifecycleLocks.get(threadId) === lock) {
+              threadLifecycleLocks.delete(threadId);
+            }
+          }),
       );
   const settleCompaction = (threadId: ThreadId, pending: PendingCompaction, terminal: string) =>
     Effect.gen(function* () {
@@ -550,6 +552,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   });
   let turnAnalyticsRequestId = 0;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+  const ensureWorkspaceDirectory = Effect.fn("ProviderService.ensureWorkspaceDirectory")(function* (
+    threadId: ThreadId,
+    cwd: string,
+  ) {
+    // Missing folders deserve an actionable error before an adapter turns
+    // them into a misleading process-spawn failure. Other stat failures
+    // still fall through to the adapter.
+    const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
+      Effect.map((workspaceStat) => workspaceStat.type === "Directory"),
+      Effect.catch((statError) => Effect.succeed(statError.reason._tag !== "NotFound")),
+    );
+    if (!workspaceIsDirectory) {
+      return yield* new ProviderWorkspaceMissingError({ threadId, cwd });
+    }
+  });
 
   const finishTurnAnalytics = (
     state: TurnAnalyticsState,
@@ -1271,13 +1289,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     () => reconcileInstanceSubscriptions,
   ).pipe(Effect.forkScoped);
 
-  const publishWakeSessionState = (input: {
+  const publishWakeFailure = (input: {
     readonly instanceId: ProviderInstanceId;
     readonly provider: ProviderDriverKind;
     readonly threadId: ThreadId;
-    readonly state: "starting" | "ready" | "error";
     readonly reason: string;
-    readonly preserveActiveTurn?: boolean;
   }) =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
@@ -1286,16 +1302,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         {
           type: "session.state.changed",
           eventId: EventId.make(
-            `codex-wake:${input.threadId}:${input.state}:${DateTime.toEpochMillis(now)}`,
+            `codex-wake:${input.threadId}:error:${DateTime.toEpochMillis(now)}`,
           ),
           provider: input.provider,
           providerInstanceId: input.instanceId,
           threadId: input.threadId,
           createdAt: DateTime.formatIso(now),
           payload: {
-            state: input.state,
+            state: "error",
             reason: input.reason,
-            ...(input.preserveActiveTurn === true ? { preserveActiveTurn: true } : {}),
           },
         },
       );
@@ -1307,10 +1322,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       readonly operation: string;
       readonly resumeMode?: "strict";
     }) {
-      const persistedBinding = Option.getOrUndefined(
-        yield* directory.getBinding(input.binding.threadId),
-      );
-      const binding = persistedBinding ?? input.binding;
+      const binding = input.binding;
       const bindingInstanceId = yield* requireBindingInstanceId(input.operation, binding);
       yield* Effect.annotateCurrentSpan({
         "provider.operation": "recover-session",
@@ -1330,29 +1342,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             { ...existing, providerInstanceId: bindingInstanceId },
             binding.threadId,
           );
-          if (
-            input.resumeMode === "strict" &&
-            (existing.status === "ready" || existing.status === "error")
-          ) {
-            yield* publishWakeSessionState({
-              instanceId: bindingInstanceId,
-              provider: existing.provider,
-              threadId: binding.threadId,
-              state: "starting",
-              reason: "Waking loaded Codex session.",
-            });
-            yield* publishWakeSessionState({
-              instanceId: bindingInstanceId,
-              provider: existing.provider,
-              threadId: binding.threadId,
-              state: existing.status,
-              preserveActiveTurn: true,
-              reason:
-                existing.status === "error"
-                  ? (existing.lastError ?? "Codex session is loaded with an error.")
-                  : "Codex session is already loaded.",
-            });
-          }
           yield* analytics.record("provider.session.recovered", {
             provider: existing.provider,
             strategy: "adopt-existing",
@@ -1375,16 +1364,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (persistedCwd === undefined) {
           return yield* new ProviderWorkspaceMissingError({ threadId: binding.threadId });
         }
-        const workspaceIsDirectory = yield* fileSystem.stat(persistedCwd).pipe(
-          Effect.map((workspaceStat) => workspaceStat.type === "Directory"),
-          Effect.catch((statError) => Effect.succeed(statError.reason._tag !== "NotFound")),
-        );
-        if (!workspaceIsDirectory) {
-          return yield* new ProviderWorkspaceMissingError({
-            threadId: binding.threadId,
-            cwd: persistedCwd,
-          });
-        }
+        yield* ensureWorkspaceDirectory(binding.threadId, persistedCwd);
       }
 
       yield* prepareMcpSession(binding.threadId, bindingInstanceId);
@@ -1613,18 +1593,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.cwd.effective": effectiveCwd ?? "",
         });
         if (effectiveCwd !== undefined) {
-          // Fail fast with an actionable error when the workspace folder is
-          // gone (e.g. moved, deleted, or replaced by a plain file).
-          // Otherwise every adapter surfaces this as a misleading "failed to
-          // spawn <binary>" process error. Stat failures other than "missing"
-          // fall through to the adapter.
-          const workspaceIsDirectory = yield* fileSystem.stat(effectiveCwd).pipe(
-            Effect.map((workspaceStat) => workspaceStat.type === "Directory"),
-            Effect.catch((statError) => Effect.succeed(statError.reason._tag !== "NotFound")),
-          );
-          if (!workspaceIsDirectory) {
-            return yield* new ProviderWorkspaceMissingError({ threadId, cwd: effectiveCwd });
-          }
+          yield* ensureWorkspaceDirectory(threadId, effectiveCwd);
         }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
@@ -2251,18 +2220,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const wakeTargetError = (
       reason: ProviderSessionWakeTargetError["reason"],
       extras?: { readonly threadId?: ThreadId; readonly providerInstanceId?: string },
-    ) =>
-      new ProviderSessionWakeTargetError({
+    ) => {
+      const providerInstanceId = extras?.providerInstanceId ?? input.providerInstanceId;
+      return new ProviderSessionWakeTargetError({
         reason,
         providerThreadId: input.providerThreadId,
-        ...(input.providerInstanceId !== undefined
-          ? { providerInstanceId: input.providerInstanceId }
-          : {}),
-        ...(extras?.providerInstanceId !== undefined
-          ? { providerInstanceId: extras.providerInstanceId }
-          : {}),
+        ...(providerInstanceId !== undefined ? { providerInstanceId } : {}),
         ...(extras?.threadId !== undefined ? { threadId: extras.threadId } : {}),
       });
+    };
 
     const bindings = yield* directory.listBindings();
     const matches = matchCodexWakeBindings(bindings, input);
@@ -2309,6 +2275,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         operation: "ProviderService.wakeSession",
         resumeMode: "strict",
       }).pipe(
+        Effect.tapError((error) =>
+          publishWakeFailure({
+            instanceId,
+            provider: binding.provider,
+            threadId: binding.threadId,
+            reason: error.message,
+          }),
+        ),
         withMetrics({
           counter: providerSessionsTotal,
           attributes: providerMetricAttributes(binding.provider, {

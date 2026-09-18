@@ -34,7 +34,6 @@ import {
 import * as Effect from "effect/Effect";
 import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
-import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -1454,7 +1453,6 @@ function mapToRuntimeEvents(
         type: "session.state.changed",
         payload: {
           state: "ready",
-          preserveActiveTurn: true,
           ...(event.message ? { reason: event.message } : {}),
         },
       },
@@ -2460,32 +2458,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 cause,
               }),
           ),
-          Effect.catch((error) =>
-            Fiber.interrupt(eventFiber).pipe(
-              Effect.andThen(runtime.close.pipe(Effect.ignore)),
+          Effect.onError(() =>
+            runtime.close.pipe(
               Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
-              Effect.andThen(
-                input.resumeMode === "strict"
-                  ? DateTime.now.pipe(
-                      Effect.flatMap((now) =>
-                        Queue.offer(runtimeEventQueue, {
-                          type: "session.state.changed",
-                          eventId: EventId.make(NodeCrypto.randomUUID()),
-                          provider: PROVIDER,
-                          providerInstanceId: boundInstanceId,
-                          threadId: input.threadId,
-                          createdAt: DateTime.formatIso(now),
-                          payload: {
-                            state: "error",
-                            reason: error.detail,
-                          },
-                        }),
-                      ),
-                      Effect.asVoid,
-                    )
-                  : Effect.void,
-              ),
-              Effect.andThen(Effect.fail(error)),
+              Effect.andThen(Fiber.interrupt(eventFiber)),
+              Effect.ignore,
             ),
           ),
         );

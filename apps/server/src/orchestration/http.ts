@@ -2,13 +2,11 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
-  EnvironmentInternalError,
-  EnvironmentRequestInvalidError,
-  EnvironmentResourceNotFoundError,
+  type EnvironmentRequestInvalidError,
+  type EnvironmentResourceNotFoundError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import { projectThreadDetailSnapshot } from "./ActivityPayloadProjection.ts";
@@ -22,45 +20,49 @@ import {
 } from "../auth/http.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import {
-  ProviderInstanceNotFoundError,
-  ProviderSessionWakeTargetError,
-  ProviderUnsupportedError,
-  ProviderWorkspaceMissingError,
+  type ProviderInstanceNotFoundError,
+  type ProviderSessionWakeTargetError,
+  type ProviderUnsupportedError,
+  type ProviderWorkspaceMissingError,
+  type ProviderServiceError,
 } from "../provider/Errors.ts";
 import * as ProviderService from "../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
-const isProviderSessionWakeTargetError = Schema.is(ProviderSessionWakeTargetError);
-const isProviderWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
-const isProviderInstanceNotFoundError = Schema.is(ProviderInstanceNotFoundError);
-const isProviderUnsupportedError = Schema.is(ProviderUnsupportedError);
+type MappedProviderSessionWakeError =
+  | ProviderSessionWakeTargetError
+  | ProviderWorkspaceMissingError
+  | ProviderInstanceNotFoundError
+  | ProviderUnsupportedError;
 
-const mapProviderSessionWakeError = (
-  cause: unknown,
-): Effect.Effect<
-  never,
-  EnvironmentRequestInvalidError | EnvironmentResourceNotFoundError | EnvironmentInternalError
-> => {
-  if (isProviderSessionWakeTargetError(cause)) {
-    switch (cause.reason) {
-      case "not_found":
-        return failEnvironmentNotFound("provider_session_not_found");
-      case "thread_unavailable":
-        return failEnvironmentNotFound("thread_unavailable");
-      case "ambiguous":
-        return failEnvironmentInvalidRequest("ambiguous_provider_session");
-      case "instance_unavailable":
-        return failEnvironmentInvalidRequest("provider_instance_unavailable");
-    }
+const isUnexpectedProviderSessionWakeError = (
+  cause: ProviderServiceError,
+): cause is Exclude<ProviderServiceError, MappedProviderSessionWakeError> => {
+  switch (cause._tag) {
+    case "ProviderSessionWakeTargetError":
+    case "ProviderWorkspaceMissingError":
+    case "ProviderInstanceNotFoundError":
+    case "ProviderUnsupportedError":
+      return false;
+    default:
+      return true;
   }
-  if (isProviderWorkspaceMissingError(cause)) {
-    return failEnvironmentInvalidRequest("workspace_missing");
+};
+
+const mapProviderSessionWakeTargetError = (
+  cause: ProviderSessionWakeTargetError,
+): Effect.Effect<never, EnvironmentRequestInvalidError | EnvironmentResourceNotFoundError> => {
+  switch (cause.reason) {
+    case "not_found":
+      return failEnvironmentNotFound("provider_session_not_found");
+    case "thread_unavailable":
+      return failEnvironmentNotFound("thread_unavailable");
+    case "ambiguous":
+      return failEnvironmentInvalidRequest("ambiguous_provider_session");
+    case "instance_unavailable":
+      return failEnvironmentInvalidRequest("provider_instance_unavailable");
   }
-  if (isProviderInstanceNotFoundError(cause) || isProviderUnsupportedError(cause)) {
-    return failEnvironmentInvalidRequest("provider_instance_unavailable");
-  }
-  return failEnvironmentInternal("orchestration_provider_session_wake_failed", cause);
 };
 
 export const orchestrationHttpApiLayer = HttpApiBuilder.group(
@@ -173,9 +175,21 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.wakeProviderSession")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          return yield* providerService
-            .wakeSession(args.payload)
-            .pipe(Effect.catch((cause) => mapProviderSessionWakeError(cause)));
+          return yield* providerService.wakeSession(args.payload).pipe(
+            Effect.catchIf(isUnexpectedProviderSessionWakeError, (cause) =>
+              failEnvironmentInternal("orchestration_provider_session_wake_failed", cause),
+            ),
+            Effect.catchTag("ProviderSessionWakeTargetError", mapProviderSessionWakeTargetError),
+            Effect.catchTag("ProviderWorkspaceMissingError", () =>
+              failEnvironmentInvalidRequest("workspace_missing"),
+            ),
+            Effect.catchTag("ProviderInstanceNotFoundError", () =>
+              failEnvironmentInvalidRequest("provider_instance_unavailable"),
+            ),
+            Effect.catchTag("ProviderUnsupportedError", () =>
+              failEnvironmentInvalidRequest("provider_instance_unavailable"),
+            ),
+          );
         }),
       );
   }),
