@@ -1,7 +1,7 @@
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import { SymbolView } from "../../components/AppSymbol";
-import { TerminalHeader } from "./TerminalHeader";
+import { ScreenHeader } from "../../components/ScreenHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Platform, Pressable, View } from "react-native";
@@ -35,7 +35,12 @@ import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useServerConfigs } from "../../state/entities";
 import { useWorkspaceState } from "../../state/workspace";
-import { stepTerminalFontSize } from "../../lib/appearancePreferences";
+import {
+  MAX_TERMINAL_FONT_SIZE,
+  MIN_TERMINAL_FONT_SIZE,
+  TERMINAL_FONT_SIZE_STEP,
+  stepTerminalFontSize,
+} from "../../lib/appearancePreferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   useAttachedTerminalSession,
@@ -58,7 +63,9 @@ import {
   type PendingTerminalLaunch,
 } from "./terminalLaunchContext";
 import {
+  basename,
   buildTerminalMenuSessions,
+  getTerminalStatusLabel,
   nextOpenTerminalId,
   previousLiveTerminalId,
   resolveTerminalSessionLabel,
@@ -72,6 +79,90 @@ import {
 } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
+
+function TerminalHeader(props: {
+  readonly subtitle: string;
+  readonly isEnvironmentReady: boolean;
+  readonly fontSize: number;
+  readonly terminalId: string;
+  readonly sessions: ReadonlyArray<TerminalMenuSession>;
+  readonly status: Parameters<typeof getTerminalStatusLabel>[0];
+  readonly workspaceRoot: string;
+  readonly onCloseTerminal: () => void;
+  readonly onDecreaseFontSize: () => void;
+  readonly onIncreaseFontSize: () => void;
+  readonly onOpenNewTerminal: () => void;
+  readonly onSelectTerminal: (terminalId: string) => void;
+}) {
+  return (
+    <ScreenHeader
+      title="Terminal"
+      subtitle={props.subtitle}
+      onBack={props.onCloseTerminal}
+      backInSplitView={{
+        accessibilityLabel: "Close terminal",
+        icon: "xmark",
+        separateBackground: true,
+      }}
+      menus={
+        props.isEnvironmentReady
+          ? [
+              {
+                title: "Terminal options",
+                icon: "terminal",
+                status: getTerminalStatusLabel(props.status),
+                items: [
+                  {
+                    id: "text-size",
+                    title: "Text size",
+                    icon: "textformat.size",
+                    inline: true,
+                    items: [
+                      {
+                        id: "font-decrease",
+                        title: `A- ${Math.max(MIN_TERMINAL_FONT_SIZE, props.fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`,
+                        disabled: props.fontSize <= MIN_TERMINAL_FONT_SIZE,
+                        onPress: props.onDecreaseFontSize,
+                      },
+                      {
+                        id: "font-increase",
+                        title: `A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, props.fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`,
+                        disabled: props.fontSize >= MAX_TERMINAL_FONT_SIZE,
+                        onPress: props.onIncreaseFontSize,
+                      },
+                    ],
+                  },
+                  ...props.sessions.map((session) => ({
+                    id: `terminal-session:${session.terminalId}`,
+                    title: session.displayLabel,
+                    icon: "terminal",
+                    subtitle: [
+                      getTerminalStatusLabel({
+                        status: session.status,
+                        hasRunningSubprocess: session.hasRunningSubprocess,
+                      }),
+                      basename(session.cwd),
+                    ]
+                      .filter(Boolean)
+                      .join(" · "),
+                    selected: session.terminalId === props.terminalId,
+                    onPress: () => props.onSelectTerminal(session.terminalId),
+                  })),
+                  {
+                    id: "terminal-new",
+                    title: "Open new terminal",
+                    icon: "plus",
+                    subtitle: `Start another shell in ${basename(props.workspaceRoot) ?? "this workspace"}`,
+                    onPress: props.onOpenNewTerminal,
+                  },
+                ],
+              },
+            ]
+          : undefined
+      }
+    />
+  );
+}
 
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
