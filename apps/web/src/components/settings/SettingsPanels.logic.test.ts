@@ -293,12 +293,12 @@ describe("normalizeProviderHealthIntervalSeconds", () => {
     expect(normalizeProviderHealthIntervalSeconds(600, min)).toBe(600);
   });
 
-  it("jumps to disabled when stepping down from the minimum", () => {
-    expect(normalizeProviderHealthIntervalSeconds(min - 30, min)).toBe(0);
+  it("snaps a value typed below the minimum down to disabled when decreasing", () => {
+    expect(normalizeProviderHealthIntervalSeconds(min - 15, min)).toBe(0);
   });
 
-  it("jumps to the minimum when stepping up from disabled", () => {
-    expect(normalizeProviderHealthIntervalSeconds(30, 0)).toBe(min);
+  it("snaps a value typed below the minimum up to the minimum when increasing", () => {
+    expect(normalizeProviderHealthIntervalSeconds(15, 0)).toBe(min);
   });
 
   it("treats an empty or negative value as disabled", () => {

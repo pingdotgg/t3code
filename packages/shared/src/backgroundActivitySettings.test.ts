@@ -21,7 +21,7 @@ describe("clampProviderHealthRefreshInterval", () => {
     expect(Duration.toMillis(clampProviderHealthRefreshInterval(Duration.seconds(5)))).toBe(
       MIN_MILLIS,
     );
-    expect(Duration.toMillis(clampProviderHealthRefreshInterval(Duration.seconds(30)))).toBe(
+    expect(Duration.toMillis(clampProviderHealthRefreshInterval(Duration.seconds(29)))).toBe(
       MIN_MILLIS,
     );
   });

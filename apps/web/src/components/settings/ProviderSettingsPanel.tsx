@@ -23,7 +23,6 @@ import {
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
 import * as Arr from "effect/Array";
-import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
@@ -68,13 +67,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
-import {
-  NumberField,
-  NumberFieldDecrement,
-  NumberFieldGroup,
-  NumberFieldIncrement,
-  NumberFieldInput,
-} from "../ui/number-field";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -90,10 +82,9 @@ import {
   backgroundActivityOverrideSettings,
   buildProviderInstanceUpdatePatch,
   durationToSeconds,
-  normalizeProviderHealthIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_MIN_SECONDS,
-  PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
 } from "./SettingsPanels.logic";
+import { ProviderHealthIntervalField } from "./ProviderHealthIntervalField";
 import {
   PolicyTooltip,
   SettingResetButton,
@@ -1133,35 +1124,19 @@ export function EnvironmentProviderSettings({
                 readOnly && "opacity-50 select-none",
               )}
             >
-              <NumberField
-                value={providerHealthRefreshIntervalSeconds}
-                min={0}
-                step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
-                size="sm"
-                className="w-32"
-                onValueChange={(value) =>
+              <ProviderHealthIntervalField
+                valueSeconds={providerHealthRefreshIntervalSeconds}
+                label="Provider health check interval"
+                onCommit={(interval) =>
                   updateSettings(
                     backgroundActivityOverrideSettings(
                       settings.backgroundActivity,
                       resolvedBackgroundActivity,
-                      {
-                        providerHealthRefreshInterval: Duration.seconds(
-                          normalizeProviderHealthIntervalSeconds(
-                            value,
-                            providerHealthRefreshIntervalSeconds,
-                          ),
-                        ),
-                      },
+                      { providerHealthRefreshInterval: interval },
                     ),
                   )
                 }
-              >
-                <NumberFieldGroup>
-                  <NumberFieldDecrement aria-label="Decrease provider health check interval" />
-                  <NumberFieldInput aria-label="Provider health check interval in seconds" />
-                  <NumberFieldIncrement aria-label="Increase provider health check interval" />
-                </NumberFieldGroup>
-              </NumberField>
+              />
               <span className="text-xs text-muted-foreground">seconds</span>
             </div>
           }

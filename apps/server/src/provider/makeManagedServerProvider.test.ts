@@ -668,7 +668,7 @@ describe("makeManagedServerProvider", () => {
             schemaVersion: 1 as const,
             profile: "custom" as const,
             baseProfile: "balanced" as const,
-            overrides: { providerHealthRefreshInterval: Duration.seconds(30) },
+            overrides: { providerHealthRefreshInterval: Duration.seconds(5) },
           },
         };
         const serverSettingsLayer = Layer.succeed(
@@ -707,14 +707,14 @@ describe("makeManagedServerProvider", () => {
 
         yield* Deferred.await(firstCheckStarted);
 
-        // The persisted 30s override is floored, so no tick fires at 30s.
-        yield* TestClock.adjust("30 seconds");
+        // The persisted 5s override is floored, so no tick fires at 5s.
+        yield* TestClock.adjust("5 seconds");
         assert.strictEqual(yield* Ref.get(checkCalls), 1);
 
         // The floored tick fires while the first probe is still running and is
         // skipped rather than queued behind it.
         yield* TestClock.adjust(
-          Duration.subtract(MIN_PROVIDER_HEALTH_REFRESH_INTERVAL, Duration.seconds(30)),
+          Duration.subtract(MIN_PROVIDER_HEALTH_REFRESH_INTERVAL, Duration.seconds(5)),
         );
         yield* Effect.yieldNow;
         assert.strictEqual(yield* Ref.get(checkCalls), 1);

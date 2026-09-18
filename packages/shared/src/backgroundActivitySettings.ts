@@ -12,7 +12,7 @@ import * as Duration from "effect/Duration";
 /**
  * Zero disables periodic probes. Any other interval is floored at
  * {@link MIN_PROVIDER_HEALTH_REFRESH_INTERVAL} so a persisted or patched
- * value cannot schedule probes faster than the probe timeout.
+ * value cannot schedule probes faster than the settings UI allows.
  */
 export function clampProviderHealthRefreshInterval(interval: Duration.Duration): Duration.Duration {
   const millis = Duration.toMillis(interval);
@@ -39,7 +39,7 @@ const PRESET_SETTINGS: Record<BackgroundActivityProfile, ResolvedBackgroundActiv
   performance: {
     profile: "performance",
     automaticGitFetchInterval: Duration.seconds(15),
-    providerHealthRefreshInterval: MIN_PROVIDER_HEALTH_REFRESH_INTERVAL,
+    providerHealthRefreshInterval: Duration.minutes(1),
     hostPowerMonitorActiveInterval: Duration.seconds(30),
     hostPowerMonitorIdleInterval: Duration.minutes(2),
     idleClientTtl: Duration.seconds(45),
