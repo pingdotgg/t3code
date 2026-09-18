@@ -24,9 +24,11 @@ present.
 
 ## Continuing a migrated thread
 
-The first new message starts a fresh provider session. T3 Code gives that session the newest part of
-the old user and assistant transcript, up to 32,000 characters. Earlier text remains visible in the
-thread, but the provider does not receive it automatically.
+The first new message starts a fresh provider session. T3 Code selects intact user and assistant
+messages using the same [handoff budget](./portable-handoffs.md) as a provider switch. Omitted text
+remains in the thread and can be retrieved by the agent. The migration retains its separate
+32,000-character recovery excerpt; neither that excerpt nor the handoff replaces the full imported
+transcript.
 
 Before continuing a long or important thread, read the recent transcript and include any older
 requirements the agent still needs in your next message. Starting a new thread and pasting a short

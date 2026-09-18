@@ -701,10 +701,13 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
 function timelineItem(input: {
   readonly row: OrchestrationV2ThreadProjection["visibleTurnItems"][number];
   readonly maxChars: number;
+  readonly textOffset?: number;
   readonly messagesByThreadId: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection["messages"]>;
 }): OrchestratorMcpThreadTimelineItem {
   const text = turnItemText(input.row.item);
-  const textTruncated = text !== null && text.length > input.maxChars;
+  const offset = input.textOffset ?? 0;
+  const end = offset + input.maxChars;
+  const textTruncated = text !== null && text.length > end;
   const messageId =
     input.row.item.type === "user_message" || input.row.item.type === "assistant_message"
       ? input.row.item.messageId
@@ -727,8 +730,9 @@ function timelineItem(input: {
     type: input.row.item.type,
     status: input.row.item.status,
     title: input.row.item.title,
-    text: textTruncated ? `${text.slice(0, input.maxChars)}\n…[truncated]` : text,
+    text: text === null ? null : text.slice(offset, end),
     textTruncated,
+    nextTextOffset: textTruncated ? end : null,
     updatedAt: DateTime.formatIso(input.row.item.updatedAt),
   };
 }
@@ -1659,9 +1663,14 @@ const make = Effect.gen(function* () {
         const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
         const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
         const matching = target.visibleTurnItems
-          .filter((row) => row.position > afterPosition)
+          .filter((row) =>
+            input.itemId === undefined
+              ? row.position > afterPosition
+              : row.sourceItemId === input.itemId,
+          )
           .filter(
             (row) =>
+              input.itemId !== undefined ||
               view === "activity" ||
               row.item.type === "user_message" ||
               row.item.type === "assistant_message" ||
@@ -1692,6 +1701,7 @@ const make = Effect.gen(function* () {
         const task = directAppOwnedChildTask(parent, target);
         if (
           task !== undefined &&
+          (input.textOffset ?? 0) === 0 &&
           pageIncludesTerminalTaskResult({ parent, page, task, target, maxChars })
         ) {
           yield* readTask(scope, task.id, false, true, "thread-read-acknowledge");
@@ -1702,7 +1712,14 @@ const make = Effect.gen(function* () {
             .toSorted((left, right) => right.ordinal - left.ordinal)
             .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
             .map(threadRun),
-          items: page.map((row) => timelineItem({ row, maxChars, messagesByThreadId })),
+          items: page.map((row) =>
+            timelineItem({
+              row,
+              maxChars,
+              messagesByThreadId,
+              ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
+            }),
+          ),
           nextPosition: page.at(-1)?.position ?? null,
           hasMore: page.length < matching.length,
         } satisfies OrchestratorMcpThreadReadResult;
