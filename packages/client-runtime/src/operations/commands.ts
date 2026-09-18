@@ -915,6 +915,16 @@ export const mergeThreadBack = Effect.fn("EnvironmentCommands.mergeThreadBack")(
   });
 });
 
+export const resumeThreadQueue = Effect.fn("EnvironmentCommands.resumeThreadQueue")(function* (
+  input: ThreadCommandInput,
+) {
+  return yield* dispatch({
+    type: "queue.resume",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+  });
+});
+
 export const reorderQueuedRun = Effect.fn("EnvironmentCommands.reorderQueuedRun")(function* (
   input: ReorderQueuedRunInput,
 ) {
