@@ -102,7 +102,7 @@ it.effect.each([
             getById: () => Effect.succeed(Option.some({ workspaceRoot: parent } as never)),
           }),
           Layer.mock(ProjectionStoreV2)({
-            getThreadProjection: () => Effect.succeed(projection),
+            getCheckpointRollbackContext: () => Effect.succeed(projection),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,

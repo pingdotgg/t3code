@@ -108,7 +108,7 @@ export const layer: Layer.Layer<
       readonly scopeId: CheckpointScopeId;
       readonly restoreFiles?: boolean;
     }) {
-      const projection = yield* projections.getThreadProjection(input.threadId);
+      const projection = yield* projections.getCheckpointRollbackContext(input.threadId, input);
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === input.providerThreadId,
       );

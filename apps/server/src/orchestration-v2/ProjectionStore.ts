@@ -22,6 +22,8 @@ import type {
   RunAttemptId,
   RuntimeRequestId,
   MessageId,
+  CheckpointId,
+  CheckpointScopeId,
 } from "@t3tools/contracts";
 import {
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -226,6 +228,52 @@ export interface ProjectionRuntimeResponseContext {
   readonly session: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
 }
 
+type ProjectionCheckpointCaptureContext = Pick<
+  OrchestrationV2ThreadProjection,
+  "runs" | "nodes" | "checkpointScopes" | "providerThreads"
+> & {
+  readonly checkpoints: ReadonlyArray<
+    Pick<
+      OrchestrationV2ThreadProjection["checkpoints"][number],
+      "scopeId" | "ordinalWithinScope" | "status"
+    >
+  >;
+};
+
+type ProjectionCheckpointRollbackContext = Pick<
+  OrchestrationV2ThreadProjection,
+  | "thread"
+  | "runs"
+  | "attempts"
+  | "nodes"
+  | "providerThreads"
+  | "providerSessions"
+  | "providerTurns"
+  | "checkpointScopes"
+  | "checkpoints"
+>;
+
+interface CheckpointCaptureTarget {
+  readonly runId: RunId;
+  readonly scopeId: CheckpointScopeId;
+}
+
+interface CheckpointRollbackTarget {
+  readonly providerThreadId: ProviderThreadId;
+  readonly checkpointId: CheckpointId;
+  readonly scopeId: CheckpointScopeId;
+}
+
+const decodeCaptureCheckpointReadiness = Schema.decodeUnknownEffect(
+  Schema.Array(
+    OrchestrationV2CheckpointJsonSchema.mapFields(({ scopeId, ordinalWithinScope, status }) => ({
+      scopeId,
+      ordinalWithinScope,
+      status,
+    })),
+  ),
+);
+
 export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
@@ -285,6 +333,14 @@ export interface ProjectionStoreV2Shape {
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, ProjectionStoreV2Error>;
+  readonly getCheckpointCaptureContext: (
+    threadId: ThreadId,
+    target: CheckpointCaptureTarget,
+  ) => Effect.Effect<ProjectionCheckpointCaptureContext, ProjectionStoreV2Error>;
+  readonly getCheckpointRollbackContext: (
+    threadId: ThreadId,
+    target: CheckpointRollbackTarget,
+  ) => Effect.Effect<ProjectionCheckpointRollbackContext, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
@@ -3788,6 +3844,174 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getCheckpointCaptureContext: ProjectionStoreV2Shape["getCheckpointCaptureContext"] = (
+      threadId,
+      target,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* requireThread(threadId);
+            const runRows = yield* sql<PayloadRow>`
+        SELECT payload_json FROM orchestration_v2_projection_runs
+        WHERE thread_id = ${threadId} AND run_id = ${target.runId}`;
+            const runs = yield* decodeRows(decodeRunPayload, threadId)(runRows);
+            const run = runs[0];
+            if (run === undefined || (run.status === "completed" && run.checkpointId !== null)) {
+              return {
+                runs,
+                nodes: [],
+                checkpointScopes: [],
+                providerThreads: [],
+                checkpoints: [],
+              };
+            }
+            const [nodeRows, scopeRows, providerRows, readinessRows] = yield* Effect.all([
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
+          WHERE thread_id = ${threadId} AND node_id = ${run.rootNodeId}`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
+          WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads
+          WHERE provider_thread_id = ${run.providerThreadId} AND (
+            thread_id = ${threadId}
+            OR owner_node_id IN (SELECT node_id FROM orchestration_v2_projection_nodes WHERE thread_id = ${threadId})
+            OR provider_thread_id IN (SELECT provider_thread_id FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId})
+          )`,
+              sql`SELECT scope_id AS "scopeId", ordinal_within_scope AS "ordinalWithinScope", status
+          FROM orchestration_v2_projection_checkpoints
+          WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}
+            AND ordinal_within_scope IN (0, ${Math.max(0, run.ordinal - 1)})`,
+            ]);
+            return {
+              runs,
+              nodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
+              checkpointScopes: yield* decodeRows(
+                decodeCheckpointScopePayload,
+                threadId,
+              )(scopeRows),
+              providerThreads: yield* decodeRows(
+                decodeProviderThreadPayload,
+                threadId,
+              )(providerRows),
+              checkpoints: yield* decodeCaptureCheckpointReadiness(readinessRows),
+            };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
+    const getCheckpointRollbackContext: ProjectionStoreV2Shape["getCheckpointRollbackContext"] = (
+      threadId,
+      target,
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const thread = yield* getThread(threadId);
+            const [providerRows, checkpointRows, scopeRows] = yield* Effect.all([
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads
+          WHERE provider_thread_id = ${target.providerThreadId} AND (
+            thread_id = ${threadId}
+            OR owner_node_id IN (SELECT node_id FROM orchestration_v2_projection_nodes WHERE thread_id = ${threadId})
+            OR provider_thread_id IN (SELECT provider_thread_id FROM orchestration_v2_projection_subagents WHERE thread_id = ${threadId})
+          )`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
+          WHERE thread_id = ${threadId} AND checkpoint_id = ${target.checkpointId}`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
+          WHERE thread_id = ${threadId} AND scope_id = ${target.scopeId}`,
+            ]);
+            const providerThreads = yield* decodeRows(
+              decodeProviderThreadPayload,
+              threadId,
+            )(providerRows);
+            const checkpointScopes = yield* decodeRows(
+              decodeCheckpointScopePayload,
+              threadId,
+            )(scopeRows);
+            const checkpoints = yield* decodeRows(
+              decodeCheckpointPayload,
+              threadId,
+            )(checkpointRows);
+            const providerThread = providerThreads[0];
+            const checkpoint = checkpoints[0];
+            const scope = checkpointScopes[0];
+            if (
+              providerThread === undefined ||
+              checkpoint === undefined ||
+              scope === undefined ||
+              checkpoint.scopeId !== scope.id ||
+              checkpoint.status !== "ready" ||
+              providerThread.providerSessionId === null ||
+              providerThread.id !== thread.activeProviderThreadId ||
+              providerThread.providerInstanceId !== thread.modelSelection.instanceId
+            ) {
+              return {
+                thread,
+                providerThreads,
+                checkpointScopes,
+                checkpoints,
+                runs: [],
+                attempts: [],
+                nodes: [],
+                providerSessions: [],
+                providerTurns: [],
+              };
+            }
+            const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
+            const runRows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_runs
+        WHERE thread_id = ${threadId}
+          AND (ordinal = ${targetOrdinal} OR (ordinal > ${targetOrdinal} AND status = 'completed'))
+        ORDER BY ordinal ASC`;
+            const runs = yield* decodeRows(decodeRunPayload, threadId)(runRows);
+            const targetRun = runs.find((run) => run.ordinal === targetOrdinal);
+            const attemptRows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_run_attempts
+        WHERE thread_id = ${threadId} AND attempt_id = ${targetRun?.activeAttemptId ?? null}`;
+            const attempts = yield* decodeRows(decodeRunAttemptPayload, threadId)(attemptRows);
+            const attempt = attempts[0];
+            const [nodeRows, sessionRows, turnRows, staleRows] = yield* Effect.all([
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_nodes
+          WHERE thread_id = ${threadId} AND node_id IN (
+            SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs
+            WHERE thread_id = ${threadId} AND ordinal > ${targetOrdinal} AND status = 'completed'
+          ) ORDER BY node_id ASC`,
+              sql<PayloadRow>`SELECT session.payload_json FROM orchestration_v2_projection_provider_sessions AS session
+          JOIN orchestration_v2_projection_provider_session_bindings AS binding
+            ON binding.provider_session_id = session.provider_session_id
+          WHERE binding.thread_id = ${threadId} AND session.provider_session_id = ${providerThread.providerSessionId}`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_turns
+          WHERE thread_id = ${threadId} AND (
+            provider_thread_id = ${providerThread.id}
+            OR provider_turn_id = ${attempt?.providerTurnId ?? null}
+            OR run_attempt_id = ${attempt?.id ?? null}
+          ) ORDER BY provider_thread_id ASC, ordinal ASC`,
+              sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_checkpoints
+          WHERE thread_id = ${threadId} AND scope_id = ${scope.id} AND status = 'ready'
+            AND app_run_ordinal > ${targetOrdinal}
+            AND checkpoint_id != ${checkpoint.id}
+          ORDER BY scope_id ASC, ordinal_within_scope ASC`,
+            ]);
+            return {
+              thread,
+              providerThreads,
+              checkpointScopes,
+              runs,
+              attempts,
+              checkpoints: [
+                ...checkpoints,
+                ...(yield* decodeRows(decodeCheckpointPayload, threadId)(staleRows)),
+              ],
+              nodes: yield* decodeRows(decodeNodePayload, threadId)(nodeRows),
+              providerSessions: yield* decodeRows(
+                decodeProviderSessionPayload,
+                threadId,
+              )(sessionRows),
+              providerTurns: yield* decodeRows(decodeProviderTurnPayload, threadId)(turnRows),
+            };
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
     const getCheckpointContext: ProjectionStoreV2Shape["getCheckpointContext"] = (threadId) =>
       sql
         .withTransaction(
@@ -4524,6 +4748,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadProviderContext,
       getRuntimeResponseContext,
       getCheckpointContext,
+      getCheckpointCaptureContext,
+      getCheckpointRollbackContext,
       getPendingNativeUserInputs,
       getRuntimeRequest,
       getPlan,
@@ -4771,6 +4997,124 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               (session) =>
                 request?.responseCapability.type === "live" &&
                 session.id === request.responseCapability.providerSessionId,
+            ),
+          };
+        }),
+      getCheckpointCaptureContext: (threadId, target) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined)
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          const runs = projection.runs.filter((run) => run.id === target.runId);
+          const run = runs[0];
+          if (run === undefined || (run.status === "completed" && run.checkpointId !== null)) {
+            return { runs, nodes: [], checkpointScopes: [], providerThreads: [], checkpoints: [] };
+          }
+          return {
+            runs,
+            nodes: projection.nodes.filter((node) => node.id === run.rootNodeId),
+            checkpointScopes: projection.checkpointScopes.filter(
+              (scope) => scope.id === target.scopeId,
+            ),
+            providerThreads: projection.providerThreads.filter(
+              (provider) => provider.id === run.providerThreadId,
+            ),
+            checkpoints: projection.checkpoints
+              .filter(
+                (checkpoint) =>
+                  checkpoint.scopeId === target.scopeId &&
+                  (checkpoint.ordinalWithinScope === 0 ||
+                    checkpoint.ordinalWithinScope === Math.max(0, run.ordinal - 1)),
+              )
+              .map(({ scopeId, ordinalWithinScope, status }) => ({
+                scopeId,
+                ordinalWithinScope,
+                status,
+              })),
+          };
+        }),
+      getCheckpointRollbackContext: (threadId, target) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined)
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          const thread = projection.thread;
+          const providerThreads = projection.providerThreads.filter(
+            (provider) => provider.id === target.providerThreadId,
+          );
+          const checkpointScopes = projection.checkpointScopes.filter(
+            (scope) => scope.id === target.scopeId,
+          );
+          const checkpoints = projection.checkpoints.filter(
+            (checkpoint) => checkpoint.id === target.checkpointId,
+          );
+          const providerThread = providerThreads[0];
+          const checkpoint = checkpoints[0];
+          const scope = checkpointScopes[0];
+          if (
+            providerThread === undefined ||
+            checkpoint === undefined ||
+            scope === undefined ||
+            checkpoint.scopeId !== scope.id ||
+            checkpoint.status !== "ready" ||
+            providerThread.providerSessionId === null ||
+            providerThread.id !== thread.activeProviderThreadId ||
+            providerThread.providerInstanceId !== thread.modelSelection.instanceId
+          ) {
+            return {
+              thread,
+              providerThreads,
+              checkpointScopes,
+              checkpoints,
+              runs: [],
+              attempts: [],
+              nodes: [],
+              providerSessions: [],
+              providerTurns: [],
+            };
+          }
+          const targetOrdinal = checkpoint.appRunOrdinal ?? 0;
+          const runs = projection.runs.filter(
+            (run) =>
+              run.ordinal === targetOrdinal ||
+              (run.ordinal > targetOrdinal && run.status === "completed"),
+          );
+          const targetRun = runs.find((run) => run.ordinal === targetOrdinal);
+          const attempts = projection.attempts.filter(
+            (attempt) => attempt.id === targetRun?.activeAttemptId,
+          );
+          const attempt = attempts[0];
+          const nodeIds = new Set(
+            runs
+              .filter((run) => run.ordinal > targetOrdinal && run.status === "completed")
+              .map((run) => run.rootNodeId),
+          );
+          return {
+            thread,
+            providerThreads,
+            checkpointScopes,
+            runs,
+            attempts,
+            nodes: projection.nodes.filter((node) => nodeIds.has(node.id)),
+            checkpoints: [
+              ...checkpoints,
+              ...projection.checkpoints.filter(
+                (candidate) =>
+                  candidate.scopeId === scope.id &&
+                  candidate.status === "ready" &&
+                  candidate.appRunOrdinal !== null &&
+                  candidate.appRunOrdinal > targetOrdinal &&
+                  candidate.id !== checkpoint.id,
+              ),
+            ],
+            providerSessions: projection.providerSessions.filter(
+              (session) => session.id === providerThread.providerSessionId,
+            ),
+            providerTurns: projection.providerTurns.filter(
+              (turn) =>
+                turn.providerThreadId === providerThread.id ||
+                turn.id === attempt?.providerTurnId ||
+                (attempt !== undefined && turn.runAttemptId === attempt.id),
             ),
           };
         }),

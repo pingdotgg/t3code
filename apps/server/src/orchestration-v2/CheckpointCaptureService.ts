@@ -62,7 +62,7 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const projection = yield* projections.getThreadProjection(input.threadId);
+      const projection = yield* projections.getCheckpointCaptureContext(input.threadId, input);
       const run = projection.runs.find((candidate) => candidate.id === input.runId);
 
       // The effect is at-least-once. A completed run with a checkpoint proves

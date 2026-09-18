@@ -4,7 +4,6 @@ import {
   RunId,
   ThreadId,
   type OrchestrationV2ThreadShell,
-  type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,14 +22,17 @@ it.effect("captures the root checkpoint and refreshes workspace state", () => {
   const capture = vi.fn(() => Effect.void);
   const refresh = vi.fn(() => Effect.void);
   const projection = {
-    checkpointScopes: [{ id: scopeId, cwd: "/repo" }],
-  } as unknown as OrchestrationV2ThreadProjection;
+    runs: [],
+    checkpoints: [],
+    checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
+  };
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: capture }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getCheckpointContext: () => Effect.succeed(projection),
+          getThreadProjection: () => Effect.die("finalization must not load transcript"),
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh,

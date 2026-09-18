@@ -67,7 +67,7 @@ it.effect("rejects a non-ready checkpoint before opening a session or restoring 
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getCheckpointRollbackContext: () => Effect.succeed(projection),
           getShellSnapshot: () =>
             Effect.succeed({
               schemaVersion: 1,
@@ -144,7 +144,7 @@ it.effect("rejects a rollback when another provider thread became active", () =>
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getCheckpointRollbackContext: () => Effect.succeed(projection),
           getShellSnapshot: () =>
             Effect.succeed({
               schemaVersion: 1,
@@ -224,7 +224,7 @@ it.effect("rejects a rollback when provider selection changed before execution",
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getCheckpointRollbackContext: () => Effect.succeed(projection),
           getShellSnapshot: () =>
             Effect.succeed({
               schemaVersion: 1,
@@ -295,7 +295,7 @@ it.effect("reports a missing provider turn as a structured rollback failure", ()
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getCheckpointRollbackContext: () => Effect.succeed(projection),
           getShellSnapshot: () =>
             Effect.succeed({
               schemaVersion: 1,
@@ -351,7 +351,7 @@ it.effect("wraps underlying failures with an unexpected-failure reason and cause
         Layer.mock(EventSinkV2)({}),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.fail(projectionError),
+          getCheckpointRollbackContext: () => Effect.fail(projectionError),
         }),
         Layer.mock(ProviderSessionManagerV2)({}),
         Layer.mock(RuntimePolicyV2)({}),
@@ -436,7 +436,7 @@ it.effect.each([
         }),
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
-          getThreadProjection: () => Effect.succeed(projection),
+          getCheckpointRollbackContext: () => Effect.succeed(projection),
           getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
           getCheckpointContext: () =>
             Effect.succeed({

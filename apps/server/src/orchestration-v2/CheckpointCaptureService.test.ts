@@ -19,6 +19,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
@@ -26,6 +28,7 @@ import { VcsProcessTimeoutError } from "@t3tools/contracts";
 import { CheckpointServiceV2, layer as checkpointServiceLayer } from "./CheckpointService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import * as RunFinalization from "./RunFinalizationService.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -33,6 +36,8 @@ const ProjectionStoreTestLayer = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
   SqlitePersistenceMemory,
 );
+
+const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const threadId = ThreadId.make("thread:checkpoint-capture-delegated");
 const projectId = ProjectId.make("project:checkpoint-capture-delegated");
@@ -252,6 +257,24 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           payload: readyBaseline,
         });
 
+        // Checkpointing must not decode obsolete or large conversation history.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${`turn-item:checkpoint-capture:${refLookupFails}`}, ${threadId}, ${runId}, ${rootNodeId}, NULL, NULL,
+            NULL, 1, 'assistant_message', 'completed', ${DateTime.formatIso(now)},
+            ${encodeUnknownJsonString({ obsolete: "transcript shape", text: "x".repeat(1024 * 1024) })}
+          )
+        `;
+        yield* sql`
+          UPDATE orchestration_v2_projection_checkpoints
+          SET payload_json = json_set(payload_json, '$.files', 'obsolete file summary')
+          WHERE checkpoint_id = ${readyBaseline.id}
+        `;
+
         const committed = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
         const captureLayer = CheckpointCaptureService.layer.pipe(
           Layer.provide(
@@ -301,10 +324,20 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           ),
         );
 
+        const finalizationLayer = RunFinalization.layer.pipe(
+          Layer.provideMerge(captureLayer),
+          Layer.provide(
+            Layer.succeed(RunFinalization.RunFinalizationObserver, {
+              refresh: () => Effect.void,
+              refreshAfterTurn: () => Effect.void,
+            }),
+          ),
+        );
+
         yield* Effect.gen(function* () {
-          const service = yield* CheckpointCaptureService.CheckpointCaptureServiceV2;
+          const finalization = yield* RunFinalization.RunFinalizationService;
           // Capture reads the waiting run while the projection still holds the stale cohort.
-          yield* service.execute({ threadId, runId, scopeId });
+          yield* finalization.finalize({ threadId, runId, scopeId });
 
           const events = yield* Ref.get(committed);
           const runUpdated = events.find((event) => event.type === "run.updated");
@@ -346,15 +379,25 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           // Apply the real capture-emitted run.updated through ProjectionStore.
           yield* projectionStore.apply(runUpdated);
 
-          const projection = yield* projectionStore.getThreadProjection(threadId);
+          const projection = yield* projectionStore.getCheckpointCaptureContext(threadId, {
+            runId,
+            scopeId,
+          });
           const projectedRun = projection.runs[0];
           assert.isDefined(projectedRun);
           assert.equal(projectedRun?.status, "completed");
           assert.equal(projectedRun?.checkpointId, runUpdated.payload.checkpointId);
           assert.deepEqual(projectedRun?.delegatedCompletion, newerCohort);
           assert.equal(projectedRun?.delegatedCompletion?.delivery?.messageId, deliveryMessageId);
+          yield* Ref.set(committed, []);
+          yield* finalization.finalize({ threadId, runId, scopeId });
+          assert.deepEqual(
+            yield* Ref.get(committed),
+            [],
+            "a repeated capture must remain idempotent",
+          );
           assert.deepEqual(projectedRun?.delegatedCompletion?.delivery?.taskIds, [taskId]);
-        }).pipe(Effect.provide(captureLayer));
+        }).pipe(Effect.provide(finalizationLayer));
       }),
   );
 });

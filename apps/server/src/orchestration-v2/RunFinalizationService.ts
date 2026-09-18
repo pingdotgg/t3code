@@ -64,7 +64,7 @@ const make = Effect.gen(function* () {
         ),
       );
     const projection = yield* projections
-      .getThreadProjection(input.threadId)
+      .getCheckpointContext(input.threadId)
       .pipe(
         Effect.mapError(
           (cause) => new RunFinalizationError({ ...input, operation: "refresh-workspace", cause }),
