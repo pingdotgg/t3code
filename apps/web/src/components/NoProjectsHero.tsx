@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { PlusIcon } from "lucide-react";
 import { useCallback } from "react";
 
@@ -8,11 +8,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 
 export function NoProjectsHero() {
-  const navigate = useNavigate();
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
-  const openWelcome = useCallback(() => {
-    void navigate({ to: "/welcome" });
-  }, [navigate]);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -25,13 +21,12 @@ export function NoProjectsHero() {
               </EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
                 Add a project to start your first thread, or{" "}
-                <button
-                  type="button"
-                  onClick={openWelcome}
+                <Link
+                  to="/welcome"
                   className="inline cursor-pointer border-muted-foreground/35 border-b border-dotted transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   import from Claude Code or Codex
-                </button>
+                </Link>
                 .
               </EmptyDescription>
               <div className="mt-6 flex justify-center">
