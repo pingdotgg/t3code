@@ -44,7 +44,7 @@ import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
-import { FileHeader, FilesBrowserHeader } from "./FilesHeader";
+import { ScreenHeader } from "../../components/ScreenHeader";
 import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
 import { WorkspaceFilePreviewError } from "./WorkspaceFilePreviewError";
 import { WorkspaceFileVideoPreview } from "./WorkspaceFileVideoPreview";
@@ -58,6 +58,107 @@ import {
   isVideoPreviewFile,
 } from "./filePath";
 import { useWorkspaceFileAssetUrlState } from "./workspaceFileAssetUrl";
+
+function FilesBrowserHeader(props: {
+  readonly projectName: string;
+  readonly searchQuery: string;
+  readonly onSearchQueryChange: (query: string) => void;
+  readonly onRefresh: () => void;
+  readonly onBack: () => void;
+}) {
+  return (
+    <ScreenHeader
+      title="Files"
+      subtitle={props.projectName}
+      onBack={props.onBack}
+      hideBottomBorder
+      matchSearchSurface
+      search={{
+        value: props.searchQuery,
+        onChangeText: props.onSearchQueryChange,
+        placeholder: "Search files",
+        onRefresh: props.onRefresh,
+        refreshAccessibilityLabel: "Refresh files",
+        closeAccessibilityLabel: "Close file search",
+        clearAccessibilityLabel: "Clear file search",
+      }}
+    />
+  );
+}
+
+function FileHeader(props: {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly iconColor: string;
+  readonly activeMode: string;
+  readonly fileInspectorSupported: boolean;
+  readonly onBack: () => void;
+  readonly onReturnToThread: () => void;
+  readonly actions: ReadonlyArray<{
+    readonly id: string;
+    readonly title: string;
+    readonly icon: string;
+    readonly inline: boolean;
+    readonly onPress: () => unknown;
+  }>;
+}) {
+  const { panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const modes = props.actions.filter(({ inline }) => inline);
+  return (
+    <ScreenHeader
+      title={props.title}
+      subtitle={props.subtitle}
+      onBack={props.onBack}
+      hideBottomBorder
+      options={{ headerTintColor: props.iconColor, headerTitle: props.title }}
+      backInSplitView={
+        props.fileInspectorSupported
+          ? {
+              accessibilityLabel: "Return to chat",
+              icon: "chevron.left",
+              onPress: props.onReturnToThread,
+            }
+          : undefined
+      }
+      actions={
+        props.fileInspectorSupported
+          ? [
+              {
+                accessibilityLabel: panes.auxiliaryPaneVisible
+                  ? "Hide file navigator"
+                  : "Show file navigator",
+                icon: "sidebar.right",
+                selected: panes.auxiliaryPaneVisible,
+                onPress: toggleAuxiliaryPane,
+              },
+            ]
+          : undefined
+      }
+      menus={[
+        {
+          title: "File actions",
+          icon: "ellipsis",
+          separateBackground: false,
+          items: [
+            ...(modes.length > 0
+              ? [
+                  {
+                    id: "modes",
+                    inline: true,
+                    items: modes.map((action) => ({
+                      ...action,
+                      selected: action.id === props.activeMode,
+                    })),
+                  },
+                ]
+              : []),
+            ...props.actions.filter(({ inline }) => !inline),
+          ],
+        },
+      ]}
+    />
+  );
+}
 
 type FileViewMode = "preview" | "source";
 
