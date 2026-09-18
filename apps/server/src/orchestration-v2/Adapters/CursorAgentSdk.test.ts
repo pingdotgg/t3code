@@ -68,7 +68,7 @@ const cursorSdkMock = vi.hoisted(() => {
   };
 });
 
-vi.mock("@cursor/sdk", () => ({
+vi.mock("../../provider/cursorSdk.ts", () => ({
   Agent: {
     create: cursorSdkMock.create,
     resume: vi.fn(),
