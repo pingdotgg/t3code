@@ -1,3 +1,4 @@
+import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ScaleIcon } from "lucide-react";
@@ -78,17 +79,9 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           kind={activeEnvironment?.machine ?? "server"}
           className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
         />
-        <span
-          data-composer-label
-          className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
-        >
-          <span
-            data-composer-label-motion
-            className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
-          >
-            {activeEnvironment?.label ?? "Run on"}
-          </span>
-        </span>
+        <ComposerContextLabel displayMode={displayMode}>
+          {activeEnvironment?.label ?? "Run on"}
+        </ComposerContextLabel>
       </span>
     );
     return (
@@ -139,17 +132,9 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               }
             />
           )}
-          <span
-            data-composer-label
-            className="min-w-0 max-w-[240px] truncate transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0"
-          >
-            <span
-              data-composer-label-motion
-              className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
-            >
-              <SelectValue />
-            </span>
-          </span>
+          <ComposerContextLabel displayMode={displayMode}>
+            <SelectValue />
+          </ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
       </Tooltip>
