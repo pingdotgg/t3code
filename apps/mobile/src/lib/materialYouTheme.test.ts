@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 import type { MaterialYouPalette } from "./materialYouPalette";
-import { materialYouPaletteToMobileThemeVariables } from "./materialYouTheme";
+import { materialYouPaletteToMobileThemeVariables } from "./materialYouTheme.android";
 
 const palette: MaterialYouPalette = {
   primary: "#6750A4FF",
