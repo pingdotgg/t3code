@@ -488,25 +488,18 @@ export function runOrchestratorV2Scenario(
           );
         });
 
-      const releaseReplayGate = (
-        label: string,
-        attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
-      ): Effect.Effect<void, OrchestratorV2ScenarioStepError> =>
-        Effect.gen(function* () {
-          if (options.replayGate?.hasReached(label) ?? false) {
-            options.replayGate?.release(label);
-            return;
-          }
-          if (attemptsRemaining <= 0) {
-            options.replayGate?.release(label);
-            return yield* new OrchestratorV2ScenarioStepError({
-              scenario: scenario.name,
-              step: `release_replay_gate:${label}:reached=false`,
-            });
-          }
-          yield* yieldToRuntime;
-          return yield* releaseReplayGate(label, attemptsRemaining - 1);
-        });
+      const releaseReplayGate = Effect.fn("scenario.releaseReplayGate")(function* (label: string) {
+        const gate = options.replayGate;
+        const reached =
+          gate === undefined ? false : yield* Effect.promise(() => gate.waitForReached(label));
+        if (!reached) {
+          return yield* new OrchestratorV2ScenarioStepError({
+            scenario: scenario.name,
+            step: `release_replay_gate:${label}:not_configured`,
+          });
+        }
+        gate?.release(label);
+      });
 
       for (const step of scenarioSteps(scenario)) {
         switch (step.type) {
