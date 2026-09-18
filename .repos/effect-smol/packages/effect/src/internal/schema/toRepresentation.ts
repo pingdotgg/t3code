@@ -283,7 +283,7 @@ export function toRepresentations(
         return {
           _tag: "Union",
           types: ast.types.map((ast) => recur(ast)),
-          mode: ast.mode,
+          ...(ast.options === undefined ? {} : { options: ast.options }),
           checks,
           ...annotationsField(ast.annotations)
         }

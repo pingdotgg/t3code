@@ -1,20 +1,49 @@
-import type {
-  EstimatedUsageResultItem,
-  MetricMeasurement,
-  MetricTag,
-  UsageResultItem,
-  WorkspaceResponseCustomerUsageLimit,
-} from "@distilled.cloud/railway";
+import { waitUntilDeleted } from "./GraphQL.ts";
 import * as railway from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
 import { isResolved } from "../Diff.ts";
 import * as Provider from "../Provider.ts";
 import { Resource } from "../Resource.ts";
 import { RailwayEnvironment, resolveWorkspace } from "./Environment.ts";
 
 import type { Providers } from "./Providers.ts";
+
+type MetricMeasurement = railway.Scalars["MetricMeasurement"];
+type MetricTag = railway.Scalars["MetricTag"];
+
+const selection = {
+  id: true,
+  customerId: true,
+  softLimit: true,
+  hardLimit: true,
+  isOverLimit: true,
+} as const satisfies railway.Selection<"UsageLimit">;
+type WorkspaceResponseCustomerUsageLimit = railway.Result<
+  "UsageLimit!",
+  typeof selection
+>;
+type UsageResultItem = railway.Result<
+  "AggregatedUsage!",
+  {
+    measurement: true;
+    value: true;
+    tags: {
+      deploymentId: true;
+      deploymentInstanceId: true;
+      environmentId: true;
+      projectId: true;
+      region: true;
+      serviceId: true;
+      volumeId: true;
+      volumeInstanceId: true;
+    };
+  }
+>;
+type EstimatedUsageResultItem = railway.Result<
+  "EstimatedUsage!",
+  { measurement: true; estimatedValue: true; projectId: true }
+>;
 
 /**
  * A resource-valued prop: the resource itself, or an Effect that produces
@@ -221,17 +250,33 @@ export const usage = Effect.fn(function* (query: UsageQuery) {
   const projectId = projectIdOf(query.project);
   const workspaceId =
     workspaceIdOf(query.workspace) ?? (yield* resolveWorkspace()).id;
-  const rows = yield* railway.usage({
-    measurements: [...query.measurements],
-    workspaceId,
-    ...(projectId !== undefined ? { projectId } : {}),
-    ...(query.startDate !== undefined ? { startDate: query.startDate } : {}),
-    ...(query.endDate !== undefined ? { endDate: query.endDate } : {}),
-    ...(query.groupBy !== undefined ? { groupBy: [...query.groupBy] } : {}),
-    ...(query.includeDeleted !== undefined
-      ? { includeDeleted: query.includeDeleted }
-      : {}),
-  });
+  const rows = yield* railway.usage(
+    {
+      measurements: [...query.measurements],
+      workspaceId,
+      ...(projectId !== undefined ? { projectId } : {}),
+      ...(query.startDate !== undefined ? { startDate: query.startDate } : {}),
+      ...(query.endDate !== undefined ? { endDate: query.endDate } : {}),
+      ...(query.groupBy !== undefined ? { groupBy: [...query.groupBy] } : {}),
+      ...(query.includeDeleted !== undefined
+        ? { includeDeleted: query.includeDeleted }
+        : {}),
+    },
+    {
+      measurement: true,
+      value: true,
+      tags: {
+        deploymentId: true,
+        deploymentInstanceId: true,
+        environmentId: true,
+        projectId: true,
+        region: true,
+        serviceId: true,
+        volumeId: true,
+        volumeInstanceId: true,
+      },
+    },
+  );
   return rows ?? [];
 });
 
@@ -252,14 +297,17 @@ export const estimatedUsage = Effect.fn(function* (query: EstimatedUsageQuery) {
   const projectId = projectIdOf(query.project);
   const workspaceId =
     workspaceIdOf(query.workspace) ?? (yield* resolveWorkspace()).id;
-  const rows = yield* railway.estimatedUsage({
-    measurements: [...query.measurements],
-    workspaceId,
-    ...(projectId !== undefined ? { projectId } : {}),
-    ...(query.includeDeleted !== undefined
-      ? { includeDeleted: query.includeDeleted }
-      : {}),
-  });
+  const rows = yield* railway.estimatedUsage(
+    {
+      measurements: [...query.measurements],
+      workspaceId,
+      ...(projectId !== undefined ? { projectId } : {}),
+      ...(query.includeDeleted !== undefined
+        ? { includeDeleted: query.includeDeleted }
+        : {}),
+    },
+    { measurement: true, estimatedValue: true, projectId: true },
+  );
   return rows ?? [];
 });
 
@@ -381,11 +429,12 @@ const currentWorkspaceId = Effect.fn(function* () {
 
 const getWorkspace = (workspaceId: string) =>
   railway
-    .workspace({ workspaceId })
+    .workspace(
+      { workspaceId },
+      { customer: { id: true, usageLimit: selection } },
+    )
     .pipe(
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-        Effect.succeed(undefined),
-      ),
+      railway.catchTags(["RailwayNotFound"], () => Effect.succeed(undefined)),
     );
 
 const toAttrs = (
@@ -420,7 +469,7 @@ const setLimit = (input: {
   softLimitDollars: number;
   hardLimitDollars?: number | null;
 }) =>
-  railway.usageLimitSet({
+  railway.setUsageLimit({
     input: {
       customerId: input.customerId,
       softLimitDollars: input.softLimitDollars,
@@ -450,16 +499,15 @@ const resolveScope = Effect.fn(function* (input: {
 });
 
 const waitUntilGone = (workspaceId: string, usageLimitId: string) =>
-  observe(workspaceId).pipe(
-    Effect.map((found) => {
-      if (found?.limit === undefined) return true;
-      return found.limit.id !== usageLimitId;
-    }),
-    Effect.repeat({
-      schedule: Schedule.spaced("1 second"),
-      until: (gone) => gone,
-      times: 8,
-    }),
+  waitUntilDeleted(
+    "UsageLimit",
+    usageLimitId,
+    observe(workspaceId).pipe(
+      Effect.map((found) => {
+        if (found?.limit === undefined) return true;
+        return found.limit.id !== usageLimitId;
+      }),
+    ),
   );
 
 export const UsageLimitProvider = () =>
@@ -535,7 +583,7 @@ export const UsageLimitProvider = () =>
             : observed?.hardLimit != null
               ? { hardLimitDollars: null }
               : {}),
-        }).pipe(Effect.catchTag("RailwayValidationError", () => Effect.void));
+        }).pipe(railway.catchTags("RailwayValidationError", () => Effect.void));
         found = yield* observe(workspaceId);
       }
 
@@ -558,10 +606,8 @@ export const UsageLimitProvider = () =>
       const workspaceId = output.workspaceId;
       if (customerId.length === 0) return;
       yield* railway
-        .usageLimitRemove({ input: { customerId } })
-        .pipe(
-          Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
-        );
+        .removeUsageLimit({ input: { customerId } })
+        .pipe(railway.catchTags(["RailwayNotFound"], () => Effect.void));
       if (workspaceId.length > 0 && output.usageLimitId.length > 0) {
         yield* waitUntilGone(workspaceId, output.usageLimitId);
       }

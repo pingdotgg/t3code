@@ -14,10 +14,10 @@
   "account_id": "0f1b8aa119a907021f659042f95ea9ba",
   "workers_dev": false,
   "main": "src/worker.ts",
-  "compatibility_date": "2024-07-31",
-  // nodejs_compat required when using @cloudflare/vitest-pool-workers
-  // enable_ctx_exports enables ctx.exports loopback for the AssetWorkerInner
-  "compatibility_flags": ["nodejs_compat", "enable_ctx_exports"],
+  "compatibility_date": "2026-08-31",
+  // nodejs_compat and nodejs_compat_v2 are default-on as of 2026-08-04;
+  // 2026-08-31 therefore needs no redundant positive compatibility flag.
+  // ctx.exports is default-on as of 2025-11-17.
   "unsafe": {
     "metadata": {
       "build_options": {
@@ -63,13 +63,9 @@
   "env": {
     "staging": {
       "name": "asset-worker-staging",
-      // enable_version_api is set per-environment (not top-level) because
-      // the local workerd in vitest-pool-workers does not support it yet.
-      "compatibility_flags": [
-        "nodejs_compat",
-        "enable_ctx_exports",
-        "enable_version_api",
-      ],
+      // Match upstream's environment-scoped behavior: only staging and
+      // fed-prod enable the experimental version API.
+      "compatibility_flags": ["enable_version_api"],
       "unsafe": {
         "metadata": {
           "build_options": {
@@ -116,11 +112,7 @@
     "fed-prod": {
       "name": "asset-worker-fed-prod",
       "account_id": "fca6c231dc1d1780777997c5bce5a5e3", // workers assets
-      "compatibility_flags": [
-        "nodejs_compat",
-        "enable_ctx_exports",
-        "enable_version_api",
-      ],
+      "compatibility_flags": ["enable_version_api"],
       "vars": {
         "ENVIRONMENT": "fed-prod",
       },

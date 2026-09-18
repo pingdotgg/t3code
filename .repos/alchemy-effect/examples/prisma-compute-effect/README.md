@@ -40,7 +40,7 @@ the state store once:
 ```sh
 export CLOUDFLARE_ACCOUNT_ID="..."
 export CLOUDFLARE_API_TOKEN="..."
-bunx alchemy cloudflare bootstrap
+bunx alchemy provider cloudflare bootstrap
 ```
 
 Keep those Cloudflare credentials configured for every later deploy and

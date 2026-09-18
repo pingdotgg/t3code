@@ -17,7 +17,7 @@ import * as JsonPatch from "effect/JsonPatch"
 import * as Path from "effect/Path"
 import * as Predicate from "effect/Predicate"
 import * as Schema from "effect/Schema"
-import * as Yaml from "yaml"
+import * as Yaml from "effect/unstable/encoding/Yaml"
 
 // =============================================================================
 // Error Types

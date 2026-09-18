@@ -20,10 +20,10 @@ const toFlagType = (single: Param.Single<"flag", unknown>): Completions.FlagType
   switch (tag) {
     case "Boolean":
       return { _tag: "Boolean" }
-    case "Integer":
-      return { _tag: "Integer" }
-    case "Float":
-      return { _tag: "Float" }
+    case "Int":
+      return { _tag: "Int" }
+    case "Finite":
+      return { _tag: "Finite" }
     case "Date":
       return { _tag: "Date" }
     case "Choice": {
@@ -44,10 +44,10 @@ const toFlagType = (single: Param.Single<"flag", unknown>): Completions.FlagType
 const toArgumentType = (single: Param.Single<"argument", unknown>): Completions.ArgumentType => {
   const tag = single.primitiveType._tag
   switch (tag) {
-    case "Integer":
-      return { _tag: "Integer" }
-    case "Float":
-      return { _tag: "Float" }
+    case "Int":
+      return { _tag: "Int" }
+    case "Finite":
+      return { _tag: "Finite" }
     case "Date":
       return { _tag: "Date" }
     case "Choice": {
@@ -70,18 +70,25 @@ const toArgumentType = (single: Param.Single<"argument", unknown>): Completions.
 // ---------------------------------------------------------------------------
 
 /** @internal */
-export const fromCommand = (cmd: Command.Any): Completions.CommandDescriptor => {
+export const fromCommand = (
+  cmd: Command.Any,
+  inheritedFlags: ReadonlyArray<Param.AnyFlag> = []
+): Completions.CommandDescriptor => {
   const impl = toImpl(cmd)
   const config = impl.config
 
   const flags: Array<Completions.FlagDescriptor> = []
-  for (const flag of config.flags) {
+  const seen = new Set<string>()
+  // Match help's precedence: local flags first, then ancestors root to leaf.
+  for (const [index, flag] of [...config.flags, ...inheritedFlags].entries()) {
     const singles = Param.extractSingleParams(flag)
     for (const single of singles) {
       if (single.kind !== "flag") continue
       // Omit hidden flags from completion scripts so tab-completion in the
       // shell does not advertise flags that are absent from --help.
       if (single.hidden) continue
+      if (index >= config.flags.length && seen.has(single.name)) continue
+      seen.add(single.name)
       flags.push({
         name: single.name,
         aliases: single.aliases,
@@ -108,12 +115,17 @@ export const fromCommand = (cmd: Command.Any): Completions.CommandDescriptor => 
   }
 
   const subcommands: Array<Completions.CommandDescriptor> = []
+  const sharedFlags = [...inheritedFlags, ...impl.contextConfig.flags]
   for (const group of cmd.subcommands) {
     for (const subcommand of group.commands) {
       // Omit unlisted subcommands from completion scripts so tab-completion in
       // the shell does not advertise commands that are absent from --help.
       if (subcommand.unlisted) continue
-      subcommands.push(fromCommand(subcommand))
+      const descriptor = fromCommand(subcommand, sharedFlags)
+      subcommands.push(descriptor)
+      if (subcommand.alias && subcommand.alias !== subcommand.name) {
+        subcommands.push({ ...descriptor, name: subcommand.alias })
+      }
     }
   }
 

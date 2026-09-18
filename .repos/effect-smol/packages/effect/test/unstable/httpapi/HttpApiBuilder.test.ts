@@ -11,7 +11,7 @@ import {
   SchemaTransformation,
   Stream
 } from "effect"
-import { Etag, HttpPlatform } from "effect/unstable/http"
+import { Etag, HttpEffect, HttpPlatform, HttpServerResponse } from "effect/unstable/http"
 import {
   HttpApi,
   HttpApiBuilder,
@@ -32,6 +32,62 @@ const TestServices = Layer.mergeAll(
   Etag.layerWeak,
   HttpPlatform.layer
 ).pipe(Layer.provideMerge(FileSystem.layerNoop({})))
+
+it.layer(TestServices)("HttpApiBuilder.handler", (it) => {
+  it.effect("returns the callback unchanged and supports registration in a group", () =>
+    Effect.gen(function*() {
+      const Api = HttpApi.make("Api").add(
+        HttpApiGroup.make("users").add(
+          HttpApiEndpoint.post("create", "/users/:id", {
+            params: { id: Schema.FiniteFromString },
+            payload: Schema.Struct({ name: Schema.String }),
+            success: Schema.Struct({ id: Schema.Number, name: Schema.String })
+          })
+        )
+      )
+      const callback = vi.fn(({ params, payload }: {
+        readonly params: { readonly id: number }
+        readonly payload: { readonly name: string }
+      }) => Effect.succeed({ id: params.id, name: payload.name }))
+      const handler = HttpApiBuilder.handler(Api, "users", "create", callback)
+
+      assert.strictEqual(handler, callback)
+      assert.strictEqual(callback.mock.calls.length, 0)
+
+      const GroupLayer = HttpApiBuilder.group(Api, "users", (handlers) => handlers.handle("create", handler))
+      const client = yield* HttpApiTest.groups(Api, ["users"]).pipe(Effect.provide(GroupLayer))
+      const result = yield* client.users.create({ params: { id: 42 }, payload: { name: "Ada" } })
+
+      assert.deepStrictEqual(result, { id: 42, name: "Ada" })
+      assert.strictEqual(callback.mock.calls.length, 1)
+    }))
+})
+
+it.layer(TestServices)("HttpApiTest pre-response handlers", (it) => {
+  it.effect("runs registered pre-response handlers", () =>
+    Effect.gen(function*() {
+      const Api = HttpApi.make("Api").add(
+        HttpApiGroup.make("test").add(
+          HttpApiEndpoint.get("get", "/fixture", { success: Schema.String.pipe(HttpApiSchema.asText()) })
+        )
+      )
+      const GroupLayer = HttpApiBuilder.group(Api, "test", (handlers) =>
+        handlers.handle("get", () =>
+          Effect.as(
+            HttpEffect.appendPreResponseHandler((_request, response) =>
+              Effect.succeed(HttpServerResponse.setHeader(response, "x-fixture", "present"))
+            ),
+            "ok"
+          )))
+      const client = yield* HttpApiTest.groups(Api, ["test"]).pipe(Effect.provide(GroupLayer))
+      const response = yield* client.test.get({ responseMode: "response-only" })
+
+      assert.strictEqual(response.url, "http://localhost:3000/fixture")
+      assert.strictEqual(response.status, 200)
+      assert.strictEqual(response.headers["x-fixture"], "present")
+      assert.strictEqual(yield* response.text, "ok")
+    }))
+})
 
 it.layer(TestServices)("HttpApiBuilder query parameters", (it) => {
   it.effect("round trips array query parameters with one or more values", () =>
@@ -790,6 +846,51 @@ it.layer(TestServices)("HttpApiBuilder WithHeaders responses", (it) => {
 })
 
 it.layer(TestServices)("HttpApiBuilder streaming success responses", (it) => {
+  for (
+    const [name, innerStatus, wrapperStatus, expectedStatus] of [
+      ["wrapper status", undefined, 206, 206],
+      ["wrapper overrides inner status", 201, 206, 206],
+      ["default status control", undefined, undefined, 200]
+    ] as const
+  ) {
+    it.effect(`preserves WithHeaders stream status: ${name}`, () =>
+      Effect.gen(function*() {
+        const stream = HttpApiSchema.StreamUint8Array()
+        const wrapped = HttpApiSchema.WithHeaders(
+          innerStatus === undefined ? stream : stream.pipe(HttpApiSchema.status(innerStatus)),
+          { "x-note": Schema.String }
+        )
+        const success = wrapperStatus === undefined ? wrapped : wrapped.pipe(HttpApiSchema.status(wrapperStatus))
+        const Api = HttpApi.make("Api").add(
+          HttpApiGroup.make("test").add(HttpApiEndpoint.get("download", "/test", { success }))
+        )
+        const GroupLayer = HttpApiBuilder.group(
+          Api,
+          "test",
+          (handlers) =>
+            handlers.handle("download", () =>
+              Effect.succeed(HttpApiSchema.withHeaders({
+                body: Stream.make(new Uint8Array([1, 2])),
+                headers: { "x-note": "test" }
+              })))
+        )
+
+        const client = yield* HttpApiTest.groups(Api, ["test"]).pipe(Effect.provide(GroupLayer))
+        const response = yield* client.test.download({ responseMode: "response-only" })
+        const chunks = yield* Stream.runCollect(response.stream)
+
+        assert.strictEqual(response.status, expectedStatus)
+        assert.strictEqual(response.headers["content-type"], "application/octet-stream")
+        assert.strictEqual(response.headers["x-note"], "test")
+        assert.deepStrictEqual(Array.from(chunks, (chunk) => Array.from(chunk)), [[1, 2]])
+
+        const decoded = yield* client.test.download({})
+        const decodedChunks = yield* Stream.runCollect(decoded.body)
+        assert.deepStrictEqual(decoded.headers, { "x-note": "test" })
+        assert.deepStrictEqual(Array.from(decodedChunks, (chunk) => Array.from(chunk)), [[1, 2]])
+      }))
+  }
+
   it.effect("emits StreamUint8Array handler responses as streamed bytes with the declared content type", () =>
     Effect.gen(function*() {
       const Api = HttpApi.make("Api").add(
@@ -1369,5 +1470,36 @@ it.layer(TestServices)("HttpApiBuilder streaming success responses", (it) => {
       const error = yield* Effect.flip(client.test.protected({ headers: { "x-first": "ok" } }))
 
       assert.deepStrictEqual(error, new HandlerFailure({ message: "handler failed" }))
+    }))
+})
+
+it.layer(TestServices)("HttpApiBuilder middleware error responses", (it) => {
+  it.effect("encodes a middleware error through the response codec", () =>
+    Effect.gen(function*() {
+      const RateLimited = Schema.Struct({ retryAfter: Schema.BigInt }).pipe(HttpApiSchema.status(429))
+
+      class RateLimit extends HttpApiMiddleware.Service<RateLimit>()("RateLimit", {
+        error: RateLimited
+      }) {}
+
+      const Api = HttpApi.make("Api").add(
+        HttpApiGroup.make("test").add(
+          HttpApiEndpoint.get("limited", "/limited", { success: Schema.String }).middleware(RateLimit)
+        )
+      )
+      const GroupLayer = HttpApiBuilder.group(
+        Api,
+        "test",
+        (handlers) => handlers.handle("limited", () => Effect.succeed("ok"))
+      )
+      const RateLimitLayer = Layer.succeed(RateLimit)(() => Effect.fail({ retryAfter: 30n }))
+
+      const client = yield* HttpApiTest.groups(Api, ["test"]).pipe(
+        Effect.provide(GroupLayer),
+        Effect.provide(RateLimitLayer)
+      )
+      const error = yield* Effect.flip(client.test.limited())
+
+      assert.deepStrictEqual(error, { retryAfter: 30n })
     }))
 })

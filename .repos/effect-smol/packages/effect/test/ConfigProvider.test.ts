@@ -564,6 +564,14 @@ describe("ConfigProvider", () => {
       await assertSuccess(provider, ["A", 1], ConfigProvider.makeValue("value2"))
     })
 
+    it("array: values outside the JavaScript array index range yield a Record", async () => {
+      const env = { A_4294967295: "value1" }
+      const provider = ConfigProvider.fromEnv({ env })
+
+      await assertSuccess(provider, ["A"], ConfigProvider.makeRecord(new Set(["4294967295"])))
+      await assertSuccess(provider, ["A", "4294967295"], ConfigProvider.makeValue("value1"))
+    })
+
     it("root path exposes top-level keys", async () => {
       const env = { A: "value1", B_C: "value2" }
       const provider = ConfigProvider.fromEnv({ env })
@@ -836,6 +844,17 @@ DB_PASS=\${PASSWORD}
       await assertSuccess(provider, [], ConfigProvider.makeRecord(new Set(["PASSWORD", "DB"])))
       await assertSuccess(provider, ["PASSWORD"], ConfigProvider.makeValue("value"))
       await assertSuccess(provider, ["DB_PASS"], ConfigProvider.makeValue("value"))
+    })
+
+    it("expands referenced values as literal data", async () => {
+      const provider = ConfigProvider.fromDotEnvContents(
+        `
+SOURCE=a$&b$'c$\`d
+TARGET=\${SOURCE}
+`,
+        { expandVariables: true }
+      )
+      await assertSuccess(provider, ["TARGET"], ConfigProvider.makeValue("a$&b$'c$`d"))
     })
 
     it("expansion defaults are used only for empty or unset variables", async () => {

@@ -25,7 +25,9 @@ export default class MySQLApi extends Railway.Service<MySQLApi>()(
     environment: Partition,
     main: import.meta.url,
     port: MYSQL_API_PORT,
-    build: { install: ["mysql2"] },
+    // Match Alchemy's installed version; multiple lockfile entries make an
+    // unversioned external ambiguous when bundling this fixture.
+    build: { install: { mysql2: "3.24.2" } },
   },
   Effect.gen(function* () {
     const conn = yield* Railway.ConnectMySQL(Db);

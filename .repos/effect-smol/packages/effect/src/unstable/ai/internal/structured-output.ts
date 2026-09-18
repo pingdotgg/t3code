@@ -64,11 +64,11 @@ function transform(root: SchemaAST.AST): SchemaAST.AST {
       case "Union": {
         const types = SchemaAST.mapOrSame(ast.types, recur)
         const checks = prepareChecks(ast.checks)
-        const mode = ast.mode === "oneOf" ? "anyOf" : ast.mode
-        if (types === ast.types && checks === ast.checks && mode === ast.mode) return ast
+        const options = ast.options?.mode === "oneOf" ? { ...ast.options, mode: "anyOf" as const } : ast.options
+        if (types === ast.types && checks === ast.checks && options === ast.options) return ast
         return new SchemaAST.Union(
           types,
-          mode,
+          options,
           ast.annotations,
           checks,
           ast.encoding,
@@ -254,7 +254,7 @@ function objectToEntries(
 function unionOrSingle(types: ReadonlyArray<SchemaAST.AST>): SchemaAST.AST {
   if (types.length === 1) return types[0]
   const unique = Array.from(new Set(types))
-  return unique.length === 1 ? unique[0] : new SchemaAST.Union(unique, "anyOf")
+  return unique.length === 1 ? unique[0] : new SchemaAST.Union(unique)
 }
 
 function combineChecks(
@@ -300,7 +300,7 @@ function compilerAnnotations(
 
 function optionalToNullable(type: SchemaAST.AST): SchemaAST.AST {
   return SchemaAST.decodeTo(
-    new SchemaAST.Union([type, SchemaAST.null], "anyOf"),
+    new SchemaAST.Union([type, SchemaAST.null]),
     SchemaAST.optionalKey(type),
     SchemaTransformation.transformOptional({
       decode: Option.filter(Predicate.isNotNull),

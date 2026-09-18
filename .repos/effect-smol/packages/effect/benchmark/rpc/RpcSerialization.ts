@@ -136,7 +136,7 @@ const schemaBinary = Effect.runSync(
 )
 
 const formats = [
-  { name: "Msgpack", serialization: RpcSerialization.msgPack },
+  { name: "NDJSON", serialization: RpcSerialization.ndjson },
   { name: "SchemaBinary", serialization: schemaBinary }
 ] as const
 
@@ -210,9 +210,7 @@ console.log(`${process.platform} ${process.arch}; ${cpus()[0]?.model ?? "unknown
 console.log(
   "End-to-end operations include the payload codec plus RPC envelope framing; codec construction is excluded."
 )
-console.log(
-  "Msgpack uses RpcSerialization.msgPack defaults, including records. SchemaBinary fingerprints envelopes only and shares one string dictionary across the frames of a connection."
-)
+console.log("SchemaBinary fingerprints envelopes only and keeps every frame independently decodable.")
 console.log(
   "First-frame sizes use a fresh serializer; steady sizes and throughput reuse one as on a long-lived connection, and decode walks a stream in frame order."
 )
@@ -258,11 +256,11 @@ for (const entry of prepared) {
 await bench.run()
 assert.notStrictEqual(sink, undefined)
 
-const msgpackThroughput = new Map<string, number>()
+const ndjsonThroughput = new Map<string, number>()
 for (const task of bench.tasks) {
   const label = labels.get(task.name)!
-  if (label.formatName === "Msgpack" && task.result?.state === "completed") {
-    msgpackThroughput.set(`${label.caseName}/${label.direction}`, task.result.throughput.mean)
+  if (label.formatName === "NDJSON" && task.result?.state === "completed") {
+    ndjsonThroughput.set(`${label.caseName}/${label.direction}`, task.result.throughput.mean)
   }
 }
 
@@ -285,13 +283,13 @@ console.table(bench.tasks.map((task) => {
       State: result?.state ?? "missing result"
     }
   }
-  const baseline = msgpackThroughput.get(`${label.caseName}/${label.direction}`)!
+  const baseline = ndjsonThroughput.get(`${label.caseName}/${label.direction}`)!
   return {
     Case: label.caseName,
     Format: label.formatName,
     Direction: label.direction,
     "Throughput avg (ops/s)": Math.round(result.throughput.mean),
-    "vs Msgpack": `${(result.throughput.mean / baseline).toFixed(2)}x`,
+    "vs NDJSON": `${(result.throughput.mean / baseline).toFixed(2)}x`,
     "Latency med (us/op)": (result.latency.p50 * 1_000).toFixed(2),
     "Latency RME": `${result.latency.rme.toFixed(2)}%`,
     Samples: result.latency.samplesCount

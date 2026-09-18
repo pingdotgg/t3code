@@ -13,6 +13,7 @@ header: |
    */
 excludeAnnotations:
   - examples
+disableAdditionalProperties: true
 replacements:
   # Schema.Unknown doesn't work with Schema.toCodecJson (used by HttpClientResponse.schemaBodyJson)
   # Replace with Schema.Json which properly handles arbitrary JSON values
@@ -59,4 +60,3 @@ replacements:
   # Make context_management optional in BetaMessageDeltaEvent (API may omit this field)
   - from: '"context_management": Schema.Union([BetaResponseContextManagement, Schema.Null]).annotate({ "description": "Information about context management strategies applied during the request", "default": null }),'
     to: '"context_management": Schema.optionalKey(Schema.Union([BetaResponseContextManagement, Schema.Null]).annotate({ "description": "Information about context management strategies applied during the request", "default": null })),'
-

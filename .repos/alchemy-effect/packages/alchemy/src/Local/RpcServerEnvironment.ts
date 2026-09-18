@@ -6,7 +6,8 @@ import * as Option from "effect/Option";
 import { AlchemyContext } from "../AlchemyContext.ts";
 import { AuthProviders } from "../Auth/AuthProvider.ts";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
-import { ProfileLive, withProfileOverride } from "../Auth/Profile.ts";
+import { ProfileStoreLive } from "../Auth/Profile.ts";
+import { withProfileOverride } from "../Auth/Resolve.ts";
 import { Stack } from "../Stack.ts";
 import { Stage } from "../Stage.ts";
 import { loadConfigProvider } from "../Util/ConfigProvider.ts";
@@ -57,7 +58,7 @@ export const layer = (
     SessionEnvironment,
 ) =>
   Layer.mergeAll(
-    ProfileLive,
+    ProfileStoreLive,
     CredentialsStoreLive,
     Layer.succeed(AuthProviders, {}),
     ConfigProvider.layer(
@@ -81,7 +82,7 @@ export const RPC_SERVER_ENVIRONMENT_KEY =
 
 /** The spawn-time environment the parent baked into the child's process env. */
 export const fromProcessEnv: Effect.Effect<RpcServerEnvironment, unknown> =
-  Config.string(RPC_SERVER_ENVIRONMENT_KEY).pipe(
+  Config.String(RPC_SERVER_ENVIRONMENT_KEY).pipe(
     Config.map((raw) => JSON.parse(raw) as RpcServerEnvironment),
   );
 

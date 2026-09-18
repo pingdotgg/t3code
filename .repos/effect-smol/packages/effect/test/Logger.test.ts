@@ -162,6 +162,31 @@ describe("Logger", () => {
       )
     }))
 
+  for (const initial of [{}, { measurement: "previous" }]) {
+    it.effect(`annotateLogsScoped ${"measurement" in initial ? "restores" : "removes"} NaN annotations`, () =>
+      Effect.gen(function*() {
+        const annotations: Array<Record<string, unknown>> = []
+        const logger = Logger.make<unknown, void>(({ fiber }) => {
+          annotations.push({ ...fiber.getRef(References.CurrentLogAnnotations) })
+        })
+        const scope = yield* Scope.make()
+
+        yield* Effect.gen(function*() {
+          yield* Effect.annotateLogsScoped("measurement", NaN)
+          yield* Effect.log("inside")
+          yield* Scope.close(scope, Exit.void)
+          yield* Effect.log("after close")
+        }).pipe(
+          Scope.provide(scope),
+          Effect.annotateLogs(initial),
+          Effect.provide(Logger.layer([logger])),
+          Effect.ensuring(Scope.close(scope, Exit.void))
+        )
+
+        assert.deepStrictEqual(annotations, [{ measurement: NaN }, initial])
+      }))
+  }
+
   it.effect("default logger preserves message item order when logging a cause", () =>
     Effect.gen(function*() {
       yield* Effect.log("first", Cause.fail("boom"), "second")

@@ -1310,11 +1310,16 @@ const processPath = (path: string): {
   readonly pathTemplate: string
 } => {
   const pathIds: Array<string> = []
-  path = path.replace(/{([^}]+)}/g, (_, name) => {
-    const id = Utils.camelize(name)
+  const fragments: Array<string> = []
+  let offset = 0
+  for (const match of path.matchAll(/{([^}]+)}/g)) {
+    fragments.push(JSON.stringify(path.slice(offset, match.index)))
+    const id = Utils.camelize(match[1])
     pathIds.push(id)
-    return "${" + id + "}"
-  })
-  const pathTemplate = "`" + path + "`"
+    fragments.push(`__encodePathParam(${id})`)
+    offset = match.index + match[0].length
+  }
+  fragments.push(JSON.stringify(path.slice(offset)))
+  const pathTemplate = fragments.join(" + ")
   return { pathIds, pathTemplate } as const
 }

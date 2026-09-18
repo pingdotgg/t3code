@@ -2,8 +2,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { getAuthProvider } from "../Auth/AuthProvider.ts";
-import { ALCHEMY_PROFILE, AlchemyProfile } from "../Auth/Profile.ts";
+import { resolveProviderConfig } from "../Auth/Resolve.ts";
 import {
   PRISMA_AUTH_PROVIDER_NAME,
   type PrismaAuthConfig,
@@ -67,23 +66,16 @@ export const fromProfile = () =>
   Layer.effect(
     PrismaEnvironment,
     Effect.gen(function* () {
-      const profile = yield* AlchemyProfile;
-      const auth = yield* getAuthProvider<
-        PrismaAuthConfig,
-        PrismaResolvedCredentials
-      >(PRISMA_AUTH_PROVIDER_NAME);
-      const profileName = yield* ALCHEMY_PROFILE;
-      const ci = yield* Config.boolean("CI").pipe(Config.withDefault(false));
-      const baseUrl = yield* Config.string(PRISMA_API_URL_ENV).pipe(
-        Config.orElse(() => Config.string(PRISMA_MANAGEMENT_API_URL_ENV)),
+      const baseUrl = yield* Config.String(PRISMA_API_URL_ENV).pipe(
+        Config.orElse(() => Config.String(PRISMA_MANAGEMENT_API_URL_ENV)),
         Config.withDefault(DEFAULT_BASE_URL),
         Effect.flatMap(normalizeBaseUrl),
       );
-      const config = yield* profile.loadOrConfigure(auth, profileName, { ci });
-      const credentials = yield* auth.read(
-        profileName,
-        config as PrismaAuthConfig,
-      );
+      const { resolve } = yield* resolveProviderConfig<
+        PrismaAuthConfig,
+        PrismaResolvedCredentials
+      >(PRISMA_AUTH_PROVIDER_NAME);
+      const credentials = yield* resolve;
       return { ...credentials, baseUrl };
     }),
   );

@@ -1,74 +1,22 @@
 import * as Cloudflare from "@/Cloudflare/index.ts";
 import * as Test from "@/Test/Alchemy";
-import { createServer, type Server } from "node:http";
 import { expect } from "alchemy-test";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import OtelEventFlushWorker from "./fixtures/otel-event-flush-worker.ts";
+import { startOtlpCollector } from "../Utils/OtlpCollector.ts";
 
 const { test } = Test.make({ providers: Cloudflare.providers(), dev: true });
-
-interface DelayedOtlpCollector {
-  readonly server: Server;
-  readonly url: string;
-  readonly completedRequests: { value: number };
-}
-
-/**
- * Starts a local OTLP endpoint that only counts responses fully written to the
- * client. The Node server is a test adapter for observing workerd cancellation.
- */
-const startDelayedOtlpCollector = Effect.acquireRelease(
-  Effect.callback<DelayedOtlpCollector, Error>((resume) => {
-    const completedRequests = { value: 0 };
-    const server = createServer((request, response) => {
-      request.resume();
-      request.once("end", () => {
-        setTimeout(() => {
-          response.once("finish", () => {
-            completedRequests.value += 1;
-          });
-          response.writeHead(200, { "content-type": "application/json" });
-          response.end('{"partialSuccess":{}}');
-        }, 500);
-      });
-    });
-    const onError = (error: Error) => resume(Effect.fail(error));
-    server.once("error", onError);
-    server.listen(0, "127.0.0.1", () => {
-      server.off("error", onError);
-      const address = server.address();
-      if (address === null || typeof address === "string") {
-        resume(
-          Effect.fail(new Error("OTLP test collector address unavailable")),
-        );
-        return;
-      }
-      resume(
-        Effect.succeed({
-          server,
-          completedRequests,
-          url: `http://127.0.0.1:${address.port}/v1/traces`,
-        }),
-      );
-    });
-    return Effect.sync(() => server.close());
-  }),
-  ({ server }) =>
-    Effect.callback<void, Error>((resume) => {
-      server.close((error) =>
-        resume(error === undefined ? Effect.void : Effect.fail(error)),
-      );
-    }).pipe(Effect.orDie),
-);
 
 test.provider(
   "delivers Worker and Durable Object OTLP batches without delaying the Worker response",
   (stack) =>
     Effect.gen(function* () {
-      const collector = yield* startDelayedOtlpCollector;
+      // Delayed responses expose whether export delivery waits on the
+      // Worker response (it must not) or rides `waitUntil`.
+      const collector = yield* startOtlpCollector({ responseDelay: 500 });
       const currentConfig = yield* ConfigProvider.ConfigProvider;
       const deployment = yield* stack
         .deploy(
@@ -82,7 +30,7 @@ test.provider(
             ConfigProvider.ConfigProvider,
             ConfigProvider.orElse(
               ConfigProvider.fromUnknown({
-                OTLP_EVENT_FLUSH_URL: collector.url,
+                OTLP_EVENT_FLUSH_URL: `${collector.url}/v1/traces`,
               }),
               currentConfig,
             ),

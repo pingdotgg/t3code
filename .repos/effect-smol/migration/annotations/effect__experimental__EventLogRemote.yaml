@@ -6,16 +6,16 @@
   note: ChangesRpc replaces the separate request and response models with one streaming RPC.
 "@effect/experimental/EventLogRemote#decodeRequest":
   replacement: effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs
-  note: Generic RPC framing and RpcSerialization.layerMsgPack replace the module-specific request decoder.
+  note: Generic RPC framing and RpcSerialization.layerSchemaBinary replace the module-specific request decoder.
 "@effect/experimental/EventLogRemote#decodeResponse":
   replacement: effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs
-  note: Generic RPC framing and RpcSerialization.layerMsgPack replace the module-specific response decoder.
+  note: Generic RPC framing and RpcSerialization.layerSchemaBinary replace the module-specific response decoder.
 "@effect/experimental/EventLogRemote#encodeRequest":
   replacement: effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs
-  note: Generic RPC framing and RpcSerialization.layerMsgPack replace the module-specific request encoder.
+  note: Generic RPC framing and RpcSerialization.layerSchemaBinary replace the module-specific request encoder.
 "@effect/experimental/EventLogRemote#encodeResponse":
   replacement: effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs
-  note: Generic RPC framing and RpcSerialization.layerMsgPack replace the module-specific response encoder.
+  note: Generic RPC framing and RpcSerialization.layerSchemaBinary replace the module-specific response encoder.
 "@effect/experimental/EventLogRemote#EventLogRemote":
   replacement: effect/unstable/eventlog/EventLogRemote#EventLogRemote
   note: Use the v4 Context.Service; methods now take storeId-aware options.
@@ -27,7 +27,7 @@
   note: HelloResponse replaces Hello and includes the v4 authentication challenge; HelloRpc defines the endpoint.
 "@effect/experimental/EventLogRemote#layerWebSocket":
   replacement: effect/unstable/eventlog/EventLogRemote#layerEncrypted + effect/unstable/rpc/RpcClient#layerProtocolSocket
-  note: Compose the encrypted remote with the generic socket protocol, MsgPack serialization, and a Socket provider.
+  note: Compose the encrypted remote with the generic socket protocol, SchemaBinary serialization, and a Socket provider.
 "@effect/experimental/EventLogRemote#layerWebSocketBrowser":
   replacement: effect/unstable/eventlog/EventLogRemote#layerEncrypted + effect/unstable/rpc/RpcClient#layerProtocolSocket + @effect/platform-browser/BrowserSocket#layerWebSocket
   note: Compose the encrypted remote and generic RPC socket protocol with the browser WebSocket layer.
@@ -38,14 +38,14 @@
   replacement: effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs
   note: EventLogRemoteRpcs and generic RPC serialization replace the old protocol request union.
 "@effect/experimental/EventLogRemote#ProtocolRequestMsgPack":
-  replacement: effect/unstable/rpc/RpcSerialization#layerMsgPack
-  note: Use the generic MsgPack RPC serialization layer instead of a request-specific schema.
+  replacement: effect/unstable/rpc/RpcSerialization#layerSchemaBinary
+  note: Use the generic SchemaBinary RPC serialization layer instead of a request-specific schema.
 "@effect/experimental/EventLogRemote#ProtocolResponse":
   replacement: effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs
   note: EventLogRemoteRpcs and generic RPC serialization replace the old protocol response union.
 "@effect/experimental/EventLogRemote#ProtocolResponseMsgPack":
-  replacement: effect/unstable/rpc/RpcSerialization#layerMsgPack
-  note: Use the generic MsgPack RPC serialization layer instead of a response-specific schema.
+  replacement: effect/unstable/rpc/RpcSerialization#layerSchemaBinary
+  note: Use the generic SchemaBinary RPC serialization layer instead of a response-specific schema.
 "@effect/experimental/EventLogRemote#RemoteAdditions":
   replacement: none
   note: This unused protocol model has no v4 counterpart.

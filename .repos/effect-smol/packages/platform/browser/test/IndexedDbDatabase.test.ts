@@ -19,7 +19,7 @@ afterEach(() => {
   indexedDB.deleteDatabase(databaseName)
 })
 
-describe.sequential("IndexedDbDatabase", () => {
+describe("IndexedDbDatabase", { concurrent: false }, () => {
   it.effect("insert and read todos", () => {
     const Table = IndexedDbTable.make({
       name: "todo",

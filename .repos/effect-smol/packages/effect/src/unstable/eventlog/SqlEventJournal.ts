@@ -14,6 +14,7 @@ import * as Uuid from "../../internal/uuid.ts"
 import * as Layer from "../../Layer.ts"
 import * as PubSub from "../../PubSub.ts"
 import * as Schema from "../../Schema.ts"
+import * as SchemaTransformation from "../../SchemaTransformation.ts"
 import * as SqlClient from "../sql/SqlClient.ts"
 import * as SqlError from "../sql/SqlError.ts"
 import * as SqlSchema from "../sql/SqlSchema.ts"
@@ -124,6 +125,7 @@ export const make = (options?: {
     }).pipe(withTracerDisabled)
 
     const decodeEntryRows = Schema.decodeUnknownEffect(EntryRowArray)
+    const decodeEntryIdRows = Schema.decodeUnknownEffect(EntryIdRowArray)
     const toEntries = (rows: ReadonlyArray<EntryRow>): ReadonlyArray<EventJournal.Entry> => rows.map(toEntry)
 
     const insertEntry = SqlSchema.void({
@@ -156,12 +158,13 @@ export const make = (options?: {
 
       const existingIds = new Set<string>()
       if (entries.length > 0) {
-        yield* sql<{ id: Uint8Array }>`SELECT id FROM ${entryTableSql} WHERE ${
+        yield* sql`SELECT id FROM ${entryTableSql} WHERE ${
           sql.in(
             "id",
             entries.map((entry) => entry.id)
           )
         }`.pipe(
+          Effect.flatMap(decodeEntryIdRows),
           Effect.tap((rows) =>
             Effect.sync(() => {
               for (const row of rows) {
@@ -223,13 +226,16 @@ export const make = (options?: {
           }, { disableChecks: true })
           return yield* Effect.uninterruptibleMask((restore) =>
             restore(effect(entry)).pipe(
-              Effect.tap(insertEntry(toEntryRow(entry))),
+              Effect.tap(
+                insertEntry(toEntryRow(entry)).pipe(
+                  Effect.mapError((cause) => new EventJournal.EventJournalError({ cause, method: "write" }))
+                )
+              ),
               Effect.tap(PubSub.publish(pubsub, entry))
             )
           )
         },
-        withTracerDisabled,
-        Effect.mapError((cause) => new EventJournal.EventJournalError({ cause, method: "write" }))
+        withTracerDisabled
       ),
       writeFromRemote: (options) =>
         writeFromRemote(options).pipe(
@@ -248,13 +254,13 @@ export const make = (options?: {
             ORDER BY timestamp ASC
           `.pipe(
             Effect.flatMap(decodeEntryRows),
-            Effect.map(toEntries)
+            Effect.map(toEntries),
+            Effect.mapError((cause) => new EventJournal.EventJournalError({ cause, method: "withRemoteUncommited" }))
           )
           if (!Arr.isReadonlyArrayNonEmpty(entries)) return yield* Effect.succeedNone
           return yield* Effect.asSome(f(entries))
         },
-        withTracerDisabled,
-        Effect.mapError((cause) => new EventJournal.EventJournalError({ cause, method: "withRemoteUncommited" }))
+        withTracerDisabled
       ),
       nextRemoteSequence: (remoteId) =>
         sql<{ max: number | null }>`SELECT MAX(sequence) AS max FROM ${remotesTableSql} WHERE remote_id = ${remoteId}`
@@ -318,15 +324,32 @@ export const layer = (options?: {
 }): Layer.Layer<EventJournal.EventJournal, SqlError.SqlError, SqlClient.SqlClient> =>
   Layer.effect(EventJournal.EventJournal)(make(options))
 
+const ArrayBuffer = Schema.instanceOf(globalThis.ArrayBuffer, {
+  expected: "ArrayBuffer"
+})
+
+const SqlUint8Array = Schema.Union([Schema.Uint8Array, ArrayBuffer]).pipe(
+  Schema.decodeTo(
+    Schema.Uint8Array,
+    SchemaTransformation.transform({
+      decode: (value) => value instanceof globalThis.ArrayBuffer ? new globalThis.Uint8Array(value) : value,
+      encode: (value) => value
+    })
+  )
+)
+
+const SqlEntryId = SqlUint8Array.pipe(Schema.decodeTo(EventJournal.EntryId))
+
 const EntryRow = Schema.Struct({
-  id: EventJournal.EntryId,
+  id: SqlEntryId,
   event: Schema.String,
   primary_key: Schema.String,
-  payload: Schema.Uint8Array,
+  payload: SqlUint8Array,
   timestamp: Schema.Int
 })
 
 const EntryRowArray = Schema.Array(EntryRow)
+const EntryIdRowArray = Schema.Array(Schema.Struct({ id: SqlEntryId }))
 
 type EntryRow = Schema.Schema.Type<typeof EntryRow>
 

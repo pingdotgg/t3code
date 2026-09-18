@@ -205,7 +205,7 @@ test.provider(
       // Output-valued `autoScalingGroup` lost in the round-trip.
       const wedgeRow = Effect.gen(function* () {
         const state = yield* yield* State;
-        const stage = "test"; // scratch stacks default to the "test" stage
+        const stage = stack.stage;
         const fqns = yield* state.list({ stack: stack.name, stage });
         const rows = yield* Effect.forEach(fqns, (fqn) =>
           state

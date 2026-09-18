@@ -1,0 +1,94 @@
+name: Package Preview
+
+# Builds, packs, and publishes preview packages from the job that built them.
+# The job proves it is the run it claims to be by uploading the manifest as
+# an artifact of its own run, which only the job's runtime token can do; the
+# registry reads the artifact list back through the GitHub API. That works
+# the same for pushes, same-repo pull requests, and fork pull requests, and
+# needs no permissions or secrets. The upload has to be an action step: the
+# runtime token is never exposed to `run:` steps.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "submodules/distilled"
+      - "packages/**"
+      - "scripts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - "tsconfig.json"
+      - ".github/workflows/pkg.yml"
+  pull_request:
+    paths:
+      - "submodules/distilled"
+      - "packages/**"
+      - "scripts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - "tsconfig.json"
+      - ".github/workflows/pkg.yml"
+
+permissions:
+  contents: read
+
+env:
+  PKG_REGISTRY: https://pkg.alchemy.run
+
+concurrency:
+  group: pkg-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  publish:
+    name: Publish preview packages
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Pack the pull request head rather than the synthetic merge commit,
+          # so every tarball is addressed by a commit that exists on the PR.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout distilled
+        run: git submodule update --init --depth=1 --checkout -- submodules/distilled
+
+      # No turbo cache here on purpose: the restore keys fall back to any
+      # earlier run, and replayed outputs for the distilled packages, whose
+      # sources live in a submodule, have compiled alchemy against stale
+      # declarations. A clean build is a few minutes and always correct.
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      - name: Build packages
+        run: pnpm build:pkg
+
+      # Keep the directory lists in sync with the `build:pkg` script.
+      - name: Pack packages
+        id: pack
+        run: >-
+          pnpm exec pkg pack
+          --group 'alchemy=./packages/alchemy'
+          --group '@alchemy.run[Collapsed]=./packages/{better-auth,cloudflare-runtime,frontend-frameworks,node-utils,floci,pkg}'
+          --group '@distilled.cloud[Collapsed]=./submodules/distilled/packages/{core,aws,axiom,cloudflare,fly-io,github,hetzner,neon,planetscale,railway,stripe}'
+
+      - name: Vouch for the manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.pack.outputs.artifact-name }}
+          path: .pkg/pkg-manifest.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Publish packages
+        run: pnpm exec pkg publish

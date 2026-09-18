@@ -1,0 +1,34 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": [
+    "alchemy.run.ts",
+    "vite.config.ts",
+    "src/**/*"
+  ],
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext",
+    "jsx": "react-jsx",
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "vite/client"
+    ],
+    "declaration": false,
+    "declarationMap": false
+  },
+  "references": [
+    {
+      "path": "../../packages/alchemy/tsconfig.json"
+    },
+    {
+      "path": "../../packages/better-auth/tsconfig.json"
+    }
+  ]
+}

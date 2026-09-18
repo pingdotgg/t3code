@@ -19,6 +19,98 @@ import {
 import { describe, expect, it } from "tstyche"
 
 describe("HttpApiBuilder", () => {
+  describe("handler", () => {
+    it("infers the selected endpoint's decoded request and preserves service requirements", () => {
+      class Repository extends Context.Service<Repository, {}>()("Repository") {}
+      class Lookup extends HttpApiEndpoint.post("lookup", "/users/:id", {
+        params: { id: Schema.FiniteFromString },
+        query: { page: Schema.FiniteFromString },
+        payload: Schema.Struct({ name: Schema.String }),
+        headers: { "x-token": Schema.String },
+        success: Schema.String
+      }) {}
+      const api = HttpApi.make("api").add(
+        HttpApiGroup.make("users").add(Lookup),
+        HttpApiGroup.make("admins").add(
+          HttpApiEndpoint.get("lookup", "/admins", { success: Schema.Number })
+        )
+      )
+      const handler = HttpApiBuilder.handler(api, "users", "lookup", ({ params, query, payload, headers }) => {
+        expect(params).type.toBe<{ readonly id: number }>()
+        expect(query).type.toBe<{ readonly page: number }>()
+        expect(payload).type.toBe<{ readonly name: string }>()
+        expect(headers).type.toBe<{ readonly "x-token": string }>()
+        return Effect.as(Repository, payload.name)
+      })
+
+      expect(handler).type.toBe<HttpApiEndpoint.Handler<typeof Lookup, never, Repository>>()
+      const group = HttpApiBuilder.group(api, "users", (handlers) => handlers.handle("lookup", handler))
+      expect(group).type.toBe<
+        Layer.Layer<HttpApiGroup.Service<"api", "users">, never, HttpRouterRequest<"Requires", Repository>>
+      >()
+
+      const adminHandler = HttpApiBuilder.handler(api, "admins", "lookup", () => Effect.succeed(42))
+      expect<Effect.Success<ReturnType<typeof adminHandler>>>().type.toBe<number | HttpServerResponse>()
+      expect<Effect.Services<ReturnType<typeof adminHandler>>>().type.toBe<never>()
+    })
+
+    it("accepts endpoint and middleware errors while preserving middleware-provided services", () => {
+      class NotFound extends Schema.TaggedError<NotFound>()("NotFound", {}) {}
+      class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", {}) {}
+      class Auth extends HttpApiMiddleware.Service<Auth, { provides: CurrentUser }>()("Auth", {
+        error: Unauthorized
+      }) {}
+      const endpoint = HttpApiEndpoint.get("get", "/users", {
+        success: Schema.String,
+        error: NotFound
+      }).middleware(Auth)
+      const api = HttpApi.make("api").add(HttpApiGroup.make("users").add(endpoint))
+      const handler = HttpApiBuilder.handler(
+        api,
+        "users",
+        "get",
+        Effect.fnUntraced(function*() {
+          const { userId } = yield* CurrentUser
+          if (userId === "missing") return yield* Effect.fail(new NotFound())
+          if (userId === "unauthorized") return yield* Effect.fail(new Unauthorized())
+          return userId
+        })
+      )
+
+      expect(handler).type.toBe<HttpApiEndpoint.Handler<typeof endpoint, Unauthorized, CurrentUser>>()
+      const group = HttpApiBuilder.group(api, "users", (handlers) => handlers.handle("get", handler))
+      expect(group).type.toBe<Layer.Layer<HttpApiGroup.Service<"api", "users">, never, Auth>>()
+    })
+
+    it("rejects unknown groups and endpoints outside the selected group", () => {
+      const api = HttpApi.make("api").add(
+        HttpApiGroup.make("users").add(HttpApiEndpoint.get("getUser", "/users")),
+        HttpApiGroup.make("admins").add(HttpApiEndpoint.get("getAdmin", "/admins"))
+      )
+
+      expect(HttpApiBuilder.handler).type.not.toBeCallableWith(api, "missing", "getUser", () => Effect.void)
+      expect(HttpApiBuilder.handler).type.not.toBeCallableWith(api, "users", "missing", () => Effect.void)
+      expect(HttpApiBuilder.handler).type.not.toBeCallableWith(api, "users", "getAdmin", () => Effect.void)
+    })
+
+    it("rejects invalid successes and errors from other endpoints", () => {
+      class OtherError extends Schema.TaggedError<OtherError>()("OtherError", {}) {}
+      class OtherMiddleware extends HttpApiMiddleware.Service<OtherMiddleware>()("OtherMiddleware", {
+        error: OtherError
+      }) {}
+      const api = HttpApi.make("api").add(
+        HttpApiGroup.make("users").add(
+          HttpApiEndpoint.get("get", "/users", { success: Schema.String }),
+          HttpApiEndpoint.get("other", "/other", { success: Schema.Number }).middleware(OtherMiddleware)
+        )
+      )
+
+      expect(HttpApiBuilder.handler).type.not.toBeCallableWith(api, "users", "get", () => Effect.succeed(42))
+      expect(HttpApiBuilder.handler).type.not.toBeCallableWith(api, "users", "get", () => Effect.fail(new OtherError()))
+      expect(HttpApiBuilder.handler).type.not.toBeCallableWith(api, "users", "get", () => Effect.fail("undeclared"))
+    })
+  })
+
   describe("group", () => {
     it("does not require unknown services for status annotations piped onto errors", () => {
       class NotFound extends Schema.TaggedError<NotFound>()("NotFound", {}) {}

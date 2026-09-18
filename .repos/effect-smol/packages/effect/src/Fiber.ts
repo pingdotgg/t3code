@@ -13,12 +13,13 @@ import type { Effect } from "./Effect.ts"
 import type { Exit } from "./Exit.ts"
 import * as effect from "./internal/effect.ts"
 import type { LogLevel } from "./LogLevel.ts"
+import type { FiberRuntimeMetricsService } from "./Metric.ts"
 import type { Pipeable } from "./Pipeable.ts"
 import { hasProperty } from "./Predicate.ts"
 import type { StackFrame } from "./References.ts"
 import type { Scheduler, SchedulerDispatcher } from "./Scheduler.ts"
 import type { Scope } from "./Scope.ts"
-import type { AnySpan } from "./Tracer.ts"
+import type { AnySpan, Tracer } from "./Tracer.ts"
 import type { Covariant } from "./Types.ts"
 
 const TypeId = "~effect/Fiber"
@@ -75,14 +76,8 @@ export interface Fiber<out A, out E = never> extends Pipeable {
   readonly getRef: <A>(ref: Context.Reference<A>) => A
   readonly context: Context.Context<never>
   setContext(context: Context.Context<never>): void
-  readonly currentScheduler: Scheduler
+  readonly cache: Fiber.Cache
   readonly currentDispatcher: SchedulerDispatcher
-  readonly currentSpan?: AnySpan | undefined
-  readonly currentLogLevel: LogLevel
-  readonly minimumLogLevel: LogLevel
-  readonly currentStackFrame?: StackFrame | undefined
-  readonly maxOpsBeforeYield: number
-  readonly currentPreventYield: boolean
   readonly addObserver: (cb: (exit: Exit<A, E>) => void) => () => void
   readonly interruptUnsafe: (
     fiberId?: number | undefined,
@@ -154,6 +149,36 @@ export declare namespace Fiber {
   export interface Variance<out A, out E = never> {
     readonly _A: Covariant<A>
     readonly _E: Covariant<E>
+  }
+
+  /**
+   * Context-derived values cached for the fiber's current `Context`.
+   *
+   * **When to use**
+   *
+   * Use to read runtime services resolved from the fiber's context, such as
+   * the scheduler, current span, or log levels.
+   *
+   * **Details**
+   *
+   * The cache object is computed once per context cache root and shared by
+   * every fiber running with that root, so it must be treated as immutable.
+   *
+   * @category models
+   * @since 4.0.0
+   */
+  export interface Cache {
+    readonly scheduler: Scheduler
+    readonly tracer: Tracer | undefined
+    readonly tracerContext: Tracer["context"] | undefined
+    readonly tracerEnabled: boolean
+    readonly span: AnySpan | undefined
+    readonly logLevel: LogLevel
+    readonly minimumLogLevel: LogLevel
+    readonly stackFrame: StackFrame | undefined
+    readonly runtimeMetrics: FiberRuntimeMetricsService | undefined
+    readonly maxOpsBeforeYield: number
+    readonly preventYield: boolean
   }
 }
 

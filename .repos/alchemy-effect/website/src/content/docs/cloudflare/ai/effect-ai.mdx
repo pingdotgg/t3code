@@ -14,7 +14,7 @@ provider-agnostic.
 
 This guide is about the *Alchemy* side of that picture: how to build
 the `LanguageModel` layer inside a Worker or Lambda
-([Functions & Servers](/infrastructure-as-effects/functions-and-servers))
+([Runtime](/infrastructure-as-effects/runtime))
 (`Cloudflare.Worker`, `AWS.Lambda.Function`), where to read the API
 key from, and how to plug `Chat.Persistence` into a backing store
 that matches the platform. For the AI calls themselves —
@@ -31,12 +31,12 @@ Every Effect AI provider is two stacked layers:
 2. A **language model** Layer that picks the model and any defaults
    (`OpenAiLanguageModel.layer({ model: "gpt-4o-mini" })`, …).
 
-You build that stack once in the Platform's **init phase** and
+You build that stack once in the Runtime's **Construction phase** and
 `Effect.provide(...)` it on the handler:
 
 ```typescript
 Effect.gen(function* () {
-  // 1. Init: build the LanguageModel layer (deploy bindings happen here).
+  // 1. Construct: build the LanguageModel layer (deploy bindings happen here).
   const languageModel = ...;
 
   return {
@@ -53,29 +53,29 @@ Effect.gen(function* () {
 pattern works in a Lambda handler, an HTTP API endpoint, an RPC
 procedure, a Workflow, or any other Effect.
 
-## Read the API key with `Config.redacted`
+## Read the API key with `Config.Redacted`
 
 Every upstream provider's client Layer (`OpenAiClient.layer`,
 `AnthropicClient.layer`, …) takes an `apiKey: Redacted<string>`.
-[`Config.redacted`](/environments/secrets) resolved in the Platform's
-Init phase gives you exactly that `Redacted<string>` — and Alchemy
+[`Config.Redacted`](/environments/secrets) resolved in the Runtime's
+Construction phase gives you exactly that `Redacted<string>` — and Alchemy
 automatically binds the value as a `secret_text` binding
 (Cloudflare) or environment variable (Lambda) at deploy time:
 
 ```typescript
 import * as Config from "effect/Config";
 
-// outer init — resolves the value AND records the binding
-const apiKey = yield* Config.redacted("OPENAI_API_KEY");
+// constructor — resolves the value AND records the binding
+const apiKey = yield* Config.Redacted("OPENAI_API_KEY");
 ```
 
-`Config.redacted("OPENAI_API_KEY")` reads `OPENAI_API_KEY` from your
+`Config.Redacted("OPENAI_API_KEY")` reads `OPENAI_API_KEY` from your
 `ConfigProvider` (e.g. `.env`) at deploy time, records the binding,
 and resolves from that binding again at runtime — one line, both
 phases. See [Concepts › Secrets and Config](/environments/secrets) for
-the Init/Runtime split, `.env`, and transformations.
+the Construction/Runtime split, `.env`, and transformations.
 
-Because the value is in scope right in Init, the model Layer can be
+Because the value is in scope right in the constructor, the model Layer can be
 built eagerly — no `Layer.unwrap` needed:
 
 ```typescript
@@ -109,7 +109,7 @@ export default Cloudflare.Worker(
   "Worker",
   { main: import.meta.url },
   Effect.gen(function* () {
-    const apiKey = yield* Config.redacted("OPENAI_API_KEY");
+    const apiKey = yield* Config.Redacted("OPENAI_API_KEY");
 
     const languageModel = OpenAiLanguageModel.layer({
       model: "gpt-4o-mini",
@@ -164,7 +164,7 @@ backing layer does.
 For Workers AI models on Cloudflare, the shortest path is the native
 [Workers AI binding](/cloudflare/ai/workers-ai): no API key, no HTTP
 client layer, no resource to declare. `yield*
-Cloudflare.Workers.AI()` in the Init phase attaches the binding, and
+Cloudflare.Workers.AI()` in the Construction phase attaches the binding, and
 `ai.model({...})` builds the `LanguageModel` Layer directly on top of
 it:
 
@@ -201,7 +201,7 @@ declares the gateway as a resource and
 `.model({...})` builds the same `LanguageModel` Layer shape, proxied
 through the gateway.
 
-Bind the gateway in the Init phase and call `aiGateway.model({...})`
+Bind the gateway in the Construction phase and call `aiGateway.model({...})`
 with a Workers AI model id. It returns a `LanguageModel` Layer
 directly — no API key, no `Layer.unwrap`, since the gateway binding
 handles auth and the URL:
@@ -218,7 +218,7 @@ const languageModel = aiGateway.model({
 That `languageModel` Layer slots into the same `Effect.provide(...)`
 spot as any other provider — the rest of your handler doesn't
 change. Provide `Cloudflare.AI.QueryGatewayBinding` once at the
-bottom of the Init layer chain so the binding resolves at runtime:
+bottom of the constructor's layer chain so the binding resolves at runtime:
 
 ```typescript
 Effect.gen(function* () {
@@ -269,5 +269,5 @@ model })` — is the same.
 - [Add an AI Gateway](/cloudflare/ai/ai-gateway) — wire
   Workers AI behind a Cloudflare AI Gateway with caching and
   streaming.
-- [Secrets & env](/cloudflare/security/secrets-env) — how `Config.redacted`
+- [Secrets & env](/cloudflare/security/secrets-env) — how `Config.Redacted`
   feeds the upstream providers' API keys at deploy and runtime.

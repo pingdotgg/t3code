@@ -1259,6 +1259,12 @@ describe("Array", () => {
       expect(pipe(iterableString, Array.window(negativeOne))).type.toBe<Array<never>>()
       expect(Array.window(negativeOne)(iterableString)).type.toBe<Array<never>>()
     })
+
+    it("n: fractional literal", () => {
+      expect(Array.window(iterableString, 1.5)).type.toBe<Array<Array<string>>>()
+      expect(pipe(iterableString, Array.window(1.5))).type.toBe<Array<Array<string>>>()
+      expect(Array.window(1.5)(iterableString)).type.toBe<Array<Array<string>>>()
+    })
   })
 
   it("flatten", () => {

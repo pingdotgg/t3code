@@ -92,8 +92,8 @@ sbatch --nodes=1 train.sbatch
   like any other Kubernetes Job or Deployment on EKS.
 
 ```sh
-bun alchemy deploy ./eks.run.ts    # EKS ~10-15 min + HyperPod ~10-20 min
-bun alchemy destroy ./eks.run.ts
+bun alchemy deploy --config ./eks.run.ts    # EKS ~10-15 min + HyperPod ~10-20 min
+bun alchemy destroy --config ./eks.run.ts
 ```
 
 ## Inspection

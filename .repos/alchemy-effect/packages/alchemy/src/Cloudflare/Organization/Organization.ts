@@ -378,7 +378,7 @@ const toAttributes = (
   name: org.name,
   createTime: org.createTime,
   managedBy: org.meta.managedBy ?? undefined,
-  flags: org.meta.flags ?? undefined,
+  flags: org.meta.tenantFlags ?? undefined,
   parent: org.parent ?? undefined,
   profile: org.profile ?? undefined,
 });

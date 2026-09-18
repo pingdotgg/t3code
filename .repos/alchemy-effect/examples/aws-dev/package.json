@@ -16,8 +16,11 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@effect/platform-node": "catalog:effect",
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect"
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "alchemy-test": "workspace:*"
   }
 }

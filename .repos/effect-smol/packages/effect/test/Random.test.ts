@@ -60,6 +60,51 @@ describe("Random", () => {
   })
 
   describe("nextBetween", () => {
+    it.effect.each(
+      [
+        ["positive", 10, 20, 1 - Number.EPSILON, 20 - 2 ** -48],
+        ["adjacent", 1e16, 1e16 + 2, 0.75, 1e16],
+        ["negative", -1e16 - 2, -1e16, 0.75, -1e16 - 2],
+        ["zero", -Number.MIN_VALUE, 0, 0.75, -Number.MIN_VALUE]
+      ] as const
+    )("excludes a rounded upper bound: %s", ([_name, min, max, draw, expected]) =>
+      Effect.gen(function*() {
+        const value = yield* Random.nextBetween(min, max).pipe(
+          Effect.provideService(Random.Random, {
+            nextIntUnsafe: () => 0,
+            nextDoubleUnsafe: () => draw
+          })
+        )
+
+        assert.isAtLeast(value, min)
+        assert.isBelow(value, max)
+        assert.strictEqual(value, expected)
+      }))
+
+    it.effect("preserves degenerate bounds", () =>
+      Effect.gen(function*() {
+        const value = yield* Random.nextBetween(10, 10).pipe(
+          Effect.provideService(Random.Random, {
+            nextIntUnsafe: () => 0,
+            nextDoubleUnsafe: () => 0.75
+          })
+        )
+
+        assert.strictEqual(value, 10)
+      }))
+
+    it.effect("documents current behavior for unsupported bounds", () =>
+      Effect.gen(function*() {
+        const value = yield* Random.nextBetween(10, Infinity).pipe(
+          Effect.provideService(Random.Random, {
+            nextIntUnsafe: () => 0,
+            nextDoubleUnsafe: () => 0.75
+          })
+        )
+
+        assert.strictEqual(value, Infinity)
+      }))
+
     it.effect("generates number in half-open range", () =>
       Effect.gen(function*() {
         for (let i = 0; i < 100; i++) {

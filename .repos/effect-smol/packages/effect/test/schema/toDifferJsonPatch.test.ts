@@ -1,7 +1,7 @@
-import { Schema } from "effect"
+import { assert, describe, it } from "@effect/vitest"
+import { Effect, Schema } from "effect"
 import * as DateTime from "effect/DateTime"
-import * as FastCheck from "effect/testing/FastCheck"
-import { describe, it } from "vitest"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 import { assertSchemaIssueError, deepStrictEqual, strictEqual, throws } from "../utils/assert.ts"
 
 /**
@@ -16,35 +16,45 @@ import { assertSchemaIssueError, deepStrictEqual, strictEqual, throws } from "..
  * - property-based roundtrip across a broad set of codecs
  */
 
-function roundtrip<T, E>(codec: Schema.Codec<T, E>) {
-  const differ = Schema.toDifferJsonPatch(codec)
-  const arbitrary = Schema.toArbitrary(codec)(FastCheck)
-  const arb = arbitrary.filter((v) => {
-    // avoid prototype-poisoning-ish values that aren't valid JSON-ish containers for patching
-    if (
-      typeof v === "object" &&
-      v !== null &&
-      (Object.getPrototypeOf(v) === null || Object.hasOwn(v as any, "__proto__"))
-    ) {
-      return false
-    }
-    return true
+const SerializableSymbol = Schema.Symbol.check(
+  Schema.makeFilter((symbol) => {
+    const key = Symbol.keyFor(symbol)
+    return key !== undefined && !/[\n\r\u2028\u2029]/.test(key)
   })
+)
+const SerializablePropertyKey = Schema.Union([SerializableSymbol, Schema.Finite, Schema.String])
 
-  FastCheck.assert(
-    FastCheck.property(arb, arb, (v1, v2) => {
+const roundtrip = Effect.fnUntraced(function*<T, E>(codec: Schema.Codec<T, E>) {
+  const differ = Schema.toDifferJsonPatch(codec)
+  const arbitrary = Arbitrary.schema(Schema.Tuple([codec, codec]))
+  const result = yield* Arbitrary.checkEffect(
+    arbitrary,
+    ([v1, v2]) => {
+      // avoid prototype-poisoning-ish values that aren't valid JSON-ish containers for patching
+      if (
+        [v1, v2].some((value) =>
+          typeof value === "object" &&
+          value !== null &&
+          (Object.getPrototypeOf(value) === null || Object.hasOwn(value as any, "__proto__"))
+        )
+      ) {
+        return true
+      }
       const patch = differ.diff(v1, v2)
       const patched = differ.patch(v1, patch)
 
       // two invalid dates are not considered equal by deepStrictEqual
       if (patched instanceof Date && v2 instanceof Date && Object.is(patched.getTime(), v2.getTime())) {
-        return
+        return true
       }
 
       deepStrictEqual(patched, v2)
-    })
+      return true
+    },
+    { runs: 100, seed: "toDifferJsonPatch" }
   )
-}
+  assert.strictEqual(result._tag, "Passed")
+})
 
 describe("Schema.toDifferJsonPatch", () => {
   describe("structural guarantees", () => {
@@ -169,69 +179,68 @@ describe("Schema.toDifferJsonPatch", () => {
   })
 
   describe("roundtrip (property-based)", () => {
-    it("patch(diff(a,b)) round-trips for a wide set of codecs", () => {
-      roundtrip(Schema.Any.annotate({
-        toArbitrary: () => (fc) => fc.json()
+    it.effect("patch(diff(a,b)) round-trips for a wide set of codecs", () =>
+      Effect.gen(function*() {
+        yield* roundtrip(Schema.Any)
+
+        yield* roundtrip(Schema.String)
+        yield* roundtrip(Schema.Number)
+        yield* roundtrip(Schema.Boolean)
+        yield* roundtrip(Schema.BigInt)
+        yield* roundtrip(SerializableSymbol)
+
+        // includes edgey keys without re-testing pointer logic exhaustively
+        yield* roundtrip(Schema.Struct({
+          a: Schema.String,
+          "-": Schema.NullOr(Schema.String),
+          "": Schema.String
+        }))
+
+        yield* roundtrip(Schema.Record(Schema.String, Schema.Number))
+        yield* roundtrip(Schema.StructWithRest(
+          Schema.Struct({
+            a: Schema.Number,
+            "-": Schema.Number,
+            "": Schema.Number
+          }),
+          [Schema.Record(Schema.String, Schema.Number)]
+        ))
+
+        yield* roundtrip(Schema.Tuple([Schema.String, Schema.Number]))
+        yield* roundtrip(Schema.Array(Schema.Number))
+
+        yield* roundtrip(Schema.TupleWithRest(
+          Schema.Tuple([Schema.Number]),
+          [Schema.String]
+        ))
+        yield* roundtrip(Schema.TupleWithRest(
+          Schema.Tuple([Schema.Number]),
+          [Schema.String, Schema.Boolean]
+        ))
+
+        yield* roundtrip(Schema.Union([Schema.String, Schema.Finite]))
+
+        yield* roundtrip(Schema.Finite)
+        yield* roundtrip(Schema.Date)
+        yield* roundtrip(Schema.URL)
+        yield* roundtrip(Schema.RegExp)
+        yield* roundtrip(Schema.Duration)
+        yield* roundtrip(Schema.DateTimeUtc)
+        yield* roundtrip(Schema.Uint8Array)
+        yield* roundtrip(SerializablePropertyKey)
+        yield* roundtrip(Schema.Option(Schema.String))
+        yield* roundtrip(Schema.Result(Schema.Number, Schema.String))
+        yield* roundtrip(Schema.ReadonlyMap(Schema.String, Schema.Number))
+        yield* roundtrip(Schema.ErrorInstance())
+        yield* roundtrip(Schema.Json)
+        yield* roundtrip(Schema.Exit(Schema.Number, Schema.String, Schema.Json))
+
+        class A extends Schema.Class<A>("A")({ value: Schema.Number }) {}
+        class B extends Schema.Class<B>("B")({ a: A }) {}
+        yield* roundtrip(B)
+
+        class E extends Schema.Error<E>("E")({ message: Schema.String }) {}
+        yield* roundtrip(E)
       }))
-
-      roundtrip(Schema.String)
-      roundtrip(Schema.Number)
-      roundtrip(Schema.Boolean)
-      roundtrip(Schema.BigInt)
-      roundtrip(Schema.Symbol)
-
-      // includes edgey keys without re-testing pointer logic exhaustively
-      roundtrip(Schema.Struct({
-        a: Schema.String,
-        "-": Schema.NullOr(Schema.String),
-        "": Schema.String
-      }))
-
-      roundtrip(Schema.Record(Schema.String, Schema.Number))
-      roundtrip(Schema.StructWithRest(
-        Schema.Struct({
-          a: Schema.Number,
-          "-": Schema.Number,
-          "": Schema.Number
-        }),
-        [Schema.Record(Schema.String, Schema.Number)]
-      ))
-
-      roundtrip(Schema.Tuple([Schema.String, Schema.Number]))
-      roundtrip(Schema.Array(Schema.Number))
-
-      roundtrip(Schema.TupleWithRest(
-        Schema.Tuple([Schema.Number]),
-        [Schema.String]
-      ))
-      roundtrip(Schema.TupleWithRest(
-        Schema.Tuple([Schema.Number]),
-        [Schema.String, Schema.Boolean]
-      ))
-
-      roundtrip(Schema.Union([Schema.String, Schema.Finite]))
-
-      roundtrip(Schema.Finite)
-      roundtrip(Schema.Date)
-      roundtrip(Schema.URL)
-      roundtrip(Schema.RegExp)
-      roundtrip(Schema.Duration)
-      roundtrip(Schema.DateTimeUtc)
-      roundtrip(Schema.Uint8Array)
-      roundtrip(Schema.PropertyKey)
-      roundtrip(Schema.Option(Schema.String))
-      roundtrip(Schema.Result(Schema.Number, Schema.String))
-      roundtrip(Schema.ReadonlyMap(Schema.String, Schema.Number))
-      roundtrip(Schema.ErrorInstance())
-      roundtrip(Schema.Json)
-      roundtrip(Schema.Exit(Schema.Number, Schema.String, Schema.Json))
-
-      class A extends Schema.Class<A>("A")({ value: Schema.Number }) {}
-      class B extends Schema.Class<B>("B")({ a: A }) {}
-      roundtrip(B)
-
-      class E extends Schema.Error<E>("E")({ message: Schema.String }) {}
-      roundtrip(E)
-    })
   })
 })

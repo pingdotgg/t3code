@@ -4,9 +4,13 @@
 
 ## Installation
 
+Install Vitest 5 (`>=5.0.0 <6.0.0`) and Vite `>=8.1.5 <9.0.0` alongside the package:
+
 ```sh
-npm install -D @effect/doctest@rc
+npm install -D @effect/doctest@rc vitest@^5 vite@^8.1.5
 ```
+
+Vitest 5 supports Node.js `^22.12.0 || ^24.0.0 || >=26.0.0`. Existing snippet markers and doctest configuration remain supported. When upgrading, import reporter types from `vitest/node`; JSON reports now default to a file, so configure `outputFile` explicitly when consuming the report. See the [Vitest migration guide](https://vitest.dev/guide/migration/) for upstream changes.
 
 ## Documentation
 

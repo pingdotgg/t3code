@@ -516,7 +516,7 @@ export const model = (
  *
  * **When to use**
  *
- * Use when you need to construct a `LanguageModel.Service` value backed by
+ * Use when you need to construct a `LanguageModel` value backed by
  * `OpenRouterClient` inside an Effect.
  *
  * **Details**
@@ -541,7 +541,7 @@ export const model = (
 export const make = Effect.fnUntraced(function*({ model, config: providerConfig }: {
   readonly model: string
   readonly config?: Omit<typeof Config.Service, "model"> | undefined
-}): Effect.fn.Return<LanguageModel.Service, never, OpenRouterClient> {
+}): Effect.fn.Return<LanguageModel.LanguageModel, never, OpenRouterClient> {
   const client = yield* OpenRouterClient
   const codecTransformer = getCodecTransformer(model)
 
@@ -557,8 +557,9 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
       const messages = yield* prepareMessages({ options })
       const { tools, toolChoice } = yield* prepareTools({ options, transformer: codecTransformer })
       const responseFormat = yield* getResponseFormat({ config, options, transformer: codecTransformer })
+      const { strictJsonSchema: _sjs, ...apiConfig } = config
       const request: typeof Generated.ChatRequest.Encoded = {
-        ...config,
+        ...apiConfig,
         messages,
         ...(Predicate.isNotUndefined(responseFormat) ? { response_format: responseFormat } : undefined),
         ...(Predicate.isNotUndefined(tools) ? { tools } : undefined),
@@ -899,7 +900,7 @@ const prepareMessages = Effect.fnUntraced(
             messages.push({
               role: "tool",
               tool_call_id: part.id,
-              content: JSON.stringify(part.result)
+              content: typeof part.result === "string" ? part.result : JSON.stringify(part.result)
             })
           }
 
@@ -1046,7 +1047,6 @@ const makeResponse = Effect.fnUntraced(
               method: "makeResponse",
               reason: new AiError.ToolParameterValidationError({
                 toolName,
-                toolParams: {},
                 description: `Failed to securely JSON parse tool parameters: ${cause}`
               })
             })
@@ -1495,7 +1495,7 @@ const makeStreamResponse = Effect.fnUntraced(
             (detail) => detail.type === "reasoning.encrypted" && detail.data.length > 0
           )
           if (totalToolCalls > 0 && hasEncryptedReasoning && finishReason === "stop") {
-            finishReason = resolveFinishReason("tool-calls")
+            finishReason = "tool-calls"
           }
 
           // Forward any unsent tool calls if finish reason is 'tool-calls'
@@ -1844,16 +1844,21 @@ const getUsage = (usage: Generated.ChatUsage | undefined): Response.Usage => {
   const cacheReadTokens = usage.prompt_tokens_details?.cached_tokens ?? 0
   const cacheWriteTokens = usage.prompt_tokens_details?.cache_write_tokens ?? 0
   const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens ?? 0
+  // Some providers report cached or reasoning tokens separately from their parent counts.
+  // Treat details exceeding the parent as disjoint to avoid negative remainders.
+  // Otherwise, retain subset accounting.
+  const inputTotal = cacheReadTokens > promptTokens ? promptTokens + cacheReadTokens : promptTokens
+  const outputTotal = reasoningTokens > completionTokens ? completionTokens + reasoningTokens : completionTokens
   return {
     inputTokens: {
-      uncached: promptTokens - cacheReadTokens,
-      total: promptTokens,
+      uncached: inputTotal - cacheReadTokens,
+      total: inputTotal,
       cacheRead: cacheReadTokens,
       cacheWrite: cacheWriteTokens
     },
     outputTokens: {
-      total: completionTokens,
-      text: completionTokens - reasoningTokens,
+      total: outputTotal,
+      text: outputTotal - reasoningTokens,
       reasoning: reasoningTokens
     }
   }

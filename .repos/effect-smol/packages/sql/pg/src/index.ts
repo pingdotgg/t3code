@@ -17,7 +17,17 @@ export * as PgClient from "./PgClient.ts"
 /**
  * @since 4.0.0
  */
+export * as PgConnection from "./PgConnection.ts"
+
+/**
+ * @since 4.0.0
+ */
 export * as PgMigrator from "./PgMigrator.ts"
+
+/**
+ * @since 4.0.0
+ */
+export * as PgPool from "./PgPool.ts"
 
 /**
  * @since 4.0.0

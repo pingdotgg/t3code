@@ -1,8 +1,8 @@
-import { CredentialsFromEnv } from "@distilled.cloud/fly-io";
 import * as sprites from "@distilled.cloud/fly-io/sprites";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { CredentialsFromAmbientOrEnv } from "./Credentials.ts";
 import { Checkpoint, type CheckpointClient } from "./Checkpoint.ts";
 import { makeHttpSpriteBinding } from "./SpriteHttp.ts";
 
@@ -62,4 +62,7 @@ export const CheckpointHttp = Layer.effect(
       }),
     }),
   ),
-).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(CredentialsFromEnv));
+).pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(CredentialsFromAmbientOrEnv),
+);

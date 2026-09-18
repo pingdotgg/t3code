@@ -33,7 +33,7 @@ afterEach(() => {
   Reflect.set(globalThis, "indexedDB", previousIndexedDb)
 })
 
-describe.sequential("BrowserPersistence", () => {
+describe("BrowserPersistence", { concurrent: false }, () => {
   it.effect("set + get", () =>
     Effect.gen(function*() {
       const backing = yield* Persistence.BackingPersistence

@@ -18,10 +18,10 @@
   note: "The guard remains in effect/unstable/http/Multipart."
 "@effect/platform/Multipart#MaxFieldSize":
   replacement: "Multipart.MaxFieldSize"
-  note: "The setting remains but is now a Context.Reference."
+  note: "Now a Context.Reference<ByteSize.ByteSize>; provide a value such as ByteSize.bytes(100)."
 "@effect/platform/Multipart#MaxFileSize":
   replacement: "Multipart.MaxFileSize"
-  note: "The setting remains as a Context.Reference; use undefined rather than Option.none for no limit."
+  note: "Now a Context.Reference<ByteSize.ByteSize | undefined>; provide ByteSize.bytes(100), for example, or undefined for no limit."
 "@effect/platform/Multipart#MaxParts":
   replacement: "Multipart.MaxParts"
   note: "The setting remains as a Context.Reference; use undefined rather than Option.none for no limit."
@@ -42,10 +42,10 @@
   note: "Build the multipart limit context and provide it to the stream; Option-valued limits became optional plain values."
 "@effect/platform/Multipart#withMaxFieldSize":
   replacement: "Effect.provideService(Multipart.MaxFieldSize, size)"
-  note: "Provide the v4 Context.Reference around the effect."
+  note: "Provide a ByteSize value, such as ByteSize.bytes(100). To normalize ByteSize.Input options, use Multipart.limitsServices."
 "@effect/platform/Multipart#withMaxFileSize":
   replacement: "Effect.provideService(Multipart.MaxFileSize, size)"
-  note: "Provide the v4 Context.Reference around the effect, converting Option.none to undefined."
+  note: "Replace Option.none with undefined and Option.some(value) with a normalized ByteSize value. To normalize ByteSize.Input options, use Multipart.limitsServices."
 "@effect/platform/Multipart#withMaxParts":
   replacement: "Effect.provideService(Multipart.MaxParts, count)"
   note: "Provide the v4 Context.Reference around the effect, converting Option.none to undefined."
@@ -54,4 +54,4 @@
   note: "The channel constructor moved and no longer accepts bufferSize; input and output chunks use non-empty readonly arrays."
 "@effect/platform/Multipart#withLimits.Options":
   replacement: "Multipart.withLimits.Options"
-  note: "Limit fields now use optional plain numbers or SizeInput values; convert Option.none to undefined and Option.some(value) to value."
+  note: "Limit fields now use optional plain numbers or ByteSize inputs; convert Option.none to undefined and Option.some(value) to value."

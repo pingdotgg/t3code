@@ -1,3 +1,4 @@
+import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
 import * as Effect from "effect/Effect";
 import type { MemoOptions } from "../../Command/Memo.ts";
 import type { InputProps } from "../../Input.ts";
@@ -20,13 +21,6 @@ import {
  * subpath.
  */
 const NEXTJS_SOURCE_PROVIDER = "@alchemy.run/frontend-frameworks/nextjs/source";
-
-/**
- * The default compatibility date when none is provided. Matches the
- * `@alchemy.run/frontend-frameworks/nextjs` integration's own default so deploy and local
- * dev agree.
- */
-const DEFAULT_COMPATIBILITY_DATE = "2026-05-12";
 
 export interface NextjsProps<
   Bindings extends WorkerBindingProps = {},
@@ -302,16 +296,11 @@ export const Nextjs: {
               WORKER_SELF_REFERENCE: Self,
               ...props?.env,
             },
-            // OpenNext requires nodejs_compat; the Worker here is external
-            // (no inline Effect entry), so the engine won't add it.
+            // OpenNext requires Node.js APIs. The 2026-08-31 default date
+            // enables both nodejs_compat modes, so no redundant flag is sent.
             compatibility: {
               date: props?.compatibility?.date ?? DEFAULT_COMPATIBILITY_DATE,
-              flags: Array.from(
-                new Set([
-                  "nodejs_compat",
-                  ...(props?.compatibility?.flags ?? []),
-                ]),
-              ),
+              flags: props?.compatibility?.flags,
             },
             // The OpenNext server owns routing: run the worker first and
             // leave asset-path rewriting off. Users can still override.

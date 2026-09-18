@@ -17,7 +17,7 @@ import SecretsTestFunctionLive, {
 } from "./fixtures/handler.ts";
 
 /**
- * `Config.redacted("CONFIG_SECRET")` resolves against the active
+ * `Config.Redacted("CONFIG_SECRET")` resolves against the active
  * `ConfigProvider` at deploy time. The default provider reads from
  * `process.env`, so populate it before `beforeAll(deploy(Stack))`
  * compiles the stack.
@@ -76,7 +76,7 @@ const getJson = (url: string) =>
   );
 
 test(
-  "Config.redacted with literal default round-trips to Lambda runtime as Redacted<string>",
+  "Config.Redacted with literal default round-trips to Lambda runtime as Redacted<string>",
   Effect.gen(function* () {
     const { url } = yield* stack;
     expect(url).toBeTypeOf("string");
@@ -95,7 +95,7 @@ test(
 );
 
 test(
-  "Config.redacted resolved from env round-trips through Lambda env",
+  "Config.Redacted resolved from env round-trips through Lambda env",
   Effect.gen(function* () {
     const { url } = yield* stack;
     const baseUrl = url.replace(/\/+$/, "");
@@ -113,7 +113,7 @@ test(
 );
 
 test(
-  "Config.string round-trips to Lambda runtime as a string",
+  "Config.String round-trips to Lambda runtime as a string",
   Effect.gen(function* () {
     const { url } = yield* stack;
     const baseUrl = url.replace(/\/+$/, "");
@@ -128,7 +128,7 @@ test(
 );
 
 test(
-  "Config.number round-trips to Lambda runtime preserving the number type",
+  "Config.Number round-trips to Lambda runtime preserving the number type",
   Effect.gen(function* () {
     const { url } = yield* stack;
     const baseUrl = url.replace(/\/+$/, "");
@@ -143,7 +143,7 @@ test(
 );
 
 test(
-  "Config.string with object default round-trips to Lambda runtime preserving nested shape",
+  "Config.String with object default round-trips to Lambda runtime preserving nested shape",
   Effect.gen(function* () {
     const { url } = yield* stack;
     const baseUrl = url.replace(/\/+$/, "");

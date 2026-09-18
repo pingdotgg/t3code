@@ -9,6 +9,7 @@
  * @since 4.0.0
  */
 
+import * as Arr from "./Array.ts"
 import * as Context from "./Context.ts"
 import * as Data from "./Data.ts"
 import * as Effect from "./Effect.ts"
@@ -651,7 +652,7 @@ export const nested: {
  * )
  *
  * const program = Effect.gen(function*() {
- *   const port = yield* Config.number("port")
+ *   const port = yield* Config.Number("port")
  *   return port
  * })
  *
@@ -697,7 +698,7 @@ export const layer = <E = never, R = never>(
  * // The current env provider is tried first; `defaults` is the fallback
  * const DefaultsLayer = ConfigProvider.layerAdd(defaults)
  * const BaseLayer = ConfigProvider.layer(ConfigProvider.fromUnknown({}))
- * const program = Config.string("HOST")
+ * const program = Config.String("HOST")
  *
  * const layer = Layer.provide(DefaultsLayer, BaseLayer)
  * Effect.runSync(Effect.provide(program, layer)) // => "localhost"
@@ -763,7 +764,7 @@ export const layerAdd = <E = never, R = never>(
  *   }
  * })
  *
- * const host = Config.string("host").parse(
+ * const host = Config.String("host").parse(
  *   provider.pipe(ConfigProvider.nested("database"))
  * )
  *
@@ -908,7 +909,7 @@ export function fromEnvRecord(
  *   }
  * })
  *
- * const host = Config.string("HOST").parse(
+ * const host = Config.String("HOST").parse(
  *   provider.pipe(ConfigProvider.nested("DATABASE"))
  * )
  *
@@ -958,8 +959,6 @@ function buildEnvTrie(env: Record<string, string | undefined>): EnvTrieNode {
   return trie
 }
 
-const NUMERIC_INDEX = /^(0|[1-9][0-9]*)$/
-
 function nodeAtEnv(
   trie: EnvTrieNode,
   env: Record<string, string | undefined>,
@@ -976,7 +975,7 @@ function nodeAtEnv(
     return leafValue === undefined ? undefined : makeValue(leafValue)
   }
 
-  const allNumeric = children.every((k) => NUMERIC_INDEX.test(k))
+  const allNumeric = children.every(Arr.isCanonicalArrayIndex)
   if (allNumeric) {
     const length = Math.max(...children.map((k) => parseInt(k, 10))) + 1
     return makeArray(length, leafValue)
@@ -1136,7 +1135,7 @@ function interpolate(envValue: string, parsed: Record<string, string>): string {
       : defaultValue ?? ""
 
     return interpolate(
-      envValue.replace(group, value),
+      envValue.replace(group, () => value),
       parsed
     )
   }

@@ -4,16 +4,70 @@ import type {
   CRUD,
   ActionApply,
   ActionDelete,
+  Plan,
 } from "../Plan.ts";
 import type { ProviderMode } from "../ProviderMode.ts";
-
-export interface TreeBinding {
-  sid: string;
-  action: BindingAction;
-}
+import {
+  formatDeclaredPropertyYaml,
+  formatDriftPropertyYaml,
+  type DeclaredPropertyYaml,
+} from "./PropertyDiff.ts";
 
 export type ActionTreeItem = ActionApply | ActionDelete;
 export type ActionVerb = ActionTreeItem["action"]; // "run" | "noop" | "delete"
+
+/** No-op actions are dependency markers, not work the user needs to review. */
+export const actionHasPlannedWork = (item: ActionTreeItem): boolean =>
+  item.action !== "noop";
+
+export interface PlanSummaryCounts {
+  readonly counts: Record<
+    | "create"
+    | "update"
+    | "adopted"
+    | "delete"
+    | "orphaned"
+    | "replace"
+    | "noop",
+    number
+  >;
+  readonly taskCounts: Record<"run" | "delete" | "noop", number>;
+  readonly bindingChanges: number;
+}
+
+/** Count every resource and task, plus binding changes, for the Plan summary. */
+export const buildPlanSummary = (plan: Plan): PlanSummaryCounts => {
+  const allItems = [
+    ...Object.values(plan.resources),
+    ...Object.values(plan.deletions),
+  ].filter((item): item is CRUD => item !== undefined);
+  const counts = {
+    create: 0,
+    update: 0,
+    adopted: 0,
+    delete: 0,
+    orphaned: 0,
+    noop: 0,
+    replace: 0,
+  };
+  for (const item of allItems) {
+    counts[item.action]++;
+  }
+  const taskCounts = { run: 0, noop: 0, delete: 0 };
+  for (const item of [
+    ...Object.values(plan.actions ?? {}),
+    ...Object.values(plan.actionDeletions ?? {}),
+  ].filter((task): task is ActionTreeItem => task !== undefined)) {
+    taskCounts[item.action]++;
+  }
+  const bindingChanges = allItems.reduce(
+    (count, item) =>
+      count +
+      item.bindings.filter((binding) => binding.action !== "noop").length,
+    0,
+  );
+  return { counts, taskCounts, bindingChanges };
+};
 
 /**
  * A tree node representing a namespace.
@@ -31,7 +85,9 @@ export interface TreeNode {
 export type DerivedAction =
   | "create"
   | "update"
+  | "adopted"
   | "delete"
+  | "orphaned"
   | "replace"
   | "noop"
   | "mixed";
@@ -78,7 +134,7 @@ export function buildNamespaceTree(
   return root;
 }
 
-export function deriveNamespaceAction(node: TreeNode): DerivedAction {
+function deriveNamespaceAction(node: TreeNode): DerivedAction {
   const actions = new Set<BindingAction | CRUD["action"] | DerivedAction>();
 
   for (const resource of node.resources) {
@@ -128,14 +184,20 @@ export interface FlattenedItem {
    * old generation was created with (always differs from `providerMode`).
    */
   fromProviderMode?: ProviderMode;
+  /** Safe YAML detail attached only when the caller opts into detailed view. */
+  propertyYaml?: DeclaredPropertyYaml;
+}
+
+export interface FlattenTreeOptions {
+  includePropertyYaml?: boolean;
 }
 
 export function flattenTree(
   node: TreeNode,
-  depth = 0,
-  result: FlattenedItem[] = [],
+  options: FlattenTreeOptions = {},
 ): FlattenedItem[] {
-  flattenNamespace(node, depth, result);
+  const result: FlattenedItem[] = [];
+  flattenNamespace(node, 0, result, options);
   return result;
 }
 
@@ -143,6 +205,7 @@ const flattenNamespace = (
   node: TreeNode,
   depth: number,
   result: FlattenedItem[],
+  options: FlattenTreeOptions,
 ) => {
   const sortedResources = [...node.resources].sort((a, b) =>
     a.resource.LogicalId.localeCompare(b.resource.LogicalId),
@@ -166,7 +229,7 @@ const flattenNamespace = (
       action: deriveNamespaceAction(child),
       hasChildren: true,
     });
-    flattenNamespace(child, depth + 1, result);
+    flattenNamespace(child, depth + 1, result, options);
   }
 
   for (const resource of sortedResources) {
@@ -187,6 +250,24 @@ const flattenNamespace = (
         resource.state.providerMode !== resource.mode
           ? resource.state.providerMode
           : undefined,
+      propertyYaml:
+        "drift" in resource && resource.drift !== undefined
+          ? formatDriftPropertyYaml(
+              resource.drift.expected,
+              resource.drift.actual,
+              resource.drift.missing,
+            )
+          : options.includePropertyYaml &&
+              (resource.action === "create" ||
+                resource.action === "update" ||
+                resource.action === "adopted" ||
+                resource.action === "replace")
+            ? formatDeclaredPropertyYaml(
+                resource.action === "create" ? {} : resource.state.props,
+                resource.props,
+                resource.action === "adopted" ? "update" : resource.action,
+              )
+            : undefined,
     });
     for (const binding of [...resource.bindings].sort((a, b) =>
       a.sid.localeCompare(b.sid),
@@ -201,7 +282,7 @@ const flattenNamespace = (
       });
     }
     if (childNamespace) {
-      flattenNamespace(childNamespace, depth + 1, result);
+      flattenNamespace(childNamespace, depth + 1, result, options);
     }
   }
 
@@ -226,16 +307,6 @@ const isEmpty = (node: TreeNode) =>
   node.actions.length === 0 &&
   Array.from(node.children.values()).every(isEmpty);
 
-const countVisibleChildren = (node: TreeNode) => {
-  const resourceIds = new Set(
-    node.resources.map((resource) => resource.resource.LogicalId),
-  );
-  return (
-    node.resources.length +
-    Array.from(node.children.keys()).filter((id) => !resourceIds.has(id)).length
-  );
-};
-
 const deriveResourceChildrenAction = (
   resource: CRUD,
   node: TreeNode,
@@ -258,8 +329,10 @@ const deriveAction = (
 ): DerivedAction => {
   if (actions.size === 0) return "noop";
   if (actions.has("replace")) return actions.size === 1 ? "replace" : "mixed";
+  if (actions.has("orphaned")) return actions.size === 1 ? "orphaned" : "mixed";
   if (actions.has("delete")) return actions.size === 1 ? "delete" : "mixed";
   if (actions.has("create")) return actions.size === 1 ? "create" : "mixed";
+  if (actions.has("adopted")) return actions.size === 1 ? "adopted" : "mixed";
   if (actions.has("update")) return actions.size === 1 ? "update" : "mixed";
   return "noop";
 };

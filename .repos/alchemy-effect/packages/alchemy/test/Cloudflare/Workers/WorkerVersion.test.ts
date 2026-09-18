@@ -381,7 +381,11 @@ describe.concurrent("Cloudflare.Worker version", () => {
         // preview URLs in `domains`, no `urls`/`domain`, legacy hash.
         yield* Effect.gen(function* () {
           const state = yield* yield* State;
-          const key = { stack: stack.name, stage: "test", fqn: "MigrPreview" };
+          const key = {
+            stack: stack.name,
+            stage: stack.stage,
+            fqn: "MigrPreview",
+          };
           const current = yield* state.get(key);
           expect(current).toBeDefined();
           const attr = {

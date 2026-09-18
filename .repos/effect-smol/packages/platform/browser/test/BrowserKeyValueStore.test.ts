@@ -24,6 +24,18 @@ describe("KeyValueStore / layerIndexedDb", () => {
     )
   )
 
+  it.effect("reports a key containing bytes as present", () => {
+    const layer = BrowserKeyValueStore.layerIndexedDb({
+      database: `kvs_binary_has_${crypto.randomUUID()}`
+    }).pipe(Layer.provide(layerFakeIndexedDb))
+
+    return Effect.gen(function*() {
+      const store = yield* KeyValueStore.KeyValueStore
+      yield* store.set("binary", new Uint8Array([0, 127, 255]))
+      assert.isTrue(yield* store.has("binary"))
+    }).pipe(Effect.provide(layer))
+  })
+
   it.effect("does not report a write before its transaction commits", () => {
     const db = {
       objectStoreNames: { contains: () => true },

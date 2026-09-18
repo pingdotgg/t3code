@@ -44,7 +44,7 @@ export const make = Platform.make({
   compression,
   fileResponse(path, status, statusText, headers, start, end, contentLength) {
     let body: ReadableStream<Uint8Array>
-    if (contentLength === 0) {
+    if (contentLength === BigInt(0)) {
       body = new ReadableStream<Uint8Array>({
         start(controller) {
           controller.close()
@@ -55,7 +55,7 @@ export const make = Platform.make({
       file.seekSync(start, Deno.SeekMode.Start)
       body = end === undefined
         ? file.readable
-        : file.readable.pipeThrough(new ByteSliceStream(0, contentLength - 1))
+        : file.readable.pipeThrough(new ByteSliceStream(0, end - start - 1))
     }
     return Response.raw(body, {
       headers: {
@@ -68,11 +68,11 @@ export const make = Platform.make({
     })
   },
   fileWebResponse(file, status, statusText, headers, options) {
-    const offset = Number(options?.offset ?? 0)
+    const offset = options?.offset ?? 0
     const available = Math.max(0, file.size - offset)
     const contentLength = options?.bytesToRead === undefined
       ? available
-      : Math.min(available, Math.max(0, Number(options.bytesToRead)))
+      : Math.min(available, Math.max(0, options.bytesToRead))
     let body: typeof file | ReadableStream<Uint8Array> = file
     if (contentLength === 0) {
       body = new ReadableStream<Uint8Array>({

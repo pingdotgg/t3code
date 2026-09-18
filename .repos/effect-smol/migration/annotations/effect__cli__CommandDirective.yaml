@@ -1,5 +1,5 @@
 "@effect/cli/CommandDirective#builtIn":
-  replacement: "GlobalFlag.action"
+  replacement: "GlobalFlag.Action"
   note: "Define a custom action flag; v4 runners no longer return built-in directives."
 "@effect/cli/CommandDirective#BuiltIn":
   replacement: "GlobalFlag.Action"

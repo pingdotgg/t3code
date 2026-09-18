@@ -49,7 +49,7 @@ stage, and logical ID.
 
 ## Bind it to a Worker
 
-Bind the bucket in the Worker's init phase and use the typed client
+Bind the bucket in the Worker's Construction phase and use the typed client
 in the runtime handlers. This Worker stores objects on `PUT /:key`
 and serves them back on `GET /:key`:
 

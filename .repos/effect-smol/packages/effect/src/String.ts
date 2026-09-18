@@ -13,6 +13,7 @@ import type { NonEmptyArray } from "./Array.ts"
 import * as Equ from "./Equivalence.ts"
 import { dual } from "./Function.ts"
 import * as readonlyArray from "./internal/array.ts"
+import * as Count from "./internal/count.ts"
 import * as number from "./Number.ts"
 import * as Option from "./Option.ts"
 import * as order from "./Order.ts"
@@ -774,6 +775,10 @@ export const padStart = (maxLength: number, fillString?: string) => (self: strin
 /**
  * Repeats the string the specified number of times.
  *
+ * **Details**
+ *
+ * `count` is rounded down. `NaN` and non-positive values are treated as `0`.
+ *
  * **Example** (Repeating strings)
  *
  * ```ts import.meta.vitest
@@ -786,7 +791,7 @@ export const padStart = (maxLength: number, fillString?: string) => (self: strin
  * @category transforming
  * @since 2.0.0
  */
-export const repeat = (count: number) => (self: string): string => self.repeat(count)
+export const repeat = (count: number) => (self: string): string => self.repeat(Count.normalize(count))
 
 /**
  * Replaces all occurrences of a substring or pattern in a string.
@@ -876,7 +881,8 @@ export const toLocaleUpperCase = (locale?: string | Array<string>) => (self: str
  * If `n` is larger than the available number of characters, the string will
  * be returned whole.
  *
- * If `n` is not a positive number, an empty string will be returned.
+ * If `n` is not a positive number, including `NaN`, an empty string will be
+ * returned.
  *
  * If `n` is a float, it will be rounded down to the nearest integer.
  *
@@ -894,7 +900,7 @@ export const toLocaleUpperCase = (locale?: string | Array<string>) => (self: str
 export const takeLeft: {
   (n: number): (self: string) => string
   (self: string, n: number): string
-} = dual(2, (self: string, n: number): string => self.slice(0, Math.max(n, 0)))
+} = dual(2, (self: string, n: number): string => self.slice(0, Count.normalize(n)))
 
 /**
  * Keeps the specified number of characters from the end of a string.
@@ -904,7 +910,8 @@ export const takeLeft: {
  * If `n` is larger than the available number of characters, the string will
  * be returned whole.
  *
- * If `n` is not a positive number, an empty string will be returned.
+ * If `n` is not a positive number, including `NaN`, an empty string will be
+ * returned.
  *
  * If `n` is a float, it will be rounded down to the nearest integer.
  *
@@ -924,7 +931,7 @@ export const takeRight: {
   (self: string, n: number): string
 } = dual(
   2,
-  (self: string, n: number): string => self.slice(Math.max(0, self.length - Math.floor(n)), Infinity)
+  (self: string, n: number): string => self.slice(self.length - Math.min(Count.normalize(n), self.length), Infinity)
 )
 
 const CR = 0x0d

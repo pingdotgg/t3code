@@ -1,14 +1,15 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { Node, Project, type SourceFile } from "ts-morph";
+import * as ts from "typescript-api/unstable/ast";
+import type { Node, SourceFile } from "typescript-api/unstable/ast";
+import { createSyntaxProject } from "./typescript-source.ts";
 
 const websiteRoot = path.join(import.meta.dir, "../website");
 
 interface SourceRoot {
   /** Directory scanned for documented source files. */
   srcRoot: string;
-  tsConfig: string;
   /**
    * Synthetic provider name for flat single-provider packages (their files
    * sit directly at `srcRoot`); empty for the alchemy package, whose
@@ -24,16 +25,11 @@ const config = {
   roots: [
     {
       srcRoot: path.join(import.meta.dir, "../packages/alchemy/src"),
-      tsConfig: path.join(import.meta.dir, "../packages/alchemy/tsconfig.json"),
       providerPrefix: "",
       sourceDisplayPrefix: "src",
     },
     {
       srcRoot: path.join(import.meta.dir, "../packages/better-auth/src"),
-      tsConfig: path.join(
-        import.meta.dir,
-        "../packages/better-auth/tsconfig.json",
-      ),
       providerPrefix: "BetterAuth",
       sourceDisplayPrefix: "packages/better-auth/src",
     },
@@ -134,13 +130,7 @@ async function discoverFiles(root: SourceRoot): Promise<FileEntry[]> {
 }
 
 function getJsDocText(node: Node): string {
-  const getter = (node as Node & { getJsDocs?: () => { getText(): string }[] })
-    .getJsDocs;
-  if (!getter) return "";
-  return getter
-    .call(node)
-    .map((doc) => doc.getText())
-    .join("\n");
+  return node.jsDoc?.map((doc) => doc.getText()).join("\n") ?? "";
 }
 
 function cleanDocComment(raw: string): string {
@@ -343,15 +333,15 @@ function parseJSDoc(node: Node): ParsedJSDoc {
 }
 
 function declName(node: Node): string {
-  if (Node.isVariableStatement(node)) {
-    return node.getDeclarations()[0]?.getName() ?? "";
+  if (ts.isVariableStatement(node)) {
+    return node.declarationList.declarations[0]?.name.getText() ?? "";
   }
   if (
-    Node.isClassDeclaration(node) ||
-    Node.isInterfaceDeclaration(node) ||
-    Node.isTypeAliasDeclaration(node)
+    ts.isClassDeclaration(node) ||
+    ts.isInterfaceDeclaration(node) ||
+    ts.isTypeAliasDeclaration(node)
   ) {
-    return node.getName() ?? "";
+    return node.name?.getText() ?? "";
   }
   return "";
 }
@@ -372,15 +362,72 @@ const hasContent = (doc: ParsedJSDoc) =>
  * lets us find the documented `VpcLinkResource` const from the tagged
  * `VpcLink` interface.
  */
+export function exportedNames(sourceFile: SourceFile): string[] {
+  const names = new Set<string>();
+  const addBinding = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) names.add(name.text);
+    else
+      for (const element of name.elements) {
+        if (ts.isBindingElement(element) && element.name)
+          addBinding(element.name);
+      }
+  };
+  for (const statement of sourceFile.statements) {
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+        for (const spec of statement.exportClause.elements)
+          names.add(spec.name.text);
+      } else if (
+        statement.exportClause &&
+        ts.isNamespaceExport(statement.exportClause)
+      ) {
+        names.add(statement.exportClause.name.text);
+      }
+    } else if (ts.isExportAssignment(statement)) {
+      if (!statement.isExportEquals) names.add("default");
+    } else if (
+      (ts.isVariableStatement(statement) ||
+        ts.isClassDeclaration(statement) ||
+        ts.isFunctionDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement) ||
+        ts.isImportEqualsDeclaration(statement)) &&
+      statement.modifierFlags & ts.ModifierFlags.Export
+    ) {
+      if (statement.modifierFlags & ts.ModifierFlags.Default)
+        names.add("default");
+      else if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations)
+          addBinding(declaration.name);
+      } else if (
+        ts.isClassDeclaration(statement) ||
+        ts.isFunctionDeclaration(statement) ||
+        ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement) ||
+        ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement) ||
+        ts.isImportEqualsDeclaration(statement)
+      ) {
+        if (statement.name) names.add(statement.name.text);
+      }
+    }
+  }
+  return [...names];
+}
+
 function localNameForExport(
   sourceFile: SourceFile,
   publicName: string,
 ): string | undefined {
-  for (const ed of sourceFile.getExportDeclarations()) {
-    if (ed.getModuleSpecifier()) continue;
-    for (const spec of ed.getNamedExports()) {
-      if (spec.getAliasNode()?.getText() === publicName) {
-        return spec.getNameNode().getText();
+  for (const ed of sourceFile.statements.filter(ts.isExportDeclaration)) {
+    if (ed.moduleSpecifier) continue;
+    for (const spec of ed.exportClause && ts.isNamedExports(ed.exportClause)
+      ? ed.exportClause.elements
+      : []) {
+      if (spec.name.text === publicName) {
+        return (spec.propertyName ?? spec.name).text;
       }
     }
   }
@@ -396,11 +443,17 @@ function localNameForExport(
  * When the tagged declaration itself has no content, pull it from that related
  * declaration so the page isn't dropped as empty.
  */
-function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
+export function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
   const candidates: Node[] = [
-    ...sourceFile.getVariableStatements().filter((s) => s.isExported()),
-    ...sourceFile.getClasses().filter((c) => c.isExported()),
-    ...sourceFile.getInterfaces().filter((i) => i.isExported()),
+    ...sourceFile.statements
+      .filter(ts.isVariableStatement)
+      .filter((s) => Boolean(s.modifierFlags & ts.ModifierFlags.Export)),
+    ...sourceFile.statements
+      .filter(ts.isClassDeclaration)
+      .filter((c) => Boolean(c.modifierFlags & ts.ModifierFlags.Export)),
+    ...sourceFile.statements
+      .filter(ts.isInterfaceDeclaration)
+      .filter((i) => Boolean(i.modifierFlags & ts.ModifierFlags.Export)),
   ];
 
   for (const node of candidates) {
@@ -418,10 +471,10 @@ function findTaggedPrimary(sourceFile: SourceFile): Primary | undefined {
     // carries the docs (same name, or re-exported under this name).
     const localName = localNameForExport(sourceFile, name);
     const related: Node[] = [
-      ...sourceFile.getVariableStatements(),
-      ...sourceFile.getClasses(),
-      ...sourceFile.getInterfaces(),
-      ...sourceFile.getTypeAliases(),
+      ...sourceFile.statements.filter(ts.isVariableStatement),
+      ...sourceFile.statements.filter(ts.isClassDeclaration),
+      ...sourceFile.statements.filter(ts.isInterfaceDeclaration),
+      ...sourceFile.statements.filter(ts.isTypeAliasDeclaration),
     ].filter((d) => {
       if (d === node) return false;
       const dn = declName(d);
@@ -679,6 +732,19 @@ function renderPage(doc: PageDoc, resolve: LinkResolver): string {
     "---",
     `title: ${yamlString(doc.title)}`,
     `description: ${yamlString(description)}`,
+    // Generated reference pages are ~4k near-identical one-paragraph +
+    // one-snippet stubs (92% of the site). Indexed as separate documents
+    // they read as programmatic thin content, dilute crawl budget, and are
+    // what surfaces as "random" search results instead of the hub and
+    // guide pages. Keep them navigable and crawlable (`follow`) but out of
+    // search indexes; the sitemap integration drops any page carrying this
+    // meta. Revisit once pages are consolidated per service / carry real
+    // prose — this is the only line to change.
+    "head:",
+    "  - tag: meta",
+    "    attrs:",
+    "      name: robots",
+    '      content: "noindex, follow"',
     "---",
   ].join("\n");
 
@@ -903,17 +969,16 @@ async function main() {
       )}.`,
     );
 
-    const project = new Project({
-      tsConfigFilePath: root.tsConfig,
-      skipFileDependencyResolution: true,
-    });
+    await using syntax = await createSyntaxProject(
+      entries.map((entry) => entry.absolutePath),
+    );
 
     for (const entry of entries) {
-      const sourceFile = project.getSourceFile(entry.absolutePath);
+      const sourceFile = await syntax.project.program.getSourceFile(
+        entry.absolutePath,
+      );
       if (!sourceFile) {
-        console.warn(`  skipped (not in project): ${entry.relativePath}`);
-        skipped++;
-        continue;
+        throw new Error(`Missing source file ${entry.absolutePath}`);
       }
 
       const primary = findTaggedPrimary(sourceFile);
@@ -953,12 +1018,7 @@ async function main() {
       };
       pending.push({ outputRelative, doc });
 
-      let exportNames: string[] = [];
-      try {
-        exportNames = [...sourceFile.getExportedDeclarations().keys()];
-      } catch {
-        // Unresolvable re-exports — page-name resolution still applies.
-      }
+      const exportNames = exportedNames(sourceFile);
 
       const segments = normalizeSlashes(outputRelative).split("/");
       pageEntries.push({
@@ -1050,4 +1110,4 @@ async function main() {
   );
 }
 
-await main();
+if (import.meta.main) await main();

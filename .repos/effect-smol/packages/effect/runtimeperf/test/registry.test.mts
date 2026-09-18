@@ -9,7 +9,29 @@ describe("runtimeperf registry", () => {
     const { fixtures } = loadRegistry()
     assert.equal(new Set(fixtures.map((fixture) => fixture.target)).size, fixtures.length)
     for (const fixture of fixtures) {
-      assert.ok(["effect", "valibot", "zod4"].includes(fixture.implementation))
+      assert.ok(["effect", "fast-check-v4", "valibot", "zod4"].includes(fixture.implementation))
+    }
+  })
+
+  it("pairs every Arbitrary scenario across the native and fast-check implementations", () => {
+    const { fixtures } = loadRegistry()
+    const scenarios = Map.groupBy(
+      fixtures.filter((fixture) => fixture.suite === "arbitrary"),
+      (fixture) => fixture.scenario
+    )
+    assert.equal(scenarios.size, 31)
+    for (const fixtures of scenarios.values()) {
+      assert.deepEqual(fixtures.map((fixture) => fixture.implementation).sort(), ["effect", "fast-check-v4"])
+      const metadata = (fixture) => ({
+        export: fixture.export,
+        family: fixture.family,
+        operation: fixture.operation,
+        path: fixture.path,
+        scenario: fixture.scenario,
+        size: fixture.size,
+        tier: fixture.tier
+      })
+      assert.deepEqual(metadata(fixtures[0]), metadata(fixtures[1]))
     }
   })
 

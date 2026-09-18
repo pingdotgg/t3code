@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import {
+  ByteSize,
   Config,
   ConfigProvider,
   Duration,
@@ -42,7 +43,7 @@ describe("Config", () => {
     assert.isFalse(sourceError instanceof ConfigProvider.SourceError)
 
     const provider = ConfigProvider.make(() => Effect.die(sourceError))
-    const error = await Config.string("value").parse(provider).pipe(
+    const error = await Config.String("value").parse(provider).pipe(
       Effect.flip,
       Effect.runPromise
     )
@@ -79,9 +80,9 @@ describe("Config", () => {
 
     it("string decodes present input and reports absence", async () => {
       const provider = ConfigProvider.fromUnknown({ a: "value" })
-      await assertSuccess(Config.string("a"), provider, "value")
+      await assertSuccess(Config.String("a"), provider, "value")
       await assertFailure(
-        Config.string("b"),
+        Config.String("b"),
         provider,
         `Expected string
   at ["b"]`
@@ -90,9 +91,9 @@ describe("Config", () => {
 
     it("nonEmptyString rejects preserved empty input", async () => {
       const provider = ConfigProvider.fromUnknown({ a: "value", b: "" }, { preserveEmptyStrings: true })
-      await assertSuccess(Config.nonEmptyString("a"), provider, "value")
+      await assertSuccess(Config.NonEmptyString("a"), provider, "value")
       await assertFailure(
-        Config.nonEmptyString("b"),
+        Config.NonEmptyString("b"),
         provider,
         `Expected a value with a length of at least 1
   at ["b"]`
@@ -101,10 +102,10 @@ describe("Config", () => {
 
     it("number accepts finite and non-finite numbers", async () => {
       const provider = ConfigProvider.fromUnknown({ a: "1", c: "c", d: "Infinity" })
-      await assertSuccess(Config.number("a"), provider, 1)
-      await assertSuccess(Config.number("d"), provider, Infinity)
+      await assertSuccess(Config.Number("a"), provider, 1)
+      await assertSuccess(Config.Number("d"), provider, Infinity)
       await assertFailure(
-        Config.number("b"),
+        Config.Number("b"),
         provider,
         `Expected string | "Infinity" | "-Infinity" | "NaN"
   at ["b"]`
@@ -113,15 +114,15 @@ describe("Config", () => {
 
     it("finite rejects invalid and non-finite numbers", async () => {
       const provider = ConfigProvider.fromUnknown({ a: "1", b: "a", c: "Infinity" })
-      await assertSuccess(Config.finite("a"), provider, 1)
+      await assertSuccess(Config.Finite("a"), provider, 1)
       await assertFailure(
-        Config.finite("b"),
+        Config.Finite("b"),
         provider,
         `Expected a string representing a finite number
   at ["b"]`
       )
       await assertFailure(
-        Config.finite("c"),
+        Config.Finite("c"),
         provider,
         `Expected a string representing a finite number
   at ["c"]`
@@ -130,9 +131,9 @@ describe("Config", () => {
 
     it("int rejects non-integer numbers", async () => {
       const provider = ConfigProvider.fromUnknown({ a: "1", b: "1.2" })
-      await assertSuccess(Config.int("a"), provider, 1)
+      await assertSuccess(Config.Int("a"), provider, 1)
       await assertFailure(
-        Config.int("b"),
+        Config.Int("b"),
         provider,
         `Expected an integer
   at ["b"]`
@@ -141,9 +142,9 @@ describe("Config", () => {
 
     it("literal accepts only the configured value", async () => {
       const provider = ConfigProvider.fromUnknown({ a: "L" })
-      await assertSuccess(Config.literal("L", "a"), provider, "L")
+      await assertSuccess(Config.Literal("L", "a"), provider, "L")
       await assertFailure(
-        Config.literal("-", "a"),
+        Config.Literal("-", "a"),
         provider,
         `Expected "-"
   at ["a"]`
@@ -152,9 +153,9 @@ describe("Config", () => {
 
     it("literals accepts configured string alternatives", async () => {
       const provider = ConfigProvider.fromUnknown({ a: "production", b: "staging" })
-      await assertSuccess(Config.literals(["development", "production"], "a"), provider, "production")
+      await assertSuccess(Config.Literals(["development", "production"], "a"), provider, "production")
       await assertFailure(
-        Config.literals(["development", "production"], "b"),
+        Config.Literals(["development", "production"], "b"),
         provider,
         `Expected "development" | "production"
   at ["b"]`
@@ -163,9 +164,9 @@ describe("Config", () => {
 
     it("literals accepts configured number alternatives", async () => {
       const provider = ConfigProvider.fromUnknown({ a: "1", b: "3" })
-      await assertSuccess(Config.literals([1, 2], "a"), provider, 1)
+      await assertSuccess(Config.Literals([1, 2], "a"), provider, 1)
       await assertFailure(
-        Config.literals([1, 2], "b"),
+        Config.Literals([1, 2], "b"),
         provider,
         `Expected "1" | "2"
   at ["b"]`
@@ -174,9 +175,9 @@ describe("Config", () => {
 
     it("date rejects invalid dates", async () => {
       const provider = ConfigProvider.fromUnknown({ a: "2021-01-01", b: "invalid" })
-      await assertSuccess(Config.date("a"), provider, new Date("2021-01-01"))
+      await assertSuccess(Config.Date("a"), provider, new Date("2021-01-01"))
       await assertFailure(
-        Config.date("b"),
+        Config.Date("b"),
         provider,
         `Expected a valid Date
   at ["b"]`
@@ -188,9 +189,9 @@ describe("Config", () => {
         a: "value"
       })
 
-      await assertSuccess(Config.redacted("a"), provider, Redacted.make("value"))
+      await assertSuccess(Config.Redacted("a"), provider, Redacted.make("value"))
       await assertFailure(
-        Config.redacted("failure"),
+        Config.Redacted("failure"),
         provider,
         `Expected string
   at ["failure"]`
@@ -202,9 +203,9 @@ describe("Config", () => {
         a: "https://example.com"
       })
 
-      await assertSuccess(Config.url("a"), provider, new URL("https://example.com"))
+      await assertSuccess(Config.URL("a"), provider, new URL("https://example.com"))
       await assertFailure(
-        Config.url("failure"),
+        Config.URL("failure"),
         provider,
         `Expected string
   at ["failure"]`
@@ -240,19 +241,19 @@ describe("Config", () => {
           : Effect.succeed(s.toUpperCase())
 
       await assertSuccess(
-        Config.mapOrFail(config, f),
+        Config.mapEffect(config, f),
         ConfigProvider.fromUnknown("value"),
         "VALUE"
       )
       await assertFailure(
-        Config.mapOrFail(config, f),
+        Config.mapEffect(config, f),
         ConfigProvider.fromUnknown("", { preserveEmptyStrings: true }),
         `empty`
       )
     })
 
     it("orElse evaluates the fallback after absence", async () => {
-      const config = Config.orElse(Config.string("a"), () => Config.finite("b"))
+      const config = Config.orElse(Config.String("a"), () => Config.Finite("b"))
 
       await assertSuccess(
         config,
@@ -279,7 +280,7 @@ describe("Config", () => {
           })
         ).parse(provider)
         const mappedOrFailed = Config.succeed(1).pipe(
-          Config.mapOrFail((value) => {
+          Config.mapEffect((value) => {
             mapOrFailCalls++
             return Effect.succeed(value + 1)
           })
@@ -308,7 +309,7 @@ describe("Config", () => {
 
     describe("all", () => {
       it("combines tuple inputs and preserves positions", async () => {
-        const config = Config.all([Config.nonEmptyString("a"), Config.finite("b")])
+        const config = Config.all([Config.NonEmptyString("a"), Config.Finite("b")])
 
         await assertSuccess(config, ConfigProvider.fromUnknown({ a: "a", b: "1" }), ["a", 1])
         await assertFailure(
@@ -326,7 +327,7 @@ describe("Config", () => {
       })
 
       it("combines generic iterables in iteration order", async () => {
-        const config = Config.all(new Set([Config.nonEmptyString("a"), Config.finite("b")]))
+        const config = Config.all(new Set([Config.NonEmptyString("a"), Config.Finite("b")]))
 
         await assertSuccess(config, ConfigProvider.fromUnknown({ a: "a", b: "1" }), ["a", 1])
         await assertFailure(
@@ -344,7 +345,7 @@ describe("Config", () => {
       })
 
       it("combines named fields and preserves their keys", async () => {
-        const config = Config.all({ a: Config.nonEmptyString("b"), c: Config.finite("d") })
+        const config = Config.all({ a: Config.NonEmptyString("b"), c: Config.Finite("d") })
 
         await assertSuccess(config, ConfigProvider.fromUnknown({ b: "b", d: "1" }), { a: "b", c: 1 })
         await assertFailure(
@@ -365,7 +366,7 @@ describe("Config", () => {
     describe("withDefault", () => {
       it("uses the parsed value when present and the default when absent", async () => {
         const defaultValue = 0
-        const config = Config.finite("a").pipe(Config.withDefault(defaultValue))
+        const config = Config.Finite("a").pipe(Config.withDefault(defaultValue))
 
         await assertSuccess(config, ConfigProvider.fromUnknown({ a: "1" }), 1)
         await assertSuccess(config, ConfigProvider.fromUnknown({}), defaultValue)
@@ -379,14 +380,14 @@ describe("Config", () => {
 
       it("supports redacted default values", async () => {
         const defaultValue = Redacted.make("default")
-        const config = Config.redacted("a").pipe(Config.withDefault(defaultValue))
+        const config = Config.Redacted("a").pipe(Config.withDefault(defaultValue))
 
         await assertSuccess(config, ConfigProvider.fromUnknown({ a: "value" }), Redacted.make("value"))
         await assertSuccess(config, ConfigProvider.fromUnknown({}), defaultValue)
       })
 
       it("treats ignored empty env strings as absent", async () => {
-        const config = Config.string("a").pipe(Config.withDefault("default"))
+        const config = Config.String("a").pipe(Config.withDefault("default"))
 
         await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" } }), "default")
         await assertSuccess(
@@ -397,7 +398,7 @@ describe("Config", () => {
       })
 
       it("validates empty env numbers when they are preserved", async () => {
-        const config = Config.number("a").pipe(Config.withDefault(0))
+        const config = Config.Number("a").pipe(Config.withDefault(0))
 
         await assertSuccess(config, ConfigProvider.fromEnv({ env: { a: "" } }), 0)
         await assertFailure(
@@ -412,7 +413,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
 
       it("defaults wholly absent products and rejects partial products", async () => {
         const defaultValue = { a: "a", c: 0 }
-        const config = Config.all({ a: Config.nonEmptyString("b"), c: Config.finite("d") }).pipe(
+        const config = Config.all({ a: Config.NonEmptyString("b"), c: Config.Finite("d") }).pipe(
           Config.withDefault(defaultValue)
         )
 
@@ -440,7 +441,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
       })
 
       it("does not recover from invalid union input", async () => {
-        const config = Config.logLevel("LOG_LEVEL").pipe(Config.withDefault("Info"))
+        const config = Config.LogLevel("LOG_LEVEL").pipe(Config.withDefault("Info"))
 
         await assertSuccess(config, ConfigProvider.fromUnknown({}), "Info")
         await assertFailure(
@@ -562,8 +563,8 @@ Expected "Infinity" | "-Infinity" | "NaN"
 
     describe("option", () => {
       it("wraps present values and maps absence to None", async () => {
-        const config = Config.finite("a").pipe(Config.option)
-        const stringConfig = Config.string("a").pipe(Config.option)
+        const config = Config.Finite("a").pipe(Config.option)
+        const stringConfig = Config.String("a").pipe(Config.option)
 
         await assertSuccess(config, ConfigProvider.fromUnknown({ a: "1" }), Option.some(1))
         await assertSuccess(config, ConfigProvider.fromUnknown({}), Option.none())
@@ -582,7 +583,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
       })
 
       it("returns None for absent products and rejects partial products", async () => {
-        const config = Config.all({ a: Config.nonEmptyString("b"), c: Config.finite("d") }).pipe(
+        const config = Config.all({ a: Config.NonEmptyString("b"), c: Config.Finite("d") }).pipe(
           Config.option
         )
 
@@ -636,8 +637,8 @@ Expected "Infinity" | "-Infinity" | "NaN"
           })
         ).pipe(Config.nested("database"))
         const allConfig = Config.all({
-          host: Config.string("host"),
-          port: Config.finite("port")
+          host: Config.String("host"),
+          port: Config.Finite("port")
         }).pipe(Config.nested("database"))
 
         it("default wholly absent nested configurations", async () => {
@@ -688,7 +689,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
           Effect.gen(function*() {
             const config = Config.all({
               optional: Config.schema(Schema.UndefinedOr(Schema.String), "optional"),
-              required: Config.string("required")
+              required: Config.String("required")
             })
             const fallback = { optional: "fallback", required: "fallback" }
             const provider = ConfigProvider.fromUnknown({})
@@ -723,12 +724,12 @@ Expected "Infinity" | "-Infinity" | "NaN"
           ]
           const allConfigs = [
             Config.all({
-              missing: Config.string("missing"),
-              invalid: Config.finite("invalid")
+              missing: Config.String("missing"),
+              invalid: Config.Finite("invalid")
             }),
             Config.all({
-              invalid: Config.finite("invalid"),
-              missing: Config.string("missing")
+              invalid: Config.Finite("invalid"),
+              missing: Config.String("missing")
             })
           ]
 
@@ -746,8 +747,8 @@ Expected "Infinity" | "-Infinity" | "NaN"
         Effect.gen(function*() {
           const fallback = { required: "fallback", defaulted: 0 }
           const config = Config.all({
-            required: Config.string("required"),
-            defaulted: Config.int("defaulted").pipe(Config.withDefault(1))
+            required: Config.String("required"),
+            defaulted: Config.Int("defaulted").pipe(Config.withDefault(1))
           }).pipe(Config.withDefault(fallback))
 
           assert.deepStrictEqual(
@@ -771,8 +772,8 @@ Expected "Infinity" | "-Infinity" | "NaN"
       it.effect("preserves provider input evidence recovered by orElse", () =>
         Effect.gen(function*() {
           const config = Config.all({
-            recovered: Config.int("recovered").pipe(Config.orElse(() => Config.succeed(1))),
-            required: Config.string("required")
+            recovered: Config.Int("recovered").pipe(Config.orElse(() => Config.succeed(1))),
+            required: Config.String("required")
           }).pipe(Config.withDefault({ recovered: 0, required: "default" }))
           const error = yield* config.parse(
             ConfigProvider.fromUnknown({ recovered: "invalid" })
@@ -789,8 +790,8 @@ Expected "Infinity" | "-Infinity" | "NaN"
         Effect.gen(function*() {
           const fallback = { recovered: 0, required: "default" }
           const config = Config.all({
-            recovered: Config.int("recovered").pipe(Config.orElse(() => Config.succeed(1))),
-            required: Config.string("required")
+            recovered: Config.Int("recovered").pipe(Config.orElse(() => Config.succeed(1))),
+            required: Config.String("required")
           }).pipe(Config.withDefault(fallback))
 
           assert.deepStrictEqual(
@@ -801,8 +802,8 @@ Expected "Infinity" | "-Infinity" | "NaN"
 
       it.effect("does not turn recovered invalid input into absence", () =>
         Effect.gen(function*() {
-          const config = Config.int("primary").pipe(
-            Config.orElse(() => Config.string("fallback")),
+          const config = Config.Int("primary").pipe(
+            Config.orElse(() => Config.String("fallback")),
             Config.withDefault("default")
           )
           const error = yield* config.parse(
@@ -822,11 +823,11 @@ Expected "Infinity" | "-Infinity" | "NaN"
             new Schema.SchemaError(new SchemaIssue.Forbidden({ message: "invalid value" }))
           )
           const config = Config.all({
-            recovered: Config.string("recovered").pipe(
-              Config.mapOrFail(() => Effect.fail(validationError)),
+            recovered: Config.String("recovered").pipe(
+              Config.mapEffect(() => Effect.fail(validationError)),
               Config.orElse(() => Config.succeed("fallback"))
             ),
-            required: Config.string("required")
+            required: Config.String("required")
           }).pipe(Config.withDefault({ recovered: "default", required: "default" }))
           const error = yield* config.parse(
             ConfigProvider.fromUnknown({ recovered: "value" })
@@ -854,7 +855,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
             recovered: Config.schema(Schema.Struct({ value: Schema.String })).pipe(
               Config.orElse(() => Config.succeed({ value: "fallback" }))
             ),
-            required: Config.string("required")
+            required: Config.String("required")
           }).pipe(Config.withDefault({ recovered: { value: "default" }, required: "default" }))
           const error = yield* config.parse(provider).pipe(Effect.flip)
 
@@ -874,12 +875,12 @@ Expected "Infinity" | "-Infinity" | "NaN"
             return Effect.succeed(undefined)
           })
           const recovered = Config.all({
-            failed: Config.string("failed"),
-            present: Config.string("present")
+            failed: Config.String("failed"),
+            present: Config.String("present")
           }).pipe(Config.orElse(() => Config.succeed({ failed: "recovered", present: "recovered" })))
           const config = Config.all({
             recovered,
-            required: Config.string("required")
+            required: Config.String("required")
           }).pipe(Config.withDefault({
             recovered: { failed: "default", present: "default" },
             required: "default"
@@ -904,7 +905,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
             recovered: Config.schema(Schema.Struct({ value: Schema.String })).pipe(
               Config.orElse(() => Config.succeed({ value: "fallback" }))
             ),
-            required: Config.string("required")
+            required: Config.String("required")
           }).pipe(Config.withDefault(fallback))
 
           assert.deepStrictEqual(
@@ -922,7 +923,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
                 : undefined
             )
           )
-          const config = Config.string("value")
+          const config = Config.String("value")
 
           assert.strictEqual(
             yield* config.pipe(Config.withDefault("default")).parse(provider),
@@ -960,7 +961,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
         Effect.gen(function*() {
           const cause = new ConfigProvider.SourceError({ message: "source unavailable" })
           const provider = ConfigProvider.make(() => Effect.fail(cause))
-          const error = yield* Config.string("a").pipe(
+          const error = yield* Config.String("a").pipe(
             Config.withDefault("fallback"),
             (config) => config.parse(provider),
             Effect.flip
@@ -988,7 +989,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
     describe("nested", () => {
       describe("with fromUnknown", () => {
         it("prefixes a root config", async () => {
-          const config = Config.string().pipe(Config.nested("a"))
+          const config = Config.String().pipe(Config.nested("a"))
 
           await assertSuccess(
             config,
@@ -1004,7 +1005,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
         })
 
         it("composes a constructor path with a prefix", async () => {
-          const config = Config.string("a").pipe(Config.nested("b"))
+          const config = Config.String("a").pipe(Config.nested("b"))
 
           await assertSuccess(
             config,
@@ -1020,7 +1021,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
         })
 
         it("composes multiple prefixes from outermost to innermost", async () => {
-          const config = Config.string("a").pipe(Config.nested("b"), Config.nested("c"))
+          const config = Config.String("a").pipe(Config.nested("b"), Config.nested("c"))
 
           await assertSuccess(
             config,
@@ -1037,8 +1038,8 @@ Expected "Infinity" | "-Infinity" | "NaN"
 
         it("prefixes every child of an all product", async () => {
           const config = Config.all({
-            host: Config.string("host"),
-            port: Config.number("port")
+            host: Config.String("host"),
+            port: Config.Number("port")
           }).pipe(Config.nested("database"))
 
           await assertSuccess(
@@ -1057,7 +1058,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
 
       describe("with fromEnv", () => {
         it("prefixes a root config", async () => {
-          const config = Config.string().pipe(Config.nested("a"))
+          const config = Config.String().pipe(Config.nested("a"))
 
           await assertSuccess(
             config,
@@ -1073,7 +1074,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
         })
 
         it("composes a constructor path with a prefix", async () => {
-          const config = Config.string("a").pipe(Config.nested("b"))
+          const config = Config.String("a").pipe(Config.nested("b"))
 
           await assertSuccess(
             config,
@@ -1089,7 +1090,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
         })
 
         it("composes multiple prefixes from outermost to innermost", async () => {
-          const config = Config.string("a").pipe(Config.nested("b"), Config.nested("c"))
+          const config = Config.String("a").pipe(Config.nested("b"), Config.nested("c"))
 
           await assertSuccess(
             config,
@@ -1106,8 +1107,8 @@ Expected "Infinity" | "-Infinity" | "NaN"
 
         it("prefixes every child of an all product", async () => {
           const config = Config.all({
-            host: Config.string("host"),
-            port: Config.number("port")
+            host: Config.String("host"),
+            port: Config.Number("port")
           }).pipe(Config.nested("database"))
 
           await assertSuccess(
@@ -1124,7 +1125,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
         })
 
         it("composes Config and provider prefixes without leaking provider paths into errors", async () => {
-          const config = Config.string("host").pipe(Config.nested("database"))
+          const config = Config.String("host").pipe(Config.nested("database"))
           const provider = ConfigProvider.fromEnv({
             env: { app_database_host: "localhost" }
           }).pipe(ConfigProvider.nested("app"))
@@ -1145,7 +1146,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
           )
 
           await assertFailure(
-            Config.number("port"),
+            Config.Number("port"),
             provider,
             `Expected a string representing a finite number
   at ["port"]
@@ -1207,18 +1208,18 @@ Expected "Infinity" | "-Infinity" | "NaN"
           failure: "value"
         })
 
-        await assertSuccess(Config.boolean("a"), provider, true)
-        await assertSuccess(Config.boolean("b"), provider, false)
-        await assertSuccess(Config.boolean("c"), provider, true)
-        await assertSuccess(Config.boolean("d"), provider, false)
-        await assertSuccess(Config.boolean("e"), provider, true)
-        await assertSuccess(Config.boolean("f"), provider, false)
-        await assertSuccess(Config.boolean("g"), provider, true)
-        await assertSuccess(Config.boolean("h"), provider, false)
-        await assertSuccess(Config.boolean("i"), provider, true)
-        await assertSuccess(Config.boolean("j"), provider, false)
+        await assertSuccess(Config.Boolean("a"), provider, true)
+        await assertSuccess(Config.Boolean("b"), provider, false)
+        await assertSuccess(Config.Boolean("c"), provider, true)
+        await assertSuccess(Config.Boolean("d"), provider, false)
+        await assertSuccess(Config.Boolean("e"), provider, true)
+        await assertSuccess(Config.Boolean("f"), provider, false)
+        await assertSuccess(Config.Boolean("g"), provider, true)
+        await assertSuccess(Config.Boolean("h"), provider, false)
+        await assertSuccess(Config.Boolean("i"), provider, true)
+        await assertSuccess(Config.Boolean("j"), provider, false)
         await assertFailure(
-          Config.boolean("failure"),
+          Config.Boolean("failure"),
           provider,
           `Expected "true" | "yes" | "on" | "1" | "y" | "false" | "no" | "off" | "0" | "n"
   at ["failure"]`
@@ -1234,15 +1235,29 @@ Expected "Infinity" | "-Infinity" | "NaN"
           failure: "value"
         })
 
-        await assertSuccess(Config.duration("a"), provider, Duration.millis(1000))
-        await assertSuccess(Config.duration("b"), provider, Duration.seconds(1))
-        await assertSuccess(Config.duration("c"), provider, Duration.infinity)
-        await assertSuccess(Config.duration("d"), provider, Duration.negativeInfinity)
+        await assertSuccess(Config.Duration("a"), provider, Duration.millis(1000))
+        await assertSuccess(Config.Duration("b"), provider, Duration.seconds(1))
+        await assertSuccess(Config.Duration("c"), provider, Duration.infinity)
+        await assertSuccess(Config.Duration("d"), provider, Duration.negativeInfinity)
         await assertFailure(
-          Config.duration("failure"),
+          Config.Duration("failure"),
           provider,
           `Expected a valid Duration string
   at ["failure"]`
+        )
+      })
+
+      it("decodes exact byte sizes and reports invalid input", async () => {
+        const provider = ConfigProvider.fromUnknown({
+          huge: "9007199254740993 B",
+          invalid: "10 MBi"
+        })
+
+        await assertSuccess(Config.ByteSize("huge"), provider, ByteSize.bytes(9_007_199_254_740_993n))
+        await assertFailure(
+          Config.ByteSize("invalid"),
+          provider,
+          `Expected a valid ByteSize string\n  at ["invalid"]`
         )
       })
 
@@ -1252,9 +1267,9 @@ Expected "Infinity" | "-Infinity" | "NaN"
           failure: "-1"
         })
 
-        await assertSuccess(Config.port("a"), provider, 8080)
+        await assertSuccess(Config.Port("a"), provider, 8080)
         await assertFailure(
-          Config.port("failure"),
+          Config.Port("failure"),
           provider,
           `Expected a value between 1 and 65535
   at ["failure"]`
@@ -1268,15 +1283,15 @@ Expected "Infinity" | "-Infinity" | "NaN"
           failure_2: "value"
         })
 
-        await assertSuccess(Config.logLevel("a"), provider, "Info")
+        await assertSuccess(Config.LogLevel("a"), provider, "Info")
         await assertFailure(
-          Config.logLevel("failure_1"),
+          Config.LogLevel("failure_1"),
           provider,
           `Expected "All" | "Fatal" | "Error" | "Warn" | "Info" | "Debug" | "Trace" | "None"
   at ["failure_1"]`
         )
         await assertFailure(
-          Config.logLevel("failure_2"),
+          Config.LogLevel("failure_2"),
           provider,
           `Expected "All" | "Fatal" | "Error" | "Warn" | "Info" | "Debug" | "Trace" | "None"
   at ["failure_2"]`
@@ -1285,8 +1300,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
 
       describe("Record", () => {
         it("decodes object input", async () => {
-          const schema = Config.Record(Schema.String, Schema.String)
-          const config = Config.schema(schema, "OTEL_RESOURCE_ATTRIBUTES")
+          const config = Config.Record(Schema.String, Schema.String, "OTEL_RESOURCE_ATTRIBUTES")
 
           await assertSuccess(
             config,
@@ -1306,8 +1320,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
         })
 
         it("decodes separated string input", async () => {
-          const schema = Config.Record(Schema.String, Schema.String)
-          const config = Config.schema(schema, "OTEL_RESOURCE_ATTRIBUTES")
+          const config = Config.Record(Schema.String, Schema.String, "OTEL_RESOURCE_ATTRIBUTES")
 
           await assertSuccess(
             config,
@@ -1325,21 +1338,23 @@ Expected "Infinity" | "-Infinity" | "NaN"
         })
 
         it("supports custom separators", async () => {
-          const schema = Config.Record(Schema.String, Schema.String, { separator: "&", keyValueSeparator: "==" })
-          const config = Config.schema(schema, "OTEL_RESOURCE_ATTRIBUTES")
+          const options = { separator: "&", keyValueSeparator: "==" }
+          const input = "service.name==my-service&service.version==1.0.0&custom.attribute==value"
+          const expected = {
+            "service.name": "my-service",
+            "service.version": "1.0.0",
+            "custom.attribute": "value"
+          }
 
           await assertSuccess(
-            config,
-            ConfigProvider.fromEnv({
-              env: {
-                OTEL_RESOURCE_ATTRIBUTES: "service.name==my-service&service.version==1.0.0&custom.attribute==value"
-              }
-            }),
-            {
-              "service.name": "my-service",
-              "service.version": "1.0.0",
-              "custom.attribute": "value"
-            }
+            Config.Record(Schema.String, Schema.String, options),
+            ConfigProvider.fromUnknown(input),
+            expected
+          )
+          await assertSuccess(
+            Config.Record(Schema.String, Schema.String, "OTEL_RESOURCE_ATTRIBUTES", options),
+            ConfigProvider.fromUnknown({ OTEL_RESOURCE_ATTRIBUTES: input }),
+            expected
           )
         })
       })
@@ -1491,7 +1506,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
             )
           }))
 
-        it.effect("leaves separated record parsing to the explicit Config.Record schema", () =>
+        it.effect("leaves separated record parsing to the explicit Config.Record constructor", () =>
           Effect.gen(function*() {
             const provider = ConfigProvider.fromEnv({
               env: {
@@ -1500,7 +1515,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
             })
 
             assert.deepStrictEqual(
-              yield* Config.schema(Config.Record(Schema.String, Schema.Finite), "values").parse(provider),
+              yield* Config.Record(Schema.String, Schema.Finite, "values").parse(provider),
               { first: 1, second: 2 }
             )
           }))
@@ -1526,7 +1541,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
             )
           }))
 
-        it.effect("leaves scalar-to-array parsing to the explicit Config.Array schema", () =>
+        it.effect("leaves scalar-to-array parsing to the explicit Config.Array constructor", () =>
           Effect.gen(function*() {
             const provider = ConfigProvider.fromEnv({
               env: {
@@ -1536,12 +1551,26 @@ Expected "Infinity" | "-Infinity" | "NaN"
             })
 
             assert.deepStrictEqual(
-              yield* Config.schema(Config.Array(Schema.Finite), "values").parse(provider),
+              yield* Config.Array(Schema.Finite, "values").parse(provider),
               [1, 2]
             )
             assert.deepStrictEqual(
               yield* Config.schema(Schema.Array(Schema.Finite), "values").parse(provider),
               [3]
+            )
+          }))
+
+        it.effect("supports options with and without a path", () =>
+          Effect.gen(function*() {
+            assert.deepStrictEqual(
+              yield* Config.Array(Schema.Finite, { separator: ";" }).parse(ConfigProvider.fromUnknown("1;2")),
+              [1, 2]
+            )
+            assert.deepStrictEqual(
+              yield* Config.Array(Schema.Finite, "values", { separator: ";" }).parse(
+                ConfigProvider.fromUnknown({ values: "1;2" })
+              ),
+              [1, 2]
             )
           }))
       })
@@ -1672,7 +1701,7 @@ Expected "Infinity" | "-Infinity" | "NaN"
                 ]),
                 "value"
               ),
-              required: Config.string("required")
+              required: Config.String("required")
             }).pipe(
               Config.withDefault({
                 selected: undefined,

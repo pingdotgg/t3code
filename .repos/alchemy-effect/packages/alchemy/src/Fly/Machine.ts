@@ -27,6 +27,7 @@ import {
   observeReplicaSet,
   reconcileReplicas,
   resolveCount,
+  toFlyService,
   volumeIdsOf,
   type Replica,
   type ReplicaSet,
@@ -105,6 +106,37 @@ export interface MachinePort {
   endPort?: number;
 }
 
+/** A health check attached to a Fly service. */
+export interface MachineServiceCheck {
+  /** Check type. HTTP checks send a request; TCP checks open a connection. */
+  type: "http" | "tcp";
+  /** Port to check. Usually the service's {@link MachineService.internalPort}. */
+  port?: number;
+  /** Time between checks, such as `"15s"`. */
+  interval?: string;
+  /** Maximum time for a check, such as `"2s"`. */
+  timeout?: string;
+  /** Delay after the Machine starts before checks begin, such as `"30s"`. */
+  gracePeriod?: string;
+  /** HTTP method for an `http` check. */
+  method?: string;
+  /** Request path for an `http` check. */
+  path?: string;
+  /** Request protocol for an `http` check. */
+  protocol?: "http" | "https";
+  /** Headers sent by an `http` check. */
+  headers?: Array<{
+    /** Header name. */
+    name: string;
+    /** Header values. */
+    values: string[];
+  }>;
+  /** Hostname used to validate the certificate for an HTTPS check. */
+  tlsServerName?: string;
+  /** Skip certificate verification for an HTTPS check. */
+  tlsSkipVerify?: boolean;
+}
+
 export interface MachineService {
   /**
    * Proxy protocol (`tcp` or `udp`).
@@ -122,6 +154,8 @@ export interface MachineService {
   autostop?: "off" | "stop" | "suspend" | boolean;
   /** Minimum Machines to keep running for this service. */
   minMachinesRunning?: number;
+  /** Health checks for this service. */
+  checks?: MachineServiceCheck[];
 }
 
 export type MachineMount = DiskSpec;
@@ -404,6 +438,39 @@ export type Machine = Resource<
  *       ports: [
  *         { port: 80, handlers: ["http"], forceHttps: true },
  *         { port: 443, handlers: ["tls", "http"] },
+ *       ],
+ *     },
+ *   ],
+ * });
+ * ```
+ *
+ * ### Service health checks
+ * Add HTTP or TCP `checks` to a service. Fly uses their results to
+ * determine whether the service is ready to receive traffic.
+ *
+ * **Example:** HTTP readiness check
+ * ```typescript
+ * const web = yield* Fly.Machine("Web", {
+ *   app: Site,
+ *   region: "iad",
+ *   image: "nginx:alpine",
+ *   services: [
+ *     {
+ *       protocol: "tcp",
+ *       internalPort: 80,
+ *       ports: [{ port: 80, handlers: ["http"] }],
+ *       checks: [
+ *         {
+ *           type: "http",
+ *           port: 80,
+ *           method: "GET",
+ *           path: "/health",
+ *           protocol: "http",
+ *           interval: "15s",
+ *           timeout: "2s",
+ *           gracePeriod: "30s",
+ *           headers: [{ name: "X-Health-Check", values: ["alchemy"] }],
+ *         },
  *       ],
  *     },
  *   ],
@@ -694,26 +761,6 @@ const toFlyInit = (init: MachineInit): FlyMachineInit => ({
 const toFlyRestart = (restart: MachineRestart): FlyMachineRestart => ({
   policy: restart.policy,
   max_retries: restart.maxRetries,
-});
-
-const toFlyService = (service: MachineService): FlyMachineService => ({
-  protocol: service.protocol,
-  internal_port: service.internalPort,
-  autostart: service.autostart,
-  autostop:
-    typeof service.autostop === "boolean"
-      ? service.autostop
-        ? "stop"
-        : "off"
-      : service.autostop,
-  min_machines_running: service.minMachinesRunning,
-  ports: service.ports?.map((port) => ({
-    port: port.port,
-    handlers: port.handlers,
-    force_https: port.forceHttps,
-    start_port: port.startPort,
-    end_port: port.endPort,
-  })),
 });
 
 const desiredEnv = (

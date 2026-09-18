@@ -1,0 +1,5 @@
+# tcut recordings + renders (the .cast is the source of truth for re-renders,
+# but it is large and machine-specific — regenerate with `tcut demo.video.ts`)
+out/
+# credential file the recording writes for the on-camera `--env-file demo.env`
+demo.env

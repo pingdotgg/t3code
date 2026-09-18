@@ -16,7 +16,7 @@ export const OBJECT_VAR_VALUE = { host: "localhost", flags: { beta: true } };
 
 /**
  * Name of the deploy-time `process.env` variable the test populates
- * before deploying — sourced via `Config.string(...)` inside the
+ * before deploying — sourced via `Config.String(...)` inside the
  * worker's init phase.
  */
 
@@ -29,28 +29,28 @@ export default class SecretsTestWorker extends Cloudflare.Worker<SecretsTestWork
   Effect.gen(function* () {
     // Secret from a literal — `Alchemy.Secret` coerces the literal to
     // `Redacted` and the Worker provider deploys it as `secret_text`.
-    const literalSecret = yield* Config.redacted("LITERAL_SECRET").pipe(
+    const literalSecret = yield* Config.Redacted("LITERAL_SECRET").pipe(
       Config.withDefault(Redacted.make(LITERAL_SECRET_VALUE)),
     );
 
     // Secret from a `Config` — resolved against the active
     // `ConfigProvider` (process.env) at deploy time.
-    const configSecret = yield* Config.redacted("CONFIG_SECRET");
+    const configSecret = yield* Config.Redacted("CONFIG_SECRET");
 
     // Plain string variable — `plain_text` binding round-trip.
-    const stringVar = yield* Config.string("STRING_VAR").pipe(
+    const stringVar = yield* Config.String("STRING_VAR").pipe(
       Config.withDefault(STRING_VAR_VALUE),
     );
 
     // Number variable — non-string values JSON.stringify on `set` and
     // JSON.parse on the runtime accessor, so the accessor returns the
     // original number.
-    const numberVar = yield* Config.number("NUMBER_VAR").pipe(
+    const numberVar = yield* Config.Number("NUMBER_VAR").pipe(
       Config.withDefault(NUMBER_VAR_VALUE),
     );
 
     // Object variable — same JSON round-trip as above for nested data.
-    const objectVar = yield* Config.string("OBJECT_VAR").pipe(
+    const objectVar = yield* Config.String("OBJECT_VAR").pipe(
       Config.withDefault(OBJECT_VAR_VALUE),
     );
 

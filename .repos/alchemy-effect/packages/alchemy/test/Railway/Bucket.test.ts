@@ -5,6 +5,7 @@ import * as S3 from "@distilled.cloud/aws/s3";
 import * as railway from "@distilled.cloud/railway";
 import * as Provider from "@/Provider";
 import * as Railway from "@/Railway";
+import { projectBuckets } from "@/Railway/GraphQL.ts";
 import { suitePartition } from "./suiteProject.ts";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -25,9 +26,8 @@ const OBJECT_KEY = "alchemy-marker.txt";
 const OBJECT_BODY = "hello-from-railway";
 
 const listProjectBuckets = (projectId: string) =>
-  railway.project({ id: projectId }).pipe(
-    Effect.map((project) => project.buckets.edges.map((edge) => edge.node)),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.succeed([])),
+  projectBuckets(projectId, { id: true, name: true, projectId: true }).pipe(
+    railway.catchTags(["RailwayNotFound"], () => Effect.succeed([])),
   );
 
 const findBucket = (projectId: string, bucketId: string, name: string) =>
@@ -45,11 +45,20 @@ const firstCredentials = (
   projectId: string,
 ) =>
   railway
-    .bucketS3Credentials({
-      bucketId,
-      environmentId,
-      projectId,
-    })
+    .bucketS3Credentials(
+      {
+        bucketId,
+        environmentId,
+        projectId,
+      },
+      {
+        bucketName: true,
+        endpoint: true,
+        accessKeyId: true,
+        secretAccessKey: true,
+        region: true,
+      },
+    )
     .pipe(
       Effect.flatMap((items) => {
         const first = items[0];
@@ -68,7 +77,7 @@ const waitUntilBucketGone = (
   projectId: string,
   bucketId: string,
 ) =>
-  railway.environment({ id: environmentId, projectId }).pipe(
+  railway.environment({ id: environmentId, projectId }, { config: true }).pipe(
     Effect.map((env) => {
       const buckets =
         env.config !== null &&
@@ -85,13 +94,13 @@ const waitUntilBucketGone = (
         ? ("gone" as const)
         : ("found" as const);
     }),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    railway.catchTags(["RailwayNotFound"], () =>
       Effect.succeed("gone" as const),
     ),
     Effect.repeat({
       schedule: Schedule.spaced("2 seconds"),
       until: (status) => status === "gone",
-      times: 20,
+      times: 10,
     }),
   );
 
@@ -265,5 +274,5 @@ test.provider(
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );

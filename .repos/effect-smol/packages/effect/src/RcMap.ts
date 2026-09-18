@@ -274,7 +274,7 @@ export const make: {
         self.state = { _tag: "Closed" }
         return Effect.forEach(
           map,
-          ([, entry]) => Effect.exit(Scope.close(entry.scope, Exit.void))
+          ([, entry]) => Effect.exit(closeEntry(entry))
         ).pipe(
           Effect.tap(() =>
             Effect.sync(() => {
@@ -370,7 +370,7 @@ export const get: {
           context.set(key, value)
         })
         context.set(Scope.Scope.key, entry.scope)
-        self.lookup(key).pipe(
+        Effect.suspend(() => self.lookup(key)).pipe(
           Effect.runForkWith(Context.makeUnsafe(context)),
           Fiber.runIn(entry.scope)
         ).addObserver((exit) => Deferred.doneUnsafe(entry.deferred, exit))
@@ -449,20 +449,26 @@ export const getOption: {
     })
 )
 
+const closeEntry = <A, E>(entry: State.Entry<A, E>) =>
+  entry.fiber
+    ? Fiber.interrupt(entry.fiber).pipe(Effect.andThen(Scope.close(entry.scope, Exit.void)))
+    : Scope.close(entry.scope, Exit.void)
+
 const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>) =>
   Effect.withFiber((fiber) => {
     entry.refCount--
     if (entry.refCount > 0) {
       return Effect.void
-    } else if (
-      self.state._tag === "Closed"
-      || !MutableHashMap.has(self.state.map, key)
-      || Duration.isZero(entry.idleTimeToLive)
-    ) {
-      if (self.state._tag === "Open") {
-        MutableHashMap.remove(self.state.map, key)
-      }
-      return Scope.close(entry.scope, Exit.void)
+    } else if (self.state._tag === "Closed") {
+      return closeEntry(entry)
+    }
+
+    const o = MutableHashMap.get(self.state.map, key)
+    if (o._tag === "None" || o.value !== entry) {
+      return closeEntry(entry)
+    } else if (Duration.isZero(entry.idleTimeToLive)) {
+      MutableHashMap.remove(self.state.map, key)
+      return closeEntry(entry)
     } else if (!Duration.isFinite(entry.idleTimeToLive)) {
       return Effect.void
     }
@@ -476,6 +482,8 @@ const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>
       const remaining = entry.expiresAt - now
       if (remaining <= 0) {
         if (self.state._tag === "Closed" || entry.refCount > 0) return Effect.void
+        const o = MutableHashMap.get(self.state.map, key)
+        if (o._tag === "None" || o.value !== entry) return Effect.void
         MutableHashMap.remove(self.state.map, key)
         return restore(Scope.close(entry.scope, Exit.void))
       }
@@ -592,8 +600,7 @@ export const invalidate: {
     const entry = o.value
     MutableHashMap.remove(self.state.map, key)
     if (entry.refCount > 0) return
-    if (entry.fiber) yield* Fiber.interrupt(entry.fiber)
-    yield* Scope.close(entry.scope, Exit.void)
+    yield* closeEntry(entry)
   }, Effect.uninterruptible)
 )
 

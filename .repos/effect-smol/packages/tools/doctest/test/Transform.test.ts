@@ -7,21 +7,21 @@ describe("Transform", () => {
   it("transforms expression assertions", () => {
     assert.strictEqual(
       transform("Option.some(1) // => Option.some(1)", "example.ts", 10),
-      `__effect_doctest_assert_0(Option.some(1), Option.some(1))\n\n${imported}`
+      `__effect_doctest_assert_0(Option.some(1), Option.some(1));\n\n${imported}`
     )
   })
 
   it("transforms const declaration assertions without evaluating the initializer twice", () => {
     assert.strictEqual(
       transform("const result = makeValue() // => Option.some(1)\nuse(result)", "example.ts", 10),
-      `const result = makeValue()\n__effect_doctest_assert_0(result, Option.some(1))\nuse(result)\n\n${imported}`
+      `const result = makeValue()\n__effect_doctest_assert_0(result, Option.some(1));\nuse(result)\n\n${imported}`
     )
   })
 
   it("preserves indentation in nested blocks", () => {
     assert.strictEqual(
       transform("if (enabled) {\n  const result = makeValue() // => 1\n}", "example.ts", 10),
-      `if (enabled) {\n  const result = makeValue()\n  __effect_doctest_assert_0(result, 1)\n}\n\n${imported}`
+      `if (enabled) {\n  const result = makeValue()\n  __effect_doctest_assert_0(result, 1);\n}\n\n${imported}`
     )
   })
 

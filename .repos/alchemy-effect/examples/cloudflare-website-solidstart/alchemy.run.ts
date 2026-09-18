@@ -10,9 +10,6 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const worker = yield* Cloudflare.Website.Vite("CloudflareSolidStart", {
-      compatibility: {
-        flags: ["nodejs_compat"],
-      },
       env: {
         GREETING: "Hello from SolidStart on Cloudflare!",
       },

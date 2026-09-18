@@ -12,12 +12,13 @@
 import { dual } from "./Function.ts"
 import * as Hash from "./Hash.ts"
 import { PipeInspectableProto } from "./internal/core.ts"
+import * as Count from "./internal/count.ts"
 import * as Iterable from "./Iterable.ts"
 import type { Pipeable } from "./Pipeable.ts"
 import { hasProperty } from "./Predicate.ts"
 import * as PrimaryKey from "./PrimaryKey.ts"
 
-const TypeId = "~effect/cluster/HashRing" as const
+const TypeId = "~effect/HashRing" as const
 
 /**
  * A weighted consistent-hashing ring for assigning inputs to nodes with stable
@@ -312,6 +313,11 @@ export const get = <A extends PrimaryKey.PrimaryKey>(self: HashRing<A>, input: s
  * Use to precompute ownership for a fixed number of shard indexes across the
  * current ring members.
  *
+ * **Details**
+ *
+ * Finite fractional values of `count` are rounded down. `NaN` and non-positive
+ * values produce an empty shard distribution.
+ *
  * @category combinators
  * @since 3.19.0
  */
@@ -319,6 +325,7 @@ export const getShards = <A extends PrimaryKey.PrimaryKey>(self: HashRing<A>, co
   if (self.ring.length === 0) {
     return undefined
   }
+  count = Count.normalize(count)
 
   const shards = new Array<A>(count)
 
@@ -413,7 +420,7 @@ function getIndexForInput<A extends PrimaryKey.PrimaryKey>(
     return [a, distA]
   }
   const range = Math.max(lo, len - lo)
-  for (let i = 1; i < range; i++) {
+  for (let i = 1; i <= range; i++) {
     let index = lo - i
     if (index >= 0 && index < len && !exclude.has(ring[index][1])) {
       return [index, Math.abs(ring[index][0] - hash)]

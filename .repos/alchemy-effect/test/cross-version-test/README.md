@@ -20,7 +20,7 @@ Both assert, after every deploy, that the live worker serves the `marker` baked
 into the version just deployed — proving the running code was actually replaced
 in place. Each also exercises the **state-store upgrade** path: alchemy's
 Cloudflare state store is an account-wide, version-stamped singleton that
-`alchemy cloudflare bootstrap` migrates between versions.
+`alchemy provider cloudflare bootstrap` migrates between versions.
 
 **Fresh state store per scenario.** Each scenario ("unit" — the whole `upgrade`
 chain is one unit; each `jump` is its own unit) owns a brand-new state store:
@@ -124,12 +124,13 @@ after a `--keep` run or an aborted run):
 
 ```sh
 cd test/cross-version-test/test/05-current   # uses the current-branch CLI
-bun run alc -- cloudflare teardown --profile <profile>
+bun run alc -- provider cloudflare teardown --profile <profile>
 ```
 
-`cloudflare teardown` is the inverse of `cloudflare bootstrap` (added alongside
-this harness). It's idempotent and only removes resources alchemy created — a
-Secrets Store that still holds foreign secrets is left in place.
+`provider cloudflare teardown` is the inverse of
+`provider cloudflare bootstrap`. It's idempotent and only removes resources
+Alchemy created. It leaves a Secrets Store in place if it still contains
+foreign secrets.
 
 ## ⚠️ Use a dedicated Cloudflare account
 

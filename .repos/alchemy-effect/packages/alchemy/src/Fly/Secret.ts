@@ -77,14 +77,14 @@ const SecretResource = Resource<Secret>("Fly.Secret");
  * managed in one place by Fly.
  *
  * For a secret only this {@link Service} reads from `.env` at deploy
- * time, yield `Config.redacted` instead. Do not pass `env: { ... }` on
+ * time, yield `Config.Redacted` instead. Do not pass `env: { ... }` on
  * a Service.
  *
  * @see https://fly.io/docs/apps/secrets/
  *
- * ### Config.redacted on a Service
+ * ### Config.Redacted on a Service
  * Most secrets in a Service come from your `.env`. Yield
- * `Config.redacted` in init. Alchemy binds the value onto the Machine.
+ * `Config.Redacted` in init. Alchemy binds the value onto the Machine.
  *
  * **Example:** Bind from .env
  * ```typescript
@@ -95,7 +95,7 @@ const SecretResource = Resource<Secret>("Fly.Secret");
  *   "Api",
  *   { app: Site, main: import.meta.url, port: 3000 },
  *   Effect.gen(function* () {
- *     const apiKey = yield* Config.redacted("API_KEY");
+ *     const apiKey = yield* Config.Redacted("API_KEY");
  *
  *     return {
  *       fetch: Effect.gen(function* () {

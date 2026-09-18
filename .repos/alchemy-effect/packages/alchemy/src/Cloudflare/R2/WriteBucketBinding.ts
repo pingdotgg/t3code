@@ -82,18 +82,21 @@ export const makeWrite = ({
     ) =>
       use((raw) => {
         if (Stream.isStream(value)) {
+          // `contentLength` is ours; everything else (checksums, metadata,
+          // conditions) is R2's and must reach it on every path.
+          const { contentLength, ...r2Options } = options ?? {};
           const rawStream = getRawStream(value);
           if (rawStream) {
-            return raw.put(key, rawStream as any, options);
-          } else if (!options?.contentLength) {
+            return raw.put(key, rawStream as any, r2Options);
+          } else if (!contentLength) {
             throw new Error("Content length is required");
           }
-          // content length myst be known, so we pipe through fixed length stream
-          // TODO(sam): is it more efficient to just assign the contentLength as a property?
+          // R2 needs a known length, so the stream is piped through a fixed
+          // length stream.
           const readable = Stream.toReadableStream(value).pipeThrough(
-            new FixedLengthStream(options.contentLength),
+            new FixedLengthStream(contentLength),
           );
-          return raw.put(key, readable as any);
+          return raw.put(key, readable as any, r2Options);
         }
         return raw.put(key, value as any, options);
       }).pipe(Effect.map(wrapR2ObjectOrBody)) as any,

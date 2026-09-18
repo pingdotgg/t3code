@@ -1,3 +1,4 @@
+import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
@@ -27,6 +28,7 @@ export type ComputeAutoBuildFramework =
   | "astro"
   | "nestjs"
   | "tanstack-start"
+  | "vite"
   | "bun";
 
 export interface ComputeAutoBuildOptions {
@@ -40,7 +42,7 @@ export interface ComputeAutoBuildOptions {
   entrypoint?: string;
   /**
    * Framework to build. `auto` tries Next.js, Nuxt, Astro, TanStack Start,
-   * then Bun.
+   * Vite, then Bun.
    *
    * @default "auto"
    */
@@ -87,9 +89,67 @@ export interface ComputeBuildArtifact {
    */
   defaultPort?: number;
   /**
+   * Directory within the artifact that user-authored archive ignore patterns
+   * are relative to.
+   */
+  archiveIgnorePrefix?: string;
+  /**
+   * Artifact-relative files that must remain present after archiving.
+   */
+  requiredFiles?: readonly string[];
+  /**
    * Removes temporary build output.
    */
   cleanup: Effect.Effect<void, never, FileSystem.FileSystem>;
+}
+
+export interface ComputeStaticBuildOptions {
+  /**
+   * Application root.
+   */
+  appPath: string;
+  /**
+   * Optional shell command that creates the static output directory.
+   */
+  command?: string;
+  /**
+   * Working directory for the build command and static output.
+   *
+   * @default appPath
+   */
+  cwd?: string;
+  /**
+   * Static output directory, relative to `cwd`.
+   */
+  outdir: string;
+  /**
+   * HTML file served at the root and for SPA fallbacks.
+   *
+   * @default "index.html"
+   */
+  indexPage?: string;
+  /**
+   * Serve the index page when no static file matches the request.
+   *
+   * @default false
+   */
+  spa?: boolean;
+  /**
+   * Environment variables supplied to the build command.
+   */
+  env?: Record<string, string | Redacted.Redacted<string> | undefined>;
+  /**
+   * Maximum bytes retained from each build output stream.
+   *
+   * @default 1048576 (1 MiB)
+   */
+  outputLimitBytes?: number;
+  /**
+   * Maximum wall-clock time for the build command.
+   *
+   * @default 900 (15 minutes)
+   */
+  timeoutSeconds?: number;
 }
 
 interface BuildStrategy {
@@ -451,6 +511,28 @@ const strategies: readonly BuildStrategy[] = [
       }),
   },
   {
+    name: "vite",
+    canBuild: (appPath) => hasPackageDependency(appPath, ["vite"]),
+    execute: (options) =>
+      Effect.gen(function* () {
+        const command = yield* packageCliCommand(
+          options.appPath,
+          "vite",
+          ["build"],
+          "Could not find an installed Vite CLI. Install `vite` in the application or workspace before deploying.",
+        );
+        return yield* runComputeStaticBuild({
+          appPath: options.appPath,
+          command,
+          outdir: "dist",
+          spa: true,
+          env: options.env,
+          outputLimitBytes: options.outputLimitBytes,
+          timeoutSeconds: options.timeoutSeconds,
+        });
+      }),
+  },
+  {
     name: "bun",
     canBuild: () => Effect.succeed(true),
     execute: (options) => buildBun(options),
@@ -476,6 +558,177 @@ export const runComputeAutoBuild = Effect.fn(function* (
     new Error("No suitable Prisma Compute auto-build strategy found."),
   );
 });
+
+export const runComputeStaticBuild = Effect.fn(function* (
+  options: ComputeStaticBuildOptions,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const cwd = options.cwd ? path.resolve(options.cwd) : options.appPath;
+  const outdir = normalizeRelativePath(options.outdir);
+  if (outdir === undefined) {
+    return yield* Effect.fail(
+      new Error(
+        "Static site outdir must be a relative path without parent segments.",
+      ),
+    );
+  }
+  const indexPage = normalizeRelativePath(options.indexPage ?? "index.html");
+  if (indexPage === undefined || indexPage === ".") {
+    return yield* Effect.fail(
+      new Error(
+        "Static site indexPage must be a relative file path without parent segments.",
+      ),
+    );
+  }
+
+  if (options.command !== undefined) {
+    yield* runBuildCommand({
+      command: options.command,
+      cwd,
+      env: processBuildEnv(options.env),
+      outputLimitBytes: options.outputLimitBytes,
+      timeoutSeconds: options.timeoutSeconds,
+    });
+  }
+
+  const sourceDir = path.resolve(cwd, outdir);
+  if (!(yield* directoryExists(sourceDir))) {
+    return yield* Effect.fail(
+      new Error(
+        `Static site build did not produce an output directory at ${sourceDir}.`,
+      ),
+    );
+  }
+  const indexStat = yield* fs
+    .stat(path.join(sourceDir, indexPage))
+    .pipe(Effect.catch(() => Effect.succeed(undefined)));
+  if (indexStat?.type !== "File") {
+    return yield* Effect.fail(
+      new Error(
+        `Static site build did not produce ${indexPage} inside ${sourceDir}.`,
+      ),
+    );
+  }
+
+  const temp = yield* makeTempArtifactDir();
+  const budget = makeStagingBudget();
+  const build = Effect.gen(function* () {
+    return yield* withStagingDeadline(
+      Effect.gen(function* () {
+        const publicDir = path.join(temp.artifactDir, "public");
+        yield* copyDirectoryPreserveSymlinks(
+          sourceDir,
+          publicDir,
+          temp.artifactDir,
+          cwd,
+          budget,
+        );
+        const entrypoint = "server.mjs";
+        const serverPath = path.join(temp.artifactDir, entrypoint);
+        const source = staticSiteServerSource({
+          indexPage,
+          spa: options.spa ?? false,
+        });
+        yield* accountStagingEntry(
+          budget,
+          serverPath,
+          yield* Effect.sync(() => new TextEncoder().encode(source).byteLength),
+        );
+        yield* fs.writeFileString(serverPath, source);
+        return {
+          directory: temp.artifactDir,
+          entrypoint,
+          defaultPort: 8080,
+          archiveIgnorePrefix: "public",
+          requiredFiles: [`public/${indexPage}`],
+          cleanup: temp.cleanup,
+        };
+      }),
+      budget,
+    );
+  });
+
+  return yield* build.pipe(
+    Effect.catch((error) =>
+      temp.cleanup.pipe(Effect.andThen(Effect.fail(error))),
+    ),
+  );
+});
+
+const staticSiteServerSource = (options: { indexPage: string; spa: boolean }) =>
+  [
+    'const publicRoot = new URL("./public/", import.meta.url);',
+    `const indexPage = ${JSON.stringify(options.indexPage)};`,
+    `const spa = ${JSON.stringify(options.spa)};`,
+    "",
+    'const encodePath = (value) => value.split("/").map(encodeURIComponent).join("/");',
+    "",
+    "const responseForFile = async (fileUrl, method) => {",
+    "  const file = Bun.file(fileUrl);",
+    "  if (!(await file.exists())) return undefined;",
+    '  if (method !== "HEAD") return new Response(file);',
+    "  return new Response(null, {",
+    "    headers: {",
+    '      "content-length": String(file.size),',
+    '      "content-type": file.type || "application/octet-stream",',
+    "    },",
+    "  });",
+    "};",
+    "",
+    "const resolvePublicPath = (pathname) => {",
+    "  let decoded;",
+    "  try {",
+    "    decoded = decodeURIComponent(pathname);",
+    "  } catch {",
+    "    return undefined;",
+    "  }",
+    '  if (decoded.includes("\\0")) return undefined;',
+    "  const target = new URL(`.${encodePath(decoded)}`, publicRoot);",
+    "  return target.href.startsWith(publicRoot.href) ? target : undefined;",
+    "};",
+    "",
+    "const server = Bun.serve({",
+    '  hostname: "0.0.0.0",',
+    '  port: Number(process.env.PORT ?? "8080"),',
+    "  async fetch(request) {",
+    "    const method = request.method;",
+    '    if (method !== "GET" && method !== "HEAD") {',
+    '      return new Response("Method Not Allowed", {',
+    "        status: 405,",
+    '        headers: { allow: "GET, HEAD" },',
+    "      });",
+    "    }",
+    "",
+    "    const url = new URL(request.url);",
+    "    const pathname = url.pathname;",
+    "    const target = resolvePublicPath(pathname);",
+    '    if (target === undefined) return new Response("Bad Request", { status: 400 });',
+    "",
+    "    const exact = await responseForFile(target, method);",
+    "    if (exact) return exact;",
+    '    const directoryUrl = target.href.endsWith("/") ? target : new URL(`${target.href}/`);',
+    '    const directoryIndexPage = pathname === "/" ? indexPage : "index.html";',
+    "    const directoryIndex = await responseForFile(new URL(encodePath(directoryIndexPage), directoryUrl), method);",
+    "    if (directoryIndex) {",
+    '      if (!pathname.endsWith("/")) {',
+    '        const location = `${pathname.replace(/^\\/+/, "/")}/${url.search}`;',
+    "        return new Response(null, { status: 301, headers: { location } });",
+    "      }",
+    "      return directoryIndex;",
+    "    }",
+    "",
+    "    if (spa) {",
+    "      const fallback = await responseForFile(new URL(encodePath(indexPage), publicRoot), method);",
+    "      if (fallback) return fallback;",
+    "    }",
+    '    return new Response("Not Found", { status: 404 });',
+    "  },",
+    "});",
+    "",
+    "console.log(`Listening on ${server.url}`);",
+    "",
+  ].join("\n");
 
 const buildFramework = Effect.fn(function* (options: {
   appPath: string;
@@ -1351,8 +1604,8 @@ const accountStagingEntry = (
   return Effect.void;
 };
 
-const safeFileSize = (source: string, rawSize: FileSystem.Size) => {
-  const size = Number(rawSize);
+const safeFileSize = (source: string, rawSize: ByteSize.ByteSize) => {
+  const size = ByteSize.toNumberUnsafe(rawSize);
   return Number.isSafeInteger(size) && size >= 0
     ? Effect.succeed(size)
     : Effect.fail(

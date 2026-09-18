@@ -113,6 +113,11 @@ describe("Tuple", () => {
         (b) => `b: ${b}`
       ] as const
     )).type.toBe<[number, number, string]>()
+
+    const optionalTransform = undefined as ((n: number) => string) | undefined
+    expect(Tuple.evolve(tuple, [undefined, optionalTransform] as const)).type.toBe<
+      [string, number | string, boolean]
+    >()
   })
 
   describe("renameIndices", () => {

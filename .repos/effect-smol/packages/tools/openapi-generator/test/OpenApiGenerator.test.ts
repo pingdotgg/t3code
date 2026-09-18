@@ -1,7 +1,7 @@
 import * as OpenApiGenerator from "@effect/openapi-generator/OpenApiGenerator"
 import { assert, describe, it } from "@effect/vitest"
 import * as Effect from "effect/Effect"
-import type { OpenAPISpec } from "effect/unstable/httpapi/OpenApi"
+import type { OpenAPISpec, OpenAPISpecOperation } from "effect/unstable/httpapi/OpenApi"
 import { spawnSync } from "node:child_process"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
@@ -739,6 +739,35 @@ export const make = (
           )
       : (request) => Effect.flatMap(httpClient.execute(request), withOptionalResponse)
   }
+  const __encodePathParam = encodeURIComponent
+  const __makePathRequest = (
+    method: (url: string) => HttpClientRequest.HttpClientRequest,
+    parameters: ReadonlyArray<string>,
+    getPath: () => string,
+  ) => Effect.suspend(() => {
+    const fail = (description: string, cause?: unknown) => Effect.fail(
+      new HttpClientError.HttpClientError({
+        reason: new HttpClientError.InvalidUrlError({
+          request: method(""),
+          cause,
+          description,
+        }),
+      }),
+    )
+    if (parameters.some((value) => value === "" || /^(?:\\.|%2e){1,2}$/i.test(value))) {
+      return fail("Path parameters must be non-empty and cannot be dot segments")
+    }
+    let path: string
+    try {
+      path = getPath()
+    } catch (cause) {
+      return fail("Failed to encode path parameter", cause)
+    }
+    if (path.split("/").some((segment) => /^(?:\\.|%2e){1,2}$/i.test(segment))) {
+      return fail("Request paths cannot contain dot segments")
+    }
+    return Effect.succeed(method(path))
+  })
   const decodeSuccess =
     <Schema extends Schema.Constraint>(schema: Schema) =>
     (response: HttpClientResponse.HttpClientResponse) =>
@@ -752,11 +781,13 @@ export const make = (
       )
   return {
     httpClient,
-    "getUser": (id, options) => HttpClientRequest.get(\`/users/\${id}\`).pipe(
-    withResponse(options?.config)(HttpClientResponse.matchStatus({
+    "getUser": (id, options) => __makePathRequest(HttpClientRequest.get, [id], () => "/users/" + __encodePathParam(id) + "").pipe(
+    Effect.flatMap((request) => request.pipe(
+      withResponse(options?.config)(HttpClientResponse.matchStatus({
       "2xx": decodeSuccess(GetUser200),
       orElse: unexpectedStatus
     }))
+    ))
   )
   }
 }
@@ -896,7 +927,7 @@ export const TestClientError = <Tag extends string, E>(
         [
           `import * as Sse from "effect/unstable/encoding/Sse"`,
           `readonly "streamEventsSse": () => Stream.Stream<{ readonly event: string; readonly id: string | undefined; readonly data: typeof StreamEvents200Sse.Type }, HttpClientError.HttpClientError | SchemaError | Sse.Retry | Sse.SseError, typeof StreamEvents200Sse.DecodingServices>`,
-          `"streamEventsSse": () => HttpClientRequest.get(\`/events\`).pipe(`,
+          `"streamEventsSse": () => HttpClientRequest.get("/events").pipe(`,
           `sseRequest(StreamEvents200Sse)`,
           `schema: Schema.ConstraintDecoder<Type, DecodingServices>`
         ]
@@ -1040,8 +1071,8 @@ export const TestClientError = <Tag extends string, E>(
         `readonly "downloadArchive": <Config extends OperationConfig>(options: { readonly config?: Config | undefined } | undefined) => Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
         `readonly "downloadArchiveStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
         `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
-        `"downloadAvatar": (options) => HttpClientRequest.get(\`/avatar\`).pipe(
-    withResponse(options?.config)(HttpClientResponse.matchStatus({
+        `"downloadAvatar": (options) => HttpClientRequest.get("/avatar").pipe(
+      withResponse(options?.config)(HttpClientResponse.matchStatus({
       "2xx": decodeBinary`,
         `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
         `"400": decodeError("DownloadMixedContent400", DownloadMixedContent400)`,
@@ -1190,6 +1221,35 @@ export const make = (
           )
       : (request) => Effect.flatMap(httpClient.execute(request), withOptionalResponse)
   }
+  const __encodePathParam = encodeURIComponent
+  const __makePathRequest = (
+    method: (url: string) => HttpClientRequest.HttpClientRequest,
+    parameters: ReadonlyArray<string>,
+    getPath: () => string,
+  ) => Effect.suspend(() => {
+    const fail = (description: string, cause?: unknown) => Effect.fail(
+      new HttpClientError.HttpClientError({
+        reason: new HttpClientError.InvalidUrlError({
+          request: method(""),
+          cause,
+          description,
+        }),
+      }),
+    )
+    if (parameters.some((value) => value === "" || /^(?:\\.|%2e){1,2}$/i.test(value))) {
+      return fail("Path parameters must be non-empty and cannot be dot segments")
+    }
+    let path: string
+    try {
+      path = getPath()
+    } catch (cause) {
+      return fail("Failed to encode path parameter", cause)
+    }
+    if (path.split("/").some((segment) => /^(?:\\.|%2e){1,2}$/i.test(segment))) {
+      return fail("Request paths cannot contain dot segments")
+    }
+    return Effect.succeed(method(path))
+  })
   const decodeSuccess = <A>(response: HttpClientResponse.HttpClientResponse) =>
     response.json as Effect.Effect<A, HttpClientError.HttpClientError>
   const decodeVoid = (_response: HttpClientResponse.HttpClientResponse) =>
@@ -1226,8 +1286,10 @@ export const make = (
   }
   return {
     httpClient,
-    "getUser": (id, options) => HttpClientRequest.get(\`/users/\${id}\`).pipe(
-    onRequest(options?.config)(["2xx"])
+    "getUser": (id, options) => __makePathRequest(HttpClientRequest.get, [id], () => "/users/" + __encodePathParam(id) + "").pipe(
+    Effect.flatMap((request) => request.pipe(
+      onRequest(options?.config)(["2xx"])
+    ))
   )
   }
 }
@@ -1274,8 +1336,8 @@ export const TestClientError = <Tag extends string, E>(
         `onRequest(options?.config)([], {"404":"DownloadArchive404"}, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
         `readonly "downloadArchive": <Config extends OperationConfig>(options: { readonly config?: Config | undefined } | undefined) => Effect.Effect<WithOptionalResponse<Uint8Array, Config>`,
         `readonly "downloadAvatarStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
-        `"downloadAvatar": (options) => HttpClientRequest.get(\`/avatar\`).pipe(
-    onRequest(options?.config)([], undefined, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
+        `"downloadAvatar": (options) => HttpClientRequest.get("/avatar").pipe(
+      onRequest(options?.config)([], undefined, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
         `readonly "downloadCustomBinaryStream": () => Stream.Stream<Uint8Array, HttpClientError.HttpClientError>`,
         `import * as HttpClient from "effect/unstable/http/HttpClient"`,
         `onRequest(options?.config)([], {"400":"DownloadMixedContent400"}, {"binary":["2xx"],"voidSuccess":[],"voidError":[]})`,
@@ -2771,6 +2833,38 @@ export const __HttpApiMultipartFiles = Multipart.FilesSchema`,
   })
 
   describe("regression", () => {
+    it.effect("quotes static path text with and without parameters", () => {
+      const prefix = "/files/\"`\\\n/"
+      const suffix = "/content\"`"
+      const operation: OpenAPISpecOperation = {
+        operationId: "read",
+        parameters: [],
+        tags: ["Files"],
+        security: [],
+        responses: { "204": { description: "No content" } }
+      }
+      return assertRuntimeIncludes({
+        openapi: "3.1.0",
+        info: { title: "Quoted paths", version: "1.0.0" },
+        components: { schemas: {}, securitySchemes: {} },
+        security: [],
+        tags: [],
+        paths: {
+          [prefix + suffix]: { get: operation },
+          [prefix + "{id}" + suffix]: {
+            get: {
+              ...operation,
+              operationId: "readById",
+              parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }]
+            }
+          }
+        }
+      }, [
+        `HttpClientRequest.get(${JSON.stringify(prefix + suffix)})`,
+        `() => ${JSON.stringify(prefix)} + __encodePathParam(id) + ${JSON.stringify(suffix)}`
+      ])
+    })
+
     it.effect("emits compilable clients when schema examples are invalid", () =>
       assertGeneratedClientsCompile({
         openapi: "3.0.3",

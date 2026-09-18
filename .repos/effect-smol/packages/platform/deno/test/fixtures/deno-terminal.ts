@@ -20,8 +20,8 @@ const TerminalLayer = Layer.mergeAll(
 )
 
 const prompts = Effect.gen(function*() {
-  const first = yield* Prompt.run(Prompt.confirm({ message: "First" }))
-  const second = yield* Prompt.run(Prompt.confirm({ message: "Second" })).pipe(Effect.flip)
+  const first = yield* Prompt.run(Prompt.Confirm({ message: "First" }))
+  const second = yield* Prompt.run(Prompt.Confirm({ message: "Second" })).pipe(Effect.flip)
   return { first, second: second._tag }
 })
 

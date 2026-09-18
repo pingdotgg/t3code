@@ -56,7 +56,7 @@ const queryFailureReasonTag = (code: number) =>
     Effect.provide(Reactivity.layer)
   )
 
-describe("ClickhouseClient SqlError classification", () => {
+describe("ClickhouseClient SqlError classification", { concurrent: false }, () => {
   it.effect("maps representative native codes to reasons", () =>
     Effect.gen(function*() {
       const cases = [

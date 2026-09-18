@@ -187,6 +187,20 @@ describe("toEquivalence", () => {
     })
   })
 
+  it("Class", () => {
+    class A extends Schema.Class<A>("A")({
+      value: Schema.String
+    }) {}
+
+    const equivalence = Schema.toEquivalence(A)
+    const a = new A({ value: "a" })
+    const b = new A({ value: "a" })
+    ;(b as A & { metadata?: number }).metadata = 1
+
+    assertTrue(equivalence(a, b))
+    assertFalse(equivalence(a, new A({ value: "b" })))
+  })
+
   describe("Record", () => {
     it("Record(String, Number)", () => {
       const schema = Schema.Record(Schema.String, Schema.Number)
@@ -500,6 +514,7 @@ describe("toEquivalence", () => {
     assertTrue(equivalence(Duration.millis(1), Duration.millis(1)))
     assertFalse(equivalence(Duration.millis(1), Duration.millis(2)))
     assertTrue(equivalence(Duration.nanos(1n), Duration.nanos(1n)))
+    assertTrue(equivalence(Duration.millis(1), Duration.nanos(1_000_000n)))
     assertFalse(equivalence(Duration.nanos(1n), Duration.nanos(2n)))
     assertTrue(equivalence(Duration.infinity, Duration.infinity))
     assertFalse(equivalence(Duration.infinity, Duration.millis(1)))
@@ -559,8 +574,10 @@ describe("toEquivalence", () => {
   it("DateTimeZoned", () => {
     const equivalence = Schema.toEquivalence(Schema.DateTimeZoned)
     const z1 = DateTime.makeZonedUnsafe("2024-01-01T00:00:00.000Z", { timeZone: "Europe/London" })
+    const sameInstant = DateTime.makeZonedUnsafe("2024-01-01T00:00:00.000Z", { timeZone: "America/New_York" })
     const z2 = DateTime.makeZonedUnsafe("2024-01-02T00:00:00.000Z", { timeZone: "Europe/London" })
     assertTrue(equivalence(z1, z1))
+    assertTrue(equivalence(z1, sameInstant))
     assertFalse(equivalence(z1, z2))
   })
 
@@ -580,6 +597,14 @@ describe("toEquivalence", () => {
         )
         const equivalence = Schema.toEquivalence(schema)
         assertTrue(equivalence("ab", "ac"))
+      })
+
+      it("overrides a compiler-owned Declaration", () => {
+        const schema = Schema.Option(Schema.Number).pipe(
+          Schema.overrideToEquivalence(() => () => true)
+        )
+        const equivalence = Schema.toEquivalence(schema)
+        assertTrue(equivalence(Option.none(), Option.some(1)))
       })
     })
   })

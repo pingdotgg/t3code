@@ -24,6 +24,8 @@ export class RemoteContainer extends Cloudflare.Container<RemoteContainer>()(
     const bucket = yield* EnvBucket;
     return {
       image: "mendhak/http-https-echo:latest",
+      vcpu: 1,
+      memoryMib: 4096,
       observability: { logs: { enabled: true } },
       env: {
         // Tells the echo image to include `process.env` in its JSON response.

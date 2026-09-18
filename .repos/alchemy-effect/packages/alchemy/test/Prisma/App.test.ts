@@ -1,14 +1,20 @@
+import * as Provider from "@/Provider";
 import { App as PrismaApp, AppProvider } from "@/Prisma/App";
 import { PrismaClient, type PrismaManagementClient } from "@/Prisma/Client";
 import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { AlchemyContext } from "@/AlchemyContext";
+import {
+  dispatchTo,
+  makeFakeManagementApi,
+  unhandled,
+} from "./fixtures/FakeManagementApi.ts";
 
 const app = (id: string, branchId: string | null = "branch-main") => ({
   id,
   type: "app" as const,
-  url: `https://api.prisma.test/v1/apps/${id}`,
+  url: `https://api.prisma.test/v1/services/${id}`,
   name: "api",
   region: { id: "us-east-1" as const, name: "US East" },
   projectId: "project-1",
@@ -40,6 +46,44 @@ const liveProviderContext = Layer.succeed(AlchemyContext, {
   adopt: false,
 });
 
+/**
+ * Serve the Management API from the same hermetic client-shaped handlers this
+ * suite declares, for the routes App now reaches through distilled
+ * operations. `dispatchTo` maps each handler's result onto the wire (see the
+ * fixture). The delete path still resolves the hand-rolled client (destroyApp
+ * is D3), so the `PrismaClient` layer stays provided alongside.
+ */
+const clientBackedApi = (client: any) =>
+  makeFakeManagementApi((request) => {
+    // segments[0] is the "v1" prefix.
+    const [head, id, tail] = request.pathname
+      .split("/")
+      .filter((segment) => segment.length > 0)
+      .slice(1);
+    const body = request.bodyJson as any;
+    const query = Object.fromEntries(new URLSearchParams(request.search));
+    const { call, callVoid, list } = dispatchTo(request);
+
+    if (head === "services") {
+      if (id === undefined) {
+        return request.method === "GET"
+          ? call(client.listApps, [query], list)
+          : call(client.createApp, [body]);
+      }
+      if (request.method === "GET") return call(client.getApp, [id]);
+      if (request.method === "PATCH") return call(client.updateApp, [id, body]);
+      if (request.method === "DELETE") return callVoid(client.deleteApp, [id]);
+    }
+    if (
+      head === "projects" &&
+      tail === "branches" &&
+      request.method === "GET"
+    ) {
+      return call(client.listBranches, [id, query], list);
+    }
+    return unhandled(request);
+  });
+
 const provide =
   (client: PrismaManagementClient) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -47,6 +91,7 @@ const provide =
       Effect.provide(AppProvider()),
       Effect.provide(Layer.succeed(PrismaClient, client)),
       Effect.provide(liveProviderContext),
+      Effect.provide(clientBackedApi(client).layer),
     );
 
 describe("Prisma App", () => {
@@ -133,7 +178,7 @@ describe("Prisma App", () => {
     } as unknown as PrismaManagementClient;
 
     return Effect.gen(function* () {
-      const provider = yield* PrismaApp.Provider;
+      const provider = yield* Provider.findProvider(PrismaApp);
       const error = yield* provider.read!({
         id: "App",
         fqn: "App",
@@ -186,14 +231,14 @@ describe("Prisma App", () => {
 
         expect(output.branchId).toBe("branch-wanted");
         expect(output.regionId).toBe("eu-west-3");
+        // JSON drops undefined members, so the wire body carries neither
+        // regionId nor branchGitName.
         expect(calls[0]).toEqual([
           "createApp",
           {
             projectId: "project-1",
             displayName: "api",
-            regionId: undefined,
             branchId: "branch-wanted",
-            branchGitName: undefined,
           },
         ]);
         expect(calls.map(([name]) => name)).toEqual(["createApp", "updateApp"]);

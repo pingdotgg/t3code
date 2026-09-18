@@ -8,6 +8,25 @@ An Effect SQL client for [PGlite](https://pglite.dev), a WASM build of PostgreSQ
 npm install effect@rc @effect/sql-pglite@rc
 ```
 
+## LISTEN / NOTIFY
+
+`listen` is a scoped subscription that returns after the listener is installed.
+It exposes notifications through a queue and keeps the subscription active for
+the surrounding scope:
+
+```ts
+import { PgliteClient } from "@effect/sql-pglite"
+import { Effect, Queue } from "effect"
+
+const program = Effect.gen(function*() {
+  const sql = yield* PgliteClient.PgliteClient
+  const notifications = yield* sql.listen("events")
+
+  yield* sql.notify("events", "ready")
+  return yield* Queue.take(notifications)
+})
+```
+
 ## Documentation
 
 - [Effect website](https://effect.website)

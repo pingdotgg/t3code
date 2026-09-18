@@ -4,11 +4,14 @@ import {
   type Channel,
   Context,
   Data,
+  Duration,
   Effect,
   type ExecutionPlan,
+  Exit,
   Fiber,
   HashMap,
   type Layer,
+  Metric,
   type Option,
   pipe,
   Result,
@@ -71,6 +74,7 @@ declare const resultStringOrNumber: Result.Result<string, "err-1"> | Result.Resu
 declare const fiberStringOrNumber: Fiber.Fiber<string, "err-1"> | Fiber.Fiber<number, "err-2">
 declare const stringArray: Array<Effect.Effect<string, "err-3", "dep-3">>
 declare const numberRecord: Record<string, Effect.Effect<number, "err-4", "dep-4">>
+declare const unionRecord: { a: typeof string } | { b: typeof number }
 declare const optionalEffect: Option.Option<Effect.Effect<string, "err-1", "dep-1">>
 declare const iterableString: Effect.Effect<Iterable<string>, "err-1", "dep-1">
 
@@ -125,22 +129,38 @@ describe("Types", () => {
 })
 
 describe("Effect.try", () => {
-  it("supports direct-thunk form", () => {
+  it("infers UnknownError for the direct-thunk form", () => {
     const result = Effect.try(() => 1)
     expect(result).type.toBe<Effect.Effect<number, Cause.UnknownError>>()
   })
 
-  it("supports options form with typed error mapping", () => {
+  it("rejects a narrower return annotation for the direct-thunk form", () => {
+    function load(): Effect.Effect<number, SimpleError> {
+      // @ts-expect-error is not assignable to type
+      return Effect.try(() => 1)
+    }
+    expect(load).type.toBe<() => Effect.Effect<number, SimpleError>>()
+  })
+
+  it("infers the mapped error from the options form", () => {
     const result = Effect.try({
       try: () => 1,
       catch: () => new SimpleError({ code: 1 })
     })
     expect(result).type.toBe<Effect.Effect<number, SimpleError>>()
   })
+
+  it("rejects a generic alias that erases UnknownError", () => {
+    expect(Effect.try).type.not.toBeAssignableTo<
+      <A, E>(
+        options: (() => A) | { readonly try: () => A; readonly catch: (error: unknown) => E }
+      ) => Effect.Effect<A, E>
+    >()
+  })
 })
 
 describe("Effect.tryPromise", () => {
-  it("supports direct-thunk form", () => {
+  it("infers UnknownError for the direct-thunk form", () => {
     const result = Effect.tryPromise((signal) => {
       expect(signal).type.toBe<AbortSignal>()
       return Promise.resolve(1)
@@ -148,7 +168,15 @@ describe("Effect.tryPromise", () => {
     expect(result).type.toBe<Effect.Effect<number, Cause.UnknownError>>()
   })
 
-  it("supports options form with typed error mapping", () => {
+  it("rejects a narrower return annotation for the direct-thunk form", () => {
+    function load(): Effect.Effect<number, SimpleError> {
+      // @ts-expect-error is not assignable to type
+      return Effect.tryPromise(() => Promise.resolve(1))
+    }
+    expect(load).type.toBe<() => Effect.Effect<number, SimpleError>>()
+  })
+
+  it("infers the mapped error from the options form", () => {
     const result = Effect.tryPromise({
       try: (signal) => {
         expect(signal).type.toBe<AbortSignal>()
@@ -157,6 +185,16 @@ describe("Effect.tryPromise", () => {
       catch: () => new SimpleError({ code: 1 })
     })
     expect(result).type.toBe<Effect.Effect<number, SimpleError>>()
+  })
+
+  it("rejects a generic alias that erases UnknownError", () => {
+    expect(Effect.tryPromise).type.not.toBeAssignableTo<
+      <A, E>(
+        options:
+          | ((signal: AbortSignal) => PromiseLike<A>)
+          | { readonly try: (signal: AbortSignal) => PromiseLike<A>; readonly catch: (error: unknown) => E }
+      ) => Effect.Effect<A, E>
+    >()
   })
 })
 
@@ -706,6 +744,13 @@ describe("Effect.acquireRelease", () => {
   })
 })
 
+describe("Effect.tapDefect", () => {
+  it("saved operator preserves the source error type", () => {
+    const observe = Effect.tapDefect(() => Effect.void)
+    expect(observe(Effect.fail("boom"))).type.toBe<Effect.Effect<never, string>>()
+  })
+})
+
 describe("Effect.tapErrorTag", () => {
   it("narrows tagged errors", () => {
     const result = pipe(
@@ -1120,6 +1165,41 @@ describe("all", () => {
       Effect.Effect<void, never, "dep-4">
     >()
   })
+
+  it("union of records", () => {
+    expect(Effect.all(unionRecord)).type.toBe<
+      Effect.Effect<{ a: string } | { b: number }, "err-1" | "err-2", "dep-1" | "dep-2">
+    >()
+    expect(Effect.all(unionRecord, { discard: true })).type.toBe<
+      Effect.Effect<void, "err-1" | "err-2", "dep-1" | "dep-2">
+    >()
+    expect(Effect.all(unionRecord, { mode: "result" })).type.toBe<
+      Effect.Effect<
+        { a: Result.Result<string, "err-1"> } | { b: Result.Result<number, "err-2"> },
+        never,
+        "dep-1" | "dep-2"
+      >
+    >()
+  })
+})
+
+describe("Effect.repeatOrElse", () => {
+  const source = Effect.succeed("input")
+  const schedule = null as unknown as Schedule.Schedule<number, string>
+
+  it("passes the previous schedule metadata to the direct fallback", () => {
+    Effect.repeatOrElse(source, schedule, (_error, previous) => {
+      expect(previous).type.toBe<Option.Option<Schedule.Metadata<number, string>>>()
+      return Effect.succeed(0)
+    })
+  })
+
+  it("passes the previous schedule metadata to the curried fallback", () => {
+    source.pipe(Effect.repeatOrElse(schedule, (_error, previous) => {
+      expect(previous).type.toBe<Option.Option<Schedule.Metadata<number, string>>>()
+      return Effect.succeed(0)
+    }))
+  })
 })
 
 describe("Effect.retry", () => {
@@ -1250,6 +1330,24 @@ describe("Effect.updateServiceScoped", () => {
   })
 })
 
+describe("Effect.effectify", () => {
+  it("error mappers receive caller inputs without the callback", () => {
+    const fn = (input: string, callback: (error: Error | null, value?: string) => void) => callback(null, input)
+
+    Effect.effectify(fn, (_error, args) => {
+      expect(args).type.toBe<[input: string]>()
+      return args
+    })
+    Effect.effectify(fn, (_error, args) => {
+      expect(args).type.toBe<[input: string]>()
+      return args
+    }, (_error, args) => {
+      expect(args).type.toBe<[input: string]>()
+      return args
+    })
+  })
+})
+
 describe("Effect.withExecutionPlan", () => {
   const plan = null as unknown as ExecutionPlan.ExecutionPlan<{
     provides: "provided"
@@ -1285,5 +1383,46 @@ describe("Effect.withExecutionPlan", () => {
   it("without options the requirements are unchanged", () => {
     const result = Effect.withExecutionPlan(self, plan)
     expect(result).type.toBe<Effect.Effect<number, string, "other-dep" | "plan-dep">>()
+  })
+})
+
+describe("Effect.cachedWithTTL", () => {
+  it("data-first", () => {
+    const cached = Effect.cachedWithTTL(number, (exit) => {
+      expect(exit).type.toBe<Exit.Exit<number, "err-2">>()
+      return Exit.isSuccess(exit) ? Duration.seconds(exit.value) : 0
+    })
+
+    expect(cached).type.toBe<Effect.Effect<Effect.Effect<number, "err-2", "dep-2">>>()
+  })
+
+  it("data-last", () => {
+    const cached = number.pipe(Effect.cachedWithTTL((exit) => {
+      expect(exit).type.toBe<Exit.Exit<number, "err-2">>()
+      return Exit.isSuccess(exit) ? "1 second" : 0
+    }))
+
+    expect(cached).type.toBe<Effect.Effect<Effect.Effect<number, "err-2", "dep-2">>>()
+  })
+})
+
+describe("Effect.track", () => {
+  const observe = Effect.track(
+    Metric.gauge("track"),
+    (exit: Exit.Exit<number, string>) => Exit.isSuccess(exit) ? exit.value : 0
+  )
+
+  it("rejects incompatible source errors", () => {
+    expect(observe).type.not.toBeCallableWith(Effect.fail(1))
+  })
+
+  it("preserves compatible narrow errors", () => {
+    expect(observe(number)).type.toBe<Effect.Effect<number, "err-2", "dep-2">>()
+  })
+})
+
+describe("Effect.withErrorReporting", () => {
+  it("returns an Effect for an Exit input", () => {
+    expect(Effect.withErrorReporting(Exit.succeed(1))).type.toBe<Effect.Effect<number>>()
   })
 })

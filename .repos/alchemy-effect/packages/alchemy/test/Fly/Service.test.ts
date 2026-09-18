@@ -8,7 +8,8 @@ import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import Api from "./fixtures/api.ts";
-import { MARKER, Site, VOLUME_PATH } from "./fixtures/shared.ts";
+import ChecksApi, { ChecksSite } from "./fixtures/checks-api.ts";
+import { API_PORT, MARKER, Site, VOLUME_PATH } from "./fixtures/shared.ts";
 
 const { test } = Test.make({ providers: Fly.providers() });
 
@@ -31,6 +32,32 @@ const waitUntilGone = (appName: string, machineId: string) =>
       Effect.repeat({
         schedule: Schedule.spaced("2 seconds"),
         until: (status) => status === "gone",
+        times: 10,
+      }),
+    );
+
+const waitForPassingServiceCheck = (appName: string, machineId: string) =>
+  machines
+    .getMachine({
+      app_name: appName,
+      machine_id: machineId,
+    })
+    .pipe(
+      Effect.map((machine) => {
+        const serviceChecks =
+          machine.checks?.filter((check) =>
+            check.name?.startsWith("servicecheck-"),
+          ) ?? [];
+        const check = serviceChecks[0];
+        return serviceChecks.length === 1 &&
+          check?.name === `servicecheck-00-http-${API_PORT}` &&
+          check.status === "passing"
+          ? check
+          : undefined;
+      }),
+      Effect.repeat({
+        schedule: Schedule.spaced("5 seconds"),
+        until: (check) => check !== undefined,
         times: 10,
       }),
     );
@@ -117,6 +144,12 @@ test.provider(
       expect(fetched.config?.metadata?.["alchemy.replica"]).toEqual("0");
       expect(fetched.config?.guest?.cpus).toEqual(1);
       expect(fetched.config?.guest?.memory_mb).toEqual(256);
+      const defaultCheck = fetched.config?.services?.[0]?.checks?.[0];
+      expect(defaultCheck?.type).toEqual("tcp");
+      expect(defaultCheck?.port).toEqual(API_PORT);
+      expect(defaultCheck?.interval).toEqual("10s");
+      expect(defaultCheck?.timeout).toEqual("2s");
+      expect(defaultCheck?.grace_period).toEqual("30s");
 
       const liveVolume = yield* machines.getVolumeById({
         app_name: deployed.api.appName,
@@ -154,6 +187,52 @@ test.provider(
       const gone = yield* waitUntilGone(
         deployed.api.appName,
         deployed.api.machineId,
+      );
+      expect(gone).toEqual("gone");
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+test.provider(
+  "creates a custom service check and reports it passing",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const app = yield* ChecksSite;
+          const service = yield* ChecksApi;
+          return { app, service };
+        }),
+      );
+
+      const live = yield* machines.getMachine({
+        app_name: deployed.app.appName,
+        machine_id: deployed.service.machineId,
+      });
+      const check = live.config?.services?.[0]?.checks?.[0];
+      expect(check?.type).toEqual("http");
+      expect(check?.port).toEqual(API_PORT);
+      expect(check?.method).toEqual("GET");
+      expect(check?.path).toEqual("/health");
+      expect(check?.protocol).toEqual("http");
+      expect(check?.interval).toEqual("15s");
+      expect(check?.timeout).toEqual("3s");
+      expect(check?.grace_period).toEqual("20s");
+
+      const passingCheck = yield* waitForPassingServiceCheck(
+        deployed.service.appName,
+        deployed.service.machineId,
+      );
+      expect(passingCheck?.name).toEqual(`servicecheck-00-http-${API_PORT}`);
+      expect(passingCheck?.status).toEqual("passing");
+
+      yield* stack.destroy();
+
+      const gone = yield* waitUntilGone(
+        deployed.service.appName,
+        deployed.service.machineId,
       );
       expect(gone).toEqual("gone");
     }).pipe(logLevel),

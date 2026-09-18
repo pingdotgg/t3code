@@ -160,6 +160,51 @@ export const group = <
     )
   })) as any
 
+/**
+ * Creates a reusable handler for a single endpoint in an API group.
+ *
+ * **Details**
+ *
+ * Returns the supplied callback unchanged, with its request, success, and error
+ * types inferred from the endpoint, preserving the callback's service
+ * requirements. Pass the result to `handlers.handle` when implementing the group.
+ *
+ * @category handlers
+ * @since 4.0.0
+ */
+export const handler = <
+  ApiId extends string,
+  Groups extends HttpApiGroup.Constraint,
+  const GroupIdentifier extends HttpApiGroup.Identifier<Groups>,
+  const EndpointIdentifier extends HttpApiGroup.EndpointsWithIdentifier<Groups, GroupIdentifier>["identifier"],
+  R
+>(
+  _api: HttpApi.HttpApi<ApiId, Groups>,
+  _groupIdentifier: GroupIdentifier,
+  _endpointIdentifier: EndpointIdentifier,
+  f: HttpApiEndpoint.HandlerWithIdentifier<
+    HttpApiGroup.EndpointsWithIdentifier<Groups, GroupIdentifier>,
+    EndpointIdentifier,
+    HttpApiEndpoint.MiddlewareError<
+      HttpApiEndpoint.WithIdentifier<
+        HttpApiGroup.EndpointsWithIdentifier<Groups, GroupIdentifier>,
+        EndpointIdentifier
+      >
+    >,
+    R
+  >
+): HttpApiEndpoint.HandlerWithIdentifier<
+  HttpApiGroup.EndpointsWithIdentifier<Groups, GroupIdentifier>,
+  EndpointIdentifier,
+  HttpApiEndpoint.MiddlewareError<
+    HttpApiEndpoint.WithIdentifier<
+      HttpApiGroup.EndpointsWithIdentifier<Groups, GroupIdentifier>,
+      EndpointIdentifier
+    >
+  >,
+  R
+> => f
+
 const HandlersTypeId = "~effect/httpapi/HttpApiBuilder/Handlers"
 
 type EndpointMap<Endpoints extends HttpApiEndpoint.Constraint> = {
@@ -971,13 +1016,14 @@ function makeWithHeadersEncoder(endpoint: HttpApiEndpoint.Top): WithHeadersEncod
 }
 
 function makeStreamEncoder(endpoint: HttpApiEndpoint.Top): StreamEncoder | undefined {
-  const streamSchema = getStreamSuccessSchema(endpoint)
-  if (streamSchema === undefined) {
+  const successSchema = getStreamSuccessSchema(endpoint)
+  if (successSchema === undefined) {
     return undefined
   }
 
+  const streamSchema = successSchema.body
   const hasBuffered = hasBufferedSuccess(endpoint)
-  const status = HttpApiSchema.getStatusStream(streamSchema)
+  const status = HttpApiSchema.getStatusSuccessSchema(successSchema.schema)
   const contentType = streamSchema.contentType
 
   if (HttpApiSchema.isStreamUint8Array(streamSchema)) {
@@ -1021,7 +1067,7 @@ function getStreamSuccessSchema(endpoint: HttpApiEndpoint.Top) {
   for (const schema of endpoint.success) {
     const body = HttpApiSchema.isWithHeaders(schema) ? schema.schema : schema
     if (HttpApiSchema.isStreamSchema(body)) {
-      return body
+      return { schema, body }
     }
   }
 }
@@ -1175,7 +1221,7 @@ function getResponseTransformation(
     HttpApiSchema.isNoContent(bodySchema.ast)
   )
 
-  return SchemaTransformation.transformOrFail({
+  return SchemaTransformation.transformEffect({
     decode: (input, options) =>
       Effect.fail(
         new SchemaIssue.Forbidden({ message: "Encode only schema" }, input, options)
@@ -1194,7 +1240,7 @@ function withHeadersTransformation<T = unknown>(
     options?: SchemaAST.ParseOptions
   ) => Effect.Effect<unknown, Schema.SchemaError, unknown>
 ): SchemaTransformation.Transformation<T, Response.HttpServerResponse, never, unknown> {
-  return SchemaTransformation.transformOrFail<T, Response.HttpServerResponse, never, unknown>({
+  return SchemaTransformation.transformEffect<T, Response.HttpServerResponse, never, unknown>({
     decode: (input, options) =>
       Effect.fail(
         new SchemaIssue.Forbidden({ message: "Encode only schema" }, input, options)

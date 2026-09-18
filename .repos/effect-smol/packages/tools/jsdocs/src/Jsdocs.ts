@@ -468,8 +468,9 @@ const tagOrder = new Map([
   ["deprecated", 0],
   ["default", 1],
   ["see", 2],
-  ["category", 3],
-  ["since", 4]
+  ["unstable", 3],
+  ["category", 4],
+  ["since", 5]
 ])
 const signatureTypeFormatFlags = ts.TypeFormatFlags.NoTruncation |
   ts.TypeFormatFlags.UseSingleQuotesForStringLiteralType
@@ -1460,7 +1461,7 @@ function buildTags(
 ): Result<ParsedModuleTags | ParsedDeclarationTags | ParsedNamespaceTags | ParsedMemberTags, JSDocParseError> {
   const diagnostics: Array<JSDocDiagnostic> = []
   const allowed = scope === "declaration"
-    ? new Set(["deprecated", "see", "category", "since"])
+    ? new Set(["deprecated", "see", "unstable", "category", "since"])
     : scope === "member"
     ? new Set(["deprecated", "default", "see", "since"])
     : scope === "module"
@@ -3377,6 +3378,10 @@ export function loadJSDocConfig(cwd = process.cwd(), configPath = "jsdocs.config
  * @since 4.0.0
  */
 export function extractJSDocsSync(options: ExtractJSDocsOptions): JSDocModel {
+  // Share caches within an extraction, not across source snapshots.
+  programCache.clear()
+  packageMetadataCache.clear()
+  barrelExportCache.clear()
   const cwd = path.resolve(options.cwd ?? process.cwd())
   const tsconfigPath = path.resolve(cwd, options.tsconfig)
   const entry = getProgram(tsconfigPath)

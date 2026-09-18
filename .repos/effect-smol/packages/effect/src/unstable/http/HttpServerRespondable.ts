@@ -10,8 +10,8 @@
  */
 import * as Cause from "../../Cause.ts"
 import * as Effect from "../../Effect.ts"
+import * as Schema from "../../internal/schemaError.ts"
 import { hasProperty } from "../../Predicate.ts"
-import * as Schema from "../../Schema.ts"
 import type { HttpServerResponse } from "./HttpServerResponse.ts"
 import * as Response from "./HttpServerResponse.ts"
 

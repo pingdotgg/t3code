@@ -352,17 +352,19 @@ export const Service = <
     readonly requiredForClient?: boolean | undefined
   } | undefined
 ) => {
-  const Err = globalThis.Error as any
   const limit = getStackTraceLimit()
-  setStackTraceLimit(2)
-  const creationError = new Err()
-  setStackTraceLimit(limit)
+  let creationError: globalThis.Error | undefined
+  if (limit !== 0) {
+    setStackTraceLimit(2)
+    creationError = new globalThis.Error()
+    setStackTraceLimit(limit)
+  }
 
   class Service extends Context.Service<Self, any>()(id) {}
   const self = Service as any
   Object.defineProperty(Service, "stack", {
     get() {
-      return creationError.stack
+      return creationError?.stack
     }
   })
   self[TypeId] = TypeId

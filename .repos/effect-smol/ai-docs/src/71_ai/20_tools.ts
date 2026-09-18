@@ -101,7 +101,7 @@ const ProductToolkitLayer = ProductToolkit.toLayer(Effect.gen(function*() {
 
 // Provider setup (same pattern as the language-model example).
 const OpenAiClientLayer = OpenAiClient.layerConfig({
-  apiKey: Config.redacted("OPENAI_API_KEY")
+  apiKey: Config.Redacted("OPENAI_API_KEY")
 }).pipe(Layer.provide(FetchHttpClient.layer))
 
 export class ProductAssistantError extends Schema.TaggedError<ProductAssistantError>()(

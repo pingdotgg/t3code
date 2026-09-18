@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src/**/*.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "./src"
+  },
+  "references": [
+    {
+      "path": "../alchemy/tsconfig.json"
+    },
+    {
+      "path": "../../submodules/distilled/packages/github/tsconfig.json"
+    }
+  ]
+}

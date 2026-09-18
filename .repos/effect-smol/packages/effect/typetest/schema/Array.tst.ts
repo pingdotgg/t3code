@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { describe, expect, it } from "tstyche"
 
 describe("Array", () => {
@@ -18,6 +18,22 @@ describe("Array", () => {
     expect(schema.annotate({})).type.toBe<Schema.mutable<Schema.$Array<typeof Schema.FiniteFromString>>>()
 
     expect(schema.schema.value).type.toBe<typeof Schema.FiniteFromString>()
+  })
+
+  it("withDecodingDefaultType after mutable preserves the mutable type", () => {
+    const schema = Schema.Struct({
+      value: Schema.Array(Schema.FiniteFromString).pipe(
+        Schema.mutable,
+        Schema.withDecodingDefaultType(Effect.succeed([1]))
+      )
+    })
+
+    expect(Schema.revealCodec(schema)).type.toBe<
+      Schema.Codec<{ readonly value: Array<number> }, { readonly value?: Array<string> | undefined }>
+    >()
+    expect(schema.fields.value).type.toBe<
+      Schema.withDecodingDefaultType<Schema.mutable<Schema.$Array<typeof Schema.FiniteFromString>>>
+    >()
   })
 })
 

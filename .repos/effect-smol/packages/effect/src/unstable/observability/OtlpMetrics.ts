@@ -156,7 +156,7 @@ export const make: (options: {
               if (typeof currentCount === "bigint" && typeof previousCount === "bigint") {
                 reportValue = currentCount - previousCount
                 // Handle reset: if current < previous, report current value
-                if (reportValue < BigInt(0)) {
+                if (state.state.incremental && reportValue < BigInt(0)) {
                   reportValue = currentCount
                 }
               } else {
@@ -164,7 +164,7 @@ export const make: (options: {
                 const prev = Number(previousCount)
                 reportValue = curr - prev
                 // Handle reset
-                if (reportValue < 0) {
+                if (state.state.incremental && reportValue < 0) {
                   reportValue = curr
                 }
               }
@@ -461,6 +461,7 @@ export const make: (options: {
     url: options.url,
     headers: options.headers,
     maxBatchSize: "disabled",
+    exportEmpty: true,
     exportInterval: options.exportInterval ?? Duration.seconds(10),
     body: snapshot,
     shutdownTimeout: options.shutdownTimeout ?? Duration.seconds(3)
@@ -503,7 +504,7 @@ export const layerFromConfig = (options?: {
 }): Layer.Layer<Exporter.Flusher, never, HttpClient.HttpClient | OtlpSerialization> =>
   Effect.gen(function*() {
     const { disabled, endpoint, exporters } = yield* Config.all({
-      disabled: Config.boolean("OTEL_SDK_DISABLED").pipe(Config.withDefault(false)),
+      disabled: Config.Boolean("OTEL_SDK_DISABLED").pipe(Config.withDefault(false)),
       endpoint: OtlpEnv.endpoint("METRICS"),
       exporters: OtlpEnv.exporters("METRICS")
     })
@@ -512,16 +513,16 @@ export const layerFromConfig = (options?: {
     }
 
     const { baseTimeout, metricsTimeout, exportTimeout, exportInterval, temporalityPreference } = yield* Config.all({
-      baseTimeout: Config.option(Config.int("OTEL_EXPORTER_OTLP_TIMEOUT")),
-      metricsTimeout: Config.option(Config.int("OTEL_EXPORTER_OTLP_METRICS_TIMEOUT")),
-      exportTimeout: Config.option(Config.int("OTEL_METRIC_EXPORT_TIMEOUT")),
+      baseTimeout: Config.option(Config.Int("OTEL_EXPORTER_OTLP_TIMEOUT")),
+      metricsTimeout: Config.option(Config.Int("OTEL_EXPORTER_OTLP_METRICS_TIMEOUT")),
+      exportTimeout: Config.option(Config.Int("OTEL_METRIC_EXPORT_TIMEOUT")),
       exportInterval: Config.option(
-        Config.int("OTEL_METRIC_EXPORT_INTERVAL").pipe(
+        Config.Int("OTEL_METRIC_EXPORT_INTERVAL").pipe(
           Config.map(Duration.millis)
         )
       ),
       temporalityPreference: Config.option(
-        Config.literals(["delta", "cumulative"], "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE")
+        Config.Literals(["delta", "cumulative"], "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE")
       )
     })
 

@@ -18,9 +18,9 @@ import {
   reifyBoundConfigProvider,
 } from "../../Runtime.ts";
 import { Self } from "../../Self.ts";
-import { Stack } from "../../Stack.ts";
-import { buildEventTelemetry } from "../../Telemetry.ts";
-import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
+import { StackContext } from "../../StackContext.ts";
+import { buildEventTelemetry } from "../../TelemetryRuntime.ts";
+import { CloudflareEnvironment } from "../CloudflareEnvironmentService.ts";
 import cloudflare_workers from "./cloudflare_workers.ts";
 import { isScopeEjected } from "./HttpServer.ts";
 import {
@@ -32,12 +32,12 @@ import {
 } from "./Rpc.ts";
 import {
   ExportedHandlerMethods,
-  Worker,
   WorkerEnvironment,
   WorkerExecutionContext,
   deferredExecutionContext,
   fromExecutionContext,
-} from "./Worker.ts";
+} from "./WorkerRuntime.ts";
+import type { Worker } from "./Worker.ts";
 import type { WorkerRuntimeContext } from "./WorkerRuntimeContext.ts";
 
 /**
@@ -283,7 +283,7 @@ const getSharedBuild = (
       Effect.map(({ env }) =>
         layer.pipe(
           Layer.provideMerge(
-            Layer.succeed(Stack, {
+            Layer.succeed(StackContext, {
               name: stack.name,
               stage: stack.stage,
               bindings: {},

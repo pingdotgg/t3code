@@ -15,7 +15,7 @@ permissions: {}
 jobs:
   approval-gate:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-small
     environment: fork
     steps:
       - run: echo "Fork PR approved by maintainer."
@@ -27,7 +27,7 @@ jobs:
       !cancelled()
       && (needs.approval-gate.result == 'success' || needs.approval-gate.result == 'skipped')
       && github.repository_owner == 'Effect-Ts'
-    runs-on: ubuntu-latest
+    runs-on: namespace-profile-linux-small
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

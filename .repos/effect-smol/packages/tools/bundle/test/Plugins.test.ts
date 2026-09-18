@@ -1,8 +1,10 @@
 import { createResolveLocalPackageImports } from "@effect/bundle/Plugins"
 import { assert, describe, it } from "@effect/vitest"
+import * as Effect from "effect/Effect"
 import type * as EffectPath from "effect/Path"
+import * as fs from "node:fs/promises"
 import * as path from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import type { Plugin } from "rollup"
 
 type Resolved = {
@@ -23,6 +25,7 @@ type ResolveId = (
 ) => Promise<Resolved | null>
 
 const packageDir = fileURLToPath(new URL("../../../effect", import.meta.url))
+const bundleDir = fileURLToPath(new URL("..", import.meta.url))
 const pathService = path as unknown as EffectPath.Path
 
 const getResolveId = (plugin: Plugin): ResolveId => {
@@ -70,5 +73,29 @@ describe("createResolveLocalPackageImports", () => {
     }, "effect/Schema")
 
     assert.deepStrictEqual(result, resolved(path.join(packageDir, "dist", "Schema.js")))
+  })
+})
+
+describe("Fixtures", () => {
+  it("discovers fixtures when the module path contains spaces", async () => {
+    const root = await fs.mkdtemp(path.join(bundleDir, ".fixtures-test-"))
+    try {
+      const directory = path.join(root, "Effect Work")
+      const modulePath = path.join(directory, "src", "Fixtures.ts")
+      const fixturesDir = path.join(directory, "fixtures")
+      await fs.mkdir(path.dirname(modulePath), { recursive: true })
+      await fs.mkdir(fixturesDir)
+      await fs.copyFile(path.join(bundleDir, "src", "Fixtures.ts"), modulePath)
+      await fs.writeFile(path.join(fixturesDir, "example.ts"), "")
+
+      const { Fixtures } = await import(pathToFileURL(modulePath).href)
+
+      assert.deepStrictEqual(await Effect.runPromise(Fixtures.make), {
+        fixtures: ["example.ts"],
+        fixturesDir: fixturesDir + path.sep
+      })
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
   })
 })

@@ -1,7 +1,8 @@
 import { afterAll, assert, describe, expect, it, layer } from "@effect/vitest"
 import * as testAssert from "@effect/vitest/utils"
 import { Clock, Context, Duration, Effect, Fiber, Layer, Schema } from "effect"
-import { FastCheck, TestClock } from "effect/testing"
+import { TestClock } from "effect/testing"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 it.effect(
   "effect",
@@ -167,7 +168,19 @@ describe("layer", () => {
             expect(foo).toEqual("foo")
             return num === num
           }),
-        { fastCheck: { numRuns: 200 } }
+        { arbitrary: { runs: 200 } }
+      )
+
+      it.effect.prop(
+        "adds context with a Schema property",
+        [Schema.Int],
+        ([value]) =>
+          Effect.gen(function*() {
+            const foo = yield* Foo
+            assert.strictEqual(foo, "foo")
+            assert.isTrue(Number.isInteger(value))
+          }),
+        { arbitrary: { runs: 5, seed: "vitest-arbitrary-layer" } }
       )
     })
   })
@@ -209,13 +222,56 @@ describe("layer", () => {
 
 // property testing
 
-const realNumber = FastCheck.float({ noNaN: true, noDefaultInfinity: true })
+const realNumber = Schema.Finite
+const textArbitrary = Arbitrary.schema(Schema.Literals(["a", "b"]))
 
-it.prop("symmetry", [realNumber, FastCheck.integer()], ([a, b]) => a + b === b + a)
+it.prop(
+  "schema with array",
+  [Schema.String, Schema.Int],
+  ([text, count]) => typeof text === "string" && Number.isInteger(count)
+)
+
+it.prop(
+  "schema with object",
+  { text: Schema.String, count: Schema.Int },
+  ({ text, count }) => typeof text === "string" && Number.isInteger(count)
+)
+
+let mixedTupleRuns = 0
+let mixedRecordRuns = 0
+afterAll(() => {
+  assert.strictEqual(mixedTupleRuns, 5)
+  assert.strictEqual(mixedRecordRuns, 5)
+})
+
+it.prop(
+  "Schema and Arbitrary with array",
+  [Schema.Int, textArbitrary],
+  ([count, text]) => {
+    mixedTupleRuns++
+    assert.isTrue(Number.isInteger(count))
+    assert.include(["a", "b"], text)
+  },
+  { arbitrary: { runs: 5, maxDiscards: 0, seed: "vitest-mixed-tuple" } }
+)
+
+it.effect.prop(
+  "Schema and Arbitrary with object",
+  { count: Schema.Int, text: textArbitrary },
+  ({ count, text }) =>
+    Effect.sync(() => {
+      mixedRecordRuns++
+      assert.isTrue(Number.isInteger(count))
+      assert.include(["a", "b"], text)
+    }),
+  { arbitrary: { runs: 5, maxDiscards: 0, seed: "vitest-mixed-record" } }
+)
+
+it.prop("symmetry", [realNumber, Schema.Int], ([a, b]) => a + b === b + a)
 
 it.prop(
   "symmetry with object",
-  { a: realNumber, b: FastCheck.integer() },
+  { a: realNumber, b: Schema.Int },
   ({ a, b }) => a + b === b + a
 )
 
@@ -225,13 +281,28 @@ it.live.prop(
   ({ value }) => Effect.sync(() => assert.isTrue(Number.isInteger(value)))
 )
 
-it.effect.prop("symmetry", [realNumber, FastCheck.integer()], ([a, b]) =>
+let arbitraryEffectRuns = 0
+afterAll(() => assert.strictEqual(arbitraryEffectRuns, 5))
+
+it.effect.prop(
+  "schema with Arbitrary options",
+  [Schema.String, Schema.Int],
+  ([text, count]) =>
+    Effect.sync(() => {
+      arbitraryEffectRuns++
+      assert.strictEqual(typeof text, "string")
+      assert.isTrue(Number.isInteger(count))
+    }),
+  { arbitrary: { runs: 5, maxDiscards: 0, seed: "vitest-arbitrary" } }
+)
+
+it.effect.prop("symmetry", [realNumber, Schema.Int], ([a, b]) =>
   Effect.gen(function*() {
     yield* Effect.void
     assert.isTrue(a + b === b + a)
   }))
 
-it.effect.prop("symmetry with object", { a: realNumber, b: FastCheck.integer() }, ({ a, b }) =>
+it.effect.prop("symmetry with object", { a: realNumber, b: Schema.Int }, ({ a, b }) =>
   Effect.gen(function*() {
     yield* Effect.void
     assert.strictEqual(a + b, b + a)
@@ -239,10 +310,75 @@ it.effect.prop("symmetry with object", { a: realNumber, b: FastCheck.integer() }
 
 it.effect.prop(
   "should detect the substring",
-  { a: FastCheck.string(), b: FastCheck.string(), c: FastCheck.string() },
+  { a: Schema.String, b: Schema.String, c: Schema.String },
   ({ a, b, c }) =>
     Effect.gen(function*() {
       yield* Effect.scope
       assert.include(a + b + c, b)
     })
 )
+
+describe("property failures", () => {
+  const Input = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))
+  const pureDefectValues: Array<number> = []
+  const effectDefectValues: Array<number> = []
+  let interruptedRuns = 0
+  let timeoutPropertyStarted = false
+  let timeoutPropertyReleased = false
+
+  afterAll(() => {
+    assert.deepStrictEqual(pureDefectValues, [8, 1])
+    assert.deepStrictEqual(effectDefectValues, [8, 1])
+    assert.strictEqual(interruptedRuns, 1)
+    assert.isTrue(timeoutPropertyStarted)
+    assert.isTrue(timeoutPropertyReleased)
+  })
+
+  it.prop(
+    "shrinks synchronous defects",
+    [Input],
+    ([value]) => {
+      pureDefectValues.push(value)
+      throw new Error("property defect")
+    },
+    { fails: true, arbitrary: { runs: 1, seed: "assertion-shrink" } }
+  )
+
+  it.effect.prop(
+    "shrinks Effect defects",
+    [Input],
+    ([value]) =>
+      Effect.sync(() => {
+        effectDefectValues.push(value)
+        assert.strictEqual(value, 0)
+      }),
+    { fails: true, arbitrary: { runs: 1, seed: "assertion-shrink" } }
+  )
+
+  it.effect.prop(
+    "preserves interruption",
+    [Input],
+    () => {
+      interruptedRuns++
+      return Effect.interrupt
+    },
+    { fails: true, arbitrary: { runs: 1, seed: "assertion-shrink" } }
+  )
+
+  it.effect.prop(
+    "interrupts property checking on timeout",
+    [Schema.Literal("value")],
+    () =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          timeoutPropertyStarted = true
+        }),
+        () => Effect.never,
+        () =>
+          Effect.sync(() => {
+            timeoutPropertyReleased = true
+          })
+      ),
+    { fails: true, timeout: 10, arbitrary: { runs: 1, maxDiscards: 0, seed: "property-timeout" } }
+  )
+})

@@ -88,7 +88,10 @@ describe.concurrent("Local.RpcServer", () => {
               url,
             ) as RpcStub<RpcProxyApi>;
             const result = yield* Effect.promise(async () => {
-              const provider = await stub.getProvider("Test.Echo");
+              const provider = await stub.getProvider(
+                "Test.Echo",
+                new URL("./fixtures/rpc-server-entry.ts", import.meta.url).href,
+              );
               const handlers = unwrapRpcHandlers(provider as any) as {
                 echo: (msg: string) => Effect.Effect<string>;
               };

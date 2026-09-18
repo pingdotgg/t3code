@@ -28,7 +28,7 @@ export const Worker = Cloudflare.Worker("Worker", {
   env: {
     // Self-contained default so the example deploys without external secrets;
     // the integ test asserts this value round-trips through env.API_KEY.
-    API_KEY: Config.redacted("SOME_API_KEY").pipe(
+    API_KEY: Config.Redacted("SOME_API_KEY").pipe(
       Config.withDefault("SOME_API_KEY"),
     ),
     DB,

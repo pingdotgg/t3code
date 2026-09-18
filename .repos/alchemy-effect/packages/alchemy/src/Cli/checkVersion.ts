@@ -9,6 +9,14 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { AlchemyContext } from "alchemy/AlchemyContext";
 import packageJson from "../../package.json" with { type: "json" };
+import {
+  ANSI_RESET,
+  ansiFg,
+  colorsEnabled,
+  glyphsFor,
+  theme,
+  unicodeEnabled,
+} from "./CliKit/index.ts";
 
 const NPM_DIST_TAGS_URL =
   "https://registry.npmjs.org/-/package/alchemy/dist-tags";
@@ -173,17 +181,22 @@ export const checkLatestVersion = Effect.gen(function* () {
   if (latest === undefined || compareVersions(latest, current) <= 0) return;
 
   const installCmd =
-    typeof process !== "undefined" && (process as any).versions?.bun
+    typeof process !== "undefined" && process.versions.bun !== undefined
       ? `bun add alchemy@${latest}`
       : `pnpm add alchemy@${latest}`;
-  // Print via the Console service, not Effect.logWarning: TelemetryLive
-  // replaces the default stdout logger with an OTLP-only logger at this
-  // stage of the program, so log output would never reach the terminal.
-  const useColor = process.stderr.isTTY === true;
+  // Print via the Console service, not Effect.logWarning: this is a
+  // user-facing notice, not a log record, so it should reach the terminal
+  // regardless of the installed loggers or the configured log floor.
+  const useColor = colorsEnabled();
+  const glyphs = glyphsFor(unicodeEnabled());
   const message =
     `alchemy ${latest} is available (you're on ${current}). ` +
     `Run \`${installCmd}\` to upgrade.`;
-  yield* Console.warn(useColor ? `\x1b[33m${message}\x1b[0m` : message);
+  yield* Console.warn(
+    useColor
+      ? `${ansiFg(theme.color.warning)}${glyphs.warning} ${message}${ANSI_RESET}`
+      : message,
+  );
 }).pipe(Effect.catch(() => Effect.void));
 
 // Exported for tests.

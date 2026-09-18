@@ -21,7 +21,7 @@ const build = Command.make(
 const dev = Command.make(
   "dev",
   {
-    port: Flag.integer("port").pipe(Flag.optional),
+    port: Flag.Int("port").pipe(Flag.optional),
   },
   Effect.fn(function* ({ port }) {
     const framework = yield* Framework;

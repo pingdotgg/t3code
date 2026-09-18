@@ -1,0 +1,77 @@
+---
+title: GitHub API compatibility
+description: Point the gh CLI and Octokit at your host with the /api/v3 facade.
+---
+
+The host exposes a GitHub REST v3 facade at `/api/v3`, so tooling that
+already speaks GitHub works against it unchanged. It is a translation
+layer over the same operations as `/api/v1`, reshaped into GitHub's
+requests and responses.
+
+## Using `gh`
+
+`gh` reaches other hosts through its Enterprise settings and sends
+REST to `https://<host>/api/v3/...`:
+
+```sh
+export GH_HOST="git.example.com"
+export GH_ENTERPRISE_TOKEN="YOUR_CREDENTIAL"
+
+gh api "repos/acme/web"
+gh api "repos/acme/web/commits"
+gh api "repos/acme/web/pulls" --paginate
+```
+
+The host must be reachable over HTTPS. `gh` refuses plaintext for
+enterprise hosts.
+
+## Using Octokit
+
+```typescript
+import { Octokit } from "octokit";
+
+const octokit = new Octokit({
+  baseUrl: `https://${host}/api/v3`,
+  auth: process.env.GIT_TOKEN,
+});
+
+await octokit.rest.repos.get({ owner: "acme", repo: "web" });
+```
+
+## Covered
+
+Repository metadata, branches, commits and commit detail, comparison,
+file contents, the authenticated-user probe at `/user`, and pull
+requests: list, create, get, update, merge, and changed files.
+
+`gh` and Octokit send `Authorization: token <t>`, so the middleware in
+front of the facade should accept that scheme alongside Basic. The
+credential is whatever your middleware verifies. `/user` is the probe
+`gh` makes; the engine has no user to answer with, so override `user` when
+registering the `github` group with `HttpApiBuilder.group`. Spread
+`git.github` into `handleAll` and supply your own `user` handler.
+[HTTP routes](/git/blocks/server#replace-a-git-handler) shows how to replace
+a handler using your application session.
+
+Pagination uses `Link` headers with `rel="next"`. The next URL carries
+an opaque cursor, which `gh api --paginate` and Octokit's paginator
+follow as-is.
+
+## Shape mappings
+
+- A merged pull request is `state: "closed"` with `merged: true`.
+- Ids are integers derived from the internal identifiers.
+- Errors are `{ message }` with GitHub's status conventions: `401`
+  "Requires authentication", `404` "Not Found", `405` for an
+  unsupported merge method, `409` for a conflict.
+
+## Not covered
+
+**GraphQL.** `gh`'s porcelain, `gh pr create`, `gh pr list`,
+`gh issue`, speaks GraphQL and does not work. Use `gh api` with REST
+paths.
+
+Also absent: issues, reviews, comments, checks, search, rename
+detection in file lists, and per-file line counts. Additions and
+deletions report zero, since the host does not compute content diffs.
+Fetch the blobs and diff client-side.

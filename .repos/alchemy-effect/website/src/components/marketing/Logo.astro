@@ -12,12 +12,7 @@ const markSize = Math.round(size * 0.95);
 ---
 
 <span class="alc-logo">
-  <Yantra
-    class="alc-logo__mark"
-    size={markSize}
-    stroke="var(--alc-accent-deep)"
-    useCurrentColor={false}
-  />
+  <Yantra class="alc-logo__mark" size={markSize} />
   <span class="alc-logo__word" style={`font-size:${size}px;`}>Alchemy</span>
 </span>
 
@@ -30,7 +25,6 @@ const markSize = Math.round(size * 0.95);
   .alc-logo__mark {
     display: inline-flex;
     align-items: center;
-    color: var(--alc-accent-deep);
   }
   .alc-logo__mark :global(svg) {
     display: block;

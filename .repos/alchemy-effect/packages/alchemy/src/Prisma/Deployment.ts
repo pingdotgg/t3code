@@ -14,10 +14,11 @@ import * as ProviderLayer from "../Local/ProviderLayer.ts";
 import { Resource } from "../Resource.ts";
 import { sha256Object } from "../Util/sha256.ts";
 import {
-  PrismaClient,
-  isNotFound,
-  type PrismaManagementClient,
-} from "./Client.ts";
+  type GetServiceDeploymentsResponse,
+  getServiceDeployments,
+  createServiceDeployment,
+} from "@distilled.cloud/prisma/management";
+import { Retry } from "@distilled.cloud/prisma";
 import {
   destroyDeployment,
   waitForDeploymentStatus,
@@ -43,11 +44,8 @@ import {
   resolveAppId,
   unresolvedAppIdOf,
 } from "./Refs.ts";
-import type { Deployment as ApiDeployment } from "./Types.ts";
-
-type ObservedDeployment = Omit<ApiDeployment, "createdAt"> & {
-  createdAt?: string;
-};
+import type { ObservedDeployment } from "./Internal/Observed.ts";
+import { PrismaPaginationError } from "./Internal/Pagination.ts";
 
 export const MAX_DEPLOYMENT_ARTIFACT_BYTES = 256 * 1024 * 1024;
 
@@ -220,18 +218,41 @@ export interface Deployment extends Resource<
  */
 export const Deployment = Resource<Deployment>("Prisma.Deployment");
 
-const findDeployment = (
-  client: PrismaManagementClient,
-  appId: string,
-  foundryVersionId: string | undefined,
-) =>
+// Distilled emits the cursor-paginated list operations as plain ops, so
+// callers walk `pagination` themselves (see `src/Neon/Project.ts`).
+const listAppDeployments = (appId: string) =>
+  Effect.gen(function* () {
+    const deployments: GetServiceDeploymentsResponse["data"][number][] = [];
+    let cursor: string | undefined;
+    while (true) {
+      const page = yield* getServiceDeployments(
+        cursor === undefined
+          ? { serviceId: appId, limit: 100 }
+          : { serviceId: appId, limit: 100, cursor },
+      );
+      deployments.push(...page.data);
+      const nextCursor = page.pagination.nextCursor;
+      if (!page.pagination.hasMore) break;
+      if (nextCursor === null) {
+        return yield* Effect.fail(
+          new PrismaPaginationError({
+            message:
+              "Invalid Prisma Management API pagination response from getServiceDeployments: hasMore was true without a non-empty nextCursor",
+          }),
+        );
+      }
+      cursor = nextCursor;
+    }
+    return deployments;
+  });
+
+const findDeployment = (appId: string, foundryVersionId: string | undefined) =>
   foundryVersionId === undefined
     ? Effect.succeed(undefined)
-    : client.listAppDeployments(appId, { limit: 100 }).pipe(
+    : listAppDeployments(appId).pipe(
         Effect.flatMap((deployments) => {
           const matches = deployments.filter(
-            (deployment: { foundryVersionId: string }) =>
-              deployment.foundryVersionId === foundryVersionId,
+            (deployment) => deployment.foundryVersionId === foundryVersionId,
           );
           return matches.length > 1
             ? Effect.fail(
@@ -447,7 +468,6 @@ const ProviderLive = () =>
   Provider.effect(
     Deployment,
     Effect.gen(function* () {
-      const client = yield* PrismaClient;
       return {
         stables: ["deploymentId"],
         // App deletion cascades deployments. AppProvider is the single nuke
@@ -543,18 +563,18 @@ const ProviderLive = () =>
               ? output.appId
               : yield* resolveAppId(olds.app);
           const savedDeployment = output?.deploymentId
-            ? yield* observeDeployment(client, output.deploymentId).pipe(
-                Effect.catchIf(isNotFound, () => Effect.succeed(undefined)),
+            ? yield* observeDeployment(output.deploymentId).pipe(
+                Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
               )
             : undefined;
           const listed = savedDeployment
             ? undefined
-            : yield* findDeployment(client, appId, output?.foundryVersionId);
+            : yield* findDeployment(appId, output?.foundryVersionId);
           const deployment =
             savedDeployment ??
-            (listed ? yield* observeDeployment(client, listed.id) : undefined);
+            (listed ? yield* observeDeployment(listed.id) : undefined);
           if (savedDeployment) {
-            yield* ensureDeploymentMembership(client, appId, savedDeployment);
+            yield* ensureDeploymentMembership(appId, savedDeployment);
           }
           return deployment ? attrsFrom(deployment, appId, output) : undefined;
         }),
@@ -616,12 +636,12 @@ const ProviderLive = () =>
             ? undefined
             : output?.deploymentId;
           let deployment: ObservedDeployment | undefined = deploymentId
-            ? yield* observeDeployment(client, deploymentId).pipe(
-                Effect.catchIf(isNotFound, () => Effect.succeed(undefined)),
+            ? yield* observeDeployment(deploymentId).pipe(
+                Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
               )
             : undefined;
           if (deployment) {
-            yield* ensureDeploymentMembership(client, appId, deployment);
+            yield* ensureDeploymentMembership(appId, deployment);
             if (deployment.status === "failed") {
               return yield* Effect.fail(
                 new Error(
@@ -636,7 +656,7 @@ const ProviderLive = () =>
             error: unknown,
           ) =>
             createdDeploymentId === failedDeploymentId
-              ? destroyDeployment(client, failedDeploymentId).pipe(
+              ? destroyDeployment(failedDeploymentId).pipe(
                   Effect.catch((cleanupError) =>
                     Effect.fail(
                       aggregateCleanupFailure(
@@ -653,10 +673,20 @@ const ProviderLive = () =>
               : Effect.fail(error);
 
           if (!deployment) {
-            const created = yield* client.createAppDeployment(appId, {
-              portMapping: news.portMapping,
-              skipCodeUpload: news.skipCodeUpload,
-            });
+            const created = yield* createServiceDeployment({
+              serviceId: appId,
+              ...(news.portMapping === undefined
+                ? {}
+                : { portMapping: news.portMapping }),
+              ...(news.skipCodeUpload === undefined
+                ? {}
+                : { skipCodeUpload: news.skipCodeUpload }),
+            }).pipe(
+              // A replayed create would make a second deployment; the retry
+              // policy cannot see the request, so opt out explicitly.
+              Retry.none,
+              Effect.map((response) => response.data),
+            );
             createdDeploymentId = created.id;
             if (artifact !== undefined && !created.uploadUrl) {
               return yield* cleanupCreatedDeploymentOnFailure(
@@ -677,12 +707,10 @@ const ProviderLive = () =>
                 ),
               );
             }
-            deployment = yield* observeDeployment(client, created.id).pipe(
-              Effect.catchIf(isNotFound, () =>
+            deployment = yield* observeDeployment(created.id).pipe(
+              Effect.catchTag("NotFound", () =>
                 Effect.succeed({
                   id: created.id,
-                  type: "deployment" as const,
-                  url: created.url,
                   foundryVersionId: created.foundryVersionId,
                   status: "new",
                   previewDomain: null,
@@ -713,12 +741,10 @@ const ProviderLive = () =>
                 currentDeployment.status !== "provisioning"
               ) {
                 const started = yield* startDeploymentIdempotent(
-                  client,
                   currentDeployment.id,
                 );
                 if (started) {
                   return yield* waitForDeploymentStatus(
-                    client,
                     currentDeployment.id,
                     "running",
                   ).pipe(
@@ -730,7 +756,6 @@ const ProviderLive = () =>
                 }
               }
               return yield* waitForDeploymentStatus(
-                client,
                 currentDeployment.id,
                 "running",
               );
@@ -745,11 +770,7 @@ const ProviderLive = () =>
               // Promotion is deliberately replayed even when the control-plane
               // record already names this deployment. The endpoint operation also
               // repairs provider routing and custom-domain assignment drift.
-              const promoted = yield* promoteAppObserved(
-                client,
-                appId,
-                deployment.id,
-              );
+              const promoted = yield* promoteAppObserved(appId, deployment.id);
               return promoted.appEndpointDomain;
             });
           }
@@ -762,17 +783,16 @@ const ProviderLive = () =>
         }),
         delete: Effect.fn(function* ({ output }) {
           if (isPrismaDevId(output.deploymentId)) return;
-          const deployment = yield* observeDeployment(
-            client,
-            output.deploymentId,
-          ).pipe(Effect.catchIf(isNotFound, () => Effect.succeed(undefined)));
+          const deployment = yield* observeDeployment(output.deploymentId).pipe(
+            Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+          );
           if (!deployment) return;
-          yield* ensureDeploymentMembership(client, output.appId, deployment);
-          yield* destroyDeployment(client, output.deploymentId);
+          yield* ensureDeploymentMembership(output.appId, deployment);
+          yield* destroyDeployment(output.deploymentId);
         }),
         tail: ({ output }) =>
           output.deploymentId
-            ? tailDeploymentLogs(client, output.deploymentId)
+            ? tailDeploymentLogs(output.deploymentId)
             : Stream.empty,
       };
     }),

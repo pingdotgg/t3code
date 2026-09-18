@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Clock, Effect, Exit, Fiber, Latch, Layer, Option, PrimaryKey, Schema, Scope } from "effect"
-import { ClusterError, ClusterSchema, Entity, EntityResource, Singleton } from "effect/unstable/cluster"
+import { Cause, Clock, Effect, Exit, Fiber, Latch, Layer, PrimaryKey, Schema, Scope } from "effect"
+import { ClusterSchema, Entity, EntityResource, Singleton } from "effect/unstable/cluster"
 import { Rpc } from "effect/unstable/rpc"
 import { type Backend, type ClusterRunner, make } from "./harness.ts"
 
@@ -153,7 +153,7 @@ const findIdsByRunner = Effect.fnUntraced(function*(
 
 describe("cluster entity integration", () => {
   for (const backend of ["pg", "mysql"] satisfies ReadonlyArray<Backend>) {
-    it.live(`${backend}: fails an unroutable reply during runner shutdown without hanging teardown`, () =>
+    it.live(`${backend}: interrupts an unroutable reply during runner shutdown without hanging teardown`, () =>
       Effect.gen(function*() {
         const finalizerEntered = Latch.makeUnsafe()
         const sendReply = Latch.makeUnsafe()
@@ -193,11 +193,12 @@ describe("cluster entity integration", () => {
         sendReply.openUnsafe()
         yield* Fiber.join(stopping)
 
+        // The request is durable, so the caller is interrupted rather than
+        // failed: the send is not an error, this runner just cannot observe
+        // the reply.
         assert.isDefined(requestExit)
         assert(Exit.isFailure(requestExit!))
-        const failure = Cause.findErrorOption(requestExit!.cause)
-        assert(Option.isSome(failure))
-        assert(failure.value instanceof ClusterError.EntityNotAssignedToRunner)
+        assert(Cause.hasInterruptsOnly(requestExit!.cause))
       }))
 
     for (const persisted of [false, true] as const) {
@@ -571,6 +572,7 @@ describe("cluster entity integration", () => {
         orderGate.openUnsafe()
         assert.strictEqual(yield* Fiber.join(request), 1)
         yield* Fiber.join(stopping)
+        yield* cluster.waitForStableAssignments()
 
         const killId = `kill-${backend}`
         const killed = yield* cluster.ownerOfEntity(StateEntity, killId)

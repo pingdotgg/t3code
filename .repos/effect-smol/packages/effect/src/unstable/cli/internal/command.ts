@@ -234,6 +234,8 @@ export const makeCommand = <const Name extends string, Input, E, R, ContextInput
 
 /**
  * Converts a single flag param into a FlagDoc for help display.
+ *
+ * @internal
  */
 export const toFlagDoc = (
   single: Param.Single<typeof Param.flagKind, unknown>,

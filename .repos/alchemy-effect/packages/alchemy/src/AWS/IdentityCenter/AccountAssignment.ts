@@ -330,6 +330,13 @@ const readAssignment = Effect.fn(function* ({
   principalType,
   targetId,
 }: AccountAssignmentProps) {
+  // A `creating` row can serialize without resolved Outputs (`targetId`
+  // from `account.accountId`, etc.). Distilled `ListAccountAssignments`
+  // then fails with `ParseError: Expected string at ["AccountId"]`.
+  if (!targetId || !permissionSetArn || !principalId) {
+    return undefined;
+  }
+
   const instance = yield* resolveInstance(instanceArn);
   const assignments = yield* ssoAdmin.listAccountAssignments
     .items({

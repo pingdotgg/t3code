@@ -19,6 +19,7 @@ import {
   hasAlchemyTags,
 } from "../../Tags.ts";
 import { toWireDays, toWireSeconds } from "../../Util/Duration.ts";
+import { zipFiles } from "../../Util/zip.ts";
 import { sha256Object } from "../../Util/sha256.ts";
 import { AWSEnvironment } from "../Environment.ts";
 import type { Providers } from "../Providers.ts";
@@ -335,17 +336,9 @@ const buildCode = Effect.fn(function* (
   handler: string,
   runtimeVersion: string,
 ) {
-  const zip = new (yield* Effect.promise(() => import("jszip"))).default();
-  // constant date for a deterministic archive
-  const date = new Date("1980-01-01T00:00:00.000Z");
-  zip.file(scriptFilePath(runtimeVersion, handler), script, { date });
-  const buffer = yield* Effect.promise(() =>
-    zip.generateAsync({
-      type: "nodebuffer",
-      compression: "DEFLATE",
-      platform: "UNIX",
-    }),
-  );
+  const buffer = yield* zipFiles([
+    { path: scriptFilePath(runtimeVersion, handler), content: script },
+  ]);
   return {
     ZipFile: new Uint8Array(buffer),
     Handler: handler,

@@ -1,0 +1,27 @@
+{
+  "name": "@fixtures/nuxt",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts dev --port 3111",
+    "build": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "node scripts/e2e.mjs",
+    "pretest": "playwright install chromium",
+    "test:e2e": "playwright test",
+    "test:update-snapshots": "playwright test --update-snapshots"
+  },
+  "dependencies": {
+    "nitropack": "catalog:",
+    "nuxt": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@alchemy.run/cloudflare-runtime": "workspace:*",
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:node24",
+    "effect": "catalog:"
+  }
+}

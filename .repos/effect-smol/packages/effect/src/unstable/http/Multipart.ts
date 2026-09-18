@@ -11,6 +11,7 @@
  * @since 4.0.0
  */
 import * as Arr from "../../Array.ts"
+import * as ByteSize from "../../ByteSize.ts"
 import * as Cause from "../../Cause.ts"
 import * as Channel from "../../Channel.ts"
 import * as Context from "../../Context.ts"
@@ -30,7 +31,6 @@ import type { ParseOptions } from "../../SchemaAST.ts"
 import * as SchemaTransformation from "../../SchemaTransformation.ts"
 import type * as Scope from "../../Scope.ts"
 import * as Stream from "../../Stream.ts"
-import * as UndefinedOr from "../../UndefinedOr.ts"
 import * as IncomingMessage from "./HttpIncomingMessage.ts"
 import * as HttpServerRespondable from "./HttpServerRespondable.ts"
 import * as HttpServerResponse from "./HttpServerResponse.ts"
@@ -98,12 +98,25 @@ export interface Field extends Part.Proto {
 }
 
 /**
- * Returns `true` when a value is a multipart `Part`.
+ * Returns `true` when a value has the multipart part type identifier.
+ *
+ * **Details**
+ *
+ * This includes `Field`, `File`, and `PersistedFile` values. Use
+ * `isStreamPart` to identify only parsed, streamed parts.
  *
  * @category guards
  * @since 4.0.0
  */
 export const isPart = (u: unknown): u is Part => Predicate.hasProperty(u, TypeId)
+
+/**
+ * Returns `true` when a value is a multipart text `Field` or streamed `File`.
+ *
+ * @category guards
+ * @since 4.0.0
+ */
+export const isStreamPart = (u: unknown): u is Part => isPart(u) && (u._tag === "Field" || u._tag === "File")
 
 /**
  * Returns `true` when a value is a multipart text `Field`.
@@ -422,9 +435,9 @@ export const makeConfig = (
     return Effect.succeed<MP.BaseConfig>({
       headers,
       maxParts: fiber.getRef(MaxParts),
-      maxFieldSize: Number(fiber.getRef(MaxFieldSize)),
-      maxPartSize: UndefinedOr.map(fiber.getRef(MaxFileSize), Number),
-      maxTotalSize: UndefinedOr.map(fiber.getRef(IncomingMessage.MaxBodySize), Number),
+      maxFieldSize: fiber.getRef(MaxFieldSize),
+      maxPartSize: fiber.getRef(MaxFileSize),
+      maxTotalSize: fiber.getRef(IncomingMessage.MaxBodySize),
       isFile: mimeTypes.length === 0 ? undefined : (info: MP.PartInfo): boolean =>
         !mimeTypes.some(
           (_) => info.contentType.includes(_)
@@ -456,6 +469,7 @@ export const makeChannel = <IE>(headers: Record<string, string>): Channel.Channe
     Effect.map(makeConfig(headers), (config) => {
       let partsBuffer: Array<Part> = []
       let exit = Option.none<Exit.Exit<never, IE | MultipartError | Cause.Done>>()
+      let ended = false
 
       const parser = MP.make({
         ...config,
@@ -503,7 +517,10 @@ export const makeChannel = <IE>(headers: Record<string, string>): Channel.Channe
         }),
         Effect.catchCause((cause) => {
           if (Pull.isDoneCause(cause)) {
-            parser.end()
+            if (!ended) {
+              ended = true
+              parser.end()
+            }
           } else {
             exit = Option.some(Exit.failCause(cause)) as any
           }
@@ -757,9 +774,9 @@ class PersistedFileImpl extends PartBase implements PersistedFile {
  */
 export const limitsServices = (options: {
   readonly maxParts?: number | undefined
-  readonly maxFieldSize?: FileSystem.SizeInput | undefined
-  readonly maxFileSize?: FileSystem.SizeInput | undefined
-  readonly maxTotalSize?: FileSystem.SizeInput | undefined
+  readonly maxFieldSize?: ByteSize.Input | undefined
+  readonly maxFileSize?: ByteSize.Input | undefined
+  readonly maxTotalSize?: ByteSize.Input | undefined
   readonly fieldMimeTypes?: ReadonlyArray<string> | undefined
 }): Context.Context<never> => {
   const map = new Map<string, unknown>()
@@ -767,13 +784,13 @@ export const limitsServices = (options: {
     map.set(MaxParts.key, options.maxParts)
   }
   if (options.maxFieldSize !== undefined) {
-    map.set(MaxFieldSize.key, FileSystem.Size(options.maxFieldSize))
+    map.set(MaxFieldSize.key, ByteSize.fromInputUnsafe(options.maxFieldSize))
   }
   if (options.maxFileSize !== undefined) {
-    map.set(MaxFileSize.key, UndefinedOr.map(options.maxFileSize, FileSystem.Size))
+    map.set(MaxFileSize.key, ByteSize.fromInputUnsafe(options.maxFileSize))
   }
   if (options.maxTotalSize !== undefined) {
-    map.set(IncomingMessage.MaxBodySize.key, UndefinedOr.map(options.maxTotalSize, FileSystem.Size))
+    map.set(IncomingMessage.MaxBodySize.key, ByteSize.fromInputUnsafe(options.maxTotalSize))
   }
   if (options.fieldMimeTypes !== undefined) {
     map.set(FieldMimeTypes.key, options.fieldMimeTypes)
@@ -800,9 +817,9 @@ export declare namespace withLimits {
    */
   export type Options = {
     readonly maxParts?: number | undefined
-    readonly maxFieldSize?: FileSystem.SizeInput | undefined
-    readonly maxFileSize?: FileSystem.SizeInput | undefined
-    readonly maxTotalSize?: FileSystem.SizeInput | undefined
+    readonly maxFieldSize?: ByteSize.Input | undefined
+    readonly maxFileSize?: ByteSize.Input | undefined
+    readonly maxTotalSize?: ByteSize.Input | undefined
     readonly fieldMimeTypes?: ReadonlyArray<string> | undefined
   }
 }
@@ -831,8 +848,8 @@ export const MaxParts = Context.Reference<number | undefined>("effect/http/Multi
  * @category services
  * @since 4.0.0
  */
-export const MaxFieldSize = Context.Reference<FileSystem.SizeInput>("effect/http/Multipart/MaxFieldSize", {
-  defaultValue: constant(FileSystem.Size(10 * 1024 * 1024))
+export const MaxFieldSize = Context.Reference<ByteSize.ByteSize>("effect/http/Multipart/MaxFieldSize", {
+  defaultValue: constant(ByteSize.mebibytes(10))
 })
 
 /**
@@ -845,7 +862,7 @@ export const MaxFieldSize = Context.Reference<FileSystem.SizeInput>("effect/http
  * @category services
  * @since 4.0.0
  */
-export const MaxFileSize = Context.Reference<FileSystem.SizeInput | undefined>(
+export const MaxFileSize = Context.Reference<ByteSize.ByteSize | undefined>(
   "effect/http/Multipart/MaxFileSize",
   { defaultValue: () => undefined }
 )

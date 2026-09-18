@@ -99,16 +99,17 @@ export const fromConfig: (
   readonly serviceVersion?: string | undefined
   readonly attributes?: Record<string, unknown> | undefined
 }) {
-  const env = yield* Config.schema(
-    Schema.UndefinedOr(Config.Record(Schema.StringFromUriComponent, Schema.StringFromUriComponent)),
+  const env = yield* Config.Record(
+    Schema.StringFromUriComponent,
+    Schema.StringFromUriComponent,
     "OTEL_RESOURCE_ATTRIBUTES"
-  )
+  ).pipe(Config.withDefault(undefined))
 
   const serviceName = options?.serviceName
     ?? options?.attributes?.["service.name"] as string | undefined
     ?? (yield* Config.schema(Schema.UndefinedOr(Schema.String), "OTEL_SERVICE_NAME"))
     ?? env?.["service.name"] as string | undefined
-    ?? (yield* Config.string("OTEL_SERVICE_NAME"))
+    ?? (yield* Config.String("OTEL_SERVICE_NAME"))
 
   const serviceVersion = options?.serviceVersion
     ?? options?.attributes?.["service.version"] as string | undefined

@@ -8,7 +8,7 @@ import SqlMySQLWorker from "./mysql-worker.ts";
 /**
  * PlanetScale MySQL origin + Hyperdrive + Worker for the `SQL.MySQL` client
  * suite. Kept in its own file so it can also be driven directly, e.g.
- * `alchemy tail --stage test ./test/SQL/fixtures/mysql-stack.ts`.
+ * `alchemy logs --tail --stage test --config ./test/SQL/fixtures/mysql-stack.ts`.
  */
 export default Alchemy.Stack(
   "SqlMySQLStack",

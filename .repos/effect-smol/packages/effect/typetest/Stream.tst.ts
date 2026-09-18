@@ -18,6 +18,18 @@ class AiError extends Data.TaggedError("AiError")<{ readonly reason: RateLimit |
 
 declare const aiStream: Stream.Stream<string, AiError | ErrorB, "dep-1">
 
+describe("Stream.catchDefect", () => {
+  it("supports data-last usage", () => {
+    const result = pipe(stream, Stream.catchDefect(() => Stream.fail("recovery" as const)))
+    expect(result).type.toBe<Stream.Stream<string, ErrorA | ErrorB | "recovery", "dep-1">>()
+  })
+
+  it("supports data-first usage", () => {
+    const result = Stream.catchDefect(stream, () => Stream.succeed(1))
+    expect(result).type.toBe<Stream.Stream<string | number, ErrorA | ErrorB, "dep-1">>()
+  })
+})
+
 describe("Stream.catchIf", () => {
   it("supports refinement in data-last usage", () => {
     const result = pipe(

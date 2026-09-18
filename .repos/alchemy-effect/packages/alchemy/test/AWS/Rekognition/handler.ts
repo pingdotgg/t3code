@@ -538,38 +538,48 @@ export default RekognitionTestFunction.make(
         }
 
         // Stream processors: list for real, control plane through the typed
-        // ResourceNotFoundException path.
+        // ResourceNotFoundException path. Rekognition Video stream processors
+        // are allow-listed per account: an unentitled account gets the typed
+        // AccessDeniedException from every op (the list included), which
+        // still proves the binding reached the service.
         if (request.method === "GET" && pathname === "/stream-processors") {
-          const count = (
-            (yield* listStreamProcessors({ MaxResults: 10 }))
-              .StreamProcessors ?? []
-          ).length;
+          const listed = yield* listStreamProcessors({ MaxResults: 10 }).pipe(
+            Effect.map(
+              (r) => ({ count: (r.StreamProcessors ?? []).length }) as const,
+            ),
+            Effect.catchTag("AccessDeniedException", (e) =>
+              Effect.succeed({ count: -1, listTag: e._tag } as const),
+            ),
+          );
           const describeTag = yield* describeStreamProcessor({
             Name: "alchemy-nonexistent-processor",
           }).pipe(
             Effect.map(() => "Found"),
-            Effect.catchTag("ResourceNotFoundException", (e) =>
-              Effect.succeed(e._tag),
+            Effect.catchTag(
+              ["ResourceNotFoundException", "AccessDeniedException"],
+              (e) => Effect.succeed(e._tag),
             ),
           );
           const startTag = yield* startStreamProcessor({
             Name: "alchemy-nonexistent-processor",
           }).pipe(
             Effect.map(() => "Started"),
-            Effect.catchTag("ResourceNotFoundException", (e) =>
-              Effect.succeed(e._tag),
+            Effect.catchTag(
+              ["ResourceNotFoundException", "AccessDeniedException"],
+              (e) => Effect.succeed(e._tag),
             ),
           );
           const stopTag = yield* stopStreamProcessor({
             Name: "alchemy-nonexistent-processor",
           }).pipe(
             Effect.map(() => "Stopped"),
-            Effect.catchTag("ResourceNotFoundException", (e) =>
-              Effect.succeed(e._tag),
+            Effect.catchTag(
+              ["ResourceNotFoundException", "AccessDeniedException"],
+              (e) => Effect.succeed(e._tag),
             ),
           );
           return yield* HttpServerResponse.json({
-            count,
+            ...listed,
             describeTag,
             startTag,
             stopTag,

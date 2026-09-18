@@ -168,7 +168,7 @@
   note: "No version-mismatch log-level Reference or public replacement exists."
 "effect/Layer#tapErrorCause":
   replacement: "Layer.tapCause"
-  note: "The cause observer was renamed."
+  note: "The cause observer was renamed. Its callback must accept the source layer's full error cause; a callback narrowed to only part of the error union is rejected."
 "effect/Layer#toRuntime":
   replacement: "Layer.build(self), then Effect.runForkWith, Effect.runPromiseWith, or Effect.runSyncWith"
   note: "Runtime<R> was removed; build a Context, or use ManagedRuntime.make for a reusable managed runner."
@@ -187,3 +187,6 @@
 "effect/Layer#zipWith":
   replacement: "Layer.fromBuild with concurrent Effect.zipWith over Layer.buildWithMemoMap"
   note: "Combine acquisition effects directly; use Layer.merge when the function only merged Context values."
+"effect/Layer#tapError":
+  replacement: "Layer.tapError"
+  note: "The observer must accept the source layer's full error union. Widen callbacks that handled only a subtype; saved curried observers preserve the source error type."

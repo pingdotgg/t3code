@@ -14,7 +14,6 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Hetzner.providers(),
   state: Alchemy.localState(),
   profile: process.env.ALCHEMY_PROFILE,
-  stage: "test",
 });
 
 if (!hasCreds) {

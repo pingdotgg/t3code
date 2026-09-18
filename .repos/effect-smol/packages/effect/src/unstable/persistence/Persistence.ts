@@ -385,11 +385,6 @@ export const layerBackingSqlMultiTable: Layer.Layer<
           `.unprepared
       })
 
-      const wrapString = sql.onDialectOrElse({
-        mssql: () => (s: string) => `N'${s}'`,
-        orElse: () => (s: string) => `'${s}'`
-      })
-
       return identity<BackingPersistenceStore>({
         get: (key) =>
           sql<
@@ -419,9 +414,9 @@ export const layerBackingSqlMultiTable: Layer.Layer<
               })
             ),
         getMany: (keys) =>
-          sql<{ id: string; value: string }>`SELECT id, value FROM ${table} WHERE id IN (${
-            sql.literal(keys.map(wrapString).join(", "))
-          }) AND (expires IS NULL OR expires > ${clock.currentTimeMillisUnsafe()})`.unprepared.pipe(
+          sql<{ id: string; value: string }>`SELECT id, value FROM ${table} WHERE ${
+            sql.in("id", keys)
+          } AND (expires IS NULL OR expires > ${clock.currentTimeMillisUnsafe()})`.unprepared.pipe(
             Effect.mapError((cause) =>
               new PersistenceError({
                 message: `Failed to getMany from backing store`,
@@ -726,11 +721,6 @@ export const layerBackingSql: Layer.Layer<
       `.unprepared
   })
 
-  const wrapString = sql.onDialectOrElse({
-    mssql: () => (s: string) => `N'${s}'`,
-    orElse: () => (s: string) => `'${s}'`
-  })
-
   return BackingPersistence.of({
     make: Effect.fnUntraced(function*(storeId) {
       const clock = yield* Clock.Clock
@@ -764,9 +754,9 @@ export const layerBackingSql: Layer.Layer<
               })
             ),
         getMany: (keys) =>
-          sql<{ id: string; value: string }>`SELECT id, value FROM ${table} WHERE store_id = ${storeId} AND id IN (${
-            sql.literal(keys.map(wrapString).join(", "))
-          }) AND (expires IS NULL OR expires > ${clock.currentTimeMillisUnsafe()})`.unprepared.pipe(
+          sql<{ id: string; value: string }>`SELECT id, value FROM ${table} WHERE store_id = ${storeId} AND ${
+            sql.in("id", keys)
+          } AND (expires IS NULL OR expires > ${clock.currentTimeMillisUnsafe()})`.unprepared.pipe(
             Effect.mapError((cause) =>
               new PersistenceError({
                 message: `Failed to getMany from backing store`,

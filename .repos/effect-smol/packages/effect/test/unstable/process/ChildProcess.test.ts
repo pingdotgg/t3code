@@ -54,6 +54,12 @@ describe("ChildProcess", () => {
       assert.deepStrictEqual(cmd.args, ["hello"])
     })
 
+    it("preserves astral Unicode escapes in template arguments", () => {
+      const cmd = ChildProcess.make`echo \u{1F600} tail`
+      assert(ChildProcess.isStandardCommand(cmd))
+      assert.deepStrictEqual(cmd.args, ["😀", "tail"])
+    })
+
     it("array form should create a standard command", () => {
       const cmd = ChildProcess.make("node", ["--version"])
       assert.strictEqual(cmd._tag, "StandardCommand")

@@ -9,7 +9,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { HttpServerResponse } from "effect/unstable/http";
-import { buildEventTelemetry } from "../../Telemetry.ts";
+import { buildEventTelemetry } from "../../TelemetryRuntime.ts";
 import type {
   DurableObjectExport,
   DurableObjectShape,
@@ -214,6 +214,14 @@ export const makeDurableObjectBridge =
               reason,
               wasClean,
             ) ?? Effect.void,
+        );
+      }
+
+      async webSocketError(ws: WebSocket, error: unknown) {
+        return this.#execute(
+          (instance) =>
+            instance.webSocketError?.(fromWebSocket(ws as any), error) ??
+            Effect.void,
         );
       }
     } as any;

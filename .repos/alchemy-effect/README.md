@@ -1,7 +1,7 @@
 <div align="center">
 
 <a href="https://alchemy.run">
-  <img src="./images/readme-hero.png" alt="Alchemy — Infrastructure as Effects" width="360" />
+  <img src="https://raw.githubusercontent.com/alchemy-run/alchemy/main/images/readme-hero.webp" alt="Alchemy — Infrastructure as Effects" width="360" />
 </a>
 
 <br />

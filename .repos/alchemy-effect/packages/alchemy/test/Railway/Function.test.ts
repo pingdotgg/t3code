@@ -29,11 +29,11 @@ Bun.serve({
 `;
 
 const waitUntilGone = (serviceId: string) =>
-  railway.service({ id: serviceId }).pipe(
+  railway.service({ id: serviceId }, { deletedAt: true }).pipe(
     Effect.map((service) =>
       service.deletedAt != null ? ("gone" as const) : ("found" as const),
     ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    railway.catchTags(["RailwayNotFound"], () =>
       Effect.succeed("gone" as const),
     ),
     Effect.repeat({
@@ -92,16 +92,27 @@ test.provider(
       expect(created.ping.domainId).toEqual(expect.any(String));
       expect(created.ping.domainId!.length).toBeGreaterThan(0);
 
-      const fetched = yield* railway.service({ id: created.ping.serviceId });
+      const fetched = yield* railway.service(
+        { id: created.ping.serviceId },
+        { id: true, name: true, projectId: true, deletedAt: true },
+      );
       expect(fetched.id).toEqual(created.ping.serviceId);
       expect(fetched.name).toEqual(created.ping.name);
       expect(fetched.projectId).toEqual(created.ping.projectId);
       expect(fetched.deletedAt).toBeNull();
 
-      const instance = yield* railway.serviceInstance({
-        environmentId: created.ping.environmentId,
-        serviceId: created.ping.serviceId,
-      });
+      const instance = yield* railway.serviceInstance(
+        {
+          environmentId: created.ping.environmentId,
+          serviceId: created.ping.serviceId,
+        },
+        {
+          serviceId: true,
+          environmentId: true,
+          source: { image: true },
+          startCommand: true,
+        },
+      );
       expect(instance.serviceId).toEqual(created.ping.serviceId);
       expect(instance.environmentId).toEqual(created.ping.environmentId);
       expect(Railway.isFunctionImage(instance.source?.image)).toEqual(true);
@@ -109,7 +120,10 @@ test.provider(
         expect.stringMatching(/^\.\/run\.sh /),
       );
 
-      const runtime = yield* railway.functionRuntime({ name: "bun" });
+      const runtime = yield* railway.functionRuntime(
+        { name: "bun" },
+        { name: true, latestVersion: { image: true } },
+      );
       expect(runtime.name).toEqual("bun");
       expect(runtime.latestVersion.image.length).toBeGreaterThan(0);
       expect(instance.source?.image).toEqual(runtime.latestVersion.image);
@@ -142,10 +156,13 @@ test.provider(
       expect(created.job.cronSchedule).toEqual("0 * * * *");
       expect(created.job.url).toBeUndefined();
       expect(created.job.domain).toBeUndefined();
-      const jobInstance = yield* railway.serviceInstance({
-        environmentId: created.job.environmentId,
-        serviceId: created.job.serviceId,
-      });
+      const jobInstance = yield* railway.serviceInstance(
+        {
+          environmentId: created.job.environmentId,
+          serviceId: created.job.serviceId,
+        },
+        { cronSchedule: true, source: { image: true } },
+      );
       expect(jobInstance.cronSchedule).toEqual("0 * * * *");
       expect(Railway.isFunctionImage(jobInstance.source?.image)).toEqual(true);
 
@@ -154,7 +171,7 @@ test.provider(
       const gone = yield* waitUntilGone(created.ping.serviceId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );
 
 test.provider(
@@ -180,10 +197,13 @@ test.provider(
         `${created.ping.name}.railway.internal`,
       );
 
-      const instance = yield* railway.serviceInstance({
-        environmentId: created.ping.environmentId,
-        serviceId: created.ping.serviceId,
-      });
+      const instance = yield* railway.serviceInstance(
+        {
+          environmentId: created.ping.environmentId,
+          serviceId: created.ping.serviceId,
+        },
+        { source: { image: true }, startCommand: true },
+      );
       expect(Railway.isFunctionImage(instance.source?.image)).toEqual(true);
       expect(instance.startCommand).toEqual(
         expect.stringMatching(/^\.\/run\.sh /),
@@ -217,7 +237,7 @@ test.provider(
       const gone = yield* waitUntilGone(created.ping.serviceId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );
 
 test.provider.skip(
@@ -244,10 +264,13 @@ test.provider.skip(
       );
       expect(created.ping.rpcToken.length).toBeGreaterThanOrEqual(32);
 
-      const instance = yield* railway.serviceInstance({
-        environmentId: created.ping.environmentId,
-        serviceId: created.ping.serviceId,
-      });
+      const instance = yield* railway.serviceInstance(
+        {
+          environmentId: created.ping.environmentId,
+          serviceId: created.ping.serviceId,
+        },
+        { source: { image: true }, startCommand: true },
+      );
       expect(Railway.isFunctionImage(instance.source?.image)).toEqual(true);
       expect(instance.startCommand).toEqual(
         expect.stringMatching(/^\.\/run\.sh /),
@@ -279,5 +302,5 @@ test.provider.skip(
       const gone = yield* waitUntilGone(created.ping.serviceId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );

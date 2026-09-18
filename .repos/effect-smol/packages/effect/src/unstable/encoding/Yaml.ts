@@ -480,14 +480,25 @@ class YamlParser {
     if (style === "|") {
       output = content.join("\n")
     } else {
-      for (let index = 0; index < content.length; index++) {
-        output += content[index]
-        if (index < content.length - 1) {
-          output += content[index].length === 0 || content[index + 1].length === 0 ? "\n" : " "
+      let blankLines = 0
+      let previousMoreIndented: boolean | undefined
+      for (const line of content) {
+        if (line.length === 0) {
+          blankLines++
+        } else {
+          const moreIndented = line.startsWith(" ")
+          const hardBreak = moreIndented || previousMoreIndented === true
+          if (previousMoreIndented === undefined) output += "\n".repeat(blankLines)
+          else if (blankLines === 0) output += hardBreak ? "\n" : " "
+          else output += "\n".repeat(blankLines + (hardBreak ? 1 : 0))
+          output += line
+          blankLines = 0
+          previousMoreIndented = moreIndented
         }
       }
+      output += "\n".repeat(blankLines)
     }
-    if (chomp === "keep") return `${output}\n`
+    if (chomp === "keep") return output.endsWith("\n") ? output : `${output}\n`
     output = output.replace(/\n+$/, "")
     return chomp === "strip" ? output : `${output}\n`
   }
@@ -516,6 +527,8 @@ class YamlParser {
 
 /**
  * Parses one YAML document into JavaScript values.
+ *
+ * **Details**
  *
  * The core YAML 1.2 scalar schema is used, so booleans, nulls, and numbers are
  * decoded while date-like values remain strings.

@@ -1,7 +1,7 @@
 import { assert, describe, it, vi } from "@effect/vitest"
 import { Clock, Effect } from "effect"
 
-describe.sequential("Clock", () => {
+describe("Clock", { concurrent: false }, () => {
   it.live("keeps wall time aligned while exposing the monotonic source", () => {
     let wallMillis = 1_000_000
     let monotonicNanos = 5_000_000_000n

@@ -24,6 +24,14 @@ export interface Snippet {
  */
 export type SourceFormat = "jsdoc" | "markdown"
 
+/**
+ * Returns whether a file uses Markdown or MDX documentation syntax.
+ *
+ * @category guards
+ * @since 4.0.0
+ */
+export const isMarkdown = (file: string): boolean => file.endsWith(".md") || file.endsWith(".mdx")
+
 const jsdocPattern = /\/\*\*[\s\S]*?\*\//g
 const fencePattern = /(?:```|~~~)(.*?)\n([\s\S]*?)(?:(?:```|~~~)|$)/g
 const runnableMarker = "import.meta.vitest"
@@ -98,6 +106,4 @@ export const extract = (source: string, format: SourceFormat = "jsdoc"): Readonl
  * @since 4.0.0
  */
 export const extractFile = (file: string): Promise<ReadonlyArray<Snippet>> =>
-  readFile(file, "utf8").then((source) =>
-    extract(source, file.endsWith(".md") || file.endsWith(".mdx") ? "markdown" : "jsdoc")
-  )
+  readFile(file, "utf8").then((source) => extract(source, isMarkdown(file) ? "markdown" : "jsdoc"))

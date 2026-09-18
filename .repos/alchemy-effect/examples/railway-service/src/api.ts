@@ -61,7 +61,7 @@ export default class Api extends Railway.Service<Api>()(
         const path = new URL(request.url, "http://service").pathname;
 
         if (path === "/secret") {
-          const value = yield* Config.string(SECRET_NAME).pipe(
+          const value = yield* Config.String(SECRET_NAME).pipe(
             Effect.orElseSucceed(() => ""),
           );
           return yield* HttpServerResponse.json({

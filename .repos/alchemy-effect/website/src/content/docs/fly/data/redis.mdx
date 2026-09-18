@@ -48,7 +48,7 @@ because the name cannot exist twice.
 ## Bind from a Service
 
 Yield `Fly.ReadWriteRedis` (or `ReadRedis` / `WriteRedis`) in
-Service init. Provide the matching `*Http` layer.
+the Service's constructor. Provide the matching `*Http` layer.
 
 ```typescript
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";

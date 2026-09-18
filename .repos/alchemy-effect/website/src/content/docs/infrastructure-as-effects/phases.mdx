@@ -1,23 +1,25 @@
 ---
 title: Phases
-description: Alchemy programs run in two phases — plantime/init drives the deploy, runtime handles requests. Knowing which is which is the key to writing Workers and Lambda Functions.
+description: Alchemy programs run in two phases — Construction drives the deploy, Runtime handles requests. Knowing which is which is the key to writing Workers and Lambda Functions.
 ---
 
 import DAG from "../../../components/DAG.astro";
 
 Every alchemy program runs in two phases — plantime builds the plan,
-runtime serves requests. Function resources — Workers, Lambdas,
-Containers — express both in a single program by **returning an
-Effect from inside an Effect**.
+runtime serves requests. [Runtime](/infrastructure-as-effects/runtime)
+resources — Workers, Lambdas, Containers — express both in a single
+program by **returning an Effect from inside an Effect**. Earlier
+pages named the two halves the Construction phase and the Runtime
+phase; this page pins down exactly when each one runs.
 
-## Init vs runtime
+## Construction vs Runtime
 
 ```typescript
 Cloudflare.Worker(
   "Worker",
   { main: import.meta.url },
   Effect.gen(function* () {
-    // ─── Init phase ───
+    // ─── Construction phase ───
     const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
 
     return {
@@ -31,24 +33,25 @@ Cloudflare.Worker(
 );
 ```
 
-| Phase   | Code   | When it runs                          |
-| ------- | ------ | ------------------------------------- |
-| Init    | outer  | At plantime **and** at cold start     |
+| Phase        | Code   | When it runs                          |
+| ------------ | ------ | ------------------------------------- |
+| Construction | outer  | At plantime **and** at cold start     |
 | Runtime | inner  | Only inside a deployed handler        |
 
-The `bucket` value is established once during init and captured by
-the runtime closure. Init runs at most once per cold start; the
+The `bucket` value is established once during Construction and captured
+by the runtime closure. The constructor runs at most once per cold start; the
 runtime body runs per request with everything already wired up.
 Each phase has its own `Scope` with very different lifetimes —
-[Instance scope vs request scope](/infrastructure-as-effects/functions-and-servers#instance-scope-vs-request-scope)
+[Instance scope vs request scope](/infrastructure-as-effects/runtime#instance-scope-vs-request-scope)
 covers where cleanup can (and cannot) happen.
 
-The runtime phase is the *only* place where `Alchemy.RuntimeContext`
+The Runtime phase is the *only* place where `Alchemy.RuntimeContext`
 is available. Any Effect whose requirements include `RuntimeContext`
 can only execute inside the runtime closure — the type system
-rejects it everywhere else. The next page builds the
-[colored-function model](/infrastructure-as-effects/layers#runtime-as-a-colored-function)
-on top of this split.
+rejects it everywhere else.
+[Layers](/infrastructure-as-effects/layers#the-types-hold-the-boundary)
+builds on this split to keep whole services honest about where they
+can run.
 
 ## What runs when
 
@@ -56,26 +59,26 @@ on top of this split.
   caption="Plantime (top) records bindings and builds the plan. Runtime (bottom) starts on cold start and runs the handler per request."
   nodes={[
     { id: "Plan", label: "alchemy deploy", type: "plantime", tone: "accent" },
-    { id: "InitP", label: "init()", type: "records bindings" },
+    { id: "ConstructP", label: "construct()", type: "records bindings" },
     { id: "Apply", label: "apply", type: "create / update" },
     { id: "Deploy", label: "deployed", type: "Worker / Lambda" },
     { id: "Cold", label: "cold start", type: "runtime", tone: "accent", layer: 0 },
-    { id: "InitR", label: "init()", type: "builds SDK clients", layer: 1 },
+    { id: "ConstructR", label: "construct()", type: "builds SDK clients", layer: 1 },
     { id: "Runtime", label: "fetch()", type: "per request", layer: 2 },
   ]}
   edges={[
-    { from: "Plan", to: "InitP" },
-    { from: "InitP", to: "Apply" },
+    { from: "Plan", to: "ConstructP" },
+    { from: "ConstructP", to: "Apply" },
     { from: "Apply", to: "Deploy" },
-    { from: "Cold", to: "InitR" },
-    { from: "InitR", to: "Runtime" },
+    { from: "Cold", to: "ConstructR" },
+    { from: "ConstructR", to: "Runtime" },
   ]}
 />
 
-- At **plantime**, init runs to discover bindings — alchemy needs
+- At **plantime**, the constructor runs to discover bindings — alchemy needs
   to know which resources the handler will use so it can wire
   permissions, env vars, and references.
-- At **runtime cold start**, init runs again — this time inside the
+- At **runtime cold start**, the constructor runs again — this time inside the
   deployed Worker, where the same `bind()` calls return live SDK
   clients backed by the deployed resource.
 - The **runtime body** only runs in the deployed handler. It never
@@ -143,7 +146,7 @@ provisioning lives behind the guard, never on the runtime path.
 
 ## Why this matters
 
-The init/runtime split lets you write code that:
+The Construction/Runtime split lets you write code that:
 
 1. **Resolves infrastructure references at deploy time** — bindings
    know which bucket ARN, queue URL, etc. to inject.
@@ -153,11 +156,8 @@ The init/runtime split lets you write code that:
    variable in the runtime body already knows which resource to
    talk to.
 
-Next: [Layers](/infrastructure-as-effects/layers) turns this phase
-split into a type-level model — `RuntimeContext` as a colored
-function.
-
 ## Where next
 
-- [Layers](/infrastructure-as-effects/layers) — `RuntimeContext` as a colored function; infrastructure behind service interfaces.
+- [Circular Bindings](/infrastructure-as-effects/circular-bindings) — the two-pass plan this phase split makes possible. Next page.
+- [Layers](/infrastructure-as-effects/layers) — `RuntimeContext` as a type-level boundary; infrastructure behind service interfaces.
 - [State Store](/state-store) — where deploy results persist between runs.

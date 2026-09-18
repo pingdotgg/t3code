@@ -20,7 +20,6 @@ import Stack from "../alchemy.run.ts";
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: AWS.providers(),
   state: Alchemy.localState(),
-  stage: "test",
 });
 
 // The first deploy builds + pushes container images and waits for two

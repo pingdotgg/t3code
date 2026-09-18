@@ -222,14 +222,66 @@ export const decodeRpcValue = (value: unknown) => {
 };
 
 /**
+ * A tagged-error class an RPC surface can declare (e.g. a Durable Object's
+ * `errors` prop) so failures crossing the RPC boundary are reconstructed as
+ * real class instances instead of the plain `{ _tag, ...fields }` objects
+ * {@link encodeRpcError} produces. `identifier` is the static tag that
+ * `Schema.TaggedError` classes carry; other classes match by class `name`.
+ */
+export interface RpcErrorClass {
+  new (props: never): unknown;
+  readonly identifier?: string;
+}
+
+/**
+ * Build a reviver from declared error classes: a failure shaped
+ * `{ _tag, ...fields }` whose tag matches a declared class is
+ * reconstructed via that class's constructor (both sides of the RPC import
+ * the same class declaration, so the schema is shared by construction).
+ * Unmatched or already-revived errors pass through untouched.
+ */
+export const makeRpcErrorReviver = (
+  errors: ReadonlyArray<RpcErrorClass> | undefined,
+): ((error: unknown) => unknown) => {
+  if (errors === undefined || errors.length === 0) {
+    return (error) => error;
+  }
+  const byTag = new Map<string, RpcErrorClass>();
+  for (const cls of errors) {
+    byTag.set(cls.identifier ?? cls.name, cls);
+  }
+  return (error) => {
+    if (typeof error !== "object" || error === null || !("_tag" in error)) {
+      return error;
+    }
+    const cls = byTag.get((error as { _tag: string })._tag);
+    if (cls === undefined || error instanceof cls) {
+      return error;
+    }
+    try {
+      return new (cls as new (props: unknown) => unknown)(error);
+    } catch {
+      // A malformed wire object must not turn into a defect here — the
+      // caller still sees the raw envelope error.
+      return error;
+    }
+  };
+};
+
+/**
  * Decode an RPC return value, lifting error envelopes into the Effect
  * error channel so that remote `Effect.fail(...)` values are recoverable.
+ * When `revive` is given (see {@link makeRpcErrorReviver}), envelope errors
+ * are reconstructed as their declared error classes.
  */
 export const decodeRpcResult = (
   value: unknown,
+  revive?: (error: unknown) => unknown,
 ): Effect.Effect<unknown, unknown> => {
   if (isRpcErrorEnvelope(value)) {
-    return Effect.fail(value.error);
+    return Effect.fail(
+      revive === undefined ? value.error : revive(value.error),
+    );
   }
   return Effect.succeed(decodeRpcValue(value));
 };

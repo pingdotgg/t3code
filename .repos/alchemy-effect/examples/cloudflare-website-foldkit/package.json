@@ -10,16 +10,16 @@
     "test": "bun test"
   },
   "dependencies": {
-    "effect": "catalog:effect",
-    "foldkit": "catalog:frontend"
+    "effect": "catalog:",
+    "foldkit": "catalog:"
   },
   "devDependencies": {
-    "@foldkit/vite-plugin": "catalog:frontend",
-    "@tailwindcss/vite": "catalog:frontend",
+    "@foldkit/vite-plugin": "catalog:",
+    "@tailwindcss/vite": "catalog:",
     "alchemy": "workspace:*",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build",
-    "vite": "catalog:build"
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   },
   "engines": {
     "node": ">=22"

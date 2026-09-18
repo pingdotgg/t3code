@@ -9,17 +9,17 @@
   },
   "dependencies": {
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
+    "effect": "catalog:",
     "react": "^19.2.7",
-    "react-dom": "catalog:frontend",
-    "react-router": "catalog:frontend"
+    "react-dom": "catalog:",
+    "react-router": "catalog:"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:cloudflare",
+    "@cloudflare/workers-types": "catalog:",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "catalog:frontend",
-    "@vitejs/plugin-rsc": "catalog:frontend",
-    "vite": "catalog:build"
+    "@vitejs/plugin-react": "catalog:",
+    "@vitejs/plugin-rsc": "catalog:",
+    "vite": "catalog:"
   }
 }

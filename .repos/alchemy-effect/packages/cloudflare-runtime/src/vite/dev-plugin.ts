@@ -16,7 +16,7 @@ import * as vite from "vite";
 import { DistilledDevEnvironment } from "./dev-environment.ts";
 import type { ServerHandle } from "./dev-server.ts";
 import { configuredExportTypes, mergeExportTypes } from "./export-types.ts";
-import { resolveForwardedHost } from "./forwarded-host.ts";
+import { proxyRequestHeaders } from "./forwarded-host.ts";
 import type { CloudflareVitePluginOptions } from "./plugin.ts";
 import { handleWebSocket } from "./websockets.ts";
 
@@ -117,7 +117,8 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
       if (!optionsApi) {
         throw new Error("Cannot resolve the cloudflare-runtime:options plugin");
       }
-      const inputs = Object.values(optionsApi.input());
+      // Frameworks can register multiple names for the same Worker entry.
+      const inputs = [...new Set(Object.values(optionsApi.input()))];
       if (inputs.length > 1) {
         throw new Error(
           `Expected exactly one entry in the input, got ${inputs.length} entries: ${JSON.stringify(inputs)}`,
@@ -159,11 +160,12 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
       );
       await connect(handle.address);
       let address = handle.address;
+      let proxySharedSecret = handle.proxySharedSecret;
 
       const bindWebSocket = () => {
         removeUpgradeListener?.();
         removeUpgradeListener = server.httpServer
-          ? handleWebSocket(server.httpServer, address)
+          ? handleWebSocket(server.httpServer, address, proxySharedSecret)
           : undefined;
       };
 
@@ -184,6 +186,7 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
         );
         await connect(handle.address);
         address = handle.address;
+        proxySharedSecret = handle.proxySharedSecret;
         bindWebSocket();
       };
 
@@ -257,10 +260,7 @@ export function dev(options: CloudflareVitePluginOptions): Array<vite.Plugin> {
             );
             const request = NodeHttp.request(url, {
               method: req.method,
-              headers: {
-                ...req.headers,
-                host: resolveForwardedHost(req.headers, url.host),
-              },
+              headers: proxyRequestHeaders(req, url, proxySharedSecret),
             });
             req.pipe(request);
             request.on("response", (response) => {

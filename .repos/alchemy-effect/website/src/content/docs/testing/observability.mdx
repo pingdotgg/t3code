@@ -81,7 +81,7 @@ export const Ingest = Axiom.ApiToken("Ingest", {
   },
 });
 
-// src/worker.ts — in the Worker's init Effect:
+// src/worker.ts — in the Worker's constructor Effect:
 import { Ingest, Logs, Traces } from "./observability.ts";
 
 Effect.provide(

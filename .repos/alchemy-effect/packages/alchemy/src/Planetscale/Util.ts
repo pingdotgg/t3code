@@ -3,7 +3,7 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
-import type { ScopedPlanStatusSession } from "../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../Report.ts";
 
 /**
  * Tagged error raised when polling for a state predicate that has not yet

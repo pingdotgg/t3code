@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import Api from "./src/api.ts";
 import { Db, Site } from "./src/shared.ts";
 
-const RAILWAY_TEST_DOMAIN = Config.string("RAILWAY_TEST_DOMAIN").pipe(
+const RAILWAY_TEST_DOMAIN = Config.String("RAILWAY_TEST_DOMAIN").pipe(
   Config.option,
   Config.map(Option.getOrUndefined),
 );

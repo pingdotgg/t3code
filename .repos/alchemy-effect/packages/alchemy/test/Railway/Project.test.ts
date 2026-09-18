@@ -15,11 +15,11 @@ const logLevel = Effect.provideService(
 );
 
 const waitUntilGone = (projectId: string) =>
-  railway.project({ id: projectId }).pipe(
+  railway.project({ id: projectId }, { deletedAt: true }).pipe(
     Effect.map((project) =>
       project.deletedAt != null ? ("gone" as const) : ("found" as const),
     ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    railway.catchTags(["RailwayNotFound"], () =>
       Effect.succeed("gone" as const),
     ),
     Effect.repeat({
@@ -57,7 +57,10 @@ test.provider(
         `https://railway.com/project/${created.projectId}`,
       );
 
-      const fetched = yield* railway.project({ id: created.projectId });
+      const fetched = yield* railway.project(
+        { id: created.projectId },
+        { id: true, name: true, description: true, workspaceId: true },
+      );
       expect(fetched.id).toEqual(created.projectId);
       expect(fetched.name).toEqual(created.name);
       expect(fetched.description).toEqual("v1");
@@ -91,7 +94,10 @@ test.provider(
       expect(updated.environmentId).toEqual(created.environmentId);
       expect(updated.url).toEqual(created.url);
 
-      const fetchedUpdate = yield* railway.project({ id: updated.projectId });
+      const fetchedUpdate = yield* railway.project(
+        { id: updated.projectId },
+        { id: true, name: true, description: true },
+      );
       expect(fetchedUpdate.id).toEqual(updated.projectId);
       expect(fetchedUpdate.name).toEqual(nextName);
       expect(fetchedUpdate.description).toEqual("v2");
@@ -101,5 +107,5 @@ test.provider(
       const gone = yield* waitUntilGone(created.projectId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );

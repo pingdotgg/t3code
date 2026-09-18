@@ -10,6 +10,7 @@ const KvNamespaceWorker = {
     ),
 };
 import * as Storage from "../../globals/Storage.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
 import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
 import * as Plugin from "../../Plugin.ts";
 import type { BindingHook } from "../../PluginContext.ts";
@@ -103,7 +104,7 @@ export const KvNamespaceLive = Layer.effect(
             const kvService: WorkerdConfig.Service = {
               name: SERVICE_KV,
               worker: {
-                compatibilityDate: "2025-01-01",
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 modules: formatInternalWorkerModules(
                   yield* Effect.promise(KvNamespaceWorker.worker),
                 ),

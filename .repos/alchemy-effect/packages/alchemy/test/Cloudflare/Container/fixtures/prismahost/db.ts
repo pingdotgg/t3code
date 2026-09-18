@@ -1,6 +1,7 @@
 import { Connection } from "@/Prisma/Connection.ts";
 import { Postgres } from "@/Prisma/Postgres.ts";
 import { Project } from "@/Prisma/Project.ts";
+import { Stage } from "@/Stage.ts";
 import * as Effect from "effect/Effect";
 
 /**
@@ -15,7 +16,7 @@ export const PrismaHostConnection = Effect.gen(function* () {
     project,
     name: "main",
     dev: {
-      name: "alchemy-container-prisma-host",
+      name: `alchemy-container-prisma-host-${yield* Stage}`,
       persistenceMode: "stateless",
     },
   });

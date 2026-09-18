@@ -554,6 +554,32 @@ describe("PgProtocol", () => {
       assert.strictEqual(messages[0]._tag, "DataRow")
     })
 
+    it("pushEach hands over a message before it reads the next", () => {
+      const parser = PgProtocol.makeParser<unknown>()
+      const seen: Array<PgProtocol.BackendMessage<unknown>> = []
+      parser.pushEach(bytes(backend.rowDescription + backend.dataRowTwoColumns), (message) => {
+        // A row's columns are only known from the description in front of it,
+        // so installing the reader here has to reach the rows behind it.
+        if (message._tag === "RowDescription") {
+          parser.readField = (bytes, offset, size) => (size < 0 ? null : hex(bytes.subarray(offset, offset + size)))
+        }
+        seen.push(message)
+      })
+      assert.strictEqual(seen.length, 2)
+      assert.strictEqual(seen[0]._tag, "RowDescription")
+      assert.deepStrictEqual(seen[1], { _tag: "DataRow", values: ["00000001", "78"] })
+    })
+
+    it("pushEach keeps the messages it handed over before a failure", () => {
+      const parser = PgProtocol.makeParser()
+      const seen: Array<PgProtocol.BackendMessage> = []
+      assertThrowsTagged(
+        "PgProtocolParseError",
+        () => parser.pushEach(bytes(backend.parseComplete + "4480000000"), (message) => seen.push(message))
+      )
+      assert.deepStrictEqual(seen, [{ _tag: "ParseComplete" }])
+    })
+
     it("returns both messages when one chunk holds two", () => {
       const parser = PgProtocol.makeParser()
       const chunk = bytes(backend.parseComplete + backend.bindComplete)

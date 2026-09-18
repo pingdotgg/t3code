@@ -106,7 +106,7 @@ export interface IndexedDbQueryBuilder<
 > extends Pipeable.Pipeable, Inspectable {
   readonly tables: ReadonlyMap<string, IndexedDbVersion.Tables<Source>>
   readonly database: MutableRef.MutableRef<globalThis.IDBDatabase>
-  readonly reactivity: Reactivity.Reactivity["Service"]
+  readonly reactivity: Reactivity.Reactivity
   readonly IDBKeyRange: typeof globalThis.IDBKeyRange
   readonly IDBTransaction: globalThis.IDBTransaction | undefined
 
@@ -268,7 +268,7 @@ export declare namespace IndexedDbQuery {
     readonly table: Table
     readonly database: MutableRef.MutableRef<globalThis.IDBDatabase>
     readonly IDBKeyRange: typeof globalThis.IDBKeyRange
-    readonly reactivity: Reactivity.Reactivity["Service"]
+    readonly reactivity: Reactivity.Reactivity
 
     readonly clear: Effect.Effect<void, IndexedDbQueryError>
 
@@ -937,7 +937,7 @@ const applySelect = Effect.fnUntraced(function*(
         if (predicate === undefined || predicate(cursor.value)) {
           results.push(
             keyPath === undefined
-              ? { ...cursor.value, key: cursor.key }
+              ? { ...cursor.value, key: cursor.primaryKey }
               : cursor.value
           )
           count += 1
@@ -992,7 +992,7 @@ const applyFirst = Effect.fnUntraced(function*(
   const data = yield* Effect.callback<any, IndexedDbQueryError | Cause.NoSuchElementError>((resume) => {
     const { keyRange, store } = getReadonlyObjectStore(query.select)
 
-    if (keyRange !== undefined) {
+    if (keyRange !== undefined && keyPath !== undefined) {
       const request = store.get(keyRange)
 
       request.onerror = (event) => {
@@ -1016,7 +1016,7 @@ const applyFirst = Effect.fnUntraced(function*(
         }
       }
     } else {
-      const request = store.openCursor()
+      const request = store.openCursor(keyRange)
 
       request.onerror = (event) => {
         resume(
@@ -1031,7 +1031,7 @@ const applyFirst = Effect.fnUntraced(function*(
 
       request.onsuccess = () => {
         const value = request.result?.value
-        const key = request.result?.key
+        const key = request.result?.primaryKey
 
         if (value === undefined) {
           resume(
@@ -1413,7 +1413,7 @@ const makeFrom = <
   readonly table: Table
   readonly database: MutableRef.MutableRef<globalThis.IDBDatabase>
   readonly IDBKeyRange: typeof globalThis.IDBKeyRange
-  readonly reactivity: Reactivity.Reactivity["Service"]
+  readonly reactivity: Reactivity.Reactivity
 }): IndexedDbQuery.From<Table> => {
   const self = Object.create(FromProto)
   self.table = options.table
@@ -1785,6 +1785,7 @@ const SelectProto: Omit<
             const isPartial = data.length < chunkSize
             const next = makeSelect({
               ...select,
+              limitValue: limit === undefined ? chunkSize : Math.min(chunkSize, limit - total),
               offsetValue: initialOffset + total
             })
             return [data, isPartial || reachedLimit ? Option.none() : Option.some(next)] as const
@@ -2054,7 +2055,7 @@ export const make = <Source extends IndexedDbVersion.AnyWithProps>({
   readonly database: MutableRef.MutableRef<globalThis.IDBDatabase>
   readonly IDBKeyRange: typeof globalThis.IDBKeyRange
   readonly tables: ReadonlyMap<string, IndexedDbVersion.Tables<Source>>
-  readonly reactivity: Reactivity.Reactivity["Service"]
+  readonly reactivity: Reactivity.Reactivity
 }): IndexedDbQueryBuilder<Source> => {
   const self = Object.create(QueryBuilderProto)
   self.tables = tables

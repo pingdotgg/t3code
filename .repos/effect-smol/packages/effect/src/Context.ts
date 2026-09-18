@@ -1031,6 +1031,7 @@ export const getUnsafe: {
  * @since 2.0.0
  */
 export const get: {
+  <I, S>(service: Key<I, S>): (self: Context<I>) => S
   <Services, I extends Services, S>(service: Key<I, S>): (self: Context<Services>) => S
   <Services, I extends Services, S>(self: Context<Services>, service: Key<I, S>): S
 } = getUnsafe

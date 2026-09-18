@@ -77,6 +77,9 @@ export default DsqlDirectFunction.make(
         // closed when the invocation settles.
         if (request.method === "POST" && pathname === "/roundtrip") {
           const info = yield* conn;
+          // Plain `PgClient` over the DSQL URL (`sslmode=require`): DSQL
+          // routes on TLS SNI, which `@effect/sql-pg` ≥ rc.115 sends for
+          // DNS hosts by default (Effect-TS/effect#8174).
           const ctx = yield* Layer.build(PgClient.layer({ url: info.url }));
           const sqlClient = Context.get(ctx, PgClient.PgClient);
           // DSQL runs DDL as its own autocommit statement (no DDL+DML

@@ -29,7 +29,7 @@ import { BadArgument } from "./PlatformError.ts"
  * @category type IDs
  * @since 4.0.0
  */
-export const TypeId = "~effect/platform/Path"
+export const TypeId = "~effect/Path"
 
 /**
  * Defines the service interface for platform-specific path manipulation.

@@ -165,7 +165,6 @@ const truncate = (
   maxTokens: number
 ): Effect.Effect<Prompt.Prompt, AiError.AiError> =>
   Effect.suspend(() => {
-    let count = 0
     let inputMessages = self.content
     let outputMessages: Array<Prompt.Message> = []
     const loop: Effect.Effect<Prompt.Prompt, AiError.AiError> = Effect.suspend(() => {
@@ -174,12 +173,12 @@ const truncate = (
         return Effect.succeed(Prompt.fromMessages(outputMessages))
       }
       inputMessages = inputMessages.slice(0, inputMessages.length - 1)
-      return Effect.flatMap(tokenize(Prompt.fromMessages([message])), (tokens) => {
-        count += tokens.length
-        if (count > maxTokens) {
+      const candidate = [message, ...outputMessages]
+      return Effect.flatMap(tokenize(Prompt.fromMessages(candidate)), (tokens) => {
+        if (tokens.length > maxTokens) {
           return Effect.succeed(Prompt.fromMessages(outputMessages))
         }
-        outputMessages = [message, ...outputMessages]
+        outputMessages = candidate
         return loop
       })
     })

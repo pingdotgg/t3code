@@ -9,23 +9,23 @@
     "directory": "examples/monorepo-multi-stack/frontend"
   },
   "dependencies": {
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
-    "@types/react-dom": "^19.2.3",
-    "@types/react": "^19.2.14",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@types/react": "catalog:",
     "alchemy": "workspace:*",
     "@monorepo-multi-stack/backend": "workspace:*",
-    "effect": "catalog:effect",
-    "react-dom": "^19.2.6",
-    "react": "^19.2.6",
-    "vite": "catalog:build"
+    "effect": "catalog:",
+    "react-dom": "catalog:",
+    "react": "catalog:",
+    "vite": "catalog:"
   },
   "scripts": {
     "deploy": "alchemy deploy",
     "dev": "alchemy dev",
     "destroy": "alchemy destroy",
     "logs": "alchemy logs",
-    "tail": "alchemy tail",
+    "tail": "alchemy logs --tail",
     "test": "bun test"
   }
 }

@@ -15,7 +15,7 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const configuredPassword = yield* Config.redacted("POSTGRES_PASSWORD").pipe(
+    const configuredPassword = yield* Config.Redacted("POSTGRES_PASSWORD").pipe(
       Config.option,
     );
     const password = yield* Option.match(configuredPassword, {

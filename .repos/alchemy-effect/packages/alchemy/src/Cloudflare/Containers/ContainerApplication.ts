@@ -8,7 +8,7 @@ import {
   type PlatformServices,
 } from "../../Platform.ts";
 import { Resource } from "../../Resource.ts";
-import * as Server from "../../Server/index.ts";
+import type { ProcessServices } from "../../Server/Process.ts";
 import type { Providers } from "../Providers.ts";
 import type { InlineDockerfile } from "../../Docker/Dockerfile.ts";
 import { ContainerTypeId } from "./Container.ts";
@@ -108,7 +108,8 @@ export interface ContainerApplicationPropsBase extends PlatformProps {
   /**
    * Instance type for each deployment. Defaults to wrangler's `"lite"` tier
    * (1/16 vCPU, 256 MiB, 2 GB disk) when no explicit {@link vcpu}/{@link memory}/
-   * {@link disk} is set. (`"dev"` is wrangler's deprecated alias for `"lite"`.)
+   * {@link memoryMib}/{@link disk} is set. (`"dev"` is wrangler's deprecated
+   * alias for `"lite"`.)
    * @default "lite"
    */
   instanceType?: ContainerApplication.InstanceType;
@@ -132,6 +133,12 @@ export interface ContainerApplicationPropsBase extends PlatformProps {
    * Memory allocation override for each deployment.
    */
   memory?: string;
+  /**
+   * Memory allocation override for each deployment, in MiB.
+   * Custom sizing requires at least 1 {@link vcpu} and 3072 MiB of memory
+   * per vCPU for the first 4 vCPUs.
+   */
+  memoryMib?: number;
   /**
    * Disk allocation override for each deployment.
    */
@@ -262,11 +269,10 @@ export interface EffectfulContainerProps extends ContainerApplicationPropsBase {
    */
   autoInstallExternals?: boolean;
   /**
-   * Bundler configuration for {@link main}: rolldown `input`/`output`
-   * overrides plus pure-annotation options (`pure`). `effect`, `@effect/*`,
-   * `alchemy`, `@alchemy.run/*`, and `@distilled.cloud/*` are annotated as
-   * pure by default so unused code from those packages is tree-shaken; list
-   * additional packages via `pure.packages`, or disable with `pure: false`.
+   * Bundler configuration for {@link main}. Unused code is tree-shaken.
+   * `effect`, alchemy, and `@distilled.cloud` are marked pure so unused
+   * parts prune more aggressively. List extra packages with
+   * `pure.packages`, or disable with `pure: false`.
    */
   build?: Bundle.BundleConfig;
 }
@@ -345,7 +351,7 @@ export interface AnyContainerApplicationProps extends ContainerApplicationPropsB
 export type ContainerServices =
   | ContainerApplication
   | PlatformServices
-  | Server.ProcessServices;
+  | ProcessServices;
 
 export type ContainerShape = Main<ContainerServices>;
 
@@ -481,16 +487,13 @@ export type ContainerShape = Main<ContainerServices>;
  * bundled program is still layered on top.
  *
  * ### Bundling & Tree-shaking
- * `main` is bundled with rolldown at deploy time. Top-level calls in the
- * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
- * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
- * default, so anything the container program doesn't use from those packages is
- * tree-shaken out of the bundle. Any other package — including your own
- * app — is left untouched unless you list it explicitly.
+ * `main` is bundled with rolldown at deploy time. Unused code is
+ * tree-shaken. `effect`, alchemy, and `@distilled.cloud` are marked
+ * pure so unused parts prune more aggressively. Your app is not
+ * marked pure.
  *
- * **Example:** Treat additional packages as pure
- * Pass package names (or picomatch globs) via `build.pure.packages` to
- * annotate them in addition to the defaults.
+ * **Example:** Mark additional packages as pure
+ * Only list packages with no top-level side effects.
  * ```typescript
  * {
  *   main: import.meta.url,
@@ -500,18 +503,7 @@ export type ContainerShape = Main<ContainerServices>;
  * }
  * ```
  *
- * Listing a package annotates calls whose result is bound (variable
- * initializers, exports) — safe anywhere. If a listed package also
- * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
- * combination opts it into full annotation: top-level calls whose result
- * is discarded (e.g. `router.on("/path", handler)` registrations) are
- * also marked pure and deleted under minification when unused. Only list
- * a `sideEffects: false` package if its modules really are free of
- * meaningful top-level side effects. The `effect`, `alchemy`, and
- * `@distilled.cloud` defaults declare exactly that, on purpose — their
- * modules are designed to be fully tree-shakeable.
- *
- * **Example:** Disable pure annotations
+ * **Example:** Turn it off
  * ```typescript
  * {
  *   main: import.meta.url,

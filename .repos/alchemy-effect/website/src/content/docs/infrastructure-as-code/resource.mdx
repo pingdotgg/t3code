@@ -355,7 +355,7 @@ alchemy handles it with a two-phase plan; see
 
 Real systems have cycles — two Workers that call each other, a
 Lambda that invokes another Lambda. Alchemy resolves them by
-splitting each Function resource ([Functions & Servers](/infrastructure-as-effects/functions-and-servers)) into a
+splitting each Function resource ([Runtime](/infrastructure-as-effects/runtime)) into a
 **class** that acts as the Tag (the identity) and a **`.make(...)`**
 Layer that supplies the runtime implementation — so the class can be
 referenced before its implementation exists:

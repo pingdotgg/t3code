@@ -11,10 +11,10 @@
     "directory": "examples/monorepo-multi-stack/backend"
   },
   "dependencies": {
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect"
+    "effect": "catalog:"
   },
   "exports": {
     ".": {
@@ -36,7 +36,7 @@
     "dev": "alchemy dev",
     "destroy": "alchemy destroy",
     "logs": "alchemy logs",
-    "tail": "alchemy tail",
+    "tail": "alchemy logs --tail",
     "test": "bun test"
   }
 }

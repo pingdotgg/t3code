@@ -15,19 +15,32 @@ const logLevel = Effect.provideService(
 );
 
 const listLive = (environmentId: string, serviceId: string) =>
-  railway.tcpProxies({ environmentId, serviceId }).pipe(
-    Effect.map((items) =>
-      items
-        .filter(
-          (proxy) => proxy.deletedAt == null && proxy.syncStatus !== "DELETED",
-        )
-        .map((proxy) => ({
-          ...proxy,
-          domain: proxy.domain.replace(/\.+$/, ""),
-        })),
-    ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.succeed([])),
-  );
+  railway
+    .tcpProxies(
+      { environmentId, serviceId },
+      {
+        id: true,
+        domain: true,
+        proxyPort: true,
+        applicationPort: true,
+        deletedAt: true,
+        syncStatus: true,
+      },
+    )
+    .pipe(
+      Effect.map((items) =>
+        items
+          .filter(
+            (proxy) =>
+              proxy.deletedAt == null && proxy.syncStatus !== "DELETED",
+          )
+          .map((proxy) => ({
+            ...proxy,
+            domain: proxy.domain.replace(/\.+$/, ""),
+          })),
+      ),
+      railway.catchTags(["RailwayNotFound"], () => Effect.succeed([])),
+    );
 
 const waitUntilProxyGone = (
   environmentId: string,
@@ -48,13 +61,16 @@ const waitUntilProxyGone = (
   );
 
 const createTargetService = (projectId: string, environmentId: string) =>
-  railway.serviceCreate({
-    input: {
-      projectId,
-      environmentId,
-      source: { image: "redis:7-alpine" },
+  railway.createService(
+    {
+      input: {
+        projectId,
+        environmentId,
+        source: { image: "redis:7-alpine" },
+      },
     },
-  });
+    { id: true },
+  );
 
 test.provider(
   "create, update, and delete a tcp proxy",
@@ -125,7 +141,7 @@ test.provider(
       );
       expect(proxyGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );
 
 test.provider(
@@ -187,5 +203,5 @@ test.provider(
       );
       expect(proxyGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );

@@ -7,3 +7,6 @@
 "@effect/cluster/Reply#TypeId":
   replacement: "none"
   note: "The reply marker is private in v4. Use Reply.isReply for runtime refinement."
+"@effect/cluster/Reply#Reply":
+  replacement: "Reply.Reply(rpc, codecFor)"
+  note: "Pass the transport codec. Decoding replies requires Rpc.ServicesClient; encoding replies requires Rpc.ServicesServer."

@@ -84,30 +84,12 @@ A reconciler is a single observe → ensure → sync → return flow:
 
 ```typescript
 reconcile: Effect.fn(function* ({ news, output }) {
-  const stripe = yield* StripeClient;
-
-  // Observe — fetch live state if we have a cached id.
-  let product = output?.productId
-    ? yield* Effect.tryPromise(() =>
-        stripe.products.retrieve(output.productId),
-      ).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
-    : undefined;
-
-  // Ensure — create if missing.
-  if (!product) {
-    product = yield* Effect.tryPromise(() =>
-      stripe.products.create({ name: news.name }),
-    );
+  let live = yield* observe(output);          // read live cloud state
+  if (!live) live = yield* create(news);      // ensure it exists
+  if (drifted(live, news)) {
+    live = yield* update(live.id, news);      // sync only the delta
   }
-
-  // Sync — patch any field that drifted from desired.
-  if (product.name !== news.name) {
-    product = yield* Effect.tryPromise(() =>
-      stripe.products.update(product!.id, { name: news.name }),
-    );
-  }
-
-  return { productId: product.id, name: product.name };
+  return toAttributes(live);                  // fresh attributes
 }),
 ```
 
@@ -129,8 +111,9 @@ state persistence failure. Deterministic physical names plus the
 observe step ensure a retry finds the existing resource and re-syncs
 any drifted fields.
 
-See the [custom provider guide](/infrastructure-as-code/custom-provider#implement-reconcile)
-for the full walkthrough.
+For a real reconciler built up step by step — observe, ensure,
+sync, return, against the Stripe API — see the
+[custom provider guide](/infrastructure-as-code/custom-provider#implement-reconcile).
 
 ### `delete`
 
@@ -271,7 +254,7 @@ or `nuke.skip` (the resource can never actually be deleted).
 
 ### `tail` / `logs`
 
-Optional. Power `alchemy tail` (live log streaming) and
+Optional. Powers `alchemy logs --tail` (live log streaming) and
 `alchemy logs` (historical fetch). Each returns a `Stream` or
 `Effect` of `LogLine` values respectively.
 

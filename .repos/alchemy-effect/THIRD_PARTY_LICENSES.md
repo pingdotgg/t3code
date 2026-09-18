@@ -6,7 +6,7 @@ respective license notices.
 
 ## Astro
 
-Portions of `packages/cloudflare-frameworks/src/astro` are derived from
+Portions of `packages/frontend-frameworks/src/astro` are derived from
 `@astrojs/cloudflare`.
 
 Copyright (c) 2021 Fred K. Schott
@@ -33,7 +33,7 @@ SOFTWARE.
 
 ## SvelteKit
 
-Portions of `packages/cloudflare-frameworks/src/sveltekit` are derived from
+Portions of `packages/frontend-frameworks/src/sveltekit` are derived from
 `@sveltejs/adapter-cloudflare`.
 
 Copyright (c) 2020 SvelteKit contributors
@@ -43,7 +43,7 @@ Astro section above.
 
 ## Waku
 
-Portions of `packages/cloudflare-frameworks/src/waku` are derived from Waku.
+Portions of `packages/frontend-frameworks/src/waku` are derived from Waku.
 
 Copyright (c) 2023 Daishi Kato
 
@@ -65,7 +65,7 @@ License reproduced in the Astro section above.
 
 ## OpenNext for Cloudflare
 
-Portions of `packages/cloudflare-frameworks/src/nextjs`, including the build
+Portions of `packages/frontend-frameworks/src/nextjs`, including the build
 runner and development-context integration, are derived from OpenNext for
 Cloudflare.
 
@@ -122,17 +122,17 @@ been dedicated to the public domain. See <https://www.sqlite.org/copyright.html>
 
 ## Upstream source references
 
-- Astro: <https://github.com/withastro/astro>
-- SvelteKit: <https://github.com/sveltejs/kit>
-- Waku: <https://github.com/wakujs/waku>
-- Cloudflare Workers SDK: <https://github.com/cloudflare/workers-sdk>
-- OpenNext for Cloudflare: <https://github.com/opennextjs/opennextjs-cloudflare>
+- Astro: [`a2240c43830e29c1d85667f4c610655d6b10253f`](https://github.com/withastro/astro/tree/a2240c43830e29c1d85667f4c610655d6b10253f)
+- SvelteKit: [`f36b3a4cd307bd8c89e03fa191becc175e7b3077`](https://github.com/sveltejs/kit/tree/f36b3a4cd307bd8c89e03fa191becc175e7b3077)
+- Waku: [`39e868f2638c27de9635c68ebf965e14a4112e9b`](https://github.com/wakujs/waku/tree/39e868f2638c27de9635c68ebf965e14a4112e9b)
+- Cloudflare Workers SDK: [`b7b4ff84477982e7c770bb93928287893fcf2e03`](https://github.com/cloudflare/workers-sdk/tree/b7b4ff84477982e7c770bb93928287893fcf2e03)
+- OpenNext for Cloudflare: [`da4b7fc8c89441a6f96205635fa70e329d1f0df7`](https://github.com/opennextjs/opennextjs-cloudflare/tree/da4b7fc8c89441a6f96205635fa70e329d1f0df7)
 - SST: <https://github.com/sst/sst>
 - node-sanitize-filename: <https://github.com/parshap/node-sanitize-filename>
 - node-ignore: <https://github.com/kaelzhang/node-ignore>
 - SQLite: <https://github.com/sqlite/sqlite>
 
-The external `.vendor` Git submodules are separate works governed by the
-license files in their respective repositories. This notice covers code copied
+The first-class `submodules/` checkouts (distilled, floci) are separate works
+governed by the license files in their respective repositories. This notice covers code copied
 or adapted into the Alchemy repository; it does not replace the license
 documentation within those submodules.

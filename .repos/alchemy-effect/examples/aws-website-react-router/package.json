@@ -10,24 +10,24 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@react-router/node": "catalog:frontend",
-    "isbot": "catalog:frontend",
-    "react": "catalog:frontend",
-    "react-dom": "catalog:frontend",
-    "react-router": "catalog:frontend"
+    "@react-router/node": "catalog:",
+    "isbot": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
-    "@react-router/dev": "catalog:frontend",
-    "@tailwindcss/vite": "catalog:frontend",
-    "@types/react": "catalog:frontend",
+    "@effect/platform-node": "catalog:",
+    "@react-router/dev": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@types/react": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build",
-    "vite": "catalog:build"
+    "effect": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   },
   "engines": {
     "node": ">=22"

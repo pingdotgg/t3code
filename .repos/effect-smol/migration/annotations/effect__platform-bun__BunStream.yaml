@@ -1,6 +1,6 @@
 "@effect/platform-bun/BunStream#FromReadableOptions":
   replacement: "Pick<Parameters<typeof BunStream.fromReadable>[0], \"chunkSize\" | \"closeOnDone\">"
-  note: "The named interface was inlined into the constructor options; chunkSize is now a number and the full options also contain evaluate, onError, and bufferSize."
+  note: "The named interface was inlined into the constructor options; chunkSize is now a number and the full options also contain evaluate and onError. The ignored bufferSize option was removed."
 "@effect/platform-bun/BunStream#FromWritableOptions":
   replacement: "Pick<Parameters<typeof BunSink.fromWritable>[0], \"endOnDone\" | \"encoding\">"
   note: "The named interface was inlined into BunSink.fromWritable and duplex constructor options."

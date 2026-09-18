@@ -335,10 +335,10 @@ describe("Postgres state store", () => {
 
   it.effect("reports an unresolvable url config as a state store error", () => {
     // `url` accepts any Effect of a Redacted string, so
-    // `Config.redacted(...)` can be passed straight through; a missing
+    // `Config.Redacted(...)` can be passed straight through; a missing
     // variable surfaces as a StateStoreError like any other failure.
     return withoutClient(
-      { url: Config.redacted("ALCHEMY_TEST_MISSING_STATE_DATABASE_URL") },
+      { url: Config.Redacted("ALCHEMY_TEST_MISSING_STATE_DATABASE_URL") },
       (store) => store.get(request),
     ).pipe(
       Effect.flip,

@@ -27,6 +27,7 @@ vi.mock("../preview-server.ts", () => ({
     startedBuilds.push(build);
     return {
       address: new URL(runtimeAddress),
+      proxySharedSecret: "preview-secret",
       close: async () => {
         closed += 1;
       },

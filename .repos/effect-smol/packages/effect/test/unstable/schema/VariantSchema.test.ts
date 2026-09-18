@@ -84,6 +84,21 @@ describe("VariantSchema", () => {
 })
 
 describe("Model", () => {
+  it("preserves classes when extracting the default variant", () => {
+    class Person extends Model.Class<Person>("Person")({
+      name: Schema.String
+    }) {}
+
+    const person = Schema.decodeSync(Model.extract(Person, "select"))({ name: "Alex" })
+
+    assert.isTrue(person instanceof Person)
+  })
+
+  it("FieldOption preserves omitted variants", () => {
+    const field = Model.FieldOption(Model.Field({ select: Schema.String, json: undefined }))
+    assert.strictEqual(field.schemas.json, undefined)
+  })
+
   it("FieldOnly includes fields only in listed variants", () => {
     const InsertOnly = Model.Struct({
       value: Model.FieldOnly(["insert"])(Schema.String)

@@ -33,4 +33,38 @@ describe("WorkflowBridge", () => {
       }
     }),
   );
+
+  it.effect(
+    "omits undefined config keys so retries-only steps keep the engine timeout default",
+    () =>
+      Effect.gen(function* () {
+        const doCalls: Array<unknown> = [];
+        const step = wrapWorkflowStep({
+          do: (...args: unknown[]) => {
+            doCalls.push(args);
+            return Promise.resolve("done");
+          },
+          sleep: () => Promise.resolve(),
+          sleepUntil: () => Promise.resolve(),
+          waitForEvent: () => Promise.resolve(),
+        });
+
+        yield* step.do({
+          name: "retries-only",
+          effect: Effect.succeed("done"),
+          retries: { limit: 3, delay: "10 seconds", backoff: "exponential" },
+        });
+
+        expect(doCalls).toHaveLength(1);
+        const config = (doCalls[0] as Array<unknown>)[1];
+        expect(config).toEqual({
+          retries: {
+            limit: 3,
+            delay: "10 seconds",
+            backoff: "exponential",
+          },
+        });
+        expect("timeout" in (config as object)).toBe(false);
+      }),
+  );
 });

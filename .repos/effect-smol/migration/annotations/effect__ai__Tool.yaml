@@ -55,3 +55,9 @@
 "@effect/ai/Tool#TypeId":
   replacement: "Tool.TypeId"
   note: "Moved to effect/unstable/ai/Tool and remains public. Its literal changed, so use the export rather than retaining the old hard-coded string."
+"@effect/ai/Tool#Result":
+  replacement: "Tool.Result"
+  note: "The result includes success, declared failure, and execution-denied or execution-interrupted values in both failure modes. Return mode also includes AiError; handle these variants when narrowing results."
+"@effect/ai/Tool#ResultEncoded":
+  replacement: "Tool.ResultEncoded"
+  note: "The encoded result includes execution-denied and execution-interrupted variants in both failure modes, plus encoded AiError in return mode."

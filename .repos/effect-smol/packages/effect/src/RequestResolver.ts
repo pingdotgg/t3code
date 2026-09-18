@@ -17,7 +17,8 @@ import type * as Duration from "./Duration.ts"
 import * as Effect from "./Effect.ts"
 import * as Exit from "./Exit.ts"
 import { constTrue, dual, identity } from "./Function.ts"
-import { exitFail, exitSucceed } from "./internal/core.ts"
+import { exitSucceed } from "./internal/core.ts"
+import * as Count from "./internal/count.ts"
 import * as effect from "./internal/effect.ts"
 import * as internal from "./internal/request.ts"
 import * as Iterable from "./Iterable.ts"
@@ -528,17 +529,18 @@ export const fromEffectTagged = <A extends Request.Any & { readonly _tag: string
       return Effect.forEach(
         grouped,
         ([tag, requests]) =>
-          Effect.matchCause((fns[tag] as any)(requests) as Effect.Effect<Array<any>, unknown, unknown>, {
+          Effect.matchCause((fns[tag] as any)(requests) as Effect.Effect<Iterable<any>, unknown, unknown>, {
             onFailure: (cause) => {
               for (let i = 0; i < requests.length; i++) {
                 const entry = requests[i]
-                entry.completeUnsafe(exitFail(cause) as any)
+                entry.completeUnsafe(Exit.failCause(cause) as any)
               }
             },
             onSuccess: (res) => {
-              for (let i = 0; i < res.length; i++) {
-                const entry = requests[i]
-                entry.completeUnsafe(exitSucceed(res[i]) as any)
+              let i = 0
+              for (const result of res) {
+                const entry = requests[i++]
+                entry.completeUnsafe(exitSucceed(result) as any)
               }
             }
           }),
@@ -740,7 +742,8 @@ export const never: RequestResolver<never> = make(() => Effect.never)
  *
  * When more than `n` requests are waiting for the same resolver and batch key,
  * the current batch is run and additional requests are collected into later
- * batches.
+ * batches. Finite fractional values of `n` are rounded down. `NaN` and
+ * non-positive values are treated as `1` so that every batch remains non-empty.
  *
  * **Example** (Limiting parallel request batches)
  *
@@ -787,11 +790,13 @@ export const never: RequestResolver<never> = make(() => Effect.never)
 export const batchN: {
   (n: number): <A extends Request.Any>(self: RequestResolver<A>) => RequestResolver<A>
   <A extends Request.Any>(self: RequestResolver<A>, n: number): RequestResolver<A>
-} = dual(2, <A extends Request.Any>(self: RequestResolver<A>, n: number): RequestResolver<A> =>
-  makeWith({
+} = dual(2, <A extends Request.Any>(self: RequestResolver<A>, n: number): RequestResolver<A> => {
+  const size = Count.normalizeNonEmpty(n)
+  return makeWith({
     ...self,
-    collectWhile: (requests) => requests.size < n
-  }))
+    collectWhile: (requests) => requests.size < size
+  })
+})
 
 /**
  * Transforms a request resolver by grouping requests using the specified key
@@ -1114,8 +1119,9 @@ export const asCache: {
  *
  * **Gotchas**
  *
- * Entries do not expire by time, and completed failures are cached the same as
- * successes. Request equality controls cache hits.
+ * Entries do not expire by time, and completed failures without interruptions
+ * are cached the same as successes. Results containing interruptions are not
+ * cached. Request equality controls cache hits.
  *
  * @see {@link asCache} for exposing the resolver as a `Cache` with time-to-live and service lookup controls
  * @see {@link persisted} for backing persistable requests with the configured persistence store
@@ -1163,7 +1169,16 @@ export const withCache: {
           MutableHashMap.set(cache, entry.request, cached)
           const prevComplete = entry.completeUnsafe
           entry.completeUnsafe = function(exit) {
-            cached.exit = exit as any
+            if (Exit.hasInterrupts(exit)) {
+              if (cached.exit === undefined) {
+                const current = MutableHashMap.get(cache, entry.request)
+                if (current._tag === "Some" && current.value === cached) {
+                  MutableHashMap.remove(cache, entry.request)
+                }
+              }
+            } else {
+              cached.exit = exit as any
+            }
             prevComplete(exit)
           }
           return true
@@ -1261,6 +1276,7 @@ export const persisted: {
         >)
         const leftover: Array<Request.Entry<A>> = []
         const toPersist = new Map<A, Request.Result<A>>()
+        const completed = new Set<Request.Entry<A>>()
         for (let i = 0; i < results.length; i++) {
           const entry = entries[i]
           const exit = results[i]
@@ -1270,6 +1286,7 @@ export const persisted: {
           ) {
             const prevComplete = entry.completeUnsafe
             entry.completeUnsafe = function(exit) {
+              completed.add(entry)
               toPersist.set(entry.request, exit as any)
               prevComplete(exit)
             }
@@ -1281,10 +1298,10 @@ export const persisted: {
         if (!Arr.isArrayNonEmpty(leftover)) {
           return
         }
-        yield* Effect.catchCause(self.runAll(leftover, key), (cause) => {
+        yield* Effect.catchCause(Effect.suspend(() => self.runAll(leftover, key)), (cause) => {
           for (let i = 0; i < leftover.length; i++) {
             const entry = leftover[i]
-            if (!toPersist.has(entry.request)) continue
+            if (completed.has(entry)) continue
             entry.completeUnsafe(Exit.failCause(cause) as any)
           }
           return Effect.void

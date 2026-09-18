@@ -8,25 +8,10 @@ const ClientLayer = PgliteClient.layer({})
 
 describe("PersistedQueue SQL migrations", () => {
   layer(ClientLayer, { timeout: "30 seconds" })((it) => {
-    it.effect("adopts an existing queue table and records the migration once", () =>
+    it.effect("runs fresh-install migrations once", () =>
       Effect.gen(function*() {
         const sql = (yield* SqlClient.SqlClient).withoutTransforms()
         const tableName = "persisted_queue_migration_test"
-        const table = sql(tableName)
-
-        yield* sql`CREATE TABLE ${table} (
-          sequence SERIAL PRIMARY KEY,
-          id VARCHAR(36) NOT NULL,
-          queue_name VARCHAR(100) NOT NULL,
-          element TEXT NOT NULL,
-          completed BOOLEAN NOT NULL,
-          attempts INTEGER NOT NULL DEFAULT 0,
-          last_failure TEXT NULL,
-          acquired_at TIMESTAMP NULL,
-          acquired_by UUID NULL,
-          created_at TIMESTAMP NOT NULL,
-          updated_at TIMESTAMP NOT NULL
-        )`
 
         yield* PersistedQueue.makeStoreSql({ tableName })
         yield* PersistedQueue.makeStoreSql({ tableName })
@@ -35,7 +20,10 @@ describe("PersistedQueue SQL migrations", () => {
           readonly migration_id: number
           readonly name: string
         }>`SELECT migration_id, name FROM ${sql(`${tableName}_migrations`)} ORDER BY migration_id`
-        assert.deepStrictEqual(migrations, [{ migration_id: 1, name: "create_table" }])
+        assert.deepStrictEqual(migrations, [
+          { migration_id: 1, name: "create_table" },
+          { migration_id: 2, name: "upgrade_schema" }
+        ])
 
         const indexes = yield* sql<{ readonly indexname: string }>`
           SELECT indexname FROM pg_indexes

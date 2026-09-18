@@ -28,7 +28,7 @@ export const Staging = Railway.Environment("Staging", {
 
 /**
  * Shared project variable. {@link Api} pulls it into service env with
- * `Railway.ref("shared", SECRET_NAME)` and reads it via `Config.string`.
+ * `Railway.ref("shared", SECRET_NAME)` and reads it via `Config.String`.
  */
 export const Marker = Railway.Variable("Marker", {
   project: Site,

@@ -18,10 +18,8 @@ const testOptions = { providers: AWS.providers() };
 const { test, beforeAll, afterAll } = Test.make(testOptions);
 const sharedStack = Core.scratchStack(testOptions, "CodePipelineBindings");
 
-// Lambda function URL cold-start (DNS, IAM propagation, init) can take well
-// over 60s on a fresh deploy under parallel-suite load — and the freshly
-// attached codepipeline policy has been observed to take >150s to propagate
-// on a first-ever deploy.
+// A fresh Lambda role can remain unauthorized by CodePipeline after the
+// function itself is active.
 const readinessPolicy = Schedule.max([
   Schedule.fixed("2 seconds"),
   Schedule.recurs(90),
@@ -33,6 +31,18 @@ class TransientUpstream extends Data.TaggedError("TransientUpstream")<{
   readonly status: number;
   readonly body: string;
 }> {}
+
+class PipelineReadinessError extends Data.TaggedError(
+  "PipelineReadinessError",
+)<{
+  readonly status: number;
+  readonly errorTag?: string;
+  readonly errorMessage?: string;
+}> {
+  override get message() {
+    return `CodePipeline readiness failed (${this.errorTag ?? `HTTP ${this.status}`}): ${this.errorMessage ?? "no error details"}`;
+  }
+}
 
 // Retry transient 5xx from the shared Lambda fixture (cold re-init, IAM
 // propagation on the freshly attached codepipeline policy surfaced as a 500
@@ -136,24 +146,27 @@ describe.sequential("CodePipeline Bindings", () => {
       yield* Effect.logInfo(
         `CodePipeline test setup: probing readiness at ${readinessUrl}`,
       );
-      // Ready = the function answers 200 AND the freshly attached
-      // codepipeline policy has propagated (an AccessDeniedException errorTag
-      // means IAM is still converging — keep probing).
+      // Readiness requires an authorized downstream call, not just HTTP 200.
       yield* HttpClient.get(readinessUrl).pipe(
         Effect.flatMap((response) =>
-          response.status === 200
-            ? response.json
-            : Effect.fail(new Error(`Function not ready: ${response.status}`)),
+          Effect.gen(function* () {
+            if (response.status !== 200) {
+              return yield* new PipelineReadinessError({
+                status: response.status,
+              });
+            }
+            return yield* response.json;
+          }),
         ),
-        Effect.flatMap((body: any) =>
-          body.errorTag === undefined
-            ? Effect.succeed(body)
+        Effect.flatMap((body) => {
+          const result = body as { errorTag?: string; errorMessage?: string };
+          return result.errorTag === undefined
+            ? Effect.succeed(result)
             : Effect.fail(
-                new Error(
-                  `IAM not propagated: ${body.errorTag}: ${body.errorMessage}`,
-                ),
-              ),
-        ),
+                new PipelineReadinessError({ status: 200, ...result }),
+              );
+        }),
+        Effect.tapError((error) => Effect.logWarning(String(error))),
         Effect.retry({ schedule: readinessPolicy }),
       );
     }),

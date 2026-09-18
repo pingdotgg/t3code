@@ -18,7 +18,6 @@ allowBuilds:
   cpu-features: false
   dprint: false
   esbuild: false
-  msgpackr-extract: false
   protobufjs: false
   sharp: false
   ssh2: false
@@ -28,4 +27,4 @@ allowBuilds:
   workerd: false
 
 patchedDependencies:
-  '@changesets/get-github-info@1.0.0': patches/@changesets__get-github-info@1.0.0.patch
+  '@changesets/get-github-info@1.0.1': patches/@changesets__get-github-info@1.0.1.patch

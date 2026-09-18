@@ -54,7 +54,7 @@ effect/Logger#pretty:
   note: "Logger.layer replaces the active set; include tracerLogger to preserve v3 built-in layer behavior."
 effect/Logger#prettyLogger:
   replacement: "Logger.consolePretty"
-  note: "Direct constructor rename; call it with the same options."
+  note: "Renamed to consolePretty. Remove the stderr option; provide Logger.LogToStderr with true to route TTY output to console.error. Colors, formatDate, and mode remain constructor options."
 effect/Logger#prettyLoggerDefault:
   replacement: "Logger.consolePretty()"
   note: "The prebuilt singleton became a constructor call."
@@ -95,8 +95,8 @@ effect/Logger#withMinimumLogLevel:
   replacement: "Effect.provideService(effect, References.MinimumLogLevel, level)"
   note: "Replace the FiberRef-local helper with reference provisioning."
 effect/Logger#withSpanAnnotations:
-  replacement: "custom Logger.make wrapper using options.fiber.currentSpan"
-  note: "No transparent generic equivalent remains. Read span identity from options.fiber.currentSpan and add it to custom output as needed."
+  replacement: "custom Logger.make wrapper using options.fiber.cache.span"
+  note: "No transparent generic equivalent remains. Read span identity from options.fiber.cache.span and add it to custom output as needed."
 effect/Logger#zip:
   replacement: "Logger.make(options => [left.log(options), right.log(options)])"
   note: "No named combinator remains; invoke both loggers and return their output tuple."

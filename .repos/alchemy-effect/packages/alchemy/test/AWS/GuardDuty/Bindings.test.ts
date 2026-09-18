@@ -193,8 +193,15 @@ describe.sequential("GuardDuty Bindings", () => {
           expect(detail.count).toBe(1);
           expect(detail.type).toBe("Recon:EC2/PortProbeUnprotectedPort");
 
-          // Statistics group the sample finding by severity.
-          const stats = (yield* getJson("/stats")) as { severities: string[] };
+          // Statistics can lag behind the finding itself.
+          const stats = (yield* getJson("/stats").pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("3 seconds"),
+              until: (r): boolean =>
+                (r as { severities: string[] }).severities.length > 0,
+              times: 10,
+            }),
+          )) as { severities: string[] };
           expect(stats.severities.length).toBeGreaterThan(0);
 
           // Archive everything we generated — a real write.

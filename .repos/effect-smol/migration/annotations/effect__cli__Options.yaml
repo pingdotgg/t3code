@@ -17,40 +17,40 @@
   replacement: "Flag.between"
   note: "Use the moved combinator; v4 validates bounds when constructing the parameter."
 "@effect/cli/Options#boolean":
-  replacement: "Flag.boolean + Flag.withDefault"
-  note: "Use Flag.boolean(name).pipe(Flag.withDefault(false)) to preserve v3's omitted-flag default; bare Flag.boolean is now required. --no-name is automatic and aliases are added with Flag.withAlias."
+  replacement: "Flag.Boolean + Flag.withDefault"
+  note: "Use Flag.Boolean(name).pipe(Flag.withDefault(false)) to preserve v3's omitted-flag default; bare Flag.Boolean is now required. --no-name is automatic and aliases are added with Flag.withAlias."
 "@effect/cli/Options#choice":
-  replacement: "Flag.choice"
+  replacement: "Flag.Literals"
   note: "Use the moved constructor."
 "@effect/cli/Options#choiceWithValue":
-  replacement: "Flag.choiceWithValue"
+  replacement: "Flag.ChoiceWithValue"
   note: "Use the moved constructor."
 "@effect/cli/Options#date":
-  replacement: "Flag.date"
+  replacement: "Flag.Date"
   note: "Use the moved constructor."
 "@effect/cli/Options#directory":
-  replacement: "Flag.directory"
+  replacement: "Flag.Directory"
   note: "Use mustExist=true for exists=yes and omit it for either; exists=no has no exact replacement."
 "@effect/cli/Options#file":
-  replacement: "Flag.file"
+  replacement: "Flag.File"
   note: "Use mustExist=true for exists=yes and omit it for either; exists=no has no exact replacement."
 "@effect/cli/Options#fileContent":
-  replacement: "Flag.file + Flag.mapEffect"
+  replacement: "Flag.File + Flag.mapEffect"
   note: "Parse a path and read it with FileSystem.readFile; no binary-content flag constructor remains."
 "@effect/cli/Options#fileParse":
-  replacement: "Flag.fileParse"
+  replacement: "Flag.FileParse"
   note: "Pass the old format as an options field; v4 returns parsed content rather than a path/content tuple."
 "@effect/cli/Options#fileSchema":
-  replacement: "Flag.fileSchema"
+  replacement: "Flag.FileSchema"
   note: "Pass the old format as an options field and use a v4 Schema constraint decoder."
 "@effect/cli/Options#fileText":
-  replacement: "Flag.file + Flag.mapEffect"
-  note: "Flag.fileText returns content only; read after Flag.file when the path/content tuple must be preserved."
+  replacement: "Flag.File + Flag.mapEffect"
+  note: "Flag.FileText returns content only; read after Flag.File when the path/content tuple must be preserved."
 "@effect/cli/Options#filterMap":
   replacement: "Flag.filterMap"
   note: "Use the moved combinator and replace the fixed message with an onNone function."
 "@effect/cli/Options#float":
-  replacement: "Flag.float"
+  replacement: "Flag.Finite"
   note: "Use the moved constructor."
 "@effect/cli/Options#getHelp":
   replacement: "none"
@@ -62,7 +62,7 @@
   replacement: "none"
   note: "The public Usage tree was removed; Command generates a usage string internally."
 "@effect/cli/Options#integer":
-  replacement: "Flag.integer"
+  replacement: "Flag.Int"
   note: "Use the moved constructor."
 "@effect/cli/Options#isBool":
   replacement: "none"
@@ -71,7 +71,7 @@
   replacement: "Param.isParam(value) && value.kind === Param.flagKind"
   note: "Flags now use the shared Param representation and an explicit kind discriminator."
 "@effect/cli/Options#keyValueMap":
-  replacement: "Flag.keyValuePair"
+  replacement: "Flag.KeyValuePair"
   note: "Renamed and now returns Record<string, string> rather than HashMap."
 "@effect/cli/Options#map":
   replacement: "Flag.map"
@@ -84,7 +84,7 @@
   note: "Use the moved combinator; onError now returns a string rather than HelpDoc."
 "@effect/cli/Options#none":
   replacement: "omit the config entry"
-  note: "V4 Flag.none is an always-failing sentinel, not v3's empty successful option set."
+  note: "V4 Flag.Never is an always-failing sentinel, not v3's empty successful option set."
 "@effect/cli/Options#optional":
   replacement: "Flag.optional"
   note: "Use the moved combinator; it still returns Option."
@@ -92,7 +92,7 @@
   replacement: "Flag.Flag"
   note: "Options was renamed to Flag in effect/unstable/cli."
 "@effect/cli/Options#Options.BooleanOptionsConfig":
-  replacement: "Flag.boolean + Flag.withAlias + Flag.map"
+  replacement: "Flag.Boolean + Flag.withAlias + Flag.map"
   note: "The config object was removed; aliases and value inversion are combinators, while custom negation names need application logic."
 "@effect/cli/Options#Options.PathOptionsConfig":
   replacement: "{ readonly mustExist?: boolean }"
@@ -116,17 +116,17 @@
   replacement: "Command.runWith"
   note: "Raw argv processing is now whole-command execution; no public standalone flag tokenizer remains."
 "@effect/cli/Options#redacted":
-  replacement: "Flag.redacted"
+  replacement: "Flag.Redacted"
   note: "Use the moved constructor."
 "@effect/cli/Options#repeated":
   replacement: "Flag.variadic"
   note: "Renamed to variadic; pass optional min and max bounds."
 "@effect/cli/Options#secret":
-  replacement: "Flag.redacted"
+  replacement: "Flag.Redacted"
   note: "The deprecated Secret constructor was removed; use Redacted-backed input."
 "@effect/cli/Options#text":
-  replacement: "Flag.string"
-  note: "Renamed from text to string."
+  replacement: "Flag.String"
+  note: "Renamed from text to String."
 "@effect/cli/Options#withAlias":
   replacement: "Flag.withAlias"
   note: "Use the moved combinator."

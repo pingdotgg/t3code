@@ -40,36 +40,41 @@ const VolumeStack = Effect.gen(function* () {
 
 const listLive = (volumeInstanceId: string) =>
   railway
-    .volumeInstanceBackupList({ volumeInstanceId })
+    .listVolumeInstanceBackup(
+      { volumeInstanceId },
+      { id: true, name: true, createdAt: true },
+    )
     .pipe(
-      Effect.catchTag(["RailwayNotFound", "NotFound", "RailwayForbidden"], () =>
+      railway.catchTags(["RailwayNotFound", "RailwayForbidden"], () =>
         Effect.succeed([]),
       ),
     );
 
 const waitUntilReady = (volumeInstanceId: string) =>
-  railway.volumeInstance({ id: volumeInstanceId }).pipe(
-    Effect.map((instance) =>
-      instance.deletedAt == null &&
-      instance.state !== "DELETED" &&
-      instance.state !== "DELETING" &&
-      instance.state !== "UPDATING" &&
-      instance.state !== "MIGRATING" &&
-      instance.state !== "MIGRATION_PENDING" &&
-      instance.state !== "RESTORING" &&
-      instance.state !== "ERROR"
-        ? ("ready" as const)
-        : ("pending" as const),
-    ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed("pending" as const),
-    ),
-    Effect.repeat({
-      schedule: Schedule.spaced("2 seconds"),
-      until: (status) => status === "ready",
-      times: 10,
-    }),
-  );
+  railway
+    .volumeInstance({ id: volumeInstanceId }, { deletedAt: true, state: true })
+    .pipe(
+      Effect.map((instance) =>
+        instance.deletedAt == null &&
+        instance.state !== "DELETED" &&
+        instance.state !== "DELETING" &&
+        instance.state !== "UPDATING" &&
+        instance.state !== "MIGRATING" &&
+        instance.state !== "MIGRATION_PENDING" &&
+        instance.state !== "RESTORING" &&
+        instance.state !== "ERROR"
+          ? ("ready" as const)
+          : ("pending" as const),
+      ),
+      railway.catchTags(["RailwayNotFound"], () =>
+        Effect.succeed("pending" as const),
+      ),
+      Effect.repeat({
+        schedule: Schedule.spaced("2 seconds"),
+        until: (status) => status === "ready",
+        times: 10,
+      }),
+    );
 
 const waitUntilBackupGone = (
   volumeInstanceId: string,
@@ -98,9 +103,12 @@ test.provider(
       yield* waitUntilReady(created.volume.volumeInstanceId);
 
       const result = yield* Effect.result(
-        railway.volumeInstanceBackupCreate({
-          volumeInstanceId: created.volume.volumeInstanceId,
-        }),
+        railway.createVolumeInstanceBackup(
+          {
+            volumeInstanceId: created.volume.volumeInstanceId,
+          },
+          { workflowId: true },
+        ),
       );
       if (Result.isSuccess(result)) {
         yield* Effect.logInfo(
@@ -111,21 +119,27 @@ test.provider(
           result.success.workflowId.length > 0
         ) {
           yield* railway
-            .workflowStatus({
-              workflowId: result.success.workflowId,
-            })
-            .pipe(Effect.catchTag(["RailwayForbidden"], () => Effect.void));
+            .workflowStatus(
+              {
+                workflowId: result.success.workflowId,
+              },
+              { status: true },
+            )
+            .pipe(railway.catchTags(["RailwayForbidden"], () => Effect.void));
         }
         const extras = yield* listLive(created.volume.volumeInstanceId);
         for (const extra of extras) {
           yield* railway
-            .volumeInstanceBackupDelete({
-              volumeInstanceBackupId: extra.id,
-              volumeInstanceId: created.volume.volumeInstanceId,
-            })
+            .deleteVolumeInstanceBackup(
+              {
+                volumeInstanceBackupId: extra.id,
+                volumeInstanceId: created.volume.volumeInstanceId,
+              },
+              { workflowId: true },
+            )
             .pipe(
-              Effect.catchTag(
-                ["RailwayNotFound", "NotFound", "RailwayForbidden"],
+              railway.catchTags(
+                ["RailwayNotFound", "RailwayForbidden"],
                 () => Effect.void,
               ),
             );
@@ -134,11 +148,11 @@ test.provider(
         return;
       }
 
-      expect(result.failure._tag).toEqual("RailwayForbidden");
+      expect(railway.isErrorTag(result.failure, "RailwayForbidden")).toBe(true);
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );
 
 test.provider.skipIf(!backupEntitled)(
@@ -213,5 +227,5 @@ test.provider.skipIf(!backupEntitled)(
       );
       expect(backupGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );

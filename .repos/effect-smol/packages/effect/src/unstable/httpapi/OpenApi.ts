@@ -14,6 +14,7 @@ import * as Context from "../../Context.ts"
 import * as Equal from "../../Equal.ts"
 import { constFalse } from "../../Function.ts"
 import * as InternalRecord from "../../internal/record.ts"
+import * as InternalToCodec from "../../internal/schema/toCodec.ts"
 import * as InternalToJsonSchemaDocument from "../../internal/schema/toJsonSchemaDocument.ts"
 import * as InternalToRepresentation from "../../internal/schema/toRepresentation.ts"
 import * as JsonPatch from "../../JsonPatch.ts"
@@ -328,6 +329,7 @@ function makeOpenApi<Id extends string, Groups extends HttpApiGroup.Constraint>(
   > = []
   const pathOperations = new Set<string>()
   const operationIds = new Set<string>()
+  const finalizeOperations: Array<() => void> = []
 
   processAnnotation(api.annotations, Title, (title) => {
     spec.info.title = title
@@ -378,7 +380,7 @@ function makeOpenApi<Id extends string, Groups extends HttpApiGroup.Constraint>(
       if (Context.get(mergedAnnotations, Exclude)) {
         return
       }
-      let op: OpenAPISpecOperation = {
+      const op: OpenAPISpecOperation = {
         tags: [Context.getOrElse(group.annotations, Title, () => group.identifier)],
         operationId: Context.getOrElse(
           endpoint.annotations,
@@ -422,7 +424,7 @@ function makeOpenApi<Id extends string, Groups extends HttpApiGroup.Constraint>(
             content.forEach((map, encoding) => {
               map.forEach((schemas, contentType) => {
                 const asts = Array.from(schemas, SchemaAST.getAST)
-                const ast = asts.length === 1 ? asts[0] : new SchemaAST.Union(asts, "anyOf")
+                const ast = asts.length === 1 ? asts[0] : new SchemaAST.Union(asts)
 
                 pathOps.push({
                   _tag: "schema",
@@ -583,7 +585,7 @@ function makeOpenApi<Id extends string, Groups extends HttpApiGroup.Constraint>(
           const content: OpenApiSpecContent = {}
           for (const [contentType, { encoding, schemas }] of schemasByContentType) {
             const asts = schemas.map(SchemaAST.getAST)
-            const ast = asts.length === 1 ? asts[0] : new SchemaAST.Union(asts, "anyOf")
+            const ast = asts.length === 1 ? asts[0] : new SchemaAST.Union(asts)
             pathOps.push({
               _tag: "schema",
               ast: toEncodingAST(ast, encoding._tag),
@@ -618,32 +620,35 @@ function makeOpenApi<Id extends string, Groups extends HttpApiGroup.Constraint>(
         () => "Error"
       )
 
-      processAnnotation(endpoint.annotations, Override, (override) => {
-        // OpenAPI documents are JSON, so symbol keys are intentionally ignored.
-        for (const [key, value] of Object.entries(override)) {
-          InternalRecord.assignProperty(op as any, key, value)
-        }
-      })
-      processAnnotation(endpoint.annotations, Transform, (transformFn) => {
-        op = transformFn(op) as OpenAPISpecOperation
-      })
-
       const pathOperation = `${method} ${path.replace(/\{[^}]+\}/g, "{}")}`
       if (pathOperations.has(pathOperation)) {
         throw new globalThis.Error(`Duplicate OpenAPI operation for ${endpoint.method} ${path}`)
-      }
-      const operationId = op.operationId
-      if (operationId !== undefined) {
-        if (operationIds.has(operationId)) {
-          throw new globalThis.Error(`Duplicate OpenAPI operationId: ${operationId}`)
-        }
-        operationIds.add(operationId)
       }
       pathOperations.add(pathOperation)
       if (!Object.hasOwn(spec.paths, path)) {
         InternalRecord.assignProperty(spec.paths, path, {})
       }
       spec.paths[path][method] = op
+      finalizeOperations.push(() => {
+        let op = spec.paths[path][method]!
+        processAnnotation(endpoint.annotations, Override, (override) => {
+          // OpenAPI documents are JSON, so symbol keys are intentionally ignored.
+          for (const [key, value] of Object.entries(override)) {
+            InternalRecord.assignProperty(op as any, key, value)
+          }
+        })
+        processAnnotation(endpoint.annotations, Transform, (transformFn) => {
+          op = transformFn(op) as OpenAPISpecOperation
+        })
+        const operationId = op.operationId
+        if (operationId !== undefined) {
+          if (operationIds.has(operationId)) {
+            throw new globalThis.Error(`Duplicate OpenAPI operationId: ${operationId}`)
+          }
+          operationIds.add(operationId)
+        }
+        spec.paths[path][method] = op
+      })
     }
   })
 
@@ -672,9 +677,10 @@ function makeOpenApi<Id extends string, Groups extends HttpApiGroup.Constraint>(
     const jsonSchemaMultiDocument = JsonSchema.toMultiDocumentOpenApi3_1(
       InternalToJsonSchemaDocument.toJsonSchemaMultiDocument(
         InternalToRepresentation.toRepresentations(
-          Arr.map(pathOps, (op) => Schema.toCodecJsonAST(op.ast)),
+          Arr.map(pathOps, (op) => InternalToCodec.toCodecJsonAST(op.ast)),
           options
-        )
+        ),
+        { onExcessProperty: "error" }
       )
     )
     const patchOps: Array<JsonPatch.JsonPatchOperation> = pathOps.map((op, i) => {
@@ -696,6 +702,10 @@ function makeOpenApi<Id extends string, Groups extends HttpApiGroup.Constraint>(
     })
 
     spec = JsonPatch.apply(patchOps, spec as any) as any
+  }
+
+  for (const finalize of finalizeOperations) {
+    finalize()
   }
 
   Object.keys(spec.components.schemas).forEach((key) => {

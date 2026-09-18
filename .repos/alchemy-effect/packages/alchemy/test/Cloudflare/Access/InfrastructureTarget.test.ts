@@ -91,7 +91,7 @@ test.provider(
       // the Output-valued `ip` prop lost in the round-trip. `hostname`
       // survives so the cold-read identity path runs.
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state

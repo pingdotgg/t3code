@@ -16,14 +16,14 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "catalog:cloudflare",
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
-    "drizzle-orm": "catalog:database",
-    "effect": "catalog:effect"
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "drizzle-kit": "catalog:database"
+    "drizzle-kit": "catalog:"
   }
 }

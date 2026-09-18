@@ -1305,16 +1305,39 @@ export const ProviderLive = () =>
           // refusal is the data protection users rely on, and emptying the
           // bucket to get past it is how a stack teardown turns into
           // irreversible data loss (#1248).
-          if (olds.forceDestroy === true || force === true) {
+          const destroyContents = olds.forceDestroy === true || force === true;
+          if (destroyContents) {
             yield* emptyBucket(output.bucketName, output.jurisdiction);
           }
-          yield* r2
+          const deleteBucket = r2
             .deleteBucket({
               accountId: output.accountId,
               bucketName: output.bucketName,
               jurisdiction: output.jurisdiction,
             })
             .pipe(Effect.catchTag("NoSuchBucket", () => Effect.void));
+          if (!destroyContents) {
+            return yield* deleteBucket;
+          }
+          // A writer that outlives the emptying pass (a Durable Object's
+          // alarm finishing a job while the stack tears down) can land an
+          // object between the sweep and the delete: re-empty and retry,
+          // bounded. Incomplete multipart uploads also hold a bucket; those
+          // only a lifecycle rule clears, and the refusal then stands.
+          yield* deleteBucket.pipe(
+            Effect.catchTag("BucketNotEmpty", (error) =>
+              Effect.sleep("2 seconds").pipe(
+                Effect.andThen(
+                  emptyBucket(output.bucketName, output.jurisdiction),
+                ),
+                Effect.andThen(Effect.fail(error)),
+              ),
+            ),
+            Effect.retry({
+              while: (error) => error._tag === "BucketNotEmpty",
+              times: 5,
+            }),
+          );
         }),
         read: Effect.fn(function* ({ id, output, olds }) {
           const { accountId } = yield* yield* CloudflareEnvironment;

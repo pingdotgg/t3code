@@ -1,48 +1,25 @@
 import { AuthProviders } from "@/Auth/AuthProvider";
-import { CredentialsStore } from "@/Auth/Credentials";
-import { AlchemyProfile } from "@/Auth/Profile";
-import {
-  PrismaAuth,
-  type PrismaStoredCredentials,
-} from "@/Prisma/AuthProvider";
+import { ProfileStore } from "@/Auth/Profile";
+import * as CliKit from "@/Cli/CliKit";
+import { PrismaAuth } from "@/Prisma/AuthProvider";
 import { PrismaEnvironment, fromProfile } from "@/Prisma/PrismaEnvironment";
 import { describe, expect, it } from "alchemy-test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import { makeFakeProfileStore } from "./fakes.ts";
 
-const makeProfile = (method: "env" | "stored"): AlchemyProfile["Service"] => ({
-  readConfig: Effect.succeed({ version: 0, profiles: {} }),
-  writeConfig: () => Effect.void,
-  getProfile: () => Effect.succeed(undefined),
-  setProfile: () => Effect.void,
-  deleteProfile: () => Effect.succeed(false),
-  loadOrConfigure: <Config extends { method: string }>() =>
-    Effect.succeed({ method } as Config),
-});
-
-const makeCredentialsStore = (
-  serviceToken?: string,
-): CredentialsStore["Service"] => {
-  const stored = serviceToken
-    ? ({
-        type: "serviceToken",
-        serviceToken,
-      } satisfies PrismaStoredCredentials)
-    : undefined;
-  return {
-    read: <T>() => Effect.succeed(stored as T | undefined),
-    write: () => Effect.void,
-    delete: () => Effect.void,
-    deleteProfile: () => Effect.void,
-  };
-};
+const makeProfile = (serviceToken: string): ProfileStore["Service"] =>
+  makeFakeProfileStore({
+    loadProviderConfig: <Config extends { method: string }>() =>
+      Effect.succeed({ method: "stored", serviceToken } as unknown as Config),
+  });
 
 const testLayer = (
   config: Record<string, string>,
   options: {
-    method?: "env" | "stored";
     storedToken?: string;
   } = {},
 ) => {
@@ -51,59 +28,34 @@ const testLayer = (
     Layer.provideMerge(PrismaAuth),
     Layer.provideMerge(Layer.succeed(AuthProviders, authProviders)),
     Layer.provideMerge(
-      Layer.succeed(AlchemyProfile, makeProfile(options.method ?? "env")),
-    ),
-    Layer.provideMerge(
       Layer.succeed(
-        CredentialsStore,
-        makeCredentialsStore(options.storedToken),
+        ProfileStore,
+        makeProfile(options.storedToken ?? "test-token"),
       ),
     ),
     Layer.provideMerge(
       ConfigProvider.layer(ConfigProvider.fromUnknown(config)),
     ),
+    Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(CliKit.layer({ input: false })),
   );
 };
 
 describe("PrismaEnvironment", () => {
-  it.effect("resolves credentials and API base URL from profile config", () =>
+  it.effect("resolves stored credentials and API base URL from config", () =>
     Effect.gen(function* () {
       const env = yield* PrismaEnvironment;
 
       expect(env.type).toBe("serviceToken");
-      expect(env.source).toEqual({
-        type: "env",
-        details: "PRISMA_SERVICE_TOKEN",
-      });
+      expect(env.source).toEqual({ type: "stored" });
       expect(Redacted.value(env.serviceToken)).toBe("test-token");
       expect(env.baseUrl).toBe("https://control-plane.prisma.test");
     }).pipe(
       Effect.provide(
-        testLayer({
-          PRISMA_SERVICE_TOKEN: "test-token",
-          PRISMA_API_URL: "https://control-plane.prisma.test",
-        }),
-      ),
-    ),
-  );
-
-  it.effect("resolves Prisma Compute CLI env aliases", () =>
-    Effect.gen(function* () {
-      const env = yield* PrismaEnvironment;
-
-      expect(env.type).toBe("serviceToken");
-      expect(env.source).toEqual({
-        type: "env",
-        details: "PRISMA_API_TOKEN",
-      });
-      expect(Redacted.value(env.serviceToken)).toBe("api-token");
-      expect(env.baseUrl).toBe("https://management.prisma.test");
-    }).pipe(
-      Effect.provide(
-        testLayer({
-          PRISMA_API_TOKEN: "api-token",
-          PRISMA_MANAGEMENT_API_URL: "https://management.prisma.test",
-        }),
+        testLayer(
+          { PRISMA_API_URL: "https://control-plane.prisma.test" },
+          { storedToken: "test-token" },
+        ),
       ),
     ),
   );
@@ -115,11 +67,13 @@ describe("PrismaEnvironment", () => {
       expect(env.baseUrl).toBe("https://api-url.prisma.test");
     }).pipe(
       Effect.provide(
-        testLayer({
-          PRISMA_SERVICE_TOKEN: "test-token",
-          PRISMA_API_URL: "https://api-url.prisma.test",
-          PRISMA_MANAGEMENT_API_URL: "https://management-url.prisma.test",
-        }),
+        testLayer(
+          {
+            PRISMA_API_URL: "https://api-url.prisma.test",
+            PRISMA_MANAGEMENT_API_URL: "https://management-url.prisma.test",
+          },
+          { storedToken: "test-token" },
+        ),
       ),
     ),
   );
@@ -137,7 +91,6 @@ describe("PrismaEnvironment", () => {
         testLayer(
           {},
           {
-            method: "stored",
             storedToken: "stored-token",
           },
         ),
@@ -151,10 +104,10 @@ describe("PrismaEnvironment", () => {
       expect(env.baseUrl).toBe("http://127.0.0.1:8787");
     }).pipe(
       Effect.provide(
-        testLayer({
-          PRISMA_SERVICE_TOKEN: "test-token",
-          PRISMA_API_URL: "http://127.0.0.1:8787/",
-        }),
+        testLayer(
+          { PRISMA_API_URL: "http://127.0.0.1:8787/" },
+          { storedToken: "test-token" },
+        ),
       ),
     ),
   );
@@ -163,10 +116,10 @@ describe("PrismaEnvironment", () => {
     Effect.gen(function* () {
       const exit = yield* PrismaEnvironment.pipe(
         Effect.provide(
-          testLayer({
-            PRISMA_SERVICE_TOKEN: "test-token",
-            PRISMA_API_URL: "http://management.prisma.test",
-          }),
+          testLayer(
+            { PRISMA_API_URL: "http://management.prisma.test" },
+            { storedToken: "test-token" },
+          ),
         ),
         Effect.exit,
       );
@@ -181,10 +134,10 @@ describe("PrismaEnvironment", () => {
     Effect.gen(function* () {
       const credentialExit = yield* PrismaEnvironment.pipe(
         Effect.provide(
-          testLayer({
-            PRISMA_SERVICE_TOKEN: "test-token",
-            PRISMA_API_URL: "https://token@api.prisma.test",
-          }),
+          testLayer(
+            { PRISMA_API_URL: "https://token@api.prisma.test" },
+            { storedToken: "test-token" },
+          ),
         ),
         Effect.exit,
       );
@@ -197,10 +150,10 @@ describe("PrismaEnvironment", () => {
 
       const pathExit = yield* PrismaEnvironment.pipe(
         Effect.provide(
-          testLayer({
-            PRISMA_SERVICE_TOKEN: "test-token",
-            PRISMA_API_URL: "https://api.prisma.test/proxy",
-          }),
+          testLayer(
+            { PRISMA_API_URL: "https://api.prisma.test/proxy" },
+            { storedToken: "test-token" },
+          ),
         ),
         Effect.exit,
       );

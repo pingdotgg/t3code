@@ -51,12 +51,20 @@ export class RailwayEnvironment extends Context.Service<
  * (`Not Authorized`); fall back to `apiToken.workspaces[0]`.
  */
 export const resolveWorkspace = Effect.fn(function* () {
-  const fromMe = yield* railway.me({}).pipe(
-    Effect.map((me) => me.workspace ?? me.workspaces[0]),
-    Effect.catchTag(["RailwayForbidden", "RailwayUnauthenticated"], () =>
-      Effect.succeed(undefined),
-    ),
-  );
+  const fromMe = yield* railway
+    .me(
+      {},
+      {
+        workspace: { id: true, name: true },
+        workspaces: { id: true, name: true },
+      },
+    )
+    .pipe(
+      Effect.map((me) => me.workspace ?? me.workspaces[0]),
+      railway.catchTags(["RailwayForbidden", "RailwayUnauthenticated"], () =>
+        Effect.succeed(undefined),
+      ),
+    );
   if (fromMe !== undefined && fromMe.id.length > 0) {
     return {
       id: fromMe.id,
@@ -64,7 +72,10 @@ export const resolveWorkspace = Effect.fn(function* () {
     } satisfies RailwayWorkspace;
   }
 
-  const token = yield* railway.apiToken({});
+  const token = yield* railway.apiToken(
+    {},
+    { workspaces: { id: true, name: true } },
+  );
   const workspace = token.workspaces[0];
   if (workspace === undefined || workspace.id.length === 0) {
     return yield* new RailwayWorkspaceNotFound({

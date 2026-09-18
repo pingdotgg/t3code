@@ -25,6 +25,8 @@ export {
 export type MakeOptions<ROut = any> = Core.MakeOptions<ROut>;
 export type ScratchStack = Core.ScratchStack;
 export type TestEffect<A, R = never> = Core.TestEffect<A, R>;
+export const defaultStage = Core.defaultStage;
+export const resolveStage = Core.resolveStage;
 
 export interface TestApi {
   test: TestFn;

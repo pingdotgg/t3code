@@ -75,7 +75,7 @@ export const layer = Layer.effect(
       );
 
     const getEnv = (name: string) =>
-      Config.string(name).pipe(
+      Config.String(name).pipe(
         Effect.catchTag("ConfigError", () => Effect.succeed(undefined)),
       );
 

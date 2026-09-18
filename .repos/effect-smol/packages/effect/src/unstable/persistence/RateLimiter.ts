@@ -162,7 +162,7 @@ export const make: Effect.Effect<
               delay,
               limit: options.limit,
               remaining: options.limit - count,
-              resetAfter: Duration.times(window, Math.ceil(ttl / windowMillis))
+              resetAfter: Duration.millis(ttl)
             })
           }
         )
@@ -176,40 +176,28 @@ export const make: Effect.Effect<
           refillRate,
           allowOverflow: onExceeded === "delay"
         }),
-        (remaining) => {
-          if (onExceeded === "fail") {
-            if (remaining < 0) {
-              return Effect.fail(
-                new RateLimiterError({
-                  reason: new RateLimitExceeded({
-                    key: options.key,
-                    retryAfter: Duration.times(refillRate, -remaining),
-                    limit: options.limit,
-                    remaining: 0
-                  })
+        ([remaining, elapsedMillis]) => {
+          const delay = Duration.millis(Math.max(0, Math.ceil(-remaining) * refillRateMillis - elapsedMillis))
+          const resetAfter = Duration.millis(
+            Math.max(0, Math.ceil(options.limit - remaining) * refillRateMillis - elapsedMillis)
+          )
+          if (onExceeded === "fail" && remaining < 0) {
+            return Effect.fail(
+              new RateLimiterError({
+                reason: new RateLimitExceeded({
+                  key: options.key,
+                  retryAfter: delay,
+                  limit: options.limit,
+                  remaining: 0
                 })
-              )
-            }
-            return Effect.succeed<ConsumeResult>({
-              delay: Duration.zero,
-              limit: options.limit,
-              remaining,
-              resetAfter: Duration.times(refillRate, options.limit - remaining)
-            })
-          }
-          if (remaining >= 0) {
-            return Effect.succeed<ConsumeResult>({
-              delay: Duration.zero,
-              limit: options.limit,
-              remaining,
-              resetAfter: Duration.times(refillRate, options.limit - remaining)
-            })
+              })
+            )
           }
           return Effect.succeed<ConsumeResult>({
-            delay: Duration.times(refillRate, -remaining),
+            delay,
             limit: options.limit,
             remaining,
-            resetAfter: Duration.times(refillRate, options.limit - remaining)
+            resetAfter
           })
         }
       )
@@ -370,7 +358,7 @@ export function sleep(self: RateLimiter, options?: {
  * @category type IDs
  * @since 4.0.0
  */
-export const ErrorTypeId: ErrorTypeId = "~@effect/experimental/RateLimiter/RateLimiterError"
+export const ErrorTypeId: ErrorTypeId = "~effect/persistence/RateLimiter/RateLimiterError"
 
 /**
  * Type-level identifier used to brand `RateLimiterError` values.
@@ -378,7 +366,7 @@ export const ErrorTypeId: ErrorTypeId = "~@effect/experimental/RateLimiter/RateL
  * @category type IDs
  * @since 4.0.0
  */
-export type ErrorTypeId = "~@effect/experimental/RateLimiter/RateLimiterError"
+export type ErrorTypeId = "~effect/persistence/RateLimiter/RateLimiterError"
 
 /**
  * Error reason for a rate-limit check that exceeded the configured limit.
@@ -505,6 +493,11 @@ export interface ConsumeResult {
 
   /**
    * The time until the rate limit fully resets.
+   *
+   * **Details**
+   *
+   * For token buckets, accounts for elapsed refill time and reserved debt,
+   * assuming no further consumption.
    */
   readonly resetAfter: Duration.Duration
 }
@@ -633,14 +626,18 @@ export class RateLimiterStore extends Context.Service<
     }) => Effect.Effect<readonly [count: number, ttl: number], RateLimiterError>
 
     /**
-     * Returns the current remaining tokens for the `key` after consuming the
-     * specified amount of tokens.
+     * Refills the bucket for `key`, attempts to consume `tokens`, and returns
+     * `[remaining, elapsedMillis]` from that single atomic operation.
      *
-     * If `allowOverflow` is true, the number of tokens can drop below zero.
+     * `remaining` is the token count after subtracting `tokens`. Fractional counts
+     * must retain their numeric precision. A negative count is only persisted
+     * when `allowOverflow` is true.
      *
-     * In the case of no overflow, the returned token count will only be
-     * negative if the requested tokens exceed the available tokens, but the
-     * real token count will not be persisted below zero.
+     * `elapsedMillis` is the time since the current refill interval started, in
+     * milliseconds (fractions preserved), always at least `0` and less than
+     * `Duration.toMillis(refillRate)`. It is `0` when the bucket is at capacity
+     * after refilling and before consuming. Otherwise the boundary advances by
+     * whole refill intervals and the interval never restarts.
      */
     readonly tokenBucket: (options: {
       readonly key: string
@@ -648,7 +645,7 @@ export class RateLimiterStore extends Context.Service<
       readonly limit: number
       readonly refillRate: Duration.Duration
       readonly allowOverflow: boolean
-    }) => Effect.Effect<number, RateLimiterError>
+    }) => Effect.Effect<readonly [remaining: number, elapsedMillis: number], RateLimiterError>
 
     /**
      * Consumes tokens from the adaptive rate-limit state for the `key`.
@@ -745,20 +742,21 @@ export const layerStoreMemory: Layer.Layer<
           if (!bucket) {
             bucket = { tokens: options.limit, lastRefill: now }
             tokenBuckets.set(options.key, bucket)
-          } else {
-            const elapsed = now - bucket.lastRefill
-            const tokensToAdd = Math.floor(elapsed / refillRateMillis)
-            if (tokensToAdd > 0) {
-              bucket.tokens = Math.min(options.limit, bucket.tokens + tokensToAdd)
-              bucket.lastRefill += tokensToAdd * refillRateMillis
-            }
+          }
+          const tokensToAdd = Math.floor((now - bucket.lastRefill) / refillRateMillis)
+          if (tokensToAdd > 0) {
+            bucket.tokens = Math.min(options.limit, bucket.tokens + tokensToAdd)
+            bucket.lastRefill += tokensToAdd * refillRateMillis
+          }
+          if (bucket.tokens >= options.limit) {
+            bucket.lastRefill = now
           }
 
           const newTokenCount = bucket.tokens - options.tokens
           if (options.allowOverflow || newTokenCount >= 0) {
             bucket.tokens = newTokenCount
           }
-          return newTokenCount
+          return [newTokenCount, Math.max(0, now - bucket.lastRefill)] as const
         })
       ),
     adaptiveConsume: (options) =>
@@ -945,14 +943,17 @@ export const makeStoreRedis = Effect.fnUntraced(function*(
       const refillMillis = Duration.toMillis(options.refillRate)
       return Effect.clockWith((clock) =>
         Effect.mapError(
-          tokenBucket(
-            key,
-            lastRefillKey,
-            options.tokens,
-            refillMillis,
-            options.limit,
-            clock.currentTimeMillisUnsafe(),
-            options.allowOverflow ? 1 : 0
+          Effect.map(
+            tokenBucket(
+              key,
+              lastRefillKey,
+              options.tokens,
+              refillMillis,
+              options.limit,
+              clock.currentTimeMillisUnsafe(),
+              options.allowOverflow ? 1 : 0
+            ),
+            ([remaining, elapsedMillis]) => [Number(remaining), Number(elapsedMillis)] as const
           ),
           (cause) =>
             new RateLimiterError({
@@ -1078,6 +1079,9 @@ if refill_amount > 0 then
   current = math.min(current + refill_amount, limit)
   last_refill = last_refill + (refill_amount * refill_ms)
 end
+if current >= limit then
+  last_refill = now
+end
 
 local next = current - tokens
 local stored = current
@@ -1085,14 +1089,16 @@ if next >= 0 or overflow then
   stored = next
 end
 
-local ttl = math.floor((limit - stored) * refill_ms)
+elapsed = math.max(0, now - last_refill)
+local ttl = math.ceil(math.ceil(limit - stored) * refill_ms - elapsed)
 if ttl < 1 then ttl = 1 end
 redis.call("SET", key, stored, "PX", ttl)
 redis.call("SET", last_refill_key, last_refill, "PX", ttl)
-return next
+-- Use 17 significant digits to round-trip both numbers.
+return { string.format("%.17g", next), string.format("%.17g", elapsed) }
 `
   }
-).withReturnType<number>()
+).withReturnType<readonly [remaining: string, elapsedMillis: string]>()
 
 const adaptiveConsumeScript = Redis.script(
   (key: string, tokens: number, fallbackWindowMillis: number, ttlGraceMillis: number) => [

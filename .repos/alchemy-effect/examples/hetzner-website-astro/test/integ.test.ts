@@ -49,7 +49,6 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Hetzner.providers(),
   state: Alchemy.localState(),
   profile: process.env.ALCHEMY_PROFILE,
-  stage: "test",
 });
 
 // The first deploy runs the full Astro build AND creates a Hetzner

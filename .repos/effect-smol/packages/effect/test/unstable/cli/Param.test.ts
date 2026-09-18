@@ -27,11 +27,31 @@ const TestLayer = Layer.mergeAll(
 )
 
 describe("Param", () => {
+  it.effect("Never remains an always-failing flag sentinel", () =>
+    Effect.gen(function*() {
+      for (const sentinel of [Flag.Never, Param.Never(Param.flagKind)]) {
+        const missing = yield* Effect.flip(sentinel.parse({ flags: {}, arguments: [] }))
+        assert.instanceOf(missing, CliError.MissingOption)
+        const supplied = yield* Effect.flip(sentinel.parse({ flags: { __never__: ["value"] }, arguments: [] }))
+        assert.instanceOf(supplied, CliError.InvalidValue)
+      }
+    }).pipe(Effect.provide(TestLayer)))
+
+  it.effect("Never remains an always-failing argument sentinel", () =>
+    Effect.gen(function*() {
+      for (const sentinel of [Argument.Never, Param.Never(Param.argumentKind)]) {
+        const missing = yield* Effect.flip(sentinel.parse({ flags: {}, arguments: [] }))
+        assert.instanceOf(missing, CliError.MissingArgument)
+        const supplied = yield* Effect.flip(sentinel.parse({ flags: {}, arguments: ["value"] }))
+        assert.instanceOf(supplied, CliError.InvalidValue)
+      }
+    }).pipe(Effect.provide(TestLayer)))
+
   describe("boolean", () => {
     it.effect("returns MissingOption when a boolean flag is omitted", () =>
       Effect.gen(function*() {
         const error = yield* Effect.flip(
-          Flag.boolean("verbose").parse({
+          Flag.Boolean("verbose").parse({
             flags: {},
             arguments: []
           })
@@ -42,7 +62,7 @@ describe("Param", () => {
 
     it.effect("uses the requested default when a boolean flag is omitted", () =>
       Effect.gen(function*() {
-        const flag = Flag.boolean("verbose").pipe(Flag.withDefault(true))
+        const flag = Flag.Boolean("verbose").pipe(Flag.withDefault(true))
 
         const [, value] = yield* flag.parse({
           flags: {},
@@ -54,7 +74,7 @@ describe("Param", () => {
 
     it.effect("restores switch behavior with a false default", () =>
       Effect.gen(function*() {
-        const flag = Flag.boolean("verbose").pipe(Flag.withDefault(false))
+        const flag = Flag.Boolean("verbose").pipe(Flag.withDefault(false))
 
         const [, value] = yield* flag.parse({
           flags: {},
@@ -68,8 +88,8 @@ describe("Param", () => {
   it.effect("recognizes the alternate flag declared by orElse", () =>
     Effect.gen(function*() {
       const command = Command.make("app", {
-        config: Flag.string("config").pipe(
-          Flag.orElse(() => Flag.string("config-url"))
+        config: Flag.String("config").pipe(
+          Flag.orElse(() => Flag.String("config-url"))
         )
       })
 
@@ -81,8 +101,8 @@ describe("Param", () => {
 
   it.effect("registers and parses the alternate flag declared by orElseResult", () =>
     Effect.gen(function*() {
-      const flag = Flag.string("config").pipe(
-        Flag.orElseResult(() => Flag.string("config-url"))
+      const flag = Flag.String("config").pipe(
+        Flag.orElseResult(() => Flag.String("config-url"))
       )
 
       assert.deepStrictEqual(Param.extractSingleParams(flag).map((param) => param.name), ["config", "config-url"])
@@ -101,7 +121,7 @@ describe("Param", () => {
       ["__proto__"]: value,
       kind: Param.flagKind,
       name: "name",
-      primitiveType: Primitive.string
+      primitiveType: Primitive.String
     } as any)
 
     assert.isTrue(Param.isParam(param))
@@ -112,7 +132,7 @@ describe("Param", () => {
   describe("optional", () => {
     it.effect("returns none when an optional boolean flag is omitted", () =>
       Effect.gen(function*() {
-        const flag = Flag.boolean("verbose").pipe(Flag.optional)
+        const flag = Flag.Boolean("verbose").pipe(Flag.optional)
 
         const [, value] = yield* flag.parse({
           flags: {},
@@ -124,7 +144,7 @@ describe("Param", () => {
 
     it.effect("returns some false when an optional boolean flag is explicitly disabled", () =>
       Effect.gen(function*() {
-        const flag = Flag.boolean("verbose").pipe(Flag.optional)
+        const flag = Flag.Boolean("verbose").pipe(Flag.optional)
 
         const [, value] = yield* flag.parse({
           flags: { verbose: ["false"] },
@@ -133,13 +153,37 @@ describe("Param", () => {
 
         assert.deepStrictEqual(value, Option.some(false))
       }).pipe(Effect.provide(TestLayer)))
+
+    it.effect("supports alternative flags", () =>
+      Effect.gen(function*() {
+        const flag = Flag.String("config").pipe(
+          Flag.orElse(() => Flag.String("config-url")),
+          Flag.optional
+        )
+
+        const [, value] = yield* flag.parse({ flags: { config: ["config.json"] }, arguments: [] })
+
+        assert.deepStrictEqual(value, Option.some("config.json"))
+      }).pipe(Effect.provide(TestLayer)))
   })
+
+  it.effect("uses the default when a required variadic argument is omitted", () =>
+    Effect.gen(function*() {
+      const argument = Argument.String("files").pipe(
+        Argument.atLeast(1),
+        Argument.withDefault(["README.md"])
+      )
+
+      const result = yield* argument.parse({ flags: {}, arguments: [] })
+
+      assert.deepStrictEqual(result, [[], ["README.md"]])
+    }).pipe(Effect.provide(TestLayer)))
 
   describe("withFallbackPrompt", () => {
     it.effect("prompts for missing flag values and preserves remaining args", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.text({ message: "Name" })
-        const flag = Flag.string("name").pipe(Flag.withFallbackPrompt(prompt))
+        const prompt = Prompt.String({ message: "Name" })
+        const flag = Flag.String("name").pipe(Flag.withFallbackPrompt(prompt))
 
         yield* MockTerminal.inputText("Chandra")
         yield* MockTerminal.inputKey("enter")
@@ -155,8 +199,8 @@ describe("Param", () => {
 
     it.effect("does not prompt when flag value is provided", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.text({ message: "Name" })
-        const flag = Flag.string("name").pipe(Flag.withFallbackPrompt(prompt))
+        const prompt = Prompt.String({ message: "Name" })
+        const flag = Flag.String("name").pipe(Flag.withFallbackPrompt(prompt))
 
         const [, value] = yield* flag.parse({
           flags: { name: ["Ava"] },
@@ -168,8 +212,8 @@ describe("Param", () => {
 
     it.effect("prompts for missing arguments", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.text({ message: "File" })
-        const argument = Argument.string("file").pipe(Argument.withFallbackPrompt(prompt))
+        const prompt = Prompt.String({ message: "File" })
+        const argument = Argument.String("file").pipe(Argument.withFallbackPrompt(prompt))
 
         yield* MockTerminal.inputText("notes.txt")
         yield* MockTerminal.inputKey("enter")
@@ -188,10 +232,10 @@ describe("Param", () => {
         const calls = yield* Ref.make(0)
         const prompt = Effect.gen(function*() {
           yield* Ref.update(calls, (n) => n + 1)
-          return Prompt.text({ message: "Name from effect" })
+          return Prompt.String({ message: "Name from effect" })
         })
 
-        const flag = Flag.string("name").pipe(Flag.withFallbackPrompt(prompt))
+        const flag = Flag.String("name").pipe(Flag.withFallbackPrompt(prompt))
 
         const [, provided] = yield* flag.parse({
           flags: { name: ["Ava"] },
@@ -218,10 +262,10 @@ describe("Param", () => {
         const calls = yield* Ref.make(0)
         const prompt = Effect.gen(function*() {
           yield* Ref.update(calls, (n) => n + 1)
-          return Prompt.text({ message: "File from effect" })
+          return Prompt.String({ message: "File from effect" })
         })
 
-        const argument = Argument.string("file").pipe(Argument.withFallbackPrompt(prompt))
+        const argument = Argument.String("file").pipe(Argument.withFallbackPrompt(prompt))
 
         const [providedRemaining, provided] = yield* argument.parse({
           flags: {},
@@ -251,7 +295,7 @@ describe("Param", () => {
         })
         const prompt = Effect.fail(failure)
 
-        const flag = Flag.string("name").pipe(Flag.withFallbackPrompt(prompt))
+        const flag = Flag.String("name").pipe(Flag.withFallbackPrompt(prompt))
 
         const error = yield* Effect.flip(
           flag.parse({
@@ -265,8 +309,8 @@ describe("Param", () => {
 
     it.effect("prefers defaults over fallback prompts", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.text({ message: "Name" })
-        const flag = Flag.string("name").pipe(
+        const prompt = Prompt.String({ message: "Name" })
+        const flag = Flag.String("name").pipe(
           Flag.withDefault("guest"),
           Flag.withFallbackPrompt(prompt)
         )
@@ -281,8 +325,8 @@ describe("Param", () => {
 
     it.effect("does not prompt for invalid flag values", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.text({ message: "Count" })
-        const flag = Flag.integer("count").pipe(Flag.withFallbackPrompt(prompt))
+        const prompt = Prompt.String({ message: "Count" })
+        const flag = Flag.Int("count").pipe(Flag.withFallbackPrompt(prompt))
 
         const error = yield* Effect.flip(
           flag.parse({
@@ -296,8 +340,8 @@ describe("Param", () => {
 
     it.effect("does not prompt for invalid argument values", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.text({ message: "Count" })
-        const argument = Argument.integer("count").pipe(Argument.withFallbackPrompt(prompt))
+        const prompt = Prompt.String({ message: "Count" })
+        const argument = Argument.Int("count").pipe(Argument.withFallbackPrompt(prompt))
 
         const error = yield* Effect.flip(
           argument.parse({
@@ -311,8 +355,8 @@ describe("Param", () => {
 
     it.effect("prompts for missing boolean flags", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.confirm({ message: "Verbose" })
-        const flag = Flag.boolean("verbose").pipe(Flag.withFallbackPrompt(prompt))
+        const prompt = Prompt.Confirm({ message: "Verbose" })
+        const flag = Flag.Boolean("verbose").pipe(Flag.withFallbackPrompt(prompt))
 
         yield* MockTerminal.inputKey("y")
 
@@ -326,8 +370,8 @@ describe("Param", () => {
 
     it.effect("uses an explicitly disabled boolean before prompting", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.confirm({ message: "Verbose" })
-        const flag = Flag.boolean("verbose").pipe(Flag.withFallbackPrompt(prompt))
+        const prompt = Prompt.Confirm({ message: "Verbose" })
+        const flag = Flag.Boolean("verbose").pipe(Flag.withFallbackPrompt(prompt))
 
         const [, value] = yield* flag.parse({
           flags: { verbose: ["false"] },
@@ -339,8 +383,8 @@ describe("Param", () => {
 
     it.effect("returns MissingOption when prompt is cancelled", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.text({ message: "Name" })
-        const flag = Flag.string("name").pipe(Flag.withFallbackPrompt(prompt))
+        const prompt = Prompt.String({ message: "Name" })
+        const flag = Flag.String("name").pipe(Flag.withFallbackPrompt(prompt))
 
         yield* MockTerminal.inputKey("c", { ctrl: true })
 
@@ -356,8 +400,8 @@ describe("Param", () => {
 
     it.effect("returns MissingArgument when argument prompt is cancelled", () =>
       Effect.gen(function*() {
-        const prompt = Prompt.text({ message: "File" })
-        const argument = Argument.string("file").pipe(Argument.withFallbackPrompt(prompt))
+        const prompt = Prompt.String({ message: "File" })
+        const argument = Argument.String("file").pipe(Argument.withFallbackPrompt(prompt))
 
         yield* MockTerminal.inputKey("c", { ctrl: true })
 
@@ -381,8 +425,8 @@ describe("Param", () => {
       })
 
       return Effect.gen(function*() {
-        const flag = Flag.boolean("verbose").pipe(
-          Flag.withFallbackConfig(Config.boolean("VERBOSE"))
+        const flag = Flag.Boolean("verbose").pipe(
+          Flag.withFallbackConfig(Config.Boolean("VERBOSE"))
         )
 
         const [, value] = yield* flag.parse({
@@ -405,8 +449,8 @@ describe("Param", () => {
       })
 
       return Effect.gen(function*() {
-        const flag = Flag.boolean("verbose").pipe(
-          Flag.withFallbackConfig(Config.boolean("VERBOSE"))
+        const flag = Flag.Boolean("verbose").pipe(
+          Flag.withFallbackConfig(Config.Boolean("VERBOSE"))
         )
 
         const [, value] = yield* flag.parse({
@@ -429,8 +473,8 @@ describe("Param", () => {
       })
 
       return Effect.gen(function*() {
-        const flag = Flag.string("name").pipe(
-          Flag.withFallbackConfig(Config.string("NAME"))
+        const flag = Flag.String("name").pipe(
+          Flag.withFallbackConfig(Config.String("NAME"))
         )
 
         const [, value] = yield* flag.parse({
@@ -453,8 +497,8 @@ describe("Param", () => {
       })
 
       return Effect.gen(function*() {
-        const flag = Flag.string("name").pipe(
-          Flag.withFallbackConfig(Config.string("NAME"))
+        const flag = Flag.String("name").pipe(
+          Flag.withFallbackConfig(Config.String("NAME"))
         )
 
         const [, value] = yield* flag.parse({
@@ -477,8 +521,8 @@ describe("Param", () => {
       })
 
       return Effect.gen(function*() {
-        const argument = Argument.string("repository").pipe(
-          Argument.withFallbackConfig(Config.string("REPOSITORY"))
+        const argument = Argument.String("repository").pipe(
+          Argument.withFallbackConfig(Config.String("REPOSITORY"))
         )
 
         const [, value] = yield* argument.parse({
@@ -497,8 +541,8 @@ describe("Param", () => {
       const provider = ConfigProvider.fromEnv({ env: {} })
 
       return Effect.gen(function*() {
-        const flag = Flag.string("name").pipe(
-          Flag.withFallbackConfig(Config.string("NAME"))
+        const flag = Flag.String("name").pipe(
+          Flag.withFallbackConfig(Config.String("NAME"))
         )
 
         const error = yield* Effect.flip(
@@ -523,8 +567,8 @@ describe("Param", () => {
       })
 
       return Effect.gen(function*() {
-        const flag = Flag.integer("count").pipe(
-          Flag.withFallbackConfig(Config.int("COUNT"))
+        const flag = Flag.Int("count").pipe(
+          Flag.withFallbackConfig(Config.Int("COUNT"))
         )
 
         const error = yield* Effect.flip(

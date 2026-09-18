@@ -305,7 +305,7 @@ const sha256Object = (input: unknown): Effect.Effect<string> =>
 
 // ─────────────────────────────────────────────────────────────────────
 // Glob / gitignore matching (self-contained approximation of the
-// fast-glob + gitignore semantics alchemy's `hashDirectory` uses)
+// glob + gitignore semantics alchemy's `hashDirectory` uses)
 // ─────────────────────────────────────────────────────────────────────
 
 const escapeRegex = (char: string): string =>

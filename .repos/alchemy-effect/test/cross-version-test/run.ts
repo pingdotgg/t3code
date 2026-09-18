@@ -378,9 +378,13 @@ async function deployAndVerify(
 ): Promise<void> {
   await ensureInstalled(stage);
 
+  const cloudflareCommand =
+    stage.kind === "workspace"
+      ? ["provider", "cloudflare"]
+      : ["cloudflare"];
   await alcRetry(
     stage,
-    ["cloudflare", "bootstrap", "--profile", PROFILE!],
+    [...cloudflareCommand, "bootstrap", "--profile", PROFILE!],
     "bootstrap",
   );
 
@@ -419,13 +423,19 @@ async function destroyApp(stage: Stage, alchemyStage: string) {
 
 /**
  * Delete the account-wide Cloudflare state store (worker + secrets store) via
- * the current-branch CLI's `cloudflare teardown` (idempotent). Run between
- * units so each one deploys a FRESH state store rather than inheriting the
- * previous unit's (possibly downgraded) one.
+ * the current-branch CLI's `provider cloudflare teardown` (idempotent). Run
+ * between units so each one deploys a FRESH state store rather than inheriting
+ * the previous unit's (possibly downgraded) one.
  */
 async function teardownStore(reason: string) {
   console.log(`${YELLOW}↺ tearing down state store (${reason})${RESET}`);
-  const r = await alc(LATEST, ["cloudflare", "teardown", "--profile", PROFILE!]);
+  const r = await alc(LATEST, [
+    "provider",
+    "cloudflare",
+    "teardown",
+    "--profile",
+    PROFILE!,
+  ]);
   if (r.code !== 0) {
     console.error(
       `${RED}warning: state store teardown failed — remove it manually.${RESET}`,

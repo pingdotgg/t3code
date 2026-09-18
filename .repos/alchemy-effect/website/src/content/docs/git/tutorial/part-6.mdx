@@ -1,0 +1,251 @@
+---
+title: "Part 6: Protect a branch"
+description: Authorize parsed Git mutations in ordinary HTTP handlers, using the request's user before committing changes.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+The middleware decides who may push. Now add a rule about what an authorized
+push may do: it may update `main`, but it may not delete it.
+
+Your handler decodes the Git commands, calls an application policy, then prepares
+and commits the push. It runs in the same request as the middleware from Part 4,
+so `Session` is available. Git's binary body does not require a separate middleware
+system.
+
+## Define the branch rule
+
+Create `src/branch-policy.ts`:
+
+```typescript
+// src/branch-policy.ts
+import * as Git from "alchemy/Git";
+import * as Effect from "effect/Effect";
+import { Session } from "./session.ts";
+
+export const checkRefChanges = (repo: Git.RepoMetaData, updates: ReadonlyArray<Git.RefUpdate>) =>
+  Effect.gen(function* () {
+    const { user } = yield* Session;
+    for (const update of updates) {
+      if (user === null || user.id !== repo.owner) {
+        return yield* new Git.PushDenied({ ref: update.ref, reason: "only the owner may change refs" });
+      }
+      if (update.ref === "refs/heads/main" && /^0+$/.test(update.newOid)) {
+        return yield* new Git.PushDenied({ ref: update.ref, reason: "main cannot be deleted" });
+      }
+    }
+  });
+```
+
+A deletion uses an all-zero `newOid`. This ordinary function can live in its own
+module. More policies are more Effect-returning functions; call them in sequence.
+A function may require a database service and query it with `user.id`, just like
+any other application effect.
+
+## Implement the push endpoint
+
+Create `src/protocol.ts`:
+
+```typescript
+// src/protocol.ts
+import * as Git from "alchemy/Git";
+import * as GitHttp from "alchemy/Git/Http";
+import * as Effect from "effect/Effect";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { checkRefChanges } from "./branch-policy.ts";
+
+export const ProtocolLive = HttpApiBuilder.group(Git.Api, "protocol", (h) => Effect.gen(function* () {
+  const git = yield* Git.Engine;
+  const defaults = yield* Git.Handlers;
+  return h
+    .handleRaw("infoRefs", defaults.protocol.infoRefs)
+    .handleRaw("uploadPack", defaults.protocol.uploadPack)
+    .handleRaw("receivePack", ({ params, request }) => Effect.scoped(Effect.gen(function* () {
+      const repo = yield* git.repositories.get(params).pipe(Effect.catchTag("StoreError", Effect.die));
+      const push = yield* GitHttp.ReceivePack.decode(request);
+      if (push._tag === "Probe") return GitHttp.ReceivePack.probeResponse();
+      return yield* Effect.gen(function* () {
+        yield* checkRefChanges(repo, push.updates);
+        const prepared = yield* git.preparePush(repo, push.input);
+        // Additional application validation can read prepared.readObject(oid) here.
+        return GitHttp.ReceivePack.response(push, yield* git.commitPush(prepared));
+      }).pipe(Effect.catchTag("PushDenied", error => Effect.succeed(GitHttp.ReceivePack.reject(push, error.reason))));
+    })).pipe(
+      Effect.catchTag("StoreError", error => Effect.succeed(GitHttp.ReceivePack.failure(error.reason))),
+      Effect.catchTag(["WireProtocolError", "PackIngestError"], error => Effect.succeed(GitHttp.ReceivePack.failure(error.reason))),
+    ));
+}));
+
+```
+
+`decode` reads a bounded command header and leaves the pack streaming.
+`preparePush` stages and validates objects without moving refs. `commitPush`
+changes refs using Git's expected-old-OID checks and atomic capability. Leaving
+the scope without committing cleans up staging. A policy failure becomes Git's
+report-status, so `git push` prints your rejection reason.
+
+For content validation, call `prepared.readObject(oid)` between prepare and commit.
+It reads this push's incoming objects and existing live objects, with a 1 MiB
+per-object limit by default. [Engine operations](/git/blocks/engine) covers this boundary.
+
+## Apply the same rule to REST writes
+
+The host also exposes a REST endpoint for deleting refs. Protect it with the
+same function so it cannot bypass the push policy. Create `src/ref-writes.ts`:
+
+```typescript
+// src/ref-writes.ts
+import * as Git from "alchemy/Git";
+import * as Effect from "effect/Effect";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { checkRefChanges } from "./branch-policy.ts";
+
+export const RefsLive = HttpApiBuilder.group(Git.Api, "refs", (h) => Effect.gen(function* () {
+  const git = yield* Git.Engine;
+  const defaults = yield* Git.Handlers;
+  return h.handleAll({ ...defaults.refs,
+    update: ({ params, query, payload }) => Effect.scoped(Effect.gen(function* () {
+      if (/^0+$/.test(payload.newOid)) return yield* new Git.PushDenied({ ref: query.name, reason: "use the DELETE endpoint to remove a ref" });
+      const repo = yield* git.repositories.get(params);
+      const prepared = yield* git.prepareRefUpdate(repo, { ref: query.name, ...payload });
+      yield* checkRefChanges(repo, prepared.updates);
+      const result = yield* prepared.commit;
+      if (result === undefined) return yield* new Git.PushDenied({ ref: query.name, reason: "use the DELETE endpoint to remove a ref" });
+      return new Git.Ref({ name: result.name, oid: result.oid as Git.Oid });
+    })).pipe(Effect.catchTag("StoreError", Effect.die)),
+    remove: ({ params, query, payload }) => Effect.scoped(Effect.gen(function* () {
+      const repo = yield* git.repositories.get(params);
+      const prepared = yield* git.prepareRefRemoval(repo, { ref: query.name, ...payload });
+      yield* checkRefChanges(repo, prepared.updates);
+      yield* prepared.commit;
+    })).pipe(Effect.catchTag("StoreError", Effect.die)),
+  });
+}));
+```
+
+The prepared ref operation pins the state you inspected. If another request moves
+the ref before commit, the commit fails with `RefConflict`.
+
+This tutorial's new rule prevents deletion. Merges cannot delete a branch. For
+policies that restrict other ref changes, also authorize REST and GitHub merges;
+`prepareMerge` captures both branch tips, and the [application example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-git-service/src/api/ref-writes.ts)
+shares its policy across those paths.
+
+## Register your implementations
+
+Add these imports to `src/git.ts`:
+
+```typescript
+// src/git.ts (additional imports)
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { ProtocolLive } from "./protocol.ts";
+import { RefsLive } from "./ref-writes.ts";
+```
+
+Replace `PublicRoutes` with:
+
+```typescript
+// src/git.ts
+const GitRoutes = HttpApiBuilder.layer(Git.Api).pipe(
+  Layer.provide(Layer.mergeAll(Git.GroupsLive, ProtocolLive, RefsLive)),
+);
+
+const PublicRoutes = Layer.mergeAll(AppApiLive, GitRoutes).pipe(
+  Layer.provide(Authentication.layer),
+);
+```
+
+These groups use the existing `Git.Api` contract, so the remaining default groups
+can be reused. Your existing `HttpLive` storage layers stay the same. If you add
+API middleware or change a prefix on a different `AppApi`, build every affected
+group against that actual API instead; see [HTTP routes](/git/blocks/server).
+
+## Deploy the rule
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npx alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn alchemy deploy`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+Use Dana's `$KEY` when Git prompts during the checks below. Keep the remote
+pointed at `$HOST/$OWNER/web.git` from Part 4.
+
+## Verify an ordinary update
+
+```sh
+printf 'Main is protected from deletion.\n' >> work/README.md
+git -C work commit -am "Document the branch rule"
+git -c credential.helper= -C work push origin main
+```
+
+The push should succeed: updating `main` does not match the deletion rule.
+
+## Verify that another branch can be deleted
+
+```sh
+git -c credential.helper= -C work push origin HEAD:feature
+git -c credential.helper= -C work push origin --delete feature
+```
+
+Both operations should succeed.
+
+## Verify that main cannot be deleted
+
+```sh
+git -c credential.helper= -C work push origin --delete main
+```
+
+Expect the push to be rejected with `main cannot be deleted`. Verify that the
+remote still has the branch:
+
+```sh
+git -c credential.helper= -C work ls-remote origin refs/heads/main
+```
+
+It should print the current commit ID and `refs/heads/main`. Authentication
+accepted the caller; the application handler rejected the proposed change.
+
+## Remove the tutorial deployment
+
+When you finish experimenting:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun alchemy destroy`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npx alchemy destroy`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm alchemy destroy`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn alchemy destroy`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+This removes the Worker, repositories' storage, R2 bucket contents, and account
+database from this tutorial stack. Keep your local `work` checkout if you want
+to retain its commits.
+
+## Build further
+
+You have deployed Git, controlled access, allowed public reads, introduced user
+credentials, added your own API, and enforced a ref rule. Each behavior can now
+change independently.
+
+- [HTTP routes](/git/blocks/server) covers custom Git handlers and API schemas.
+- [Authentication and authorization](/git/blocks/auth) describes the two policy boundaries.
+- [Recipes](/git/recipes) covers other storage and hashing implementations.
+- The [complete application example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-git-service)
+  adds a browser UI and serves it on the Git host's origin.

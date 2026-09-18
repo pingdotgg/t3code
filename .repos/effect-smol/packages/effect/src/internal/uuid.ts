@@ -17,7 +17,9 @@ const randomBytes = (): Uint8Array<ArrayBuffer> => globalThis.crypto.getRandomVa
 
 /** @internal */
 export function v4Bytes(): Uint8Array<ArrayBuffer>
+/** @internal */
 export function v4Bytes<A extends ArrayBufferLike>(bytes: Uint8Array<A>): Uint8Array<A>
+/** @internal */
 export function v4Bytes(bytes: Uint8Array = randomBytes()): Uint8Array {
   bytes[6] = (bytes[6] & 0x0f) | 0x40
   bytes[8] = (bytes[8] & 0x3f) | 0x80
@@ -31,7 +33,9 @@ const maxV7Timestamp = 2 ** 48 - 1
 
 /** @internal */
 export function v7Bytes(timestampMillis: number): Uint8Array<ArrayBuffer>
+/** @internal */
 export function v7Bytes<A extends ArrayBufferLike>(timestampMillis: number, bytes: Uint8Array<A>): Uint8Array<A>
+/** @internal */
 export function v7Bytes(timestampMillis: number, bytes: Uint8Array = randomBytes()): Uint8Array {
   const timestamp = Math.min(Math.max(0, Math.trunc(timestampMillis)), maxV7Timestamp)
 

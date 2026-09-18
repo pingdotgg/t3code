@@ -1,0 +1,132 @@
+---
+title: React to Stripe events
+description: consumeEvents provisions the webhook endpoint and runs one Effect per delivery. When to use it, which events to listen for, and how to manage the endpoint yourself.
+---
+
+Stripe tells you what happened asynchronously. A payment succeeded, a
+renewal was declined, a merchant finished onboarding — none of these
+come back on the request that started them. Anything your app needs to
+*know* about billing state, it learns from webhooks.
+
+There are two levels:
+
+1. **`WebhookEndpoint`** — the Stack resource. Owns the Stripe
+   endpoint: URL, enabled event types, signing secret.
+2. **`consumeEvents`** — the event source. One handler, one typed
+   `Effect` per delivery.
+
+For the common case you only write level 2. `consumeEvents` creates
+the `WebhookEndpoint` pointed at the Worker it runs on, enables exactly
+the events you listed, and binds the minted signing secret so every
+delivery is verified before your handler sees it.
+
+## On a Worker
+
+```typescript
+// src/Api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Stripe from "alchemy/Stripe";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    yield* Stripe.consumeEvents(
+      "Events",
+      {
+        events: [
+          Stripe.CustomerSubscriptionCreated,
+          Stripe.CustomerSubscriptionDeleted,
+        ],
+      },
+      Effect.fn(function* (event) {
+        // event: CustomerSubscriptionCreated | CustomerSubscriptionDeleted
+        switch (event.type) {
+          case "customer.subscription.created":
+            yield* Effect.log(`new subscription ${event.object.id}`);
+            return;
+          case "customer.subscription.deleted":
+            yield* Effect.log(`canceled ${event.object.id}`);
+            return;
+        }
+      }),
+    );
+
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("ok")),
+    };
+  }).pipe(Effect.provide(Stripe.ConsumeEventsLive)),
+) {}
+```
+
+Pass event **classes**, not `"customer.subscription.created"` strings.
+The class is both the subscription key and the type of `event` inside
+the handler, so `event.object` is a `Subscription` in the first case
+and the switch is exhaustive.
+
+Deliveries arrive at `/webhooks/stripe` on the Worker (override with
+`path`). The listener verifies `Stripe-Signature`; a bad signature is a
+`401` and never reaches your handler. A defect in your handler is a
+`500`, which makes Stripe retry.
+
+:::note[Handlers must be idempotent]
+Stripe retries on any non-2xx and may deliver an event more than once.
+Write your handler so running it twice for the same event is harmless —
+upserting a row keyed by customer or account id, as both examples do,
+is the usual shape.
+:::
+
+## Which events
+
+The classes exported from `alchemy/Stripe`:
+
+| Class | Event | You'll want it when |
+|---|---|---|
+| `CheckoutSessionCompleted` | `checkout.session.completed` | A buyer paid on hosted Checkout |
+| `CustomerSubscriptionCreated` | `customer.subscription.created` | A subscription started (any path) |
+| `CustomerSubscriptionUpdated` | `customer.subscription.updated` | Renewal, plan change, `past_due` recovery |
+| `CustomerSubscriptionDeleted` | `customer.subscription.deleted` | Cancellation completed |
+| `InvoicePaid` | `invoice.paid` | A renewal charge succeeded |
+| `InvoicePaymentFailed` | `invoice.payment_failed` | A renewal charge was declined |
+| `PaymentIntentSucceeded` / `PaymentIntentFailed` | `payment_intent.*` | One-off payments |
+| `CustomerCreated` / `Updated` / `Deleted` | `customer.*` | Mirror customer records |
+| `AccountUpdated` | `account.updated` | A Connect merchant finished onboarding |
+
+[Sell a subscription](/stripe/guides/subscriptions) shows the first six
+driving an entitlement record. [Connect](/stripe/guides/connect) shows
+`AccountUpdated` driving a merchant table.
+
+## Managing the endpoint yourself
+
+Declare a `WebhookEndpoint` directly when the delivery URL is not a
+Worker alchemy deploys — an existing service, a different cloud:
+
+```typescript
+// alchemy.run.ts
+const webhook = yield* Stripe.WebhookEndpoint("Events", {
+  url: "https://api.example.com/stripe",
+  enabledEvents: ["customer.subscription.created"],
+});
+```
+
+`webhook.secret` is the signing secret; get it to that service however
+you get secrets there.
+
+If the target *is* an alchemy Worker but you want the endpoint declared
+in the Stack rather than inside the Worker, bind the secret explicitly:
+
+```typescript
+const api = yield* Api;
+const webhook = yield* Stripe.WebhookEndpoint("Events", {
+  url: Output.interpolate`${api.url}/webhooks/stripe`,
+  enabledEvents: [Stripe.CustomerSubscriptionCreated],
+});
+yield* Stripe.bindWebhookSecret(api, webhook.secret);
+```
+
+## Reference
+
+[WebhookEndpoint](/providers/stripe/webhookendpoint) ·
+[consumeEvents](/providers/stripe/consumeeventslive)

@@ -53,7 +53,7 @@ export const generateDbAuthToken: (
   options: GenerateDbAuthTokenOptions,
 ) => Effect.Effect<
   Redacted.Redacted<string>,
-  Credentials.CredentialsError,
+  Presign.PresignError,
   Credentials.Credentials | Region.Region
 > = Effect.fn(function* (options: GenerateDbAuthTokenOptions) {
   const hostAndPort =

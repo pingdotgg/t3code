@@ -49,10 +49,11 @@ Three things happen:
    compute swaps in the new code without a redeploy.
 
 Resources whose provider has no local implementation deploy to
-the real cloud, into your personal
-[stage](/environments/stages) (`dev_$USER` by default), so your
-loop never collides with teammates or prod. A stack that mixes
-emulated and live-only resources just works.
+the real cloud, into the [`dev_$USER` stage](/environments/stages)
+by default — separate from `alchemy deploy`'s `live_$USER` stage,
+so a bare `alchemy dev` cannot replace a stage you deployed. A
+stack that mixes emulated and live-only resources just works. Tear
+the local-dev stage down with `alchemy destroy --stage dev_$USER`.
 
 ## Hot module reloading
 
@@ -169,7 +170,7 @@ calls and no separate `alchemy dev` terminal. See
 - [Cloudflare local development](/cloudflare/local-development) — what runs in workerd and which bindings are simulated.
 - [AWS local development](/aws/local-development) — the emulated AWS surface, Lambda/ECS containers, and zero-credential dev.
 - [CI](/environments/ci) — deploy the same stack from GitHub Actions with PR previews.
-- [Stages](/environments/stages) — how `dev_$USER`, `pr-42`, and `prod` stay isolated.
+- [Stages](/environments/stages) — how `live_$USER`, `dev_$USER`, `pr-42`, and `prod` stay isolated.
 - [Dev servers](/command/dev-servers) — run any framework dev server as a `Command.Dev` resource in the dev loop.
 - [Testing](/testing) — run the same test suite against the local emulators with `Test.make({ dev: true })`.
 - [Local Providers](/infrastructure-as-code/local-provider) — build the local implementation of a resource.

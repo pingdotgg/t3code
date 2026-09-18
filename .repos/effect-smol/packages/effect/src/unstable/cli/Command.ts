@@ -97,15 +97,15 @@ import * as Prompt from "./Prompt.ts"
  *   never,
  *   never
  * > = Command.make("deploy", {
- *   env: Flag.string("env"),
- *   force: Flag.boolean("force").pipe(Flag.withDefault(false)),
- *   files: Argument.string("files").pipe(Argument.variadic())
+ *   env: Flag.String("env"),
+ *   force: Flag.Boolean("force").pipe(Flag.withDefault(false)),
+ *   files: Argument.String("files").pipe(Argument.variadic())
  * })
  *
  * // Command with handler
  * const output: Array<string> = []
  * const greet = Command.make("greet", {
- *   name: Flag.string("name")
+ *   name: Flag.String("name")
  * }, (config) => Effect.sync(() => output.push(`Hello, ${config.name}!`)).pipe(Effect.asVoid))
  *
  * await Effect.runPromise(
@@ -225,20 +225,20 @@ export declare namespace Command {
    *
    * // Simple flat configuration
    * const simpleConfig = {
-   *   name: Flag.string("name"),
-   *   age: Flag.integer("age"),
-   *   file: Argument.string("file")
+   *   name: Flag.String("name"),
+   *   age: Flag.Int("age"),
+   *   file: Argument.String("file")
    * } satisfies CliCommand.Command.Config
    *
    * // Nested configuration for organization
    * const nestedConfig = {
    *   user: {
-   *     name: Flag.string("name"),
-   *     email: Flag.string("email")
+   *     name: Flag.String("name"),
+   *     email: Flag.String("email")
    *   },
    *   server: {
-   *     host: Flag.string("host"),
-   *     port: Flag.integer("port")
+   *     host: Flag.String("host"),
+   *     port: Flag.Int("port")
    *   }
    * } satisfies CliCommand.Command.Config
    *
@@ -293,10 +293,10 @@ export declare namespace Command {
      * import type { Command as CliCommand } from "effect/unstable/cli"
      *
      * const config = {
-     *   name: Flag.string("name"),
+     *   name: Flag.String("name"),
      *   server: {
-     *     host: Flag.string("host"),
-     *     port: Flag.integer("port")
+     *     host: Flag.String("host"),
+     *     port: Flag.Int("port")
      *   }
      * } as const
      *
@@ -456,14 +456,14 @@ export type Services<C> = C extends Command<
  *
  * const parent = Command.make("app").pipe(
  *   Command.withSharedFlags({
- *     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false)),
- *     config: Flag.string("config")
+ *     verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false)),
+ *     config: Flag.String("config")
  *   })
  * )
  *
  * const output: Array<string> = []
  * const child = Command.make("deploy", {
- *   target: Flag.string("target")
+ *   target: Flag.String("target")
  * }, (config) =>
  *   Effect.gen(function*() {
  *     // Access parent's config by yielding the parent command
@@ -568,21 +568,21 @@ export const isCommand = (u: unknown): u is Command.Any => Predicate.hasProperty
  *
  * // Command with simple flags
  * const greet = Command.make("greet", {
- *   name: Flag.string("name"),
- *   count: Flag.integer("count").pipe(Flag.withDefault(1))
+ *   name: Flag.String("name"),
+ *   count: Flag.Int("count").pipe(Flag.withDefault(1))
  * })
  *
  * // Command with nested configuration
  * const deploy = Command.make("deploy", {
- *   environment: Flag.string("env").pipe(
+ *   environment: Flag.String("env").pipe(
  *     Flag.withDescription("Target environment")
  *   ),
  *   server: {
- *     host: Flag.string("host").pipe(Flag.withDefault("localhost")),
- *     port: Flag.integer("port").pipe(Flag.withDefault(3000))
+ *     host: Flag.String("host").pipe(Flag.withDefault("localhost")),
+ *     port: Flag.Int("port").pipe(Flag.withDefault(3000))
  *   },
- *   files: Argument.string("files").pipe(Argument.variadic),
- *   force: Flag.boolean("force").pipe(
+ *   files: Argument.String("files").pipe(Argument.variadic),
+ *   force: Flag.Boolean("force").pipe(
  *     Flag.withDescription("Force deployment"),
  *     Flag.withDefault(false)
  *   )
@@ -591,8 +591,8 @@ export const isCommand = (u: unknown): u is Command.Any => Predicate.hasProperty
  * // Command with handler
  * const output: Array<string> = []
  * const deployWithHandler = Command.make("deploy", {
- *   environment: Flag.string("env"),
- *   force: Flag.boolean("force").pipe(Flag.withDefault(false))
+ *   environment: Flag.String("env"),
+ *   force: Flag.Boolean("force").pipe(Flag.withDefault(false))
  * }, (config) =>
  *   Effect.gen(function*() {
  *     yield* Effect.sync(() => output.push(`Starting deployment to ${config.environment}`))
@@ -676,7 +676,7 @@ export const make: {
  *
  * // Command without initial handler
  * const greet = Command.make("greet", {
- *   name: Flag.string("name")
+ *   name: Flag.String("name")
  * })
  *
  * // Add handler later
@@ -801,14 +801,14 @@ const normalizeSubcommandEntries = (
  * // Parent command with shared flags
  * const git = Command.make("git").pipe(
  *   Command.withSharedFlags({
- *     verbose: Flag.boolean("verbose").pipe(Flag.withDefault(false))
+ *     verbose: Flag.Boolean("verbose").pipe(Flag.withDefault(false))
  *   })
  * )
  *
  * // Subcommand that accesses parent config
  * const output: Array<string> = []
  * const clone = Command.make("clone", {
- *   repository: Flag.string("repo")
+ *   repository: Flag.String("repo")
  * }, (config) =>
  *   Effect.gen(function*() {
  *     const parent = yield* git // Access parent's parsed config
@@ -1134,7 +1134,7 @@ type ExtractSubcommandContext<T extends ReadonlyArray<Command.SubcommandEntry>> 
  *
  * const output: Array<string> = []
  * const deploy = Command.make("deploy", {
- *   environment: Flag.string("env")
+ *   environment: Flag.String("env")
  * }, (config) =>
  *   Effect.gen(function*() {
  *     yield* Effect.sync(() => output.push(`Deploying to ${config.environment}`))
@@ -1414,7 +1414,7 @@ const mapHandler = <Name extends string, Input, E, R, ContextInput, E2, R2>(
  *
  * const output: Array<string> = []
  * const deploy = Command.make("deploy", {
- *   env: Flag.string("env")
+ *   env: Flag.String("env")
  * }, (config) =>
  *   Effect.gen(function*() {
  *     const fs = yield* FileSystem.FileSystem
@@ -1731,7 +1731,7 @@ const showUserError = (error: CliError.UserError): Effect.Effect<void> =>
  *
  * const output: Array<string> = []
  * const greetCommand = Command.make("greet", {
- *   name: Flag.string("name")
+ *   name: Flag.String("name")
  * }, (config) =>
  *   Effect.gen(function*() {
  *     yield* Effect.sync(() => output.push(`Hello, ${config.name}!`))
@@ -1818,8 +1818,8 @@ export const run: {
  *
  * const output: Array<string> = []
  * const greet = Command.make("greet", {
- *   name: Flag.string("name"),
- *   count: Flag.integer("count").pipe(Flag.withDefault(1))
+ *   name: Flag.String("name"),
+ *   count: Flag.Int("count").pipe(Flag.withDefault(1))
  * }, (config) =>
  *   Effect.gen(function*() {
  *     for (let i = 0; i < config.count; i++) {
@@ -1904,7 +1904,7 @@ export const runWith = <const Name extends string, Input, E, R, ContextInput>(
             ]
             const wizardResult = yield* Wizard.run(command, { commandPath, prefix })
             yield* Console.log(Wizard.renderCompletion(wizardResult.displayArgs))
-            const shouldRun = yield* Prompt.run(Prompt.toggle({
+            const shouldRun = yield* Prompt.run(Prompt.Toggle({
               message: "Run this command?",
               initial: true,
               active: "yes",

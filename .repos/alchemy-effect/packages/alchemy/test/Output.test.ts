@@ -139,7 +139,7 @@ describe("Output.evaluate", () => {
       provideState(
         Effect.gen(function* () {
           const result = yield* Output.evaluate(
-            { port: Config.number("PORT").pipe(Config.withDefault(1337)) },
+            { port: Config.Number("PORT").pipe(Config.withDefault(1337)) },
             {},
           ).pipe(
             Effect.provide(
@@ -842,8 +842,8 @@ describe("Output coercion guard", () => {
 });
 
 describe("Redacted stack-output serialization (regression #598)", () => {
-  // A resource whose attribute is a `Redacted<string>` — e.g. `Random.text`,
-  // which pr-package's AuthTokenValue exposes. When such an attribute flows
+  // A resource whose attribute is a `Redacted<string>` — e.g. `Random.text`.
+  // When such an attribute flows
   // into a Stack output it is JSON-serialized for persistence to state /
   // Doppler / GH secrets. `JSON.stringify(Redacted)` returns the literal
   // string "<redacted>", so a publisher reading the output would send

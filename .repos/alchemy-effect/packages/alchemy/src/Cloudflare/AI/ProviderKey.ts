@@ -104,7 +104,7 @@ export type ProviderKey = {
  *   store,
  *   gatewayId: gateway.gatewayId,
  *   providerSlug: "openai",
- *   value: yield* Config.redacted("OPENAI_API_KEY"),
+ *   value: yield* Config.Redacted("OPENAI_API_KEY"),
  * });
  * ```
  *
@@ -116,7 +116,7 @@ export type ProviderKey = {
  *   store,
  *   gatewayId: gateway.gatewayId,
  *   providerSlug: "openai",
- *   value: yield* Config.redacted("OPENAI_API_KEY"),
+ *   value: yield* Config.Redacted("OPENAI_API_KEY"),
  * });
  *
  * const evals = yield* Cloudflare.AI.ProviderKey("OpenAiEvalsKey", {
@@ -124,7 +124,7 @@ export type ProviderKey = {
  *   gatewayId: gateway.gatewayId,
  *   providerSlug: "openai",
  *   alias: "evals",
- *   value: yield* Config.redacted("OPENAI_EVALS_API_KEY"),
+ *   value: yield* Config.Redacted("OPENAI_EVALS_API_KEY"),
  * });
  * ```
  *

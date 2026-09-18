@@ -1,14 +1,13 @@
 import { assert, describe, it } from "@effect/vitest"
-import { SchemaRepresentation } from "effect"
-import { Cookies, Headers, UrlParams } from "effect/unstable/http"
+import { Schema, SchemaRepresentation } from "effect"
 
 describe("HTTP schema representations", () => {
   it("generates code for declaration schemas", () => {
     const document = SchemaRepresentation.toRepresentations([
-      Headers.HeadersSchema.ast,
-      Cookies.CookiesSchema.ast,
-      Cookies.CookieSchema.ast,
-      UrlParams.UrlParamsSchema.ast
+      Schema.Headers.ast,
+      Schema.Cookies.ast,
+      Schema.Cookie.ast,
+      Schema.UrlParams.ast
     ])
 
     assert.deepStrictEqual(
@@ -26,10 +25,10 @@ describe("HTTP schema representations", () => {
     const output = SchemaRepresentation.toCodeDocument(document)
 
     assert.deepStrictEqual(output.codes, [
-      { runtime: `Headers.HeadersSchema.annotate({ "expected": "Headers" })`, Type: "Headers.Headers" },
-      { runtime: `Cookies.CookiesSchema.annotate({ "expected": "Cookies" })`, Type: "Cookies.Cookies" },
-      { runtime: `Cookies.CookieSchema.annotate({ "expected": "Cookie" })`, Type: "Cookies.Cookie" },
-      { runtime: `UrlParams.UrlParamsSchema.annotate({ "expected": "UrlParams" })`, Type: "UrlParams.UrlParams" }
+      { runtime: `Schema.Headers.annotate({ "expected": "Headers" })`, Type: "Headers.Headers" },
+      { runtime: `Schema.Cookies.annotate({ "expected": "Cookies" })`, Type: "Cookies.Cookies" },
+      { runtime: `Schema.Cookie.annotate({ "expected": "Cookie" })`, Type: "Cookies.Cookie" },
+      { runtime: `Schema.UrlParams.annotate({ "expected": "UrlParams" })`, Type: "UrlParams.UrlParams" }
     ])
     assert.deepStrictEqual(output.artifacts, [
       {

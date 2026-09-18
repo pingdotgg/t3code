@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import fg from "fast-glob";
+import { glob } from "tinyglobby";
 import path from "pathe";
 import * as Artifacts from "../../../Artifacts.ts";
 import * as Bundle from "../../../Bundle/Bundle.ts";
@@ -90,11 +90,12 @@ export const readPrebuiltWorkerBundle = Effect.fn(function* (
     Effect.zipWith(
       Effect.tryPromise({
         try: () =>
-          fg.glob(
+          glob(
             (options.rules ?? defaultModuleRules).flatMap((rule) => rule.globs),
             {
               cwd: root,
               onlyFiles: true,
+              expandDirectories: false,
               dot: true,
             },
           ),

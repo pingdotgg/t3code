@@ -1,9 +1,9 @@
 "@effect/cluster/EntityProxyServer#layerHttpApi":
   replacement: "effect/unstable/cluster/EntityProxyServer#layerHttpApi"
-  note: "Moved into core Effect. Use v4 HttpApi identifiers and Rpc.ServicesServer requirements."
+  note: "Moved into core Effect. Use v4 HttpApi identifiers and provide Sharding plus both Rpc.ServicesServer and Rpc.ServicesClient codec requirements."
 "@effect/cluster/EntityProxyServer#layerRpcHandlers":
   replacement: "effect/unstable/cluster/EntityProxyServer#layerRpcHandlers"
-  note: "Moved into core Effect; the service requirement is now Rpc.ServicesServer rather than Rpc.Context."
+  note: "Moved into core Effect; replace Rpc.Context with both Rpc.ServicesServer and Rpc.ServicesClient codec requirements, alongside Sharding."
 "@effect/cluster/EntityProxyServer#RpcHandlers":
   replacement: "effect/unstable/cluster/EntityProxyServer#RpcHandlers"
   note: "Moved into core Effect and updated for the additional v4 Rpc requirements type parameter."

@@ -1,5 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
+import type { CallerEnv } from "./stack.ts";
+
 /**
  * Plain (non-Effect) Worker whose `API` binding was declared with
  * `Cloudflare.WorkerEntrypoint(target, { entrypoint: "Api", props })`.
@@ -11,15 +13,7 @@
  * assert against it directly.
  */
 export default {
-  async fetch(
-    request: Request,
-    env: {
-      API: Service & {
-        greet: (name: string) => Promise<string>;
-        getProps: () => Promise<Record<string, unknown>>;
-      };
-    },
-  ): Promise<Response> {
+  async fetch(request: Request, env: CallerEnv): Promise<Response> {
     const url = new URL(request.url);
     try {
       if (url.pathname === "/greet") {

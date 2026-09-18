@@ -1,10 +1,10 @@
-import { CredentialsFromEnv } from "@distilled.cloud/fly-io";
 import * as machines from "@distilled.cloud/fly-io/machines";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { CredentialsFromAmbientOrEnv } from "./Credentials.ts";
 import { GetSecret } from "./GetSecret.ts";
 import { makeHttpSecretBinding } from "./SecretHttp.ts";
 
@@ -37,7 +37,7 @@ export const GetSecretHttp = Layer.effect(
             // that over getSecret — org tokens still cannot read plaintext
             // from outside the App, and the env is already the source of
             // truth once the secret exists.
-            const fromEnv = yield* Config.redacted(name).pipe(
+            const fromEnv = yield* Config.Redacted(name).pipe(
               Effect.map((value) => ({
                 name,
                 value: Redacted.value(value),
@@ -56,4 +56,7 @@ export const GetSecretHttp = Layer.effect(
         }),
     }),
   ),
-).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(CredentialsFromEnv));
+).pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(CredentialsFromAmbientOrEnv),
+);

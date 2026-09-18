@@ -8,6 +8,7 @@ const D1Worker = {
     loadInternalWorker("#cloudflare-runtime-core-worker/bindings/d1/D1.worker"),
 };
 import * as Storage from "../../globals/Storage.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../../internal/constants.ts";
 import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
 import * as Plugin from "../../Plugin.ts";
 import type { BindingHook } from "../../PluginContext.ts";
@@ -95,7 +96,7 @@ export const D1Live = Layer.effect(
             const d1Service: WorkerdConfig.Service = {
               name: SERVICE_D1,
               worker: {
-                compatibilityDate: "2025-01-01",
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 modules: formatInternalWorkerModules(
                   yield* Effect.promise(D1Worker.worker),
                 ),

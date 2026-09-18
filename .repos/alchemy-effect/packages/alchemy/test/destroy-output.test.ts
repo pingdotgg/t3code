@@ -1,4 +1,5 @@
 import * as Alchemy from "@/index.ts";
+import { Stage } from "@/Stage";
 import { Stack } from "@/Stack";
 import { InMemoryService, State, type ResourceState } from "@/State";
 import * as Test from "@/Test/Alchemy";
@@ -58,18 +59,21 @@ const DestroyOutputStack = Alchemy.Stack(
   { providers: TestLayers(), state: stateLayer },
   Effect.gen(function* () {
     const A = yield* TestResource("A", { string: "test-string" });
-    return { url: A.string };
+    return { url: A.string, stage: yield* Stage };
   }),
 );
 
 harness.test(
   "stack destroy removes the persisted stack output",
   Effect.gen(function* () {
-    yield* harness.deploy(DestroyOutputStack);
-    expect(outputs.DestroyOutputStack?.test).toEqual({ url: "test-string" });
+    const { stage } = yield* harness.deploy(DestroyOutputStack);
+    expect(outputs.DestroyOutputStack?.[stage]).toEqual({
+      url: "test-string",
+      stage,
+    });
 
     yield* harness.destroy(DestroyOutputStack);
-    expect(outputs.DestroyOutputStack?.test).toBeUndefined();
-    expect(store.DestroyOutputStack?.test).toBeUndefined();
+    expect(outputs.DestroyOutputStack?.[stage]).toBeUndefined();
+    expect(store.DestroyOutputStack?.[stage]).toBeUndefined();
   }),
 );

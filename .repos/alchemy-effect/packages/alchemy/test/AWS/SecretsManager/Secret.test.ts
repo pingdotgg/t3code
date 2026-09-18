@@ -22,6 +22,60 @@ class ResourcePolicyNotAttached extends Data.TaggedError(
 
 class SecretStillExists extends Data.TaggedError("SecretStillExists") {}
 
+class SecretVersionNotVisible extends Data.TaggedError(
+  "SecretVersionNotVisible",
+)<{
+  readonly expectedVersionId: string;
+  readonly observedVersionId: string | undefined;
+  readonly descriptionMatches: boolean;
+}> {}
+
+// Read APIs propagate independently and can return older snapshots on later calls.
+const readCurrentSecret = Effect.fn(function* (
+  secretArn: string,
+  versionId: string,
+  description: string,
+) {
+  return yield* Effect.retry(
+    Effect.gen(function* () {
+      const value = yield* secretsmanager.getSecretValue({
+        SecretId: secretArn,
+      });
+      const described = yield* secretsmanager.describeSecret({
+        SecretId: secretArn,
+      });
+      if (
+        value.VersionId !== versionId ||
+        !value.VersionStages?.includes("AWSCURRENT") ||
+        described.Description !== description ||
+        !described.VersionIdsToStages?.[versionId]?.includes("AWSCURRENT")
+      ) {
+        return yield* Effect.fail(
+          new SecretVersionNotVisible({
+            expectedVersionId: versionId,
+            observedVersionId: value.VersionId,
+            descriptionMatches: described.Description === description,
+          }),
+        );
+      }
+      return { value, described };
+    }).pipe(
+      Effect.tapError((error) =>
+        error._tag === "SecretVersionNotVisible"
+          ? Effect.logInfo("Waiting for secret version visibility", error)
+          : Effect.void,
+      ),
+    ),
+    {
+      while: (error) =>
+        error._tag === "SecretVersionNotVisible" ||
+        error._tag === "ResourceNotFoundException",
+      schedule: Schedule.fixed("2 seconds"),
+      times: 10,
+    },
+  );
+});
+
 // Secrets Manager marks values as sensitive, so the distilled client can hand
 // them back either raw or wrapped in `Redacted` — unwrap for assertions.
 const unwrapString = (
@@ -61,6 +115,8 @@ const assertSecretDeleted = (secretArn: string) =>
 
 test.provider("create, update value, destroy", (stack) =>
   Effect.gen(function* () {
+    yield* stack.destroy();
+
     const secret = yield* stack.deploy(
       Effect.gen(function* () {
         return yield* Secret("LifecycleSecret", {
@@ -76,9 +132,13 @@ test.provider("create, update value, destroy", (stack) =>
     expect(secret.versionId).toBeTruthy();
 
     // Out-of-band verification via distilled.
-    const v1 = yield* secretsmanager.getSecretValue({
-      SecretId: secret.secretArn,
-    });
+    const { value: v1 } = yield* readCurrentSecret(
+      secret.secretArn,
+      secret.versionId!,
+      "lifecycle v1",
+    );
+    expect(v1.VersionId).toBe(secret.versionId);
+    expect(v1.VersionStages).toContain("AWSCURRENT");
     expect(unwrapString(v1.SecretString)).toBe("initial-value");
 
     // Update the value + description in place (no replacement).
@@ -96,15 +156,20 @@ test.provider("create, update value, destroy", (stack) =>
     expect(updated.versionId).toBeTruthy();
     expect(updated.versionId).not.toBe(secret.versionId);
 
-    const v2 = yield* secretsmanager.getSecretValue({
-      SecretId: secret.secretArn,
-    });
+    const { value: v2, described } = yield* readCurrentSecret(
+      secret.secretArn,
+      updated.versionId!,
+      "lifecycle v2",
+    );
+    expect(v2.VersionId).toBe(updated.versionId);
+    expect(v2.VersionStages).toContain("AWSCURRENT");
     expect(unwrapString(v2.SecretString)).toBe("updated-value");
 
-    const described = yield* secretsmanager.describeSecret({
-      SecretId: secret.secretArn,
-    });
     expect(described.Description).toBe("lifecycle v2");
+    expect(updated.description).toBe(described.Description);
+    expect(described.VersionIdsToStages?.[updated.versionId!]).toContain(
+      "AWSCURRENT",
+    );
 
     yield* stack.destroy();
 
@@ -123,6 +188,8 @@ const BINARY_V2 = new Uint8Array([42, 7, 128, 129, 130, 0, 255]);
 
 test.provider("binary secret value round-trips (Redacted prop)", (stack) =>
   Effect.gen(function* () {
+    yield* stack.destroy();
+
     const secret = yield* stack.deploy(
       Effect.gen(function* () {
         return yield* Secret("BinaryLifecycleSecret", {
@@ -136,9 +203,13 @@ test.provider("binary secret value round-trips (Redacted prop)", (stack) =>
     expect(secret.versionId).toBeTruthy();
 
     // Out-of-band verification via distilled: exact bytes on the wire.
-    const v1 = yield* secretsmanager.getSecretValue({
-      SecretId: secret.secretArn,
-    });
+    const { value: v1 } = yield* readCurrentSecret(
+      secret.secretArn,
+      secret.versionId!,
+      "binary lifecycle v1",
+    );
+    expect(v1.VersionId).toBe(secret.versionId);
+    expect(v1.VersionStages).toContain("AWSCURRENT");
     expect(Array.from(unwrapBinary(v1.SecretBinary)!)).toEqual(
       Array.from(BINARY_V1),
     );
@@ -154,13 +225,25 @@ test.provider("binary secret value round-trips (Redacted prop)", (stack) =>
       }),
     );
     expect(updated.secretArn).toBe(secret.secretArn);
+    expect(updated.versionId).toBeTruthy();
     expect(updated.versionId).not.toBe(secret.versionId);
 
-    const v2 = yield* secretsmanager.getSecretValue({
-      SecretId: secret.secretArn,
-    });
+    const { value: v2, described } = yield* readCurrentSecret(
+      secret.secretArn,
+      updated.versionId!,
+      "binary lifecycle v2",
+    );
+    expect(v2.VersionId).toBe(updated.versionId);
+    expect(v2.VersionStages).toContain("AWSCURRENT");
     expect(Array.from(unwrapBinary(v2.SecretBinary)!)).toEqual(
       Array.from(BINARY_V2),
+    );
+    expect(unwrapString(v2.SecretString)).toBeUndefined();
+
+    expect(described.Description).toBe("binary lifecycle v2");
+    expect(updated.description).toBe(described.Description);
+    expect(described.VersionIdsToStages?.[updated.versionId!]).toContain(
+      "AWSCURRENT",
     );
 
     yield* stack.destroy();
@@ -272,7 +355,6 @@ test.provider("list enumerates the deployed secret", (stack) =>
     const secret = yield* stack.deploy(
       Effect.gen(function* () {
         return yield* Secret("ListSecret", {
-          name: "alchemy-test-secret-list",
           description: "list lifecycle op coverage",
           secretString: Redacted.make("super-secret-value"),
           tags: { Environment: "test" },

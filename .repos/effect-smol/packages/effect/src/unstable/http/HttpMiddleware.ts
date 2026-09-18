@@ -14,14 +14,14 @@ import { Clock } from "../../Clock.ts"
 import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
 import * as Exit from "../../Exit.ts"
+import type * as Fiber from "../../Fiber.ts"
 import { constant, constFalse } from "../../Function.ts"
 import * as internalEffect from "../../internal/effect.ts"
 import * as Layer from "../../Layer.ts"
 import * as Option from "../../Option.ts"
 import type { Predicate } from "../../Predicate.ts"
 import type { ReadonlyRecord } from "../../Record.ts"
-import { TracerEnabled } from "../../References.ts"
-import { ParentSpan } from "../../Tracer.ts"
+import { nativeTracer, ParentSpan, Tracer } from "../../Tracer.ts"
 import * as Headers from "./Headers.ts"
 import type { CompressionAlgorithm } from "./HttpPlatform.ts"
 import { HttpPlatform } from "./HttpPlatform.ts"
@@ -32,6 +32,7 @@ import * as Response from "./HttpServerResponse.ts"
 import type { HttpServerResponse } from "./HttpServerResponse.ts"
 import * as TraceContext from "./HttpTraceContext.ts"
 import * as compressionInternal from "./internal/compression.ts"
+import * as bodyInternal from "./internal/httpBody.ts"
 import { appendPreResponseHandlerUnsafe } from "./internal/preResponseHandler.ts"
 
 /**
@@ -170,6 +171,12 @@ export const logger: <E, R>(
   })
 )
 
+/** @internal */
+export const isTracerDisabledUnsafe = (
+  fiber: Fiber.Fiber<unknown, unknown>,
+  request: HttpServerRequest
+): boolean => !fiber.cache.tracerEnabled || fiber.getRef(TracerDisabledWhen)(request)
+
 /**
  * Middleware that creates a server trace span for each request and records request and response HTTP attributes.
  *
@@ -181,8 +188,7 @@ export const tracer: <E, R>(
 ) => Effect.Effect<HttpServerResponse, E, HttpServerRequest | R> = make((httpApp) =>
   Effect.withFiber((fiber) => {
     const request = Context.getUnsafe(fiber.context, HttpServerRequest)
-    const disabled = !fiber.getRef(TracerEnabled) || fiber.getRef(TracerDisabledWhen)(request)
-    if (disabled) {
+    if (isTracerDisabledUnsafe(fiber, request)) {
       return httpApp
     }
     const nameGenerator = fiber.getRef(SpanNameGenerator)
@@ -195,6 +201,11 @@ export const tracer: <E, R>(
     return Effect.onExitPrimitive(httpApp, (exit) => {
       fiber.setContext(prevServices)
       const endTime = fiber.getRef(Clock).currentTimeNanosUnsafe()
+      if (Exit.isSuccess(exit) && (!span.sampled || fiber.getRef(Tracer) === nativeTracer)) {
+        span.end(endTime, exit)
+        return undefined
+      }
+      const redactedHeaderNames = fiber.getRef(Headers.CurrentRedactedNames)
       fiber.currentDispatcher.scheduleTask(() => {
         let response: HttpServerResponse
         let spanExit = exit
@@ -206,7 +217,6 @@ export const tracer: <E, R>(
           response = exit.value
         }
         if (span.sampled) {
-          const redactedHeaderNames = fiber.getRef(Headers.CurrentRedactedNames)
           span.attribute("http.request.method", request.method)
           if (request.url.startsWith("/")) {
             const host = request.headers.host ?? "localhost"
@@ -335,8 +345,8 @@ export const cors = (options?: {
     : (origin: string) => (opts.allowedOrigins as ReadonlyArray<string>).includes(origin)
 
   const allowOrigin = typeof opts.allowedOrigins === "function" || opts.allowedOrigins.length > 1
-    ? ((originHeader: string) => {
-      if (!isAllowedOrigin(originHeader)) return undefined
+    ? ((originHeader: string): ReadonlyRecord<string, string> => {
+      if (!isAllowedOrigin(originHeader)) return { vary: "Origin" }
       return {
         "access-control-allow-origin": originHeader,
         vary: "Origin"
@@ -398,18 +408,36 @@ export const cors = (options?: {
   const headersFromRequestOptions = (request: HttpServerRequest) => {
     const origin = request.headers["origin"]
     const accessControlRequestHeaders = request.headers["access-control-request-headers"]
-    return Headers.fromRecordUnsafe({
+    const headers = Headers.fromRecordUnsafe({
       ...allowOrigin(origin),
       ...allowCredentials,
       ...exposeHeaders,
       ...allowMethods,
-      ...allowHeaders(accessControlRequestHeaders),
       ...maxAge
     })
+    const accessControlHeaders = allowHeaders(accessControlRequestHeaders)
+    if (accessControlHeaders === undefined) return headers
+    const vary = accessControlHeaders["vary"]
+    return Headers.setAll(
+      headers,
+      vary === undefined
+        ? accessControlHeaders
+        : {
+          ...accessControlHeaders,
+          vary: compressionInternal.varyWith(headers, vary)
+        }
+    )
   }
 
-  const preResponseHandler = (request: HttpServerRequest, response: HttpServerResponse) =>
-    Effect.succeed(Response.setHeaders(response, headersFromRequest(request)))
+  const preResponseHandler = (request: HttpServerRequest, response: HttpServerResponse) => {
+    const headers = headersFromRequest(request)
+    return Effect.succeed(Response.setHeaders(
+      response,
+      headers["vary"] === undefined
+        ? headers
+        : Headers.set(headers, "vary", compressionInternal.varyWith(response.headers, "Origin"))
+    ))
+  }
 
   return <E, R>(
     httpApp: Effect.Effect<HttpServerResponse, E, R>
@@ -457,7 +485,7 @@ export const cors = (options?: {
  * explicitly flush each input chunk, so incremental delivery depends on the
  * runtime's implementation.
  *
- * **Security**
+ * **Gotchas**
  *
  * Compression can expose secrets through BREACH-style attacks when one
  * response contains both secret data and attacker-controlled input and an
@@ -542,7 +570,7 @@ export const compression = (
     if (algorithm === undefined) {
       return Effect.succeed(withVary(response))
     }
-    const contentLength = body.contentLength ?? contentLengthHeader(response.headers)
+    const contentLength = body.contentLength ?? bodyInternal.parseContentLength(response.headers["content-length"])
     if (contentLength !== undefined && contentLength < minSize) {
       return Effect.succeed(withVary(response))
     }
@@ -561,8 +589,8 @@ export const compression = (
 }
 
 const withVary = (response: HttpServerResponse): HttpServerResponse => {
-  const vary = compressionInternal.varyAcceptEncoding(response.headers)
-  return vary === undefined ? response : Response.setHeader(response, "vary", vary)
+  const vary = compressionInternal.varyWith(response.headers, "Accept-Encoding")
+  return Response.setHeader(response, "vary", vary)
 }
 
 const defaultAlgorithms: ReadonlyArray<CompressionAlgorithm> = ["br", "gzip", "deflate"]
@@ -575,12 +603,3 @@ const defaultLevels = {
 } as const
 
 const noTransformRegex = /(?:^|[\s,])no-transform(?:$|[\s,;])/i
-
-const contentLengthHeader = (headers: Headers.Headers): number | undefined => {
-  const value = headers["content-length"]
-  if (value === undefined) {
-    return undefined
-  }
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined
-}

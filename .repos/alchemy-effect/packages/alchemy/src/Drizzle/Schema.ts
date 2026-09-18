@@ -9,6 +9,7 @@ import { isResolved } from "../Diff.ts";
 import * as Provider from "../Provider.ts";
 import { Resource } from "../Resource.ts";
 import { exec } from "../Util/exec.ts";
+import { isNonInteractive } from "../Util/interactive.ts";
 import type { Providers } from "./Providers.ts";
 
 export type Dialect = "postgres" | "mysql" | "sqlite";
@@ -217,13 +218,10 @@ export const SchemaProvider = () =>
             extendEnv: true,
           };
 
-          const interactive =
-            !process.env.CI &&
-            process.stdin.isTTY &&
-            process.stdout.isTTY &&
-            process.stderr.isTTY;
-
-          if (interactive) {
+          // Hand the terminal to drizzle-kit only when this process may
+          // prompt at all — the same detection (TTY, CI, `--no-input`,
+          // `ALCHEMY_NO_TUI`, agent env) every other spawned command uses.
+          if (!isNonInteractive() && process.stderr.isTTY) {
             const handle = yield* ChildProcess.make(nodeExecPath, args, {
               ...commandOptions,
               stdin: "inherit",

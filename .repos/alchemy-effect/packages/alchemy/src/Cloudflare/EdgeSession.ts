@@ -1,3 +1,4 @@
+import { DEFAULT_COMPATIBILITY_DATE } from "@alchemy.run/cloudflare-runtime/core/internal/constants";
 import { Credentials } from "@distilled.cloud/cloudflare/Credentials";
 import * as workers from "@distilled.cloud/cloudflare/workers";
 import * as Data from "effect/Data";
@@ -33,7 +34,7 @@ export interface EdgeSessionOptions {
   readonly files: ReadonlyArray<File>;
   /** Remote bindings attached to the preview worker. */
   readonly bindings: ReadonlyArray<EdgeBinding>;
-  /** @default "2025-04-28" */
+  /** @default "2026-08-31" */
   readonly compatibilityDate?: string;
 }
 
@@ -46,8 +47,6 @@ export interface EdgeSessionHandle {
   readonly url: string;
   readonly headers: Record<string, string>;
 }
-
-const DEFAULT_COMPATIBILITY_DATE = "2025-04-28";
 
 const wrap = <A, E, R>(effect: Effect.Effect<A, E, R>, message: string) =>
   effect.pipe(

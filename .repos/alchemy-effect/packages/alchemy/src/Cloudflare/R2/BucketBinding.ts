@@ -102,6 +102,7 @@ export const makeR2ObjectWrappers = (
           cause: error,
         }),
     }),
+    readable: object.body as any as ReadableStream<Uint8Array>,
     bodyUsed: object.bodyUsed,
     arrayBuffer: () => tryPromise(() => object.arrayBuffer()),
     bytes: () => tryPromise(() => object.bytes()),

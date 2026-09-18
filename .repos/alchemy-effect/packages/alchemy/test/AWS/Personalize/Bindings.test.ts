@@ -1,6 +1,7 @@
 import * as AWS from "@/AWS";
 import { AWSEnvironment } from "@/AWS/Environment";
 import * as Core from "@/Test/Core";
+import * as Output from "@/Output";
 import * as Test from "@/Test/Alchemy";
 import * as personalize from "@distilled.cloud/aws/personalize";
 import { describe, expect } from "alchemy-test";
@@ -23,6 +24,14 @@ const readinessPolicy = Schedule.max([
 ]);
 
 let baseUrl: string;
+let resourceArns:
+  | {
+      group: string;
+      tracker: string;
+      datasets: string[];
+      schemas: string[];
+    }
+  | undefined;
 
 // Well-formed-but-nonexistent ARNs the probe routes are driven against —
 // training a solution/campaign takes ~an hour of paid compute, so the
@@ -110,6 +119,35 @@ describe.sequential("Personalize Bindings", () => {
         }).pipe(Effect.provide(PersonalizeTestFunctionLive)),
       );
 
+      // Resolve this generation's references before destroy removes its state.
+      const refOptions = { stack: sharedStack.name, stage: sharedStack.stage };
+      const group = yield* AWS.Personalize.DatasetGroup.ref(
+        "BindingsGroup",
+        refOptions,
+      );
+      const tracker = yield* AWS.Personalize.EventTracker.ref(
+        "Tracker",
+        refOptions,
+      );
+      const datasets = yield* Effect.forEach(
+        ["Interactions", "Items", "Users"],
+        (id) => AWS.Personalize.Dataset.ref(id, refOptions),
+      );
+      const schemas = yield* Effect.forEach(
+        ["InteractionsSchema", "ItemsSchema", "UsersSchema"],
+        (id) => AWS.Personalize.Schema.ref(id, refOptions),
+      );
+      resourceArns = yield* Effect.all({
+        group: Output.evaluate(group.datasetGroupArn, {}),
+        tracker: Output.evaluate(tracker.eventTrackerArn, {}),
+        datasets: Effect.forEach(datasets, (dataset) =>
+          Output.evaluate(dataset.datasetArn, {}),
+        ),
+        schemas: Effect.forEach(schemas, (schema) =>
+          Output.evaluate(schema.schemaArn, {}),
+        ),
+      }).pipe(Effect.provide(sharedStack.state));
+
       expect(functionUrl).toBeTruthy();
       baseUrl = functionUrl!.replace(/\/+$/, "");
 
@@ -126,52 +164,45 @@ describe.sequential("Personalize Bindings", () => {
     { timeout: 480_000 },
   );
 
-  // Assert the fixture's Personalize resources are gone out-of-band after the
-  // destroy. Dataset-group deletion is asynchronous (DELETE IN_PROGRESS), so
-  // poll until no group with this suite's stack prefix remains; the datasets
-  // and the auto-created event schema disappear with it. `withProviders`
-  // supplies the AWS environment the raw distilled calls need.
+  // Verify only resources owned by this fixture generation. Old runs with the
+  // same stack-name prefix must not hold this run's cleanup open.
   const assertPersonalizeResourcesGone = Core.withProviders(
     Effect.gen(function* () {
-      const prefix = `${sharedStack.name}-`;
-      const groups = yield* personalize.listDatasetGroups({}).pipe(
-        Effect.repeat({
-          schedule: Schedule.spaced("5 seconds"),
-          until: (response): boolean =>
-            !(response.datasetGroups ?? []).some((group) =>
-              group.name?.startsWith(prefix),
+      if (!resourceArns) return;
+      yield* Effect.forEach(
+        [
+          personalize
+            .describeDatasetGroup({
+              datasetGroupArn: resourceArns.group,
+            })
+            .pipe(Effect.asVoid),
+          personalize
+            .describeEventTracker({
+              eventTrackerArn: resourceArns.tracker,
+            })
+            .pipe(Effect.asVoid),
+          ...resourceArns.datasets.map((datasetArn) =>
+            personalize.describeDataset({ datasetArn }).pipe(Effect.asVoid),
+          ),
+          ...resourceArns.schemas.map((schemaArn) =>
+            personalize.describeSchema({ schemaArn }).pipe(Effect.asVoid),
+          ),
+        ],
+        (describe) =>
+          describe.pipe(
+            Effect.as(false),
+            Effect.catchTag("ResourceNotFoundException", () =>
+              Effect.succeed(true),
             ),
-          times: 24,
-        }),
+            Effect.repeat({
+              schedule: Schedule.spaced("2 seconds"),
+              until: (gone) => gone,
+              times: 10,
+            }),
+            Effect.tap((gone) => Effect.sync(() => expect(gone).toBe(true))),
+          ),
+        { concurrency: 4 },
       );
-      expect(
-        (groups.datasetGroups ?? [])
-          .map((group) => group.name)
-          .filter((name) => name?.startsWith(prefix)),
-      ).toEqual([]);
-      const trackers = yield* personalize.listEventTrackers({});
-      expect(
-        (trackers.eventTrackers ?? [])
-          .map((tracker) => tracker.name)
-          .filter((name) => name?.startsWith(prefix)),
-      ).toEqual([]);
-      // The user-defined schemas are deleted synchronously by the destroy;
-      // the group's auto-created event schema goes with the group deletion.
-      const schemas = yield* personalize.listSchemas({}).pipe(
-        Effect.repeat({
-          schedule: Schedule.spaced("5 seconds"),
-          until: (response): boolean =>
-            !(response.schemas ?? []).some((schema) =>
-              schema.name?.startsWith(prefix),
-            ),
-          times: 12,
-        }),
-      );
-      expect(
-        (schemas.schemas ?? [])
-          .map((schema) => schema.name)
-          .filter((name) => name?.startsWith(prefix)),
-      ).toEqual([]);
     }),
     testOptions,
     sharedStack.name,

@@ -1,8 +1,151 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Data, Deferred, Effect, Exit, Fiber, Option, RcMap, Ref, Scope } from "effect"
+import { Cause, Data, Deferred, Effect, Exit, Fiber, MutableHashMap, Option, RcMap, Ref, Scope } from "effect"
 import { TestClock } from "effect/testing"
 
 describe("RcMap", () => {
+  describe("lookup defects", () => {
+    for (const throws of [false, true]) {
+      it.effect.each([0, 1000])(
+        `releases capacity after a ${throws ? "throwing" : "dying"} lookup with TTL %s`,
+        (idleTimeToLive) =>
+          Effect.gen(function*() {
+            const map = yield* RcMap.make({
+              lookup: (key: string) => {
+                if (key !== "bad") return Effect.succeed(key)
+                if (throws) throw "boom"
+                return Effect.die("boom")
+              },
+              capacity: 1,
+              idleTimeToLive
+            })
+
+            assert.deepStrictEqual(yield* RcMap.get(map, "bad").pipe(Effect.scoped, Effect.exit), Exit.die("boom"))
+            if (idleTimeToLive > 0) {
+              assert.isTrue(yield* RcMap.has(map, "bad"))
+              yield* TestClock.adjust(idleTimeToLive)
+            }
+            assert.deepStrictEqual(yield* RcMap.get(map, "good").pipe(Effect.exit), Exit.succeed("good"))
+            assert.isFalse(yield* RcMap.has(map, "bad"))
+          })
+      )
+
+      it.effect(`shares a ${throws ? "throwing" : "dying"} lookup's defect with later borrowers`, () =>
+        Effect.gen(function*() {
+          const map = yield* RcMap.make({
+            lookup: (_key: string): Effect.Effect<string> => {
+              if (throws) throw "boom"
+              return Effect.die("boom")
+            }
+          })
+
+          assert.deepStrictEqual(yield* RcMap.get(map, "bad").pipe(Effect.exit), Exit.die("boom"))
+          const borrower = yield* RcMap.getOption(map, "bad").pipe(
+            Effect.exit,
+            Effect.timeoutOption(1000),
+            Effect.forkChild({ startImmediately: true })
+          )
+          yield* TestClock.adjust(1000)
+          assert.deepStrictEqual(yield* Fiber.join(borrower), Option.some(Exit.die("boom")))
+        }))
+    }
+  })
+
+  describe("invalidate", () => {
+    it.effect.each([0, 1000, Infinity])(
+      "releases only the invalidated entry with TTL %s",
+      (idleTimeToLive) =>
+        Effect.gen(function*() {
+          const acquired: Array<number> = []
+          const released: Array<number> = []
+          const mapScope = yield* Scope.make()
+          const oldScope = yield* Scope.make()
+          const newScope = yield* Scope.make()
+          const map = yield* RcMap.make({
+            lookup: (_key: string) =>
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  const value = acquired.length + 1
+                  acquired.push(value)
+                  return value
+                }),
+                (value) => Effect.sync(() => released.push(value))
+              ),
+            idleTimeToLive
+          }).pipe(Scope.provide(mapScope))
+
+          assert.strictEqual(yield* RcMap.get(map, "key").pipe(Scope.provide(oldScope)), 1)
+          yield* RcMap.invalidate(map, "key")
+          assert.isFalse(yield* RcMap.has(map, "key"))
+          assert.deepStrictEqual(released, [])
+          assert.strictEqual(yield* RcMap.get(map, "key").pipe(Scope.provide(newScope)), 2)
+
+          yield* Scope.close(oldScope, Exit.void)
+          const afterOldRelease = { released: [...released], has: yield* RcMap.has(map, "key") }
+          const replacement = yield* Effect.scoped(RcMap.getOption(map, "key"))
+          yield* Scope.close(newScope, Exit.void)
+          const afterNewRelease = [...released]
+          if (idleTimeToLive === 1000) {
+            yield* TestClock.adjust(999)
+            assert.isTrue(yield* RcMap.has(map, "key"))
+            yield* TestClock.adjust(1)
+            assert.isFalse(yield* RcMap.has(map, "key"))
+          }
+          yield* Scope.close(mapScope, Exit.void)
+
+          assert.deepStrictEqual(acquired, [1, 2])
+          assert.deepStrictEqual(afterOldRelease, { released: [1], has: true })
+          assert.deepStrictEqual(replacement, Option.some(2))
+          assert.deepStrictEqual(afterNewRelease, idleTimeToLive === 0 ? [1, 2] : [1])
+          assert.deepStrictEqual(released, [1, 2])
+        })
+    )
+
+    it.effect("an invalidated entry's idle timer cannot remove its replacement", () =>
+      Effect.gen(function*() {
+        const acquired = yield* Ref.make(0)
+        const released: Array<number> = []
+        const mapScope = yield* Scope.make()
+        const map = yield* RcMap.make({
+          lookup: (_key: string) =>
+            Effect.acquireRelease(
+              Ref.updateAndGet(acquired, (n) => n + 1),
+              (value) => Effect.sync(() => released.push(value))
+            ),
+          idleTimeToLive: 1000
+        }).pipe(Scope.provide(mapScope))
+
+        assert.strictEqual(yield* Effect.scoped(RcMap.get(map, "key")), 1)
+        yield* TestClock.adjust(500)
+        const oldEntry = map.state._tag === "Open"
+          ? Option.getOrThrow(MutableHashMap.get(map.state.map, "key"))
+          : undefined
+        assert.isDefined(oldEntry)
+        assert.isDefined(oldEntry.fiber)
+        const idleFiber = oldEntry.fiber
+        const oldScope = yield* Scope.make()
+        const newScope = yield* Scope.make()
+        assert.strictEqual(yield* RcMap.get(map, "key").pipe(Scope.provide(oldScope)), 1)
+        yield* RcMap.invalidate(map, "key")
+        assert.deepStrictEqual(released, [])
+        assert.strictEqual(yield* RcMap.get(map, "key").pipe(Scope.provide(newScope)), 2)
+        yield* Scope.close(oldScope, Exit.void)
+        const idleExit = idleFiber.pollUnsafe()
+        assert.isDefined(idleExit)
+        assert.isTrue(Exit.hasInterrupts(idleExit))
+        yield* TestClock.adjust(1000)
+        const replacement = yield* Effect.scoped(RcMap.getOption(map, "key"))
+        const afterTimer = [...released]
+        yield* Scope.close(mapScope, Exit.void)
+        assert.deepStrictEqual(released, [1, 2])
+        yield* Scope.close(newScope, Exit.void)
+
+        assert.deepStrictEqual(replacement, Option.some(2))
+        assert.deepStrictEqual(afterTimer, [1])
+        assert.deepStrictEqual(released, [1, 2])
+        assert.strictEqual(yield* Ref.get(acquired), 2)
+      }))
+  })
+
   describe("getOption", () => {
     it.effect("returns None without lookup or capacity acquisition when missing", () =>
       Effect.gen(function*() {

@@ -158,12 +158,12 @@ export type BucketSippy = Resource<
  *     provider: "aws",
  *     bucket: "legacy-media",
  *     region: "us-east-1",
- *     accessKeyId: yield* Config.redacted("AWS_ACCESS_KEY_ID"),
- *     secretAccessKey: yield* Config.redacted("AWS_SECRET_ACCESS_KEY"),
+ *     accessKeyId: yield* Config.Redacted("AWS_ACCESS_KEY_ID"),
+ *     secretAccessKey: yield* Config.Redacted("AWS_SECRET_ACCESS_KEY"),
  *   },
  *   destination: {
- *     accessKeyId: yield* Config.redacted("R2_ACCESS_KEY_ID"),
- *     secretAccessKey: yield* Config.redacted("R2_SECRET_ACCESS_KEY"),
+ *     accessKeyId: yield* Config.Redacted("R2_ACCESS_KEY_ID"),
+ *     secretAccessKey: yield* Config.Redacted("R2_SECRET_ACCESS_KEY"),
  *   },
  * });
  * ```
@@ -177,11 +177,11 @@ export type BucketSippy = Resource<
  *     provider: "gcs",
  *     bucket: "legacy-media",
  *     clientEmail: "sippy@my-project.iam.gserviceaccount.com",
- *     privateKey: yield* Config.redacted("GCS_PRIVATE_KEY"),
+ *     privateKey: yield* Config.Redacted("GCS_PRIVATE_KEY"),
  *   },
  *   destination: {
- *     accessKeyId: yield* Config.redacted("R2_ACCESS_KEY_ID"),
- *     secretAccessKey: yield* Config.redacted("R2_SECRET_ACCESS_KEY"),
+ *     accessKeyId: yield* Config.Redacted("R2_ACCESS_KEY_ID"),
+ *     secretAccessKey: yield* Config.Redacted("R2_SECRET_ACCESS_KEY"),
  *   },
  * });
  * ```

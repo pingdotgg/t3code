@@ -14,8 +14,6 @@ import PrismaHyperdriveWorker from "./fixtures/hyperdrive-worker.ts";
 
 const wantsLive = process.env.ALCHEMY_RUN_LIVE_PRISMA_TESTS === "true";
 const hasLiveCredentials =
-  !!process.env.PRISMA_SERVICE_TOKEN?.trim() ||
-  !!process.env.PRISMA_API_TOKEN?.trim() ||
   process.env.ALCHEMY_RUN_LIVE_PRISMA_WITH_PROFILE === "true";
 const runLive = wantsLive && hasLiveCredentials;
 

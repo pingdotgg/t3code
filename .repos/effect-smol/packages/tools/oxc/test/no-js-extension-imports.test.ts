@@ -1,4 +1,5 @@
 import rule from "@effect/oxc/oxlint/rules/no-js-extension-imports"
+import type { Fix, Visitor } from "@oxlint/plugins"
 import { describe, expect, it } from "vitest"
 import { runRule } from "./utils.ts"
 
@@ -19,6 +20,42 @@ describe("no-js-extension-imports", () => {
     type: "ExportNamedDeclaration",
     source: { value: source, range: [9, 9 + source.length + 2] as [number, number] },
     range: [0, 50] as [number, number]
+  })
+
+  const applyFix = (visitor: keyof Visitor, node: unknown): Fix => {
+    const errors = runRule(rule, visitor, node)
+    expect(errors).toHaveLength(1)
+    return errors[0].fix!({ replaceTextRange: (range, text) => ({ range, text }) })
+  }
+
+  describe("fixes", () => {
+    const declarations = [
+      ["ImportDeclaration", "import "],
+      ["ExportAllDeclaration", "export * from "],
+      ["ExportNamedDeclaration", "export { value } from "]
+    ] as const
+
+    it.each(declarations)("escapes the replacement in %s", (visitor, prefix) => {
+      const value = "./say\"hello.js"
+      const source = `${prefix}'${value}'`
+      const node = { source: { value, range: [prefix.length, source.length] } }
+      const fix = applyFix(visitor, node)
+      expect(fix.range).toEqual([prefix.length, source.length])
+      expect(Function(`return ${fix.text}`)()).toBe("./say\"hello.ts")
+    })
+
+    it.each([
+      ["./back\\file.js", "./back\\file.ts"],
+      ["./a\nb.js", "./a\nb.ts"],
+      ["./plain.js", "./plain.ts"],
+      ["./plain.jsx", "./plain.tsx"],
+      ["./plain.mjs", "./plain.mts"],
+      ["./plain.cjs", "./plain.cts"],
+      ["./say'hello.js", "./say'hello.ts"]
+    ])("preserves the decoded specifier for %s", (value, expected) => {
+      const fix = applyFix("ImportDeclaration", createImportDeclaration(value))
+      expect(Function(`return ${fix.text}`)()).toBe(expected)
+    })
   })
 
   describe("ImportDeclaration", () => {

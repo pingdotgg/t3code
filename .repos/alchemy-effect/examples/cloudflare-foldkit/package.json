@@ -12,17 +12,17 @@
     "test": "bun test test/integ.test.ts"
   },
   "dependencies": {
-    "effect": "catalog:effect",
-    "foldkit": "catalog:frontend"
+    "effect": "catalog:",
+    "foldkit": "catalog:"
   },
   "devDependencies": {
-    "@foldkit/vite-plugin": "catalog:frontend",
-    "@tailwindcss/vite": "catalog:frontend",
-    "@types/node": "^24.12.0",
+    "@foldkit/vite-plugin": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:node24",
     "alchemy": "workspace:*",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build",
-    "vite": "catalog:build"
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   },
   "repository": {
     "type": "git",

@@ -1,4 +1,4 @@
-import { expect, it } from "@effect/vitest"
+import { assert, expect, it } from "@effect/vitest"
 import { Context, Effect, Layer, Schema, Stream, Struct } from "effect"
 import { TestClock } from "effect/testing"
 import {
@@ -41,7 +41,7 @@ const JsonPlaceholderLayer = Layer.effect(JsonPlaceholder)(makeJsonPlaceholder)
 const TestRoutes = HttpRouter.serve(HttpRouter.use(Effect.fnUntraced(function*(router) {
   yield* router.addAll([
     HttpRouter.route("GET", "/", Effect.succeed(HttpServerResponse.text("test"))),
-    HttpRouter.route("GET", "/redirect", Effect.succeed(HttpServerResponse.redirect("/"))),
+    HttpRouter.route("GET", "/redirect", Effect.succeed(HttpServerResponse.redirect("/?value=a%23b#fragment"))),
     HttpRouter.route(
       "GET",
       "/stream",
@@ -118,10 +118,13 @@ const TestServerLayer = Layer.unwrap(Effect.promise(() =>
         const client = (yield* HttpClient.HttpClient).pipe(
           HttpClient.followRedirects()
         )
-        const response = yield* client.get("/redirect").pipe(
-          Effect.flatMap((_) => _.text)
-        )
-        expect(response).toBe("test")
+        const response = yield* client.get("/redirect")
+        // Fetch follows redirects natively and retains the original request.
+        expect(new URL(response.request.url).pathname).toBe("/redirect")
+        expect(new URL(response.url).pathname).toBe("/")
+        assert.strictEqual(new URL(response.url).search, "?value=a%23b")
+        assert.strictEqual(new URL(response.url).hash, "")
+        expect(yield* response.text).toBe("test")
       }).pipe(Effect.provide(testLayer)))
 
     it.effect("stream", () =>

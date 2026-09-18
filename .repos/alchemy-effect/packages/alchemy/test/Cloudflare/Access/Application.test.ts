@@ -390,7 +390,7 @@ test.provider(
       const state = yield* yield* State.State;
       yield* state.delete({
         stack: stack.name,
-        stage: "test",
+        stage: stack.stage,
         fqn: "ColdReadApp",
       });
 

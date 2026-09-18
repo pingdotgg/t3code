@@ -581,7 +581,7 @@ describe.skipIf(!!process.env.FAST)("AWS.Kinesis.Stream", () => {
             const state = yield* yield* State;
             yield* state.delete({
               stack: stack.name,
-              stage: "test",
+              stage: stack.stage,
               fqn: "AdoptableStream",
             });
           }).pipe(Effect.provide(stack.state));
@@ -628,7 +628,7 @@ describe.skipIf(!!process.env.FAST)("AWS.Kinesis.Stream", () => {
             const state = yield* yield* State;
             yield* state.delete({
               stack: stack.name,
-              stage: "test",
+              stage: stack.stage,
               fqn: "Original",
             });
           }).pipe(Effect.provide(stack.state));

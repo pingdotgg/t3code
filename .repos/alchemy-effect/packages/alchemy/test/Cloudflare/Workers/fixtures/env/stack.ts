@@ -26,9 +26,9 @@ export const AsyncWorker = Cloudflare.Worker("EnvAsyncWorker", {
       token: "abc",
       scopes: ["read", "write"],
     }),
-    CONFIG_STR: Config.string("CONFIG_STR"),
-    CONFIG_NUM: Config.number("CONFIG_NUM"),
-    CONFIG_REDACTED: Config.redacted("CONFIG_REDACTED"),
+    CONFIG_STR: Config.String("CONFIG_STR"),
+    CONFIG_NUM: Config.Number("CONFIG_NUM"),
+    CONFIG_REDACTED: Config.Redacted("CONFIG_REDACTED"),
     CF_VERSION_METADATA: Cloudflare.Workers.VersionMetadata(),
   },
 });

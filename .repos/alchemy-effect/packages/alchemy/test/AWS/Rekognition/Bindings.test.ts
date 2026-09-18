@@ -31,7 +31,11 @@ let accountId: string;
 class TransientUpstream extends Data.TaggedError("TransientUpstream")<{
   readonly status: number;
   readonly body: string;
-}> {}
+}> {
+  override get message(): string {
+    return `upstream responded ${this.status}: ${this.body}`;
+  }
+}
 
 // Freshly attached IAM policies propagate eventually; an early Rekognition
 // call can surface AccessDenied as a 500 through the handler's orDie. Retry
@@ -349,10 +353,23 @@ describe("Rekognition Bindings", () => {
         Effect.gen(function* () {
           const result = (yield* getJson("/stream-processors")) as {
             count: number;
+            listTag?: string;
             describeTag: string;
             startTag: string;
             stopTag: string;
           };
+          // Rekognition Video stream processors are allow-listed per account.
+          // An unentitled account is denied on every op, list included, and
+          // surfaces the typed AccessDeniedException at the entitlement gate
+          // (probed 2026-09: AdministratorAccess itself is denied). An
+          // entitled account lists for real and gets the not-found tags.
+          if (result.listTag === "AccessDeniedException") {
+            expect(result.count).toBe(-1);
+            expect(result.describeTag).toBe("AccessDeniedException");
+            expect(result.startTag).toBe("AccessDeniedException");
+            expect(result.stopTag).toBe("AccessDeniedException");
+            return;
+          }
           expect(result.count).toBeGreaterThanOrEqual(0);
           expect(result.describeTag).toBe("ResourceNotFoundException");
           expect(result.startTag).toBe("ResourceNotFoundException");

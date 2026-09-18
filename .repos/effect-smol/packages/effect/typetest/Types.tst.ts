@@ -1,4 +1,4 @@
-import type { Brand, Types } from "effect"
+import type { Brand, DateTime, Effect, HashMap, Option, Types } from "effect"
 import { describe, expect, it } from "tstyche"
 
 describe("Types", () => {
@@ -14,6 +14,10 @@ describe("Types", () => {
       .type.toBe<[]>()
     expect<Types.TupleOf<3, number>>()
       .type.toBe<[number, number, number]>()
+    expect<Types.TupleOf<1.5, number>>()
+      .type.toBe<Array<number>>()
+    expect<Types.TupleOf<-1.5, number>>()
+      .type.toBe<never>()
   })
 
   it("TupleOfAtLeast", () => {
@@ -104,6 +108,46 @@ describe("Types", () => {
     })
   })
 
+  describe("RequiredKeys", () => {
+    it("retains named required keys with string, number and symbol indexes", () => {
+      const key = Symbol()
+      expect<
+        Types.RequiredKeys<{ readonly a: number; optional?: number; [key: string]: number | undefined }>
+      >().type.toBe<"a">()
+      expect<Types.RequiredKeys<{ 0: number; [key: number]: number }>>().type.toBe<0>()
+      expect<Types.RequiredKeys<{ [key]: number; [key: symbol]: number }>>().type.toBe<typeof key>()
+    })
+
+    it("excludes index signatures and optional properties", () => {
+      expect<Types.RequiredKeys<Record<string, number>>>().type.toBe<never>()
+      expect<Types.RequiredKeys<{ optional?: number; [key: string]: number | undefined }>>().type.toBe<never>()
+    })
+
+    it("extracts required keys without an index signature", () => {
+      expect<Types.RequiredKeys<{ a: number; b?: string }>>().type.toBe<"a">()
+    })
+
+    it("retains named keys on intersections and indexed unions", () => {
+      expect<Types.RequiredKeys<{ a: number } & { [key: string]: number }>>().type.toBe<"a">()
+      expect<
+        Types.RequiredKeys<
+          | { a: number; [key: string]: number }
+          | { a: number; b: string; [key: string]: unknown }
+        >
+      >().type.toBe<"a">()
+    })
+
+    it("preserves the mixed indexed union result", () => {
+      expect<Types.RequiredKeys<{ a: number; [key: string]: number } | { b: string }>>().type.toBe<"b">()
+    })
+
+    it("preserves array and tuple behavior", () => {
+      type Legacy<T> = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K }[keyof T]
+      expect<Types.RequiredKeys<ReadonlyArray<number>>>().type.toBe<Legacy<ReadonlyArray<number>>>()
+      expect<Types.RequiredKeys<[number, string?]>>().type.toBe<Legacy<[number, string?]>>()
+    })
+  })
+
   describe("Mutable", () => {
     it("should convert a readonly object to mutable", () => {
       expect<Types.Mutable<{ readonly a: string; readonly b: number }>>()
@@ -153,19 +197,63 @@ describe("Types", () => {
       expect<Types.DeepMutable<(arg: 1) => 2>>().type.toBe<(arg: 1) => 2>()
     })
 
-    it("built in objects", () => {
+    it("built-in objects", () => {
       expect<
         [
-          Types.DeepMutable<string>,
-          Types.DeepMutable<number>,
-          Types.DeepMutable<boolean>,
-          Types.DeepMutable<bigint>,
-          Types.DeepMutable<symbol>,
           Types.DeepMutable<Date>,
           Types.DeepMutable<RegExp>,
-          Types.DeepMutable<Generator>
+          Types.DeepMutable<Generator>,
+          Types.DeepMutable<ArrayBuffer>,
+          Types.DeepMutable<URL>
         ]
-      >().type.toBeAssignableTo<[string, number, boolean, bigint, symbol, Date, RegExp, Generator]>()
+      >().type.toBe<[Date, RegExp, Generator, ArrayBuffer, URL]>()
+    })
+
+    it("Effect data types", () => {
+      type Value = { readonly value: string }
+      expect<
+        [
+          Types.DeepMutable<DateTime.DateTime>,
+          Types.DeepMutable<Effect.Effect<Value, Error>>,
+          Types.DeepMutable<HashMap.HashMap<string, Value>>,
+          Types.DeepMutable<Option.Option<Value>>
+        ]
+      >().type.toBe<
+        [
+          DateTime.DateTime,
+          Effect.Effect<Value, Error>,
+          HashMap.HashMap<string, Value>,
+          Option.Option<Value>
+        ]
+      >()
+    })
+
+    it("preserves opaque values nested in structural data", () => {
+      type Value = { readonly value: string }
+      expect<
+        Types.DeepMutable<{
+          readonly dates: ReadonlyArray<DateTime.DateTime>
+          readonly option: Option.Option<Value>
+        }>
+      >().type.toBe<{
+        dates: Array<DateTime.DateTime>
+        option: Option.Option<Value>
+      }>()
+    })
+
+    it("preserves objects with methods or symbol-keyed properties", () => {
+      const TypeId = Symbol()
+      type WithMethod = {
+        readonly nested: { readonly value: string }
+        readonly run: () => void
+      }
+      type WithSymbol = {
+        readonly [TypeId]: "WithSymbol"
+        readonly nested: { readonly value: string }
+      }
+      expect<
+        [Types.DeepMutable<WithMethod>, Types.DeepMutable<WithSymbol>]
+      >().type.toBe<[WithMethod, WithSymbol]>()
     })
 
     describe("Branded", () => {

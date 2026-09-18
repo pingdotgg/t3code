@@ -408,7 +408,7 @@ const missingFlagValue = (spec: FlagParam): CliError.InvalidValue => {
  * Recognizes: true/false, yes/no, on/off, 1/0
  */
 const asBooleanLiteral = (token: Token | undefined): string | undefined =>
-  token?._tag === "Value" && (Primitive.isTrueValue(token.value) || Primitive.isFalseValue(token.value))
+  token?._tag === "Value" && (Primitive.isTrueLiteral(token.value) || Primitive.isFalseLiteral(token.value))
     ? token.value
     : undefined
 

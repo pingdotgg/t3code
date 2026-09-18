@@ -7,6 +7,7 @@ import type { OutputSink } from "./workerd/Workerd.ts";
 
 export interface RuntimeWorker<B extends BindingHooks = BindingHooks> {
   readonly name: string;
+  readonly proxySharedSecret?: string;
   readonly compatibilityDate: string;
   readonly compatibilityFlags: Array<string>;
   readonly bindings: B;

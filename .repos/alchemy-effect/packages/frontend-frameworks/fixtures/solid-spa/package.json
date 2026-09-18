@@ -1,0 +1,30 @@
+{
+  "name": "@fixtures/solid-spa",
+  "version": "0.0.0",
+  "private": true,
+  "description": "",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts dev",
+    "build": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "playwright test",
+    "test:update-snapshots": "playwright test --update-snapshots",
+    "pretest": "playwright install chromium"
+  },
+  "dependencies": {
+    "@solidjs/router": "catalog:solid-v1",
+    "solid-js": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@playwright/test": "catalog:",
+    "@tailwindcss/postcss": "catalog:",
+    "postcss": "catalog:",
+    "solid-devtools": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:solid-v1",
+    "vite-plugin-solid": "catalog:"
+  }
+}

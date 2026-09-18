@@ -5,7 +5,7 @@
  * replicas. It gives an event a stable tag, derives the aggregate or entity
  * primary key from the decoded payload, and records the schemas used for the
  * payload, handler result, and handler errors. The payload schema is also used
- * to derive the MessagePack encoding for journal entries and remote
+ * to derive the SchemaBinary encoding for journal entries and remote
  * replication.
  *
  * @since 4.0.0
@@ -13,7 +13,7 @@
 import { pipeArguments } from "../../Pipeable.ts"
 import * as Predicate from "../../Predicate.ts"
 import * as Schema from "../../Schema.ts"
-import * as Msgpack from "../encoding/Msgpack.ts"
+import * as SchemaBinary from "../encoding/SchemaBinary.ts"
 
 /**
  * Unique type identifier used to mark event log event definitions.
@@ -45,7 +45,7 @@ export const isEvent = (u: unknown): u is Event<any, any, any, any> => Predicate
  * **Details**
  *
  * An event definition contains its tag, primary-key function, payload schema,
- * MessagePack payload schema, success schema, and error schema.
+ * SchemaBinary payload codec, success schema, and error schema.
  *
  * @category models
  * @since 4.0.0
@@ -60,7 +60,7 @@ export interface Event<
   readonly tag: Tag
   readonly primaryKey: (payload: Schema.Schema.Type<Payload>) => string
   readonly payload: Payload
-  readonly payloadMsgPack: Msgpack.schema<Payload>
+  readonly payloadSchemaBinary: SchemaBinary.toCodec<Payload>
   readonly success: Success
   readonly error: Error
 }
@@ -97,7 +97,7 @@ export interface Any {
   readonly tag: string
   readonly primaryKey: (payload: any) => string
   readonly payload: Schema.Top
-  readonly payloadMsgPack: Msgpack.schema<Schema.Top>
+  readonly payloadSchemaBinary: SchemaBinary.toCodec<Schema.Top>
   readonly success: Schema.Top
   readonly error: Schema.Top
 }
@@ -383,7 +383,7 @@ const Proto = {
  * **Details**
  *
  * If omitted, the payload and success schemas default to `Schema.Void`, the error
- * schema defaults to `Schema.Never`, and the MessagePack payload schema is derived
+ * schema defaults to `Schema.Never`, and the SchemaBinary payload codec is derived
  * from the payload schema.
  *
  * @category constructors
@@ -415,7 +415,7 @@ export function make(options: {
     tag: options.tag,
     primaryKey: options.primaryKey,
     payload,
-    payloadMsgPack: Msgpack.schema(payload),
+    payloadSchemaBinary: SchemaBinary.toCodec(payload),
     success,
     error
   })

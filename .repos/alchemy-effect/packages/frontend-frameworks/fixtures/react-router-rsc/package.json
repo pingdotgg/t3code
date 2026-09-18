@@ -1,0 +1,30 @@
+{
+  "name": "@fixtures/react-router-rsc",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts dev --port 3200",
+    "build": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "playwright test",
+    "test:update-snapshots": "playwright test --update-snapshots",
+    "pretest": "playwright install chromium"
+  },
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:node24",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "@vitejs/plugin-rsc": "catalog:",
+    "vite": "catalog:"
+  }
+}

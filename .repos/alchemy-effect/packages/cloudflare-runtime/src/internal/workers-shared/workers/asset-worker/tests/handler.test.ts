@@ -1558,3 +1558,79 @@ describe("[Asset Worker] `canFetch`", () => {
     );
   });
 });
+
+describe("[Asset Worker] `handleRequest` analytics", () => {
+  function streamingAsset() {
+    return {
+      readableStream: new ReadableStream(),
+      contentType: "text/html",
+      cacheStatus: "HIT" as const,
+    };
+  }
+
+  async function requestWithAnalytics({
+    request,
+    configuration,
+    assets,
+  }: {
+    request: Request;
+    configuration: AssetConfig;
+    assets: Readonly<Record<string, string>>;
+  }) {
+    const analytics = new Analytics();
+    await handleRequest(
+      request,
+      // @ts-expect-error Empty config default to using mocked jaeger
+      mockEnv,
+      normalizeConfiguration(configuration),
+      async (pathname) => assets[pathname] ?? null,
+      vi.fn().mockReturnValue(streamingAsset()),
+      analytics,
+    );
+
+    return analytics;
+  }
+
+  const cases = [
+    {
+      name: "an asset",
+      request: new Request("https://example.com/"),
+      configuration: {
+        html_handling: "none",
+        not_found_handling: "none",
+      },
+      assets: { "/": "some-etag" },
+      expectedServedBy: "asset",
+    },
+    {
+      name: "an SPA fallback",
+      request: new Request("https://example.com/missing"),
+      configuration: { not_found_handling: "single-page-application" },
+      assets: { "/index.html": "spa-etag" },
+      expectedServedBy: "spa",
+    },
+    {
+      name: "a 404 page fallback",
+      request: new Request("https://example.com/missing"),
+      configuration: { not_found_handling: "404-page" },
+      assets: { "/404.html": "404-etag" },
+      expectedServedBy: "404-page",
+    },
+  ] as const;
+
+  it.for(cases)(
+    "records servedBy=$expectedServedBy for $name",
+    async (
+      { request, configuration, assets, expectedServedBy },
+      { expect },
+    ) => {
+      const analytics = await requestWithAnalytics({
+        request,
+        configuration,
+        assets,
+      });
+
+      expect(analytics.getData("servedBy")).toBe(expectedServedBy);
+    },
+  );
+});

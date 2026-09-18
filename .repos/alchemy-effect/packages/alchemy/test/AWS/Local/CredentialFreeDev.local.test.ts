@@ -1,16 +1,14 @@
 /**
  * Credential-free `alchemy dev` for AWS.
  *
- * THE RULING: `{ method: "local" }` is invisible plumbing — `alchemy dev`
+ * THE RULING: local emulation is invisible plumbing — `alchemy dev`
  * with zero AWS credentials must work, landing every emulatable resource in
  * the local floci emulator, while `Alchemy.remote()` resources demand real
  * credentials up front with a typed, actionable error.
  *
  * ## How zero-credentials is arranged
  *
- * Unlike FlociSmoke.test.ts (which stubs `AlchemyProfile` to force
- * `{ method: "local" }`), this file exercises the REAL resolution path with
- * nothing configured:
+ * This file exercises the real resolution path with nothing configured:
  *
  *  1. `Test.make({ profile: <name that exists nowhere on disk> })` — the
  *     harness's `withProfileOverride` makes `ALCHEMY_PROFILE` resolve to a
@@ -31,7 +29,7 @@
  * emulator-touching tests are skipped when the daemon is unavailable.
  */
 import { CredentialsRequired } from "@/Auth/Demand.ts";
-import { AlchemyProfile, type ProfileService } from "@/Auth/Profile.ts";
+import { ProfileStore, type ProfileStoreService } from "@/Auth/Profile.ts";
 import * as AWS from "@/AWS";
 import { AWSEnvironment } from "@/AWS/Environment.ts";
 import { Bucket } from "@/AWS/S3";
@@ -52,8 +50,8 @@ const FLOCI_ENDPOINT = "http://localhost:4566";
 
 /**
  * A profile name that exists in no `~/.alchemy` config. `getProfile`
- * returns `undefined` for it, which is exactly the "user never ran
- * `alchemy login`" starting state.
+ * returns `undefined` for it, which is exactly the "user never
+ * configured a profile" starting state.
  */
 const NO_CREDS_PROFILE = "credfree-dev-test-does-not-exist";
 
@@ -225,32 +223,33 @@ test.provider.skipIf(!dockerAvailable)(
 );
 
 /**
- * Profile service with nothing configured. `loadOrConfigure` is a tripwire:
- * the non-interactive credential-demand path must fail with the typed
- * `CredentialsRequired` BEFORE any configure flow could run (a CI-shaped
- * configure would silently write `{ method: "env" }` to the profile store).
+ * Profile service with nothing configured. Mutation and configuration methods
+ * are tripwires: the credential-demand path must fail with the typed
+ * `CredentialsRequired` — it never starts a configure flow (logins belong to
+ * `alchemy profile edit` exclusively).
  */
-const noCredsProfile: ProfileService = {
-  readConfig: Effect.succeed({ version: 0, profiles: {} }),
-  writeConfig: () => Effect.void,
+const unexpectedProfileMutation = Effect.die(
+  new Error("the credential-free path must not mutate profiles"),
+);
+const noCredsProfile: ProfileStoreService = {
+  readManifest: unexpectedProfileMutation,
   getProfile: () => Effect.succeed(undefined),
-  setProfile: () => Effect.void,
+  ensureProfile: () => unexpectedProfileMutation,
+  createProfile: () => unexpectedProfileMutation,
+  renameProfile: () => unexpectedProfileMutation,
+  current: Effect.succeed({ name: NO_CREDS_PROFILE, source: "configuration" }),
+  setProviderConfig: () => unexpectedProfileMutation,
+  deleteProviderConfig: () => unexpectedProfileMutation,
   deleteProfile: () => Effect.succeed(false),
-  loadOrConfigure: () =>
-    Effect.die(
-      new Error(
-        "loadOrConfigure must not run in the non-interactive credential-free path",
-      ),
-    ),
+  loadProviderConfig: () => unexpectedProfileMutation,
 };
 
 /**
- * The test runner exports CI=true (to force tools down non-interactive
- * paths), but the CI contract for the credential-demand seam is "use env-var
- * credentials via the configure default" — a different behavior than the one
- * under test. Mask the CI key (delegating everything else) so the demand
- * seam sees a plain non-interactive developer shell: `ci: false` +
- * `isNonInteractive() === true` → the typed failure.
+ * The test runner exports CI=true, but the CI contract for the
+ * credential-demand seam is "use env-var credentials" — a different behavior
+ * than the one under test. Mask the CI key (delegating everything else) so
+ * the demand seam sees a plain developer shell: `ci: false` → the typed
+ * failure.
  */
 const maskCi = Layer.effect(
   ConfigProvider.ConfigProvider,
@@ -269,7 +268,7 @@ const maskCi = Layer.effect(
  * `Alchemy.remote()` must NOT silently fall back to the emulator. With no
  * credentials configured, the dev deploy fails up front — before apply —
  * with the typed `CredentialsRequired` error naming the demanding resource
- * and pointing at `alchemy login`.
+ * and pointing at `alchemy profile edit`.
  */
 test.provider(
   "remote() without credentials fails with a typed CredentialsRequired error",
@@ -287,7 +286,7 @@ test.provider(
           )
           .pipe(
             // Hermetic view for the demand seam: no profile on disk, no CI.
-            Effect.provideService(AlchemyProfile, noCredsProfile),
+            Effect.provideService(ProfileStore, noCredsProfile),
             Effect.provide(maskCi),
           ),
       );
@@ -304,7 +303,7 @@ test.provider(
         expect(error.message).toContain("AWS credentials are required");
         expect(error.message).toContain("RemoteBucket");
         expect(error.message).toContain(
-          `alchemy login --profile ${NO_CREDS_PROFILE}`,
+          `alchemy profile edit --profile ${NO_CREDS_PROFILE} --add AWS`,
         );
         expect(error.message).toContain("Alchemy.remote()");
       }

@@ -37,7 +37,7 @@ import type { Sharding } from "../Sharding.ts"
 import { ShardingConfig } from "../ShardingConfig.ts"
 import * as Snowflake from "../Snowflake.ts"
 import { EntityReaper } from "./entityReaper.ts"
-import { internalInterruptors } from "./interruptors.ts"
+import { acquireEntity, releaseEntity } from "./interruptors.ts"
 import { ResourceMap } from "./resourceMap.ts"
 import { ResourceRef } from "./resourceRef.ts"
 
@@ -167,6 +167,13 @@ export const make = Effect.fnUntraced(function*<
       closed: Latch.makeUnsafe(),
       force: Latch.makeUnsafe()
     }
+
+    yield* Scope.addFinalizer(
+      scope,
+      Effect.sync(() => {
+        releaseEntity(address)
+      })
+    )
 
     // on shutdown, reset the storage for the entity
     yield* Scope.addFinalizerExit(
@@ -356,7 +363,8 @@ export const make = Effect.fnUntraced(function*<
         }
 
         return server.write
-      })
+      }),
+      address
     )
 
     function onDefect(cause: Cause.Cause<never>): Effect.Effect<void> {
@@ -405,9 +413,9 @@ export const make = Effect.fnUntraced(function*<
     // If the termination timeout is reached, let the server clean itself up
     yield* Scope.addFinalizer(
       scope,
-      Effect.withFiber((fiber) => {
+      Effect.suspend(() => {
         activeServers.delete(address.entityId)
-        internalInterruptors.add(fiber.id)
+        acquireEntity(address)
         return Effect.raceFirst(
           state.write(0, { _tag: "Eof" }).pipe(
             Effect.andThen(endLatch.await),

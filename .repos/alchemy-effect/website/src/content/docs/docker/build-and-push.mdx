@@ -70,7 +70,7 @@ const image = yield* Docker.Image("app", {
   registry: {
     server: "ghcr.io",
     username: "octocat",
-    password: Config.redacted("GITHUB_TOKEN"),
+    password: Config.Redacted("GITHUB_TOKEN"),
   },
 });
 ```
@@ -94,7 +94,7 @@ const mirrored = yield* Docker.RemoteImage("nginx-mirror", {
   registry: {
     server: "ghcr.io",
     username: "octocat",
-    password: Config.redacted("GITHUB_TOKEN"),
+    password: Config.Redacted("GITHUB_TOKEN"),
   },
 });
 ```

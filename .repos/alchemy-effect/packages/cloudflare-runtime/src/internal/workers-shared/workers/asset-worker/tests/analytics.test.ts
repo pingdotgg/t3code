@@ -1,7 +1,7 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { describe, it, vi } from "vitest";
-import { Analytics, EntrypointType } from "../src/analytics.ts";
+import { Analytics, EntrypointType, getRequestKind } from "../src/analytics.ts";
 import type { ReadyAnalyticsEvent } from "../src/types.ts";
 
 describe("[Asset Worker] Analytics", () => {
@@ -59,6 +59,8 @@ describe("[Asset Worker] Analytics", () => {
         coloRegion: "WEUR",
         cacheStatus: "HIT",
         cohort: "free",
+        servedBy: "asset",
+        requestKind: "navigation",
       });
       analytics.write();
 
@@ -83,10 +85,35 @@ describe("[Asset Worker] Analytics", () => {
       expect(event?.blobs?.[6]).toBe("WEUR"); // coloRegion
       expect(event?.blobs?.[7]).toBe("HIT"); // cacheStatus
       expect(event?.blobs?.[8]).toBe("free"); // cohort
+      expect(event?.blobs?.[9]).toBe("asset"); // servedBy
+      expect(event?.blobs?.[10]).toBe("navigation"); // requestKind
 
       // Indexes
       expect(event?.accountId).toBe(123);
       expect(event?.indexId).toBe("456");
     });
   });
+});
+
+describe("[Asset Worker] `getRequestKind`", () => {
+  const cases = [
+    ["document destination", "/style.css", "document", "navigation"],
+    ["iframe destination", "/style.css", "iframe", "navigation"],
+    ["script destination", "/index.html", "script", "subresource"],
+    ["extensionless path", "/about", undefined, "navigation"],
+    ["HTML path", "/page.html", undefined, "navigation"],
+    ["JavaScript path", "/app.js", undefined, "subresource"],
+  ] as const;
+
+  it.for(cases)(
+    "classifies $0 as $3",
+    ([, path, destination, expected], { expect }) => {
+      const headers = destination
+        ? { "Sec-Fetch-Dest": destination }
+        : undefined;
+      const request = new Request(`https://example.com${path}`, { headers });
+
+      expect(getRequestKind(request)).toBe(expected);
+    },
+  );
 });

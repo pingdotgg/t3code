@@ -14,7 +14,7 @@ import { FetchHttpClient } from "effect/unstable/http"
 // ---------------------------------------------------------------------------
 
 const OpenAiClientLayer = OpenAiClient.layerConfig({
-  apiKey: Config.redacted("OPENAI_API_KEY")
+  apiKey: Config.Redacted("OPENAI_API_KEY")
 }).pipe(Layer.provide(FetchHttpClient.layer))
 
 // ---------------------------------------------------------------------------

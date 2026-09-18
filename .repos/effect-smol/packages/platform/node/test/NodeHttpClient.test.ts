@@ -29,6 +29,32 @@ const TodoWithoutId = Schema.Struct({
   ...Struct.omit(Todo.fields, ["id"])
 })
 const largeResponseBody = "a".repeat(10 * 1024 * 1024)
+const responseBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
+const formDataResponses = [
+  {
+    name: "URL-encoded",
+    path: "/form/url-encoded",
+    contentType: "application/x-www-form-urlencoded",
+    body: "tag=one&tag=two"
+  },
+  {
+    name: "multipart",
+    path: "/form/multipart",
+    contentType: "multipart/form-data; boundary=effect-test",
+    body: [
+      "--effect-test",
+      "Content-Disposition: form-data; name=\"tag\"",
+      "",
+      "one",
+      "--effect-test",
+      "Content-Disposition: form-data; name=\"tag\"",
+      "",
+      "two",
+      "--effect-test--",
+      ""
+    ].join("\r\n")
+  }
+] as const
 
 const makeLocalServerClient = Effect.gen(function*() {
   const client = yield* HttpClient.HttpClient
@@ -66,6 +92,10 @@ const LocalServerRoutes = HttpRouter.serve(HttpRouter.addAll([
     })
   ),
   HttpRouter.route("GET", "/text", Effect.succeed(HttpServerResponse.text("test"))),
+  HttpRouter.route("GET", "/bytes", Effect.succeed(HttpServerResponse.uint8Array(responseBytes))),
+  ...formDataResponses.map(({ body, contentType, path }) =>
+    HttpRouter.route("GET", path, Effect.succeed(HttpServerResponse.text(body, { contentType })))
+  ),
   HttpRouter.route("GET", "/large", Effect.succeed(HttpServerResponse.text(largeResponseBody))),
   HttpRouter.route("GET", "/hang", Effect.never),
   HttpRouter.route("GET", "/redirect", Effect.succeed(HttpServerResponse.redirect("/redirected"))),
@@ -97,21 +127,41 @@ const LocalServerRoutes = HttpRouter.serve(HttpRouter.addAll([
   describe(`NodeHttpClient - ${name}`, () => {
     it.effect("text", () =>
       Effect.gen(function*() {
-        const response = yield* HttpClient.get("/text").pipe(
-          Effect.flatMap((_) => _.text)
-        )
-        expect(response).toBe("test")
+        const response = yield* HttpClient.get("/text?existing=1", {
+          urlParams: { value: "a#b" },
+          hash: "fragment"
+        })
+        const url = new URL(response.url)
+        assert.strictEqual(url.pathname, "/text")
+        assert.strictEqual(url.search, "?existing=1&value=a%23b")
+        assert.strictEqual(url.hash, "")
+        expect(yield* response.text).toBe("test")
       }).pipe(Effect.provide(localServerTestLayer)))
+
+    it.effect("accessing text preserves response bytes", () =>
+      Effect.gen(function*() {
+        const response = yield* HttpClient.get("/bytes")
+        void response.text
+        assert.deepStrictEqual(new Uint8Array(yield* response.arrayBuffer), responseBytes)
+      }).pipe(Effect.provide(localServerTestLayer)))
+
+    if (name === "undici") {
+      it.effect.each(formDataResponses)("parses $name response form data", ({ path }) =>
+        Effect.gen(function*() {
+          const response = yield* HttpClient.get(path)
+          const form = yield* response.formData
+          assert.deepStrictEqual(form.getAll("tag"), ["one", "two"])
+        }).pipe(Effect.provide(localServerTestLayer)))
+    }
 
     it.effect("local server followRedirects", () =>
       Effect.gen(function*() {
         const client = (yield* HttpClient.HttpClient).pipe(
           HttpClient.followRedirects()
         )
-        const response = yield* client.get("/redirect").pipe(
-          Effect.flatMap((_) => _.text)
-        )
-        expect(response).toBe("redirected")
+        const response = yield* client.get("/redirect")
+        expect(new URL(response.url).pathname).toBe("/redirected")
+        expect(yield* response.text).toBe("redirected")
       }).pipe(Effect.provide(localServerTestLayer)))
 
     it.effect("text stream", () =>

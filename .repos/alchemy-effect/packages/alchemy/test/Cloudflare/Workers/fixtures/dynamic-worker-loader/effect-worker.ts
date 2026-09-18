@@ -49,6 +49,24 @@ export default class DynamicLoaderEffectWorker extends Cloudflare.Worker<Dynamic
           return yield* worker.fetch(request).pipe(Effect.orDie);
         }
 
+        // `/get`: the named-isolate path. `loader.get(name, code)` returns
+        // the same stub shape as `load` — a regression test for a `get`
+        // that wrapped the native stub as an entrypoint and had no `fetch`.
+        if (request.url.startsWith("/get")) {
+          const worker = yield* loader.get("named-probe", () => ({
+            compatibilityDate: "2026-01-28",
+            mainModule: "worker.js",
+            modules: {
+              "worker.js": `export default {
+                async fetch() {
+                  return Response.json({ mode: "get", ok: true });
+                }
+              }`,
+            },
+          }));
+          return yield* worker.fetch(request).pipe(Effect.orDie);
+        }
+
         const worker = yield* loader.load({
           compatibilityDate: "2026-01-28",
           mainModule: "worker.js",

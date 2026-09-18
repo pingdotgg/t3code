@@ -13,11 +13,19 @@ runs:
   steps:
     - name: Install pnpm
       uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      env:
+        npm_config_audit: "false"
+        npm_config_fund: "false"
     - name: Install node
       uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
       with:
-        cache: pnpm
         node-version: 26.4.0
+        package-manager-cache: ${{ env.NSC_CONTAINER_REGISTRY == '' }}
+    - name: Configure pnpm cache
+      if: ${{ env.NSC_CONTAINER_REGISTRY != '' }}
+      uses: namespacelabs/nscloud-cache-action@c5f8dab7560444c4bf8dbc64f1b203431873c547 # v1.6.1
+      with:
+        cache: pnpm
     - name: Install deno
       uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
       if: ${{ inputs.deno-version != '' }}

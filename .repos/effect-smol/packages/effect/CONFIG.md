@@ -17,7 +17,7 @@ The simplest case: read one value from an environment variable.
 import { Config, Effect } from "effect"
 
 const program = Effect.gen(function*() {
-  const host = yield* Config.string("HOST")
+  const host = yield* Config.String("HOST")
   console.log(host)
 })
 
@@ -35,8 +35,8 @@ Use `Config.all` to group related keys:
 import { Config, ConfigProvider, Effect } from "effect"
 
 const dbConfig = Config.all({
-  host: Config.string("host"),
-  port: Config.int("port")
+  host: Config.String("host"),
+  port: Config.Int("port")
 })
 
 const provider = ConfigProvider.fromUnknown({
@@ -77,25 +77,28 @@ The schema automatically decodes raw string values into their target types. For 
 
 ## Config Constructors
 
-Each constructor reads a single value and decodes it into the appropriate type.
+Each constructor reads and decodes a configuration value into the appropriate type.
 
-| Constructor                    | Decoded type       | Notes                                                                    |
-| ------------------------------ | ------------------ | ------------------------------------------------------------------------ |
-| `Config.string(name?)`         | `string`           | Any string                                                               |
-| `Config.nonEmptyString(name?)` | `string`           | Rejects `""`                                                             |
-| `Config.number(name?)`         | `number`           | Includes `NaN`, `Infinity`                                               |
-| `Config.finite(name?)`         | `number`           | Rejects `NaN` and `Infinity`                                             |
-| `Config.int(name?)`            | `number`           | Integers only                                                            |
-| `Config.boolean(name?)`        | `boolean`          | Accepts `true/false`, `yes/no`, `on/off`, `1/0`, `y/n`                   |
-| `Config.port(name?)`           | `number`           | Integer in 1–65535                                                       |
-| `Config.url(name?)`            | `URL`              | Parsed via the `URL` constructor                                         |
-| `Config.date(name?)`           | `Date`             | Rejects invalid dates                                                    |
-| `Config.duration(name?)`       | `Duration`         | Parses `"10 seconds"`, `"500 millis"`, `"Infinity"`, `"-Infinity"`, etc. |
-| `Config.logLevel(name?)`       | `string`           | One of `All`, `Fatal`, `Error`, `Warn`, `Info`, `Debug`, `Trace`, `None` |
-| `Config.redacted(name?)`       | `Redacted<string>` | Hidden from logs and `toString`                                          |
-| `Config.literal(value, name?)` | literal type       | Accepts only the given literal                                           |
+| Constructor                      | Decoded type       | Notes                                                                    |
+| -------------------------------- | ------------------ | ------------------------------------------------------------------------ |
+| `Config.String(name?)`           | `string`           | Any string                                                               |
+| `Config.NonEmptyString(name?)`   | `string`           | Rejects `""`                                                             |
+| `Config.Number(name?)`           | `number`           | Includes `NaN`, `Infinity`                                               |
+| `Config.Finite(name?)`           | `number`           | Rejects `NaN` and `Infinity`                                             |
+| `Config.Int(name?)`              | `number`           | Integers only                                                            |
+| `Config.Boolean(name?)`          | `boolean`          | Accepts `true/false`, `yes/no`, `on/off`, `1/0`, `y/n`                   |
+| `Config.Port(name?)`             | `number`           | Integer in 1–65535                                                       |
+| `Config.URL(name?)`              | `URL`              | Parsed via the `URL` constructor                                         |
+| `Config.Date(name?)`             | `Date`             | Rejects invalid dates                                                    |
+| `Config.Duration(name?)`         | `Duration`         | Parses `"10 seconds"`, `"500 millis"`, `"Infinity"`, `"-Infinity"`, etc. |
+| `Config.LogLevel(name?)`         | `string`           | One of `All`, `Fatal`, `Error`, `Warn`, `Info`, `Debug`, `Trace`, `None` |
+| `Config.Redacted(name?)`         | `Redacted<string>` | Hidden from logs and `toString`                                          |
+| `Config.Literal(value, name?)`   | literal type       | Accepts only the given literal                                           |
+| `Config.Literals(values, name?)` | literal union      | Accepts one of the given literals                                        |
+| `Config.Array(value, ...)`       | `ReadonlyArray<V>` | Accepts structural arrays and flat separated strings                     |
+| `Config.Record(key, value, ...)` | `Record<K, V>`     | Accepts structural records and flat separated key-value strings          |
 
-The optional `name` parameter sets the local path segment for lookup. If the config is wrapped with `Config.nested`, the nested prefix is prepended to this local path. Omit `name` when the config should decode the provider root.
+The optional `name` parameter sets the local path segment for lookup. If the config is wrapped with `Config.nested`, the nested prefix is prepended to this local path. Omit `name` when the config should decode the provider root. `Config.Array` and `Config.Record` additionally accept an options object directly when no path is needed, or a path followed by the options object.
 
 ### Parsing and Path Ownership
 
@@ -117,7 +120,7 @@ Triggers when the config cannot resolve and none of its relevant provider input 
 ```ts
 import { Config, ConfigProvider, Effect } from "effect"
 
-const port = Config.int("port").pipe(Config.withDefault(3000))
+const port = Config.Int("port").pipe(Config.withDefault(3000))
 
 const provider = ConfigProvider.fromUnknown({})
 Effect.runSync(port.parse(provider)) // 3000
@@ -130,7 +133,7 @@ Returns `Option.some(value)` on success and `Option.none()` when the config is a
 ```ts
 import { Config, ConfigProvider, Effect } from "effect"
 
-const maybePort = Config.option(Config.int("port"))
+const maybePort = Config.option(Config.Int("port"))
 
 const provider = ConfigProvider.fromUnknown({})
 Effect.runSync(maybePort.parse(provider)) // { _tag: "None" }
@@ -141,7 +144,7 @@ Effect.runSync(maybePort.parse(provider)) // { _tag: "None" }
 ```ts
 import { Config } from "effect"
 
-const upperHost = Config.string("HOST").pipe(
+const upperHost = Config.String("HOST").pipe(
   Config.map((s) => s.toUpperCase())
 )
 ```
@@ -153,7 +156,7 @@ Unlike `withDefault`, this catches **all** `ConfigError`s:
 ```ts
 import { Config } from "effect"
 
-const host = Config.string("HOST").pipe(
+const host = Config.String("HOST").pipe(
   Config.orElse(() => Config.succeed("localhost"))
 )
 ```
@@ -166,8 +169,8 @@ Prepends a logical path segment to every key the inner config reads. The prefix 
 import { Config, ConfigProvider, Effect } from "effect"
 
 const dbConfig = Config.all({
-  host: Config.string("host"),
-  port: Config.int("port")
+  host: Config.String("host"),
+  port: Config.Int("port")
 }).pipe(Config.nested("database"))
 
 const provider = ConfigProvider.fromUnknown({
@@ -183,7 +186,7 @@ With environment variables, nesting uses `_` as separator:
 ```ts
 import { Config, ConfigProvider, Effect } from "effect"
 
-const host = Config.string("host").pipe(Config.nested("database"))
+const host = Config.String("host").pipe(Config.nested("database"))
 
 const provider = ConfigProvider.fromEnv({
   env: { database_host: "localhost" }
@@ -197,7 +200,7 @@ Multiple `Config.nested` calls compose with the outermost prefix first:
 ```ts
 import { Config, ConfigProvider, Effect } from "effect"
 
-const config = Config.string("host").pipe(
+const config = Config.String("host").pipe(
   Config.nested("database"),
   Config.nested("production")
 )
@@ -222,13 +225,13 @@ import { Config } from "effect"
 
 // As a record
 const appConfig = Config.all({
-  host: Config.string("host"),
-  port: Config.int("port"),
-  debug: Config.boolean("debug")
+  host: Config.String("host"),
+  port: Config.Int("port"),
+  debug: Config.Boolean("debug")
 })
 
 // As a tuple
-const pair = Config.all([Config.string("a"), Config.int("b")])
+const pair = Config.all([Config.String("a"), Config.Int("b")])
 ```
 
 For example, providing only `host` is an error here:
@@ -237,8 +240,8 @@ For example, providing only `host` is an error here:
 import { Config } from "effect"
 
 const database = Config.all({
-  host: Config.string("host"),
-  port: Config.int("port")
+  host: Config.String("host"),
+  port: Config.Int("port")
 }).pipe(
   Config.withDefault({ host: "localhost", port: 5432 })
 )
@@ -248,8 +251,8 @@ The default applies when both keys are absent, but not when only one key is pres
 
 ```ts
 const listener = Config.all({
-  host: Config.string("host"),
-  port: Config.int("port").pipe(Config.withDefault(8080))
+  host: Config.String("host"),
+  port: Config.Int("port").pipe(Config.withDefault(8080))
 }).pipe(Config.option)
 ```
 
@@ -287,28 +290,29 @@ At the lookup path of a `Config.schema`, an unavailable representation is passed
 
 This keeps the provider responsible only for reporting what exists. Schema remains responsible for deciding whether the loaded representation is valid.
 
-Plain `Schema.Array` and `Schema.Record` accept structural provider input only. Use `Config.Array` for separated scalar input such as `"a,b,c"`, and `Config.Record` for input such as `"a=1,b=2"`.
+Plain `Schema.Array` and `Schema.Record` accept structural provider input only. Use `Config.Array(Schema.String, "items")` for separated scalar input such as `"a,b,c"`, and `Config.Record(Schema.String, Schema.String, "items")` for input such as `"a=1,b=2"`. Both constructors also accept structural input.
 
 The canonical `StringTree` encoding must expose a concrete scalar, object, array, or union shape. `Config.schema` rejects opaque encodings such as `Schema.Any`, `Schema.Unknown`, `Schema.ObjectKeyword`, `Schema.Json`, and `Schema.MutableJson` synchronously when the config is constructed, including when they are nested in another schema. Suspended recursive schemas and declarations such as `Schema.URL` remain supported when their eventual canonical encoding has a concrete shape. To read arbitrary JSON from one scalar provider value, use `Schema.fromJsonString(Schema.Json)`.
 
 ### Custom Config Logic
 
-There is no public low-level `Config.make` constructor. For custom validation or transformation, start from one of the public constructors or `Config.schema`, then use `Config.map`, `Config.mapOrFail`, `Config.all`, `Config.orElse`, or `Config.withDefault`.
+There is no public low-level `Config.make` constructor. For custom validation or transformation, start from one of the public constructors or `Config.schema`, then use `Config.map`, `Config.mapEffect`, `Config.all`, `Config.orElse`, or `Config.withDefault`.
 
 If you need custom lookup behavior for a new backing source, implement a `ConfigProvider` with `ConfigProvider.make` instead.
 
-## Config Schemas
+## Array and Record Constructors
 
-For reusable codecs you can pass directly to `Config.schema`:
+`Config.Array` accepts `{ separator? }`, while `Config.Record` accepts `{ separator?, keyValueSeparator? }`. Pass the options object directly to read the provider root, or place a string or `ConfigProvider.Path` before it to select a path:
 
-| Schema                      | Type           | Notes                                      |
-| --------------------------- | -------------- | ------------------------------------------ |
-| `Config.Boolean`            | `boolean`      | Decodes `true/false/yes/no/on/off/1/0/y/n` |
-| `Schema.DurationFromString` | `Duration`     | Decodes human-readable duration strings    |
-| `Config.Port`               | `number`       | Integer in 1–65535                         |
-| `Config.LogLevel`           | `string`       | One of the standard log level literals     |
-| `Config.Array(value)`       | `Array<V>`     | Also parses flat `"v1,v2"` strings         |
-| `Config.Record(key, value)` | `Record<K, V>` | Also parses flat `"k1=v1,k2=v2"` strings   |
+```ts
+import { Config, Schema } from "effect"
+
+const rootValues = Config.Array(Schema.String, { separator: ";" })
+const namedValues = Config.Array(Schema.String, "VALUES", { separator: ";" })
+
+const rootHeaders = Config.Record(Schema.String, Schema.String, { keyValueSeparator: ":" })
+const namedHeaders = Config.Record(Schema.String, Schema.String, "HEADERS", { keyValueSeparator: ":" })
+```
 
 ## ConfigProvider Sources
 
@@ -338,7 +342,7 @@ const provider = ConfigProvider.fromEnv({
   }
 })
 
-const host = Config.string("HOST").parse(
+const host = Config.String("HOST").parse(
   provider.pipe(ConfigProvider.nested("DATABASE"))
 )
 
@@ -638,7 +642,7 @@ const TestLayer = ConfigProvider.layer(
 )
 
 const program = Effect.gen(function*() {
-  const port = yield* Config.int("port")
+  const port = yield* Config.Int("port")
   return port
 })
 
@@ -673,7 +677,7 @@ import { Config, ConfigProvider, Effect } from "effect"
 const provider = ConfigProvider.fromUnknown({ HOST: "localhost" })
 
 const program = Effect.gen(function*() {
-  const host = yield* Config.string("HOST")
+  const host = yield* Config.String("HOST")
   return host
 }).pipe(
   Effect.provideService(ConfigProvider.ConfigProvider, provider)
@@ -686,14 +690,14 @@ const program = Effect.gen(function*() {
 
    ```ts
    const program = Effect.gen(function*() {
-     const host = yield* Config.string("HOST")
+     const host = yield* Config.String("HOST")
    })
    ```
 
 2. **Call `.parse(provider)` directly** — useful for testing or when you have a specific provider:
 
    ```ts
-   const host = Config.string("HOST")
+   const host = Config.String("HOST")
    const result = Effect.runSync(host.parse(provider))
    ```
 
@@ -711,7 +715,7 @@ Check `error.cause._tag` to distinguish:
 ```ts
 import { Config, ConfigProvider, Effect } from "effect"
 
-const program = Config.int("PORT").parse(
+const program = Config.Int("PORT").parse(
   ConfigProvider.fromUnknown({ PORT: "not-a-number" })
 ).pipe(
   Effect.tapError((error) =>
@@ -754,7 +758,7 @@ const DbConfig = Config.schema(
 const AppConfig = Config.all({
   server: ServerConfig,
   db: DbConfig,
-  debug: Config.boolean("debug").pipe(Config.withDefault(false))
+  debug: Config.Boolean("debug").pipe(Config.withDefault(false))
 })
 
 // In production, just yield it — reads from process.env

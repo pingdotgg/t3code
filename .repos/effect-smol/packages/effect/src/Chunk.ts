@@ -19,6 +19,7 @@ import { dual, identity, pipe } from "./Function.ts"
 import * as Hash from "./Hash.ts"
 import type { TypeLambda } from "./HKT.ts"
 import { type Inspectable, NodeInspectSymbol, toJson } from "./Inspectable.ts"
+import * as Count from "./internal/count.ts"
 import type { NonEmptyIterable } from "./NonEmptyIterable.ts"
 import type { Option } from "./Option.ts"
 import * as O from "./Option.ts"
@@ -30,7 +31,7 @@ import * as R from "./Result.ts"
 import type { Result } from "./Result.ts"
 import type { Covariant, NoInfer } from "./Types.ts"
 
-const TypeId = "~effect/collections/Chunk"
+const TypeId = "~effect/Chunk"
 
 /**
  * A Chunk is an immutable, ordered collection optimized for efficient concatenation and access patterns.
@@ -248,7 +249,7 @@ const makeChunk = <A>(backing: Backing<A>): Chunk<A> => {
     }
     case "ISlice": {
       chunk.length = backing.length
-      chunk.depth = backing.chunk.depth + 1
+      chunk.depth = 0
       chunk.left = _empty
       chunk.right = _empty
       break
@@ -712,6 +713,7 @@ export const prepend: {
 
 /**
  * Takes the first up to `n` elements from the chunk.
+ * `n` is rounded down, with `NaN` and non-positive values treated as `0`.
  *
  * **Example** (Taking elements from the start)
  *
@@ -729,7 +731,7 @@ export const take: {
   (n: number): <A>(self: Chunk<A>) => Chunk<A>
   <A>(self: Chunk<A>, n: number): Chunk<A>
 } = dual(2, <A>(self: Chunk<A>, _n: number): Chunk<A> => {
-  const n = Math.floor(_n)
+  const n = Count.normalize(_n)
   if (n <= 0) {
     return _empty
   } else if (n >= self.length) {
@@ -769,6 +771,7 @@ export const take: {
 
 /**
  * Drops the first up to `n` elements from the chunk.
+ * `n` is rounded down, with `NaN` and non-positive values treated as `0`.
  *
  * **Example** (Dropping elements from the start)
  *
@@ -786,7 +789,7 @@ export const drop: {
   (n: number): <A>(self: Chunk<A>) => Chunk<A>
   <A>(self: Chunk<A>, n: number): Chunk<A>
 } = dual(2, <A>(self: Chunk<A>, _n: number): Chunk<A> => {
-  const n = Math.floor(_n)
+  const n = Count.normalize(_n)
   if (n <= 0) {
     return self
   } else if (n >= self.length) {
@@ -825,6 +828,7 @@ export const drop: {
 
 /**
  * Drops the last `n` elements.
+ * `n` is rounded down, with `NaN` and non-positive values treated as `0`.
  *
  * **Example** (Dropping elements from the end)
  *
@@ -841,7 +845,10 @@ export const drop: {
 export const dropRight: {
   (n: number): <A>(self: Chunk<A>) => Chunk<A>
   <A>(self: Chunk<A>, n: number): Chunk<A>
-} = dual(2, <A>(self: Chunk<A>, n: number): Chunk<A> => take(self, Math.max(0, self.length - n)))
+} = dual(
+  2,
+  <A>(self: Chunk<A>, n: number): Chunk<A> => take(self, self.length - Math.min(Count.normalize(n), self.length))
+)
 
 /**
  * Drops all elements so long as the predicate returns true.
@@ -1231,12 +1238,13 @@ export const flatten: <S extends Chunk<Chunk<any>>>(self: S) => Chunk.Flatten<S>
  *
  * **Details**
  *
- * The final chunk may contain fewer than `n` elements. Empty input produces an
- * empty chunk of chunks.
+ * `n` is rounded down and normalized to at least `1`. The final chunk may
+ * contain fewer than `n` elements. Empty input produces an empty chunk of
+ * chunks.
  *
  * **Gotchas**
  *
- * Values of `n` less than or equal to zero produce singleton chunks.
+ * `NaN` and values of `n` less than or equal to zero produce singleton chunks.
  *
  * **Example** (Splitting into fixed-size chunks)
  *
@@ -1263,11 +1271,12 @@ export const chunksOf: {
   (n: number): <A>(self: Chunk<A>) => Chunk<Chunk<A>>
   <A>(self: Chunk<A>, n: number): Chunk<Chunk<A>>
 } = dual(2, <A>(self: Chunk<A>, n: number) => {
+  const size = Count.normalizeNonEmpty(n)
   const gr: Array<Chunk<A>> = []
   let current: Array<A> = []
   toReadonlyArray(self).forEach((a) => {
     current.push(a)
-    if (current.length >= n) {
+    if (current.length >= size) {
       gr.push(fromArrayUnsafe(current))
       current = []
     }
@@ -1918,9 +1927,9 @@ export const splitAt: {
  *
  * **Details**
  *
- * `n` is floored and normalized to at least `1`. If `n` is greater than or
- * equal to the chunk length, the first result is the original chunk and the
- * second result is empty.
+ * `n` is rounded down and normalized to at least `1`, with `NaN` treated as
+ * `1`. If `n` is greater than or equal to the chunk length, the first result is
+ * the original chunk and the second result is empty.
  *
  * **Example** (Splitting non-empty chunks at an index)
  *
@@ -1948,7 +1957,7 @@ export const splitNonEmptyAt: {
   (n: number): <A>(self: NonEmptyChunk<A>) => [beforeIndex: NonEmptyChunk<A>, fromIndex: Chunk<A>]
   <A>(self: NonEmptyChunk<A>, n: number): [beforeIndex: NonEmptyChunk<A>, fromIndex: Chunk<A>]
 } = dual(2, <A>(self: NonEmptyChunk<A>, n: number): [Chunk<A>, Chunk<A>] => {
-  const _n = Math.max(1, Math.floor(n))
+  const _n = Count.normalizeNonEmpty(n)
   return _n >= self.length ?
     [self, empty()] :
     [take(self, _n), drop(self, _n)]
@@ -1959,8 +1968,9 @@ export const splitNonEmptyAt: {
  *
  * **Details**
  *
- * The chunk size is derived from the input length and `n`; the final chunk may
- * contain fewer elements than the others.
+ * `n` is rounded down and normalized to at least `1`, with `NaN` treated as
+ * `1`. The chunk size is derived from the input length and normalized count;
+ * the final chunk may contain fewer elements than the others.
  *
  * **Example** (Splitting chunks into groups)
  *
@@ -1987,7 +1997,7 @@ export const splitNonEmptyAt: {
 export const split: {
   (n: number): <A>(self: Chunk<A>) => Chunk<Chunk<A>>
   <A>(self: Chunk<A>, n: number): Chunk<Chunk<A>>
-} = dual(2, <A>(self: Chunk<A>, n: number) => chunksOf(self, Math.ceil(self.length / Math.floor(n))))
+} = dual(2, <A>(self: Chunk<A>, n: number) => chunksOf(self, Math.ceil(self.length / Count.normalizeNonEmpty(n))))
 
 /**
  * Splits this chunk on the first element that matches this predicate.
@@ -2079,6 +2089,7 @@ export const tailNonEmpty = <A>(self: NonEmptyChunk<A>): Chunk<A> => drop(self, 
 
 /**
  * Takes the last `n` elements.
+ * `n` is rounded down, with `NaN` and non-positive values treated as `0`.
  *
  * **Example** (Taking elements from the end)
  *
@@ -2101,7 +2112,10 @@ export const tailNonEmpty = <A>(self: NonEmptyChunk<A>): Chunk<A> => drop(self, 
 export const takeRight: {
   (n: number): <A>(self: Chunk<A>) => Chunk<A>
   <A>(self: Chunk<A>, n: number): Chunk<A>
-} = dual(2, <A>(self: Chunk<A>, n: number): Chunk<A> => drop(self, self.length - n))
+} = dual(
+  2,
+  <A>(self: Chunk<A>, n: number): Chunk<A> => drop(self, self.length - Math.min(Count.normalize(n), self.length))
+)
 
 /**
  * Takes all elements so long as the predicate returns true.
@@ -2405,7 +2419,8 @@ export const replace: {
  *
  * **Details**
  *
- * `n` is normalized to an integer greater than or equal to `1`.
+ * `n` is rounded down and normalized to an integer greater than or equal to
+ * `1`. `NaN` is treated as `1`.
  *
  * **Example** (Generating chunks from indices)
  *

@@ -49,7 +49,7 @@ export default function AsyncTabs({ panels }: { panels: Panel[] }) {
   const html = panels.map((p) => highlightTS(p.code));
 
   return (
-    <div ref={wrapRef} className="async-tabs">
+    <div ref={wrapRef} className="async-tabs" data-nosnippet="">
       <div className="async-tabs__chrome">
         <div className="async-tabs__header">
           <span

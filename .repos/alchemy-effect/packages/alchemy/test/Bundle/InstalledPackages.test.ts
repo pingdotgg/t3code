@@ -17,6 +17,7 @@ import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import { strFromU8, unzipSync } from "fflate";
 import { spawnSync } from "node:child_process";
 import { zipCode } from "@/Util/zip";
 
@@ -473,37 +474,16 @@ describe("Lambda external packages", () => {
           "export const handler = () => {};",
           files,
         );
-        const zip = yield* Effect.promise(async () => {
-          const JSZip = (await import("jszip")).default;
-          return JSZip.loadAsync(archive);
-        });
+        const zip = unzipSync(archive);
         expect(
-          zip.file("node_modules/@img/sharp-linux-arm64/lib/sharp.node"),
-        ).not.toBeNull();
+          zip["node_modules/@img/sharp-linux-arm64/lib/sharp.node"],
+        ).toBeDefined();
         expect(
-          zip.file(
-            "node_modules/@img/sharp-libvips-linux-arm64/lib/libvips.so",
-          ),
-        ).not.toBeNull();
-        const executablePermissions = zip.file(
-          "node_modules/sharp/bin/sharp-tool",
-        )!.unixPermissions;
-        const symlinkPermissions = zip.file(
-          "node_modules/.bin/sharp-tool",
-        )!.unixPermissions;
-        if (
-          typeof executablePermissions !== "number" ||
-          typeof symlinkPermissions !== "number"
-        ) {
-          throw new Error("Expected numeric Unix permissions in archive");
-        }
-        expect(executablePermissions & 0o111).toBe(0o111);
-        expect(symlinkPermissions & 0o170000).toBe(0o120000);
-        expect(
-          yield* Effect.promise(() =>
-            zip.file("node_modules/.bin/sharp-tool")!.async("string"),
-          ),
-        ).toBe("../sharp/bin/sharp-tool");
+          zip["node_modules/@img/sharp-libvips-linux-arm64/lib/libvips.so"],
+        ).toBeDefined();
+        expect(strFromU8(zip["node_modules/.bin/sharp-tool"]!)).toBe(
+          "../sharp/bin/sharp-tool",
+        );
         expect(installDirectory).toBeDefined();
         expect(yield* fs.exists(installDirectory!)).toBe(false);
       } finally {

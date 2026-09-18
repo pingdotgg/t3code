@@ -1,5 +1,6 @@
 import * as AWS from "@/AWS";
 import * as Core from "@/Test/Core";
+import * as Output from "@/Output";
 import * as Test from "@/Test/Alchemy";
 import * as eventbridge from "@distilled.cloud/aws/eventbridge";
 import { describe, expect } from "alchemy-test";
@@ -238,22 +239,15 @@ describe.sequential("MediaConvert Bindings", () => {
       "created the EventBridge rule for MediaConvert job state changes",
       () =>
         Effect.gen(function* () {
-          // The rule's physical name embeds the fixture's logical id
-          // (`MediaConvertTestFunction-MediaConvertJobEvents`); find it on the
-          // default bus with bounded manual pagination.
-          let rule: eventbridge.Rule | undefined;
-          let nextToken: string | undefined;
-          for (let page = 0; page < 10 && !rule; page++) {
-            const result = yield* eventbridge.listRules({
-              NextToken: nextToken,
-            });
-            rule = (result.Rules ?? []).find((candidate) =>
-              candidate.Name?.includes("MediaConvertJobEvents"),
-            );
-            nextToken = result.NextToken;
-            if (!nextToken) break;
-          }
-          expect(rule).toBeDefined();
+          const ref = yield* AWS.EventBridge.Rule.ref("MediaConvertJobEvents", {
+            stack: sharedStack.name,
+            stage: sharedStack.stage,
+          });
+          const { Name, EventBusName } = yield* Effect.all({
+            Name: Output.evaluate(ref.ruleName, {}),
+            EventBusName: Output.evaluate(ref.eventBusName, {}),
+          }).pipe(Effect.provide(sharedStack.state));
+          const rule = yield* eventbridge.describeRule({ Name, EventBusName });
           expect(rule?.EventPattern).toContain("aws.mediaconvert");
           expect(rule?.EventPattern).toContain("MediaConvert Job State Change");
         }),

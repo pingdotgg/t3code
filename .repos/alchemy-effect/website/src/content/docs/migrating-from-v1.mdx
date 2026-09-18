@@ -202,7 +202,7 @@ gives you typed errors, composable retries, and Effect's `HttpServer`
 integration.
 
 Instead of declaring `env` bindings on the resource props, you bind
-resources in the Worker's Init phase using `yield*`:
+resources in the Worker's Construction phase using `yield*`:
 
 ```diff lang="typescript"
 // src/worker.ts

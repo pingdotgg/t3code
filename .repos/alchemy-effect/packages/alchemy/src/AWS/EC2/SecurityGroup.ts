@@ -1,17 +1,31 @@
 import * as ec2 from "@distilled.cloud/aws/ec2";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
+import type { ScopedPlanStatusSession } from "../../Report.ts";
 import { Resource } from "../../Resource.ts";
-import { createInternalTags, createTagsList, diffTags } from "../../Tags.ts";
+import { Stack } from "../../Stack.ts";
+import { State, isActionState } from "../../State/State.ts";
+import {
+  createAlchemyTagFilters,
+  createInternalTags,
+  createTagsList,
+  diffTags,
+} from "../../Tags.ts";
 import type { AccountID } from "../Environment.ts";
 import { AWSEnvironment } from "../Environment.ts";
 import type { Providers } from "../Providers.ts";
 import type { RegionID } from "../Region.ts";
 import { retryWhileLingeringEnis } from "./LingeringEnis.ts";
+import {
+  expandSecurityGroupRules,
+  observedSecurityGroupRuleKey,
+  securityGroupRuleKey,
+} from "./SecurityGroupRule.ts";
 import type { VpcId } from "./Vpc.ts";
 
 export type SecurityGroupId<ID extends string = string> = `sg-${ID}`;
@@ -185,6 +199,11 @@ export interface SecurityGroup extends Resource<
  *
  * If no `egress` rules are specified, all outbound traffic is allowed by
  * default. Changing the `vpcId` or `groupName` replaces the security group.
+ * Inline rules are authoritative: undeclared rules are removed even if they
+ * carry Alchemy tags. Standalone `SecurityGroupRule` resources declared in the
+ * same stack and stage retain ownership of their persisted physical rule IDs;
+ * their own providers manage their updates and deletion. Cloud tags alone do
+ * not establish ownership.
  *
  * ### Creating a Security Group
  * Every security group belongs to a VPC. `groupName` and `description` are
@@ -252,7 +271,7 @@ export interface SecurityGroup extends Resource<
  *
  * ### Egress Rules
  * Outbound traffic is governed by `egress`. If you omit it entirely, the group
- * keeps AWS's default "allow all outbound" rule. Supplying `egress` replaces
+ * enforces the default "allow all outbound" rule. Supplying `egress` replaces
  * that default with exactly the rules you list — so you must re-add an
  * allow-all rule if you still want unrestricted outbound.
  *
@@ -276,6 +295,67 @@ export interface SecurityGroup extends Resource<
  * This locks egress down to port 443 only — useful for instances that should
  * only call out to HTTPS APIs. Any other outbound traffic (DNS, NTP, etc.) would
  * need explicit rules added here.
+ *
+ * ### Updating Inline Rules
+ * Changing a rule description updates the existing physical rule in place.
+ * Adding or removing a rule leaves unrelated rule IDs unchanged. Redeploying
+ * unchanged code repairs missing rules and removes undeclared rules.
+ *
+ * **Example:** Change a description without replacing the rule
+ * ```diff lang="typescript"
+ * const sg = yield* AWS.EC2.SecurityGroup("AppSg", {
+ *   vpcId: vpc.vpcId,
+ *   ingress: [{
+ *     ipProtocol: "tcp",
+ *     fromPort: 443,
+ *     toPort: 443,
+ *     cidrIpv4: "10.0.0.0/16",
+ * -    description: "HTTPS",
+ * +    description: "Internal HTTPS",
+ *   }],
+ * });
+ * ```
+ *
+ * Removing `description` resets it to an empty description without replacing
+ * the rule.
+ *
+ * ### Restoring Default Rules
+ * Omitting `ingress` restores no inbound rules. Omitting `egress` restores the
+ * default IPv4 allow-all outbound rule; `egress: []` disables outbound traffic.
+ * These defaults apply on creation, property removal, and drift repair.
+ *
+ * **Example:** Reset custom outbound rules to the default
+ * ```diff lang="typescript"
+ * const sg = yield* AWS.EC2.SecurityGroup("AppSg", {
+ *   vpcId: vpc.vpcId,
+ * -  egress: [{
+ * -    ipProtocol: "tcp",
+ * -    fromPort: 443,
+ * -    toPort: 443,
+ * -    cidrIpv4: "0.0.0.0/0",
+ * -  }],
+ * });
+ * ```
+ *
+ * ### Composing Standalone Rules
+ * Standalone rules must be declared in the same stack and stage as this group.
+ * Pass the group's `groupId` output to order creation and updates. Ownership is
+ * verified against each current declaration's persisted physical rule ID.
+ * Removing a declaration ends that ownership; tags alone do not protect rules.
+ * Cross-stack or cross-stage rule ownership is unsupported: this group removes
+ * rules declared elsewhere when reconciling its authoritative configuration.
+ *
+ * **Example:** Add a standalone rule in the group's stack
+ * ```typescript
+ * yield* AWS.EC2.SecurityGroupRule("HttpsIngress", {
+ *   groupId: sg.groupId,
+ *   type: "ingress",
+ *   ipProtocol: "tcp",
+ *   fromPort: 443,
+ *   toPort: 443,
+ *   cidrIpv4: "10.0.0.0/16",
+ * });
+ * ```
  *
  * ### Referencing Other Groups
  * Instead of a CIDR, a rule's source can be another security group via
@@ -350,6 +430,19 @@ export interface SecurityGroup extends Resource<
  */
 export const SecurityGroup = Resource<SecurityGroup>("AWS.EC2.SecurityGroup");
 
+class InvalidSecurityGroupRules extends Data.TaggedError(
+  "InvalidSecurityGroupRules",
+)<{
+  groupId: string;
+  message: string;
+}> {}
+
+class SecurityGroupRulesNotSettled extends Data.TaggedError(
+  "SecurityGroupRulesNotSettled",
+)<{
+  groupId: string;
+}> {}
+
 export const SecurityGroupProvider = () =>
   Provider.effect(
     SecurityGroup,
@@ -381,6 +474,20 @@ export const SecurityGroupProvider = () =>
           ),
         );
 
+      const findOwnedGroup = Effect.fn(function* (
+        id: string,
+        groupName: string,
+        vpcId?: VpcId,
+      ) {
+        return (yield* ec2.describeSecurityGroups({
+          Filters: [
+            { Name: "group-name", Values: [groupName] },
+            ...(vpcId ? [{ Name: "vpc-id", Values: [vpcId] }] : []),
+            ...(yield* createAlchemyTagFilters(id)),
+          ],
+        })).SecurityGroups?.[0];
+      });
+
       const describeSecurityGroupRules = (groupId: string) =>
         ec2.describeSecurityGroupRules
           .items({
@@ -390,6 +497,48 @@ export const SecurityGroupProvider = () =>
             Stream.runCollect,
             Effect.map((chunk) => Array.from(chunk)),
           );
+
+      const declaredRuleIds = Effect.fn(function* (groupId: string) {
+        const stack = yield* Stack;
+        const state = yield* yield* State;
+        const ids = new Set<string>();
+        for (const resource of Object.values(stack.resources)) {
+          if (resource.Type !== "AWS.EC2.SecurityGroupRule" || !resource.Props)
+            continue;
+          const row = yield* state.get({
+            stack: stack.name,
+            stage: stack.stage,
+            fqn: resource.FQN,
+          });
+          if (
+            !row ||
+            isActionState(row) ||
+            row.resourceType !== "AWS.EC2.SecurityGroupRule"
+          )
+            continue;
+          const attrs = row.attr ?? ("old" in row ? row.old.attr : undefined);
+          if (
+            attrs?.groupId === groupId &&
+            typeof attrs.securityGroupRuleId === "string"
+          ) {
+            ids.add(attrs.securityGroupRuleId);
+          }
+        }
+        return ids;
+      });
+
+      const desiredEgress = (
+        props: SecurityGroupProps,
+      ): SecurityGroupRuleData[] =>
+        props.egress ?? [{ ipProtocol: "-1", cidrIpv4: "0.0.0.0/0" }];
+      const rulesMatch = (
+        observed: ec2.SecurityGroupRule[],
+        desired: SecurityGroupRuleData[],
+      ) =>
+        JSON.stringify(observed.map(observedSecurityGroupRuleKey).sort()) ===
+        JSON.stringify(
+          expandSecurityGroupRules(desired).map(securityGroupRuleKey).sort(),
+        );
 
       const toAttrs = Effect.fn(function* (
         sg: ec2.SecurityGroup,
@@ -465,13 +614,155 @@ export const SecurityGroupProvider = () =>
           : undefined,
       });
 
+      const syncRules = Effect.fn(function* (
+        groupId: SecurityGroupId,
+        isEgress: boolean,
+        desired: SecurityGroupRuleData[],
+        observed: ec2.SecurityGroupRule[],
+        session: ScopedPlanStatusSession,
+      ) {
+        if (
+          desired.some((rule) =>
+            [
+              rule.cidrIpv4,
+              rule.cidrIpv6,
+              rule.referencedGroupId,
+              rule.prefixListId,
+            ].every((source) => !source),
+          )
+        ) {
+          return yield* new InvalidSecurityGroupRules({
+            groupId,
+            message: "Inline rules must specify a source.",
+          });
+        }
+        const desiredByKey = new Map<string, SecurityGroupRuleData>();
+        for (const rule of expandSecurityGroupRules(desired)) {
+          const key = securityGroupRuleKey({ ...rule, description: undefined });
+          if (!rule.ipProtocol || desiredByKey.has(key)) {
+            return yield* new InvalidSecurityGroupRules({
+              groupId,
+              message:
+                "Inline rules must have a protocol, a source, and distinct identities.",
+            });
+          }
+          desiredByKey.set(key, rule);
+        }
+        if (rulesMatch(observed, desired)) return;
+        const current: Array<{
+          key: string;
+          id: string;
+          rule: ec2.SecurityGroupRule;
+        }> = [];
+        for (const rule of observed) {
+          const key = observedSecurityGroupRuleKey({
+            ...rule,
+            Description: undefined,
+          });
+          if (
+            rule.IpProtocol === undefined ||
+            rule.SecurityGroupRuleId === undefined
+          ) {
+            return yield* new InvalidSecurityGroupRules({
+              groupId,
+              message: "EC2 returned a rule without its identity or source.",
+            });
+          }
+          current.push({ key, id: rule.SecurityGroupRuleId, rule });
+        }
+        const removed = current.filter(({ key }) => !desiredByKey.has(key));
+        if (removed.length > 0) {
+          const request = {
+            GroupId: groupId,
+            SecurityGroupRuleIds: removed.map(({ id }) => id),
+            DryRun: false,
+          };
+          yield* isEgress
+            ? ec2
+                .revokeSecurityGroupEgress(request)
+                .pipe(
+                  Effect.catchTag(
+                    [
+                      "InvalidPermission.NotFound",
+                      "InvalidSecurityGroupRuleId.NotFound",
+                    ],
+                    () => Effect.void,
+                  ),
+                )
+            : ec2
+                .revokeSecurityGroupIngress(request)
+                .pipe(
+                  Effect.catchTag(
+                    [
+                      "InvalidPermission.NotFound",
+                      "InvalidSecurityGroupRuleId.NotFound",
+                    ],
+                    () => Effect.void,
+                  ),
+                );
+        }
+        const descriptions = current.flatMap(({ key, id, rule }) => {
+          const desired = desiredByKey.get(key);
+          return desired === undefined ||
+            (desired.description ?? "") === (rule.Description ?? "")
+            ? []
+            : [
+                {
+                  SecurityGroupRuleId: id,
+                  SecurityGroupRule: {
+                    IpProtocol: rule.IpProtocol,
+                    FromPort: rule.FromPort,
+                    ToPort: rule.ToPort,
+                    CidrIpv4: rule.CidrIpv4,
+                    CidrIpv6: rule.CidrIpv6,
+                    ReferencedGroupId: rule.ReferencedGroupInfo?.GroupId,
+                    PrefixListId: rule.PrefixListId,
+                    Description: desired.description ?? "",
+                  },
+                },
+              ];
+        });
+        if (descriptions.length > 0) {
+          yield* ec2.modifySecurityGroupRules({
+            GroupId: groupId,
+            SecurityGroupRules: descriptions,
+          });
+        }
+        const added = [...desiredByKey]
+          .filter(([key]) => !current.some((rule) => rule.key === key))
+          .map(([, rule]) => rule);
+        if (added.length > 0) {
+          const authorize = isEgress
+            ? ec2.authorizeSecurityGroupEgress
+            : ec2.authorizeSecurityGroupIngress;
+          yield* authorize({
+            GroupId: groupId,
+            IpPermissions: added.map(toIpPermission),
+            DryRun: false,
+          });
+        }
+        yield* session.note(
+          `Reconciled ${isEgress ? "egress" : "ingress"} rules`,
+        );
+      });
+
       return {
         stables: ["groupId", "groupArn", "ownerId"],
 
-        read: Effect.fn(function* ({ output }) {
-          if (!output) return undefined;
-          const sg = yield* describeSecurityGroup(output.groupId);
-          const rules = yield* describeSecurityGroupRules(output.groupId);
+        read: Effect.fn(function* ({ id, olds, output }) {
+          const sg = output
+            ? yield* describeSecurityGroup(output.groupId).pipe(
+                Effect.catchTag("InvalidGroup.NotFound", () =>
+                  Effect.succeed(undefined),
+                ),
+              )
+            : yield* findOwnedGroup(
+                id,
+                yield* createGroupName(id, olds?.groupName),
+                olds?.vpcId,
+              );
+          if (!sg?.GroupId) return undefined;
+          const rules = yield* describeSecurityGroupRules(sg.GroupId);
           return yield* toAttrs(sg, rules);
         }),
 
@@ -520,7 +811,30 @@ export const SecurityGroupProvider = () =>
             return { action: "replace" };
           }
 
-          // Other changes can be updated in-place
+          if (output) {
+            const group = yield* describeSecurityGroup(output.groupId).pipe(
+              Effect.catchTag("InvalidGroup.NotFound", () =>
+                Effect.succeed(undefined),
+              ),
+            );
+            if (group === undefined) return { action: "update", stables: [] };
+            const owned = yield* declaredRuleIds(output.groupId);
+            const observed = (yield* describeSecurityGroupRules(
+              output.groupId,
+            )).filter((rule) => !owned.has(rule.SecurityGroupRuleId!));
+            if (
+              !rulesMatch(
+                observed.filter((rule) => !rule.IsEgress),
+                news.ingress ?? [],
+              ) ||
+              !rulesMatch(
+                observed.filter((rule) => rule.IsEgress),
+                desiredEgress(news),
+              )
+            ) {
+              return { action: "update" };
+            }
+          }
         }),
 
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
@@ -545,6 +859,10 @@ export const SecurityGroupProvider = () =>
             sg = lookup.SecurityGroups?.[0];
           }
 
+          if (sg === undefined) {
+            sg = yield* findOwnedGroup(id, groupName, news.vpcId);
+          }
+
           // Ensure — create the SG when missing.
           if (sg === undefined) {
             yield* session.note(`Creating Security Group: ${groupName}`);
@@ -567,10 +885,8 @@ export const SecurityGroupProvider = () =>
                 // `InvalidVpcID.NotFound`. Retry, bounded.
                 Effect.retry({
                   while: (e) => e._tag === "InvalidVpcID.NotFound",
-                  schedule: Schedule.max([
-                    Schedule.fixed("1 second"),
-                    Schedule.recurs(15),
-                  ]),
+                  schedule: Schedule.fixed("1 second"),
+                  times: 8,
                 }),
               );
             const newGroupId = result.GroupId! as SecurityGroupId;
@@ -603,78 +919,59 @@ export const SecurityGroupProvider = () =>
             });
           }
 
-          // Sync ingress + egress rules — revoke whatever is observed and
-          // reapply the desired set. SG rule diffing on this SDK is non-
-          // trivial because each rule has many possible source shapes
-          // (cidr/group ref/prefix list), so the simplest convergent strategy
-          // is full-replace each reconcile. Default egress (-1, 0.0.0.0/0)
-          // is restored when no explicit egress is desired.
+          // Only current declarations with persisted physical ownership are delegated.
+          const owned = yield* declaredRuleIds(groupId);
           const currentRules = yield* describeSecurityGroupRules(groupId);
-          const currentIngress = currentRules.filter((r) => !r.IsEgress);
-          const currentEgress = currentRules.filter((r) => r.IsEgress);
-          if (currentIngress.length > 0) {
-            yield* ec2
-              .revokeSecurityGroupIngress({
-                GroupId: groupId,
-                SecurityGroupRuleIds: currentIngress.map(
-                  (r) => r.SecurityGroupRuleId!,
-                ),
-                DryRun: false,
-              })
-              .pipe(
-                Effect.catchTag(
-                  "InvalidPermission.NotFound",
-                  () => Effect.void,
-                ),
-              );
-          }
-          if (currentEgress.length > 0) {
-            yield* ec2
-              .revokeSecurityGroupEgress({
-                GroupId: groupId,
-                SecurityGroupRuleIds: currentEgress.map(
-                  (r) => r.SecurityGroupRuleId!,
-                ),
-                DryRun: false,
-              })
-              .pipe(
-                Effect.catchTag(
-                  "InvalidPermission.NotFound",
-                  () => Effect.void,
-                ),
-              );
-          }
-          if (news.ingress && news.ingress.length > 0) {
-            yield* ec2.authorizeSecurityGroupIngress({
-              GroupId: groupId,
-              IpPermissions: news.ingress.map(toIpPermission),
-              DryRun: false,
-            });
-            yield* session.note(`Applied ${news.ingress.length} ingress rules`);
-          }
-          if (news.egress && news.egress.length > 0) {
-            yield* ec2.authorizeSecurityGroupEgress({
-              GroupId: groupId,
-              IpPermissions: news.egress.map(toIpPermission),
-              DryRun: false,
-            });
-            yield* session.note(`Applied ${news.egress.length} egress rules`);
-          } else {
-            yield* ec2.authorizeSecurityGroupEgress({
-              GroupId: groupId,
-              IpPermissions: [
-                {
-                  IpProtocol: "-1",
-                  IpRanges: [{ CidrIp: "0.0.0.0/0" }],
-                },
-              ],
-              DryRun: false,
-            });
-          }
+          const currentIngress = currentRules.filter(
+            (rule) => !rule.IsEgress && !owned.has(rule.SecurityGroupRuleId!),
+          );
+          const currentEgress = currentRules.filter(
+            (rule) => rule.IsEgress && !owned.has(rule.SecurityGroupRuleId!),
+          );
+          yield* syncRules(
+            groupId,
+            false,
+            news.ingress ?? [],
+            currentIngress,
+            session,
+          );
+          yield* syncRules(
+            groupId,
+            true,
+            desiredEgress(news),
+            currentEgress,
+            session,
+          );
 
           // Re-read final state.
           const finalSg = yield* describeSecurityGroup(groupId);
-          const finalRules = yield* describeSecurityGroupRules(groupId);
+          const matches = (rules: ec2.SecurityGroupRule[]) => {
+            const inline = rules.filter(
+              (rule) => !owned.has(rule.SecurityGroupRuleId!),
+            );
+            return (
+              rulesMatch(
+                inline.filter((rule) => !rule.IsEgress),
+                news.ingress ?? [],
+              ) &&
+              rulesMatch(
+                inline.filter((rule) => rule.IsEgress),
+                desiredEgress(news),
+              )
+            );
+          };
+          const finalRules = yield* describeSecurityGroupRules(groupId).pipe(
+            Effect.repeat({
+              until: matches,
+              schedule: Schedule.spaced("1 second"),
+              times: 8,
+            }),
+          );
+          if (!matches(finalRules)) {
+            return yield* Effect.fail(
+              new SecurityGroupRulesNotSettled({ groupId }),
+            );
+          }
           return yield* toAttrs(finalSg, finalRules);
         }),
 

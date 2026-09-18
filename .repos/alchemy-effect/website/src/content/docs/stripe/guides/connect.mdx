@@ -1,0 +1,490 @@
+---
+title: Onboard merchants with Connect
+description: Build a Connect platform on a Cloudflare Worker — create Express accounts, send merchants through hosted onboarding, and learn from account.updated when they can take payments.
+---
+
+Stripe Connect is for platforms: a marketplace, a SaaS that invoices
+on behalf of its customers, anything where *other businesses* get paid
+through your app. Each of those businesses becomes a **connected
+account** with its own Stripe identity. Your platform creates it,
+sends the owner through Stripe's onboarding form, and — once Stripe
+has verified them — can route payments to it.
+
+That is a state machine, not a form submission. The parts every
+platform needs:
+
+1. **Create the account** when a merchant signs up. Store its `acct_…`
+   id next to your own user record.
+2. **Send them to hosted onboarding** via an Account Link. Links are
+   single-use and expire in minutes; merchants abandon them and come
+   back tomorrow. You must be able to mint a new one on demand.
+3. **Learn when they're done.** Stripe sets `charges_enabled` on the
+   account after verification and fires `account.updated`. That
+   webhook — not the merchant returning to your `return_url` — is the
+   source of truth.
+4. **Gate on it.** Your app checks your stored `charges_enabled` before
+   it lets the merchant sell.
+
+This guide walks through `examples/stripe-connect`, which implements
+all four on one Worker with a D1 table. Every snippet is a piece of
+[`src/Api.ts`](https://github.com/alchemy-run/alchemy/blob/main/examples/stripe-connect/src/Api.ts);
+the full file is at the end.
+
+:::caution[Enable Connect first]
+`POST /v1/accounts` fails until Connect is switched on for your Stripe
+account. Do that once at
+[dashboard.stripe.com/connect](https://dashboard.stripe.com/test/connect)
+— there is no API for it.
+:::
+
+## The merchant table
+
+One row per connected account, keyed by Stripe's id. The three
+capability flags mirror what Stripe reports; `updated_at` moves when a
+webhook lands.
+
+```sql
+-- migrations/0001_init.sql
+CREATE TABLE merchants (
+  id text PRIMARY KEY,
+  email text NOT NULL,
+  details_submitted integer NOT NULL DEFAULT 0,
+  charges_enabled integer NOT NULL DEFAULT 0,
+  payouts_enabled integer NOT NULL DEFAULT 0,
+  created_at integer NOT NULL DEFAULT (unixepoch()),
+  updated_at integer NOT NULL DEFAULT (unixepoch())
+);
+```
+
+```typescript
+// src/database.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Database = Cloudflare.D1.Database("Database", {
+  migrations: "./migrations",
+});
+```
+
+## Bind the database and the Stripe calls
+
+```typescript
+// src/Api.ts
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const db = yield* Cloudflare.D1.QueryDatabase(Database);
+    const createAccount = yield* Stripe.CreateAccount();
+    const createAccountLink = yield* Stripe.CreateAccountLink();
+    // ...
+```
+
+Two Stripe bindings: one to create accounts, one to mint onboarding
+links. Both add `accounts_write` to the Worker's token.
+
+## Listen for `account.updated`
+
+This is the piece most first attempts skip. Stripe fires
+`account.updated` on *every* change to *any* connected account — most
+importantly when the merchant finishes onboarding and
+`charges_enabled` flips to `true`. `consumeEvents` provisions the
+endpoint; the handler copies the flags into D1.
+
+```typescript
+    yield* Stripe.consumeEvents(
+      "Events",
+      { events: [Stripe.AccountUpdated] },
+      Effect.fn(function* (event) {
+        const account = event.object;
+        yield* db
+          .prepare(
+            `UPDATE merchants
+               SET details_submitted = ?, charges_enabled = ?, payouts_enabled = ?, updated_at = unixepoch()
+             WHERE id = ?`,
+          )
+          .bind(
+            account.details_submitted ? 1 : 0,
+            account.charges_enabled ? 1 : 0,
+            account.payouts_enabled ? 1 : 0,
+            account.id,
+          )
+          .run()
+          .pipe(Effect.orDie);
+      }),
+    );
+```
+
+## Minting an onboarding link
+
+Account Links need two URLs. `return_url` is where the merchant lands
+when they finish. `refresh_url` is where Stripe sends them if the link
+has expired — your job there is to mint a fresh one. Factor it out
+because two routes need it:
+
+```typescript
+    const onboardingLink = (merchantId: string, origin: string) =>
+      createAccountLink({
+        account: merchantId,
+        type: "account_onboarding",
+        return_url: `${origin}/merchants/${merchantId}/onboarded`,
+        refresh_url: `${origin}/merchants/${merchantId}/onboarding/refresh`,
+      });
+```
+
+## The routes
+
+### `POST /merchants` — sign a merchant up
+
+Create the Express account requesting the capabilities the platform
+needs, store the id, and return the first onboarding link:
+
+```typescript
+        if (request.method === "POST" && url.pathname === "/merchants") {
+          const body = (yield* request.json) as { email?: string };
+          if (!body.email) {
+            return yield* HttpServerResponse.json(
+              { error: "email is required" },
+              { status: 400 },
+            );
+          }
+
+          const account = yield* createAccount({
+            type: "express",
+            country: "US",
+            email: body.email,
+            capabilities: {
+              card_payments: { requested: true },
+              transfers: { requested: true },
+            },
+          }).pipe(Effect.orDie);
+
+          yield* db
+            .prepare("INSERT INTO merchants (id, email) VALUES (?, ?)")
+            .bind(account.id, body.email)
+            .run()
+            .pipe(Effect.orDie);
+
+          const link = yield* onboardingLink(account.id, url.origin).pipe(
+            Effect.orDie,
+          );
+
+          return yield* HttpServerResponse.json(
+            { merchantId: account.id, onboardingUrl: link.url },
+            { status: 201 },
+          );
+        }
+```
+
+`type: "express"` gives merchants a lightweight Stripe dashboard and
+puts Stripe in charge of the onboarding UI. `standard` and `custom`
+trade that off differently — see
+[Stripe's account types](https://docs.stripe.com/connect/accounts).
+
+### `POST /merchants/:id/onboarding` — resume
+
+A merchant who abandoned onboarding comes back. Check they exist, mint
+a new link:
+
+```typescript
+        if (
+          request.method === "POST" &&
+          segments.length === 3 &&
+          segments[0] === "merchants" &&
+          segments[2] === "onboarding"
+        ) {
+          const merchantId = segments[1];
+          const row = yield* db
+            .prepare("SELECT id FROM merchants WHERE id = ?")
+            .bind(merchantId)
+            .first<{ id: string }>()
+            .pipe(Effect.orDie);
+          if (row === null) {
+            return yield* HttpServerResponse.json(
+              { error: "Unknown merchant" },
+              { status: 404 },
+            );
+          }
+          const link = yield* onboardingLink(merchantId, url.origin).pipe(
+            Effect.orDie,
+          );
+          return yield* HttpServerResponse.json({ onboardingUrl: link.url });
+        }
+```
+
+Your `refresh_url` page should call this and redirect.
+
+### `GET /merchants/:id` — are they live?
+
+```typescript
+        if (
+          request.method === "GET" &&
+          segments.length === 2 &&
+          segments[0] === "merchants"
+        ) {
+          const merchant = yield* db
+            .prepare("SELECT * FROM merchants WHERE id = ?")
+            .bind(segments[1])
+            .first<Merchant>()
+            .pipe(Effect.orDie);
+          if (merchant === null) {
+            return yield* HttpServerResponse.json(
+              { error: "Unknown merchant" },
+              { status: 404 },
+            );
+          }
+          return yield* HttpServerResponse.json({
+            id: merchant.id,
+            email: merchant.email,
+            onboarded: merchant.details_submitted === 1,
+            chargesEnabled: merchant.charges_enabled === 1,
+            payoutsEnabled: merchant.payouts_enabled === 1,
+            updatedAt: merchant.updated_at,
+          });
+        }
+```
+
+`chargesEnabled` is the gate. Until it's `true`, keep the merchant on
+the onboarding path.
+
+## Provide the layers
+
+```typescript
+  }).pipe(
+    Effect.provide([
+      Cloudflare.D1.QueryDatabaseBinding,
+      Stripe.CreateAccountHttp,
+      Stripe.CreateAccountLinkHttp,
+      Stripe.ConsumeEventsLive,
+    ]),
+  ),
+) {}
+```
+
+## Try it
+
+```sh
+cd examples/stripe-connect
+bun alchemy deploy
+```
+
+```sh
+curl -X POST "$URL/merchants" -H 'content-type: application/json' \
+  -d '{"email":"merchant@example.com"}'
+# → { "merchantId": "acct_…", "onboardingUrl": "https://connect.stripe.com/…" }
+```
+
+Open `onboardingUrl` and complete the test-mode form (Stripe pre-fills
+most of it). Then:
+
+```sh
+curl "$URL/merchants/acct_…"
+# → { "onboarded": true, "chargesEnabled": true, … }
+```
+
+Or skip the form: `POST /merchants/acct_…/onboarding` proves link
+minting, and any change to the account — even a metadata edit in the
+Dashboard — fires `account.updated` and bumps `updatedAt`. That's
+what `test/integ.test.ts` does.
+
+## What's next on a real platform
+
+This example stops at "the merchant can take payments". From here a
+platform typically:
+
+- creates Checkout Sessions with `payment_intent_data.transfer_data.destination`
+  set to the merchant's `acct_…` so funds route to them, or
+- creates Transfers from its own balance after the fact, and
+- listens for `payout.*` events on connected accounts.
+
+Those are ordinary `Create*` bindings and `consumeEvents` classes in the
+same shape as above.
+
+## Full file
+
+<details>
+<summary><code>examples/stripe-connect/src/Api.ts</code></summary>
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Stripe from "alchemy/Stripe";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Database } from "./database.ts";
+
+interface Merchant {
+  id: string;
+  email: string;
+  details_submitted: number;
+  charges_enabled: number;
+  payouts_enabled: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  {
+    main: import.meta.url,
+  },
+  Effect.gen(function* () {
+    const db = yield* Cloudflare.D1.QueryDatabase(Database);
+    const createAccount = yield* Stripe.CreateAccount();
+    const createAccountLink = yield* Stripe.CreateAccountLink();
+
+    yield* Stripe.consumeEvents(
+      "Events",
+      { events: [Stripe.AccountUpdated] },
+      Effect.fn(function* (event) {
+        const account = event.object;
+        yield* db
+          .prepare(
+            `UPDATE merchants
+               SET details_submitted = ?, charges_enabled = ?, payouts_enabled = ?, updated_at = unixepoch()
+             WHERE id = ?`,
+          )
+          .bind(
+            account.details_submitted ? 1 : 0,
+            account.charges_enabled ? 1 : 0,
+            account.payouts_enabled ? 1 : 0,
+            account.id,
+          )
+          .run()
+          .pipe(Effect.orDie);
+      }),
+    );
+
+    const onboardingLink = (merchantId: string, origin: string) =>
+      createAccountLink({
+        account: merchantId,
+        type: "account_onboarding",
+        return_url: `${origin}/merchants/${merchantId}/onboarded`,
+        refresh_url: `${origin}/merchants/${merchantId}/onboarding/refresh`,
+      });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const url = new URL(request.originalUrl);
+        const segments = url.pathname.split("/").filter(Boolean);
+
+        if (request.method === "GET" && url.pathname === "/") {
+          return HttpServerResponse.text("ok");
+        }
+
+        if (request.method === "POST" && url.pathname === "/merchants") {
+          const body = (yield* request.json) as { email?: string };
+          if (!body.email) {
+            return yield* HttpServerResponse.json(
+              { error: "email is required" },
+              { status: 400 },
+            );
+          }
+
+          const account = yield* createAccount({
+            type: "express",
+            country: "US",
+            email: body.email,
+            capabilities: {
+              card_payments: { requested: true },
+              transfers: { requested: true },
+            },
+          }).pipe(Effect.orDie);
+
+          yield* db
+            .prepare("INSERT INTO merchants (id, email) VALUES (?, ?)")
+            .bind(account.id, body.email)
+            .run()
+            .pipe(Effect.orDie);
+
+          const link = yield* onboardingLink(account.id, url.origin).pipe(
+            Effect.orDie,
+          );
+
+          return yield* HttpServerResponse.json(
+            { merchantId: account.id, onboardingUrl: link.url },
+            { status: 201 },
+          );
+        }
+
+        if (
+          request.method === "POST" &&
+          segments.length === 3 &&
+          segments[0] === "merchants" &&
+          segments[2] === "onboarding"
+        ) {
+          const merchantId = segments[1];
+          const row = yield* db
+            .prepare("SELECT id FROM merchants WHERE id = ?")
+            .bind(merchantId)
+            .first<{ id: string }>()
+            .pipe(Effect.orDie);
+          if (row === null) {
+            return yield* HttpServerResponse.json(
+              { error: "Unknown merchant" },
+              { status: 404 },
+            );
+          }
+          const link = yield* onboardingLink(merchantId, url.origin).pipe(
+            Effect.orDie,
+          );
+          return yield* HttpServerResponse.json({ onboardingUrl: link.url });
+        }
+
+        if (
+          request.method === "GET" &&
+          segments.length === 3 &&
+          segments[0] === "merchants" &&
+          (segments[2] === "onboarded" || segments[2] === "refresh")
+        ) {
+          return HttpServerResponse.text(
+            segments[2] === "onboarded"
+              ? "Onboarding complete. You can close this tab."
+              : "That onboarding link expired. Request a new one from the platform.",
+          );
+        }
+
+        if (
+          request.method === "GET" &&
+          segments.length === 2 &&
+          segments[0] === "merchants"
+        ) {
+          const merchant = yield* db
+            .prepare("SELECT * FROM merchants WHERE id = ?")
+            .bind(segments[1])
+            .first<Merchant>()
+            .pipe(Effect.orDie);
+          if (merchant === null) {
+            return yield* HttpServerResponse.json(
+              { error: "Unknown merchant" },
+              { status: 404 },
+            );
+          }
+          return yield* HttpServerResponse.json({
+            id: merchant.id,
+            email: merchant.email,
+            onboarded: merchant.details_submitted === 1,
+            chargesEnabled: merchant.charges_enabled === 1,
+            payoutsEnabled: merchant.payouts_enabled === 1,
+            updatedAt: merchant.updated_at,
+          });
+        }
+
+        return yield* HttpServerResponse.json(
+          { error: "Not found" },
+          { status: 404 },
+        );
+      }),
+    };
+  }).pipe(
+    Effect.provide([
+      Cloudflare.D1.QueryDatabaseBinding,
+      Stripe.CreateAccountHttp,
+      Stripe.CreateAccountLinkHttp,
+      Stripe.ConsumeEventsLive,
+    ]),
+  ),
+) {}
+```
+
+</details>

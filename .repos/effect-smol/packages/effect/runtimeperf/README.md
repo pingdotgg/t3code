@@ -4,6 +4,7 @@ This harness measures focused synchronous runtime paths in fresh Node
 processes. It supports:
 
 - focused Effect Schema diagnostics;
+- native Arbitrary comparisons against equivalent fast-check v4 arbitraries;
 - the upstream Effect, Valibot and Zod benchmark matrix;
 - paired comparisons between Git revisions or the current working tree.
 
@@ -36,6 +37,7 @@ Select a suite, fixture, shared scenario, tier, family or implementation:
 
 ```sh
 pnpm runtimeperf schema
+pnpm runtimeperf arbitrary
 pnpm runtimeperf object-32-valid
 pnpm runtimeperf schema/object-32-valid-effect
 pnpm runtimeperf --family arrays
@@ -83,6 +85,34 @@ template literals, unions, records, transformations, optional properties,
 adapters, recursion and cold paths. The `schema-benchmarks` suite contains the
 complete timing matrices exposed by the upstream Effect, Valibot and Zod
 adapters.
+
+The `arbitrary` suite compares the native public API with direct fast-check v4 arbitraries in separate processes. It
+measures derivation through the first recursive sample, steady-state recursive
+sampling, optional-Struct sampling, fixed-length string generation to exercise constraint pushdown,
+bounded Number generation, direct Uint8Array generation, a rare residual filter, a fixed-length unique array, and a
+mixed regular expression through cold derivation, warm generation, and shrinking. It also covers literal sampling as
+a runner baseline and the public `map`, `filter`, `filterMap`, and `all` combinators for tuples and records. The failure
+paths include a filtered failure with rejected shrink candidates, dependent `flatMap` sampling, shrinking, replay, a
+passing property, a failure that shrinks from `1000` to `1`, and replay of that failure. The
+recursive distributions are implementation-defined, so the fixtures use
+implementation-specific size settings and validate a comparable total node
+count for the fixed seed. The bounded Number case is a throughput comparison,
+not distribution parity: native selects among 64-bit IEEE-754 representations,
+while the fast-check fixture uses its 64-bit `double`. Replay is an
+end-to-end public API comparison, but the work is not identical: native replay
+verifies the original failure and its full shrink path, while fast-check can
+start directly from its recorded path.
+
+The regular-expression fixtures validate the same language, and both fixed-seed warm fixtures must reach multiple
+lengths and every alternative family. Their exact distributions remain implementation-defined, so cross-library
+timings are diagnostic while base/head comparisons protect the cost of each implementation's established behavior.
+
+An impossible Schema filter is deliberately not a cross-engine timing case.
+The native runner reports bounded exhaustion, while a direct fast-check arbitrary
+built with `Arbitrary.filter` does not return from generation
+when no value can satisfy the predicate. Native exhaustion remains covered by
+the Arbitrary tests instead of placing a permanently blocking fixture in the
+performance harness.
 
 Zod parsing cases import `zod/v4` and call `safeParse` with `{ jitless: true }`;
 its Standard Schema and codec cases use their native APIs. Valibot uses the

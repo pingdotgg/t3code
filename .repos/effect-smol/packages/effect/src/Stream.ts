@@ -12,6 +12,7 @@
  */
 // @effect-diagnostics returnEffectInGen:off
 import * as Arr from "./Array.ts"
+import * as ByteSize from "./ByteSize.ts"
 import * as Cause from "./Cause.ts"
 import * as Channel from "./Channel.ts"
 import { Clock } from "./Clock.ts"
@@ -22,11 +23,11 @@ import * as Equal from "./Equal.ts"
 import * as ExecutionPlan from "./ExecutionPlan.ts"
 import * as Exit from "./Exit.ts"
 import * as Fiber from "./Fiber.ts"
-import type { SizeInput } from "./FileSystem.ts"
 import type * as Filter from "./Filter.ts"
 import type { LazyArg } from "./Function.ts"
 import { constant, constTrue, constVoid, dual, identity } from "./Function.ts"
 import type { TypeLambda } from "./HKT.ts"
+import * as Count from "./internal/count.ts"
 import * as internalExecutionPlan from "./internal/executionPlan.ts"
 import * as internal from "./internal/stream.ts"
 import { addSpanStackTrace } from "./internal/tracer.ts"
@@ -890,6 +891,8 @@ export const failCauseSync = <E>(evaluate: LazyArg<Cause.Cause<E>>): Stream<neve
  * **Details**
  *
  * The `maxChunkSize` parameter controls how many values are pulled per chunk.
+ * Finite fractional values are rounded down, while `NaN` and non-positive
+ * values are treated as `1`.
  *
  * **Example** (Consuming values from an iterator)
  *
@@ -923,7 +926,9 @@ export const fromIteratorSucceed = <A>(iterator: IterableIterator<A>, maxChunkSi
  *
  * **Details**
  *
- * - `chunkSize`: Maximum number of values emitted per chunk.
+ * - `chunkSize`: Maximum number of values emitted per chunk. Finite fractional
+ *   values are rounded down, while `NaN` and non-positive values are treated as
+ *   `1`.
  *
  * **Example** (Creating a stream from an iterable)
  *
@@ -1350,7 +1355,7 @@ export const fromSubscription = <A>(pubsub: PubSub.Subscription<A>): Stream<A> =
  * @category models
  * @since 3.4.0
  */
-export interface EventListener<A> {
+export interface EventListener<A = unknown> {
   addEventListener(
     event: string,
     f: (event: A) => void,
@@ -1403,7 +1408,7 @@ export interface EventListener<A> {
  * @since 3.1.0
  */
 export const fromEventListener = <A = unknown>(
-  target: EventListener<A>,
+  target: EventListener,
   type: string,
   options?: boolean | {
     readonly capture?: boolean
@@ -1413,8 +1418,11 @@ export const fromEventListener = <A = unknown>(
   } | undefined
 ): Stream<A> =>
   callback<A>((queue) => {
-    function emit(event: A) {
+    const once = typeof options === "object" && options.once
+
+    function emit(event: any) {
       Queue.offerUnsafe(queue, event)
+      if (once) Queue.endUnsafe(queue)
     }
     return Effect.acquireRelease(
       Effect.sync(() => target.addEventListener(type, emit, options)),
@@ -1546,7 +1554,8 @@ export const iterate = <A>(value: A, next: (value: A) => A): Stream<A> =>
  * **Details**
  *
  * If the provided `min` is greater than `max`, the stream will not emit any
- * values.
+ * values. Finite fractional `chunkSize` values are rounded down, while `NaN`
+ * and non-positive values are treated as `1`.
  *
  * **Example** (Creating a numeric range)
  *
@@ -1570,7 +1579,7 @@ export const range = (
   chunkSize = Channel.DefaultChunkSize
 ): Stream<number> =>
   min > max ? empty : fromPull(Effect.sync(() => {
-    const size = Math.max(1, chunkSize)
+    const size = Count.normalizeNonEmpty(chunkSize)
     let start = min
     let done = false
     return Effect.suspend(() => {
@@ -4689,6 +4698,46 @@ export const catchCause: {
   ))
 
 /**
+ * Recovers from defects using the provided function.
+ *
+ * **Details**
+ *
+ * Typed failures and interruptions are not caught.
+ *
+ * **Example** (Recovering from a defect)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, Stream } from "effect"
+ *
+ * const stream = Stream.die("boom").pipe(
+ *   Stream.catchDefect((defect) => Stream.succeed(`recovered: ${defect}`))
+ * )
+ *
+ * const result = Effect.runSync(Stream.runCollect(stream))
+ * result // => ["recovered: boom"]
+ * ```
+ *
+ * @category error handling
+ * @since 4.0.0
+ */
+export const catchDefect: {
+  <A2, E2, R2>(
+    f: (defect: unknown) => Stream<A2, E2, R2>
+  ): <A, E, R>(self: Stream<A, E, R>) => Stream<A | A2, E | E2, R | R2>
+  <A, E, R, A2, E2, R2>(
+    self: Stream<A, E, R>,
+    f: (defect: unknown) => Stream<A2, E2, R2>
+  ): Stream<A | A2, E | E2, R | R2>
+} = dual(2, <A, E, R, A2, E2, R2>(
+  self: Stream<A, E, R>,
+  f: (defect: unknown) => Stream<A2, E2, R2>
+): Stream<A | A2, E | E2, R | R2> =>
+  self.channel.pipe(
+    Channel.catchDefect((defect) => f(defect).channel),
+    fromChannel
+  ))
+
+/**
  * Runs an effect when the stream fails without changing its values or error,
  * unless the tap effect itself fails.
  *
@@ -6080,7 +6129,12 @@ export const withExecutionPlan: {
   }))
 
 /**
- * Takes the first `n` elements from this stream, returning `Stream.empty` when `n < 1`.
+ * Takes the first `n` elements from this stream.
+ *
+ * **Details**
+ *
+ * Finite fractional values of `n` are rounded down. `NaN` and non-positive
+ * values return `Stream.empty` without evaluating the source stream.
  *
  * **Example** (Taking values from the left)
  *
@@ -6106,8 +6160,10 @@ export const take: {
   <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R>
 } = dual(
   2,
-  <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R> =>
-    n < 1 ? empty : takeUntil(self, (_, i) => i === (n - 1))
+  <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R> => {
+    const count = Count.normalize(n)
+    return count === 0 ? empty : takeUntil(self, (_, i) => i === (count - 1))
+  }
 )
 
 /**
@@ -6117,13 +6173,13 @@ export const take: {
  * **Example** (Truncating at a byte limit)
  *
  * ```ts import.meta.vitest
- * import { Effect, Stream } from "effect"
+ * import { ByteSize, Effect, Stream } from "effect"
  *
  * const program = Stream.make(
  *   new Uint8Array([1, 2]),
  *   new Uint8Array([3, 4, 5])
  * ).pipe(
- *   Stream.limitBytes(4, () => Stream.empty),
+ *   Stream.limitBytes(ByteSize.bytes(4), () => Stream.empty),
  *   Stream.runCollect,
  *   Effect.map((chunks) => chunks.map((chunk) => [...chunk]))
  * )
@@ -6136,21 +6192,21 @@ export const take: {
  */
 export const limitBytes: {
   <E, R>(
-    bytes: SizeInput,
+    bytes: ByteSize.Input,
     onLimitReached: LazyArg<Stream<Uint8Array, E, R>>
   ): (self: Stream<Uint8Array, E, R>) => Stream<Uint8Array, E, R>
   <E, R>(
     self: Stream<Uint8Array, E, R>,
-    bytes: SizeInput,
+    bytes: ByteSize.Input,
     onLimitReached: LazyArg<Stream<Uint8Array, E, R>>
   ): Stream<Uint8Array, E, R>
 } = dual(3, <E, R>(
   self: Stream<Uint8Array, E, R>,
-  bytes: SizeInput,
+  bytes: ByteSize.Input,
   onLimitReached: LazyArg<Stream<Uint8Array, E, R>>
 ): Stream<Uint8Array, E, R> =>
   suspend(() => {
-    const limit = BigInt(bytes)
+    const limit = ByteSize.fromInputUnsafe(bytes)
     let size = BigInt(0)
     let limitReached = false
     return concat(
@@ -6169,6 +6225,11 @@ export const limitBytes: {
 
 /**
  * Keeps the last `n` elements from this stream.
+ *
+ * **Details**
+ *
+ * Finite fractional values of `n` are rounded down. `NaN` and non-positive
+ * values return `Stream.empty` without evaluating the source stream.
  *
  * **Example** (Taking elements from the right)
  *
@@ -6194,11 +6255,13 @@ export const takeRight: {
   <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R>
 } = dual(
   2,
-  <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R> =>
-    mapAccumArray(self, MutableList.make<A>, (list, arr) => {
+  <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R> => {
+    const count = Count.normalize(n)
+    if (count === 0) return empty
+    return mapAccumArray(self, MutableList.make<A>, (list, arr) => {
       MutableList.appendAll(list, arr)
-      if (list.length > n) {
-        MutableList.takeNVoid(list, list.length - n)
+      if (list.length > count) {
+        MutableList.takeNVoid(list, list.length - count)
       }
       return [list, emptyArr]
     }, {
@@ -6206,6 +6269,7 @@ export const takeRight: {
         return MutableList.takeAll(list)
       }
     })
+  }
 )
 
 /**
@@ -6494,6 +6558,11 @@ export const takeWhileEffect: {
 /**
  * Drops the first `n` elements from this stream.
  *
+ * **Details**
+ *
+ * Finite fractional values of `n` are rounded down. `NaN` and non-positive
+ * values return the source stream unchanged.
+ *
  * **Example** (Dropping values from the left)
  *
  * ```ts import.meta.vitest
@@ -6518,20 +6587,23 @@ export const drop: {
   <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R>
 } = dual(
   2,
-  <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R> =>
-    transformPull(self, (pull, _scope) =>
+  <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R> => {
+    const count = Count.normalize(n)
+    if (count === 0) return self
+    return transformPull(self, (pull, _scope) =>
       Effect.sync(() => {
         let dropped = 0
         const pump: Pull.Pull<Arr.NonEmptyReadonlyArray<A>, E, void, R> = pull.pipe(
           Effect.flatMap((chunk) => {
-            if (dropped >= n) return Effect.succeed(chunk)
+            if (dropped >= count) return Effect.succeed(chunk)
             dropped += chunk.length
-            if (dropped <= n) return pump
-            return Effect.succeed(chunk.slice(n - dropped) as Arr.NonEmptyArray<A>)
+            if (dropped <= count) return pump
+            return Effect.succeed(chunk.slice(count - dropped) as Arr.NonEmptyArray<A>)
           })
         )
         return pump
       }))
+  }
 )
 
 /**
@@ -6752,7 +6824,9 @@ export const dropWhileEffect: {
  *
  * **Details**
  *
- * Keeps the last `n` elements in memory to drop them on completion.
+ * Keeps the last `n` elements in memory to drop them on completion. Finite
+ * fractional values of `n` are rounded down. `NaN` and non-positive values
+ * return the source stream unchanged.
  *
  * **Example** (Dropping values from the right)
  *
@@ -6779,13 +6853,14 @@ export const dropRight: {
 } = dual(
   2,
   <A, E, R>(self: Stream<A, E, R>, n: number): Stream<A, E, R> => {
-    if (n <= 0) return self
+    const count = Count.normalize(n)
+    if (count === 0) return self
     return transformPull(self, (pull, _scope) =>
       Effect.sync(() => {
         const list = MutableList.make<A>()
         const emit: Pull.Pull<Arr.NonEmptyReadonlyArray<A>, E> = Effect.flatMap(pull, (arr) => {
           MutableList.appendAllUnsafe(list, arr)
-          const toTake = list.length - n
+          const toTake = list.length - count
           const items = MutableList.takeN(list, toTake)
           return Arr.isArrayNonEmpty(items) ? Effect.succeed(items) : emit
         })
@@ -6828,7 +6903,8 @@ export const chunks = <A, E, R>(self: Stream<A, E, R>): Stream<Arr.NonEmptyReado
  *
  * **Details**
  *
- * The size is clamped to at least 1.
+ * Finite fractional sizes are rounded down. `NaN` and non-positive sizes are
+ * treated as `1`.
  *
  * **Example** (Rechunking stream elements)
  *
@@ -6854,7 +6930,7 @@ export const rechunk: {
   (size: number): <A, E, R>(self: Stream<A, E, R>) => Stream<A, E, R>
   <A, E, R>(self: Stream<A, E, R>, size: number): Stream<A, E, R>
 } = dual(2, <A, E, R>(self: Stream<A, E, R>, target: number): Stream<A, E, R> => {
-  target = Math.max(1, target)
+  target = Count.normalizeNonEmpty(target)
   return transformPull(self, (pull, _scope) =>
     Effect.sync(() => {
       let chunk = Arr.empty<A>() as Arr.NonEmptyArray<A>
@@ -6869,7 +6945,9 @@ export const rechunk: {
             if (chunk.length === 0 && arr.length === target) {
               return Effect.succeed(arr)
             } else if (chunk.length + arr.length < target) {
-              chunk.push(...arr)
+              for (let i = 0; i < arr.length; i++) {
+                chunk.push(arr[i])
+              }
               return loop()
             }
             current = arr
@@ -6902,6 +6980,11 @@ export const rechunk: {
 /**
  * Emits a sliding window of `n` elements.
  *
+ * **Details**
+ *
+ * Finite fractional window sizes are rounded down. `NaN` and non-positive
+ * sizes are treated as `1`.
+ *
  * **Example** (Emitting sliding windows)
  *
  * ```ts import.meta.vitest
@@ -6932,6 +7015,11 @@ export const sliding: {
 /**
  * Emits sliding windows of `chunkSize` elements, advancing by `stepSize`.
  *
+ * **Details**
+ *
+ * Finite fractional window and step sizes are rounded down. `NaN` and
+ * non-positive sizes are treated as `1`.
+ *
  * **Example** (Emitting sliding windows with a step size)
  *
  * ```ts import.meta.vitest
@@ -6956,8 +7044,10 @@ export const slidingSize: {
   <A, E, R>(self: Stream<A, E, R>, chunkSize: number, stepSize: number): Stream<Arr.NonEmptyReadonlyArray<A>, E, R>
 } = dual(
   3,
-  <A, E, R>(self: Stream<A, E, R>, chunkSize: number, stepSize: number): Stream<Arr.NonEmptyReadonlyArray<A>, E, R> =>
-    transformPull(self, (upstream, _scope) =>
+  <A, E, R>(self: Stream<A, E, R>, chunkSize: number, stepSize: number): Stream<Arr.NonEmptyReadonlyArray<A>, E, R> => {
+    const windowSize = Count.normalizeNonEmpty(chunkSize)
+    const step = Count.normalizeNonEmpty(stepSize)
+    return transformPull(self, (upstream, _scope) =>
       Effect.sync(() => {
         let cause: Cause.Cause<E | Cause.Done> | null = null
         const list = MutableList.make<A>()
@@ -6974,27 +7064,23 @@ export const slidingSize: {
               MutableList.takeNVoid(list, skip)
               skip = Math.max(0, skip - length)
             }
-            if (list.length < chunkSize) return pull
+            if (list.length < windowSize) return pull
             emitted = true
             const chunks = [] as any as Arr.NonEmptyArray<Arr.NonEmptyReadonlyArray<A>>
-            while (list.length >= chunkSize) {
-              if (chunkSize === stepSize) {
-                chunks.push(MutableList.takeN(list, chunkSize) as any)
+            while (list.length >= windowSize) {
+              if (windowSize === step) {
+                chunks.push(MutableList.takeN(list, windowSize) as any)
               } else {
-                chunks.push(MutableList.toArrayN(list, chunkSize) as any)
-                if (chunkSize === 1 && stepSize <= 0) {
-                  MutableList.take(list)
-                } else {
-                  const length = list.length
-                  MutableList.takeNVoid(list, stepSize)
-                  skip = Math.max(0, stepSize - length)
-                }
+                chunks.push(MutableList.toArrayN(list, windowSize) as any)
+                const length = list.length
+                MutableList.takeNVoid(list, step)
+                skip = Math.max(0, step - length)
               }
             }
             return Effect.succeed(chunks)
           },
           onFailure(cause_) {
-            if (emitted) MutableList.takeNVoid(list, chunkSize - stepSize)
+            if (emitted) MutableList.takeNVoid(list, windowSize - step)
             if (list.length === 0) return Effect.failCause(cause_)
             cause = cause_
             return Effect.succeed(Arr.of(MutableList.takeAll(list) as any))
@@ -7003,6 +7089,7 @@ export const slidingSize: {
 
         return Effect.suspend(() => cause ? Effect.failCause(cause) : pull)
       }))
+  }
 )
 
 /**
@@ -7972,6 +8059,8 @@ export const throttle: {
  * **Details**
  *
  * The final array may be smaller if there are not enough elements to fill it.
+ * Finite fractional sizes are rounded down. `NaN` and non-positive sizes are
+ * treated as `1`.
  *
  * **Example** (Grouping elements by size)
  *
@@ -8003,6 +8092,11 @@ export const grouped: {
 /**
  * Partitions the stream into arrays, emitting when the chunk size is reached
  * or the duration passes.
+ *
+ * **Details**
+ *
+ * Finite fractional chunk sizes are rounded down. `NaN` and non-positive sizes
+ * are treated as `1`.
  *
  * **Example** (Grouping elements by size or time)
  *
@@ -8036,7 +8130,7 @@ export const groupedWithin: {
 ): Stream<Array<A>, E, R> =>
   aggregateWithin(
     self,
-    Sink.take(chunkSize),
+    Sink.take(Count.normalizeNonEmpty(chunkSize)),
     Schedule.spaced(duration)
   ))
 
@@ -8557,7 +8651,8 @@ export const aggregateWithin: {
  * With the default suspend strategy, the source can only advance `capacity`
  * chunks ahead of the slowest downstream stream. If a downstream stream is
  * interrupted, it unsubscribes from the broadcast so it no longer contributes
- * backpressure.
+ * backpressure. Finite fractional values of `n` are rounded down. `NaN` and
+ * non-positive values create no downstream streams.
  *
  * **Example** (Broadcasting to two consumers)
  *
@@ -8626,10 +8721,11 @@ export const broadcastN: {
       readonly replay?: number | undefined
     }
   ) {
+    const n = Count.normalize(options.n)
     const pubsub = yield* makePubSub<Take.Take<A, E>>(options)
-    const streams = new Array(options.n)
+    const streams = new Array(n)
     const parentScope = yield* Scope.Scope
-    for (let i = 0; i < options.n; i++) {
+    for (let i = 0; i < n; i++) {
       const scope = Scope.forkUnsafe(parentScope)
       const subscription = yield* PubSub.subscribe(pubsub).pipe(
         Effect.provideService(Scope.Scope, scope)
@@ -10838,6 +10934,11 @@ export const mkString = <E, R>(self: Stream<string, E, R>): Effect.Effect<string
 /**
  * Concatenates the stream's `Uint8Array` chunks into a single `ArrayBuffer`.
  *
+ * **Gotchas**
+ *
+ * This materializes the full content in memory. The source stream must not
+ * reuse or mutate emitted buffers, which are retained until collection completes.
+ *
  * **Example** (Joining byte chunks into an ArrayBuffer)
  *
  * ```ts import.meta.vitest
@@ -10854,11 +10955,6 @@ export const mkString = <E, R>(self: Stream<string, E, R>): Effect.Effect<string
  * await Effect.runPromise(program) // => [1, 2, 3, 4]
  * ```
  *
- * **Gotchas**
- *
- * This materializes the full content in memory. The source stream must not
- * reuse or mutate emitted buffers, which are retained until collection completes.
- *
  * @category destructors
  * @since 4.0.0
  */
@@ -10867,6 +10963,11 @@ export const mkArrayBuffer = <E, R>(self: Stream<Uint8Array, E, R>): Effect.Effe
 
 /**
  * Concatenates the stream's `Uint8Array` chunks into a single `Uint8Array`.
+ *
+ * **Gotchas**
+ *
+ * This materializes the full content in memory. The source stream must not
+ * reuse or mutate emitted buffers, which are retained until collection completes.
  *
  * **Example** (Joining Uint8Array chunks)
  *
@@ -10881,11 +10982,6 @@ export const mkArrayBuffer = <E, R>(self: Stream<Uint8Array, E, R>): Effect.Effe
  *
  * await Effect.runPromise(program)
  * ```
- *
- * **Gotchas**
- *
- * This materializes the full content in memory. The source stream must not
- * reuse or mutate emitted buffers, which are retained until collection completes.
  *
  * @category destructors
  * @since 4.0.0

@@ -175,7 +175,7 @@ export const transform = (source: string, file: string, line: number): string =>
       output.overwrite(
         expression.start,
         comment.end,
-        `${alias}(${source.slice(expression.start, expression.end)}, ${expected})`
+        `${alias}(${source.slice(expression.start, expression.end)}, ${expected});`
       )
       continue
     }
@@ -189,7 +189,7 @@ export const transform = (source: string, file: string, line: number): string =>
         id?.type === "Identifier" && typeof id.name === "string"
       ) {
         const indentation = source.slice(source.lastIndexOf("\n", node.start - 1) + 1, node.start)
-        output.overwrite(node.end, comment.end, `\n${indentation}${alias}(${id.name}, ${expected})`)
+        output.overwrite(node.end, comment.end, `\n${indentation}${alias}(${id.name}, ${expected});`)
         continue
       }
     }

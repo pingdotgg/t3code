@@ -16,6 +16,23 @@ const Migrations = Layer.effectDiscard(
 )
 
 describe("Client", () => {
+  it.effect("keeps transactions isolated between clients", () =>
+    Effect.gen(function*() {
+      const a = yield* LibsqlClient.make({ url: ":memory:" })
+      const b = yield* LibsqlClient.make({ url: ":memory:" })
+
+      yield* a`CREATE TABLE marker (owner TEXT NOT NULL)`
+      yield* b`CREATE TABLE marker (owner TEXT NOT NULL)`
+      yield* a`INSERT INTO marker VALUES ('A')`
+      yield* b`INSERT INTO marker VALUES ('B')`
+
+      const rows = yield* a.withTransaction(b`SELECT owner FROM marker`)
+      assert.deepStrictEqual(rows, [{ owner: "B" }])
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Reactivity.layer)
+    ))
+
   it.effect("releases transaction serialization after begin fails", () => {
     let transactionCalls = 0
     const transaction = {
@@ -48,7 +65,8 @@ describe("Client", () => {
     )
   })
 
-  layer(LibsqlContainer.layerClient, { timeout: "30 seconds" })((it) => {
+  // Each test recreates the same tables.
+  layer(LibsqlContainer.layerClient, { timeout: "30 seconds", concurrent: false })("shared tables", (it) => {
     it.effect("should work", () =>
       Effect.gen(function*() {
         const sql = yield* LibsqlClient.LibsqlClient

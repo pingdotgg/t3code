@@ -1,79 +1,99 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import * as ts from "typescript-api/unstable/ast";
+import { createSyntaxProject } from "./typescript-source.ts";
 
-import { Node, Project, SyntaxKind } from "ts-morph";
+/** Insert only the missing type argument/import, preserving comments and formatting. */
+export function migrateBindingPolicies(
+  sourceFile: ts.SourceFile,
+  providersPath: string,
+): string {
+  const filename = sourceFile.fileName;
+  let source = sourceFile.text;
+  const insertions: { offset: number; text: string }[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression)
+    ) {
+      const callee = node.expression;
+      if (
+        callee.name.text === "Policy" &&
+        ts.isIdentifier(callee.expression) &&
+        callee.expression.text === "Binding" &&
+        node.typeArguments?.length === 2
+      ) {
+        // Keep an existing trailing comma/comment intact.
+        insertions.push({
+          offset: node.typeArguments[1]!.end,
+          text: ", Providers",
+        });
+      }
+    }
+    node.forEachChild(visit);
+  };
+  sourceFile.forEachChild(visit);
+  if (!insertions.length) return source;
 
-// Provider directory (relative to packages/alchemy/src) to migrate, e.g. "AWS"
-// or "Cloudflare". Defaults to "AWS".
-const provider = process.argv[2] ?? "AWS";
-
-const srcRoot = path.join(import.meta.dir, "../packages/alchemy/src", provider);
-const providersPath = path.join(srcRoot, "Providers.ts");
-const tsConfig = path.join(import.meta.dir, "../packages/alchemy/tsconfig.json");
-
-const project = new Project({
-  tsConfigFilePath: tsConfig,
-  skipAddingFilesFromTsConfig: true,
-});
-
-project.addSourceFilesAtPaths(`${srcRoot}/**/*.ts`);
-
-let filesChanged = 0;
-const changed: string[] = [];
-
-for (const sourceFile of project.getSourceFiles()) {
-  // Never touch Providers.ts itself.
-  if (path.resolve(sourceFile.getFilePath()) === path.resolve(providersPath)) {
-    continue;
-  }
-
-  let mutated = false;
-
-  for (const call of sourceFile.getDescendantsOfKind(
-    SyntaxKind.CallExpression,
-  )) {
-    const callee = call.getExpression();
-    if (!Node.isPropertyAccessExpression(callee)) continue;
-    if (callee.getName() !== "Policy") continue;
-    if (callee.getExpression().getText() !== "Binding") continue;
-
-    const typeArgs = call.getTypeArguments();
-    // Only migrate the two-type-argument form; three already has Providers.
-    if (typeArgs.length !== 2) continue;
-
-    call.addTypeArgument("Providers");
-    mutated = true;
-  }
-
-  if (!mutated) continue;
-
-  // Add `import type { Providers } from "<rel>/Providers.ts";` if absent.
-  const alreadyImported = sourceFile
-    .getImportDeclarations()
-    .some((decl) =>
-      decl
-        .getNamedImports()
-        .some((named) => named.getName() === "Providers"),
+  const imports = sourceFile.statements.filter(ts.isImportDeclaration);
+  const alreadyImported = imports.some((node) => {
+    const bindings = node.importClause?.namedBindings;
+    return (
+      bindings &&
+      ts.isNamedImports(bindings) &&
+      bindings.elements.some((specifier) => specifier.name.text === "Providers")
     );
-
+  });
   if (!alreadyImported) {
-    const fromDir = path.dirname(sourceFile.getFilePath());
-    let rel = path.relative(fromDir, providersPath).split(path.sep).join("/");
-    if (!rel.startsWith(".")) rel = `./${rel}`;
-
-    sourceFile.addImportDeclaration({
-      isTypeOnly: true,
-      namedImports: ["Providers"],
-      moduleSpecifier: rel,
+    let relative = path
+      .relative(path.dirname(filename), providersPath)
+      .split(path.sep)
+      .join("/");
+    if (!relative.startsWith(".")) relative = `./${relative}`;
+    const newline = source.includes("\r\n") ? "\r\n" : "\n";
+    const lastImport = imports.at(-1);
+    const offset =
+      lastImport?.end ?? (source.startsWith("#!") ? source.indexOf("\n") : 0);
+    insertions.push({
+      offset,
+      text: `${offset ? newline : ""}import type { Providers } from ${JSON.stringify(relative)};${offset ? "" : newline}`,
     });
   }
-
-  filesChanged += 1;
-  changed.push(path.relative(process.cwd(), sourceFile.getFilePath()));
+  for (const insertion of insertions.sort((a, b) => b.offset - a.offset)) {
+    source =
+      source.slice(0, insertion.offset) +
+      insertion.text +
+      source.slice(insertion.offset);
+  }
+  return source;
 }
 
-await project.save();
-
-console.log(`Modified ${filesChanged} file(s):`);
-for (const file of changed.sort()) {
-  console.log(`  ${file}`);
+async function main() {
+  const provider = process.argv[2] ?? "AWS";
+  const srcRoot = path.join(
+    import.meta.dir,
+    "../packages/alchemy/src",
+    provider,
+  );
+  const providersPath = path.join(srcRoot, "Providers.ts");
+  const changed: string[] = [];
+  const files = (await fs.readdir(srcRoot, { recursive: true }))
+    .sort()
+    .filter((relative) => relative.endsWith(".ts"))
+    .map((relative) => path.join(srcRoot, relative))
+    .filter((filename) => filename !== providersPath);
+  await using syntax = await createSyntaxProject(files);
+  for (const filename of files) {
+    const sourceFile = await syntax.project.program.getSourceFile(filename);
+    if (!sourceFile) throw new Error(`Missing source file ${filename}`);
+    const source = sourceFile.text;
+    const migrated = migrateBindingPolicies(sourceFile, providersPath);
+    if (migrated === source) continue;
+    await fs.writeFile(filename, migrated);
+    changed.push(path.relative(process.cwd(), filename));
+  }
+  console.log(`Modified ${changed.length} file(s):`);
+  for (const file of changed.sort()) console.log(`  ${file}`);
 }
+
+if (import.meta.main) await main();

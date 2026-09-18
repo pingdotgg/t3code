@@ -181,7 +181,7 @@ test.provider(
       // interrupted deploy leaves behind: `creating`, no attributes, and the
       // Output-valued props lost in the state round-trip (#736).
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const wedgeRow = (junk: Record<string, unknown>) =>
         Effect.gen(function* () {
           const fqns = yield* state.list({ stack: stack.name, stage });

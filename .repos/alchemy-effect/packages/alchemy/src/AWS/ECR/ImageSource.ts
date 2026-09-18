@@ -90,11 +90,10 @@ export interface BundledImageSource {
    */
   handler?: string;
   /**
-   * Bundler configuration for the entrypoint: rolldown `input`/`output`
-   * overrides plus pure-annotation options (`pure`). `effect`, `@effect/*`,
-   * `alchemy`, `@alchemy.run/*`, and `@distilled.cloud/*` are annotated as
-   * pure by default so unused code from those packages is tree-shaken; list
-   * additional packages via `pure.packages`, or disable with `pure: false`.
+   * Bundler configuration for the entrypoint. Unused code is tree-shaken.
+   * `effect`, alchemy, and `@distilled.cloud` are marked pure so unused
+   * parts prune more aggressively. List extra packages with
+   * `pure.packages`, or disable with `pure: false`.
    */
   build?: Bundle.BundleConfig;
 }

@@ -1,4 +1,4 @@
-import type { ScopedPlanStatusSession } from "@/Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "@/Report.ts";
 import * as Command from "@/Command";
 import * as Test from "@/Test/Alchemy";
 import { assert, expect } from "alchemy-test";

@@ -483,7 +483,7 @@ test.provider(
         const state = yield* yield* State;
         const row = yield* state.get({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "RollForwardDb",
         });
         const attr = {
@@ -492,7 +492,7 @@ test.provider(
         };
         yield* state.set({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "RollForwardDb",
           value: { ...(row as any), attr },
         });
@@ -605,7 +605,7 @@ test.provider(
         const state = yield* yield* State;
         const row = yield* state.get({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "RollForwardDrizzleDb",
         });
         const attr = {
@@ -616,7 +616,7 @@ test.provider(
         };
         yield* state.set({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "RollForwardDrizzleDb",
           value: { ...(row as any), attr },
         });
@@ -1064,7 +1064,7 @@ test.provider(
         const state = yield* yield* State;
         yield* state.delete({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "AdoptableDatabase",
         });
       }).pipe(Effect.provide(stack.state));
@@ -1088,7 +1088,7 @@ test.provider(
         const state = yield* yield* State;
         return yield* state.get({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "AdoptableDatabase",
         });
       }).pipe(Effect.provide(stack.state));

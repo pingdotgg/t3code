@@ -24,7 +24,7 @@ export const EvalLive = Layer.effect(
       vm
         .load({
           mainModule: "index.js",
-          compatibilityDate: "2026-01-28",
+          compatibilityDate: "2026-08-31",
           modules: {
             "code.js": code,
             "index.js": dedent`

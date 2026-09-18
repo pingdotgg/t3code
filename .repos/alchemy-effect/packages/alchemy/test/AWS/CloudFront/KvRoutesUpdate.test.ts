@@ -12,6 +12,37 @@ import * as Schedule from "effect/Schedule";
 const { test } = Test.make({ providers: AWS.providers() });
 
 describe("AWS.CloudFront.KvRoutesUpdate", () => {
+  test.provider(
+    "destroy succeeds after the store is deleted out of band",
+    (stack) =>
+      Effect.gen(function* () {
+        yield* stack.destroy();
+        const store = yield* stack.deploy(
+          Effect.gen(function* () {
+            const store = yield* KeyValueStore("Store", {});
+            yield* KvRoutesUpdate("Route", {
+              store: store.keyValueStoreArn,
+              namespace: "app",
+              key: "routes",
+              entry: "site,app,*,/",
+            });
+            return store;
+          }),
+        );
+        const current = yield* cloudfront.describeKeyValueStore({
+          Name: store.keyValueStoreName,
+        });
+        yield* cloudfront.deleteKeyValueStore({
+          Name: store.keyValueStoreName,
+          IfMatch: current.ETag!,
+        });
+        yield* assertKeyValueStoreDeleted(store.keyValueStoreName);
+        yield* stack.destroy();
+        yield* stack.destroy();
+      }),
+    { timeout: 120_000 },
+  );
+
   // KvRoutesUpdate is an update operation that manages a single route entry
   // inside a JSON array stored at a KV store key. It is keyed entirely by
   // {store, namespace, key, entry} and has no enumeration API, so list() is

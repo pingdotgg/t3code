@@ -1,9 +1,9 @@
-import { CredentialsFromEnv } from "@distilled.cloud/fly-io";
 import * as machines from "@distilled.cloud/fly-io/machines";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import { CredentialsFromAmbientOrEnv } from "./Credentials.ts";
 import { Decrypt, type DecryptRequest } from "./Decrypt.ts";
 import { unwrapSecretValue } from "./SecretHttp.ts";
 import {
@@ -54,4 +54,7 @@ export const DecryptHttp = Layer.effect(
         }),
     }),
   ),
-).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(CredentialsFromEnv));
+).pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(CredentialsFromAmbientOrEnv),
+);

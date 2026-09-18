@@ -39,9 +39,7 @@ export default class DurableObjectWorkerEnvironmentWorker extends Cloudflare.Wor
           return yield* HttpServerResponse.json({ value });
         }
 
-        // Create a DO instance under a `locationHint` and report the colo it
-        // actually landed in. The name must be one no request has addressed
-        // before: a hint only steers *creation*.
+        // Observe native option access while performing real Durable Object RPCs.
         if (request.method === "GET" && url.pathname === "/colo") {
           const name = url.searchParams.get("name") ?? "default";
           // Match the query param against the hints Cloudflare accepts rather
@@ -50,12 +48,21 @@ export default class DurableObjectWorkerEnvironmentWorker extends Cloudflare.Wor
           const hint = LOCATION_HINTS.find(
             (candidate) => candidate === url.searchParams.get("hint"),
           );
+          let locationHintRead = false;
           const object = objects.getByName(
             name,
-            hint ? { locationHint: hint } : undefined,
+            hint
+              ? {
+                  get locationHint() {
+                    locationHintRead = true;
+                    return hint;
+                  },
+                }
+              : undefined,
           );
+          const id = yield* object.identity().pipe(Effect.orDie);
           const colo = yield* object.colo().pipe(Effect.orDie);
-          return yield* HttpServerResponse.json({ colo });
+          return yield* HttpServerResponse.json({ id, colo, locationHintRead });
         }
 
         // Mirrors the tutorial's `/tick/:n` route verbatim — forwards the

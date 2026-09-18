@@ -42,7 +42,7 @@ export default class EffectWorker extends Cloudflare.Worker<EffectWorker>()(
   {
     main: import.meta.url,
     dev: {
-      port: Config.number("PORT").pipe(Config.withDefault(1338)),
+      port: Config.Number("PORT").pipe(Config.withDefault(1338)),
     },
     build: {
       bundleAnalyzer: true,

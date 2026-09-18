@@ -52,7 +52,7 @@ import { hasProperty } from "./Predicate.ts"
  * @category symbols
  * @since 2.0.0
  */
-export const symbol = "~effect/interfaces/Equal"
+export const symbol = "~effect/Equal"
 
 /**
  * The interface for types that define their own equality logic.

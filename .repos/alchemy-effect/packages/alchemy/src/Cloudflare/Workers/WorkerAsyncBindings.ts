@@ -56,6 +56,7 @@ import {
   isSelfUrl,
   isWorker,
   type Worker,
+  type WorkerObservability,
   type WorkerProps,
 } from "./Worker.ts";
 import type { WorkerAccessApplication } from "./WorkerAccess.ts";
@@ -214,6 +215,7 @@ export const bindWorkerAsyncBindings = Effect.fn(function* (
               className,
               scriptName: resource.workerName,
               limits: binding.limits,
+              schedules: binding.schedules,
             });
           }
         }
@@ -668,4 +670,31 @@ export const getCacheBinding = (
     enabled: configs.some((c) => c.enabled),
     crossVersionCache: configs.some((c) => c.crossVersionCache) || undefined,
   };
+};
+
+const DEFAULT_OBSERVABILITY: WorkerObservability = {
+  enabled: true,
+  logs: {
+    enabled: true,
+    invocationLogs: true,
+  },
+};
+
+/**
+ * Resolve the observability metadata to upload. An explicit
+ * `news.observability.traces` wins; otherwise the traces contributed by
+ * `Cloudflare.Telemetry()` (a single binding row — rows are collapsed by
+ * sid) fill in without clobbering the logs config. A cache-style `??` on
+ * the whole object would drop the default `logs.invocationLogs`.
+ */
+export const resolveObservability = (
+  news: Pick<WorkerProps, "observability">,
+  bindings: ReadonlyArray<ResourceBinding<Worker["Binding"]>>,
+): WorkerObservability => {
+  const observability = news.observability ?? DEFAULT_OBSERVABILITY;
+  const bound = bindings.find((b) => b.data.observability?.traces != null)?.data
+    .observability?.traces;
+  return observability.traces != null || bound == null
+    ? observability
+    : { ...observability, traces: bound };
 };

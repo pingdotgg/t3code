@@ -407,8 +407,8 @@ export const Reply = <R extends Rpc.Any>(
 ): Schema.Codec<
   WithExit<R> | Chunk<R>,
   Encoded,
-  Rpc.ServicesServer<R>,
-  Rpc.ServicesClient<R>
+  Rpc.ServicesClient<R>,
+  Rpc.ServicesServer<R>
 > => {
   let schemaCache = schemaCaches.get(codecFor)
   if (schemaCache === undefined) {

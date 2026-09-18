@@ -28,6 +28,12 @@ import * as QS from "./queryString.ts"
 const FULL_PATH_REGEXP = /^https?:\/\/.*?\//
 const OPTIONAL_PARAM_REGEXP = /(\/:[^/()]*?)\?(\/?)/
 
+const emptyParamsArray: ReadonlyArray<string> = []
+
+// Matches one terminal parameter without wildcard, regex, or static suffix syntax.
+const CLEAN_SINGLE_PARAM_REGEXP = /^[^:*(]*\/:[^/:*(.-]+$/
+const isCleanSingleTrailingParam = (path: string): boolean => CLEAN_SINGLE_PARAM_REGEXP.test(path)
+
 interface Route<A = unknown> {
   readonly method: string
   readonly path: Router.PathInput
@@ -55,6 +61,11 @@ class RouterImpl<A> implements Router.Router<A> {
   readonly options: Router.RouterConfig
   routes: Array<Route> = []
   trees: Record<string, StaticNode> = Object.create(null)
+  staticRoutes: Record<string, Map<string, Handler>> = Object.create(null)
+  singleParamRoutes: Record<string, Map<string, Handler>> = Object.create(null)
+  singleParamDisabled: Record<string, boolean> = Object.create(null)
+  readonly brothersNodesStack: Array<BrotherNode> = []
+  readonly singleParamArray: Array<string> = [""]
 
   on(
     method: string | Iterable<string>,
@@ -253,6 +264,32 @@ class RouterImpl<A> implements Router.Router<A> {
     const route = { method, path, pattern, params, handler }
     this.routes.push(route)
     currentNode.addRoute(route)
+
+    // Cache static routes by normalized path for direct lookup.
+    if (params.length === 0) {
+      const staticKey = pattern.split("::").join(":").split("%").join("%25")
+      const store = this.staticRoutes[method] ??= new Map()
+      if (!store.has(staticKey)) {
+        store.set(staticKey, currentNode.handlerStorage!.unconstrainedHandler!)
+      }
+    } else if (isCleanSingleTrailingParam(path)) {
+      // Cache "/prefix/:param" routes for direct prefix matching.
+      if (this.singleParamDisabled[method] !== true) {
+        let prefix = path.slice(0, path.indexOf(":"))
+        if (!this.options.caseSensitive) {
+          prefix = prefix.toLowerCase()
+        }
+        prefix = prefix.split("%").join("%25")
+        const store = this.singleParamRoutes[method] ??= new Map()
+        if (!store.has(prefix)) {
+          store.set(prefix, currentNode.handlerStorage!.unconstrainedHandler!)
+        }
+      }
+    } else if (/[(*]|[^/]:|:[^/]*[-.]/.test(path)) {
+      // Complex parameters may shadow a cached single-parameter route.
+      this.singleParamDisabled[method] = true
+      delete this.singleParamRoutes[method]
+    }
   }
 
   has(method: string, path: string): boolean {
@@ -273,48 +310,101 @@ class RouterImpl<A> implements Router.Router<A> {
     let currentNode: Node | undefined = this.trees[method]
     if (currentNode === undefined) return undefined
 
-    if (path.charCodeAt(0) !== 47) {
-      // 47 is '/'
-      path = path.replace(FULL_PATH_REGEXP, "/")
+    let querystring = ""
+    let shouldDecodeParam = false
+
+    // Skip normalization for canonical lowercase paths.
+    let clean = path.charCodeAt(0) === 47 &&
+      (path.length === 1 || path.charCodeAt(path.length - 1) !== 47)
+    if (clean) {
+      for (let i = 1; i < path.length; i++) {
+        const code = path.charCodeAt(i)
+        if (
+          code === 37 || code === 63 || code === 59 || code === 35 ||
+          (code >= 65 && code <= 90) ||
+          (code === 47 && path.charCodeAt(i - 1) === 47)
+        ) {
+          clean = false
+          break
+        }
+      }
     }
 
-    // This must be run before sanitizeUrl as the resulting function
-    // .sliceParameter must be constructed with same URL string used
-    // throughout the rest of this function.
-    if (this.options.ignoreDuplicateSlashes) {
-      path = removeDuplicateSlashes(path)
-    }
+    if (!clean) {
+      if (path.charCodeAt(0) !== 47) {
+        // 47 is '/'
+        path = path.replace(FULL_PATH_REGEXP, "/")
+      }
 
-    let sanitizedUrl
-    let querystring
-    let shouldDecodeParam
+      // This must be run before sanitizeUrl as the resulting function
+      // .sliceParameter must be constructed with same URL string used
+      // throughout the rest of this function.
+      if (this.options.ignoreDuplicateSlashes) {
+        path = removeDuplicateSlashes(path)
+      }
 
-    try {
-      sanitizedUrl = safeDecodeURI(path)
-      path = sanitizedUrl.path
-      querystring = sanitizedUrl.querystring
-      shouldDecodeParam = sanitizedUrl.shouldDecodeParam
-    } catch (error) {
-      return undefined
-    }
+      let sanitizedUrl
+      try {
+        sanitizedUrl = safeDecodeURI(path)
+        path = sanitizedUrl.path
+        querystring = sanitizedUrl.querystring
+        shouldDecodeParam = sanitizedUrl.shouldDecodeParam
+      } catch (error) {
+        return undefined
+      }
 
-    if (this.options.ignoreTrailingSlash) {
-      path = trimLastSlash(path)
+      if (this.options.ignoreTrailingSlash) {
+        path = trimLastSlash(path)
+      }
     }
 
     const originPath = path
 
-    if (this.options.caseSensitive === false) {
+    if (!clean && this.options.caseSensitive === false) {
       path = path.toLowerCase()
     }
 
     const maxParamLength = this.options.maxParamLength
 
+    const staticStore = this.staticRoutes[method]
+    if (staticStore !== undefined) {
+      const handle = staticStore.get(path)
+      if (handle !== undefined) {
+        return {
+          handler: handle.handler as A,
+          params: handle.createParams(emptyParamsArray),
+          searchParams: QS.parse(querystring)
+        } as const
+      }
+    }
+
+    const singleParamStore = this.singleParamRoutes[method]
+    if (singleParamStore !== undefined) {
+      const prefixLength = path.lastIndexOf("/") + 1
+      const handle = singleParamStore.get(path.slice(0, prefixLength))
+      if (handle !== undefined && path.length > prefixLength) {
+        let param = originPath.slice(prefixLength)
+        if (shouldDecodeParam) {
+          param = safeDecodeURIComponent(param)
+        }
+        if (param.length <= maxParamLength) {
+          this.singleParamArray[0] = param
+          return {
+            handler: handle.handler as A,
+            params: handle.createParams(this.singleParamArray),
+            searchParams: QS.parse(querystring)
+          } as const
+        }
+      }
+    }
+
     let pathIndex = (currentNode as StaticNode).prefix.length
     const params = []
     const pathLen = path.length
 
-    const brothersNodesStack: Array<BrotherNode> = []
+    // Reuse this router's synchronous backtracking stack.
+    const brothersNodesStack = this.brothersNodesStack
+    brothersNodesStack.length = 0
 
     while (true) {
       if (pathIndex === pathLen && currentNode.isLeafNode) {
@@ -577,18 +667,12 @@ class StaticNode extends ParentNode {
   private setPrefix(prefix: string) {
     this.prefix = prefix
 
+    // Child selection already matched the first character.
     if (prefix.length === 1) {
       this.matchPrefix = (_path, _pathIndex) => true
     } else {
-      const len = prefix.length
-      this.matchPrefix = function(path, pathIndex) {
-        for (let i = 1; i < len; i++) {
-          if (path.charCodeAt(pathIndex + i) !== this.prefix.charCodeAt(i)) {
-            return false
-          }
-        }
-        return true
-      }
+      const tail = prefix.slice(1)
+      this.matchPrefix = (path, pathIndex) => path.startsWith(tail, pathIndex + 1)
     }
   }
 
@@ -745,6 +829,9 @@ const assert: Assert = (condition, message) => {
 }
 
 function removeDuplicateSlashes(path: string): Router.PathInput {
+  if (path.indexOf("//") === -1) {
+    return path as Router.PathInput
+  }
   return path.replace(/\/\/+/g, "/") as Router.PathInput
 }
 
@@ -755,10 +842,29 @@ function trimLastSlash(path: string): Router.PathInput {
   return path as Router.PathInput
 }
 
+// Compile safe, unique parameter names into a stable null-prototype shape.
+// Other names and codegen-restricted runtimes use assignment.
+const safeParamName = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+const isCompilableParamName = (name: string): boolean => name !== "__proto__" && safeParamName.test(name)
+
 function compileCreateParams(
   params: ReadonlyArray<string>
 ): (paramsArray: ReadonlyArray<string>) => Record<string, string> {
   const len = params.length
+  if (len === 0) {
+    return () => Object.create(null)
+  }
+  if (params.every(isCompilableParamName) && new Set(params).size === len) {
+    try {
+      // eslint-disable-next-line no-new-func
+      return new Function(
+        "a",
+        `return {__proto__:null,${params.map((name, i) => `${name}:a[${i}]`).join(",")}}`
+      ) as (paramsArray: ReadonlyArray<string>) => Record<string, string>
+    } catch {
+      // Use assignment when CSP blocks Function construction.
+    }
+  }
   return function(paramsArray) {
     const paramsObject: Record<string, string> = Object.create(null)
     for (let i = 0; i < len; i++) {

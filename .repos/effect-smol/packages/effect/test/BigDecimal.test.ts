@@ -9,7 +9,7 @@ import {
   throws
 } from "@effect/vitest/utils"
 import { BigDecimal, Equal, Option } from "effect"
-import { FastCheck as fc } from "effect/testing"
+import * as fc from "fast-check"
 
 const $ = BigDecimal.fromStringUnsafe
 
@@ -26,6 +26,13 @@ const assertDivide = (x: string, y: string, z: string) => {
 }
 
 describe("BigDecimal", () => {
+  it("make", () => {
+    strictEqual(BigDecimal.make(1n, Number.MAX_SAFE_INTEGER).scale, Number.MAX_SAFE_INTEGER)
+    for (const scale of [0.5, NaN, Infinity, Number.MAX_VALUE]) {
+      throws(() => BigDecimal.make(1n, scale), new RangeError(`Scale must be a safe integer, got ${scale}`))
+    }
+  })
+
   it("isBigDecimal", () => {
     assertTrue(BigDecimal.isBigDecimal($("0")))
     assertTrue(BigDecimal.isBigDecimal($("987")))
@@ -175,6 +182,50 @@ describe("BigDecimal", () => {
     strictEqual(BigDecimal.Order($("5"), $("5.000")), 0)
     strictEqual(BigDecimal.Order($("5"), $("0.500")), 1)
     strictEqual(BigDecimal.Order($("5"), $("50.00")), -1)
+  })
+
+  it("Order and Equivalence support extreme scale differences", () => {
+    const positive = BigDecimal.make(1n, 0)
+    const negative = BigDecimal.make(-1n, 0)
+    const positiveTiny = BigDecimal.make(1n, Number.MAX_SAFE_INTEGER)
+    const negativeTiny = BigDecimal.make(-1n, Number.MAX_SAFE_INTEGER)
+    const zeroTiny = BigDecimal.make(0n, Number.MAX_SAFE_INTEGER)
+
+    strictEqual(BigDecimal.Order(positive, positiveTiny), 1)
+    strictEqual(BigDecimal.Order(positiveTiny, positive), -1)
+    strictEqual(BigDecimal.Order(negative, negativeTiny), -1)
+    strictEqual(BigDecimal.Order(negativeTiny, negative), 1)
+    strictEqual(BigDecimal.Order(BigDecimal.make(0n, 0), zeroTiny), 0)
+    assertFalse(BigDecimal.Equivalence(positive, positiveTiny))
+    assertTrue(BigDecimal.Equivalence(BigDecimal.make(0n, 0), zeroTiny))
+
+    const equal = Object.freeze(BigDecimal.make(10n ** 101n, 101))
+    strictEqual(BigDecimal.Order(Object.freeze(BigDecimal.make(1n, 0)), equal), 0)
+    assertTrue(BigDecimal.Equivalence(Object.freeze(BigDecimal.make(1n, 0)), equal))
+
+    const scale = Number.MAX_SAFE_INTEGER
+    const below = BigDecimal.make(9n, -scale)
+    const above = BigDecimal.make(10n ** 102n, -(scale - 101))
+    strictEqual(BigDecimal.Order(below, above), -1)
+    strictEqual(BigDecimal.Order(above, below), 1)
+    assertFalse(BigDecimal.Equivalence(below, above))
+  })
+
+  it("Order and Equivalence agree with exact bounded scale alignment", () => {
+    const values = [-12345n, -100n, -1n, 0n, 1n, 100n, 12345n]
+    const scales = [-8, -1, 0, 1, 8]
+    const decimals = values.flatMap((value) => scales.map((scale) => BigDecimal.make(value, scale)))
+
+    for (const self of decimals) {
+      for (const that of decimals) {
+        const scale = Math.max(self.scale, that.scale)
+        const selfValue = BigDecimal.scale(self, scale).value
+        const thatValue = BigDecimal.scale(that, scale).value
+        const expected = selfValue < thatValue ? -1 : selfValue > thatValue ? 1 : 0
+        strictEqual(BigDecimal.Order(self, that), expected)
+        strictEqual(BigDecimal.Equivalence(self, that), expected === 0)
+      }
+    }
   })
 
   it("isLessThan", () => {

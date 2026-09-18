@@ -1,0 +1,31 @@
+{
+  "name": "@fixtures/waku-durable-objects",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts dev --port 3110",
+    "build": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../../cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "playwright test",
+    "pretest": "playwright install chromium && bun run build",
+    "test:update-snapshots": "playwright test --update-snapshots"
+  },
+  "dependencies": {
+    "hono": "catalog:",
+    "react": "catalog:react-rsc",
+    "react-dom": "catalog:react-rsc",
+    "react-server-dom-webpack": "catalog:",
+    "waku": "catalog:"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:",
+    "@alchemy.run/cloudflare-runtime": "workspace:*",
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:node24",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "vite": "catalog:"
+  }
+}

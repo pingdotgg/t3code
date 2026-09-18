@@ -136,7 +136,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 ) {}
 ```
 
-Nothing connects at init — the pool opens on the first query of an
+Nothing connects in the constructor — the pool opens on the first query of an
 event, is reused for every query in that event, and closes when the
 event settles (see
 [Connection lifecycle](/sql/effect-sql/lifecycle)). Plan and deploy

@@ -2,6 +2,8 @@ import { PrismaClient, type PrismaManagementClient } from "@/Prisma/Client";
 import * as Prisma from "@/Prisma/Operations";
 import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import { Credentials } from "@/Prisma/Credentials";
 
 type AssertNever<T extends never> = T;
 type ClientOperation = Exclude<
@@ -239,7 +241,25 @@ describe("Prisma operation helpers", () => {
       expect(Object.keys(Prisma).sort()).toEqual(
         [...expectedOperationHelpers].sort(),
       );
-      expect(calls.map(([name]) => name)).toEqual(expectedOperationHelpers);
-    }).pipe(Effect.provideService(PrismaClient, client));
+      // The log-request builders resolve the distilled Credentials service
+      // directly instead of delegating to the client, so they never appear in
+      // `calls`.
+      expect(calls.map(([name]) => name)).toEqual(
+        expectedOperationHelpers.filter(
+          (name) =>
+            name !== "getDeploymentLogsRequest" &&
+            name !== "getBuildLogsRequest",
+        ),
+      );
+    }).pipe(
+      Effect.provideService(PrismaClient, client),
+      Effect.provideService(
+        Credentials,
+        Effect.succeed({
+          apiToken: Redacted.make("test-token"),
+          apiBaseUrl: "https://api.prisma.test",
+        }),
+      ),
+    );
   });
 });

@@ -2,9 +2,9 @@
 
 # v3 to v4 Migration Reference
 
-Base: `3d390f232bdbc3f0d3d6a2ae3c775084f494b547` (`3d390f232bdbc3f0d3d6a2ae3c775084f494b547`)
+Base: `origin/v3` (`1af4232fea7bc613e1dc68db9bec7b1f596d9e68`)
 
-Head: `origin/main` (`20cb4f260e45d37fa417c292c57be015314efe16`)
+Head: `origin/main` (`91abe38c3797b1c290aedef3b01e8c96dd4fee79`)
 
 This file is generated from the API diff and `migration/annotations/*.yaml`.
 
@@ -31,7 +31,7 @@ effect/TReentrantLock -> effect/TxReentrantLock (barrel: effect)
 effect/TRef -> effect/TxRef (barrel: effect)
 effect/TSemaphore -> effect/TxSemaphore (barrel: effect)
 effect/TSubscriptionRef -> effect/TxSubscriptionRef (barrel: effect)
-effect/FastCheck -> effect/testing/FastCheck (barrel: effect/testing)
+effect/FastCheck -> fast-check
 effect/TestClock -> effect/testing/TestClock (barrel: effect/testing)
 @effect/cli/Args -> effect/unstable/cli/Argument (barrel: effect/unstable/cli)
 @effect/cli/ValidationError -> effect/unstable/cli/CliError (barrel: effect/unstable/cli)
@@ -84,7 +84,7 @@ effect/TestClock -> effect/testing/TestClock (barrel: effect/testing)
 @effect/experimental/DevTools/Client -> effect/unstable/devtools/DevToolsClient (barrel: effect/unstable/devtools)
 @effect/experimental/DevTools/Domain -> effect/unstable/devtools/DevToolsSchema (barrel: effect/unstable/devtools)
 @effect/experimental/DevTools/Server -> effect/unstable/devtools/DevToolsServer (barrel: effect/unstable/devtools)
-@effect/platform/MsgPack -> effect/unstable/encoding/Msgpack (barrel: effect/unstable/encoding)
+@effect/platform/MsgPack -> effect/unstable/encoding/SchemaBinary (barrel: effect/unstable/encoding)
 @effect/platform/Ndjson -> effect/unstable/encoding/Ndjson (barrel: effect/unstable/encoding)
 @effect/experimental/Sse -> effect/unstable/encoding/Sse (barrel: effect/unstable/encoding)
 @effect/ai/AiError -> effect/unstable/ai/AiError (barrel: effect/unstable/ai)
@@ -506,7 +506,7 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `@effect/platform-node/NodeContext`: No single module replacement; follow the curated per-API guidance below.
 - `@effect/platform-node/NodeFileSystem/ParcelWatcher`: No single module replacement; follow the curated per-API guidance below.
 - `@effect/platform-node/NodeKeyValueStore` -> `effect/unstable/persistence/KeyValueStore`: layerFileSystem is now platform-neutral as KeyValueStore.layerFileSystem(directory); provide FileSystem and Path via NodeServices.layer or NodeFileSystem.layer with NodePath.layer.
-- `@effect/platform-node/index` -> `@effect/platform-node`: The explicit /index entrypoint was removed; import the same namespaces from the @effect/platform-node package root or import specific modules directly.
+- `@effect/platform-node/index` -> `@effect/platform-node`: The explicit /index entrypoint was removed; import Node-prefixed namespaces from the @effect/platform-node package root or import specific modules directly. Undici is no longer in the root barrel; import it from @effect/platform-node/Undici or directly from undici.
 - `@effect/platform/ChannelSchema` -> `effect/ChannelSchema`
 - `@effect/platform/Command` -> `effect/unstable/process/ChildProcess`
 - `@effect/platform/CommandExecutor` -> `effect/unstable/process/ChildProcessSpawner`
@@ -548,7 +548,7 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `@effect/platform/HttpServerResponse` -> `effect/unstable/http/HttpServerResponse`
 - `@effect/platform/HttpTraceContext` -> `effect/unstable/http/HttpTraceContext`
 - `@effect/platform/KeyValueStore` -> `effect/unstable/persistence/KeyValueStore`
-- `@effect/platform/MsgPack` -> `effect/unstable/encoding/Msgpack`
+- `@effect/platform/MsgPack` -> `effect/unstable/encoding/SchemaBinary`: MessagePack support was removed. Schema-aware encode, decode, and duplex now live on SchemaBinary. Untyped MessagePack of unknown values has no replacement.
 - `@effect/platform/Multipart` -> `effect/unstable/http/Multipart`
 - `@effect/platform/Ndjson` -> `effect/unstable/encoding/Ndjson`
 - `@effect/platform/OpenApi` -> `effect/unstable/httpapi/OpenApi`
@@ -682,14 +682,14 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `@effect/workflow/WorkflowEngine` -> `effect/unstable/workflow/WorkflowEngine`
 - `@effect/workflow/WorkflowProxy` -> `effect/unstable/workflow/WorkflowProxy`
 - `@effect/workflow/WorkflowProxyServer` -> `effect/unstable/workflow/WorkflowProxyServer`
-- `effect/Arbitrary`: No single module replacement; follow the curated per-API guidance below.
+- `effect/Arbitrary` -> `effect/unstable/arbitrary/Arbitrary`: Schema-derived generation moved to the native Arbitrary module. Effect no longer bridges to fast-check.
 - `effect/ChildExecutorDecision` -> `none`: Removed with the v3 channel executor and Channel.concatMapWithCustom. Choose Channel.flatMap, Channel.switchMap, or Channel.mergeAll instead; v4 exposes no child-executor decision ADT.
 - `effect/ConfigError`: No single module replacement; follow the curated per-API guidance below.
 - `effect/ConfigProviderPathPatch`: No single module replacement; follow the curated per-API guidance below.
 - `effect/DefaultServices`: No single module replacement; follow the curated per-API guidance below.
 - `effect/Either` -> `effect/Result`
 - `effect/ExecutionStrategy`: No single module replacement; follow the curated per-API guidance below.
-- `effect/FastCheck` -> `effect/testing/FastCheck`
+- `effect/FastCheck` -> `fast-check`: Effect no longer re-exports fast-check. Depend on the fast-check package and import it directly. For Schema-derived generation, use Arbitrary.schema from effect/unstable/arbitrary.
 - `effect/FiberId`: No single module replacement; follow the curated per-API guidance below.
 - `effect/FiberRef` -> `effect/References`
 - `effect/FiberRefs`: No single module replacement; follow the curated per-API guidance below.
@@ -4898,6 +4898,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `AiError.AiError` -> `AiError.AiError`: Moved to effect/unstable/ai/AiError and redesigned from a union of separately tagged errors into one AiError wrapper with a semantic reason. Construct it with AiError.make({ module, method, reason }) and match error.reason rather than the old top-level tags.
 
+- `AiError.HttpRequestDetails` -> `AiError.HttpRequestDetails`: Retained in effect/unstable/ai/AiError and also re-exported as Response.HttpRequestDetails. Hash is an optional string instead of Option, headers may contain Redacted strings, and method includes TRACE.
+
 - `AiError.HttpRequestError` -> `AiError.make + AiError.NetworkError`: Replace the old top-level request error with an AiError whose reason is NetworkError. NetworkError.fromRequestError converts a v4 HttpClientError.RequestError.
 
 - `AiError.HttpResponseError` -> `AiError.make + AiError.reasonFromHttpStatus / AiError.InvalidOutputError`: There is no single v4 response-error class. Wrap a semantic reason with AiError.make: use reasonFromHttpStatus for status failures and InvalidOutputError for decode or empty-body failures.
@@ -4910,7 +4912,19 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `AiError.UnknownError` -> `AiError.make + AiError.UnknownError`: UnknownError is now a semantic reason rather than a top-level error. Put module and method on AiError.make and inspect reason.\_tag when handling the outer AiError.
 
+### `@effect/ai/Chat`
+
+- `Chat.Chat` -> `Chat.Chat`: Use the Chat interface for implementations and the Context.Service value as the service key; it is no longer a class. Chat.empty and Chat.fromPrompt construct branded chat sessions.
+
+- `Chat.Service` -> `Chat.Chat`: Service was renamed to Chat. Implementations require [Chat.TypeId]: Chat.TypeId; use Chat.empty or Chat.fromPrompt to create a session.
+
 ### `@effect/ai/EmbeddingModel`
+
+- `EmbeddingModel.EmbeddingModel` -> `EmbeddingModel.EmbeddingModel`: Use the EmbeddingModel interface for implementations and the Context.Service value as the service key; it is no longer a class. Prefer EmbeddingModel.make to construct the branded implementation.
+
+- `EmbeddingModel.Result`: TODO: needs guidance
+
+- `EmbeddingModel.Service` -> `EmbeddingModel.EmbeddingModel`: Service was renamed to EmbeddingModel. Implementations require [EmbeddingModel.TypeId]: EmbeddingModel.TypeId; EmbeddingModel.make supplies the brand.
 
 - `EmbeddingModel.makeDataLoader` -> `EmbeddingModel.make + RequestResolver.setDelay + RequestResolver.batchN`: The dedicated data-loader constructor was removed. EmbeddingModel.make batches concurrent embed requests through its resolver; compose the exposed resolver with setDelay and optional batchN for the old window and maximum-batch behavior.
 
@@ -4923,6 +4937,10 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `LanguageModel.ConstructorParams` -> `none`: V4 inlines this provider-adapter shape in LanguageModel.make. Pass generateText and streamText directly to make, with optional codecTransformer, instead of naming a constructor-parameter type.
 
 - `LanguageModel.ExtractContext` -> `LanguageModel.ExtractServices`: Renamed in effect/unstable/ai/LanguageModel. ExtractServices infers toolkit handler, result-decoding, and effectful-toolkit service requirements.
+
+- `LanguageModel.LanguageModel` -> `LanguageModel.LanguageModel`: Use the LanguageModel interface for implementations and the Context.Service value as the service key; it is no longer a class. Prefer LanguageModel.make to construct the branded implementation.
+
+- `LanguageModel.Service` -> `LanguageModel.LanguageModel`: Service was renamed to LanguageModel. Implementations require [LanguageModel.TypeId]: LanguageModel.TypeId; LanguageModel.make supplies the brand.
 
 ### `@effect/ai/McpSchema`
 
@@ -4992,6 +5010,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Response.ToolCallPartEncoded` -> `Response.ToolCallPartEncoded`: Moved to effect/unstable/ai/Response; providerName was removed while providerExecuted remains optional when encoded.
 
+- `Response.ToolResultPart` -> `Response.ToolResultPart`: The schema selects success or failure using isFailure rather than trying both result schemas. It returns Schema.Codec; supply decoding services when decoding and encoding services when encoding.
+
 - `Response.ToolResultPartEncoded` -> `Response.ToolResultPartEncoded`: Moved to effect/unstable/ai/Response; providerName was removed and optional preliminary was added to the encoded shape.
 
 - `Response.documentSourcePart` -> `Response.makePart("source", { ...params, sourceType: "document" })`: The lowercase convenience constructor was removed. The DocumentSourcePart model remains, and the generic constructor now requires the document source discriminator.
@@ -5046,6 +5066,10 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Tool.Requirements` -> `Tool.HandlerServices`: Renamed and refined. HandlerServices combines parameter-decoding, result-encoding, and request-level dependencies required by a tool handler.
 
+- `Tool.Result` -> `Tool.Result`: The result includes success, declared failure, and execution-denied or execution-interrupted values in both failure modes. Return mode also includes AiError; handle these variants when narrowing results.
+
+- `Tool.ResultEncoded` -> `Tool.ResultEncoded`: The encoded result includes execution-denied and execution-interrupted variants in both failure modes, plus encoded AiError in return mode.
+
 - `Tool.Success` -> `Tool.Success`: Moved to effect/unstable/ai/Tool and remains the utility type that extracts a tool's decoded success type.
 
 - `Tool.Tool.ProviderDefinedProto` -> `Tool.ProviderDefined`: This implementation-brand interface is no longer public. Use Tool.ProviderDefined for the model type and Tool.isProviderDefined for runtime narrowing.
@@ -5078,9 +5102,9 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Args.Args.BaseArgsConfig` -> `name: string`: Argument constructors now take the name as a required first parameter.
 
-- `Args.Args.FormatArgsConfig` -> `Primitive.FileParseOptions`: Pass the name separately and use the format option with Argument.fileParse or Argument.fileSchema.
+- `Args.Args.FormatArgsConfig` -> `Primitive.FileParseOptions`: Pass the name separately and use the format option with Argument.FileParse or Argument.FileSchema.
 
-- `Args.Args.PathArgsConfig` -> `Argument.path(name, { pathType, mustExist })`: Path options are inline; map exists=yes to mustExist=true and either to omission. exists=no has no exact replacement.
+- `Args.Args.PathArgsConfig` -> `Argument.Path(name, { pathType, mustExist })`: Path options are inline; map exists=yes to mustExist=true and either to omission. exists=no has no exact replacement.
 
 - `Args.Args.Variance` -> `Argument.Argument`: The separate variance artifact was removed; Argument inherits the shared Param variance.
 
@@ -5094,9 +5118,25 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Args.between` -> `Argument.between`: Use the moved combinator; v4 validates bounds when constructing the parameter.
 
-- `Args.boolean` -> `Flag.boolean / Argument.choiceWithValue`: Positional booleans were removed as ambiguous; prefer a boolean flag or explicit true/false positional choices.
+- `Args.boolean` -> `Flag.Boolean / Argument.ChoiceWithValue`: Positional booleans were removed as ambiguous; prefer a boolean flag or explicit true/false positional choices.
 
-- `Args.fileContent` -> `Argument.file + Argument.mapEffect`: Parse a path and read it with FileSystem.readFile; no binary-content argument constructor remains.
+- `Args.choice` -> `Argument.Literals`: Use the renamed constructor and pass the argument name explicitly.
+
+- `Args.date` -> `Argument.Date`: Use the renamed constructor and pass the argument name explicitly.
+
+- `Args.directory` -> `Argument.Directory`: Use mustExist=true for exists=yes and omit it for either; exists=no has no exact replacement.
+
+- `Args.file` -> `Argument.File`: Use mustExist=true for exists=yes and omit it for either; exists=no has no exact replacement.
+
+- `Args.fileContent` -> `Argument.File + Argument.mapEffect`: Parse a path and read it with FileSystem.readFile; no binary-content argument constructor remains.
+
+- `Args.fileParse` -> `Argument.FileParse`: Pass the old format as an options field; v4 returns parsed content rather than a path/content tuple.
+
+- `Args.fileSchema` -> `Argument.FileSchema`: Pass the old format as an options field and use a v4 Schema constraint decoder.
+
+- `Args.fileText` -> `Argument.FileText`: Use the renamed constructor; it returns content only.
+
+- `Args.float` -> `Argument.Finite`: Use the renamed constructor; it rejects non-finite numbers.
 
 - `Args.getHelp` -> `none`: Per-argument help introspection was removed; Command generates help internally.
 
@@ -5108,17 +5148,27 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Args.getUsage` -> `none`: The public Usage tree was removed; Command generates a usage string internally.
 
+- `Args.integer` -> `Argument.Int`: Use the renamed constructor and pass the argument name explicitly.
+
 - `Args.isArgs` -> `Param.isParam(value) && value.kind === Param.argumentKind`: Arguments now use the shared Param representation and an explicit kind discriminator.
 
 - `Args.map` -> `Argument.map`: Use the moved combinator.
 
+- `Args.mapEffect`: TODO: needs guidance
+
+- `Args.none` -> `omit the config entry`: V4 Argument.Never is an always-failing sentinel, not v3's empty successful argument set.
+
 - `Args.optional` -> `Argument.optional`: Use the moved combinator; it still returns Option.
+
+- `Args.path` -> `Argument.Path`: Path options are inline; map exists=yes to mustExist=true and either to omission. exists=no has no exact replacement.
+
+- `Args.redacted` -> `Argument.Redacted`: Use the renamed constructor and pass the argument name explicitly.
 
 - `Args.repeated` -> `Argument.variadic`: Renamed to variadic; pass optional min and max bounds.
 
-- `Args.secret` -> `Argument.redacted`: Use Redacted-backed positional input.
+- `Args.secret` -> `Argument.Redacted`: Use Redacted-backed positional input.
 
-- `Args.text` -> `Argument.string`: Renamed to string; pass the argument name explicitly.
+- `Args.text` -> `Argument.String`: Renamed to String; pass the argument name explicitly.
 
 - `Args.validate` -> `argument.parse({ flags: {}, arguments: args })`: Parsing is now a Param method and returns leftover tokens with the value; errors are CliError.
 
@@ -5189,6 +5239,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `CliConfig.normalizeCase` -> `none`: Case normalization is no longer configurable through CliConfig.
 
 ### `@effect/cli/Command`
+
+- `Command.Command.Config`: TODO: needs guidance
 
 - `Command.Command.Context` -> `Command.CommandContext`: Renamed to CommandContext.
 
@@ -5278,7 +5330,7 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `CommandDirective.UserDefined` -> `none`: The user-defined intermediate directive was removed.
 
-- `CommandDirective.builtIn` -> `GlobalFlag.action`: Define a custom action flag; v4 runners no longer return built-in directives.
+- `CommandDirective.builtIn` -> `GlobalFlag.Action`: Define a custom action flag; v4 runners no longer return built-in directives.
 
 - `CommandDirective.isBuiltIn` -> `none`: Intermediate built-in directives were removed.
 
@@ -5358,7 +5410,7 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Options.Options` -> `Flag.Flag`: Options was renamed to Flag in effect/unstable/cli.
 
-- `Options.Options.BooleanOptionsConfig` -> `Flag.boolean + Flag.withAlias + Flag.map`: The config object was removed; aliases and value inversion are combinators, while custom negation names need application logic.
+- `Options.Options.BooleanOptionsConfig` -> `Flag.Boolean + Flag.withAlias + Flag.map`: The config object was removed; aliases and value inversion are combinators, while custom negation names need application logic.
 
 - `Options.Options.PathOptionsConfig` -> `{ readonly mustExist?: boolean }`: Path options are inline; true replaces exists=yes and omission replaces either. exists=no has no exact replacement.
 
@@ -5374,29 +5426,29 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Options.between` -> `Flag.between`: Use the moved combinator; v4 validates bounds when constructing the parameter.
 
-- `Options.boolean` -> `Flag.boolean + Flag.withDefault`: Use Flag.boolean(name).pipe(Flag.withDefault(false)) to preserve v3's omitted-flag default; bare Flag.boolean is now required. --no-name is automatic and aliases are added with Flag.withAlias.
+- `Options.boolean` -> `Flag.Boolean + Flag.withDefault`: Use Flag.Boolean(name).pipe(Flag.withDefault(false)) to preserve v3's omitted-flag default; bare Flag.Boolean is now required. --no-name is automatic and aliases are added with Flag.withAlias.
 
-- `Options.choice` -> `Flag.choice`: Use the moved constructor.
+- `Options.choice` -> `Flag.Literals`: Use the moved constructor.
 
-- `Options.choiceWithValue` -> `Flag.choiceWithValue`: Use the moved constructor.
+- `Options.choiceWithValue` -> `Flag.ChoiceWithValue`: Use the moved constructor.
 
-- `Options.date` -> `Flag.date`: Use the moved constructor.
+- `Options.date` -> `Flag.Date`: Use the moved constructor.
 
-- `Options.directory` -> `Flag.directory`: Use mustExist=true for exists=yes and omit it for either; exists=no has no exact replacement.
+- `Options.directory` -> `Flag.Directory`: Use mustExist=true for exists=yes and omit it for either; exists=no has no exact replacement.
 
-- `Options.file` -> `Flag.file`: Use mustExist=true for exists=yes and omit it for either; exists=no has no exact replacement.
+- `Options.file` -> `Flag.File`: Use mustExist=true for exists=yes and omit it for either; exists=no has no exact replacement.
 
-- `Options.fileContent` -> `Flag.file + Flag.mapEffect`: Parse a path and read it with FileSystem.readFile; no binary-content flag constructor remains.
+- `Options.fileContent` -> `Flag.File + Flag.mapEffect`: Parse a path and read it with FileSystem.readFile; no binary-content flag constructor remains.
 
-- `Options.fileParse` -> `Flag.fileParse`: Pass the old format as an options field; v4 returns parsed content rather than a path/content tuple.
+- `Options.fileParse` -> `Flag.FileParse`: Pass the old format as an options field; v4 returns parsed content rather than a path/content tuple.
 
-- `Options.fileSchema` -> `Flag.fileSchema`: Pass the old format as an options field and use a v4 Schema constraint decoder.
+- `Options.fileSchema` -> `Flag.FileSchema`: Pass the old format as an options field and use a v4 Schema constraint decoder.
 
-- `Options.fileText` -> `Flag.file + Flag.mapEffect`: Flag.fileText returns content only; read after Flag.file when the path/content tuple must be preserved.
+- `Options.fileText` -> `Flag.File + Flag.mapEffect`: Flag.FileText returns content only; read after Flag.File when the path/content tuple must be preserved.
 
 - `Options.filterMap` -> `Flag.filterMap`: Use the moved combinator and replace the fixed message with an onNone function.
 
-- `Options.float` -> `Flag.float`: Use the moved constructor.
+- `Options.float` -> `Flag.Finite`: Use the moved constructor.
 
 - `Options.getHelp` -> `none`: Per-flag help introspection was removed; Command generates help internally.
 
@@ -5404,13 +5456,13 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Options.getUsage` -> `none`: The public Usage tree was removed; Command generates a usage string internally.
 
-- `Options.integer` -> `Flag.integer`: Use the moved constructor.
+- `Options.integer` -> `Flag.Int`: Use the moved constructor.
 
 - `Options.isBool` -> `none`: No public flag-shape predicate remains; boolean-shape inspection is internal.
 
 - `Options.isOptions` -> `Param.isParam(value) && value.kind === Param.flagKind`: Flags now use the shared Param representation and an explicit kind discriminator.
 
-- `Options.keyValueMap` -> `Flag.keyValuePair`: Renamed and now returns Record\<string, string\> rather than HashMap.
+- `Options.keyValueMap` -> `Flag.KeyValuePair`: Renamed and now returns Record\<string, string\> rather than HashMap.
 
 - `Options.map` -> `Flag.map`: Use the moved combinator.
 
@@ -5418,7 +5470,7 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Options.mapTryCatch` -> `Flag.mapTryCatch`: Use the moved combinator; onError now returns a string rather than HelpDoc.
 
-- `Options.none` -> `omit the config entry`: V4 Flag.none is an always-failing sentinel, not v3's empty successful option set.
+- `Options.none` -> `omit the config entry`: V4 Flag.Never is an always-failing sentinel, not v3's empty successful option set.
 
 - `Options.optional` -> `Flag.optional`: Use the moved combinator; it still returns Option.
 
@@ -5430,13 +5482,13 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Options.processCommandLine` -> `Command.runWith`: Raw argv processing is now whole-command execution; no public standalone flag tokenizer remains.
 
-- `Options.redacted` -> `Flag.redacted`: Use the moved constructor.
+- `Options.redacted` -> `Flag.Redacted`: Use the moved constructor.
 
 - `Options.repeated` -> `Flag.variadic`: Renamed to variadic; pass optional min and max bounds.
 
-- `Options.secret` -> `Flag.redacted`: The deprecated Secret constructor was removed; use Redacted-backed input.
+- `Options.secret` -> `Flag.Redacted`: The deprecated Secret constructor was removed; use Redacted-backed input.
 
-- `Options.text` -> `Flag.string`: Renamed from text to string.
+- `Options.text` -> `Flag.String`: Renamed from text to String.
 
 - `Options.withAlias` -> `Flag.withAlias`: Use the moved combinator.
 
@@ -5462,19 +5514,23 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Primitive.PrimitiveTypeId` -> `none`: The public Primitive type-id symbol was removed.
 
-- `Primitive.boolean` -> `Primitive.boolean`: Boolean is now a singleton value; defaults belong on Flag.boolean or withDefault.
+- `Primitive.boolean` -> `Primitive.Boolean`: Boolean is now a singleton value; defaults belong on Flag.Boolean or withDefault.
 
-- `Primitive.choice` -> `Primitive.choice`: Use the moved constructor.
+- `Primitive.choice` -> `Primitive.Choice`: Use the moved constructor.
 
-- `Primitive.date` -> `Primitive.date`: Date is now a singleton Primitive value.
+- `Primitive.date` -> `Primitive.Date`: Date is now a singleton Primitive value.
+
+- `Primitive.float` -> `Primitive.Finite`: Finite is now a singleton Primitive value and rejects non-finite numbers.
 
 - `Primitive.getChoices` -> `none`: Choice introspection is internal in v4; retain alternatives in application code when needed.
 
 - `Primitive.getHelp` -> `none`: Primitive-level help generation was removed from the public API.
 
+- `Primitive.integer` -> `Primitive.Int`: Int is now a singleton Primitive value.
+
 - `Primitive.isBool` -> `none`: The boolean Primitive predicate is internal in v4.
 
-- `Primitive.text` -> `Primitive.string`: Renamed from text to string.
+- `Primitive.text` -> `Primitive.String`: Renamed from text to String.
 
 - `Primitive.validate` -> `primitive.parse(value)`: Parsing is now the Primitive.parse method over a string; defaults and case normalization moved out of this layer.
 
@@ -5486,21 +5542,41 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Prompt.Prompt` -> `Prompt.Prompt`: The model moved to effect/unstable/cli; quitting now fails with Terminal.QuitError.
 
+- `Prompt.Prompt.FloatOptions` -> `Prompt.NumberOptions`: Use the renamed public options type for Prompt.Number; it still extends the integer options type, now IntOptions.
+
+- `Prompt.Prompt.IntegerOptions` -> `Prompt.IntOptions`: Use the renamed public options type for Prompt.Int; option fields are preserved.
+
 - `Prompt.Prompt.Variance` -> `Prompt.Prompt`: The named variance artifact was removed; use Prompt\<Output\>.
 
 - `Prompt.Prompt.VarianceStruct` -> `Prompt.Prompt`: The named variance structure was removed; use Prompt\<Output\>.
 
 - `Prompt.PromptTypeId` -> `Prompt.isPrompt`: The public type-id symbol was removed; use the runtime guard.
 
-- `Prompt.date` -> `Prompt.date`: Use the moved constructor.
+- `Prompt.confirm` -> `Prompt.Confirm`: Use the renamed constructor.
 
-- `Prompt.file` -> `Prompt.file`: Use the moved constructor; v4 also supports a default selected path.
+- `Prompt.custom` -> `Prompt.Custom`: Use the renamed constructor; both overloads are preserved.
 
-- `Prompt.float` -> `Prompt.float`: Use the moved constructor; v4 also supports a default value.
+- `Prompt.date` -> `Prompt.Date`: Use the moved constructor.
 
-- `Prompt.integer` -> `Prompt.integer`: Use the moved constructor; v4 also supports a default value.
+- `Prompt.file` -> `Prompt.File`: Use the moved constructor; v4 also supports a default selected path.
 
-- `Prompt.text` -> `Prompt.text`: Use the moved constructor.
+- `Prompt.float` -> `Prompt.Number`: Use the moved constructor; v4 also supports a default value.
+
+- `Prompt.hidden` -> `Prompt.Hidden`: Use the renamed constructor.
+
+- `Prompt.integer` -> `Prompt.Int`: Use the moved constructor; v4 also supports a default value.
+
+- `Prompt.list` -> `Prompt.List`: Use the renamed constructor.
+
+- `Prompt.multiSelect` -> `Prompt.MultiSelect`: Use the renamed constructor.
+
+- `Prompt.password` -> `Prompt.Password`: Use the renamed constructor.
+
+- `Prompt.select` -> `Prompt.Select`: Use the renamed constructor.
+
+- `Prompt.text` -> `Prompt.String`: Use the moved constructor.
+
+- `Prompt.toggle` -> `Prompt.Toggle`: Use the renamed constructor.
 
 ### `@effect/cli/ValidationError`
 
@@ -5630,9 +5706,9 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `EntityProxyServer.RpcHandlers` -> `effect/unstable/cluster/EntityProxyServer#RpcHandlers`: Moved into core Effect and updated for the additional v4 Rpc requirements type parameter.
 
-- `EntityProxyServer.layerHttpApi` -> `effect/unstable/cluster/EntityProxyServer#layerHttpApi`: Moved into core Effect. Use v4 HttpApi identifiers and Rpc.ServicesServer requirements.
+- `EntityProxyServer.layerHttpApi` -> `effect/unstable/cluster/EntityProxyServer#layerHttpApi`: Moved into core Effect. Use v4 HttpApi identifiers and provide Sharding plus both Rpc.ServicesServer and Rpc.ServicesClient codec requirements.
 
-- `EntityProxyServer.layerRpcHandlers` -> `effect/unstable/cluster/EntityProxyServer#layerRpcHandlers`: Moved into core Effect; the service requirement is now Rpc.ServicesServer rather than Rpc.Context.
+- `EntityProxyServer.layerRpcHandlers` -> `effect/unstable/cluster/EntityProxyServer#layerRpcHandlers`: Moved into core Effect; replace Rpc.Context with both Rpc.ServicesServer and Rpc.ServicesClient codec requirements, alongside Sharding.
 
 ### `@effect/cluster/EntityResource`
 
@@ -5685,6 +5761,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `MessageStorage.makeEncoded` -> `effect/unstable/cluster/MessageStorage#makeEncoded`: Moved into core Effect. Custom encoded drivers must replace resetAddress with resetAddresses and may use the new limit and addresses options passed to unprocessedMessages.
 
 ### `@effect/cluster/Reply`
+
+- `Reply.Reply` -> `Reply.Reply(rpc, codecFor)`: Pass the transport codec. Decoding replies requires Rpc.ServicesClient; encoding replies requires Rpc.ServicesServer.
 
 - `Reply.ReplyEncoded` -> `effect/unstable/cluster/Reply#Encoded`: Renamed to Encoded and no longer parameterized by an Rpc; payload fields are unknown and validated by Reply.Reply(rpc, codecFor) with the transport's codec.
 
@@ -5860,15 +5938,17 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `EventLogRemote.Hello` -> `effect/unstable/eventlog/EventLogMessage#HelloResponse`: HelloResponse replaces Hello and includes the v4 authentication challenge; HelloRpc defines the endpoint.
 
+- `EventLogRemote.Ping`: TODO: needs guidance
+
 - `EventLogRemote.Pong` -> `none`: The event-log Pong model was removed; heartbeats belong to the generic RPC socket protocol.
 
 - `EventLogRemote.ProtocolRequest` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: EventLogRemoteRpcs and generic RPC serialization replace the old protocol request union.
 
-- `EventLogRemote.ProtocolRequestMsgPack` -> `effect/unstable/rpc/RpcSerialization#layerMsgPack`: Use the generic MsgPack RPC serialization layer instead of a request-specific schema.
+- `EventLogRemote.ProtocolRequestMsgPack` -> `effect/unstable/rpc/RpcSerialization#layerSchemaBinary`: Use the generic SchemaBinary RPC serialization layer instead of a request-specific schema.
 
 - `EventLogRemote.ProtocolResponse` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: EventLogRemoteRpcs and generic RPC serialization replace the old protocol response union.
 
-- `EventLogRemote.ProtocolResponseMsgPack` -> `effect/unstable/rpc/RpcSerialization#layerMsgPack`: Use the generic MsgPack RPC serialization layer instead of a response-specific schema.
+- `EventLogRemote.ProtocolResponseMsgPack` -> `effect/unstable/rpc/RpcSerialization#layerSchemaBinary`: Use the generic SchemaBinary RPC serialization layer instead of a response-specific schema.
 
 - `EventLogRemote.RemoteAdditions` -> `none`: This unused protocol model has no v4 counterpart.
 
@@ -5876,17 +5956,17 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `EventLogRemote.StopChanges` -> `none`: Interrupt the ChangesRpc stream instead of sending a StopChanges message.
 
-- `EventLogRemote.decodeRequest` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: Generic RPC framing and RpcSerialization.layerMsgPack replace the module-specific request decoder.
+- `EventLogRemote.decodeRequest` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: Generic RPC framing and RpcSerialization.layerSchemaBinary replace the module-specific request decoder.
 
-- `EventLogRemote.decodeResponse` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: Generic RPC framing and RpcSerialization.layerMsgPack replace the module-specific response decoder.
+- `EventLogRemote.decodeResponse` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: Generic RPC framing and RpcSerialization.layerSchemaBinary replace the module-specific response decoder.
 
-- `EventLogRemote.encodeRequest` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: Generic RPC framing and RpcSerialization.layerMsgPack replace the module-specific request encoder.
+- `EventLogRemote.encodeRequest` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: Generic RPC framing and RpcSerialization.layerSchemaBinary replace the module-specific request encoder.
 
-- `EventLogRemote.encodeResponse` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: Generic RPC framing and RpcSerialization.layerMsgPack replace the module-specific response encoder.
+- `EventLogRemote.encodeResponse` -> `effect/unstable/eventlog/EventLogMessage#EventLogRemoteRpcs`: Generic RPC framing and RpcSerialization.layerSchemaBinary replace the module-specific response encoder.
 
 - `EventLogRemote.fromSocket` -> `effect/unstable/eventlog/EventLogRemote#makeEncrypted + effect/unstable/rpc/RpcClient#makeProtocolSocket`: Construct the encrypted remote separately from its generic RPC socket protocol.
 
-- `EventLogRemote.layerWebSocket` -> `effect/unstable/eventlog/EventLogRemote#layerEncrypted + effect/unstable/rpc/RpcClient#layerProtocolSocket`: Compose the encrypted remote with the generic socket protocol, MsgPack serialization, and a Socket provider.
+- `EventLogRemote.layerWebSocket` -> `effect/unstable/eventlog/EventLogRemote#layerEncrypted + effect/unstable/rpc/RpcClient#layerProtocolSocket`: Compose the encrypted remote with the generic socket protocol, SchemaBinary serialization, and a Socket provider.
 
 - `EventLogRemote.layerWebSocketBrowser` -> `effect/unstable/eventlog/EventLogRemote#layerEncrypted + effect/unstable/rpc/RpcClient#layerProtocolSocket + @effect/platform-browser/BrowserSocket#layerWebSocket`: Compose the encrypted remote and generic RPC socket protocol with the browser WebSocket layer.
 
@@ -5903,6 +5983,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `PersistedCache.make` -> `effect/unstable/persistence/PersistedCache#make`: Pass lookup as the first argument and options second; timeToLive now receives exit before request and the service is Persistence.Persistence.
 
 ### `@effect/experimental/PersistedQueue`
+
+- `PersistedQueue.ErrorTypeId` -> `effect/unstable/persistence/PersistedQueue#ErrorTypeId`: Retained as a string brand; the runtime marker now uses the persistence module path.
 
 - `PersistedQueue.TypeId` -> `effect/unstable/persistence/PersistedQueue#TypeId`: Import TypeId from the v4 unstable PersistedQueue module; it is now a string brand.
 
@@ -5966,6 +6048,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/experimental/RateLimiter`
 
+- `RateLimiter.ErrorTypeId` -> `effect/unstable/persistence/RateLimiter#ErrorTypeId`: Retained as a string brand; the runtime marker now uses the persistence module path.
+
 - `RateLimiter.RateLimiterError` -> `effect/unstable/persistence/RateLimiter#RateLimiterError`: The retained name is now a wrapper error class whose reason is RateLimitExceeded or RateLimitStoreError.
 
 - `RateLimiter.TypeId` -> `effect/unstable/persistence/RateLimiter#TypeId`: Import TypeId from the v4 unstable RateLimiter module; it is now a string brand.
@@ -5982,9 +6066,9 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/experimental/Reactivity`
 
-- `Reactivity.Reactivity` -> `effect/unstable/reactivity/Reactivity#Reactivity`: Use the v4 Reactivity Context.Service; unsafe methods were renamed with an Unsafe suffix.
+- `Reactivity.Reactivity` -> `effect/unstable/reactivity/Reactivity#Reactivity`: Use the Reactivity interface for implementations and the Reactivity Context.Service value as the service key. Implementations require the TypeId brand; prefer Reactivity.make. Unsafe methods were renamed with an Unsafe suffix.
 
-- `Reactivity.Reactivity.Service` -> `effect/unstable/reactivity/Reactivity#Reactivity["Service"]`: The named namespace member was removed; derive the service shape from the Context.Service class.
+- `Reactivity.Reactivity.Service` -> `effect/unstable/reactivity/Reactivity#Reactivity`: The named namespace member was removed; use the branded Reactivity interface directly. Prefer Reactivity.make, or include [Reactivity.TypeId]: Reactivity.TypeId in a custom implementation.
 
 - `Reactivity.make` -> `effect/unstable/reactivity/Reactivity#make`: Import make from the v4 unstable Reactivity module.
 
@@ -6180,7 +6264,7 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/platform-bun/BunStream`
 
-- `BunStream.FromReadableOptions` -> `Pick<Parameters<typeof BunStream.fromReadable>[0], "chunkSize" | "closeOnDone">`: The named interface was inlined into the constructor options; chunkSize is now a number and the full options also contain evaluate, onError, and bufferSize.
+- `BunStream.FromReadableOptions` -> `Pick<Parameters<typeof BunStream.fromReadable>[0], "chunkSize" | "closeOnDone">`: The named interface was inlined into the constructor options; chunkSize is now a number and the full options also contain evaluate and onError. The ignored bufferSize option was removed.
 
 - `BunStream.FromWritableOptions` -> `Pick<Parameters<typeof BunSink.fromWritable>[0], "endOnDone" | "encoding">`: The named interface was inlined into BunSink.fromWritable and duplex constructor options.
 
@@ -6324,6 +6408,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Undici.MessageEventInit` -> `undici.MessageEventInit`: Import the upstream type directly; message ports and source use MessagePort instances in Undici 8.
 
+- `Undici.MockAgent`: TODO: needs guidance
+
 - `Undici.Pool` -> `undici.Pool`: Import the upstream Pool directly and apply interceptors after construction with pool.compose(...).
 
 - `Undici.Pool.Options` -> `undici.Pool.Options`: Import the same Pool namespace type; Undici 8 removes the interceptors option in favor of pool.compose(...).
@@ -6426,6 +6512,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Cookies.CookieTypeId` -> `Cookies.isCookie`: The cookie brand is private in v4; use the public refinement instead of reading the type-id symbol.
 
+- `Cookies.CookiesError` -> `Cookies.CookiesError`: The error tag is CookiesError rather than CookieError. Update catchTag calls and \_tag comparisons; validation details are in the reason field.
+
 - `Cookies.ErrorTypeId` -> `Cookies.CookiesError`: The error brand is private in v4; identify the exported error class instead.
 
 - `Cookies.TypeId` -> `Cookies.isCookies`: The collection brand is private in v4; use the public refinement instead.
@@ -6474,13 +6562,21 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `FileSystem.FileTypeId` -> `typeof FileSystem.FileTypeId`: The runtime marker remains exported, but the separate type alias was removed.
 
+- `FileSystem.GiB` -> `ByteSize.gibibytes`: Use the ByteSize binary unit constructor.
+
+- `FileSystem.KiB` -> `ByteSize.kibibytes`: Use the ByteSize binary unit constructor.
+
 - `FileSystem.MakeDirectoryOptions` -> `NonNullable<Parameters<FileSystem.FileSystem["makeDirectory"]>[1]>`: Operation option interfaces are inline in the v4 FileSystem service.
 
 - `FileSystem.MakeTempDirectoryOptions` -> `NonNullable<Parameters<FileSystem.FileSystem["makeTempDirectory"]>[0]>`: Operation option interfaces are inline in the v4 FileSystem service.
 
 - `FileSystem.MakeTempFileOptions` -> `NonNullable<Parameters<FileSystem.FileSystem["makeTempFile"]>[0]>`: Operation option interfaces are inline in the v4 FileSystem service.
 
+- `FileSystem.MiB` -> `ByteSize.mebibytes`: Use the ByteSize binary unit constructor.
+
 - `FileSystem.OpenFileOptions` -> `NonNullable<Parameters<FileSystem.FileSystem["open"]>[1]>`: Operation option interfaces are inline in the v4 FileSystem service.
+
+- `FileSystem.PiB` -> `ByteSize.pebibytes`: Use the ByteSize binary unit constructor.
 
 - `FileSystem.ReadDirectoryOptions` -> `NonNullable<Parameters<FileSystem.FileSystem["readDirectory"]>[1]>`: Operation option interfaces are inline in the v4 FileSystem service.
 
@@ -6488,7 +6584,13 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `FileSystem.SinkOptions` -> `NonNullable<Parameters<FileSystem.FileSystem["sink"]>[1]>`: Operation option interfaces are inline in the v4 FileSystem service.
 
-- `FileSystem.StreamOptions` -> `NonNullable<Parameters<FileSystem.FileSystem["stream"]>[1]>`: Stream options are inline; bufferSize was removed while bytesToRead, chunkSize, and offset remain.
+- `FileSystem.Size` -> `ByteSize.ByteSize`: Use ByteSize.bytes or unit constructors for file sizes. Truncation lengths, buffer sizes, and read/write counts use number. File.seek takes and returns signed bigint positions; it can fail with PlatformError, including BadArgument when seeking before the start.
+
+- `FileSystem.SizeInput` -> `ByteSize.Input`: File-size and path-backed range inputs use ByteSize.Input. Truncation lengths, Web File ranges, and buffer sizes use number.
+
+- `FileSystem.StreamOptions` -> `NonNullable<Parameters<FileSystem.FileSystem["stream"]>[1]>`: Stream options are inline; bufferSize was removed, bytesToRead and offset accept ByteSize inputs, and chunkSize uses number.
+
+- `FileSystem.TiB` -> `ByteSize.tebibytes`: Use the ByteSize binary unit constructor.
 
 - `FileSystem.WatchEventCreate` -> `FileSystem.WatchEvent.Create`: The constructor was removed; construct a tagged object with \_tag: "Create" and path.
 
@@ -6516,9 +6618,9 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Headers.remove` -> `Headers.remove / Headers.removeMany`: Use remove for one name or removeMany for an iterable; RegExp removal requires enumerating matching names.
 
-- `Headers.schema` -> `Headers.HeadersSchema`: The encoded-record and self schemas were consolidated into HeadersSchema.
+- `Headers.schema` -> `Schema.Headers`: The encoded-record and self schemas were consolidated and moved to effect/Schema as Schema.Headers.
 
-- `Headers.schemaFromSelf` -> `Headers.HeadersSchema`: The encoded-record and self schemas were consolidated into HeadersSchema.
+- `Headers.schemaFromSelf` -> `Schema.Headers`: The encoded-record and self schemas were consolidated and moved to effect/Schema as Schema.Headers.
 
 - `Headers.unsafeFromRecord` -> `Headers.fromRecordUnsafe`: Renamed to put Unsafe last; it still skips name normalization.
 
@@ -6546,6 +6648,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `HttpApiBuilder.HandlersTypeId` -> `none`: The exported symbol was removed; do not inspect or construct the private Handlers marker.
 
+- `HttpApiBuilder.Middleware` -> `none`: The API-specific middleware service tag was removed. Declared HttpApiMiddleware services are applied while routes are built; use HttpRouter.middleware for additional global middleware.
+
 - `HttpApiBuilder.MiddlewareFn` -> `effect/unstable/http/HttpRouter#middleware.Fn`: HTTP apps are Effects in v4; use the router middleware function type or infer it through HttpRouter.middleware.
 
 - `HttpApiBuilder.Router` -> `effect/unstable/http/HttpRouter#HttpRouter`: The API-specific router tag was removed; API and group layers register with the shared HttpRouter service.
@@ -6556,7 +6660,7 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `HttpApiBuilder.group` -> `effect/unstable/httpapi/HttpApiBuilder#group`: The group layer remains; names are now identifiers and API/group global error channels are gone.
 
-- `HttpApiBuilder.handler` -> `effect/unstable/httpapi/HttpApiBuilder#endpoint`: Use endpoint for a standalone typed endpoint implementation; inside a group pass callbacks to handlers.handle.
+- `HttpApiBuilder.handler` -> `effect/unstable/httpapi/HttpApiBuilder#handler`: The typed callback helper remains; names are now identifiers and API/group global error channels are gone. Pass the returned callback to handlers.handle.
 
 - `HttpApiBuilder.httpApp` -> `effect/unstable/http/HttpRouter#toHttpEffect`: Build the application from the assembled API route layer; HTTP apps are Effects in v4.
 
@@ -6866,9 +6970,9 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `HttpBody.Uint8Array` -> `HttpBody.Uint8Array`: Retained with the same fields and tag, but v4 exports a class.
 
-- `HttpBody.file` -> `HttpBody.file`: Retained; bufferSize was replaced by chunkSize and the other file options remain.
+- `HttpBody.file` -> `HttpBody.file`: Retained; bufferSize was replaced by numeric chunkSize. Offset and bytesToRead accept ByteSize.Input. Invalid ranges and a final EOF-clamped content length above Number.MAX\_SAFE\_INTEGER fail with PlatformError / BadArgument.
 
-- `HttpBody.fileInfo` -> `HttpBody.fileFromInfo`: Renamed; it still uses supplied File.Info for content length and requires FileSystem.
+- `HttpBody.fileInfo` -> `HttpBody.fileFromInfo`: Renamed; it uses supplied File.Info with ByteSize size metadata and requires FileSystem. Offset and bytesToRead accept ByteSize.Input, while chunkSize is numeric. Invalid ranges and a final EOF-clamped content length above Number.MAX\_SAFE\_INTEGER fail with PlatformError / BadArgument.
 
 - `HttpBody.unsafeJson` -> `HttpBody.jsonUnsafe`: Renamed to put Unsafe last; serialization failures still throw.
 
@@ -6940,6 +7044,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/platform/HttpClientResponse`
 
+- `HttpClientResponse.HttpClientResponse` -> `HttpClientResponse.HttpClientResponse`: Custom implementations must supply the required url string. It represents the resolved URL including query parameters and excluding the hash, uses the final URL after redirects, and is empty when unknown.
+
 - `HttpClientResponse.TypeId` -> `typeof HttpClientResponse.TypeId`: TypeId remains public but is now a string constant; use typeof in type position.
 
 - `HttpClientResponse.filterStatus` -> `HttpClientResponse.filterStatus`: Retained; rejected status now fails with an HttpClientError wrapper.
@@ -6960,11 +7066,11 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/platform/HttpIncomingMessage`
 
-- `HttpIncomingMessage.MaxBodySize` -> `HttpIncomingMessage.MaxBodySize`: Changed from a Reference subclass holding Option\<Size\> to Context.Reference\<Size | undefined\>.
+- `HttpIncomingMessage.MaxBodySize` -> `HttpIncomingMessage.MaxBodySize`: Changed from a Reference subclass holding Option\<Size\> to Context.Reference\<ByteSize.ByteSize | undefined\>.
 
 - `HttpIncomingMessage.TypeId` -> `typeof HttpIncomingMessage.TypeId`: TypeId remains public but is now a string constant; use typeof in type position.
 
-- `HttpIncomingMessage.withMaxBodySize` -> `Effect.provideService(HttpIncomingMessage.MaxBodySize, size)`: The helper was removed; provide FileSystem.Size(input) or undefined directly.
+- `HttpIncomingMessage.withMaxBodySize` -> `Effect.provideService(HttpIncomingMessage.MaxBodySize, size)`: The helper was removed; provide a ByteSize value or undefined directly.
 
 ### `@effect/platform/HttpLayerRouter`
 
@@ -7034,13 +7140,13 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/platform/HttpPlatform`
 
-- `HttpPlatform.HttpPlatform` -> `HttpPlatform.HttpPlatform`: The service is now a Context.Service class; use its Service member for the implementation type.
+- `HttpPlatform.HttpPlatform` -> `HttpPlatform.HttpPlatform`: The service is now a Context.Service class; use its Service member for the implementation type. Path-backed offset and bytesToRead accept ByteSize.Input, while chunkSize and all Web File range options use number.
 
 - `HttpPlatform.TypeId` -> `none`: The public type id was removed; use the HttpPlatform Context.Service class.
 
 - `HttpPlatform.layer` -> `HttpPlatform.layer`: Retained as the default file-response layer.
 
-- `HttpPlatform.make` -> `HttpPlatform.make`: Retained; v4 returns the service implementation and uses updated file stream options.
+- `HttpPlatform.make` -> `HttpPlatform.make`: Retained; v4 returns the service implementation. The fileResponse callback receives contentLength as bigint, while start and end remain numbers. Web File range options use number.
 
 ### `@effect/platform/HttpRouter`
 
@@ -7112,17 +7218,25 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/platform/HttpServer`
 
+- `HttpServer.Address` -> `effect/unstable/net/NetAddress#SocketAddress`: Replaced by the shared concrete internet-or-Unix socket address union.
+
 - `HttpServer.HttpServer` -> `HttpServer.HttpServer`: The interface and tag became one Context.Service class; use its Service member for implementations.
 
 - `HttpServer.ServeOptions` -> `none`: The unused respond option model was removed with no shared v4 counterpart.
 
+- `HttpServer.TcpAddress` -> `effect/unstable/net/NetAddress#InetAddress`: Replaced by the shared resolved internet-address model; use address and port instead of hostname and port.
+
 - `HttpServer.TypeId` -> `none`: The public TypeId was removed; HttpServer is now a Context.Service class.
+
+- `HttpServer.UnixAddress` -> `effect/unstable/net/NetAddress#UnixPathAddress`: Replaced by the shared Unix filesystem-path address model.
 
 - `HttpServer.addressWith` -> `HttpServer.HttpServer.use(({ address }) => effect(address))`: The accessor was removed; read the service and pass its Address to the callback.
 
+- `HttpServer.formatAddress` -> `HttpServer.formatAddress`: Accepts NetAddress.SocketAddress and delegates to NetAddress.formatUrlUnsafe. Scoped IPv6 addresses throw NetAddressError; Unix paths use the unix:// prefix.
+
 - `HttpServer.layerContext` -> `HttpServer.layerServices`: Renamed; it provides the standard HTTP platform services.
 
-- `HttpServer.make` -> `HttpServer.make`: Retained; it returns the Context.Service implementation.
+- `HttpServer.make` -> `HttpServer.make`: Retained; it returns the Context.Service implementation. Supply a NetAddress.SocketAddress for address, using NetAddress.inetAddressUnsafe for a parsed IP and port or NetAddress.unixPathAddress for a Unix path. Use NetAddress.inetAddress to validate the port through Result instead.
 
 - `HttpServer.serve` -> `effect/unstable/http/HttpServer#serve`: Moved to the v4 HTTP module; the application is now an Effect producing HttpServerResponse rather than the separate HttpApp model.
 
@@ -7168,7 +7282,9 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `HttpServerResponse.expireCookie` -> `HttpServerResponse.expireCookie`: Now effectful and safe; use expireCookieUnsafe for synchronous throwing behavior.
 
-- `HttpServerResponse.file` -> `HttpServerResponse.file`: Retained with updated FileSystem stream options.
+- `HttpServerResponse.file` -> `HttpServerResponse.file`: Retained; offset and bytesToRead accept ByteSize.Input, while chunkSize uses number. Path-backed responses validate ranges and clamp content length to the available bytes.
+
+- `HttpServerResponse.fileWeb` -> `HttpServerResponse.fileWeb`: Web File offset, bytesToRead, and chunkSize options use number, unlike path-backed ByteSize.Input ranges.
 
 - `HttpServerResponse.isServerResponse` -> `HttpServerResponse.isHttpServerResponse`: Renamed.
 
@@ -7206,21 +7322,23 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/platform/MsgPack`
 
-- `MsgPack.ErrorTypeId` -> `Msgpack.MsgPackError`: The public error type-id alias was removed; use the MsgPackError class.
+- `MsgPack.ErrorTypeId` -> `Schema.SchemaError`: MsgPackError was removed with MessagePack. SchemaBinary channels fail with Schema.SchemaError.
 
-- `MsgPack.duplex` -> `Msgpack.duplex`: The API moved to effect/unstable/encoding/Msgpack.
+- `MsgPack.MsgPackError` -> `Schema.SchemaError`: MsgPackError was removed with MessagePack. SchemaBinary channels fail with Schema.SchemaError.
 
-- `MsgPack.duplexSchema` -> `Msgpack.duplexSchema`: The API moved to effect/unstable/encoding/Msgpack and uses v4 Schema constraints.
+- `MsgPack.duplex` -> `SchemaBinary.duplex`: MessagePack was removed. Wrap a byte channel with SchemaBinary.duplex and explicit input and output schemas.
 
-- `MsgPack.pack` -> `Msgpack.encode`: The MessagePack channel constructor was renamed from pack to encode.
+- `MsgPack.duplexSchema` -> `SchemaBinary.duplex`: MessagePack was removed. Use SchemaBinary.duplex with the v4 Schema model.
 
-- `MsgPack.packSchema` -> `Msgpack.encodeSchema`: The schema-aware pack channel was renamed to encodeSchema.
+- `MsgPack.pack` -> `SchemaBinary.encode`: MessagePack was removed. Encode schema values to binary frames with SchemaBinary.encode.
 
-- `MsgPack.schema` -> `Msgpack.schema`: The schema helper remains in the moved module and uses the v4 Schema model.
+- `MsgPack.packSchema` -> `SchemaBinary.encode`: MessagePack was removed. Use SchemaBinary.encode with the v4 Schema model.
 
-- `MsgPack.unpack` -> `Msgpack.decode`: The MessagePack channel constructor was renamed from unpack to decode.
+- `MsgPack.schema` -> `SchemaBinary.toCodec`: MessagePack was removed. Derive a binary codec from a Schema with SchemaBinary.toCodec.
 
-- `MsgPack.unpackSchema` -> `Msgpack.decodeSchema`: The schema-aware unpack channel was renamed to decodeSchema.
+- `MsgPack.unpack` -> `SchemaBinary.decode`: MessagePack was removed. Decode binary frames with SchemaBinary.decode.
+
+- `MsgPack.unpackSchema` -> `SchemaBinary.decode`: MessagePack was removed. Use SchemaBinary.decode with the v4 Schema model.
 
 ### `@effect/platform/Multipart`
 
@@ -7230,9 +7348,9 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Multipart.FileSchema` -> `Multipart.PersistedFileSchema`: The schema for persisted multipart files was renamed.
 
-- `Multipart.MaxFieldSize` -> `Multipart.MaxFieldSize`: The setting remains but is now a Context.Reference.
+- `Multipart.MaxFieldSize` -> `Multipart.MaxFieldSize`: Now a Context.Reference\<ByteSize.ByteSize\>; provide a value such as ByteSize.bytes(100).
 
-- `Multipart.MaxFileSize` -> `Multipart.MaxFileSize`: The setting remains as a Context.Reference; use undefined rather than Option.none for no limit.
+- `Multipart.MaxFileSize` -> `Multipart.MaxFileSize`: Now a Context.Reference\<ByteSize.ByteSize | undefined\>; provide ByteSize.bytes(100), for example, or undefined for no limit.
 
 - `Multipart.MaxParts` -> `Multipart.MaxParts`: The setting remains as a Context.Reference; use undefined rather than Option.none for no limit.
 
@@ -7246,13 +7364,13 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Multipart.withLimits` -> `Effect.provideContext(effect, Multipart.limitsServices(options))`: Build the multipart limit context and provide it to the effect; Option-valued limits became optional plain values.
 
-- `Multipart.withLimits.Options` -> `Multipart.withLimits.Options`: Limit fields now use optional plain numbers or SizeInput values; convert Option.none to undefined and Option.some(value) to value.
+- `Multipart.withLimits.Options` -> `Multipart.withLimits.Options`: Limit fields now use optional plain numbers or ByteSize inputs; convert Option.none to undefined and Option.some(value) to value.
 
 - `Multipart.withLimitsStream` -> `Stream.provideContext(stream, Multipart.limitsServices(options))`: Build the multipart limit context and provide it to the stream; Option-valued limits became optional plain values.
 
-- `Multipart.withMaxFieldSize` -> `Effect.provideService(Multipart.MaxFieldSize, size)`: Provide the v4 Context.Reference around the effect.
+- `Multipart.withMaxFieldSize` -> `Effect.provideService(Multipart.MaxFieldSize, size)`: Provide a ByteSize value, such as ByteSize.bytes(100). To normalize ByteSize.Input options, use Multipart.limitsServices.
 
-- `Multipart.withMaxFileSize` -> `Effect.provideService(Multipart.MaxFileSize, size)`: Provide the v4 Context.Reference around the effect, converting Option.none to undefined.
+- `Multipart.withMaxFileSize` -> `Effect.provideService(Multipart.MaxFileSize, size)`: Replace Option.none with undefined and Option.some(value) with a normalized ByteSize value. To normalize ByteSize.Input options, use Multipart.limitsServices.
 
 - `Multipart.withMaxParts` -> `Effect.provideService(Multipart.MaxParts, count)`: Provide the v4 Context.Reference around the effect, converting Option.none to undefined.
 
@@ -7304,6 +7422,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `OpenApiJsonSchema.Array` -> `effect/JsonSchema#JsonSchema`: The narrow node interfaces were consolidated into the general object model.
 
+- `OpenApiJsonSchema.Boolean` -> `effect/JsonSchema#JsonSchema`: The narrow boolean interface was consolidated into the open, dialect-neutral JSON Schema object model.
+
 - `OpenApiJsonSchema.Empty` -> `effect/JsonSchema#JsonSchema`: The narrow node interfaces and special id shapes were removed.
 
 - `OpenApiJsonSchema.Enum` -> `effect/JsonSchema#JsonSchema`: The narrow node interfaces were consolidated into the general object model.
@@ -7314,6 +7434,10 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `OpenApiJsonSchema.JsonSchema` -> `effect/JsonSchema#JsonSchema`: Use the dialect-neutral open JSON Schema object model.
 
+- `OpenApiJsonSchema.Never` -> `effect/JsonSchema#JsonSchema`: The special never-schema interface was consolidated into the open JSON Schema object model; represent it with a not constraint.
+
+- `OpenApiJsonSchema.Number` -> `effect/JsonSchema#JsonSchema`: The narrow number interface was consolidated into the open, dialect-neutral JSON Schema object model.
+
 - `OpenApiJsonSchema.Numeric` -> `effect/JsonSchema#JsonSchema`: The narrow numeric interfaces were consolidated into the general object model.
 
 - `OpenApiJsonSchema.Object` -> `effect/JsonSchema#JsonSchema`: The narrow node interfaces were consolidated into the general object model.
@@ -7321,6 +7445,12 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `OpenApiJsonSchema.Ref` -> `effect/JsonSchema#JsonSchema`: The narrow ref interface was consolidated; OpenAPI conversion rewrites definition references.
 
 - `OpenApiJsonSchema.Root` -> `effect/JsonSchema#MultiDocument`: OpenAPI generation keeps roots in schemas and shared components in definitions; the inline-definitions root model is gone.
+
+- `OpenApiJsonSchema.String` -> `effect/JsonSchema#JsonSchema`: The narrow string interface was consolidated into the open, dialect-neutral JSON Schema object model.
+
+- `OpenApiJsonSchema.Unknown`: TODO: needs guidance
+
+- `OpenApiJsonSchema.Void` -> `effect/JsonSchema#JsonSchema`: The special void-schema interface was consolidated into the open JSON Schema object model.
 
 - `OpenApiJsonSchema.make` -> `effect/Schema#toJsonSchemaDocument + effect/JsonSchema#toMultiDocumentOpenApi3_1`: Generate Draft 2020-12, wrap the root in a multi-document, then convert references and definitions to OpenAPI 3.1.
 
@@ -7362,13 +7492,25 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Socket.WebSocketConstructor` -> `Socket.WebSocketConstructor`: The service moved to effect/unstable/socket/Socket and is now a Context.Service class.
 
-- `Socket.currentSendQueueCapacity` -> `Socket.SendQueueCapacity`: The FiberRef was replaced by a defaulted Context.Reference.
+- `Socket.currentSendQueueCapacity` -> `none`: The send queue was removed. The v4 Socket is pull-based: acquire socket.reader in a scope and pull frame batches; writes apply the transport's native backpressure.
+
+- `Socket.defaultCloseCodeIsError` -> `none`: Sockets no longer classify close codes; every close fails the reader's pull with a SocketError wrapping SocketCloseError. Consumers that treat a close as normal catch the error.
+
+- `Socket.fromTransformStream` -> `Socket.fromTransformStream`: The constructor remains in effect/unstable/socket/Socket but drops closeCodeIsError; every close fails the reader's pull with a SocketError wrapping SocketCloseError.
 
 - `Socket.layerWebSocket` -> `Socket.layerWebSocket`: The constructor remains in effect/unstable/socket/Socket; its URL may now also be an Effect.
 
+- `Socket.toChannelMap` -> `none`: The v4 Socket read side is an Effect that never completes via Cause.Done; map frames by acquiring Socket.readerBytes or Socket.readerString, or Effect.map the reader from socket.reader, and use Socket.toChannel or Socket.toChannelString for duplex channels.
+
 ### `@effect/platform/SocketServer`
 
+- `SocketServer.Address` -> `effect/unstable/net/NetAddress#SocketAddress`: Replaced by the shared concrete internet-or-Unix socket address union.
+
 - `SocketServer.ErrorTypeId` -> `SocketServer.ErrorTypeId`: The API moved to effect/unstable/socket/SocketServer and retains this name.
+
+- `SocketServer.TcpAddress` -> `effect/unstable/net/NetAddress#InetAddress`: Replaced by the shared resolved internet-address model; use address and port instead of hostname and port.
+
+- `SocketServer.UnixAddress` -> `effect/unstable/net/NetAddress#UnixPathAddress`: Replaced by the shared Unix filesystem-path address model.
 
 ### `@effect/platform/Template`
 
@@ -7394,6 +7536,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/platform/Url`
 
+- `Url.fromString` -> `Url.fromString`: Retained; returns Result with IllegalArgumentError instead of Either with IllegalArgumentException.
+
 - `Url.setUrlParams` -> `Url.setUrlParams`: Retained and widened to accept UrlParams.Input.
 
 ### `@effect/platform/UrlParams`
@@ -7402,19 +7546,21 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `UrlParams.Input` -> `UrlParams.Input`: Retained and broadened to include UrlParams itself.
 
+- `UrlParams.UrlParams` -> `UrlParams.UrlParams`: Import UrlParams from effect/unstable/http. It is now a branded iterable object with a params field rather than a ReadonlyArray; construct it with UrlParams.make or UrlParams.fromInput.
+
 - `UrlParams.makeUrl` -> `Url.make`: Moved to Url, returns Result, and takes string | undefined for the hash.
 
-- `UrlParams.schemaFromSelf` -> `UrlParams.UrlParamsSchema`: Renamed to the declaration schema for the v4 wrapper.
+- `UrlParams.schemaFromSelf` -> `Schema.UrlParams`: The declaration schema for the v4 wrapper moved to effect/Schema.
 
-- `UrlParams.schemaFromString` -> `Schema.String.pipe(Schema.decodeTo(UrlParams.UrlParamsSchema, { decode: SchemaGetter.transform((s) => UrlParams.fromInput(new URLSearchParams(s))), encode: SchemaGetter.transform(UrlParams.toString) }))`: No prebuilt string codec remains; recreate it by transforming between a query string and UrlParams.
+- `UrlParams.schemaFromString` -> `Schema.String.pipe(Schema.decodeTo(Schema.UrlParams, { decode: SchemaGetter.transform((s) => UrlParams.fromInput(new URLSearchParams(s))), encode: SchemaGetter.transform(UrlParams.toString) }))`: No prebuilt string codec remains; recreate it by transforming between a query string and UrlParams.
 
-- `UrlParams.schemaJson` -> `UrlParams.schemaJsonField(field).pipe(Schema.decodeTo(schema), Schema.decodeEffect)`: Compose the field codec with the target schema, then decode it.
+- `UrlParams.schemaJson` -> `Schema.JsonFromUrlParamsField(field).pipe(Schema.decodeTo(schema), Schema.decodeEffect)`: The field codec moved to effect/Schema. Compose it with the target schema, then decode it.
 
-- `UrlParams.schemaParse` -> `UrlParamsFromString.pipe(Schema.decodeTo(UrlParams.schemaRecord.pipe(Schema.decodeTo(schema))))`: Recreate the removed helper by composing the string, record, and target codecs.
+- `UrlParams.schemaParse` -> `UrlParamsFromString.pipe(Schema.decodeTo(Schema.RecordFromUrlParams.pipe(Schema.decodeTo(schema))))`: Recreate the removed helper by composing the string, record, and target codecs.
 
-- `UrlParams.schemaRecord` -> `UrlParams.schemaRecord.pipe(Schema.decodeTo(schema))`: schemaRecord is now a base codec value; compose it with the target schema.
+- `UrlParams.schemaRecord` -> `Schema.RecordFromUrlParams.pipe(Schema.decodeTo(schema))`: RecordFromUrlParams is a base codec in effect/Schema; compose it with the target schema.
 
-- `UrlParams.schemaStruct` -> `UrlParams.schemaRecord.pipe(Schema.decodeTo(schema), Schema.decodeEffect)`: Compose the record codec with the target schema and decode it.
+- `UrlParams.schemaStruct` -> `Schema.RecordFromUrlParams.pipe(Schema.decodeTo(schema), Schema.decodeEffect)`: Compose the record codec from effect/Schema with the target schema and decode it.
 
 - `UrlParams.toString` -> `UrlParams.toString`: Retained and broadened to accept any UrlParams.Input.
 
@@ -7638,6 +7784,18 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `RpcSchema.isStreamSerializable` -> `RpcSchema.isStreamSchema(schema)`: The separate WithResult serializability predicate was removed; v4 RPC streaming is identified by its explicit Stream schema.
 
+### `@effect/rpc/RpcSerialization`
+
+- `RpcSerialization.RpcSerializationError` -> `effect/unstable/rpc/RpcSerialization#MaxBufferSizeExceeded`: Buffer-limit failures now use MaxBufferSizeExceeded. MessagePack-specific decode errors have no counterpart.
+
+- `RpcSerialization.layerMsgPack` -> `effect/unstable/rpc/RpcSerialization#layerSchemaBinary`: MessagePack RPC serialization was removed. Use SchemaBinary, or layerNdjson when you need newline-delimited JSON framing.
+
+- `RpcSerialization.layerMsgPackWith` -> `effect/unstable/rpc/RpcSerialization#layerSchemaBinary`: MessagePack RPC serialization was removed. Pass maxFrameSize to layerSchemaBinary; NDJSON buffer limits remain on layerNdjsonWith.
+
+- `RpcSerialization.makeMsgPack` -> `effect/unstable/rpc/RpcSerialization#layerSchemaBinary`: MessagePack RPC serialization was removed. Construct SchemaBinary serialization with layerSchemaBinary.
+
+- `RpcSerialization.msgPack` -> `effect/unstable/rpc/RpcSerialization#layerSchemaBinary`: The MessagePack RpcSerialization service value was removed. Provide layerSchemaBinary instead.
+
 ### `@effect/rpc/RpcServer`
 
 - `RpcServer.Protocol` -> `effect/unstable/rpc/RpcServer#Protocol`: Retained as a Context.Service; custom transports now expose a disconnect queue, explicit capability flags, and codecFor for schema-aware payload and exit encoding.
@@ -7760,9 +7918,11 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `PgClient.PgClientConfig` -> `@effect/sql-pg/PgClient#PgClientConfig / PgPoolConfig`: Use PgClientConfig for base settings and PgPoolConfig for make/layer; pool sizing, idle timeout, and connection TTL moved to PgPoolConfig.
 
-- `PgClient.PgClientFromPoolOptions` -> `Parameters<typeof PgClient.fromPool>[0]`: The named type was removed; derive the inline fromPool option type. PgPoolConfig is for creating a managed pool and is not equivalent.
+- `PgClient.PgClientFromPoolOptions` -> `none`: The node-pg Pool wrapper options were removed with fromPool. Use PgClient.PgPoolConfig with PgClient.make or PgClient.layer.
 
-- `PgClient.layerFromPool` -> `PgClient.layerFrom(PgClient.fromPool(options))`: Compose fromPool with layerFrom; layerFrom now accepts an Effect acquiring a PgClient rather than pool options.
+- `PgClient.fromPool` -> `none`: Wrapping an existing node-pg Pool was removed with the native protocol client. Use PgClient.make or PgClient.layer with connection settings.
+
+- `PgClient.layerFromPool` -> `PgClient.layer`: Wrapping an existing node-pg Pool was removed. Provide connection settings to PgClient.layer instead.
 
 ### `@effect/sql-sqlite-bun/SqliteClient`
 
@@ -7782,6 +7942,10 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `SqliteClient.asyncQuery` -> `@effect/sql-sqlite-react-native/SqliteClient#AsyncQuery`: Renamed and changed from FiberRef to Context.Reference; prefer withAsyncQuery or provide AsyncQuery as a service.
 
+### `@effect/sql-sqlite-wasm/OpfsWorker`
+
+- `OpfsWorker.OpfsWorkerConfig`: TODO: needs guidance
+
 ### `@effect/sql-sqlite-wasm/SqliteClient`
 
 - `SqliteClient.SqliteClient` -> `@effect/sql-sqlite-wasm/SqliteClient#SqliteClient`: Retained with the same export/import surface; the service value is now a Context.Service.
@@ -7798,6 +7962,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Model.Class` -> `effect/unstable/schema/Model#Class`: Moved; model variants remain select, insert, update, json, jsonCreate, and jsonUpdate.
 
+- `Model.Date` -> `effect/unstable/schema/Model#Date`: Moved; still serializes DateTime.Utc as a YYYY-MM-DD string.
+
 - `Model.DateTimeFromDate` -> `effect/Schema#DateTimeUtcFromDate`: Moved to core Schema and retains Date to DateTime.Utc conversion.
 
 - `Model.Generated` -> `effect/unstable/schema/Model#GeneratedByDb`: Renamed and now read-only, with select and json variants only. Use Model.Field with select, update, and json to preserve writable v3 behavior.
@@ -7808,7 +7974,7 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Model.fields` -> `effect/unstable/schema/Model#fields`: Moved with the variant-model helpers into core Effect's unstable schema package.
 
-- `Model.makeDataLoaders` -> `effect/unstable/sql/SqlModel#makeResolvers`: Returns RequestResolvers instead of callable loaders; execute with SqlResolver.request and use RequestResolver delay/batch combinators for batching controls.
+- `Model.makeDataLoaders` -> `effect/unstable/sql/SqlModel#makeResolvers`: Returns RequestResolvers instead of callable loaders; execute with SqlResolver.request and use RequestResolver delay/batch combinators for batching controls. The insert resolver requires model decoding services as well as insert-schema encoding services.
 
 ### `@effect/sql/SqlClient`
 
@@ -7894,6 +8060,10 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `Bounded.clamp` -> `Order.clamp(B.compare)`: Use the v4 Order combinator with { minimum: B.minBound, maximum: B.maxBound }; the Bounded dictionary itself was removed.
 
+- `Bounded.max` -> `Reducer.make(Combiner.max(B.compare).combine, B.minBound)`: V4 removed Bounded dictionaries. Build the maximum Reducer from the separately retained Order and minimum bound.
+
+- `Bounded.min` -> `Reducer.make(Combiner.min(B.compare).combine, B.maxBound)`: V4 removed Bounded dictionaries. Build the minimum Reducer from the separately retained Order and maximum bound.
+
 - `Bounded.reverse` -> `Order.flip(B.compare)`: Flip the Order and swap the separately stored minimum and maximum bounds; v4 has no bundled Bounded dictionary.
 
 ### `@effect/typeclass/Monoid`
@@ -7903,6 +8073,10 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `Monoid.array` -> `Array.makeReducerConcat`: Use the v4 array concatenation Reducer; Reducer replaces Monoid and names the identity initialValue.
 
 - `Monoid.fromSemigroup` -> `Reducer.make(S.combine, empty)`: Construct a v4 Reducer from the replacement Combiner operation and identity value.
+
+- `Monoid.max` -> `Reducer.make(Combiner.max(B.compare).combine, B.minBound)`: Reducer replaces Monoid. Build it from the v4 maximum Combiner and the bounded order's minimum value.
+
+- `Monoid.min` -> `Reducer.make(Combiner.min(B.compare).combine, B.maxBound)`: Reducer replaces Monoid. Build it from the v4 minimum Combiner and the bounded order's maximum value.
 
 - `Monoid.reverse` -> `Reducer.flip`: Use the v4 Reducer combinator; it preserves initialValue and reverses combine argument order.
 
@@ -7935,6 +8109,10 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `Semigroup.last` -> `Combiner.last`: Combiner replaces Semigroup in v4.
 
 - `Semigroup.make` -> `Combiner.make`: Combiner replaces Semigroup. V4 accepts only the binary combine function and has no combineMany override.
+
+- `Semigroup.max` -> `Combiner.max`: Combiner replaces Semigroup; pass the same Order to retain last-maximum tie behavior.
+
+- `Semigroup.min` -> `Combiner.min`: Combiner replaces Semigroup; pass the same Order to retain last-minimum tie behavior.
 
 - `Semigroup.reverse` -> `Combiner.flip`: Use the v4 Combiner combinator to reverse combine argument order.
 
@@ -8246,25 +8424,41 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `@effect/vitest/index`
 
-- `index.ApiConfig` -> `vitest/node#ApiConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.ApiConfig` -> `vitest/node#ApiConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
 - `index.ArgumentsType` -> `T extends (...args: infer A) => any ? A : never`: Vitest 3 marked this root alias as an internal helper. Define the small TypeScript shape locally instead of depending on transitive internals.
 
 - `index.Arrayable` -> `T | Array<T>`: Vitest 3 marked this root alias as an internal helper. Define the small TypeScript shape locally instead of depending on transitive internals.
 
+- `index.Assertion` -> `vitest#Assertion`: Vitest 5 takes the matcher return type first. Replace Assertion\<T\> with Assertion\<void, T\> or Assertion\<Promise\<void\>, T\> for asynchronous assertions.
+
 - `index.Awaitable` -> `T | PromiseLike<T>`: Vitest 3 marked this root alias as an internal helper. Define the small TypeScript shape locally instead of depending on transitive internals.
 
-- `index.BaseCoverageOptions` -> `vitest/node#BaseCoverageOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.BaseCoverageOptions` -> `vitest/node#BaseCoverageOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.BenchmarkUserOptions` -> `vitest/node#BenchmarkUserOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.BenchFactory` -> `vitest#Bench`: Use the Vitest 5 test-context bench fixture type. It is no longer the tinybench factory constructor.
 
-- `index.BrowserConfigOptions` -> `vitest/node#BrowserConfigOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.BenchFunction` -> `vitest#BenchFn`: Use BenchFn for the callback passed to the Vitest 5 test-context bench fixture.
 
-- `index.BrowserScript` -> `vitest/node#BrowserScript`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.BenchTask` -> `vitest#BenchRegistration`: Migrate to a fixture registration and await its run() method; review its fields instead of treating it as a tinybench task.
 
-- `index.BuiltinEnvironment` -> `vitest/node#BuiltinEnvironment`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.BenchTaskResult` -> `vitest#BenchResult`: Use the result returned by awaiting the Vitest 5 fixture registration's run() method.
 
-- `index.CSSModuleScopeStrategy` -> `vitest/node#CSSModuleScopeStrategy`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.Benchmark` -> `vitest#TestBenchmark`: Use TestBenchmark for recorded benchmark data on a test; benchmarks are no longer standalone test tasks.
+
+- `index.BenchmarkAPI` -> `vitest#Bench`: Use the test-context bench fixture. Move skip, only, and todo to the enclosing test.
+
+- `index.BenchmarkResult` -> `vitest#BenchResult`: Use the result returned by awaiting the Vitest 5 fixture registration's run() method; review its changed fields.
+
+- `index.BenchmarkUserOptions` -> `vitest/node#BenchmarkUserOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
+
+- `index.BrowserConfigOptions` -> `vitest/node#BrowserConfigOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
+
+- `index.BrowserScript` -> `vitest/node#BrowserScript`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
+
+- `index.BuiltinEnvironment` -> `vitest/node#BuiltinEnvironment`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
+
+- `index.CSSModuleScopeStrategy` -> `vitest/node#CSSModuleScopeStrategy`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
 - `index.CollectLineNumbers` -> `vitest/node#TypeCheckCollectLineNumbers`: Vitest 3 deprecated the root alias in favor of this renamed vitest/node type.
 
@@ -8274,97 +8468,101 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `index.Context` -> `vitest/node#TypeCheckContext`: Vitest 3 deprecated the root alias in favor of this renamed vitest/node type.
 
-- `index.CoverageIstanbulOptions` -> `vitest/node#CoverageIstanbulOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.CoverageIstanbulOptions` -> `vitest/node#CoverageIstanbulOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.CoverageOptions` -> `vitest/node#CoverageOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.CoverageOptions` -> `vitest/node#CoverageOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.CoverageProvider` -> `vitest/node#CoverageProvider`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.CoverageProvider` -> `vitest/node#CoverageProvider`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.CoverageProviderModule` -> `vitest/node#CoverageProviderModule`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.CoverageProviderModule` -> `vitest/node#CoverageProviderModule`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.CoverageReporter` -> `vitest/node#CoverageReporter`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.CoverageReporter` -> `vitest/node#CoverageReporter`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.CoverageV8Options` -> `vitest/node#CoverageV8Options`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.CoverageV8Options` -> `vitest/node#CoverageV8Options`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
 - `index.Custom` -> `vitest#RunnerTestCase`: Vitest 4 removed the deprecated unprefixed runner alias. Import the explicit Runner\* type from vitest.
 
-- `index.CustomProviderOptions` -> `vitest/node#CustomProviderOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.CustomProviderOptions` -> `vitest/node#CustomProviderOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.DepsOptimizationOptions` -> `vitest/node#DepsOptimizationOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.DepsOptimizationOptions` -> `vitest/node#DepsOptimizationOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
 - `index.DoneCallback` -> `none`: Vitest does not support callback-style tests. Return a Promise or, in @effect/vitest tests, return an Effect.
 
-- `index.Environment` -> `vitest/environments#Environment`: This was a deprecated root re-export. Import it from vitest/environments; Vitest 4 custom environments use Vite environments.
+- `index.Environment` -> `vitest/runtime#Environment`: This was a deprecated root re-export. Import it from vitest/runtime; Vitest 5 exposes custom environments through vitest/runtime.
 
-- `index.EnvironmentOptions` -> `vitest/node#EnvironmentOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.EnvironmentOptions` -> `vitest/node#EnvironmentOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.EnvironmentReturn` -> `vitest/environments#EnvironmentReturn`: This was a deprecated root re-export. Import it from vitest/environments; Vitest 4 custom environments use Vite environments.
+- `index.EnvironmentReturn` -> `vitest/runtime#EnvironmentReturn`: This was a deprecated root re-export. Import it from vitest/runtime; Vitest 5 exposes custom environments through vitest/runtime.
 
 - `index.ErrorWithDiff` -> `vitest#TestError`: Vitest 3 deprecated ErrorWithDiff in favor of TestError; review the tightened actual, expected, and cause fields.
 
-- `index.ExtendedContext` -> `vitest#TestContext`: The separate context alias was removed. Vitest 4 uses TestContext, which includes the current task and lifecycle methods.
+- `index.ExpectPollOptions` -> `NonNullable<Parameters<typeof import("vitest").expect.poll>[1]>`: Vitest 5 removes the named options export; derive the options from the public expect.poll function.
+
+- `index.ExtendedContext` -> `vitest#TestContext`: The separate context alias was removed. Vitest 5 uses TestContext, which includes the current task and lifecycle methods.
 
 - `index.File` -> `vitest#RunnerTestFile`: Vitest 4 removed the deprecated unprefixed runner alias. Import the explicit Runner\* type from vitest.
 
-- `index.HappyDOMOptions` -> `NonNullable<import("vitest/node").EnvironmentOptions["happyDOM"]>`: Vitest 4 keeps this shape only as a property of EnvironmentOptions; derive it from the public vitest/node type.
+- `index.HappyDOMOptions` -> `NonNullable<import("vitest/node").EnvironmentOptions["happyDOM"]>`: Vitest 5 keeps this shape only as a property of EnvironmentOptions; derive it from the public vitest/node type.
 
-- `index.HookCleanupCallback` -> `none`: No named Vitest 4 export replaces this alias. Let the hook return type infer, or type the cleanup function locally.
+- `index.HookCleanupCallback` -> `none`: No named Vitest 5 export replaces this alias. Let the hook return type infer, or type the cleanup function locally.
 
-- `index.HookListener` -> `none`: Use the matching @vitest/runner hook-specific type such as BeforeAllListener, AfterAllListener, BeforeEachListener, or AfterEachListener for custom runner code.
+- `index.HookListener` -> `none`: Infer the callback from the public hook function, or derive it with Parameters\<typeof import("vitest").beforeAll\>[0] and the corresponding hook name.
 
-- `index.InlineConfig` -> `vitest/node#InlineConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.InlineConfig` -> `vitest/node#InlineConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.JSDOMOptions` -> `NonNullable<import("vitest/node").EnvironmentOptions["jsdom"]>`: Vitest 4 keeps this shape only as a property of EnvironmentOptions; derive it from the public vitest/node type.
+- `index.JSDOMOptions` -> `NonNullable<import("vitest/node").EnvironmentOptions["jsdom"]>`: Vitest 5 keeps this shape only as a property of EnvironmentOptions; derive it from the public vitest/node type.
+
+- `index.Matchers` -> `vitest#Matchers`: Augment vitest.Matchers\<R, T\> for custom matchers. R is the matcher return type and T is the received value; @vitest/expect no longer shares Vitest's assertion state.
 
 - `index.Mock` -> `vitest#Mock`: This was a Vitest re-export, not Effect API. Import it directly from vitest; @effect/vitest/index is not a valid v4 route.
 
-- `index.ModuleCache` -> `none`: Vitest 3 marked this unused internal cache shape deprecated; Vitest 4 has no public replacement.
+- `index.ModuleCache` -> `none`: Vitest 3 marked this unused internal cache shape deprecated; Vitest 5 has no public replacement.
 
 - `index.MutableArray` -> `{ -readonly [K in keyof T]: T[K] }`: Vitest 3 marked this root alias as an internal helper. Define the small TypeScript shape locally instead of depending on transitive internals.
 
 - `index.Nullable` -> `T | null | undefined`: Vitest 3 marked this root alias as an internal helper. Define the small TypeScript shape locally instead of depending on transitive internals.
 
-- `index.Pool` -> `vitest/node#Pool`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.Pool` -> `vitest/node#Pool`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.PoolOptions` -> `vitest/config#TestUserConfig`: The v3 built-in poolOptions object was removed. Move its fields to Vitest 4 top-level config such as maxWorkers and vmMemoryLimit; vitest/node PoolOptions is a different custom-pool API.
+- `index.PoolOptions` -> `vitest/config#TestUserConfig`: The v3 built-in poolOptions object was removed. Move its fields to Vitest 5 top-level config such as maxWorkers and vmMemoryLimit; vitest/node PoolOptions is a different custom-pool API.
 
-- `index.ProjectConfig` -> `vitest/node#ProjectConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.ProjectConfig` -> `vitest/node#ProjectConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
 - `index.RawErrsMap` -> `vitest/node#TypeCheckRawErrorsMap`: Vitest 3 deprecated the root alias in favor of this renamed vitest/node type.
 
-- `index.ReportContext` -> `vitest/node#ReportContext`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.ReportContext` -> `vitest/node#ReportContext`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.Reporter` -> `vitest/reporters#Reporter`: Import Reporter from the public plural vitest/reporters entrypoint; its lifecycle methods changed in Vitest 4.
+- `index.Reporter` -> `vitest/node#Reporter`: Import Reporter from vitest/node; the deprecated vitest/reporters entrypoint was removed in Vitest 5.
 
 - `index.ResolveIdFunction` -> `none`: This deprecated vite-node callback was removed. Use Vite environment or module-runner APIs.
 
-- `index.ResolvedConfig` -> `vitest/node#ResolvedConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.ResolvedConfig` -> `vitest/node#ResolvedConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.ResolvedCoverageOptions` -> `vitest/node#ResolvedCoverageOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.ResolvedCoverageOptions` -> `vitest/node#ResolvedCoverageOptions`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.ResolvedTestEnvironment` -> `none`: Vitest 3 marked this type unsupported. Use Environment from vitest/environments for custom environments.
+- `index.ResolvedTestEnvironment` -> `none`: Vitest 3 marked this type unsupported. Use Environment from vitest/runtime for custom environments.
 
 - `index.RootAndTarget` -> `vitest/node#TypeCheckRootAndTarget`: Vitest 3 deprecated the root alias in favor of this renamed vitest/node type.
 
 - `index.RunnerCustomCase` -> `vitest#RunnerTestCase`: Vitest 4 removed the deprecated unprefixed runner alias. Import the explicit Runner\* type from vitest.
 
-- `index.RuntimeContext` -> `@vitest/runner#RuntimeContext`: Custom-runner code can add an explicit @vitest/runner dependency; ordinary tests should avoid this internal state type.
+- `index.RuntimeContext` -> `none`: Vitest 5 deprecates @vitest/runner and does not expose this internal state type. Extend TestRunner from vitest and use its public methods instead.
 
-- `index.SequenceHooks` -> `vitest/node#SequenceHooks`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.SequenceHooks` -> `vitest/node#SequenceHooks`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.SequenceSetupFiles` -> `vitest/node#SequenceSetupFiles`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.SequenceSetupFiles` -> `vitest/node#SequenceSetupFiles`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
 - `index.SerializableSpec` -> `vitest#SerializedTestSpecification`: Use the non-deprecated Vitest name; SerializableSpec was only an alias.
 
 - `index.Suite` -> `vitest#RunnerTestSuite`: Vitest 4 removed the deprecated unprefixed runner alias. Import the explicit Runner\* type from vitest.
 
-- `index.SuiteHooks` -> `@vitest/runner#SuiteHooks`: Custom-runner code can add an explicit @vitest/runner dependency; ordinary tests should use public hook functions.
+- `index.SuiteHooks` -> `ReturnType<typeof import("vitest").TestRunner.getSuiteHooks>`: Derive the hook collection from Vitest 5's public TestRunner API; ordinary tests should use public hook functions.
 
 - `index.Task` -> `vitest#RunnerTask`: Vitest 4 removed the deprecated unprefixed runner alias. Import the explicit Runner\* type from vitest.
 
 - `index.TaskBase` -> `vitest#RunnerTaskBase`: Vitest 4 removed the deprecated unprefixed runner alias. Import the explicit Runner\* type from vitest.
 
-- `index.TaskContext` -> `vitest#TestContext`: The separate context alias was removed. Vitest 4 uses TestContext, which includes the current task and lifecycle methods.
+- `index.TaskContext` -> `vitest#TestContext`: The separate context alias was removed. Vitest 5 uses TestContext, which includes the current task and lifecycle methods.
 
 - `index.TaskResult` -> `vitest#RunnerTaskResult`: Vitest 4 removed the deprecated unprefixed runner alias. Import the explicit Runner\* type from vitest.
 
@@ -8376,31 +8574,39 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `index.TscErrorInfo` -> `vitest/node#TypeCheckErrorInfo`: Vitest 3 deprecated the root alias in favor of this renamed vitest/node type.
 
-- `index.TypecheckConfig` -> `vitest/node#TypecheckConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.TypecheckConfig` -> `vitest/node#TypecheckConfig`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.UserConfig` -> `vitest/config#TestUserConfig`: Vitest 4 exposes its config as TestUserConfig; ViteUserConfig is the separate Vite configuration type.
+- `index.UserConfig` -> `vitest/config#TestUserConfig`: Vitest 5 exposes its config as TestUserConfig; ViteUserConfig is the separate Vite configuration type.
 
 - `index.UserWorkspaceConfig` -> `vitest/config#UserWorkspaceConfig`: Import the type from vitest/config and migrate Vitest workspace configuration to projects.
 
-- `index.VitestEnvironment` -> `vitest/node#VitestEnvironment`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.VitestEnvironment` -> `vitest/node#VitestEnvironment`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.VitestRunMode` -> `vitest/node#VitestRunMode`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.VitestRunMode` -> `vitest/node#VitestRunMode`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
-- `index.VmEnvironmentReturn` -> `vitest/environments#VmEnvironmentReturn`: This was a deprecated root re-export. Import it from vitest/environments; Vitest 4 custom environments use Vite environments.
+- `index.VmEnvironmentReturn` -> `vitest/runtime#VmEnvironmentReturn`: This was a deprecated root re-export. Import it from vitest/runtime; Vitest 5 exposes custom environments through vitest/runtime.
 
-- `index.WorkerContext` -> `vitest/node#WorkerContext`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 4 shape.
+- `index.WorkerContext` -> `vitest/node#WorkerContext`: This was a deprecated Vitest 3 root re-export. Import the type directly from vitest/node and review its Vitest 5 shape.
 
 - `index.WorkerRPC` -> `none`: The concrete worker RPC composition is internal. Use public Vitest RuntimeRPC, RunnerRPC, ContextRPC, or WorkerRequest types only when their narrower contract fits.
 
+- `index.bench` -> `vitest#test`: Vitest 5 removes the top-level bench export. Destructure bench from a regular test's context and await bench(name, fn).run(); use skip, only, or todo on the enclosing test.
+
 - `index.chai.Should` -> `vitest#chai.Should`: This was a Vitest re-export, not Effect API. Import it directly from vitest; @effect/vitest/index is not a valid v4 route.
 
+- `index.describe` -> `vitest#describe`: Vitest 5 removes describe.sequential and sequential options. Use describe(name, { concurrent: false }, body) for suites that depend on ordering.
+
 - `index.expect` -> `vitest#expect`: This was a Vitest re-export, not Effect API. Import it directly from vitest; @effect/vitest/index is not a valid v4 route.
+
+- `index.it` -> `@effect/vitest#it`: Effect helpers retain their calling convention. Vitest 5 removes it.sequential; pass { concurrent: false } to the native test or as the Effect helper's third argument.
 
 - `index.scoped` -> `@effect/vitest#effect`: V4 effect tests are scoped and provide the test environment. Replace scoped(...) with effect(...), and it.scoped(...) with it.effect(...).
 
 - `index.scopedLive` -> `@effect/vitest#live`: V4 live tests are scoped automatically. Replace scopedLive(...) with live(...), and it.scopedLive(...) with it.live(...).
 
 - `index.should` -> `vitest#should`: This was a Vitest re-export, not Effect API. Import it directly from vitest; @effect/vitest/index is not a valid v4 route.
+
+- `index.test` -> `vitest#test`: Vitest 5 removes test.sequential and sequential options. Pass { concurrent: false } to opt out of inherited concurrency.
 
 ### `@effect/vitest/utils`
 
@@ -8446,7 +8652,7 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `DurableDeferred.failCause` -> `effect/unstable/workflow/DurableDeferred#failCause`: Moved into core Effect and now requires the error schema encoding services.
 
-- `DurableDeferred.into` -> `effect/unstable/workflow/DurableDeferred#into`: Moved into core Effect with the same exit recording and suspension propagation behavior.
+- `DurableDeferred.into` -> `effect/unstable/workflow/DurableDeferred#into`: Moved into core Effect with the same exit recording and suspension propagation behavior. Provide both decoding and encoding services for the success and error schemas; recording the exit requires encoding services.
 
 - `DurableDeferred.make` -> `effect/unstable/workflow/DurableDeferred#make`: Moved into core Effect with the same name and optional schemas, expressed through v4 Schema.Constraint.
 
@@ -8467,6 +8673,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 - `Workflow.AnyTaggedRequestSchema` -> `none`: The TaggedRequest adapter constraint was removed. Define the workflow explicitly with Workflow.make and the request payload, success, error, and PrimaryKey schemas.
 
 - `Workflow.CaptureDefects` -> `effect/unstable/workflow/Workflow#CaptureDefects`: Moved into core Effect and changed from a Context.Tag subclass to a Context.Reference value with the same true default.
+
+- `Workflow.Complete`: TODO: needs guidance
 
 - `Workflow.Execution` -> `effect/unstable/workflow/Workflow#Execution`: Moved into core Effect; its workflow discriminator changed from name to \_tag.
 
@@ -8502,6 +8710,8 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 - `WorkflowProxy.ConvertHttpApi` -> `effect/unstable/workflow/WorkflowProxy#ConvertHttpApi`: Moved into core Effect and updated to v4 HttpApiEndpoint types and the consolidated HttpApi architecture.
 
+- `WorkflowProxy.ConvertRpcs` -> `effect/unstable/workflow/WorkflowProxy#ConvertRpcs`: Moved into core Effect; generated execute, discard, and resume RPCs are now keyed from workflow \_tag.
+
 ### `@effect/workflow/WorkflowProxyServer`
 
 - `WorkflowProxyServer.layerHttpApi` -> `effect/unstable/workflow/WorkflowProxyServer#layerHttpApi`: Moved into core Effect. Use v4 HttpApi group identifiers and Workflow.RequirementsHandler schema services.
@@ -8510,34 +8720,34 @@ effect/unstable/rpc/Utils (barrel: effect/unstable/rpc)
 
 ### `effect/Arbitrary`
 
-- `Arbitrary.ArbitraryAnnotation` -> `Schema.Annotations.ToArbitrary.Declaration`: Arbitrary derivation annotations now live in Schema.Annotations and use the toArbitrary key.
+- `Arbitrary.ArbitraryAnnotation` -> `Schema.Annotations.ToArbitrary.Declaration`: Arbitrary derivation annotations now live in Schema.Annotations. Attach a toCodecArbitrary declaration callback that returns a Schema Link.
 
-- `Arbitrary.ArbitraryGenerationContext` -> `Schema.Annotations.ToArbitrary.Context`: Use the v4 arbitrary-derivation context type from Schema.Annotations.
+- `Arbitrary.ArbitraryGenerationContext` -> `Schema.Annotations.ToArbitrary.DeclarationInput`: Native arbitrary callbacks receive DeclarationInput with decoded type-parameter schemas and normalized constraints.
 
-- `Arbitrary.LazyArbitrary` -> `Schema.Arbitrary`: The arbitrary factory type moved onto Schema.
+- `Arbitrary.LazyArbitrary` -> `effect/unstable/arbitrary/Arbitrary#Arbitrary`: The generated-value description is now the native Arbitrary interface from effect/unstable/arbitrary.
 
 #### `Arbitrary.make`
 
-**Replacement:** `Schema.toArbitrary`
+**Replacement:** `effect/unstable/arbitrary/Arbitrary#schema`
 
-Arbitrary derivation is now exposed directly by Schema.
+Derive a native Arbitrary from a Schema. Effect no longer bridges to fast-check.
 
 **Example**
 
 ```ts
-Schema.toArbitrary(schema)(FastCheck)
+Arbitrary.schema(schema)
 ```
 
 #### `Arbitrary.makeLazy`
 
-**Replacement:** `Schema.toArbitrary`
+**Replacement:** `effect/unstable/arbitrary/Arbitrary#schema`
 
-Lazy arbitrary derivation is now exposed directly by Schema.
+Lazy and eager Schema derivation are the same native Arbitrary.schema constructor.
 
 **Example**
 
 ```ts
-Schema.toArbitrary(schema)
+Arbitrary.schema(schema)
 ```
 
 ### `effect/Array`
@@ -8946,9 +9156,9 @@ Schema.toArbitrary(schema)
 
 - `Channel.repeated` -> `Channel.forever`: Use forever for infinite repetition. Channel.repeat takes a Schedule and may terminate, so it is not equivalent.
 
-- `Channel.run` -> `Channel.runDone`: Renamed to runDone for an inputless, outputless channel. Use runDrain if emitted elements should be discarded.
+- `Channel.run` -> `Channel.runDrain`: Use runDrain to consume all emitted elements and return the channel's done value.
 
-- `Channel.runScoped` -> `Channel.toPull`: No direct scoped runner remains. Use toPull in the caller scope and recover Cause.Done; use runDone or runDrain when an internally managed scope is acceptable.
+- `Channel.runScoped` -> `Channel.toPull`: No direct scoped runner remains. Use toPull in the caller scope and recover Cause.Done; use runDrain when an internally managed scope is acceptable.
 
 - `Channel.scopedWith` -> `Channel.unwrap`: Use Channel.unwrap(Effect.map(Effect.scope, (scope) =\> Channel.fromEffect(f(scope)))) so the effect uses the active channel scope.
 
@@ -9032,17 +9242,17 @@ Schema.toArbitrary(schema)
 
 - `Config.all` -> `Config.all`: Combine an iterable or record of Config values. A wholly absent product can use Config.withDefault or Config.option, while a partially supplied product fails.
 
-- `Config.array` -> `Config.schema(Config.Array(valueSchema), path)`: Array parsing is schema-based in v4; rebuild the element Config as a Schema and pass the optional path to Config.schema.
+- `Config.array` -> `Config.Array(valueSchema, path)`: Array parsing is schema-based in v4; rebuild the element Config as a Schema and pass it with the optional path to Config.Array.
 
-- `Config.boolean` -> `Config.boolean`: Unchanged.
+- `Config.boolean` -> `Config.Boolean`: Direct constructor rename.
 
 - `Config.branded` -> `Config.schema(schema.pipe(Schema.brand(brand)), path)`: Brand validation moved to Schema; define the branded schema and construct the Config with Config.schema.
 
 - `Config.chunk` -> `Config.schema(Schema.Chunk(valueSchema), path)`: Collection parsing is schema-based in v4; use Schema.Chunk when a Chunk result is still required.
 
-- `Config.date` -> `Config.date`: Unchanged.
+- `Config.date` -> `Config.Date`: Direct constructor rename.
 
-- `Config.duration` -> `Config.duration`: Unchanged.
+- `Config.duration` -> `Config.Duration`: Direct constructor rename.
 
 - `Config.fail` -> `Config.fail`: The v4 constructor takes a ConfigProvider.SourceError or Schema.SchemaError instead of a message; wrap the failure in the appropriate cause.
 
@@ -9050,31 +9260,33 @@ Schema.toArbitrary(schema)
 
 - `Config.hashSet` -> `Config.schema(Schema.HashSet(valueSchema), path)`: HashSet parsing is schema-based in v4; replace the child Config with its value Schema.
 
-- `Config.integer` -> `Config.int`: Renamed to the shorter v4 integer constructor.
+- `Config.integer` -> `Config.Int`: Renamed to the shorter v4 integer constructor using the PascalCase constructor convention.
 
-- `Config.literal` -> `Config.literals(literals, path)`: The v3 curried variadic constructor became Config.literals with an array and inline path; use Config.literal for one value.
+- `Config.literal` -> `Config.Literals(literals, path)`: The v3 curried variadic constructor became Config.Literals with an array and inline path; use Config.Literal for one value.
 
-- `Config.logLevel` -> `Config.logLevel`: Unchanged.
+- `Config.logLevel` -> `Config.LogLevel`: Direct constructor rename.
 
-- `Config.mapAttempt` -> `Config.mapOrFail`: Catch exceptions explicitly and return an Effect failure containing Config.ConfigError; mapOrFail is Effect-based in v4.
+- `Config.mapAttempt` -> `Config.mapEffect`: Catch exceptions explicitly and return an Effect failure containing Config.ConfigError; mapEffect is Effect-based in v4.
 
-- `Config.nonEmptyString` -> `Config.nonEmptyString`: Unchanged.
+- `Config.mapOrFail` -> `Config.mapEffect`: Renamed to match the effectful mapping convention used throughout the library.
 
-- `Config.number` -> `Config.number`: Unchanged; use Config.finite when NaN and infinities must be rejected.
+- `Config.nonEmptyString` -> `Config.NonEmptyString`: Direct constructor rename.
+
+- `Config.number` -> `Config.Number`: Direct constructor rename; use Config.Finite when NaN and infinities must be rejected.
 
 - `Config.orElseIf` -> `Config.orElse`: The fallback now receives Config.ConfigError; test it in the callback and re-fail with Config.fail(error.cause) when the predicate is false.
 
-- `Config.port` -> `Config.port`: Unchanged.
+- `Config.port` -> `Config.Port`: Direct constructor rename.
 
 - `Config.primitive` -> `Config.schema(customSchema, path)`: Custom primitive parsing moved to Schema codecs; express decoding and diagnostics in a Schema, then pass it to Config.schema. Its canonical StringTree encoding must expose a concrete shape; opaque encodings such as Schema.Any or Schema.Unknown are not supported.
 
-- `Config.redacted` -> `Config.redacted`: The string/path overload remains; replace the v3 Config argument overload with Config.map(config, Redacted.make).
+- `Config.redacted` -> `Config.Redacted`: The string/path overload remains; replace the v3 Config argument overload with Config.map(config, Redacted.make).
 
-- `Config.repeat` -> `Config.schema(Config.Array(valueSchema), path)`: Repeated values are represented by an array Schema in v4; Config.Array also accepts flat separated input.
+- `Config.repeat` -> `Config.Array(valueSchema, path)`: Repeated values use the Config.Array constructor, which accepts structural arrays and flat separated input.
 
-- `Config.secret` -> `Config.redacted`: Secret was removed in favor of Redacted; this constructor already returns Redacted\<string\>.
+- `Config.secret` -> `Config.Redacted`: Secret was removed in favor of Redacted; this constructor returns Redacted\<string\>.
 
-- `Config.string` -> `Config.string`: Unchanged.
+- `Config.string` -> `Config.String`: Direct constructor rename.
 
 - `Config.succeed` -> `Config.succeed`: Unchanged.
 
@@ -9082,7 +9294,7 @@ Schema.toArbitrary(schema)
 
 - `Config.sync` -> `Config.succeed(undefined).pipe(Config.map(() => thunk()))`: The dedicated lazy constant constructor was removed; mapping a constant Config preserves evaluation at parse time.
 
-- `Config.url` -> `Config.url`: Unchanged.
+- `Config.url` -> `Config.URL`: Direct constructor rename.
 
 - `Config.validate` -> `Config.schema(schema.check(check), path)`: Validation moved to Schema checks; attach the predicate and message to the Schema used by Config.schema.
 
@@ -9144,7 +9356,7 @@ Schema.toArbitrary(schema)
 
 - `ConfigProvider.ConfigProvider.Flat` -> `ConfigProvider.ConfigProvider`: Flat providers were removed; implement the unified path-based provider with ConfigProvider.make.
 
-- `ConfigProvider.ConfigProvider.FromEnvConfig` -> `Parameters<typeof ConfigProvider.fromEnv>[0]`: Options are inline in v4 and contain env plus preserveEmptyStrings; custom path and sequence delimiters moved to provider path transforms and Config.Array/Config.Record schemas.
+- `ConfigProvider.ConfigProvider.FromEnvConfig` -> `Parameters<typeof ConfigProvider.fromEnv>[0]`: Options are inline in v4 and contain env plus preserveEmptyStrings; custom path delimiters moved to provider path transforms, while separated sequences and records use Config.Array and Config.Record.
 
 - `ConfigProvider.ConfigProvider.FromMapConfig` -> `none`: fromMap and its delimiter options were removed; expand delimited keys into a nested value and use ConfigProvider.fromUnknown.
 
@@ -9846,7 +10058,7 @@ Schema.toArbitrary(schema)
 
 - `Effect.transposeMapOption` -> `Option.match`: Return `Effect.succeedNone` for None and map the Effect result to Some. Adapt arguments and imports to the v4 API.
 
-- `Effect.try` -> `Effect.try`: Still exported in v4; update call sites for the revised signature, options, and channel inference.
+- `Effect.try` -> `Effect.try`: Use the callback overload for Cause.UnknownError, or the object overload with try and catch to map failures to a custom error. The callback-only overload does not accept a custom error type parameter.
 
 - `Effect.tryMap` -> `Effect.flatMap + Effect.try`: FlatMap the source value into the v4 synchronous try constructor. Adapt arguments and imports to the v4 API.
 
@@ -9936,7 +10148,7 @@ Schema.toArbitrary(schema)
 
 - `Effectable.ChannelTypeId` -> `Channel.TypeId`: The public channel brand moved to its owning module; v4 uses a string TypeId rather than the v3 Symbol.
 
-- `Effectable.Class` -> `Effectable.Class`: Still available; replace commit() with an override property or getter returning the Effect.
+- `Effectable.Class` -> `Effectable.Class`: Still available; replace commit() with an asEffect() method returning the Effect. The intermediate v4 override property/getter is no longer supported.
 
 - `Effectable.CommitPrimitive` -> `new<A, E = never, R = never>() => Effect.Effect<A, E, R>`: The named constructor interface was removed; inline the constructor type when needed.
 
@@ -9950,7 +10162,7 @@ Schema.toArbitrary(schema)
 
 - `Effectable.StreamTypeId` -> `Stream.TypeId`: The public stream brand moved to its owning module; v4 uses a string TypeId rather than the v3 Symbol.
 
-- `Effectable.StructuralClass` -> `Effectable.Class`: Use Class and migrate commit() to override; v4 equality is structural by default.
+- `Effectable.StructuralClass` -> `Effectable.Class`: Use Class and migrate commit() to asEffect(); v4 equality is structural by default.
 
 - `Effectable.StructuralCommitPrototype` -> `Effectable.Prototype`: Use Prototype with evaluate; a separate structural prototype is unnecessary because v4 equality is structural by default.
 
@@ -9985,6 +10197,8 @@ Schema.toArbitrary(schema)
 - `Either.bindTo` -> `Result.bindTo`: The do-notation combinator moved to Result.
 
 - `Either.filterOrLeft` -> `Result.filterOrFail`: Left is now Failure, so the predicate combinator is filterOrFail.
+
+- `Either.flatMap`: TODO: needs guidance
 
 - `Either.flip` -> `Result.flip`: The channel-swapping combinator moved to Result.
 
@@ -10130,6 +10344,8 @@ Schema.toArbitrary(schema)
 
 - `Exit.exists` -> `Exit.isSuccess`: No direct v4 combinator; use Exit.isSuccess(self) && predicate(self.value). If callers rely on the refinement overload, retain an explicitly typed wrapper returning self is Exit.Exit\<B\>.
 
+- `Exit.flatMap`: TODO: needs guidance
+
 - `Exit.flatMapEffect` -> `Effect.matchCauseEffectEager`: Use Effect.matchCauseEffectEager(self, { onFailure: cause =\> Effect.succeed(Exit.failCause(cause)), onSuccess: f }). The explicit failure branch is required because v3 preserved an input Failure as a successful outer Effect; plain Effect.flatMap would instead fail the outer Effect.
 
 - `Exit.flatten` -> `Exit.match`: No direct v4 Exit flatten; use Exit.match(self, { onFailure: Exit.failCause, onSuccess: identity }) to return the inner Exit on success and preserve an outer failure as Exit data.
@@ -10162,15 +10378,219 @@ Schema.toArbitrary(schema)
 
 ### `effect/FastCheck`
 
-- `FastCheck.BigUintConstraints` -> `FastCheck.BigIntConstraints`: Import FastCheck from effect/testing. Unsigned bigint constraints were consolidated into BigIntConstraints with min: 0n.
+- `FastCheck.Arbitrary`: TODO: needs guidance
 
-- `FastCheck.UnicodeJsonSharedConstraints` -> `FastCheck.JsonSharedConstraints`: Import FastCheck from effect/testing. Unicode JSON generation was consolidated into JsonSharedConstraints.stringUnit.
+- `FastCheck.ArrayConstraints`: TODO: needs guidance
+
+- `FastCheck.AsyncCommand`: TODO: needs guidance
+
+- `FastCheck.AsyncPropertyHookFunction`: TODO: needs guidance
+
+- `FastCheck.BigIntArrayConstraints`: TODO: needs guidance
+
+- `FastCheck.BigIntConstraints`: TODO: needs guidance
+
+- `FastCheck.BigUintConstraints` -> `FastCheck.BigIntConstraints`: Depend on fast-check and import it directly. Unsigned bigint constraints were consolidated into BigIntConstraints with min: 0n.
+
+- `FastCheck.CloneValue`: TODO: needs guidance
+
+- `FastCheck.Command`: TODO: needs guidance
+
+- `FastCheck.CommandsContraints`: TODO: needs guidance
+
+- `FastCheck.ContextValue`: TODO: needs guidance
+
+- `FastCheck.DateConstraints`: TODO: needs guidance
+
+- `FastCheck.DepthContext`: TODO: needs guidance
+
+- `FastCheck.DepthIdentifier`: TODO: needs guidance
+
+- `FastCheck.DepthSize`: TODO: needs guidance
+
+- `FastCheck.DictionaryConstraints`: TODO: needs guidance
+
+- `FastCheck.DomainConstraints`: TODO: needs guidance
+
+- `FastCheck.DoubleConstraints`: TODO: needs guidance
+
+- `FastCheck.EmailAddressConstraints`: TODO: needs guidance
+
+- `FastCheck.ExecutionStatus`: TODO: needs guidance
+
+- `FastCheck.ExecutionTree`: TODO: needs guidance
+
+- `FastCheck.FalsyContraints`: TODO: needs guidance
+
+- `FastCheck.FalsyValue`: TODO: needs guidance
+
+- `FastCheck.Float32ArrayConstraints`: TODO: needs guidance
+
+- `FastCheck.Float64ArrayConstraints`: TODO: needs guidance
+
+- `FastCheck.FloatConstraints`: TODO: needs guidance
+
+- `FastCheck.GeneratorValue`: TODO: needs guidance
+
+- `FastCheck.GlobalAsyncPropertyHookFunction`: TODO: needs guidance
+
+- `FastCheck.GlobalParameters`: TODO: needs guidance
+
+- `FastCheck.GlobalPropertyHookFunction`: TODO: needs guidance
+
+- `FastCheck.IAsyncProperty`: TODO: needs guidance
+
+- `FastCheck.IAsyncPropertyWithHooks`: TODO: needs guidance
+
+- `FastCheck.ICommand`: TODO: needs guidance
+
+- `FastCheck.IProperty`: TODO: needs guidance
+
+- `FastCheck.IPropertyWithHooks`: TODO: needs guidance
+
+- `FastCheck.IRawProperty`: TODO: needs guidance
+
+- `FastCheck.IntArrayConstraints`: TODO: needs guidance
+
+- `FastCheck.IntegerConstraints`: TODO: needs guidance
+
+- `FastCheck.JsonSharedConstraints`: TODO: needs guidance
+
+- `FastCheck.LetrecLooselyTypedBuilder`: TODO: needs guidance
+
+- `FastCheck.LetrecLooselyTypedTie`: TODO: needs guidance
+
+- `FastCheck.LetrecTypedBuilder`: TODO: needs guidance
+
+- `FastCheck.LetrecTypedTie`: TODO: needs guidance
+
+- `FastCheck.LetrecValue`: TODO: needs guidance
+
+- `FastCheck.LoremConstraints`: TODO: needs guidance
+
+- `FastCheck.MaybeWeightedArbitrary`: TODO: needs guidance
+
+- `FastCheck.Memo`: TODO: needs guidance
+
+- `FastCheck.MixedCaseConstraints`: TODO: needs guidance
+
+- `FastCheck.ModelRunAsyncSetup`: TODO: needs guidance
+
+- `FastCheck.ModelRunSetup`: TODO: needs guidance
+
+- `FastCheck.NatConstraints`: TODO: needs guidance
+
+- `FastCheck.ObjectConstraints`: TODO: needs guidance
+
+- `FastCheck.OneOfConstraints`: TODO: needs guidance
+
+- `FastCheck.OneOfValue`: TODO: needs guidance
+
+- `FastCheck.OptionConstraints`: TODO: needs guidance
+
+- `FastCheck.Parameters`: TODO: needs guidance
+
+- `FastCheck.PreconditionFailure`: TODO: needs guidance
+
+- `FastCheck.PropertyHookFunction`: TODO: needs guidance
+
+- `FastCheck.Random`: TODO: needs guidance
+
+- `FastCheck.RandomType`: TODO: needs guidance
+
+- `FastCheck.RecordConstraints`: TODO: needs guidance
+
+- `FastCheck.RecordValue`: TODO: needs guidance
+
+- `FastCheck.RunDetails`: TODO: needs guidance
+
+- `FastCheck.RunDetailsCommon`: TODO: needs guidance
+
+- `FastCheck.RunDetailsFailureInterrupted`: TODO: needs guidance
+
+- `FastCheck.RunDetailsFailureProperty`: TODO: needs guidance
+
+- `FastCheck.RunDetailsFailureTooManySkips`: TODO: needs guidance
+
+- `FastCheck.RunDetailsSuccess`: TODO: needs guidance
+
+- `FastCheck.SchedulerAct`: TODO: needs guidance
+
+- `FastCheck.SchedulerConstraints`: TODO: needs guidance
+
+- `FastCheck.SchedulerReportItem`: TODO: needs guidance
+
+- `FastCheck.SchedulerSequenceItem`: TODO: needs guidance
+
+- `FastCheck.ShuffledSubarrayConstraints`: TODO: needs guidance
+
+- `FastCheck.Size`: TODO: needs guidance
+
+- `FastCheck.SizeForArbitrary`: TODO: needs guidance
+
+- `FastCheck.SparseArrayConstraints`: TODO: needs guidance
+
+- `FastCheck.StringConstraints`: TODO: needs guidance
+
+- `FastCheck.StringMatchingConstraints`: TODO: needs guidance
+
+- `FastCheck.StringSharedConstraints`: TODO: needs guidance
+
+- `FastCheck.SubarrayConstraints`: TODO: needs guidance
+
+- `FastCheck.UnicodeJsonSharedConstraints` -> `FastCheck.JsonSharedConstraints`: Depend on fast-check and import it directly. Unicode JSON generation was consolidated into JsonSharedConstraints.stringUnit.
+
+- `FastCheck.UniqueArrayConstraints`: TODO: needs guidance
+
+- `FastCheck.UniqueArrayConstraintsCustomCompare`: TODO: needs guidance
+
+- `FastCheck.UniqueArrayConstraintsCustomCompareSelect`: TODO: needs guidance
+
+- `FastCheck.UniqueArrayConstraintsRecommended`: TODO: needs guidance
+
+- `FastCheck.UniqueArraySharedConstraints`: TODO: needs guidance
+
+- `FastCheck.UuidConstraints`: TODO: needs guidance
+
+- `FastCheck.Value`: TODO: needs guidance
+
+- `FastCheck.VerbosityLevel`: TODO: needs guidance
+
+- `FastCheck.WebAuthorityConstraints`: TODO: needs guidance
+
+- `FastCheck.WebFragmentsConstraints`: TODO: needs guidance
+
+- `FastCheck.WebPathConstraints`: TODO: needs guidance
+
+- `FastCheck.WebQueryParametersConstraints`: TODO: needs guidance
+
+- `FastCheck.WebSegmentConstraints`: TODO: needs guidance
+
+- `FastCheck.WebUrlConstraints`: TODO: needs guidance
+
+- `FastCheck.WeightedArbitrary`: TODO: needs guidance
+
+- `FastCheck.WithAsyncToStringMethod`: TODO: needs guidance
+
+- `FastCheck.WithCloneMethod`: TODO: needs guidance
+
+- `FastCheck.WithToStringMethod`: TODO: needs guidance
+
+- `FastCheck.__commitHash`: TODO: needs guidance
+
+- `FastCheck.__type`: TODO: needs guidance
+
+- `FastCheck.__version`: TODO: needs guidance
+
+- `FastCheck.anything`: TODO: needs guidance
+
+- `FastCheck.array`: TODO: needs guidance
 
 #### `FastCheck.ascii`
 
 **Replacement:** `FastCheck.string`
 
-Import FastCheck from effect/testing. fast-check v4 replaced character arbitraries with string units.
+Depend on fast-check and import it directly. fast-check v4 replaced character arbitraries with string units.
 
 **Example**
 
@@ -10182,7 +10602,7 @@ FastCheck.string({ unit: "binary-ascii", minLength: 1, maxLength: 1 })
 
 **Replacement:** `FastCheck.string`
 
-Import FastCheck from effect/testing. Use the binary-ascii string unit.
+Depend on fast-check and import it directly. Use the binary-ascii string unit.
 
 **Example**
 
@@ -10190,11 +10610,23 @@ Import FastCheck from effect/testing. Use the binary-ascii string unit.
 FastCheck.string({ ...constraints, unit: "binary-ascii" })
 ```
 
+- `FastCheck.assert`: TODO: needs guidance
+
+- `FastCheck.asyncDefaultReportMessage`: TODO: needs guidance
+
+- `FastCheck.asyncModelRun`: TODO: needs guidance
+
+- `FastCheck.asyncProperty`: TODO: needs guidance
+
+- `FastCheck.asyncStringify`: TODO: needs guidance
+
+- `FastCheck.asyncToStringMethod`: TODO: needs guidance
+
 #### `FastCheck.base64`
 
 **Replacement:** `FastCheck.constantFrom`
 
-Import FastCheck from effect/testing. Generate one base64 alphabet character; base64String remains for complete encoded strings.
+Depend on fast-check and import it directly. Generate one base64 alphabet character; base64String remains for complete encoded strings.
 
 **Example**
 
@@ -10202,13 +10634,19 @@ Import FastCheck from effect/testing. Generate one base64 alphabet character; ba
 FastCheck.constantFrom(..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/")
 ```
 
-- `FastCheck.bigIntN` -> `FastCheck.bigInt`: Import FastCheck from effect/testing. Express the signed bit range with min and max constraints.
+- `FastCheck.base64String`: TODO: needs guidance
+
+- `FastCheck.bigInt`: TODO: needs guidance
+
+- `FastCheck.bigInt64Array`: TODO: needs guidance
+
+- `FastCheck.bigIntN` -> `FastCheck.bigInt`: Depend on fast-check and import it directly. Express the signed bit range with min and max constraints.
 
 #### `FastCheck.bigUint`
 
 **Replacement:** `FastCheck.bigInt`
 
-Import FastCheck from effect/testing. Use a minimum of 0n and the previous maximum.
+Depend on fast-check and import it directly. Use a minimum of 0n and the previous maximum.
 
 **Example**
 
@@ -10216,11 +10654,13 @@ Import FastCheck from effect/testing. Use a minimum of 0n and the previous maxim
 FastCheck.bigInt({ min: 0n, max })
 ```
 
+- `FastCheck.bigUint64Array`: TODO: needs guidance
+
 #### `FastCheck.bigUintN`
 
 **Replacement:** `FastCheck.bigInt`
 
-Import FastCheck from effect/testing. Express the unsigned bit range with min and max constraints.
+Depend on fast-check and import it directly. Express the unsigned bit range with min and max constraints.
 
 **Example**
 
@@ -10228,11 +10668,13 @@ Import FastCheck from effect/testing. Express the unsigned bit range with min an
 FastCheck.bigInt({ min: 0n, max: (1n << BigInt(n)) - 1n })
 ```
 
+- `FastCheck.boolean`: TODO: needs guidance
+
 #### `FastCheck.char`
 
 **Replacement:** `FastCheck.string`
 
-Import FastCheck from effect/testing. Use a one-unit printable ASCII string.
+Depend on fast-check and import it directly. Use a one-unit printable ASCII string.
 
 **Example**
 
@@ -10244,7 +10686,7 @@ FastCheck.string({ unit: "grapheme-ascii", minLength: 1, maxLength: 1 })
 
 **Replacement:** `FastCheck.nat`
 
-Import FastCheck from effect/testing. Map a 16-bit natural number through String.fromCharCode.
+Depend on fast-check and import it directly. Map a 16-bit natural number through String.fromCharCode.
 
 **Example**
 
@@ -10252,15 +10694,55 @@ Import FastCheck from effect/testing. Map a 16-bit natural number through String
 FastCheck.nat({ max: 0xffff }).map(String.fromCharCode)
 ```
 
-- `FastCheck.constant` -> `FastCheck.constant`: Import FastCheck from effect/testing. The API remains; v4 infers literal types by default.
+- `FastCheck.check` -> `FastCheck.check`: Depend on fast-check and import it directly. The runner remains, but RunDetails.error was replaced by errorInstance in fast-check v4.
 
-- `FastCheck.context` -> `FastCheck.context`: Import FastCheck from effect/testing. The API is otherwise unchanged.
+- `FastCheck.clone`: TODO: needs guidance
+
+- `FastCheck.cloneIfNeeded`: TODO: needs guidance
+
+- `FastCheck.cloneMethod`: TODO: needs guidance
+
+- `FastCheck.commands`: TODO: needs guidance
+
+- `FastCheck.compareBooleanFunc`: TODO: needs guidance
+
+- `FastCheck.compareFunc`: TODO: needs guidance
+
+- `FastCheck.configureGlobal`: TODO: needs guidance
+
+- `FastCheck.constant` -> `FastCheck.constant`: Depend on fast-check and import it directly. The API remains; v4 infers literal types by default.
+
+- `FastCheck.constantFrom`: TODO: needs guidance
+
+- `FastCheck.context` -> `FastCheck.context`: Depend on fast-check and import it directly. The API is otherwise unchanged.
+
+- `FastCheck.createDepthIdentifier`: TODO: needs guidance
+
+- `FastCheck.date`: TODO: needs guidance
+
+- `FastCheck.defaultReportMessage`: TODO: needs guidance
+
+- `FastCheck.dictionary`: TODO: needs guidance
+
+- `FastCheck.domain`: TODO: needs guidance
+
+- `FastCheck.double`: TODO: needs guidance
+
+- `FastCheck.emailAddress`: TODO: needs guidance
+
+- `FastCheck.falsy`: TODO: needs guidance
+
+- `FastCheck.float`: TODO: needs guidance
+
+- `FastCheck.float32Array`: TODO: needs guidance
+
+- `FastCheck.float64Array`: TODO: needs guidance
 
 #### `FastCheck.fullUnicode`
 
 **Replacement:** `FastCheck.string`
 
-Import FastCheck from effect/testing. Use a one-unit binary Unicode string.
+Depend on fast-check and import it directly. Use a one-unit binary Unicode string.
 
 **Example**
 
@@ -10272,7 +10754,7 @@ FastCheck.string({ unit: "binary", minLength: 1, maxLength: 1 })
 
 **Replacement:** `FastCheck.string`
 
-Import FastCheck from effect/testing. Use the binary string unit.
+Depend on fast-check and import it directly. Use the binary string unit.
 
 **Example**
 
@@ -10280,19 +10762,111 @@ Import FastCheck from effect/testing. Use the binary string unit.
 FastCheck.string({ ...constraints, unit: "binary" })
 ```
 
-- `FastCheck.hexa` -> `FastCheck.integer`: Import FastCheck from effect/testing. Map an integer from 0 through 15 to a hexadecimal character.
+- `FastCheck.func`: TODO: needs guidance
 
-- `FastCheck.hexaString` -> `FastCheck.string`: Import FastCheck from effect/testing. Pass a hexadecimal-character arbitrary as the string unit.
+- `FastCheck.gen`: TODO: needs guidance
 
-- `FastCheck.stream` -> `FastCheck.stream`: Import FastCheck from effect/testing. The API remains; update custom generator and Random implementations for fast-check v4 typings.
+- `FastCheck.getDepthContextFor`: TODO: needs guidance
 
-- `FastCheck.string16bits` -> `FastCheck.string`: Import FastCheck from effect/testing. Pass a char16bits-compatible arbitrary as the string unit.
+- `FastCheck.hasAsyncToStringMethod`: TODO: needs guidance
+
+- `FastCheck.hasCloneMethod`: TODO: needs guidance
+
+- `FastCheck.hasToStringMethod`: TODO: needs guidance
+
+- `FastCheck.hash`: TODO: needs guidance
+
+- `FastCheck.hexa` -> `FastCheck.integer`: Depend on fast-check and import it directly. Map an integer from 0 through 15 to a hexadecimal character.
+
+- `FastCheck.hexaString` -> `FastCheck.string`: Depend on fast-check and import it directly. Pass a hexadecimal-character arbitrary as the string unit.
+
+- `FastCheck.infiniteStream`: TODO: needs guidance
+
+- `FastCheck.int16Array`: TODO: needs guidance
+
+- `FastCheck.int32Array`: TODO: needs guidance
+
+- `FastCheck.int8Array`: TODO: needs guidance
+
+- `FastCheck.integer`: TODO: needs guidance
+
+- `FastCheck.ipV4`: TODO: needs guidance
+
+- `FastCheck.ipV4Extended`: TODO: needs guidance
+
+- `FastCheck.ipV6`: TODO: needs guidance
+
+- `FastCheck.json`: TODO: needs guidance
+
+- `FastCheck.jsonValue`: TODO: needs guidance
+
+- `FastCheck.letrec`: TODO: needs guidance
+
+- `FastCheck.limitShrink`: TODO: needs guidance
+
+- `FastCheck.lorem`: TODO: needs guidance
+
+- `FastCheck.mapToConstant`: TODO: needs guidance
+
+- `FastCheck.maxSafeInteger`: TODO: needs guidance
+
+- `FastCheck.maxSafeNat`: TODO: needs guidance
+
+- `FastCheck.memo`: TODO: needs guidance
+
+- `FastCheck.mixedCase`: TODO: needs guidance
+
+- `FastCheck.modelRun`: TODO: needs guidance
+
+- `FastCheck.nat`: TODO: needs guidance
+
+- `FastCheck.noBias`: TODO: needs guidance
+
+- `FastCheck.noShrink`: TODO: needs guidance
+
+- `FastCheck.object`: TODO: needs guidance
+
+- `FastCheck.oneof`: TODO: needs guidance
+
+- `FastCheck.option`: TODO: needs guidance
+
+- `FastCheck.pre`: TODO: needs guidance
+
+- `FastCheck.property`: TODO: needs guidance
+
+- `FastCheck.readConfigureGlobal`: TODO: needs guidance
+
+- `FastCheck.record`: TODO: needs guidance
+
+- `FastCheck.resetConfigureGlobal` -> `Undici.install`: TODO: needs guidance
+
+- `FastCheck.sample`: TODO: needs guidance
+
+- `FastCheck.scheduledModelRun`: TODO: needs guidance
+
+- `FastCheck.scheduler`: TODO: needs guidance
+
+- `FastCheck.schedulerFor`: TODO: needs guidance
+
+- `FastCheck.shuffledSubarray`: TODO: needs guidance
+
+- `FastCheck.sparseArray`: TODO: needs guidance
+
+- `FastCheck.statistics`: TODO: needs guidance
+
+- `FastCheck.stream` -> `FastCheck.stream`: Depend on fast-check and import it directly. The API remains; update custom generator and Random implementations for fast-check v4 typings.
+
+- `FastCheck.string`: TODO: needs guidance
+
+- `FastCheck.string16bits` -> `FastCheck.string`: Depend on fast-check and import it directly. Pass a char16bits-compatible arbitrary as the string unit.
+
+- `FastCheck.stringMatching`: TODO: needs guidance
 
 #### `FastCheck.stringOf`
 
 **Replacement:** `FastCheck.string`
 
-Import FastCheck from effect/testing. Pass the former character arbitrary as the unit constraint.
+Depend on fast-check and import it directly. Pass the former character arbitrary as the unit constraint.
 
 **Example**
 
@@ -10300,13 +10874,29 @@ Import FastCheck from effect/testing. Pass the former character arbitrary as the
 FastCheck.string({ ...constraints, unit: arbitrary })
 ```
 
-- `FastCheck.unicode` -> `FastCheck.integer`: Import FastCheck from effect/testing. Map BMP code points while excluding surrogate code points; prefer the binary string unit for full Unicode.
+- `FastCheck.subarray`: TODO: needs guidance
+
+- `FastCheck.toStringMethod`: TODO: needs guidance
+
+- `FastCheck.tuple`: TODO: needs guidance
+
+- `FastCheck.uint16Array`: TODO: needs guidance
+
+- `FastCheck.uint32Array`: TODO: needs guidance
+
+- `FastCheck.uint8Array`: TODO: needs guidance
+
+- `FastCheck.uint8ClampedArray`: TODO: needs guidance
+
+- `FastCheck.ulid`: TODO: needs guidance
+
+- `FastCheck.unicode` -> `FastCheck.integer`: Depend on fast-check and import it directly. Map BMP code points while excluding surrogate code points; prefer the binary string unit for full Unicode.
 
 #### `FastCheck.unicodeJson`
 
 **Replacement:** `FastCheck.json`
 
-Import FastCheck from effect/testing. Select binary or grapheme strings with stringUnit.
+Depend on fast-check and import it directly. Select binary or grapheme strings with stringUnit.
 
 **Example**
 
@@ -10318,7 +10908,7 @@ FastCheck.json({ stringUnit: "binary" })
 
 **Replacement:** `FastCheck.jsonValue`
 
-Import FastCheck from effect/testing. Select binary or grapheme strings with stringUnit.
+Depend on fast-check and import it directly. Select binary or grapheme strings with stringUnit.
 
 **Example**
 
@@ -10326,19 +10916,35 @@ Import FastCheck from effect/testing. Select binary or grapheme strings with str
 FastCheck.jsonValue({ stringUnit: "binary" })
 ```
 
-- `FastCheck.unicodeString` -> `FastCheck.string`: Import FastCheck from effect/testing. Pass a BMP-code-point arbitrary as the unit constraint; prefer unit: binary for full Unicode.
+- `FastCheck.unicodeString` -> `FastCheck.string`: Depend on fast-check and import it directly. Pass a BMP-code-point arbitrary as the unit constraint; prefer unit: binary for full Unicode.
+
+- `FastCheck.uniqueArray`: TODO: needs guidance
+
+- `FastCheck.uuid`: TODO: needs guidance
 
 #### `FastCheck.uuidV`
 
 **Replacement:** `FastCheck.uuid`
 
-Import FastCheck from effect/testing. Specify the UUID version through constraints.
+Depend on fast-check and import it directly. Specify the UUID version through constraints.
 
 **Example**
 
 ```ts
 FastCheck.uuid({ version: 4 })
 ```
+
+- `FastCheck.webAuthority`: TODO: needs guidance
+
+- `FastCheck.webFragments`: TODO: needs guidance
+
+- `FastCheck.webPath`: TODO: needs guidance
+
+- `FastCheck.webQueryParameters`: TODO: needs guidance
+
+- `FastCheck.webSegment`: TODO: needs guidance
+
+- `FastCheck.webUrl`: TODO: needs guidance
 
 ### `effect/Fiber`
 
@@ -10702,9 +11308,9 @@ FastCheck.uuid({ version: 4 })
 
 - `Graph.Graph` -> `Graph.Graph`: The immutable type remains, but storage is opaque; replace field access with Graph nodes, edges, count, lookup, neighbor, and acyclicity APIs.
 
-- `Graph.MutableGraph` -> `Graph.MutableGraph`: The mutable type remains but no longer extends Graph.Proto; obtain it through Graph.mutate or Graph.beginMutation and use public mutation/query functions.
+- `Graph.MutableGraph` -> `Graph.MutableGraph`: The mutable type remains but no longer shares a public base interface with immutable Graph; obtain it through Graph.mutate or Graph.beginMutation and use public mutation/query functions.
 
-- `Graph.Proto` -> `Graph.Proto`: The name remains as the opaque immutable graph protocol; it no longer exposes storage and is no longer the base of MutableGraph.
+- `Graph.Proto` -> `none`: The common graph protocol was removed. Use Graph.Graph or Graph.MutableGraph as appropriate and replace storage-field access with public graph query and mutation functions.
 
 - `Graph.SearchConfig` -> `Graph.SearchConfig`: The type remains; direction is now Graph.TraversalDirection and also accepts undirected, while radius limits traversal depth.
 
@@ -10849,7 +11455,7 @@ stream.pipe(
 
 **Replacement:** `Schema.toJsonSchemaDocument`
 
-Wrap a low-level AST with Schema.make, then generate a document; v4 generation targets draft 2020-12.
+Wrap a low-level AST with Schema.make, then generate a draft 2020-12 document. Generation defaults to onExcessProperty: 'ignore'; use 'error' for closed objects. JSON Schema validation is approximate and does not replace Effect decoding.
 
 **Example**
 
@@ -10861,7 +11467,7 @@ Schema.toJsonSchemaDocument(Schema.make(ast))
 
 **Replacement:** `Schema.toJsonSchemaDocument`
 
-Generate draft 2020-12, then call JsonSchema.toDocumentDraft07 when draft-07 output is required.
+Generate draft 2020-12, then call JsonSchema.toDocumentDraft07 when draft-07 output is required. Generation now defaults to onExcessProperty: 'ignore'; pass 'error' to retain closed-object output, and use the same option when decoding to reject excess properties. The earlier v4 additionalProperties generation option was removed. JSON Schema validation is approximate and does not replace Effect decoding.
 
 **Example**
 
@@ -11003,7 +11609,7 @@ JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
 
 - `Layer.setVersionMismatchErrorLogLevel` -> `none`: No version-mismatch log-level Reference or public replacement exists.
 
-- `Layer.tapErrorCause` -> `Layer.tapCause`: The cause observer was renamed.
+- `Layer.tapErrorCause` -> `Layer.tapCause`: The cause observer was renamed. Its callback must accept the source layer's full error cause; a callback narrowed to only part of the error union is rejected.
 
 - `Layer.toRuntime` -> `Layer.build(self), then Effect.runForkWith, Effect.runPromiseWith, or Effect.runSyncWith`: Runtime\<R\> was removed; build a Context, or use ManagedRuntime.make for a reusable managed runner.
 
@@ -11021,7 +11627,7 @@ JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
 
 - `LayerMap.LayerMap` -> `LayerMap.LayerMap`: The type remains; runtime(key) became contextEffect(key) and returns Context.
 
-- `LayerMap.Service` -> `LayerMap.Service`: Use layer instead of Default, layerNoDeps instead of DefaultWithoutDependencies, and contextEffect instead of runtime.
+- `LayerMap.Service` -> `LayerMap.Service`: Use layer instead of Default, layerNoDeps instead of DefaultWithoutDependencies, and contextEffect instead of runtime. Preloading does not remove acquisition errors from later lookups, which can reacquire expired or invalidated entries.
 
 - `LayerMap.Service.Context` -> `LayerMap.Service.Services<Options>`: The input-services extractor was renamed.
 
@@ -11058,6 +11664,8 @@ JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
 - `List.filter` -> `Array.filter`: List was removed; use Array.filter. It preserves ordering but returns arrays rather than persistent linked lists.
 
 - `List.filterMap` -> `Array.filterMap`: List was removed; use Array.filterMap and change the callback from Option to Result.
+
+- `List.flatMap`: TODO: needs guidance
 
 - `List.fromIterable` -> `Array.fromIterable`: List was removed; use Array.fromIterable. It preserves ordering but returns arrays rather than persistent linked lists.
 
@@ -11197,7 +11805,7 @@ JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
 
 - `Logger.pretty` -> `Logger.layer([Logger.consolePretty(), Logger.tracerLogger])`: Logger.layer replaces the active set; include tracerLogger to preserve v3 built-in layer behavior.
 
-- `Logger.prettyLogger` -> `Logger.consolePretty`: Direct constructor rename; call it with the same options.
+- `Logger.prettyLogger` -> `Logger.consolePretty`: Renamed to consolePretty. Remove the stderr option; provide Logger.LogToStderr with true to route TTY output to console.error. Colors, formatDate, and mode remain constructor options.
 
 - `Logger.prettyLoggerDefault` -> `Logger.consolePretty()`: The prebuilt singleton became a constructor call.
 
@@ -11225,7 +11833,7 @@ JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
 
 - `Logger.withMinimumLogLevel` -> `Effect.provideService(effect, References.MinimumLogLevel, level)`: Replace the FiberRef-local helper with reference provisioning.
 
-- `Logger.withSpanAnnotations` -> `custom Logger.make wrapper using options.fiber.currentSpan`: No transparent generic equivalent remains. Read span identity from options.fiber.currentSpan and add it to custom output as needed.
+- `Logger.withSpanAnnotations` -> `custom Logger.make wrapper using options.fiber.cache.span`: No transparent generic equivalent remains. Read span identity from options.fiber.cache.span and add it to custom output as needed.
 
 - `Logger.zip` -> `Logger.make(options => [left.log(options), right.log(options)])`: No named combinator remains; invoke both loggers and return their output tuple.
 
@@ -12213,6 +12821,8 @@ SchemaIssue.makeFormatterStandardSchemaV1()(error.issue).issues
 
 - `ParseResult.ArrayFormatterIssue` -> `StandardSchemaV1.FailureResult["issues"][number]`: Use the Standard Schema issue shape returned by makeFormatterStandardSchemaV1.
 
+- `ParseResult.Composite` -> `SchemaIssue.Composite`: Composite parse failures moved to SchemaIssue. The v4 constructor takes the failing AST and an array of nested issues; input is retained only when reportInput is enabled.
+
 - `ParseResult.DeclarationDecodeUnknown` -> `SchemaGetter.Getter`: Custom declaration decoding now uses SchemaGetter values and Schema.declare annotations.
 
 - `ParseResult.DecodeUnknown` -> `Schema.decodeUnknownEffect`: Use the function type returned by Schema.decodeUnknownEffect.
@@ -12221,15 +12831,21 @@ SchemaIssue.makeFormatterStandardSchemaV1()(error.issue).issues
 
 - `ParseResult.Missing` -> `SchemaIssue.MissingKey`: Missing-key failures use the v4 SchemaIssue class.
 
+- `ParseResult.ParseError`: TODO: needs guidance
+
 - `ParseResult.ParseErrorTypeId` -> `none`: The public symbol was removed; use Schema.isSchemaError for runtime narrowing.
 
 - `ParseResult.ParseIssue` -> `SchemaIssue.Issue`: The structured parse issue union moved to SchemaIssue.
 
 - `ParseResult.ParseResultFormatter` -> `SchemaIssue.Formatter`: Issue formatter types moved to SchemaIssue.
 
+- `ParseResult.Pointer` -> `SchemaIssue.Pointer`: Path-qualified failures moved to SchemaIssue. Construct them with the property path and nested issue; rejected input belongs to the nested issue when reportInput is enabled.
+
 - `ParseResult.Refinement` -> `SchemaIssue.Filter`: Refinement failures are represented as filter issues in v4.
 
 - `ParseResult.SingleOrNonEmpty` -> `ReadonlyArray`: This ParseResult helper type was removed; use an explicit value-or-non-empty-array type when still needed.
+
+- `ParseResult.Transformation` -> `SchemaIssue.Encoding`: Transformation-stage failures are Encoding issues in v4. They retain the failing AST and nested issue; the old Encoded, Transformation, and Type kind discriminator was removed.
 
 #### `ParseResult.TreeFormatter`
 
@@ -12247,6 +12863,8 @@ SchemaIssue.defaultFormatter(issue)
 
 - `ParseResult.Unexpected` -> `SchemaIssue.UnexpectedKey`: Unexpected object keys use the v4 SchemaIssue class.
 
+- `ParseResult.decode`: TODO: needs guidance
+
 - `ParseResult.decodeEither` -> `Schema.decodeExit`: Either parsing was replaced by Exit parsing.
 
 - `ParseResult.decodePromise` -> `Schema.decodePromise`: Parsing helpers moved onto Schema and now fail with SchemaError.
@@ -12260,6 +12878,8 @@ SchemaIssue.defaultFormatter(issue)
 - `ParseResult.decodeUnknownSync` -> `Schema.decodeUnknownSync`: Parsing helpers moved onto Schema and now throw SchemaError.
 
 - `ParseResult.eitherOrUndefined` -> `none`: This ParseResult internal optimization was removed; use Effect, Exit, Option, or Result combinators directly.
+
+- `ParseResult.encode`: TODO: needs guidance
 
 - `ParseResult.encodeEither` -> `Schema.encodeExit`: Either encoding was replaced by Exit encoding.
 
@@ -13435,7 +14055,7 @@ Schema.toFormatter(schema)
 
 - `Schema.Annotations.Doc` -> `none`: The v3 helper/protocol type was removed by the v4 Schema model rewrite. Use the public v4 constructor and infer its result types instead.
 
-- `Schema.Annotations.Filter` -> `Schema.Annotations.Filter`: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
+- `Schema.Annotations.Filter` -> `Schema.Annotations.Filter`: Use the v4 filter annotation shape. arbitraryConstraint uses Schema.Annotations.ToArbitrary.FilterConstraint; the earlier v4 ToArbitrary.Constraint name was removed.
 
 - `Schema.Annotations.GenericSchema` -> `none`: The v3 helper/protocol type was removed by the v4 Schema model rewrite. Use the public v4 constructor and infer its result types instead.
 
@@ -13555,7 +14175,7 @@ Schema.toFormatter(schema)
 
 - `Schema.EndsWithSchemaId` -> `none`: The v3 schema-id symbol was removed. Use the corresponding public v4 constructor/check instead of inspecting schema ids.
 
-- `Schema.Enums` -> `Schema.Enum`: Rename the enum constructor and pass the enum object.
+- `Schema.Enums` -> `Schema.Enum`: Rename the enum constructor and pass the enum object. Numeric members must be finite; NaN and positive or negative Infinity throw at construction.
 
 - `Schema.EnumsDefinition` -> `none`: Compared the v3 declaration with v4 Schema and the schema migration guide; no direct public replacement remains. Rebuild the behavior from public v4 codecs/getters where still required.
 
@@ -13923,9 +14543,9 @@ Schema.toFormatter(schema)
 
 - `Schema.TaggedStruct` -> `Schema.TaggedStruct`: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
 
-- `Schema.TemplateLiteral` -> `Schema.TemplateLiteral(parts)`: Pass template literal parts as one array.
+- `Schema.TemplateLiteral` -> `Schema.TemplateLiteral(parts)`: Pass template literal parts as one array. Parts must not contain encodings, including inside unions and nested templates. Transformations whose decoded and encoded types are equal are also rejected. Use Schema.TemplateLiteralParser(parts) for transformed parts.
 
-- `Schema.TemplateLiteralParser` -> `Schema.TemplateLiteralParser(schema.parts)`: Create the template schema first and pass its `parts` property.
+- `Schema.TemplateLiteralParser` -> `Schema.TemplateLiteralParser(parts)`: Pass template literal parts directly as one array. Transformed parts are supported, and their decoding and encoding services are required in the corresponding direction.
 
 - `Schema.TimeZone` -> `Schema.TimeZoneFromString`: Use the string codec; v4 `TimeZone` is the self schema.
 
@@ -13999,7 +14619,7 @@ Schema.toFormatter(schema)
 
 - `Schema.Union` -> `Schema.Union(members)`: Pass union members as one array.
 
-- `Schema.UniqueSymbolFromSelf` -> `Schema.UniqueSymbol`: Use the v4 unique-symbol schema constructor.
+- `Schema.UniqueSymbolFromSelf` -> `Schema.UniqueSymbol`: Use the v4 unique-symbol schema constructor. JSON encoding is available only for globally registered symbols and uses the exact String(symbol) value; local symbols cannot be encoded as JSON.
 
 - `Schema.Unknown` -> `Schema.Unknown`: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
 
@@ -14201,7 +14821,7 @@ Schema.toFormatter(schema)
 
 - `Schema.minLength` -> `Schema.isMinLength`: Rename the string predicate to `isMinLength` and apply it with `Schema.check` or a schema's `check` method.
 
-- `Schema.multipleOf` -> `Schema.isMultipleOf`: Rename the predicate to `isMultipleOf` and apply it with `Schema.check` or a schema's `check` method.
+- `Schema.multipleOf` -> `Schema.isMultipleOf`: Rename the predicate to `isMultipleOf` and apply it with `Schema.check` or a schema's `check` method. The divisor must be finite and nonzero or construction throws RangeError; negative divisors are normalized to their absolute value.
 
 - `Schema.mutable` -> `Schema.mutable`: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
 
@@ -14301,7 +14921,7 @@ Schema.toFormatter(schema)
 
 - `Schema.transformLiterals` -> `Schema.Literals(fromValues).transform(toValues)`: Split the pairs into parallel arrays and use `Literals(...).transform(...)`.
 
-- `Schema.transformOrFail` -> `schema.pipe(Schema.decodeTo(target, { decode: SchemaGetter.transformOrFail(...), encode: ... }))`: Replace the constructor with `decodeTo` and fallible `SchemaGetter` transformations.
+- `Schema.transformOrFail` -> `schema.pipe(Schema.decodeTo(target, { decode: SchemaGetter.transformEffect(...), encode: ... }))`: Replace the constructor with `decodeTo` and effectful `SchemaGetter` transformations.
 
 - `Schema.trimmed` -> `Schema.isTrimmed`: Rename the string predicate to `isTrimmed` and apply it with `Schema.check` or a schema's `check` method.
 
@@ -14329,13 +14949,13 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.AST` -> `SchemaAST.AST`: The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model.
 
-- `SchemaAST.Annotated` -> `SchemaAST.Base`: All v4 AST nodes extend Base, which owns annotations, checks, encoding, and context.
+- `SchemaAST.Annotated` -> `SchemaAST.AST`: The public base type was removed. Use the AST union; every variant still exposes annotations, checks, encoding, and context.
 
 - `SchemaAST.AnyKeyword` -> `SchemaAST.Any`: The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role.
 
-- `SchemaAST.ArbitraryAnnotationId` -> `Schema.Annotations.ToArbitrary`: Symbol annotation IDs were removed; use the toArbitrary annotation key and its Schema.Annotations types.
+- `SchemaAST.ArbitraryAnnotationId` -> `Schema.Annotations.ToArbitrary`: Symbol annotation IDs were removed. Declarations use the toCodecArbitrary annotation; filters use arbitraryConstraint.
 
-- `SchemaAST.BatchingAnnotation` -> `none`: Per-schema batching annotations were removed; control asynchronous parsing with ParseOptions.concurrency.
+- `SchemaAST.BatchingAnnotation` -> `none`: Per-schema batching annotations were removed. They have no direct replacement. ParseOptions.concurrency controls product child parsing only; configure request batching separately.
 
 - `SchemaAST.BatchingAnnotationId` -> `none`: Symbol annotation IDs were removed and batching is no longer a schema annotation.
 
@@ -14351,9 +14971,9 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.ComposeTransformation` -> `SchemaAST.Encoding`: The marker transformation was replaced by explicit SchemaAST.Link encoding chains.
 
-- `SchemaAST.ConcurrencyAnnotation` -> `SchemaAST.ParseOptions["concurrency"]`: Concurrency is now a parse option rather than its own annotation type.
+- `SchemaAST.ConcurrencyAnnotation` -> `SchemaAST.ParseOptions`: Per-schema concurrency annotations were removed. Pass concurrency in runtime ParseOptions when creating or calling a decoder, encoder, or constructor. It applies independently to each tuple, array, struct, record, or struct-with-rest node and does not make Union candidates concurrent.
 
-- `SchemaAST.ConcurrencyAnnotationId` -> `Schema.Annotations.Bottom["parseOptions"]`: Symbol annotation IDs were removed; put concurrency inside the parseOptions annotation.
+- `SchemaAST.ConcurrencyAnnotationId` -> `SchemaAST.ParseOptions`: The annotation ID was removed. Pass concurrency in runtime ParseOptions; product parsing follows Effect.forEach concurrency semantics while Union candidates remain sequential.
 
 - `SchemaAST.Declaration` -> `SchemaAST.Declaration`: The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model.
 
@@ -14373,7 +14993,7 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.DocumentationAnnotationId` -> `Schema.Annotations.Augment["documentation"]`: Symbol annotation IDs were removed; use the documentation key.
 
-- `SchemaAST.Enums` -> `SchemaAST.Enum`: The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role.
+- `SchemaAST.Enums` -> `SchemaAST.Enum`: Renamed to Enum in the v4 AST model. Numeric enum members must be finite; NaN and positive or negative Infinity throw at construction.
 
 - `SchemaAST.EquivalenceAnnotation` -> `Schema.Annotations.ToEquivalence.Declaration`: Equivalence derivation annotations now use the toEquivalence key in Schema.Annotations.
 
@@ -14429,9 +15049,9 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.ParseJsonSchemaId` -> `Schema.UnknownFromJsonString`: Use the built-in JSON string codec instead of checking the old schema ID.
 
-- `SchemaAST.ParseOptions` -> `SchemaAST.ParseOptions`: The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model.
+- `SchemaAST.ParseOptions` -> `SchemaAST.ParseOptions`: Pass parsing options at runtime. onExcessProperty supports ignore or error, not preserve; model extra values with an explicit Record or StructWithRest. propertyOrder was removed. concurrency follows Effect.forEach semantics for tuple, array, struct, record, and struct-with-rest children, applies independently at each nested product, and does not make Union candidates concurrent. Output key order is unspecified, including in values passed to checks. Handle required presentation or serialization order explicitly outside the parser.
 
-- `SchemaAST.ParseOptionsAnnotationId` -> `Schema.Annotations.Bottom["parseOptions"]`: Symbol annotation IDs were removed; use the parseOptions key.
+- `SchemaAST.ParseOptionsAnnotationId` -> `none`: Parse options are no longer schema annotations. Pass options when creating or calling a decoder or encoder; there is no annotation-based override for nested schemas.
 
 - `SchemaAST.PrettyAnnotationId` -> `Schema.overrideToFormatter`: The symbol annotation was removed; attach custom formatters with Schema.overrideToFormatter.
 
@@ -14455,7 +15075,7 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.SymbolKeyword` -> `SchemaAST.Symbol`: The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role.
 
-- `SchemaAST.TemplateLiteral` -> `SchemaAST.TemplateLiteral`: The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model.
+- `SchemaAST.TemplateLiteral` -> `SchemaAST.TemplateLiteral`: The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model. Parts must not contain encodings, including inside unions or nested templates; use Schema.TemplateLiteralParser for transformed parts.
 
 - `SchemaAST.TemplateLiteralSpan` -> `SchemaAST.TemplateLiteral`: Template literal parts are represented directly as AST values in v4.
 
@@ -14467,7 +15087,7 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.TransformationKind` -> `SchemaTransformation.Transformation`: Transformation implementations moved to SchemaTransformation and are stored on SchemaAST.Link.
 
-- `SchemaAST.TupleType` -> `SchemaAST.Arrays`: The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role.
+- `SchemaAST.TupleType` -> `SchemaAST.Arrays`: Use Arrays(isMutable, elements, rest, annotations?, checks?, encoding?, context?, encodingChecks?).
 
 - `SchemaAST.Type` -> `SchemaAST.AST`: The tuple-element Type wrapper was removed; optionality and mutability moved to Context.
 
@@ -14475,13 +15095,13 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.TypeConstructorAnnotationId` -> `Schema.Annotations.Declaration["toCodec"]`: Symbol annotation IDs were removed; use declaration codec annotation keys.
 
-- `SchemaAST.TypeLiteral` -> `SchemaAST.Objects`: The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role.
+- `SchemaAST.TypeLiteral` -> `SchemaAST.Objects`: Use Objects(propertySignatures, indexSignatures, annotations?, checks?, encoding?, context?, encodingChecks?). Output key order is unspecified.
 
 - `SchemaAST.TypeLiteralTransformation` -> `SchemaAST.Encoding`: Object transformations are encoding links; use Schema.encodeKeys for key mappings.
 
 - `SchemaAST.UndefinedKeyword` -> `SchemaAST.Undefined`: The v4 SchemaAST redesign renamed this primitive, collection, or guard while preserving its role.
 
-- `SchemaAST.Union` -> `SchemaAST.Union`: The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model.
+- `SchemaAST.Union` -> `SchemaAST.Union`: Pass member ASTs and an optional options object: new SchemaAST.Union(types, { mode: 'oneOf' }). Read options?.mode ?? 'anyOf' instead of a direct mode field.
 
 - `SchemaAST.UniqueSymbol` -> `SchemaAST.UniqueSymbol`: The name remains, but its constructor and fields changed in the v4 Base/check/context/encoding model.
 
@@ -14507,13 +15127,13 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.getAnnotation` -> `SchemaAST.resolveAt`: Resolve string-keyed annotations with resolveAt, or use resolveIdentifier, resolveTitle, and resolveDescription.
 
-- `SchemaAST.getBatchingAnnotation` -> `none`: Batching annotations were removed; read ParseOptions.concurrency when controlling asynchronous parsing.
+- `SchemaAST.getBatchingAnnotation` -> `none`: Batching annotations were removed. ParseOptions.concurrency controls product child parsing only; configure request batching separately.
 
 - `SchemaAST.getBrandAnnotation` -> `SchemaAST.resolveAt("brands")`: Resolve the string-keyed brands annotation.
 
 - `SchemaAST.getCompiler` -> `none`: The Match-based compiler was removed; traverse SchemaAST.AST directly or use the relevant Schema derivation API.
 
-- `SchemaAST.getConcurrencyAnnotation` -> `SchemaAST.resolveAt("parseOptions")`: Resolve parseOptions and read concurrency from it.
+- `SchemaAST.getConcurrencyAnnotation` -> `SchemaAST.ParseOptions`: Concurrency is no longer read from schema annotations. Pass it in runtime ParseOptions when creating or calling a parser. It applies to product children, not Union candidates.
 
 - `SchemaAST.getDecodingFallbackAnnotation` -> `none`: Fallbacks are encoding middleware in v4, not readable annotations; attach them with Schema.catchDecoding.
 
@@ -14539,7 +15159,7 @@ Schema.toFormatter(schema)
 
 - `SchemaAST.getParseIssueTitleAnnotation` -> `none`: Issue-title callbacks were removed; use message or expected annotations and SchemaIssue formatters.
 
-- `SchemaAST.getParseOptionsAnnotation` -> `SchemaAST.resolveAt("parseOptions")`: Resolve the string-keyed parseOptions annotation.
+- `SchemaAST.getParseOptionsAnnotation` -> `none`: Parse options are no longer schema annotations. Pass options when creating or calling a decoder or encoder; there is no annotation-based override for nested schemas.
 
 - `SchemaAST.getPropertySignatures` -> `SchemaAST.Objects.propertySignatures`: Narrow to Objects and read propertySignatures directly.
 
@@ -14606,6 +15226,8 @@ Schema.toFormatter(schema)
 - `SchemaAST.omit` -> `Schema.mapFields + Struct.omit`: Object projection moved to schema field transforms.
 
 - `SchemaAST.partial` -> `Schema.mapFields + Struct.map(Schema.optional)`: Partial object transforms moved to schema field transforms.
+
+- `SchemaAST.pick` -> `none`: The low-level AST picker was removed. Keep field selection at the Schema.Struct level with mapFields and Struct.pick, or discriminate and rebuild custom AST nodes explicitly.
 
 - `SchemaAST.required` -> `Schema.mapFields + Struct.map(Schema.requiredKey)`: Required object transforms moved to schema field transforms.
 
@@ -14885,6 +15507,8 @@ Schema.toFormatter(schema)
 
 - `SortedSet.filter` -> `HashSet.filter`: Direct persistent filtering on the replacement set; traversal is unordered until explicitly sorted.
 
+- `SortedSet.flatMap`: TODO: needs guidance
+
 - `SortedSet.fromIterable` -> `HashSet.fromIterable`: Use HashSet.fromIterable and retain the element Order separately.
 
 - `SortedSet.getEquivalence` -> `Equal.asEquivalence`: HashSet implements Effect equality by set content; use Equal.asEquivalence\<HashSet.HashSet\<A\>\>().
@@ -14906,6 +15530,8 @@ Schema.toFormatter(schema)
 - `SortedSet.size` -> `HashSet.size`: Direct size query on the replacement immutable set.
 
 - `SortedSet.some` -> `HashSet.some`: Run the predicate against the replacement HashSet; sort first only if traversal order has observable effects.
+
+- `SortedSet.toggle` -> `HashSet.has + HashSet.add / HashSet.remove`: HashSet has no toggle; branch on membership and add or remove the element.
 
 - `SortedSet.union` -> `HashSet.union + HashSet.fromIterable`: Convert the old general iterable argument to HashSet before taking the union.
 
@@ -15372,9 +15998,9 @@ switch (strategy) {
 
 ### `effect/SynchronizedRef`
 
-- `SynchronizedRef.SynchronizedRef` -> `SynchronizedRef.SynchronizedRef`: The model remains, now extends the v4 Ref model, and is read or updated through explicit SynchronizedRef operations.
+- `SynchronizedRef.SynchronizedRef` -> `SynchronizedRef.SynchronizedRef`: The model remains but no longer extends Ref; read and update it through explicit SynchronizedRef operations. The curried v4 modifySomeEffect takes only the callback, which returns an Effect of [result, Option\<newValue\>]; remove the v3 fallback and outer Option.
 
-- `SynchronizedRef.SynchronizedRef.Variance` -> `Ref.Ref.Variance`: SynchronizedRef now inherits Ref variance instead of declaring a separate public variance marker.
+- `SynchronizedRef.SynchronizedRef.Variance` -> `none`: The public nested variance marker was removed. SynchronizedRef uses an internal brand in v4, so do not refer to a variance interface directly.
 
 - `SynchronizedRef.SynchronizedRefTypeId` -> `none`: The SynchronizedRef type id is internal in v4; do not inspect or construct the brand directly.
 
@@ -15920,7 +16546,7 @@ Exit.isExit(take)
 
 ### `effect/TestConfig`
 
-- `TestConfig.TestConfig` -> `none`: There is no v4 TestConfig service. Move runner settings to Vitest and FastCheck options, or define an application-specific Context.Reference if runtime access is needed.
+- `TestConfig.TestConfig` -> `none`: There is no v4 TestConfig service. Move runner settings to Vitest and native Arbitrary check options, or define an application-specific Context.Reference if runtime access is needed.
 
 - `TestConfig.make` -> `{ repeats, retries, samples, shrinks }`: The v3 constructor only returned its parameter object. The TestConfig service was removed; keep a plain object only for application-owned configuration.
 
@@ -15968,9 +16594,9 @@ Exit.isExit(take)
 
 - `TestServices.retries` -> `Vitest TestOptions.retry`: Configure retry in Vitest test options. To retry an Effect inside a test, use Effect.retry.
 
-- `TestServices.samples` -> `{ fastCheck: { numRuns } }`: Pass the run count through @effect/vitest property-test options, for example it.effect.prop(..., { fastCheck: { numRuns: samples } }).
+- `TestServices.samples` -> `{ arbitrary: { runs } }`: Pass the run count through @effect/vitest property-test options, for example it.effect.prop(..., { arbitrary: { runs: samples } }).
 
-- `TestServices.shrinks` -> `none`: The legacy maximum-shrinks service setting was removed; @effect/vitest forwards FastCheck.Parameters, which has no equivalent service value.
+- `TestServices.shrinks` -> `{ arbitrary: { maxShrinks } }`: Pass maxShrinks through @effect/vitest property-test options, for example it.effect.prop(..., { arbitrary: { maxShrinks } }).
 
 - `TestServices.size` -> `CurrentSize`: Define a custom Context.Reference\<number\> and yield it to read the current size.
 
@@ -15982,11 +16608,11 @@ Exit.isExit(take)
 
 - `TestServices.supervisedFibers` -> `none`: The annotation service was removed. Use Vitest metadata/options for runner concerns, an ordinary Ref or Context.Reference for application-owned test state, and FiberSet for explicit fiber tracking.
 
-- `TestServices.testConfig` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference.
+- `TestServices.testConfig` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference.
 
-- `TestServices.testConfigLayer` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference.
+- `TestServices.testConfigLayer` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference.
 
-- `TestServices.testConfigWith` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference.
+- `TestServices.testConfigWith` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference.
 
 - `TestServices.withAnnotations` -> `none`: The annotation service was removed. Use Vitest metadata/options for runner concerns, an ordinary Ref or Context.Reference for application-owned test state, and FiberSet for explicit fiber tracking.
 
@@ -16000,9 +16626,9 @@ Exit.isExit(take)
 
 - `TestServices.withSizedScoped` -> `Effect.updateServiceScoped(CurrentSize, () => size)`: For a scope-bounded override use updateServiceScoped; otherwise prefer wrapping the workflow with Effect.provideService.
 
-- `TestServices.withTestConfig` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference.
+- `TestServices.withTestConfig` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference.
 
-- `TestServices.withTestConfigScoped` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference.
+- `TestServices.withTestConfigScoped` -> `none`: The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference.
 
 ### `effect/TestSized`
 

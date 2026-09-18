@@ -1,7 +1,15 @@
 import { diffSnapshots } from "@effect/api-diff/Diff"
 import type { ApiDiff, ApiEntity, ApiSnapshot, DeclarationModel } from "@effect/api-diff/Model"
 import { renderMarkdownReport } from "@effect/api-diff/Report"
+import { Snapshotter } from "@effect/api-diff/Snapshot"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
+import * as Effect from "effect/Effect"
+import * as FileSystem from "effect/FileSystem"
+import * as Layer from "effect/Layer"
+import { writeFixturePackage } from "./utils.ts"
+
+const MainLayer = Snapshotter.layer.pipe(Layer.provideMerge(NodeServices.layer))
 
 const entity = (
   module: string,
@@ -35,6 +43,63 @@ const snapshot = (ref: string, entities: ReadonlyArray<ApiEntity>): ApiSnapshot 
 })
 
 describe("snapshot diff", () => {
+  it.effect("detects optional class member changes", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
+      const snapshotter = yield* Snapshotter
+      const extract = Effect.fnUntraced(function*(ref: string, source: string) {
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "api-diff-optional-class-" })
+        yield* writeFixturePackage(repoRoot, { "Api.d.ts": source }, { "./Api": { types: "./Api.d.ts" } })
+        return yield* snapshotter.extract({
+          repoRoot,
+          ref,
+          sha: "0".repeat(40),
+          modules: ["@fixture/sample/Api"]
+        })
+      })
+      const base = yield* extract("base", "export declare class Client { value: string }\n")
+      const head = yield* extract("head", "export declare class Client { value?: string }\n")
+      const diff = diffSnapshots(base, head)
+
+      for (const bucket of ["type", "value"]) {
+        const id = `@fixture/sample/Api#Client#${bucket}`
+        const baseEntity = base.entities.find((entity) => entity.id === id)
+        const headEntity = head.entities.find((entity) => entity.id === id)
+        assert(baseEntity !== undefined)
+        assert(headEntity !== undefined)
+        assert.notStrictEqual(baseEntity.fingerprint, headEntity.fingerprint)
+        assert(diff.changes.some((change) =>
+          change.classification === "member-changed" &&
+          change.baseApiId === id &&
+          change.headApiId === id
+        ))
+      }
+    }).pipe(Effect.provide(MainLayer)))
+
+  it.effect("detects changes between numeric and string literal types", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem.FileSystem
+      const snapshotter = yield* Snapshotter
+      const extract = (repoRoot: string, ref: string) =>
+        snapshotter.extract({
+          repoRoot,
+          ref,
+          sha: ref.repeat(40),
+          modules: ["@fixture/sample/Value"]
+        })
+      const baseRoot = yield* fs.makeTempDirectoryScoped({ prefix: "api-diff-literal-base-" })
+      const headRoot = yield* fs.makeTempDirectoryScoped({ prefix: "api-diff-literal-head-" })
+      yield* writeFixturePackage(baseRoot, { "Value.d.ts": "export type Value = 1\n" })
+      yield* writeFixturePackage(headRoot, { "Value.d.ts": "export type Value = \"1\"\n" })
+
+      assert.deepStrictEqual(
+        diffSnapshots(yield* extract(baseRoot, "a"), yield* extract(headRoot, "b")).changes.map((change) =>
+          change.classification
+        ),
+        ["structural-change"]
+      )
+    }).pipe(Effect.provide(MainLayer)))
+
   it("matches renames, classifies signature changes, and separates suggestions", () => {
     const base = snapshot("a", [
       entity("old/A", "changed", {

@@ -1,61 +1,33 @@
 /**
- * Connects Effect SQL to PostgreSQL using the `pg` package.
- *
- * This module provides constructors and layers for building a PostgreSQL
- * client from pool settings, a managed `pg.Client`, an existing `pg.Pool`, or
- * custom connection code. The client runs Effect SQL queries against
- * PostgreSQL, including transactions and streamed results, and adds helpers for
- * JSON values and LISTEN/NOTIFY messages. It also maps common PostgreSQL
- * failures, such as connection, authentication, constraint, timeout, and
- * deadlock errors, into Effect SQL errors.
+ * PostgreSQL support for Effect SQL, backed by the native wire protocol client.
  *
  * @since 4.0.0
  */
-import * as Arr from "effect/Array"
-import * as Cause from "effect/Cause"
-import * as Channel from "effect/Channel"
+import type * as Arr from "effect/Array"
 import * as Config from "effect/Config"
 import * as Context from "effect/Context"
-import * as Duration from "effect/Duration"
+import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
-import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
-import * as Number from "effect/Number"
-import * as Option from "effect/Option"
-import * as Queue from "effect/Queue"
-import * as RcRef from "effect/RcRef"
-import * as Redacted from "effect/Redacted"
-import * as Scope from "effect/Scope"
-import * as Semaphore from "effect/Semaphore"
+import type * as Queue from "effect/Queue"
+import type * as Redacted from "effect/Redacted"
+import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import * as Reactivity from "effect/unstable/reactivity/Reactivity"
 import * as Client from "effect/unstable/sql/SqlClient"
-import type { Connection } from "effect/unstable/sql/SqlConnection"
-import type * as SqlConnection from "effect/unstable/sql/SqlConnection"
-import {
-  AuthenticationError,
-  AuthorizationError,
-  ConnectionError,
-  ConstraintError,
-  DeadlockError,
-  LockTimeoutError,
-  SerializationError,
-  SqlError,
-  SqlSyntaxError,
-  StatementTimeoutError,
-  UniqueViolation,
-  UnknownError
-} from "effect/unstable/sql/SqlError"
+import type { Borrower, Connection } from "effect/unstable/sql/SqlConnection"
+import type { SqlError } from "effect/unstable/sql/SqlError"
 import type { Custom, Fragment } from "effect/unstable/sql/Statement"
 import * as Statement from "effect/unstable/sql/Statement"
 import type { Duplex } from "node:stream"
 import type { ConnectionOptions } from "node:tls"
-import * as Pg from "pg"
-import * as PgConnString from "pg-connection-string"
-import Cursor from "pg-cursor"
+import { validateChannelName } from "./internal/sqlError.ts"
+import * as PgConnection from "./PgConnection.ts"
+import * as PgPool from "./PgPool.ts"
+import * as PgTypes from "./PgTypes.ts"
 
 /**
- * Runtime type identifier used to mark `PgClient` values.
+ * The runtime type identifier for `PgClient`.
  *
  * @category type IDs
  * @since 4.0.0
@@ -63,7 +35,7 @@ import Cursor from "pg-cursor"
 export const TypeId: TypeId = "~@effect/sql-pg/PgClient"
 
 /**
- * Type-level identifier used to mark `PgClient` values.
+ * The type-level identifier for `PgClient`.
  *
  * @category type IDs
  * @since 4.0.0
@@ -71,7 +43,7 @@ export const TypeId: TypeId = "~@effect/sql-pg/PgClient"
 export type TypeId = "~@effect/sql-pg/PgClient"
 
 /**
- * PostgreSQL client service, extending `SqlClient` with JSON parameter fragments and LISTEN/NOTIFY helpers.
+ * A PostgreSQL `SqlClient` with JSON and `LISTEN`/`NOTIFY` helpers.
  *
  * @category services
  * @since 4.0.0
@@ -80,16 +52,19 @@ export interface PgClient extends Client.SqlClient {
   readonly [TypeId]: TypeId
   readonly config: PgClientConfig
   readonly json: (_: unknown) => Fragment
-  readonly listen: (channel: string) => Stream.Stream<string, SqlError>
+  /**
+   * Registers a channel listener and returns its non-empty payload queue after
+   * PostgreSQL confirms `LISTEN`. The listener holds a connection until the
+   * scope closes.
+   */
+  readonly listen: (
+    channel: string
+  ) => Effect.Effect<Queue.Dequeue<PgConnection.Notification>, SqlError, Scope.Scope>
   readonly notify: (channel: string, payload: string) => Effect.Effect<void, SqlError>
 }
 
 /**
- * Service tag for the PostgreSQL client service.
- *
- * **When to use**
- *
- * Use to access or provide a PostgreSQL client through the Effect context.
+ * The service tag for `PgClient`.
  *
  * @category services
  * @since 4.0.0
@@ -97,7 +72,7 @@ export interface PgClient extends Client.SqlClient {
 export const PgClient = Context.Service<PgClient>("@effect/sql-pg/PgClient")
 
 /**
- * Configuration for a PostgreSQL client, including connection, TLS, custom stream, application name, type parser, JSON transform, and query/result name transform options.
+ * Connection and query settings for a PostgreSQL client.
  *
  * @category models
  * @since 4.0.0
@@ -123,11 +98,32 @@ export interface PgClientConfig {
   readonly transformResultNames?: ((str: string) => string) | undefined
   readonly transformQueryNames?: ((str: string) => string) | undefined
   readonly transformJson?: boolean | undefined
-  readonly types?: Pg.CustomTypesConfig | undefined
+  readonly types?: PgTypes.Registry | undefined
+  /**
+   * Pipelines queries from multiple fibers on each pooled connection.
+   * Transactions, streams, and listeners still reserve a connection.
+   */
+  readonly multiplex?: boolean | undefined
+  /**
+   * How many statements may share one connection when `multiplex` is on.
+   * Defaults to `32`. Higher values trade tail latency for throughput: the
+   * statements sharing a connection are pipelined into one write, and they
+   * also queue behind the slowest of them.
+   */
+  readonly multiplexConcurrency?: number | undefined
+  /**
+   * Caches prepared statements by name. Enabled by default. Disable it for
+   * poolers that cannot preserve named statements between queries.
+   */
+  readonly prepare?: boolean | undefined
+  /** How many statements a connection keeps prepared. Defaults to `100`. */
+  readonly preparedStatementCacheSize?: number | undefined
+  /** Maximum backend message size in bytes. Defaults to 16 MiB. */
+  readonly maxMessageSize?: number | undefined
 }
 
 /**
- * PostgreSQL pool configuration, extending `PgClientConfig` with idle timeout, pool size, and connection lifetime settings.
+ * PostgreSQL client settings with connection pool limits and timeouts.
  *
  * @category models
  * @since 4.0.0
@@ -141,73 +137,23 @@ export interface PgPoolConfig extends PgClientConfig {
 }
 
 /**
- * Creates a scoped PostgreSQL client backed by a managed `pg` connection pool.
+ * Creates a scoped PostgreSQL client backed by a connection pool.
  *
  * @category constructors
  * @since 4.0.0
  */
 export const make = (options: PgPoolConfig): Effect.Effect<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
-  fromPool({
-    ...options,
-    acquire: Effect.gen(function*() {
-      const pool = new Pg.Pool({
-        connectionString: options.url ? Redacted.value(options.url) : undefined,
-        user: options.username,
-        host: options.host,
-        database: options.database,
-        password: options.password ? Redacted.value(options.password) : undefined,
-        ssl: options.ssl,
-        port: options.port,
-        ...(options.stream ? { stream: options.stream } : {}),
-        connectionTimeoutMillis: options.connectTimeout
-          ? Duration.toMillis(Duration.fromInputUnsafe(options.connectTimeout))
-          : undefined,
-        idleTimeoutMillis: options.idleTimeout
-          ? Duration.toMillis(Duration.fromInputUnsafe(options.idleTimeout))
-          : undefined,
-        max: options.maxConnections,
-        min: options.minConnections,
-        maxLifetimeSeconds: options.connectionTTL
-          ? Duration.toSeconds(Duration.fromInputUnsafe(options.connectionTTL))
-          : undefined,
-        application_name: options.applicationName ?? "@effect/sql-pg",
-        types: options.types
-      })
-
-      pool.on("error", (_err) => {})
-
-      yield* Effect.acquireRelease(
-        Effect.tryPromise({
-          try: () => pool.query("SELECT 1"),
-          catch: (cause) => new SqlError({ reason: classifyError(cause, "PgClient: Failed to connect", "connect") })
-        }),
-        () =>
-          Effect.promise(() => pool.end()).pipe(
-            Effect.timeoutOption(1000)
-          ),
-        { interruptible: true }
-      ).pipe(
-        Effect.timeoutOrElse({
-          duration: options.connectTimeout ?? Duration.seconds(5),
-          orElse: () =>
-            Effect.fail(
-              new SqlError({
-                reason: new ConnectionError({
-                  cause: new Error("Connection timed out"),
-                  message: "PgClient: Connection timed out",
-                  operation: "connect"
-                })
-              })
-            )
-        })
-      )
-
-      return pool
-    })
-  })
+  Effect.flatMap(PgPool.make(options), (pool) =>
+    makeImpl({
+      acquirer: Effect.map(pool.get, makeConnection),
+      borrower: (f) => pool.use((connection) => f(makeConnection(connection))),
+      transactionAcquirer: Effect.map(pool.reserve, makeConnection),
+      listenAcquirer: pool.reserve,
+      config: options
+    }))
 
 /**
- * Creates a scoped PostgreSQL client backed by a managed single `pg` client, optionally acquiring a separate client for streaming and LISTEN operations.
+ * Creates a scoped PostgreSQL client backed by one connection.
  *
  * @category constructors
  * @since 4.0.0
@@ -215,398 +161,62 @@ export const make = (options: PgPoolConfig): Effect.Effect<PgClient, SqlError, S
 export const makeClient = (
   options: PgClientConfig & {
     /**
-     * Whether to acquire a separate client for each sql.stream / sql.listen
+     * Opens a separate connection for each stream and listener when enabled.
      */
     readonly acquireForStream?: boolean | undefined
   }
-): Effect.Effect<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity> => {
-  function onError() {}
-  return fromClient({
-    ...options,
-    acquire: Effect.acquireRelease(
-      Effect.tryPromise({
-        try: async () => {
-          const client = new Pg.Client({
-            connectionString: options.url ? Redacted.value(options.url) : undefined,
-            user: options.username,
-            host: options.host,
-            database: options.database,
-            password: options.password ? Redacted.value(options.password) : undefined,
-            ssl: options.ssl,
-            port: options.port,
-            ...(options.stream ? { stream: options.stream } : {}),
-            application_name: options.applicationName ?? "@effect/sql-pg",
-            types: options.types
-          })
-          client.on("error", onError)
-          await client.connect()
-          return client
-        },
-        catch: (cause) => new SqlError({ reason: classifyError(cause, "PgClient: Failed to connect", "connect") })
-      }),
-      (client) =>
-        Effect.promise(() => {
-          client.off("error", onError)
-          return client.end()
-        }).pipe(
-          Effect.timeoutOption(1000)
-        ),
-      { interruptible: true }
-    ).pipe(
-      Effect.timeoutOrElse({
-        duration: options.connectTimeout ?? Duration.seconds(5),
-        orElse: () =>
-          Effect.fail(
-            new SqlError({
-              reason: new ConnectionError({
-                cause: new Error("Connection timed out"),
-                message: "PgClient: Connection timed out",
-                operation: "connect"
-              })
-            })
-          )
-      })
-    ),
-    acquireForStream: options.acquireForStream ?? false
-  })
-}
+): Effect.Effect<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+  Effect.flatMap(PgConnection.make(options), (connection) =>
+    makeImpl({
+      acquirer: Effect.succeed(makeConnection(
+        connection,
+        options.acquireForStream ? PgConnection.make(options) : undefined
+      )),
+      transactionAcquirer: Effect.map(connection.pin, makeConnection),
+      listenAcquirer: options.acquireForStream ? PgConnection.make(options) : connection.pin,
+      config: options
+    }))
 
 /**
- * Builds a PostgreSQL client from a scoped `pg` pool acquisition effect, deriving transaction, streaming, and LISTEN/NOTIFY support from that pool.
- *
- * @category constructors
- * @since 4.0.0
+ * Builds the shared SQL facade around native connection acquirers.
  */
-export const fromPool = Effect.fnUntraced(function*(
+const makeImpl = Effect.fnUntraced(function*(
   options: {
-    readonly acquire: Effect.Effect<Pg.Pool, SqlError, Scope.Scope>
-
-    readonly applicationName?: string | undefined
-    readonly spanAttributes?: Record<string, unknown> | undefined
-
-    readonly transformResultNames?: ((str: string) => string) | undefined
-    readonly transformQueryNames?: ((str: string) => string) | undefined
-    readonly transformJson?: boolean | undefined
-    readonly types?: Pg.CustomTypesConfig | undefined
-  }
-): Effect.fn.Return<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity> {
-  const pool = yield* options.acquire
-
-  const makeConection = (client?: Pg.PoolClient) =>
-    new ConnectionImpl(
-      function runWithClient<A>(f: (client: Pg.ClientBase, resume: (_: Effect.Effect<A, SqlError>) => void) => void) {
-        if (client !== undefined) {
-          return Effect.callback<A, SqlError>((resume) => {
-            f(client!, resume)
-            return makeCancel(pool, client!)
-          })
-        }
-        return Effect.callback<A, SqlError>((resume) => {
-          let done = false
-          let cancel: Effect.Effect<void> | undefined = undefined
-          let client: Pg.PoolClient | undefined = undefined
-          function onError(cause: Error) {
-            cleanup(cause)
-            resume(Effect.fail(new SqlError({ reason: classifyError(cause, "Connection error", "acquireConnection") })))
-          }
-          function cleanup(cause?: Error) {
-            if (!done) client?.release(cause)
-            done = true
-            client?.off("error", onError)
-          }
-          pool.connect((cause, client_) => {
-            if (cause) {
-              return resume(
-                Effect.fail(
-                  new SqlError({
-                    reason: classifyError(cause, "Failed to acquire connection", "acquireConnection")
-                  })
-                )
-              )
-            } else if (!client_) {
-              return resume(
-                Effect.fail(
-                  new SqlError({
-                    reason: new ConnectionError({
-                      message: "Failed to acquire connection",
-                      cause: new Error("No client returned"),
-                      operation: "acquireConnection"
-                    })
-                  })
-                )
-              )
-            } else if (done) {
-              client_.release()
-              return
-            }
-            client = client_
-            client.once("error", onError)
-            cancel = makeCancel(pool, client)
-            f(client, (eff) => {
-              cleanup()
-              resume(eff)
-            })
-          })
-          return Effect.suspend(() => {
-            if (!cancel) {
-              cleanup()
-              return Effect.void
-            }
-            return Effect.ensuring(cancel, Effect.sync(cleanup))
-          })
-        })
-      },
-      client ? Effect.succeed(client) : reserveRaw
-    )
-
-  const reserveRaw = Effect.callback<Pg.PoolClient, SqlError, Scope.Scope>((resume) => {
-    const fiber = Fiber.getCurrent()!
-    const scope = Context.getUnsafe(fiber.context, Scope.Scope)
-    let cause: Error | undefined = undefined
-    function onError(cause_: Error) {
-      cause = cause_
-    }
-    pool.connect((err, client, release) => {
-      if (err) {
-        return resume(
-          Effect.fail(
-            new SqlError({
-              reason: classifyError(
-                err,
-                "Failed to acquire connection for transaction",
-                "acquireConnection"
-              )
-            })
-          )
-        )
-      } else if (!client) {
-        return resume(
-          Effect.fail(
-            new SqlError({
-              reason: new ConnectionError({
-                message: "Failed to acquire connection for transaction",
-                cause: new Error("No client returned"),
-                operation: "acquireConnection"
-              })
-            })
-          )
-        )
-      }
-      client.on("error", onError)
-      resume(Effect.as(
-        Scope.addFinalizer(
-          scope,
-          Effect.sync(() => {
-            client.off("error", onError)
-            release(cause)
-          })
-        ),
-        client
-      ))
-    })
-  })
-  const reserve = Effect.map(reserveRaw, makeConection)
-
-  const onListenClientError = (_: Error) => {
-  }
-
-  const listenAcquirer = yield* RcRef.make({
-    acquire: Effect.acquireRelease(
-      Effect.tryPromise({
-        try: async () => {
-          const client = new Pg.Client(pool.options)
-          await client.connect()
-          client.on("error", onListenClientError)
-          return client
-        },
-        catch: (cause) =>
-          new SqlError({
-            reason: classifyError(cause, "Failed to acquire connection for listen", "acquireConnection")
-          })
-      }),
-      (client) =>
-        Effect.promise(() => {
-          client.off("error", onListenClientError)
-          return client.end()
-        }).pipe(
-          Effect.timeoutOption(1000)
-        ),
-      { interruptible: true }
-    )
-  })
-
-  let config: PgClientConfig = {
-    url: pool.options.connectionString ? Redacted.make(pool.options.connectionString) : undefined,
-    host: pool.options.host,
-    port: pool.options.port,
-    database: pool.options.database,
-    username: pool.options.user,
-    password: typeof pool.options.password === "string" ? Redacted.make(pool.options.password) : undefined,
-    ssl: pool.options.ssl,
-    applicationName: pool.options.application_name,
-    types: pool.options.types
-  }
-  if (pool.options.connectionString) {
-    // @effect-diagnostics-next-line tryCatchInEffectGen:off
-    try {
-      const parsed = PgConnString.parse(pool.options.connectionString)
-      config = {
-        ...config,
-        host: config.host ?? parsed.host ?? undefined,
-        port: config.port ?? (parsed.port ? Option.getOrUndefined(Number.parse(parsed.port)) : undefined),
-        username: config.username ?? parsed.user ?? undefined,
-        password: config.password ?? (parsed.password ? Redacted.make(parsed.password) : undefined),
-        database: config.database ?? parsed.database ?? undefined
-      }
-    } catch {
-      //
-    }
-  }
-
-  return yield* makeWith({
-    acquirer: Effect.succeed(makeConection()),
-    transactionAcquirer: reserve,
-    listenAcquirer: RcRef.get(listenAcquirer),
-    config,
-    spanAttributes: options.spanAttributes,
-    transformResultNames: options.transformResultNames,
-    transformQueryNames: options.transformQueryNames,
-    transformJson: options.transformJson
-  })
-})
-
-/**
- * Builds a PostgreSQL client from a scoped `pg` client acquisition effect, serializing access when sharing the client and optionally using separate clients for streams and LISTEN.
- *
- * @category constructors
- * @since 4.0.0
- */
-export const fromClient = Effect.fnUntraced(function*(
-  options: {
-    readonly acquire: Effect.Effect<Pg.Client, SqlError, Scope.Scope>
-
-    /**
-     * Whether to acquire a separate client for each sql.stream / sql.listen.
-     */
-    readonly acquireForStream: boolean
-
-    readonly applicationName?: string | undefined
-    readonly spanAttributes?: Record<string, unknown> | undefined
-
-    readonly transformResultNames?: ((str: string) => string) | undefined
-    readonly transformQueryNames?: ((str: string) => string) | undefined
-    readonly transformJson?: boolean | undefined
-    readonly types?: Pg.CustomTypesConfig | undefined
-  }
-): Effect.fn.Return<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity> {
-  function onError() {}
-  const acquireWithErrorHandler = options.acquire.pipe(
-    Effect.tap((client) => {
-      client.on("error", onError)
-      return Effect.addFinalizer(() => {
-        client.off("error", onError)
-        return Effect.void
-      })
-    })
-  )
-  const client = yield* acquireWithErrorHandler
-
-  const semaphore = Semaphore.makeUnsafe(1)
-  let streamClient = options.acquireForStream ? acquireWithErrorHandler : Effect.acquireRelease(
-    Effect.as(semaphore.take(1), client),
-    () => semaphore.release(1)
-  )
-
-  const makeConection = (client: Pg.Client) =>
-    new ConnectionImpl(
-      function runWithClient<A>(f: (client: Pg.ClientBase, resume: (_: Effect.Effect<A, SqlError>) => void) => void) {
-        return Effect.callback<A, SqlError>((resume) => {
-          f(client, resume)
-        })
-      },
-      streamClient
-    )
-  const connection = makeConection(client)
-  const acquirer = semaphore.withPermit(Effect.succeed(connection))
-  const transactionAcquirer = Effect.uninterruptibleMask((restore) => {
-    const fiber = Fiber.getCurrent()!
-    const scope = Context.getUnsafe(fiber.context, Scope.Scope)
-    return Effect.as(
-      Effect.tap(
-        restore(semaphore.take(1)),
-        () => Scope.addFinalizer(scope, semaphore.release(1))
-      ),
-      connection
-    )
-  })
-
-  const config: PgClientConfig = {
-    ...options,
-    host: client.host,
-    port: client.port,
-    database: client.database,
-    username: client.user,
-    password: typeof client.password === "string" ? Redacted.make(client.password) : undefined,
-    ssl: client.ssl
-  }
-
-  return yield* makeWith({
-    acquirer,
-    transactionAcquirer,
-    listenAcquirer: streamClient,
-    config,
-    spanAttributes: options.spanAttributes,
-    transformResultNames: options.transformResultNames,
-    transformQueryNames: options.transformQueryNames,
-    transformJson: options.transformJson
-  })
-})
-
-/**
- * Creates a `PgClient` from SQL connection acquirers, a LISTEN acquirer, client configuration, and transformation options.
- *
- * **When to use**
- *
- * Use to build a PostgreSQL client from custom connection acquisition logic
- * instead of the built-in pool or single-client constructors.
- *
- * @category constructors
- * @since 4.0.0
- */
-export const makeWith = Effect.fnUntraced(function*(
-  options: {
-    readonly acquirer: SqlConnection.Acquirer
-    readonly transactionAcquirer: SqlConnection.Acquirer
-    readonly listenAcquirer: Effect.Effect<Pg.ClientBase, SqlError, Scope.Scope>
-
+    readonly acquirer: Effect.Effect<Connection, SqlError, Scope.Scope>
+    readonly borrower?: Borrower | undefined
+    readonly transactionAcquirer: Effect.Effect<Connection, SqlError, Scope.Scope>
+    readonly listenAcquirer: Effect.Effect<PgConnection.PgConnection, SqlError, Scope.Scope>
     readonly config: PgClientConfig
-    readonly spanAttributes?: Record<string, unknown> | undefined
-
-    readonly transformResultNames?: ((str: string) => string) | undefined
-    readonly transformQueryNames?: ((str: string) => string) | undefined
-    readonly transformJson?: boolean | undefined
   }
 ): Effect.fn.Return<PgClient, SqlError, Scope.Scope | Reactivity.Reactivity> {
+  const config = options.config
   const compiler = makeCompiler(
-    options.transformQueryNames,
-    options.transformJson
+    config.transformQueryNames,
+    config.transformJson
   )
-  const transformRows = options.transformResultNames ?
+  const transformRows = config.transformResultNames ?
     Statement.defaultTransforms(
-      options.transformResultNames,
-      options.transformJson
+      config.transformResultNames,
+      config.transformJson
     ).array :
     undefined
 
-  const config = options.config
+  const listen = (
+    channel: string
+  ): Effect.Effect<Queue.Dequeue<PgConnection.Notification>, SqlError, Scope.Scope> =>
+    Effect.flatMap(options.listenAcquirer, (connection) => connection.listen(channel))
 
   return Object.assign(
     yield* Client.make({
       acquirer: options.acquirer,
+      borrower: options.borrower,
+      // Postgres prepares transaction control like anything else, and a client
+      // with preparation turned off falls back to the unnamed path anyway.
+      prepareTransactionControls: true,
       transactionAcquirer: options.transactionAcquirer,
       compiler,
       spanAttributes: [
-        ...(options.spanAttributes ? Object.entries(options.spanAttributes) : []),
+        ...(config.spanAttributes ? Object.entries(config.spanAttributes) : []),
         [ATTR_DB_SYSTEM_NAME, "postgresql"],
         [ATTR_DB_NAMESPACE, config.database ?? config.username ?? "postgres"],
         [ATTR_SERVER_ADDRESS, config.host ?? "localhost"],
@@ -616,70 +226,36 @@ export const makeWith = Effect.fnUntraced(function*(
     }),
     {
       [TypeId]: TypeId as TypeId,
-      config: options.config,
+      config,
       json: (_: unknown) => Statement.fragment([PgJson(_)]),
-      listen: (channel: string) =>
-        Stream.callback<string, SqlError>(Effect.fnUntraced(function*(queue) {
-          const client = yield* options.listenAcquirer
-          function onNotification(msg: Pg.Notification) {
-            if (msg.channel === channel && msg.payload) {
-              Queue.offerUnsafe(queue, msg.payload)
-            }
-          }
-          yield* Effect.addFinalizer(() =>
-            Effect.promise(() => {
-              client.off("notification", onNotification)
-              return client.query(`UNLISTEN ${Pg.escapeIdentifier(channel)}`)
-            })
-          )
-          yield* Effect.tryPromise({
-            try: () => client.query(`LISTEN ${Pg.escapeIdentifier(channel)}`),
-            catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to listen", "listen") })
-          })
-          client.on("notification", onNotification)
-        })),
-      notify: (channel: string, payload: string) =>
-        Effect.asVoid(Effect.scoped(Effect.flatMap(
-          options.acquirer,
-          (conn) => conn.executeRaw(`SELECT pg_notify($1, $2)`, [channel, payload])
-        )))
+      listen,
+      notify: (channel: string, payload: string) => {
+        const channelError = validateChannelName(channel, "notify")
+        return channelError !== undefined ?
+          Effect.fail(channelError) :
+          Effect.asVoid(Effect.scoped(Effect.flatMap(
+            options.acquirer,
+            (conn) => conn.executeRaw(`SELECT pg_notify($1, $2)`, [channel, payload])
+          )))
+      }
     }
   )
 })
 
 class ConnectionImpl implements Connection {
+  readonly connection: PgConnection.PgConnection
+  readonly streamAcquirer: Effect.Effect<PgConnection.PgConnection, SqlError, Scope.Scope> | undefined
+
   constructor(
-    runWithClient: <A>(
-      f: (client: Pg.ClientBase, resume: (_: Effect.Effect<A, SqlError>) => void) => void
-    ) => Effect.Effect<A, SqlError>,
-    reserve: Effect.Effect<Pg.ClientBase, SqlError, Scope.Scope>
+    connection: PgConnection.PgConnection,
+    streamAcquirer?: Effect.Effect<PgConnection.PgConnection, SqlError, Scope.Scope> | undefined
   ) {
-    this.runWithClient = runWithClient
-    this.reserve = reserve
+    this.connection = connection
+    this.streamAcquirer = streamAcquirer
   }
 
-  private readonly runWithClient: <A>(
-    f: (client: Pg.ClientBase, resume: (_: Effect.Effect<A, SqlError>) => void) => void
-  ) => Effect.Effect<A, SqlError>
-  private readonly reserve: Effect.Effect<Pg.ClientBase, SqlError, Scope.Scope>
-
-  private run(query: string, params: ReadonlyArray<unknown>) {
-    return this.runWithClient<ReadonlyArray<any>>((client, resume) => {
-      client.query(query, params as any, (err, result) => {
-        if (err) {
-          resume(
-            Effect.fail(new SqlError({ reason: classifyError(err, "Failed to execute statement", "execute") }))
-          )
-        } else {
-          // Multi-statement queries return an array of results
-          resume(Effect.succeed(
-            Array.isArray(result)
-              ? result.map((r) => r.rows ?? [])
-              : result.rows ?? []
-          ))
-        }
-      })
-    })
+  private run(query: string, params: ReadonlyArray<unknown>, prepare = true) {
+    return Effect.map(this.connection.query(query, params, prepare), (result) => result.rows)
   }
 
   execute(
@@ -692,102 +268,48 @@ class ConnectionImpl implements Connection {
       : this.run(sql, params)
   }
   executeRaw(sql: string, params: ReadonlyArray<unknown>) {
-    return this.runWithClient<Pg.Result>((client, resume) => {
-      client.query(sql, params as any, (err, result) => {
-        if (err) {
-          resume(
-            Effect.fail(new SqlError({ reason: classifyError(err, "Failed to execute statement", "execute") }))
-          )
-        } else {
-          resume(Effect.succeed(result))
-        }
-      })
-    })
+    return this.connection.query(sql, params)
   }
   executeWithoutTransform(sql: string, params: ReadonlyArray<unknown>) {
     return this.run(sql, params)
   }
   executeValues(sql: string, params: ReadonlyArray<unknown>) {
-    return this.runWithClient<ReadonlyArray<any>>((client, resume) => {
-      client.query(
-        {
-          text: sql,
-          rowMode: "array",
-          values: params as Array<string>
-        },
-        (err, result) => {
-          if (err) {
-            resume(
-              Effect.fail(new SqlError({ reason: classifyError(err, "Failed to execute statement", "execute") }))
-            )
-          } else {
-            resume(Effect.succeed(result.rows))
-          }
-        }
-      )
-    })
+    return this.connection.queryValues(sql, params)
   }
   executeValuesUnprepared(sql: string, params: ReadonlyArray<unknown>) {
-    return this.executeValues(sql, params)
+    return this.connection.queryValues(sql, params, false)
   }
   executeUnprepared(
     sql: string,
     params: ReadonlyArray<unknown>,
     transformRows: (<A extends object>(row: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined
   ) {
-    return this.execute(sql, params, transformRows)
+    const operation = this.run(sql, params, false)
+    return transformRows
+      ? Effect.map(operation, transformRows)
+      : operation
   }
   executeStream(
     sql: string,
     params: ReadonlyArray<unknown>,
     transformRows: (<A extends object>(row: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined
   ) {
-    // oxlint-disable-next-line @typescript-eslint/no-this-alias
-    const self = this
-    return Stream.fromChannel(Channel.fromTransform(Effect.fnUntraced(function*(_, scope) {
-      const client = yield* Scope.provide(self.reserve, scope)
-      yield* Scope.addFinalizer(scope, Effect.promise(() => cursor.close()))
-      const cursor = client.query(new Cursor(sql, params as any))
-      // @effect-diagnostics-next-line returnEffectInGen:off
-      return Effect.callback<Arr.NonEmptyReadonlyArray<any>, SqlError | Cause.Done>((resume) => {
-        cursor.read(128, (err, rows) => {
-          if (err) {
-            resume(Effect.fail(new SqlError({ reason: classifyError(err, "Failed to execute statement", "stream") })))
-          } else if (Arr.isArrayNonEmpty(rows)) {
-            resume(Effect.succeed(transformRows ? transformRows(rows) as any : rows))
-          } else {
-            resume(Cause.done())
-          }
-        })
-      })
-    })))
+    const stream = this.streamAcquirer === undefined
+      ? this.connection.stream(sql, params)
+      : Stream.unwrap(Effect.map(this.streamAcquirer, (connection) => connection.stream(sql, params)))
+    return transformRows
+      ? Stream.mapArray(stream, (rows) => transformRows(rows) as Arr.NonEmptyReadonlyArray<PgConnection.Row>)
+      : stream
   }
 }
 
-const cancelEffects = new WeakMap<Pg.PoolClient, Effect.Effect<void> | undefined>()
-const makeCancel = (pool: Pg.Pool, client: Pg.PoolClient) => {
-  if (cancelEffects.has(client)) {
-    return cancelEffects.get(client)!
-  }
-  const processId = (client as any).processID
-  const eff = processId !== undefined
-    // query cancelation is best-effort, so we don't fail if it doesn't work
-    ? Effect.callback<void>((resume) => {
-      if (pool.ending) return resume(Effect.void)
-      pool.query(`SELECT pg_cancel_backend(${processId})`, () => {
-        resume(Effect.void)
-      })
-    }).pipe(
-      Effect.interruptible,
-      Effect.timeoutOption(5000)
-    )
-    : undefined
-  cancelEffects.set(client, eff)
-  return eff
-}
+const makeConnection = (
+  connection: PgConnection.PgConnection,
+  streamAcquirer?: Effect.Effect<PgConnection.PgConnection, SqlError, Scope.Scope> | undefined
+): Connection => new ConnectionImpl(connection, streamAcquirer)
 
 /**
- * Creates a layer from an effect that acquires a `PgClient`, providing both `PgClient` and `SqlClient`.
+ * Provides both `PgClient` and `SqlClient` from an acquisition effect.
  *
  * @category layers
  * @since 4.0.0
@@ -803,14 +325,12 @@ export const layerFrom = <E, R>(
   ).pipe(Layer.provide(Reactivity.layer)) as any
 
 /**
- * Creates a layer from a `Config`-wrapped PostgreSQL pool configuration, providing both `PgClient` and `SqlClient`.
+ * Creates a client layer from wrapped pool configuration.
  *
  * @category layers
  * @since 4.0.0
  */
-export const layerConfig: (
-  config: Config.Wrap<PgPoolConfig>
-) => Layer.Layer<PgClient | Client.SqlClient, Config.ConfigError | SqlError> = (
+export const layerConfig = (
   config: Config.Wrap<PgPoolConfig>
 ): Layer.Layer<PgClient | Client.SqlClient, Config.ConfigError | SqlError> =>
   layerFrom(Effect.flatMap(
@@ -819,7 +339,7 @@ export const layerConfig: (
   ))
 
 /**
- * Creates a layer from a concrete PostgreSQL pool configuration, providing both `PgClient` and `SqlClient`.
+ * Creates a client layer from pool configuration.
  *
  * @category layers
  * @since 4.0.0
@@ -829,7 +349,7 @@ export const layer = (
 ): Layer.Layer<PgClient | Client.SqlClient, SqlError> => layerFrom(make(config))
 
 /**
- * Creates the PostgreSQL statement compiler, using `$1` placeholders, double-quoted identifiers, PostgreSQL returning clauses, and optional JSON value transformation.
+ * Creates the PostgreSQL statement compiler.
  *
  * @category constructors
  * @since 4.0.0
@@ -863,13 +383,12 @@ export const makeCompiler = (
     onCustom(type, placeholder, withoutTransform) {
       switch (type.kind) {
         case "PgJson": {
+          const value = withoutTransform || transformValue === undefined
+            ? type.paramA
+            : transformValue(type.paramA)
           return [
             placeholder(undefined),
-            [
-              withoutTransform || transformValue === undefined
-                ? type.paramA
-                : transformValue(type.paramA)
-            ]
+            [PgTypes.jsonb(value)]
           ]
         }
       }
@@ -880,7 +399,7 @@ export const makeCompiler = (
 const escape = Statement.defaultEscape("\"")
 
 /**
- * PostgreSQL-specific custom statement fragments supported by the compiler, currently JSON parameter fragments.
+ * PostgreSQL-specific statement fragments.
  *
  * @category models
  * @since 4.0.0
@@ -902,65 +421,3 @@ const ATTR_DB_SYSTEM_NAME = "db.system.name"
 const ATTR_DB_NAMESPACE = "db.namespace"
 const ATTR_SERVER_ADDRESS = "server.address"
 const ATTR_SERVER_PORT = "server.port"
-
-const pgCodeFromCause = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
-    return undefined
-  }
-  const code = cause.code
-  return typeof code === "string" ? code : undefined
-}
-
-const pgConstraintFromCause = (cause: unknown): string => {
-  if (typeof cause !== "object" || cause === null || !("constraint" in cause)) {
-    return "unknown"
-  }
-  const constraint = cause.constraint
-  if (typeof constraint !== "string") {
-    return "unknown"
-  }
-  const normalized = constraint.trim()
-  return normalized.length === 0 ? "unknown" : normalized
-}
-
-const classifyError = (
-  cause: unknown,
-  message: string,
-  operation: string
-) => {
-  const props = { cause, message, operation }
-  const code = pgCodeFromCause(cause)
-  if (code !== undefined) {
-    if (code.startsWith("08")) {
-      return new ConnectionError(props)
-    }
-    if (code.startsWith("28")) {
-      return new AuthenticationError(props)
-    }
-    if (code === "42501") {
-      return new AuthorizationError(props)
-    }
-    if (code.startsWith("42")) {
-      return new SqlSyntaxError(props)
-    }
-    if (code === "23505") {
-      return new UniqueViolation({ ...props, constraint: pgConstraintFromCause(cause) })
-    }
-    if (code.startsWith("23")) {
-      return new ConstraintError(props)
-    }
-    if (code === "40P01") {
-      return new DeadlockError(props)
-    }
-    if (code === "40001") {
-      return new SerializationError(props)
-    }
-    if (code === "55P03") {
-      return new LockTimeoutError(props)
-    }
-    if (code === "57014") {
-      return new StatementTimeoutError(props)
-    }
-  }
-  return new UnknownError(props)
-}

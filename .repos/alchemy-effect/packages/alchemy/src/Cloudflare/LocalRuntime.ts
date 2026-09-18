@@ -10,15 +10,21 @@ import { LOCAL_ID_PREFIX } from "../ProviderMode.ts";
 import { CloudflareEnvironment } from "./CloudflareEnvironment.ts";
 import type { Queue } from "./Queues/Queue.ts";
 import type { Consumer } from "./Queues/Consumer.ts";
+import { moduleExtension } from "../Util/Node.ts";
 
-export const LOCAL_ENTRY_URL = import.meta.resolve(
+/**
+ * The Cloudflare provider group module ([Local.ts](./Local.ts)) every
+ * Cloudflare local provider is registered in; the dev sidecar imports it on
+ * first use (see `Local/Sidecar.ts`).
+ */
+export const LOCAL_PROVIDERS_URL = import.meta.resolve(
   // `import.meta.resolve(<string>)` is a runtime API — TypeScript's
   // `rewriteRelativeImportExtensions` does NOT touch the string literal, so
   // we have to pick the right extension ourselves. `import.meta.url` reflects
   // the actual on-disk extension of *this* file (`.ts` when loaded from
   // `src/` under Bun or vitest, `.js` when loaded from the compiled `lib/`
   // under Node), which is exactly the signal we need.
-  import.meta.url.endsWith(".ts") ? "./Local.ts" : "./Local.js",
+  `./Local${moduleExtension(import.meta.url)}`,
   import.meta.url,
 );
 

@@ -24,7 +24,7 @@ import { hasProperty } from "./Predicate.ts"
  * @category symbols
  * @since 2.0.0
  */
-export const symbol = "~effect/interfaces/PrimaryKey"
+export const symbol = "~effect/PrimaryKey"
 
 /**
  * An interface for objects that can provide a string-based primary key.

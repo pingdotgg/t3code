@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { assertNone, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { Cause, Context, Duration, Effect, Fiber, Layer, Tracer } from "effect"
+import { Cause, Context, Duration, Effect, Exit, Fiber, Layer, Tracer } from "effect"
 import { TestClock } from "effect/testing"
 import type { Span } from "effect/Tracer"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
@@ -239,6 +239,33 @@ describe("Tracer", () => {
 
         strictEqual(span.attributes.get("key"), "value")
         strictEqual(span.attributes.get("key2"), "value2")
+      }))
+  })
+
+  describe("Effect.useSpan", () => {
+    it.effect("ends the span when the callback throws", () =>
+      Effect.gen(function*() {
+        const defect = new Error("boom")
+        const spans: Array<Tracer.Span> = []
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options)
+            spans.push(span)
+            return span
+          }
+        })
+
+        const exit = yield* Effect.useSpan("A", (): Effect.Effect<never> => {
+          throw defect
+        }).pipe(Effect.withTracer(tracer), Effect.exit)
+
+        deepStrictEqual(exit, Exit.die(defect))
+        strictEqual(spans.length, 1)
+        const span = spans[0]!
+        strictEqual(span.status._tag, "Ended")
+        if (span.status._tag === "Ended") {
+          deepStrictEqual(span.status.exit, Exit.die(defect))
+        }
       }))
   })
 

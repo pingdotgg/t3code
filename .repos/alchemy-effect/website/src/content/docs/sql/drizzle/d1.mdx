@@ -123,7 +123,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
 ) {}
 ```
 
-Nothing connects at init — the client is built on the first query of
+Nothing connects in the constructor — the client is built on the first query of
 an event and reused for every query in that event (see
 [Connection lifecycle](/sql/effect-sql/lifecycle)). Plan and deploy
 never touch D1.

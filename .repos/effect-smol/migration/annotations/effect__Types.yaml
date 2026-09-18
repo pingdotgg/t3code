@@ -10,6 +10,9 @@
 "effect/Types#Ctor":
   replacement: "new (...args: Array<any>) => T"
   note: "The named alias was removed; inline the construct signature or define a local alias."
+"effect/Types#DeepMutable":
+  replacement: "Types.DeepMutable"
+  note: "Retained, but v4 preserves built-in objects, Effect data types, and other objects with methods or symbol-keyed properties while making surrounding structural data mutable."
 "effect/Types#Invariant":
   replacement: "Types.Invariant"
   note: "Unchanged invariant type helper."

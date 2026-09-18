@@ -98,7 +98,7 @@ export const addAll = (
 export const getterAddAll = <A>(
   f: (_: A) => Iterable<globalThis.Transferable>
 ): SchemaGetter.Getter<A, A> =>
-  SchemaGetter.transformOrFail((e: A) =>
+  SchemaGetter.transformEffect((e: A) =>
     Effect.contextWith((services) => {
       const collector = Context.getOrUndefined(services, Collector)
       if (!collector) return Effect.succeed(e)

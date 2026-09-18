@@ -21,6 +21,11 @@ export const isResourceState = (
 export class StateStoreError extends Data.TaggedError("StateStoreError")<{
   message: string;
   cause?: Error;
+  /** HTTP failure metadata without the request, response body, or credentials. */
+  http?: {
+    /** Undefined when the HTTP client failed before receiving a response. */
+    status?: number;
+  };
 }> {}
 
 export class State extends Context.Service<

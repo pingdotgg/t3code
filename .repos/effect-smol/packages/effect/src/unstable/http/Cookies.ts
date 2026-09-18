@@ -19,8 +19,6 @@ import { type Pipeable, pipeArguments } from "../../Pipeable.ts"
 import * as Predicate from "../../Predicate.ts"
 import * as Record from "../../Record.ts"
 import * as Result from "../../Result.ts"
-import * as Schema from "../../Schema.ts"
-import * as SchemaTransformation from "../../SchemaTransformation.ts"
 import type * as Types from "../../Types.ts"
 
 const TypeId = "~effect/http/Cookies"
@@ -43,57 +41,6 @@ export interface Cookies extends Pipeable, Inspectable.Inspectable {
   readonly [TypeId]: typeof TypeId
   readonly cookies: Record.ReadonlyRecord<string, Cookie>
 }
-
-/**
- * Schema interface for validating and encoding `Cookies` collections.
- *
- * @category schemas
- * @since 4.0.0
- */
-export interface CookiesSchema extends Schema.declare<Cookies, Record.ReadonlyRecord<string, Cookie>> {}
-
-/**
- * Schema for `Cookies` collections.
- *
- * **Details**
- *
- * JSON encoding uses `Set-Cookie` header strings, while isomorphic encoding uses
- * a readonly record of cookie values.
- *
- * @category schemas
- * @since 4.0.0
- */
-export const CookiesSchema: CookiesSchema = Schema.declare(
-  isCookies,
-  {
-    representation: {
-      id: "effect/http/Cookies",
-      payload: null
-    },
-    toCode: () => ({
-      runtime: "Cookies.CookiesSchema",
-      Type: "Cookies.Cookies",
-      importDeclarations: [`import * as Cookies from "effect/unstable/http/Cookies"`]
-    }),
-    expected: "Cookies",
-    toCodecJson: () =>
-      Schema.link<Cookies>()(
-        Schema.Array(Schema.String),
-        SchemaTransformation.transform({
-          decode: (input) => fromSetCookie(input),
-          encode: (cookies) => toSetCookieHeaders(cookies)
-        })
-      ),
-    toCodecIso: () =>
-      Schema.link<Cookies>()(
-        Schema.Record(Schema.String, CookieSchema),
-        SchemaTransformation.transform({
-          decode: (input) => fromReadonlyRecord(input),
-          encode: (cookies) => cookies.cookies
-        })
-      )
-  }
-)
 
 const CookieTypeId = "~effect/http/Cookies/Cookie"
 
@@ -130,36 +77,6 @@ export interface Cookie extends Inspectable.Inspectable {
  */
 export const isCookie = (u: unknown): u is Cookie => Predicate.hasProperty(u, CookieTypeId)
 
-/**
- * Schema interface for validating `Cookie` values.
- *
- * @category schemas
- * @since 4.0.0
- */
-export interface CookieSchema extends Schema.declare<Cookie> {}
-
-/**
- * Schema for `Cookie` values.
- *
- * @category schemas
- * @since 4.0.0
- */
-export const CookieSchema: CookieSchema = Schema.declare(
-  isCookie,
-  {
-    representation: {
-      id: "effect/http/Cookie",
-      payload: null
-    },
-    toCode: () => ({
-      runtime: "Cookies.CookieSchema",
-      Type: "Cookies.Cookie",
-      importDeclarations: [`import * as Cookies from "effect/unstable/http/Cookies"`]
-    }),
-    expected: "Cookie"
-  }
-)
-
 const CookieErrorTypeId = "~effect/http/Cookies/CookieError"
 
 /**
@@ -189,7 +106,7 @@ export class CookiesErrorReason extends Data.Error<{
  * @category errors
  * @since 4.0.0
  */
-export class CookiesError extends Data.TaggedError("CookieError")<{
+export class CookiesError extends Data.TaggedError("CookiesError")<{
   readonly reason: CookiesErrorReason
 }> {
   /**
@@ -288,7 +205,7 @@ function parseSetCookie(header: string): Cookie | undefined {
     return undefined
   }
   const name = parts[0].slice(0, firstEqual)
-  if (!fieldContentRegExp.test(name)) {
+  if (!cookieNameRegExp.test(name)) {
     return undefined
   }
 
@@ -886,23 +803,6 @@ export const toRecord = (self: Cookies): Record<string, string> => {
   }
   return record
 }
-
-/**
- * Schema for transforming `Cookies` into records of decoded string values keyed
- * by cookie name.
- *
- * @category schemas
- * @since 4.0.0
- */
-export const schemaRecord = CookiesSchema.pipe(
-  Schema.decodeTo(
-    Schema.Record(Schema.String, Schema.String),
-    SchemaTransformation.transform({
-      decode: toRecord,
-      encode: (self) => fromIterable(Object.entries(self).map(([name, value]) => makeCookieUnsafe(name, value)))
-    })
-  )
-)
 
 /**
  * Serializes a `Cookies` collection into an array of `Set-Cookie` header values.

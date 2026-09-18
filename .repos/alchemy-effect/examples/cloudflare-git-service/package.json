@@ -1,0 +1,42 @@
+{
+  "name": "cloudflare-git-service",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-git-service"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "logs": "alchemy logs",
+    "tail": "alchemy tail",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@alchemy.run/better-auth": "workspace:*",
+    "@better-auth/api-key": "1.6.25",
+    "@pierre/diffs": "^1.3.5",
+    "alchemy": "workspace:*",
+    "better-auth": "catalog:",
+    "effect": "catalog:",
+    "highlight.js": "^11.11.1",
+    "marked": "^16.4.1",
+    "marked-highlight": "^2.2.2",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

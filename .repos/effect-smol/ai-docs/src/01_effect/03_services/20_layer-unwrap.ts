@@ -51,7 +51,7 @@ export class MessageStore extends Context.Service<MessageStore, {
   static readonly layer = Layer.unwrap(
     Effect.gen(function*() {
       // Read config inside an Effect, then choose which concrete layer to use.
-      const useInMemory = yield* Config.boolean("MESSAGE_STORE_IN_MEMORY").pipe(
+      const useInMemory = yield* Config.Boolean("MESSAGE_STORE_IN_MEMORY").pipe(
         Config.withDefault(false)
       )
 
@@ -59,7 +59,7 @@ export class MessageStore extends Context.Service<MessageStore, {
         return MessageStore.layerInMemory
       }
 
-      const remoteUrl = yield* Config.url("MESSAGE_STORE_URL")
+      const remoteUrl = yield* Config.URL("MESSAGE_STORE_URL")
       return MessageStore.layerRemote(remoteUrl)
     })
   )

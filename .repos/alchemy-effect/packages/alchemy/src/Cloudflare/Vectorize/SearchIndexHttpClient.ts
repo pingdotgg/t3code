@@ -61,7 +61,7 @@ export const makeHttpSearchIndexClient = (
     describe: () =>
       local((name) =>
         vectorize
-          .infoIndex({ accountId, indexName: name })
+          .getIndexInfo({ accountId, indexName: name })
           .pipe(Effect.map(toIndexInfo)),
       ),
     query: (vector, options) =>
@@ -161,7 +161,7 @@ const toMutation = (r: {
 }): runtime.VectorizeAsyncMutation => ({ mutationId: r.mutationId ?? "" });
 
 const toIndexInfo = (
-  r: vectorize.InfoIndexResponse,
+  r: vectorize.GetIndexInfoResponse,
 ): runtime.VectorizeIndexInfo =>
   ({
     vectorCount: r.vectorCount ?? 0,

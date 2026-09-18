@@ -1,0 +1,46 @@
+---
+/**
+ * A row of provider brand marks, for cards that point at the provider
+ * directory. Icons come from the same table the docs tab bar uses, so
+ * they stay in sync with the providers Alchemy ships.
+ */
+import { TAB_ICONS } from "../docs-icons";
+
+interface Props {
+  /** Tab labels from `TAB_ICONS`, in display order. */
+  names?: string[];
+}
+
+const {
+  names = [
+    "Hetzner",
+    "Fly",
+    "Railway",
+    "Kubernetes",
+    "Docker",
+    "Neon",
+    "PlanetScale",
+    "Prisma",
+    "Drizzle",
+    "GitHub",
+  ],
+} = Astro.props;
+
+const icons = names
+  .map((name) => ({ name, body: TAB_ICONS[name] }))
+  .filter((i): i is { name: string; body: string } => Boolean(i.body));
+---
+
+<span class="provider-icons" aria-label={names.join(", ")}>
+  {
+    icons.map((icon) => (
+      <svg
+        aria-hidden="true"
+        width="22"
+        height="22"
+        viewBox="0 0 24 24"
+        set:html={icon.body}
+      />
+    ))
+  }
+</span>

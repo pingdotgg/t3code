@@ -111,7 +111,10 @@ export function TermChrome({
     );
   }
   return (
-    <div className="alc-term not-content">
+    // `data-nosnippet`: the simulated terminal is decoration, not prose. Left
+    // visible to crawlers it leaks into Google-generated snippets as chrome
+    // fragments ("~/my-appDEV", "○localhost:1337/ HMR").
+    <div className="alc-term not-content" data-nosnippet="">
       <div className="alc-term__header">
         <span
           className="alc-code-block__dot"

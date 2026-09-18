@@ -63,6 +63,22 @@ describe("Client", () => {
       ])
     }))
 
+  for (const mode of ["unprepared", "valuesUnprepared"] as const) {
+    it.effect(`captures ${mode} preparation errors`, () =>
+      Effect.gen(function*() {
+        const sql = yield* makeClient
+        yield* sql`CREATE TABLE test (id INTEGER PRIMARY KEY)`
+
+        const statement = sql`CREATE TABLE test (id INTEGER PRIMARY KEY)`
+        const execution = mode === "unprepared"
+          ? Effect.as(statement.unprepared, false)
+          : Effect.as(statement.valuesUnprepared, false)
+        const recovered = yield* execution.pipe(Effect.catchTag("SqlError", () => Effect.succeed(true)))
+
+        assert.isTrue(recovered)
+      }))
+  }
+
   it.effect("withTransaction", () =>
     Effect.gen(function*() {
       const sql = yield* makeClient
@@ -156,6 +172,7 @@ describe("Client", () => {
       )
 
       const sql = yield* SqliteClient.make({ filename, readonly: true })
+      yield* sql`PRAGMA query_only = ON`
       assert.deepStrictEqual(yield* sql.withTransaction(sql`SELECT * FROM test`), [])
     }).pipe(Effect.provide([NodeFileSystem.layer, Reactivity.layer])))
 

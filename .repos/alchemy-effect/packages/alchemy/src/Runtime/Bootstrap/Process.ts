@@ -49,8 +49,8 @@ export const stackFromEnv: Layer.Layer<Stack, Config.ConfigError> =
   Layer.effect(
     Stack,
     Effect.all([
-      Config.string("ALCHEMY_STACK_NAME"),
-      Config.string("ALCHEMY_STAGE"),
+      Config.String("ALCHEMY_STACK_NAME"),
+      Config.String("ALCHEMY_STAGE"),
     ]).pipe(
       Effect.map(([name, stage]) => ({
         name,

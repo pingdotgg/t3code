@@ -242,7 +242,7 @@ resources its capability and `consume*` calls touched — no
 
 ```sh
 curl -X PUT --data 'audit me' "$URL/items/k1"
-bun alchemy logs Audit --follow
+bun alchemy logs Audit --tail
 ```
 
 You'll see a line like:

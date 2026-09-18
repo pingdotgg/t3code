@@ -104,12 +104,19 @@ const findSnippet = (zoneId: string, name: string) =>
 // The zone's snippet-rule list is a singleton; purge any leftovers from
 // interrupted runs so the test starts from a clean slate.
 const purgeRules = (zoneId: string) =>
-  snippets.deleteRule({ zoneId }).pipe(
+  listLiveRules(zoneId).pipe(
+    Effect.catchTag("SnippetRulesNotFound", () => Effect.succeed([])),
+    Effect.flatMap((rules) =>
+      rules.length === 0 ? Effect.void : snippets.deleteRule({ zoneId }),
+    ),
     Effect.retry({
       while: (e) => e._tag === "Forbidden",
       ...forbiddenRetryPolicy,
     }),
-    Effect.catchTag("SnippetRulesNotFound", () => Effect.void),
+    Effect.catchTag(
+      ["SnippetRulesNotFound", "SnippetZoneNotFound"],
+      () => Effect.void,
+    ),
   );
 
 // The zone's snippet-rule list is a per-zone SINGLETON, and snippets are

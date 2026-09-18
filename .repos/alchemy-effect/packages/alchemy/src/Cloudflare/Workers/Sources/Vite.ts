@@ -14,6 +14,10 @@ import {
   type ViteBuildOutput,
 } from "../../../Bundle/Vite.ts";
 import { viteSupportsPortZero } from "@alchemy.run/cloudflare-runtime/core/internal/Port";
+import {
+  makeResourceLogger,
+  makeResourceOutput,
+} from "../../../Util/ResourceOutput.ts";
 import { hashDirectory, type MemoOptions } from "../../../Command/Memo.ts";
 import { findAvailablePort, initialCwd } from "../../../Util/Node.ts";
 import { sha256Object } from "../../../Util/sha256.ts";
@@ -163,35 +167,34 @@ export const viteBuild = (
   rootDir: string = initialCwd,
   env: Record<string, unknown>,
   pluginOptions: CloudflareVitePluginOptions,
+  fqn: string,
 ) =>
-  ConsoleService.consoleWith((console) =>
-    Effect.gen(function* () {
-      const result = yield* runViteBuildChild(
-        {
-          // Anchor to the initial cwd so the resolution itself can't race a
-          // transient chdir; the child's own cwd is this resolved root.
-          rootDir: nodePath.resolve(initialCwd, rootDir),
-          // Only `VITE_`-prefixed entries participate in the build (see
-          // `getDefine`); the rest may hold non-serializable values.
-          env: Object.fromEntries(
-            Object.entries(env).filter(([key]) => key.startsWith("VITE_")),
-          ),
-          main: pluginOptions.main,
-          compatibilityDate: pluginOptions.compatibilityDate,
-          compatibilityFlags: pluginOptions.compatibilityFlags,
-          viteEnvironments: pluginOptions.viteEnvironments,
-        },
-        (channel, line) =>
-          channel === "stderr" ? console.error(line) : console.log(line),
-      );
-      return {
-        clientDirectory: result.clientDirectory,
-        base: result.base,
-        serverBundle: Effect.succeed(result.serverBundle),
-        externalWorkspaces: Effect.succeed(new Set(result.externalWorkspaces)),
-      } satisfies ViteBuildOutput;
-    }),
-  );
+  Effect.gen(function* () {
+    const logResourceOutput = makeResourceLogger(fqn);
+    const result = yield* runViteBuildChild(
+      {
+        // Anchor to the initial cwd so the resolution itself can't race a
+        // transient chdir; the child's own cwd is this resolved root.
+        rootDir: nodePath.resolve(initialCwd, rootDir),
+        // Only `VITE_`-prefixed entries participate in the build (see
+        // `getDefine`); the rest may hold non-serializable values.
+        env: Object.fromEntries(
+          Object.entries(env).filter(([key]) => key.startsWith("VITE_")),
+        ),
+        main: pluginOptions.main,
+        compatibilityDate: pluginOptions.compatibilityDate,
+        compatibilityFlags: pluginOptions.compatibilityFlags,
+        viteEnvironments: pluginOptions.viteEnvironments,
+      },
+      logResourceOutput,
+    );
+    return {
+      clientDirectory: result.clientDirectory,
+      base: result.base,
+      serverBundle: Effect.succeed(result.serverBundle),
+      externalWorkspaces: Effect.succeed(new Set(result.externalWorkspaces)),
+    } satisfies ViteBuildOutput;
+  });
 
 /**
  * The in-process build implementation. ONLY safe inside the dedicated
@@ -381,12 +384,17 @@ export const makeViteSource = (vite: ViteOptions): SourceProvider => ({
     const path = yield* Path.Path;
     const env = yield* resolveViteEnv(ctx.env ?? {});
     const { clientDirectory, serverBundle, externalWorkspaces } =
-      yield* viteBuild(vite.rootDir, env, {
-        main: vite.main,
-        compatibilityDate: ctx.compatibility.date,
-        compatibilityFlags: ctx.compatibility.flags,
-        viteEnvironments: vite.viteEnvironments,
-      });
+      yield* viteBuild(
+        vite.rootDir,
+        env,
+        {
+          main: vite.main,
+          compatibilityDate: ctx.compatibility.date,
+          compatibilityFlags: ctx.compatibility.flags,
+          viteEnvironments: vite.viteEnvironments,
+        },
+        ctx.fqn,
+      );
     const [assets, bundle, input] = yield* Effect.all(
       [
         clientDirectory

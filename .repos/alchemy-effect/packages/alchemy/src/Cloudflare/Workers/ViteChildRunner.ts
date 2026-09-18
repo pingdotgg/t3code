@@ -94,11 +94,12 @@ const program = Effect.scoped(
           // module a fresh one.
           Effect.provideService(
             Artifacts,
-            makeScopedArtifacts(createArtifactStore(), source.id),
+            makeScopedArtifacts(createArtifactStore(), source.fqn),
           ),
           Effect.flatMap((provider) =>
             provider.dev({
               id: source.id,
+              fqn: source.fqn,
               workerName: config.worker.name,
               compatibility,
               entry: { kind: "external" },

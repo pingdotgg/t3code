@@ -6,7 +6,7 @@
   note: "Flat providers were removed; implement the unified path-based provider with ConfigProvider.make."
 "effect/ConfigProvider#ConfigProvider.FromEnvConfig":
   replacement: "Parameters<typeof ConfigProvider.fromEnv>[0]"
-  note: "Options are inline in v4 and contain env plus preserveEmptyStrings; custom path and sequence delimiters moved to provider path transforms and Config.Array/Config.Record schemas."
+  note: "Options are inline in v4 and contain env plus preserveEmptyStrings; custom path delimiters moved to provider path transforms, while separated sequences and records use Config.Array and Config.Record."
 "effect/ConfigProvider#ConfigProvider.FromMapConfig":
   replacement: "none"
   note: "fromMap and its delimiter options were removed; expand delimited keys into a nested value and use ConfigProvider.fromUnknown."

@@ -1,6 +1,6 @@
 import { assert, describe, it, vitest } from "@effect/vitest"
 
-describe("Effect keepAlive", () => {
+describe("Effect keepAlive", { concurrent: false }, () => {
   it("makeRunMain keeps process alive until completion", async () => {
     const originalSetInterval = globalThis.setInterval
     const originalClearInterval = globalThis.clearInterval

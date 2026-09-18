@@ -1,6 +1,9 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Schema, SchemaRepresentation, SchemaTransformation } from "effect"
+import { JsonSchema, Schema, SchemaRepresentation, SchemaTransformation } from "effect"
 import { throws } from "../../utils/assert.ts"
+
+// oxlint-disable-next-line @typescript-eslint/no-require-imports
+const AjvDraft07 = require("ajv")
 
 function expectError(thunk: () => void, expected: string | Error): void {
   if (typeof expected === "string") {
@@ -133,7 +136,7 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
             child: { $ref: "#/$defs/ChildEncoded" }
           },
           required: ["child"],
-          additionalProperties: false
+          additionalProperties: true
         }
       })
     })
@@ -156,6 +159,155 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
           contentMediaType: "application/json"
         }
       })
+    })
+
+    for (
+      const [identifier, token] of [
+        ["Rate", "Rate"],
+        ["id~a/b", "id~0a~1b"],
+        ["Rate%", "Rate%25"],
+        ["Rate%2F", "Rate%252F"],
+        ["Rate%25", "Rate%2525"]
+      ]
+    ) {
+      it(`rewrites callback references to the canonical ${identifier} definition`, () => {
+        const Content = Schema.String.annotate({ identifier })
+        const make = () =>
+          Schema.toCodecJson(
+            Schema.String.check(Schema.isMinLength(1)).pipe(
+              Schema.decodeTo(Content, stringIdentityTransformation)
+            )
+          )
+        const first = make()
+        const second = make()
+        const callback = Schema.Unknown.check(Schema.makeFilter(() => true, {
+          toJsonSchema: () => ({ $ref: `#/$defs/${token}Encoded_1` })
+        }))
+        const document = SchemaRepresentation.toRepresentations([first.ast, second.ast, callback.ast])
+        assert.deepStrictEqual(Object.keys(document.references), [`${identifier}Encoded`, `${identifier}Encoded_1`])
+        const output = SchemaRepresentation.toJsonSchemaMultiDocument(document)
+
+        assert.deepStrictEqual(Object.keys(output.definitions), [`${identifier}Encoded`])
+        assert.deepStrictEqual(output.schemas[2], { $ref: `#/$defs/${token}Encoded` })
+        for (const restored of SchemaRepresentation.fromJsonSchemaMultiDocument(output)) {
+          assert.strictEqual(Schema.is(restored)("value"), true)
+          assert.strictEqual(Schema.is(restored)(1), false)
+        }
+      })
+    }
+
+    it("rewrites callback references with encoded leading separators", () => {
+      const Content = Schema.String.annotate({ identifier: "Rate%" })
+      const make = () =>
+        Schema.toCodecJson(
+          Schema.String.check(Schema.isMinLength(1)).pipe(
+            Schema.decodeTo(Content, stringIdentityTransformation)
+          )
+        )
+      const callback = Schema.Unknown.check(Schema.makeFilter(() => true, {
+        toJsonSchema: () => ({ $ref: "#%2F$defs%2FRate%25Encoded_1" })
+      }))
+      const output = SchemaRepresentation.toJsonSchemaMultiDocument(
+        SchemaRepresentation.toRepresentations([make().ast, make().ast, callback.ast])
+      )
+
+      assert.deepStrictEqual(Object.keys(output.definitions), ["Rate%Encoded"])
+      assert.deepStrictEqual(output.schemas[2], { $ref: "#/$defs/Rate%25Encoded" })
+      assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaMultiDocument(output))
+    })
+
+    for (
+      const $ref of [
+        "#/$defs/Rate%Encoded_1",
+        "#%2F$defs%2FRate%Encoded_1",
+        "#/$defs/Rate#Encoded_1"
+      ]
+    ) {
+      it(`rejects malformed callback reference ${JSON.stringify($ref)}`, () => {
+        const callback = Schema.Unknown.check(Schema.makeFilter(() => true, {
+          toJsonSchema: () => ({ $ref })
+        }))
+        expectError(
+          () =>
+            SchemaRepresentation.toJsonSchemaMultiDocument(
+              SchemaRepresentation.toRepresentations([callback.ast])
+            ),
+          `Invalid JSON Pointer URI fragment ${JSON.stringify($ref)}`
+        )
+      })
+    }
+
+    for (const separator of ["/", "%2F", "%2f", "~1", "%7E1"]) {
+      it(`distinguishes pointer separators from escaped slashes in ${separator} callback references`, () => {
+        const Content = Schema.String.annotate({ identifier: "Box/properties/value" })
+        const make = () =>
+          Schema.toCodecJson(
+            Schema.String.check(Schema.isMinLength(1)).pipe(
+              Schema.decodeTo(Content, stringIdentityTransformation)
+            )
+          )
+        const Box = Schema.Struct({ valueEncoded_1: Schema.Boolean }).annotate({ identifier: "Box" })
+        const $ref = `#/$defs/Box${separator}properties${separator}valueEncoded_1`
+        const callback = Schema.Unknown.check(Schema.makeFilter(() => true, {
+          toJsonSchema: () => ({ $ref })
+        }))
+        const output = SchemaRepresentation.toJsonSchemaMultiDocument(
+          SchemaRepresentation.toRepresentations([make().ast, make().ast, Box.ast, callback.ast])
+        )
+        // Normalize URI fragments before validation: Ajv alone treats %2F as token contents.
+        const document = JsonSchema.toDocumentDraft07({
+          dialect: output.dialect,
+          schema: output.schemas[3],
+          definitions: output.definitions
+        })
+        const validate = new AjvDraft07.default({ strict: false }).compile({
+          ...document.schema,
+          definitions: document.definitions
+        })
+        const isName = separator === "~1" || separator === "%7E1"
+        assert.strictEqual(validate(true), !isName)
+        assert.strictEqual(validate("value"), isName)
+        assert.strictEqual(output.schemas[3].$ref, isName ? "#/$defs/Box~1properties~1valueEncoded" : $ref)
+      })
+    }
+
+    it("preserves an encoded pointer suffix when rewriting a percent-named alias", () => {
+      const representation = SchemaRepresentation.toRepresentation(
+        Schema.Struct({ "value%2F": Schema.Boolean }).ast
+      ).representation
+      if (representation._tag !== "Objects") throw new Error("Expected an object representation")
+      const definition: SchemaRepresentation.Representation = {
+        ...representation,
+        annotations: { "~identifier": "Box%" }
+      }
+      const $ref = "#/$defs/Box%25_1%2Fproperties%2Fvalue%252F"
+      const reference = Object.freeze({ $ref, default: Object.freeze({ $ref }) })
+      const output = SchemaRepresentation.toJsonSchemaMultiDocument({
+        representations: [{
+          _tag: "Unknown",
+          checks: [{
+            _tag: "Filter",
+            aborted: false,
+            annotations: { toJsonSchema: () => reference }
+          }]
+        }],
+        references: { "Box%": definition, "Box%_1": definition }
+      })
+
+      assert.strictEqual(output.schemas[0].$ref, "#/$defs/Box%25%2Fproperties%2Fvalue%252F")
+      assert.deepStrictEqual(output.schemas[0].default, { $ref })
+      assert.strictEqual(reference.$ref, $ref)
+      const document = JsonSchema.toDocumentDraft07({
+        dialect: output.dialect,
+        schema: output.schemas[0],
+        definitions: output.definitions
+      })
+      const validate = new AjvDraft07.default({ strict: false }).compile({
+        ...document.schema,
+        definitions: document.definitions
+      })
+      assert.strictEqual(validate(true), true)
+      assert.strictEqual(validate("value"), false)
     })
 
     // JSON Schema callbacks are user-provided and may have effects, so invocation count is observable.
@@ -216,7 +368,8 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
         type: "object",
         patternProperties: {
           "^key$": { type: "string" }
-        }
+        },
+        additionalProperties: true
       }])
     })
 
@@ -263,7 +416,7 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
               ]
             }
           },
-          additionalProperties: false
+          additionalProperties: true
         },
         NodeEncoded: { $ref: "#/$defs/Objects_" }
       })
@@ -309,7 +462,7 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
             next: { $ref: "#/$defs/Suspend_" }
           },
           required: ["next"],
-          additionalProperties: false
+          additionalProperties: true
         },
         NodeEncoded: {
           type: "object",
@@ -317,7 +470,7 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
             next: { $ref: "#/$defs/Suspend_" }
           },
           required: ["next"],
-          additionalProperties: false
+          additionalProperties: true
         },
         Suspend_1: {
           type: "object",
@@ -325,7 +478,7 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
             next: { $ref: "#/$defs/Suspend_1" }
           },
           required: ["next"],
-          additionalProperties: false
+          additionalProperties: true
         },
         NodeEncoded_1: {
           type: "object",
@@ -333,7 +486,7 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
             next: { $ref: "#/$defs/Suspend_1" }
           },
           required: ["next"],
-          additionalProperties: false
+          additionalProperties: true
         }
       })
     })
@@ -389,7 +542,7 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
           {
             _tag: "Union",
             types: [StringRepresentation, { _tag: "Boolean", checks: [] }],
-            mode: "oneOf",
+            options: { mode: "oneOf" },
             checks: []
           }
         ],
@@ -552,11 +705,12 @@ describe("SchemaRepresentation.toJsonSchemaMultiDocument", () => {
       assert.deepStrictEqual(output.schemas, [
         {
           type: "object",
-          patternProperties: { "^a": { type: "string" } }
+          patternProperties: { "^a": { type: "string" } },
+          additionalProperties: true
         },
         {
           type: "object",
-          additionalProperties: { type: "string" }
+          additionalProperties: true
         }
       ])
 

@@ -23,7 +23,7 @@ import type { Result } from "./Result.ts"
 import * as Res from "./Result.ts"
 import * as TxRef from "./TxRef.ts"
 
-const TypeId = "~effect/transactions/TxDeferred"
+const TypeId = "~effect/TxDeferred"
 
 /**
  * A transactional deferred is a write-once cell readable within transactions.

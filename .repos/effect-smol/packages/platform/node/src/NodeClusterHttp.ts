@@ -60,7 +60,7 @@ export const layer = <
   const Storage extends "local" | "sql" | "byo" = never
 >(options: {
   readonly transport: "http" | "websocket"
-  readonly serialization?: "msgpack" | "ndjson" | undefined
+  readonly serialization?: "binary" | "ndjson" | undefined
   readonly serializationMaxBufferSize?: number | "unbounded" | undefined
   readonly clientOnly?: ClientOnly | undefined
   readonly storage?: Storage | undefined
@@ -130,7 +130,7 @@ export const layer = <
     Layer.provide(
       options?.serialization === "ndjson"
         ? RpcSerialization.layerNdjsonWith({ maxBufferSize: options.serializationMaxBufferSize })
-        : RpcSerialization.layerMsgPackWith({ maxBufferSize: options.serializationMaxBufferSize })
+        : RpcSerialization.layerSchemaBinary({ maxFrameSize: options.serializationMaxBufferSize })
     )
   ) as any
 }

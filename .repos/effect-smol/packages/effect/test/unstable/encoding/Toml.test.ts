@@ -45,6 +45,19 @@ started = 2026-08-05
     )
   })
 
+  it("parses child tables under distinct array entries", () => {
+    assert.deepStrictEqual(
+      Toml.parse(`
+[[servers]]
+[servers.tls]
+
+[[servers]]
+[servers.tls]
+`),
+      { servers: [{ tls: {} }, { tls: {} }] }
+    )
+  })
+
   it("parses multiline strings and numeric formats", () => {
     assert.deepStrictEqual(
       Toml.parse(`

@@ -17,19 +17,19 @@
   "dependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "react": "catalog:frontend",
-    "react-dom": "catalog:frontend"
+    "effect": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "catalog:frontend",
-    "@types/react": "catalog:frontend",
-    "@types/react-dom": "catalog:frontend",
-    "@vitejs/plugin-react": "catalog:frontend",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build",
-    "vite": "catalog:build"
+    "@tailwindcss/vite": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   }
 }

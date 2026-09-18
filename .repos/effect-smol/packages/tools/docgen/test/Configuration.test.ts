@@ -3,6 +3,7 @@ import * as Configuration from "@effect/docgen/Configuration"
 import * as Domain from "@effect/docgen/Domain"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, describe, it } from "@effect/vitest"
+import * as ByteSize from "effect/ByteSize"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -31,7 +32,7 @@ const fileInfo: FileSystem.File.Info = {
   uid: Option.none(),
   gid: Option.none(),
   rdev: Option.none(),
-  size: FileSystem.Size(0),
+  size: ByteSize.zero,
   blksize: Option.none(),
   blocks: Option.none()
 }

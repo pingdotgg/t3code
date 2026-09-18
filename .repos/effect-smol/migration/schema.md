@@ -59,7 +59,7 @@ This document maps v3 Schema APIs to their v4 equivalents. Simple renames and ar
 | `required(schema)`                              | `schema.mapFields(Struct.map(Schema.requiredKey))`                            | restructure       |
 | `extend(structB)`                               | `mapFields(Struct.assign(fieldsB))` or `fieldsAssign(fieldsB)`                | restructure       |
 | `transform(from, to, { decode, encode })`       | `from.pipe(decodeTo(to, SchemaTransformation.transform({ decode, encode })))` | restructure       |
-| `transformOrFail(from, to, { decode, encode })` | `from.pipe(decodeTo(to, { decode: SchemaGetter.transformOrFail(...), ... }))` | restructure       |
+| `transformOrFail(from, to, { decode, encode })` | `from.pipe(decodeTo(to, { decode: SchemaGetter.transformEffect(...), ... }))` | restructure       |
 | `transformLiteral(from, to)`                    | `Literal(from).transform(to)`                                                 | restructure       |
 | `transformLiterals([0,"a"], [1,"b"])`           | `Literals([0, 1]).transform(["a", "b"])`                                      | restructure       |
 | `attachPropertySignature("k", "v")`             | `mapFields(f => ({...f, k: tagDefaultOmit("v")}))`                            | restructure       |
@@ -901,7 +901,7 @@ import { Effect, Number, Schema, SchemaGetter, SchemaIssue } from "effect"
 
 const NumberFromString = Schema.String.pipe(
   Schema.decodeTo(Schema.Number, {
-    decode: SchemaGetter.transformOrFail((s) => {
+    decode: SchemaGetter.transformEffect((s) => {
       const n = Number.parse(s)
       if (n === undefined) {
         return Effect.fail(new SchemaIssue.InvalidValue())

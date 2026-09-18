@@ -1,5 +1,5 @@
 ---
-title: Resource lifecycle
+title: Resource Lifecycle
 description: How alchemy plans, applies, replaces, and destroys resources — and how to think about idempotency and recovery.
 ---
 
@@ -72,28 +72,15 @@ Whether a resource is being created for the first time, updated in
 place, or adopted from existing infrastructure, alchemy calls a
 single function: `provider.reconcile`.
 
-Reconcile must be **convergent**: given the desired state in `news`,
-it brings the cloud to that state regardless of starting point. It
-receives:
-
-- `news` — desired props
-- `output` — current attributes (`undefined` on greenfield, defined
-  after a prior reconcile or after adoption)
-- `olds` — previous props (`undefined` on greenfield AND on adoption;
-  defined only on routine updates)
-- `bindings` — resolved binding payload from upstream policies
-
-A reconciler is shaped like **observe → ensure → sync → return**:
-read live cloud state via `getX`/`describeX`, create the resource if
-missing (catching `AlreadyExists`-style errors as races), then for
-each mutable aspect diff observed cloud state against desired and
-apply only the delta.
-
-Because each step is independently idempotent, a partial reconcile
-that crashed midway resumes correctly on the next run. Physical
-names are deterministic from `stack/stage/logical-id`, so the
-"observe" step finds the previous reconcile's output even if state
-persistence failed.
+Reconcile must be **convergent**: given the desired props, it
+observes live cloud state and brings it to that state regardless of
+starting point. It must also be safe to retry — a partial reconcile
+that crashed midway resumes correctly on the next run, because
+physical names are deterministic from `stack/stage/logical-id` and
+the reconciler finds the existing resource instead of duplicating
+it. The parameter contract (`news`/`output`/`olds`/`bindings`) and
+the observe → ensure → sync shape are the provider's concern — see
+[Provider › reconcile](/infrastructure-as-code/provider#reconcile).
 
 A second pass — **convergence** — re-runs `reconcile` for any
 resource whose inputs changed because an upstream output changed
@@ -111,6 +98,10 @@ returns `{ action: "replace" }`, and alchemy:
 
 Because new and old coexist briefly, dependents get a clean cutover
 without downtime.
+
+Changing a **logical ID** also plans a replacement — if you merely
+renamed the resource, declare it with `renamedFrom` instead; see
+[Renaming Resources](/infrastructure-as-code/renaming).
 
 ## Delete
 
@@ -214,17 +205,13 @@ overlapping purposes:
   intentionally). `read` recognizes the resource and the engine
   imports it into the new state.
 
-Providers signal "this is mine" vs. "this exists but isn't mine" via
-the `Unowned(attrs)` brand. The engine routes:
-
-| `read` returns      | `--adopt` off             | `--adopt` on          |
-| ------------------- | ------------------------- | --------------------- |
-| `undefined`         | create                    | create                |
-| owned (plain attrs) | silent adopt              | silent adopt          |
-| `Unowned(attrs)`    | fail `OwnedBySomeoneElse` | take over (silently)  |
-
-See [Provider › read](/infrastructure-as-code/provider#read) for the implementation
-contract and [Adopting Resources](/cli/adopting-resources) for the CLI flag.
+A resource `read` recognizes as ours is adopted silently. One that
+exists but *isn't* ours fails with `OwnedBySomeoneElse` — re-running
+with `--adopt` (or scoping the effect with `adopt(true)`) unlocks
+the takeover. How providers signal ownership through `read`'s
+return value is part of the provider contract — see
+[Provider › read](/infrastructure-as-code/provider#read). For the CLI flag, see
+[Adopting Resources](/cli/adopting-resources).
 
 ## Errors
 
@@ -253,6 +240,8 @@ type by a [Provider](/infrastructure-as-code/provider).
 
 ## Where next
 
+- [Renaming Resources](/infrastructure-as-code/renaming) — migrate state
+  across a logical ID change instead of replacing. Next page.
 - [Providers](/infrastructure-as-code/provider) — the object that implements
   `reconcile`, `delete`, `diff`, and `read` for a resource type.
 - [CLI](/cli) — the commands and flags that drive the

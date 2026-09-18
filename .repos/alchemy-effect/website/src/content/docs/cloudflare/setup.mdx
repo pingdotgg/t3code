@@ -44,10 +44,14 @@ free plan is enough for everything in the tutorial.
 
 ## Connect alchemy to Cloudflare
 
-There is no separate credentials step. The first time you run
-`alchemy deploy` (or `plan`, `dev`, `destroy`), alchemy walks each
-provider registered in your stack through an interactive login. For
-Cloudflare you can:
+Connect Cloudflare (the `default` profile is created automatically on
+first use):
+
+```sh
+alchemy profile edit --add Cloudflare
+```
+
+For Cloudflare you can:
 
 - **Sign in with OAuth** — opens the browser, no tokens to manage.
 - **Paste an API token** — if you prefer explicit, scoped tokens.
@@ -60,29 +64,30 @@ Either way the result is saved to your **`default`**
 [profile](/environments/profiles) at `~/.alchemy/profiles.json` — no
 environment variables and no `wrangler login` required.
 
-To run the flow explicitly, or re-run it later:
+To re-run the flow later:
 
 ```sh
-# Refresh credentials for the current profile
-alchemy login
-
 # Re-run the interactive setup (e.g. switch from OAuth → API token)
-alchemy login --configure
+alchemy profile edit --reconfigure Cloudflare
+
+# Or manage every account in the profile from one menu
+alchemy profile edit
 ```
 
-`login` imports your stack file to discover which providers are
-needed, so the prompts match the providers you actually use.
+`profile edit` imports your stack file to discover which providers
+are available, so the menu matches the providers you actually use.
 
 ## Profiles
 
-A profile is a named bundle of credentials. Every command uses the
-profile named `default` unless you pass `--profile <name>` or set
-`$ALCHEMY_PROFILE` — handy for separating work and personal
-accounts, or staging and prod credentials:
+A profile is a named bundle of credentials. Commands use the built-in
+`default` profile unless you name another one explicitly.
+Pass `--profile <name>` or set `$ALCHEMY_PROFILE` to select one —
+handy for separating work and personal accounts, or staging and prod credentials:
 
 ```sh
 # Log into a separate profile
-alchemy login --profile prod --configure
+alchemy profile create prod
+alchemy profile edit --profile prod
 
 # Deploy with it
 alchemy deploy --stage prod --profile prod
@@ -100,7 +105,7 @@ See [Profiles](/environments/profiles) for the full picture.
 CI environments can't do interactive logins. There, alchemy reads
 credentials from the environment instead: `CLOUDFLARE_ACCOUNT_ID`
 plus either `CLOUDFLARE_API_TOKEN` or `CLOUDFLARE_API_KEY` +
-`CLOUDFLARE_EMAIL`. See the [CI guide](/environments/ci) for the full
+`CLOUDFLARE_EMAIL` (or `CLOUDFLARE_ACCOUNT_EMAIL`). See the [CI guide](/environments/ci) for the full
 GitHub Actions setup.
 :::
 

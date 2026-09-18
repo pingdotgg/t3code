@@ -66,7 +66,7 @@ export const layerClientProtocol: Layer.Layer<
 )
 
 /**
- * Provides the native Deno socket server used by cluster runners, listening on
+ * Provides the socket server used by cluster runners, listening on
  * `ShardingConfig.runnerListenAddress` or `runnerAddress`.
  *
  * @category layers
@@ -83,7 +83,7 @@ export const layerSocketServer: Layer.Layer<
     return yield* Effect.die("layerSocketServer: ShardingConfig.runnerListenAddress is None")
   }
   return DenoSocketServer.layer({
-    hostname: listenAddress.value.host,
+    host: listenAddress.value.host,
     port: listenAddress.value.port
   })
 }).pipe(Layer.unwrap)
@@ -100,7 +100,7 @@ export const layer = <
   const Storage extends "local" | "sql" | "byo" = never
 >(
   options?: {
-    readonly serialization?: "msgpack" | "ndjson" | undefined
+    readonly serialization?: "binary" | "ndjson" | undefined
     readonly serializationMaxBufferSize?: number | "unbounded" | undefined
     readonly clientOnly?: ClientOnly | undefined
     readonly storage?: Storage | undefined
@@ -161,7 +161,9 @@ export const layer = <
     Layer.provide(
       options?.serialization === "ndjson"
         ? RpcSerialization.layerNdjsonWith({ maxBufferSize: options?.serializationMaxBufferSize })
-        : RpcSerialization.layerMsgPackWith({ maxBufferSize: options?.serializationMaxBufferSize })
+        : RpcSerialization.layerSchemaBinary({
+          maxFrameSize: options?.serializationMaxBufferSize
+        })
     )
   ) as any
 }

@@ -109,7 +109,7 @@ export interface RemoteImage extends Resource<
  *   registry: {
  *     server: "ghcr.io",
  *     username: "octocat",
- *     password: Config.redacted("GITHUB_TOKEN"),
+ *     password: Config.Redacted("GITHUB_TOKEN"),
  *   },
  * });
  * ```

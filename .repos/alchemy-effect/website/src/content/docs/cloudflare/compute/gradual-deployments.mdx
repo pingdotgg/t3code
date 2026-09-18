@@ -4,12 +4,14 @@ description: Roll out Worker deploys incrementally — upload preview versions, 
 ---
 
 Every deploy of a Worker uploads an immutable
-[version](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/)
-— a snapshot of code, bindings, and compatibility settings — and a
+[version](https://developers.cloudflare.com/workers/configuration/versions-and-deployments/),
+a snapshot of code, bindings, and compatibility settings. A
 *deployment* routes traffic across up to two versions by percentage.
 By default alchemy deploys each new version at 100%. The `version`
 prop unlocks the other shapes: gradual rollouts, canaries, and
-traffic-free previews.
+traffic-free version uploads. For branch and pull-request testing,
+use [Worker Previews](/cloudflare/compute/previews) (`preview.of`)
+instead of a zero-traffic version.
 
 ## Roll out a deploy gradually
 
@@ -33,15 +35,15 @@ yield* Cloudflare.Worker("Api", {
 Each request is routed independently by percentage. Raise the number
 and re-deploy to ramp; remove the prop (or set `100`) to promote.
 
-The first deploy of a script always goes to 100% — there is nothing
+The first deploy of a script always goes to 100%, since there is nothing
 to split with. `traffic: 0` uploads the version without deploying it
 (the equivalent of `wrangler versions upload`).
 
 ## Percentages replace, they never add
 
 A deployment is a complete routing table, and each versioned deploy
-splits its new version against the *stable* side — the majority
-holder — of the current one:
+splits its new version against the *stable* side of the current one,
+the majority holder:
 
 ```typescript
 version: { traffic: 10 }  // deploys: v2 10%, v1 90%
@@ -89,7 +91,7 @@ jobs:
 ```
 
 Deploy at `10`, watch your metrics, re-run at `50`, promote at the
-default `100`. Run every step from the same ref — a re-run from a
+default `100`. Run every step from the same ref. A re-run from a
 moving branch ships whatever landed since, which is a new rollout,
 not a ramp.
 
@@ -97,7 +99,7 @@ not a ramp.
 
 Rolling back is another deploy: re-deploy the previous code and it
 goes out as a new version at 100%. Versions are immutable snapshots,
-so the previous behavior comes back exactly — bindings and
+so the previous behavior comes back exactly, bindings and
 compatibility settings included.
 
 ## Canary another stage's Worker
@@ -116,39 +118,34 @@ yield* Cloudflare.Worker("ApiCanary", {
 
 Destroying the canary restores 100% of traffic to the live version.
 
-## Preview versions
+## Upload a version without routing traffic
 
-With `parent` set and no `traffic`, the version receives no traffic —
-it is reachable only at its preview URL. This is the PR-preview
-workflow:
+With `traffic: 0` the version is uploaded and reachable at its Version
+URL, but it is not in the live deployment. Use this to inspect a
+specific upload before a gradual rollout. For branch and pull-request
+testing — isolated Durable Objects, Preview-specific bindings, custom
+domain Preview URLs — use
+[Worker Previews](/cloudflare/compute/previews) (`preview.of`) instead.
 
 ```typescript
-const parent = yield* Cloudflare.Worker.ref("Api", { stage: "staging" });
-
-const preview = yield* Cloudflare.Worker("Api", {
+yield* Cloudflare.Worker("Api", {
   main: "./src/api.ts",
-  version: { parent, message: `PR #${process.env.PR_NUMBER}` },
+  version: { traffic: 0, tag: process.env.GITHUB_SHA },
 });
-
-// https://<alias>-<name>.<subdomain>.workers.dev — stable across
-// re-deploys, always serving the latest uploaded version
-preview.url;
 ```
 
-Alchemy derives the alias from the stack, stage, and logical id
-(override with `version.alias`). The version carries its own bindings,
-so a PR can bind its own KV namespaces, D1 databases, and secrets.
-Preview URLs require the parent's workers.dev subdomain (on by
-default); `workersDev: { enabled: false, previewsEnabled: true }`
-keeps previews working with the stable URL off.
+`version.parent` with no `traffic` still uploads a Version URL of
+another stage's Worker (the previous PR-preview path). Prefer
+`preview.of` for that job going forward.
 
-### Preview version or preview stage?
+### Version, Preview, or stage?
 
-Deploying the stack to its own stage is also a preview — a fully
-independent one, with its own script and its own copies of every
-resource. A preview *version* rides the parent's script, settings, and
-version history, and adds no scripts to the account. Use a stage to
-preview infrastructure changes; use a version to preview code.
+A Preview is a named copy of a Worker with isolated Durable Object
+state. A version rides the parent's script and version history. A
+stage is a fully independent stack. Use a stage to preview
+infrastructure changes; use a Preview to preview code; use a version
+to canary or inspect an upload. See
+[Worker Previews](/cloudflare/compute/previews).
 
 ## Smoke test before shifting traffic
 
@@ -173,7 +170,7 @@ curl -s https://api.example.com/health \
 
 The dictionary is keyed by the *physical script name*; an unknown
 version or malformed header falls back to the percentages. Overrides
-also apply to `fetch()`-based service binding calls — forward the
+also apply to `fetch()`-based service binding calls. Forward the
 incoming request to keep cooperating Workers on matching versions. If
 the smoke test fails, re-deploy the last good ref at the default 100
 ([Roll back](#roll-back)).
@@ -200,7 +197,7 @@ yield* Cloudflare.Worker("Api", {
 
 Alchemy provisions a transform rule on each zone the Worker serves on
 (custom domains and routes), scoped to the Worker's hostnames, that
-fills the header from the cookie — and, for requests that don't carry
+fills the header from the cookie, and for requests that don't carry
 the cookie yet, from the client IP. The rule updates in place as the
 config changes and is removed when `affinity` is removed or the
 Worker is destroyed. On a [canary of another stage's
@@ -209,8 +206,8 @@ lands on the parent's zones, pinning users across the canary split.
 
 Besides `cookie`, the key can come from a request `header` (a tenant
 or user id your edge already stamps), the client IP alone
-(`{ ip: true }`), or — for anything else, like a JWT claim via API
-Shield — a raw
+(`{ ip: true }`), or, for anything else like a JWT claim via API
+Shield, a raw
 [Rules-language](https://developers.cloudflare.com/ruleset-engine/rules-language/)
 expression:
 
@@ -230,8 +227,8 @@ curl -s https://api.example.com -H 'Cloudflare-Workers-Version-Key: user-123'
 
 Pinned users only move forward as percentages rise, never back.
 
-For full control over the rule — custom match conditions, keys
-composed from several fields, rules spanning Workers — drop down to a
+For full control over the rule, such as custom match conditions, keys
+composed from several fields, or rules spanning Workers, drop down to a
 manual `Ruleset` in the same phase, which is exactly what the sugar
 manages for you:
 
@@ -288,20 +285,20 @@ export default Cloudflare.Worker(
 );
 ```
 
-See [Version metadata](/cloudflare/compute/workers#version-metadata)
+See [Version metadata](/cloudflare/compute/workers#versions)
 for the async-Worker variant.
 
 ## What a version carries
 
 A version snapshots code, bindings, compatibility settings, and cache
-configuration. Script-level settings — routes, custom domains, crons,
+configuration. Script-level settings (routes, custom domains, crons,
 tags, observability, logpush, placement, limits, and the workers.dev
-subdomain — apply immediately to *all* versions: they are rejected on
+subdomain) apply immediately to *all* versions: they are rejected on
 a version worker, and during a gradual rollout they keep their live
 values until the next full deploy.
 
-Anything the Worker *calls* — Durable Objects, Workflows, service
-bindings — sits outside the version too, so both versions talk to it
+Anything the Worker *calls*, Durable Objects, Workflows, and service
+bindings, sits outside the version too, so both versions talk to it
 during the rollout. Ship those changes expand-and-contract:
 
 1. Deploy the new DO handler / Workflow / RPC method at 100%,
@@ -318,10 +315,10 @@ Platform limits to plan around:
 
 - A deployment splits between at most two versions, and only the last
   100 uploaded versions are deployable.
-- Each Durable Object is assigned one version by the percentages —
-  a single object never splits across versions. Class migrations
+- Each Durable Object is assigned one version by the percentages,
+  so a single object never splits across versions. Class migrations
   cannot ride a rollout (deploy them at 100% first), and a version
-  worker cannot host DO or Workflow classes — host them on the parent
+  worker cannot host DO or Workflow classes. Host them on the parent
   and reference them
   [cross-script](/cloudflare/compute/cross-worker-durable-object).
 - Workers that implement Durable Objects do not get preview URLs.
@@ -332,7 +329,7 @@ Platform limits to plan around:
 ## Containers roll out by instance, not by request
 
 [Containers](/cloudflare/compute/containers) shift gradually by
-replacing running *instances* with the new image in steps — there is
+replacing running *instances* with the new image in steps. There is
 no request-level split between two images:
 
 ```typescript

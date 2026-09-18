@@ -15,7 +15,7 @@
   note: "Moved into core Effect and now requires the error schema encoding services."
 "@effect/workflow/DurableDeferred#into":
   replacement: "effect/unstable/workflow/DurableDeferred#into"
-  note: "Moved into core Effect with the same exit recording and suspension propagation behavior."
+  note: "Moved into core Effect with the same exit recording and suspension propagation behavior. Provide both decoding and encoding services for the success and error schemas; recording the exit requires encoding services."
 "@effect/workflow/DurableDeferred#make":
   replacement: "effect/unstable/workflow/DurableDeferred#make"
   note: "Moved into core Effect with the same name and optional schemas, expressed through v4 Schema.Constraint."

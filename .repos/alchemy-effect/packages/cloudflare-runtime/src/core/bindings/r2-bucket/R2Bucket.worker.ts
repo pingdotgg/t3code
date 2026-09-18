@@ -14,7 +14,8 @@
  * metadata lives in Durable Object SQLite, values (and multipart parts) are
  * stored as blob files via the `r2:storage` disk service.
  *
- * This worker requires the `nodejs_compat` compatibility flag:
+ * This worker requires Node.js compatibility, supplied by the internal
+ * 2026-08-31 compatibility date without an explicit flag:
  * `node:crypto`'s `createHash("md5")` is needed to synchronously compute
  * multipart ETags inside SQLite transactions. Upstream's `Buffer` usages are
  * replaced with small hex/base64 helpers.

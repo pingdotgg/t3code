@@ -32,6 +32,17 @@ export type FlagConditionOperator =
  * A single targeting condition: either a flat attribute comparison or a
  * nested group of clauses combined with AND/OR.
  */
+/**
+ * Value a flat condition compares against — a scalar, a JSON object, or a
+ * list (for `in` / `not_in`).
+ */
+export type FlagConditionValue =
+  | string
+  | number
+  | boolean
+  | { [key: string]: unknown }
+  | unknown[];
+
 export type FlagCondition =
   | {
       /**
@@ -45,7 +56,7 @@ export type FlagCondition =
       /**
        * Value to compare against.
        */
-      value: unknown;
+      value: FlagConditionValue;
     }
   | {
       /**
@@ -530,7 +541,7 @@ const normalizeConditions = (conditions: readonly unknown[]): FlagCondition[] =>
       const flat = condition as {
         attribute: string;
         operator: string;
-        value: unknown;
+        value: FlagConditionValue;
       };
       return [
         {

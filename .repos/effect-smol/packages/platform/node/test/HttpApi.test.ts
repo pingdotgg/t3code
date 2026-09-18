@@ -2,6 +2,7 @@ import { NodeHttpServer } from "@effect/platform-node"
 import { assert, describe, expect, it } from "@effect/vitest"
 import {
   Array,
+  ByteSize,
   Cause,
   Context,
   DateTime,
@@ -9,6 +10,7 @@ import {
   Equal,
   FileSystem,
   Layer,
+  Option,
   Redacted,
   Ref,
   Schema,
@@ -1744,7 +1746,7 @@ const HttpUsersLayer = HttpApiBuilder.group(
           const stat = yield* fs.stat(_.payload.file.path).pipe(Effect.orDie)
           return {
             contentType: _.payload.file.contentType,
-            length: Number(stat.size)
+            length: Option.getOrThrow(ByteSize.toNumber(stat.size))
           }
         }))
       .handle("uploadStream", (_) =>

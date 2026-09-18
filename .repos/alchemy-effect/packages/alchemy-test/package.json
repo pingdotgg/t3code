@@ -15,6 +15,11 @@
       "bun": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./DevCli": {
+      "types": "./lib/DevCli.d.ts",
+      "bun": "./src/DevCli.ts",
+      "import": "./src/DevCli.ts"
+    },
     "./*": {
       "types": "./lib/*.d.ts",
       "bun": "./src/*.ts",
@@ -25,12 +30,12 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@effect/platform-bun": "catalog:effect",
-    "@opentui/core": "catalog:shared",
-    "effect": "catalog:effect"
+    "@effect/platform-bun": "catalog:",
+    "@opentui/core": "catalog:",
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "@types/bun": "catalog:tooling",
-    "typescript": "catalog:build"
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
   }
 }

@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
 import { throws } from "@effect/vitest/utils"
-import { Equivalence, Graph, Option, Schema } from "effect"
-import { TestSchema } from "effect/testing"
+import { Effect, Equivalence, Graph, Option, Schema } from "effect"
+import * as Arbitrary from "effect/unstable/arbitrary/Arbitrary"
 
 const directedCodec = Schema.toCodecJson(Schema.Graph("directed", Schema.String, Schema.Number))
 const undirectedCodec = Schema.toCodecJson(Schema.Graph("undirected", Schema.String, Schema.Number))
@@ -19,10 +19,39 @@ const assertDecodeFailure = (input: unknown, path: string, message?: string) => 
 }
 
 describe("Schema.Graph", () => {
-  it("derives valid arbitrary graphs", () => {
-    new TestSchema.Asserts(Schema.Graph("directed", Schema.String, Schema.Number)).arbitrary().verifyGeneration()
-    new TestSchema.Asserts(Schema.Graph("undirected", Schema.String, Schema.Number)).arbitrary().verifyGeneration()
-  })
+  it.effect("derives productive arbitrary graphs", () =>
+    Effect.gen(function*() {
+      for (const type of ["directed", "undirected"] as const) {
+        const schema = Schema.Graph(type, Schema.String, Schema.Number)
+        const arbitrary = Arbitrary.schema(schema)
+        const values = yield* Arbitrary.sampleEffect(arbitrary, {
+          count: 100,
+          maxDiscards: 0,
+          seed: `graph-${type}`
+        })
+
+        assert.isTrue(values.every(Schema.is(schema)))
+        assert.isTrue(values.some((graph) => Array.from(graph).length > 0))
+        assert.isTrue(values.some((graph) => Array.from(Graph.edges(graph)).length > 0))
+      }
+    }))
+
+  it.effect("derives recursive graph payloads", () =>
+    Effect.gen(function*() {
+      type RecursiveGraph = Graph.Graph<RecursiveGraph, null, "directed">
+      const RecursiveGraph: Schema.Codec<RecursiveGraph> = Schema.suspend(() =>
+        Schema.Graph("directed", RecursiveGraph, Schema.Null)
+      )
+      const values = yield* Arbitrary.sampleEffect(Arbitrary.schema(RecursiveGraph), {
+        count: 30,
+        maxDiscards: 0,
+        seed: "recursive-graph",
+        size: 5
+      })
+
+      assert.isTrue(values.every(Schema.is(RecursiveGraph)))
+      assert.isTrue(values.some((graph) => Array.from(graph).length > 0))
+    }))
 
   it("derives active-structure equivalence from payload schemas", () => {
     const modulo = Schema.Number.annotate({

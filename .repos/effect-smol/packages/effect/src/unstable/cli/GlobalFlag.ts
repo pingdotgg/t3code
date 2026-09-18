@@ -101,7 +101,7 @@ export type GlobalFlag<A> = Action<A> | Setting<any, A>
  * @category constructors
  * @since 4.0.0
  */
-export const action = <A>(options: {
+export const Action = <A>(options: {
   readonly flag: Flag.Flag<A>
   readonly run: (
     value: A,
@@ -119,7 +119,7 @@ export const action = <A>(options: {
  * @category constructors
  * @since 4.0.0
  */
-export const setting = <const Id extends string>(
+export const Setting = <const Id extends string>(
   id: Id
 ) =>
 <A>(options: {
@@ -147,13 +147,13 @@ let settingIdCounter = 0
  * active command path.
  *
  * @see {@link BuiltIns} for the default list containing this flag
- * @see {@link action} for defining custom action global flags
+ * @see {@link Action} for defining custom action global flags
  *
  * @category references
  * @since 4.0.0
  */
-export const Help: Action<boolean> = action({
-  flag: Flag.boolean("help").pipe(
+export const Help: Action<boolean> = Action({
+  flag: Flag.Boolean("help").pipe(
     Flag.withAlias("h"),
     Flag.withDescription("Show help information"),
     Flag.withDefault(false)
@@ -175,8 +175,8 @@ export const Help: Action<boolean> = action({
  * @category references
  * @since 4.0.0
  */
-export const Version: Action<boolean> = action({
-  flag: Flag.boolean("version").pipe(
+export const Version: Action<boolean> = Action({
+  flag: Flag.Boolean("version").pipe(
     Flag.withAlias("v"),
     Flag.withDescription("Show version information"),
     Flag.withDefault(false)
@@ -198,8 +198,8 @@ export const Version: Action<boolean> = action({
  * @category references
  * @since 4.0.0
  */
-export const Wizard: Action<boolean> = action({
-  flag: Flag.boolean("wizard").pipe(
+export const Wizard: Action<boolean> = Action({
+  flag: Flag.Boolean("wizard").pipe(
     Flag.withDescription("Start wizard mode for a command"),
     Flag.withDefault(false)
   ),
@@ -218,8 +218,8 @@ export const Wizard: Action<boolean> = action({
  * @category references
  * @since 4.0.0
  */
-export const Completions: Action<Option.Option<"bash" | "zsh" | "fish">> = action({
-  flag: Flag.choice("completions", ["bash", "zsh", "fish", "sh"] as const)
+export const Completions: Action<Option.Option<"bash" | "zsh" | "fish">> = Action({
+  flag: Flag.Literals("completions", ["bash", "zsh", "fish", "sh"] as const)
     .pipe(
       Flag.optional,
       Flag.map((v) => Option.map(v, (s) => s === "sh" ? "bash" : s)),
@@ -246,8 +246,8 @@ export const Completions: Action<Option.Option<"bash" | "zsh" | "fish">> = actio
  * @category references
  * @since 4.0.0
  */
-export const LogLevel: Setting<"log-level", Option.Option<LogLevelType>> = setting("log-level")({
-  flag: Flag.choiceWithValue(
+export const LogLevel: Setting<"log-level", Option.Option<LogLevelType>> = Setting("log-level")({
+  flag: Flag.ChoiceWithValue(
     "log-level",
     [
       ["all", "All"],

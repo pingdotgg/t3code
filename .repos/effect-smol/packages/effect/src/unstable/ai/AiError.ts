@@ -20,9 +20,75 @@ import { redact } from "../../Redactable.ts"
 import * as Redacted from "../../Redacted.ts"
 import * as Schema from "../../Schema.ts"
 import type * as HttpClientError from "../http/HttpClientError.ts"
-import { HttpRequestDetails, HttpResponseDetails } from "./Response.ts"
 
-const ReasonTypeId = "~effect/unstable/ai/AiError/Reason" as const
+/**
+ * Schema for HTTP requests to an AI provider.
+ *
+ * **Example** (Describing an HTTP request)
+ *
+ * ```ts import.meta.vitest
+ * import type { AiError } from "effect/unstable/ai"
+ *
+ * const requestDetails: typeof AiError.HttpRequestDetails.Type = {
+ *   method: "POST",
+ *   url: "https://api.openai.com/v1/responses",
+ *   urlParams: [],
+ *   hash: undefined,
+ *   headers: { "Content-Type": "application/json" }
+ * }
+ * const result = [requestDetails.method, requestDetails.urlParams] // => ["POST", []]
+ * ```
+ *
+ * @category schemas
+ * @since 4.0.0
+ */
+export const HttpRequestDetails = Schema.Struct({
+  method: Schema.Literals(["GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS", "TRACE"]),
+  url: Schema.String,
+  urlParams: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+  hash: Schema.optional(Schema.String),
+  headers: Schema.Record(
+    Schema.String,
+    Schema.Union([
+      Schema.String,
+      Schema.Redacted(Schema.String)
+    ])
+  )
+}).annotate({ identifier: "HttpRequestDetails" })
+
+/**
+ * Schema for HTTP responses from an AI provider.
+ *
+ * **Example** (Describing an HTTP response)
+ *
+ * ```ts import.meta.vitest
+ * import type { AiError } from "effect/unstable/ai"
+ *
+ * const responseDetails: typeof AiError.HttpResponseDetails.Type = {
+ *   status: 200,
+ *   headers: {
+ *     "Content-Type": "application/json",
+ *     "X-Request-Id": "req_abc123"
+ *   }
+ * }
+ * const result = [responseDetails.status, responseDetails.headers["X-Request-Id"]] // => [200, "req_abc123"]
+ * ```
+ *
+ * @category schemas
+ * @since 4.0.0
+ */
+export const HttpResponseDetails = Schema.Struct({
+  status: Schema.Int,
+  headers: Schema.Record(
+    Schema.String,
+    Schema.Union([
+      Schema.String,
+      Schema.Redacted(Schema.String)
+    ])
+  )
+}).annotate({ identifier: "HttpResponseDetails" })
+
+const ReasonTypeId = "~effect/ai/AiError/Reason" as const
 
 const providerMetadataWithDefaults = <Metadata extends ProviderMetadata>() =>
   (ProviderMetadata as unknown as typeof ProviderMetadata & Schema.Schema<Metadata>).pipe(
@@ -1055,7 +1121,6 @@ export class ToolNotFoundError extends Schema.Error<ToolNotFoundError>(
  *
  * const error = new AiError.ToolParameterValidationError({
  *   toolName: "GetWeather",
- *   toolParams: { location: 123 },
  *   description: "Expected string, got number"
  * })
  *
@@ -1070,7 +1135,6 @@ export class ToolParameterValidationError extends Schema.Error<ToolParameterVali
 )({
   _tag: Schema.tag("ToolParameterValidationError"),
   toolName: Schema.String,
-  toolParams: Schema.Json,
   description: Schema.String
 }) {
   /**
@@ -1452,7 +1516,7 @@ export const AiErrorReason: Schema.Union<[
 // Top-Level AiError
 // =============================================================================
 
-const TypeId = "~effect/unstable/ai/AiError/AiError" as const
+const TypeId = "~effect/ai/AiError" as const
 
 /**
  * Schema for the top-level AI error wrapper using the `reason` pattern.

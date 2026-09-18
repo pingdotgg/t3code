@@ -6,11 +6,29 @@
  *
  * @since 4.0.0
  */
+import * as Cause from "../../Cause.ts"
 import * as Context from "../../Context.ts"
-import { constFalse, constTrue, identity } from "../../Function.ts"
+import { constFalse, constTrue, constUndefined, identity } from "../../Function.ts"
 import type * as Rpc from "../rpc/Rpc.ts"
 import type { EntityId } from "./EntityId.ts"
 import type { Request } from "./Envelope.ts"
+
+/**
+ * Annotation carried by an interruption when a persisted cluster request is
+ * abandoned by its current runner and must continue under another owner.
+ *
+ * @category services
+ * @since 4.0.0
+ */
+export class Abandon extends Context.Service<Abandon, true>()("effect/cluster/ClusterSchema/Abandon") {
+  static annotation = this.context(true).pipe(
+    Context.add(Cause.StackTrace, {
+      name: "ClusterAbandon",
+      stack: constUndefined,
+      parent: undefined
+    })
+  )
+}
 
 /**
  * Annotation that marks whether a cluster request should be persisted in mailbox

@@ -22,7 +22,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import type { ScopedPlanStatusSession } from "../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../Report.ts";
 import { isNonInteractive } from "../Util/interactive.ts";
 import {
   makeCommandRedactor,
@@ -385,8 +385,16 @@ export const CommandExecutorLive = () =>
             const execution = Effect.all(
               {
                 exitCode: child.exitCode,
-                stdout: collect(child.stdout, session.note, redactor),
-                stderr: collect(child.stderr, session.note, redactor),
+                stdout: collect(
+                  child.stdout,
+                  (line) => session.note(line, { kind: "output" }),
+                  redactor,
+                ),
+                stderr: collect(
+                  child.stderr,
+                  (line) => session.note(line, { kind: "output" }),
+                  redactor,
+                ),
               },
               { concurrency: "unbounded" },
             ).pipe(mapError(props));

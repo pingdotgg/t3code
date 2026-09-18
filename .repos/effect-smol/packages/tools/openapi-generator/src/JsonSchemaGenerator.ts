@@ -224,9 +224,6 @@ function makeWithRepresentation() {
         if (cached !== undefined) return cached
 
         const out = { ...js }
-        if (out.type === "object" && out.additionalProperties === undefined) {
-          out.additionalProperties = false
-        }
         const transformed = { ...(options?.onEnter === undefined ? out : options.onEnter(out)) }
         preparedSchemas.set(js, transformed)
         preparedOutputs.add(transformed)

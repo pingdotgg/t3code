@@ -54,4 +54,9 @@ const program = Effect.gen(function* () {
   yield* fs.writeFile(config.outputPath, NodeV8.serialize(result));
 });
 
-runMain(program.pipe(Effect.provide(PlatformServices)));
+// The parent streams this child's output and turns its exit code into the
+// resource-scoped build error. Do not print a second Effect failure report
+// (the extra `✖` block) from the child itself.
+runMain(program.pipe(Effect.provide(PlatformServices)), {
+  disableErrorReporting: true,
+});

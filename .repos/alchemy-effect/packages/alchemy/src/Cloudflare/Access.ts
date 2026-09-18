@@ -74,7 +74,7 @@ export const AccessLive = Layer.effect(
       );
 
     const getEnv = (name: string) =>
-      Config.string(name)
+      Config.String(name)
 
         .pipe(Effect.catchTag("ConfigError", () => Effect.succeed(undefined)));
 

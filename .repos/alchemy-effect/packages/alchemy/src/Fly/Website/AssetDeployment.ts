@@ -281,14 +281,17 @@ export const AssetDeploymentProvider = () =>
         );
         return output;
       }),
-      delete: Effect.fn(function* ({ olds, output }) {
-        if (!(olds.purge ?? true)) return;
-        const scope = yield* scopeOf(olds.bucket);
-        const observed = yield* listObserved(scope, output.prefix);
-        yield* Effect.all(
-          [...observed.keys()].map((key) => deleteObject(scope, key)),
-          { concurrency: s3Concurrency },
-        );
-      }),
+      delete: Effect.fn(
+        function* ({ olds, output }) {
+          if (!(olds.purge ?? true)) return;
+          const scope = yield* scopeOf(olds.bucket);
+          const observed = yield* listObserved(scope, output.prefix);
+          yield* Effect.all(
+            [...observed.keys()].map((key) => deleteObject(scope, key)),
+            { concurrency: s3Concurrency },
+          );
+        },
+        Effect.catchTag("NoSuchBucket", () => Effect.void),
+      ),
     }),
   );

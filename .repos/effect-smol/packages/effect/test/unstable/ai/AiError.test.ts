@@ -270,7 +270,6 @@ describe("AiError", () => {
       it("should be retryable", () => {
         const error = new AiError.ToolParameterValidationError({
           toolName: "GetWeather",
-          toolParams: { location: "NYC" },
           description: "Expected string"
         })
         assert.isTrue(error.isRetryable)
@@ -279,7 +278,6 @@ describe("AiError", () => {
       it("should format message with tool name", () => {
         const error = new AiError.ToolParameterValidationError({
           toolName: "GetWeather",
-          toolParams: { location: "NYC" },
           description: "Expected string"
         })
         assert.match(error.message, /Invalid parameters for tool 'GetWeather'/)
@@ -288,26 +286,23 @@ describe("AiError", () => {
       it("should format message with validation message", () => {
         const error = new AiError.ToolParameterValidationError({
           toolName: "GetWeather",
-          toolParams: { location: 123 },
           description: "Expected string, got number"
         })
         assert.match(error.message, /Expected string, got number/)
       })
 
-      it("should store tool params", () => {
-        const params = { location: 123 }
+      it("should construct when validated params contain non-JSON values", () => {
         const error = new AiError.ToolParameterValidationError({
           toolName: "GetWeather",
-          toolParams: params,
-          description: "Expected string"
+          description: `Expected finite number, got NaN at ["city"]`
         })
-        assert.deepStrictEqual(error.toolParams, params)
+        assert.strictEqual(error._tag, "ToolParameterValidationError")
+        assert.match(error.message, /NaN/)
       })
 
       it("should have _tag set correctly", () => {
         const error = new AiError.ToolParameterValidationError({
           toolName: "Test",
-          toolParams: {},
           description: "Error"
         })
         assert.strictEqual(error._tag, "ToolParameterValidationError")
@@ -768,7 +763,6 @@ describe("AiError", () => {
       Effect.gen(function*() {
         const error = new AiError.ToolParameterValidationError({
           toolName: "GetWeather",
-          toolParams: { location: 123 },
           description: "Expected string"
         })
         const encoded = yield* Schema.encodeEffect(AiError.ToolParameterValidationError)(error)
@@ -854,7 +848,6 @@ describe("AiError", () => {
 
         const paramError: AiError.AiErrorReason = new AiError.ToolParameterValidationError({
           toolName: "Test",
-          toolParams: {},
           description: "Error"
         })
         const paramEncoded = yield* Schema.encodeEffect(AiError.AiErrorReason)(paramError)

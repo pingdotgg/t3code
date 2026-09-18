@@ -3,16 +3,8 @@ import * as PgTypes from "@effect/sql-pg/PgTypes"
 import * as Result from "effect/Result"
 import assert from "node:assert/strict"
 import { Buffer } from "node:buffer"
-import { createRequire } from "node:module"
-import { types as pgTypes } from "pg"
-import { DataRowMessage as PgDataRowMessage } from "pg-protocol/dist/messages.js"
-import { Parser as PgParser } from "pg-protocol/dist/parser.js"
-import { serialize as pgSerialize } from "pg-protocol/dist/serializer.js"
 import postgres from "postgres"
 import { Bench } from "tinybench"
-
-const require = createRequire(import.meta.url)
-const pgUtils: { readonly prepareValue: (value: unknown) => unknown } = require("pg/lib/utils.js")
 
 const postgresSql = postgres({ max: 0 })
 const postgresSerializers = postgresSql.options.serializers
@@ -21,6 +13,12 @@ const postgresParsers = postgresSql.options.parsers
 const success = <A, E>(result: Result.Result<A, E>): A => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
+}
+
+const makeParameter = (oid: number, value: unknown): PgTypes.Parameter => {
+  const parameter = { oid, value } as PgTypes.Parameter
+  Object.defineProperty(parameter, PgTypes.ParameterTypeId, { value: PgTypes.ParameterTypeId })
+  return parameter
 }
 
 const jsonValue = { active: true, tags: ["effect", "postgres"] }
@@ -36,21 +34,17 @@ const payload = [
 ] as const
 
 const effectEncoded = payload.map(({ oid, value }) => success(PgTypes.encode(value, oid)))
-const pgTextParsers = payload.map(({ oid }) => pgTypes.getTypeParser(oid, "text"))
 const postgresTextParsers = payload.map(({ oid }) => postgresParsers[oid] ?? ((value: string) => value))
 
 const encodeEffect = () => payload.map(({ oid, value }) => success(PgTypes.encode(value, oid)))
-const encodePg = () => payload.map(({ value }) => pgUtils.prepareValue(value))
 const encodePostgresJs = () => payload.map(({ oid, value }) => postgresSerializers[oid]?.(value) ?? String(value))
 
 const decodeEffect = () => payload.map(({ oid }, index) => success(PgTypes.decode(effectEncoded[index], oid, 1)))
-const decodePg = () => payload.map(({ text }, index) => pgTextParsers[index](text))
 const decodePostgresJs = () => payload.map(({ text }, index) => postgresTextParsers[index](text))
 
 const normalize = (values: ReadonlyArray<unknown>) =>
   values.map((value) => value instanceof Uint8Array ? Array.from(value) : value)
 
-assert.deepStrictEqual(normalize(decodeEffect()), normalize(decodePg()))
 assert.deepStrictEqual(normalize(decodeEffect()), normalize(decodePostgresJs()))
 
 const makeDataRow = (fields: ReadonlyArray<string | Uint8Array>): Uint8Array => {
@@ -76,17 +70,12 @@ const parserPayload = new Uint8Array(dataRow.length * rowsPerParserRun)
 for (let index = 0; index < rowsPerParserRun; index++) {
   parserPayload.set(dataRow, index * dataRow.length)
 }
-const parserBuffer = Buffer.from(parserPayload.buffer, parserPayload.byteOffset, parserPayload.byteLength)
 const parserChunks = Array.from(
   { length: Math.ceil(parserPayload.length / 64) },
   (_, index) => parserPayload.subarray(index * 64, (index + 1) * 64)
 )
-const pgParserChunks = parserChunks.map((chunk) => Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength))
-
 const effectSingleParser = PgProtocol.makeParser()
 const effectChunkedParser = PgProtocol.makeParser()
-const pgSingleParser = new PgParser()
-const pgChunkedParser = new PgParser()
 
 const parseEffectSingle = () => effectSingleParser.push(parserPayload).length
 const parseEffectChunked = () => {
@@ -96,28 +85,11 @@ const parseEffectChunked = () => {
   }
   return count
 }
-const parsePgSingle = () => {
-  let count = 0
-  pgSingleParser.parse(parserBuffer, () => count++)
-  return count
-}
-const parsePgChunked = () => {
-  let count = 0
-  for (const chunk of pgParserChunks) {
-    pgChunkedParser.parse(chunk, () => count++)
-  }
-  return count
-}
-
 assert.equal(parseEffectSingle(), rowsPerParserRun)
 assert.equal(parseEffectChunked(), rowsPerParserRun)
-assert.equal(parsePgSingle(), rowsPerParserRun)
-assert.equal(parsePgChunked(), rowsPerParserRun)
 
 // End to end: JavaScript values in, a complete Bind frame out. This is the
-// comparison the type-encode table cannot make, because `pg` splits the work
-// between `prepareValue` and its Bind serializer.
-const bindValues = payload.map(({ value }) => value)
+// comparison the type-encode table cannot make because it includes framing.
 
 const bindEffect = () =>
   success(PgProtocol.encodeBind({
@@ -128,25 +100,16 @@ const bindEffect = () =>
 
 // The same job with the values written straight into the frame, which is what
 // a client should use: no array per parameter, no copy out of one.
-const bindParameters = payload.map(({ oid, value }) => ({ oid, value }))
+const bindParameters = payload.map(({ oid, value }) => makeParameter(oid, value))
 const encodeBindFused = PgProtocol.makeBindEncoder(PgTypes.writeParameter)
 const bindEffectFused = () => success(encodeBindFused({ portal: "", statement: "s1", parameters: bindParameters }))
-
-const bindPg = () =>
-  pgSerialize.bind({
-    portal: "",
-    statement: "s1",
-    values: bindValues,
-    valueMapper: pgUtils.prepareValue as (value: unknown, index: number) => unknown
-  })
 
 // Array parameters, where the win is much larger: every element used to be
 // encoded into an array of its own before being copied into the frame.
 const arrayRow = [
-  { oid: PgTypes.OID.int4Array, value: Array.from({ length: 16 }, (_, index) => index) },
-  { oid: PgTypes.OID.textArray, value: Array.from({ length: 8 }, (_, index) => `tag-${index}`) }
+  makeParameter(PgTypes.OID.int4Array, Array.from({ length: 16 }, (_, index) => index)),
+  makeParameter(PgTypes.OID.textArray, Array.from({ length: 8 }, (_, index) => `tag-${index}`))
 ]
-const arrayValues = arrayRow.map(({ value }) => value)
 const bindArrayEffectFused = () => success(encodeBindFused({ portal: "", statement: "s2", parameters: arrayRow }))
 const bindArrayEffect = () =>
   success(PgProtocol.encodeBind({
@@ -154,14 +117,6 @@ const bindArrayEffect = () =>
     statement: "s2",
     parameters: arrayRow.map((parameter) => success(PgTypes.encodeParameter(parameter)))
   }))
-const bindArrayPg = () =>
-  pgSerialize.bind({
-    portal: "",
-    statement: "s2",
-    values: arrayValues,
-    valueMapper: pgUtils.prepareValue as (value: unknown, index: number) => unknown
-  })
-
 // End to end: DataRow frames in, JavaScript values out. Each library reads its
 // own wire format, so the frames the binary codec sees carry binary fields.
 const binaryDataRow = makeDataRow(effectEncoded)
@@ -235,8 +190,6 @@ const decodeWideRowsFused = () => {
 }
 
 const effectRowParser = PgProtocol.makeParser()
-const pgRowParser = new PgParser()
-
 const decodeRowsEffect = () => {
   let count = 0
   for (const message of effectRowParser.push(binaryRowsPayload)) {
@@ -250,48 +203,24 @@ const decodeRowsEffect = () => {
   return count
 }
 
-const decodeRowsPg = () => {
-  let count = 0
-  pgRowParser.parse(parserBuffer, (message) => {
-    if (!(message instanceof PgDataRowMessage)) return
-    for (let index = 0; index < message.fields.length; index++) {
-      const field = message.fields[index]
-      if (field !== null) pgTextParsers[index](field)
-    }
-    count++
-  })
-  return count
-}
-
 assert.equal(decodeRowsEffect(), rowsPerParserRun)
 assert.equal(decodeRowsFused(), rowsPerParserRun)
 assert.equal(decodeWideRows(), rowsPerParserRun)
 assert.equal(decodeWideRowsFused(), rowsPerParserRun)
-assert.equal(decodeRowsPg(), rowsPerParserRun)
 assert.ok(bindEffect().length > 0)
-assert.ok(bindPg().length > 0)
 assert.deepStrictEqual(Array.from(bindEffectFused()), Array.from(bindEffect()))
 assert.deepStrictEqual(Array.from(bindArrayEffectFused()), Array.from(bindArrayEffect()))
-assert.ok(bindArrayPg().length > 0)
 
 // Arrays are the one place a value's cost is paid per element, so they get a
 // suite of their own.
 const int4ArrayLength = 16
 const int4ArrayValue = Array.from({ length: int4ArrayLength }, (_, index) => index * 1000)
-const int4ArrayText = `{${int4ArrayValue.join(",")}}`
 const int4ArrayEncoded = success(PgTypes.encode(int4ArrayValue, PgTypes.OID.int4Array))
-// `pg` types its parser lookup with a union that leaves the array OIDs out.
-const pgArrayParser = (pgTypes.getTypeParser as (oid: number, format: "text") => (value: string) => unknown)(
-  PgTypes.OID.int4Array,
-  "text"
-)
 // postgres.js has no array parser to compare against: it leaves array columns
 // as their text.
 const decodeArrayEffect = () => success(PgTypes.decode(int4ArrayEncoded, PgTypes.OID.int4Array, 1))
-const decodeArrayPg = () => pgArrayParser(int4ArrayText)
 
 assert.deepStrictEqual(decodeArrayEffect(), int4ArrayValue)
-assert.deepStrictEqual(decodeArrayPg(), int4ArrayValue)
 
 // Column names are the one place the parser decodes text, and the existing
 // payload has none: every field of a `DataRow` stays raw bytes.
@@ -325,23 +254,10 @@ const descriptionPayload = new Uint8Array(rowDescription.length * descriptionsPe
 for (let index = 0; index < descriptionsPerRun; index++) {
   descriptionPayload.set(rowDescription, index * rowDescription.length)
 }
-const descriptionBuffer = Buffer.from(
-  descriptionPayload.buffer,
-  descriptionPayload.byteOffset,
-  descriptionPayload.byteLength
-)
-
 const effectDescriptionParser = PgProtocol.makeParser()
-const pgDescriptionParser = new PgParser()
 const parseDescriptionEffect = () => effectDescriptionParser.push(descriptionPayload).length
-const parseDescriptionPg = () => {
-  let count = 0
-  pgDescriptionParser.parse(descriptionBuffer, () => count++)
-  return count
-}
 
 assert.equal(parseDescriptionEffect(), descriptionsPerRun)
-assert.equal(parseDescriptionPg(), descriptionsPerRun)
 
 // `numeric` is the one builtin whose text is built a digit group at a time, and
 // the existing payload has no column of that type either.
@@ -402,25 +318,21 @@ const runSuite = async (
 
 await runSuite("type encode", codecRowsPerRun, [
   ["@effect/sql-pg binary", batch(encodeEffect)],
-  ["postgres.js text", batch(encodePostgresJs)],
-  ["pg text", batch(encodePg)]
+  ["postgres.js text", batch(encodePostgresJs)]
 ])
 
 await runSuite("type decode", codecRowsPerRun, [
   ["@effect/sql-pg binary", batch(decodeEffect)],
-  ["postgres.js text", batch(decodePostgresJs)],
-  ["pg text", batch(decodePg)]
+  ["postgres.js text", batch(decodePostgresJs)]
 ])
 
 await runSuite("int4[] decode", codecRowsPerRun, [
-  ["@effect/sql-pg binary", batch(decodeArrayEffect)],
-  ["pg text", batch(decodeArrayPg)]
+  ["@effect/sql-pg binary", batch(decodeArrayEffect)]
 ], `${int4ArrayLength} elements per array`)
 
 await runSuite("Bind frame from JavaScript values", codecRowsPerRun, [
   ["@effect/sql-pg binary, value sink", batch(bindEffectFused)],
-  ["@effect/sql-pg binary, encoded parameters", batch(bindEffect)],
-  ["pg text", batch(bindPg)]
+  ["@effect/sql-pg binary, encoded parameters", batch(bindEffect)]
 ])
 
 await runSuite(
@@ -428,16 +340,14 @@ await runSuite(
   codecRowsPerRun,
   [
     ["@effect/sql-pg binary, value sink", batch(bindArrayEffectFused)],
-    ["@effect/sql-pg binary, encoded parameters", batch(bindArrayEffect)],
-    ["pg text", batch(bindArrayPg)]
+    ["@effect/sql-pg binary, encoded parameters", batch(bindArrayEffect)]
   ],
   "int4[16] and text[8] per row"
 )
 
 await runSuite("DataRow frames to JavaScript values", rowsPerParserRun, [
   ["@effect/sql-pg binary, field reader", decodeRowsFused],
-  ["@effect/sql-pg binary, view per field", decodeRowsEffect],
-  ["pg text", decodeRowsPg]
+  ["@effect/sql-pg binary, view per field", decodeRowsEffect]
 ])
 
 await runSuite("DataRow frames to JavaScript values, wide rows", rowsPerParserRun, [
@@ -450,18 +360,15 @@ await runSuite("numeric decode", codecRowsPerRun, [
 ], `${numericValues.length} values per row`)
 
 await runSuite("protocol RowDescription parser", descriptionsPerRun, [
-  ["@effect/sql-pg", parseDescriptionEffect],
-  ["pg-protocol (pg)", parseDescriptionPg]
+  ["@effect/sql-pg", parseDescriptionEffect]
 ], `${columnNames.length} columns per description`)
 
 await runSuite("protocol DataRow parser, one chunk", rowsPerParserRun, [
-  ["@effect/sql-pg", parseEffectSingle],
-  ["pg-protocol (pg)", parsePgSingle]
+  ["@effect/sql-pg", parseEffectSingle]
 ])
 
 await runSuite("protocol DataRow parser, 64-byte chunks", rowsPerParserRun, [
-  ["@effect/sql-pg", parseEffectChunked],
-  ["pg-protocol (pg)", parsePgChunked]
+  ["@effect/sql-pg", parseEffectChunked]
 ])
 
 if (sink === undefined || fieldSink === undefined) {

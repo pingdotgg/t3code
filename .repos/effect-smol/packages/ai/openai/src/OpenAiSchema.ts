@@ -766,10 +766,12 @@ const ApplyPatchCall = Schema.Struct({
 const CodeInterpreterCall = Schema.Struct({
   id: Schema.String,
   type: Schema.Literal("code_interpreter_call"),
-  code: Schema.optionalKey(Schema.String),
+  code: Schema.optionalKey(Schema.NullOr(Schema.String)),
   container_id: Schema.String,
-  outputs: Schema.optionalKey(Schema.Array(Schema.Unknown)),
-  status: Schema.optionalKey(MessageStatus)
+  outputs: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Unknown))),
+  status: Schema.optionalKey(
+    Schema.Literals(["in_progress", "completed", "incomplete", "interpreting", "failed"])
+  )
 })
 
 const ComputerCall = Schema.Struct({
@@ -905,38 +907,38 @@ export type Response = typeof Response.Type
 const ResponseCreatedEvent = Schema.Struct({
   type: Schema.Literal("response.created"),
   response: Response,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseCompletedEvent = Schema.Struct({
   type: Schema.Literal("response.completed"),
   response: Response,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseIncompleteEvent = Schema.Struct({
   type: Schema.Literal("response.incomplete"),
   response: Response,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseFailedEvent = Schema.Struct({
   type: Schema.Literal("response.failed"),
   response: Response,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseOutputItemAddedEvent = Schema.Struct({
   type: Schema.Literal("response.output_item.added"),
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   item: OutputItem
 })
 
 const ResponseOutputItemDoneEvent = Schema.Struct({
   type: Schema.Literal("response.output_item.done"),
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   item: OutputItem
 })
 
@@ -946,7 +948,7 @@ const ResponseOutputTextDeltaEvent = Schema.Struct({
   output_index: Schema.Int,
   content_index: Schema.Int,
   delta: Schema.String,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   logprobs: Schema.optionalKey(Schema.Array(Schema.Unknown))
 })
 
@@ -956,7 +958,7 @@ const ResponseOutputTextAnnotationAddedEvent = Schema.Struct({
   output_index: Schema.Int,
   content_index: Schema.Int,
   annotation_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   annotation: Annotation
 })
 
@@ -965,7 +967,7 @@ const ResponseReasoningSummaryPartAddedEvent = Schema.Struct({
   item_id: Schema.String,
   output_index: Schema.Int,
   summary_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   part: SummaryTextContent
 })
 
@@ -974,7 +976,7 @@ const ResponseReasoningSummaryPartDoneEvent = Schema.Struct({
   item_id: Schema.String,
   output_index: Schema.Int,
   summary_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   part: SummaryTextContent
 })
 
@@ -984,14 +986,14 @@ const ResponseReasoningSummaryTextDeltaEvent = Schema.Struct({
   output_index: Schema.Int,
   summary_index: Schema.Int,
   delta: Schema.String,
-  sequence_number: Schema.Int
+  sequence_number: Schema.optionalKey(Schema.Int)
 })
 
 const ResponseFunctionCallArgumentsDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.function_call_arguments.delta"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   delta: Schema.String
 })
 
@@ -999,7 +1001,7 @@ const ResponseFunctionCallArgumentsDoneEvent = Schema.Struct({
   type: Schema.Literal("response.function_call_arguments.done"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   arguments: Schema.String
 })
 
@@ -1007,7 +1009,7 @@ const ResponseCodeInterpreterCallCodeDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.code_interpreter_call_code.delta"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   delta: Schema.String
 })
 
@@ -1015,7 +1017,7 @@ const ResponseCodeInterpreterCallCodeDoneEvent = Schema.Struct({
   type: Schema.Literal("response.code_interpreter_call_code.done"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   code: Schema.String
 })
 
@@ -1023,7 +1025,7 @@ const ResponseApplyPatchCallOperationDiffDeltaEvent = Schema.Struct({
   type: Schema.Literal("response.apply_patch_call_operation_diff.delta"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   delta: Schema.String
 })
 
@@ -1031,7 +1033,7 @@ const ResponseApplyPatchCallOperationDiffDoneEvent = Schema.Struct({
   type: Schema.Literal("response.apply_patch_call_operation_diff.done"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   delta: Schema.optionalKey(Schema.String)
 })
 
@@ -1039,7 +1041,7 @@ const ResponseImageGenerationCallPartialImageEvent = Schema.Struct({
   type: Schema.Literal("response.image_generation_call.partial_image"),
   item_id: Schema.String,
   output_index: Schema.Int,
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   partial_image_b64: Schema.String
 })
 
@@ -1048,7 +1050,7 @@ const ResponseErrorEvent = Schema.Struct({
   code: Schema.NullOr(Schema.String),
   message: Schema.String,
   param: Schema.NullOr(Schema.String),
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   status: Schema.optionalKey(Schema.Int)
 })
 
@@ -1060,7 +1062,7 @@ const NestedResponseErrorEvent = Schema.Struct({
     message: Schema.String,
     param: Schema.NullOr(Schema.String)
   }),
-  sequence_number: Schema.Int,
+  sequence_number: Schema.optionalKey(Schema.Int),
   status: Schema.optionalKey(Schema.Int)
 }).pipe(
   Schema.decodeTo(

@@ -23,7 +23,7 @@ import { hasProperty } from "./Predicate.ts"
 import type { Result } from "./Result.ts"
 import * as TxRef from "./TxRef.ts"
 
-const TypeId = "~effect/transactions/TxHashMap"
+const TypeId = "~effect/TxHashMap"
 
 const TxHashMapProto = {
   [TypeId]: TypeId,

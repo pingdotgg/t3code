@@ -92,7 +92,7 @@ const reifyEnvString = (raw: string): string => {
  * marker. The interceptor's runtime branch reifies those markers for reads
  * during Init, but effects that run later (request handlers, nested
  * layers) resolve `Config` against the raw env-backed provider — without
- * this wrapper, `Config.number("PORT")` inside a handler sees the marker
+ * this wrapper, `Config.Number("PORT")` inside a handler sees the marker
  * JSON instead of the source value and fails with a schema error.
  *
  * Two behaviors:

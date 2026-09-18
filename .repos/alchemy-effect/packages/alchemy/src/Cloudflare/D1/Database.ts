@@ -25,7 +25,7 @@ import { recordsEqual } from "../../Util/equal.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import {
   generateLocalId,
-  LOCAL_ENTRY_URL,
+  LOCAL_PROVIDERS_URL,
   localRuntimeServices,
 } from "../LocalRuntime.ts";
 import type { Providers } from "../Providers.ts";
@@ -593,7 +593,7 @@ export const ProviderLive = () =>
 export const ProviderLocal = () =>
   RpcProvider.effect(
     Database,
-    LOCAL_ENTRY_URL,
+    LOCAL_PROVIDERS_URL,
     Effect.gen(function* () {
       // The local runtime services (workerd `Runtime`, binding plugins) and
       // the HTTP client are resolved once at layer build and closed over —
@@ -706,7 +706,7 @@ export const DatabaseProvider = () =>
     // The local provider's reconcile boots an ephemeral workerd gateway to
     // apply migrations, so it needs the shared local runtime layer. Under
     // `alchemy dev` the provider is an RPC stub (this gated layer is empty
-    // and unused) and the sidecar entry (`../Local.ts`) supplies the real
+    // and unused) and the provider group (`../Local.ts`) supplies the real
     // runtime; without the proxy the provider builds in-process and this
     // layer is real.
     local: () => ProviderLocal().pipe(Layer.provide(localRuntimeServices())),

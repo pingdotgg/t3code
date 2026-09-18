@@ -16,8 +16,7 @@ export default Alchemy.Stack(
     // `loadModule` calls resolve in the deployed Worker.
     const site = yield* Cloudflare.Website.Vite("Website", {
       compatibility: {
-        date: "2026-03-10",
-        flags: ["nodejs_compat"],
+        date: "2026-08-31",
       },
       // Only hash the files that affect the build, so unchanged sources
       // skip the Vite build (and the deploy) entirely.

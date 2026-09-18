@@ -184,7 +184,7 @@ const layerForHttp = (
         Layer.succeed(PrismaEnvironment, {
           type: "serviceToken" as const,
           serviceToken: Redacted.make("test-token"),
-          source: { type: "env" as const },
+          source: { type: "stored" as const },
           baseUrl,
         }),
       ),
@@ -291,7 +291,7 @@ const routeCoverageHarness = () => {
         Layer.succeed(PrismaEnvironment, {
           type: "serviceToken" as const,
           serviceToken: Redacted.make("test-token"),
-          source: { type: "env" as const },
+          source: { type: "stored" as const },
           baseUrl: "https://api.prisma.test",
         }),
       ),
@@ -589,7 +589,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),
@@ -923,7 +923,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),
@@ -998,7 +998,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),
@@ -1065,7 +1065,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),
@@ -1125,7 +1125,7 @@ describe("PrismaClient", () => {
             Layer.succeed(PrismaEnvironment, {
               type: "serviceToken" as const,
               serviceToken: Redacted.make("test-token"),
-              source: { type: "env" as const },
+              source: { type: "stored" as const },
               baseUrl: "https://api.prisma.test",
             }),
           ),
@@ -1183,7 +1183,7 @@ describe("PrismaClient", () => {
           Layer.succeed(PrismaEnvironment, {
             type: "serviceToken" as const,
             serviceToken: Redacted.make("test-token"),
-            source: { type: "env" as const },
+            source: { type: "stored" as const },
             baseUrl: "https://api.prisma.test",
           }),
         ),

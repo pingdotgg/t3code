@@ -96,10 +96,9 @@ when AWS asks for physical resource names.
 
 `providers: AWS.providers()` registers every AWS resource and IAM
 policy binding that ships with Alchemy, and resolves credentials from
-your Alchemy [profile](/environments/profiles) — SSO, environment
-variables, or stored access keys. You'll pick one interactively the
-first time you deploy; see [Setup](/aws/setup) for the details of
-each method.
+your Alchemy [profile](/environments/profiles). Connect SSO or stored access
+keys with `alchemy profile edit --add AWS`. See
+[Setup](/aws/setup) for the details of each method.
 
 ## Where state lives
 
@@ -184,18 +183,19 @@ Run `alchemy deploy` to create the Bucket on AWS:
   </TabItem>
 </Tabs>
 
-The first time you deploy, Alchemy prompts you to pick an AWS
-authentication method — **SSO** (recommended), **environment
-variables**, or **stored access keys** — and saves the choice to your
-**`default`** [profile](/environments/profiles). The region and account
-come from whichever method you pick. See [Setup](/aws/setup) for a
-walkthrough of all three.
+Connect AWS first with `alchemy profile edit --add AWS` and pick a
+local authentication method: **SSO** (recommended) or **stored access
+keys**. The choice is saved to your **`default`**
+[profile](/environments/profiles); the region and account come from
+whichever method you pick, and a deploy with nothing configured fails
+with that exact command to run. CI instead reads AWS environment
+credentials directly. See [Setup](/aws/setup) for the full walkthrough.
 
 :::tip
 To re-run the credential prompt later (e.g. to switch from stored
-keys to SSO, or to add a `prod` profile) use
-`alchemy login --configure` or
-`alchemy login --profile prod --configure`.
+keys to SSO), use `alchemy profile edit --reconfigure AWS`. For a
+separate profile, run `alchemy profile create prod` followed by
+`alchemy profile edit --profile prod`.
 :::
 
 <Terminal content={`[u]Plan[/u]: [g]1 to create[/g]
@@ -214,7 +214,7 @@ and prints the stack outputs. Your bucket is live on AWS.
 :::tip
 By convention, Alchemy looks for `alchemy.run.ts` at the root of your
 project. You can specify a different file with
-`alchemy deploy <file>`.
+`alchemy deploy --config <file>`.
 :::
 
 ## Verify it worked

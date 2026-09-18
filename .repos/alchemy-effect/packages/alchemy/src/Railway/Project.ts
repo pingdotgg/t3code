@@ -1,13 +1,7 @@
-import type {
-  ProjectCreateResponse,
-  ProjectResponse,
-  ProjectUpdateResponse,
-  ProjectsResponseEdgesItemNode,
-} from "@distilled.cloud/railway";
+import { waitUntilDeleted } from "./GraphQL.ts";
 import * as railway from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { Unowned } from "../AdoptPolicy.ts";
 import { isResolved } from "../Diff.ts";
@@ -21,6 +15,29 @@ import {
   sanitizeRailwayName,
 } from "./Metadata.ts";
 import type { Providers } from "./Providers.ts";
+
+const projectSelection = {
+  id: true,
+  name: true,
+  description: true,
+  workspaceId: true,
+  primaryEnvironmentId: true,
+  baseEnvironmentId: true,
+  deletedAt: true,
+} as const satisfies railway.Selection<"Project">;
+type CreateProjectResponse = railway.Result<
+  "Project!",
+  typeof projectSelection
+>;
+type ProjectResponse = railway.Result<"Project!", typeof projectSelection>;
+type UpdateProjectResponse = railway.Result<
+  "Project!",
+  typeof projectSelection
+>;
+type ProjectsResponseEdgesItemNode = railway.Result<
+  "Project!",
+  typeof projectSelection
+>;
 
 export interface ProjectProps {
   /**
@@ -157,8 +174,8 @@ export class ProjectNotCreated extends Data.TaggedError(
 
 type CloudProject =
   | ProjectResponse
-  | ProjectCreateResponse
-  | ProjectUpdateResponse
+  | CreateProjectResponse
+  | UpdateProjectResponse
   | ProjectsResponseEdgesItemNode;
 
 /** Workspace id from a get-by-id or list-node Project payload. */
@@ -198,7 +215,10 @@ const toAttrs = (
 const fillEnvironmentId = (attrs: Project["Attributes"]) => {
   if (attrs.environmentId.length > 0) return Effect.succeed(attrs);
   return railway.environments
-    .items({ projectId: attrs.projectId, first: 5 })
+    .items(
+      { projectId: attrs.projectId, first: 5 },
+      { id: true, deletedAt: true },
+    )
     .pipe(
       Stream.filter((env) => env.deletedAt == null),
       Stream.take(1),
@@ -208,9 +228,7 @@ const fillEnvironmentId = (attrs: Project["Attributes"]) => {
           ? { ...attrs, environmentId: option.value.id }
           : attrs,
       ),
-      Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-        Effect.succeed(attrs),
-      ),
+      railway.catchTags(["RailwayNotFound"], () => Effect.succeed(attrs)),
     );
 };
 
@@ -225,11 +243,9 @@ const isGone = (project: CloudProject | undefined) =>
   project === undefined || project.deletedAt != null;
 
 const getById = (projectId: string) =>
-  railway.project({ id: projectId }).pipe(
+  railway.project({ id: projectId }, projectSelection).pipe(
     Effect.map((project) => (isGone(project) ? undefined : project)),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed(undefined),
-    ),
+    railway.catchTags(["RailwayNotFound"], () => Effect.succeed(undefined)),
   );
 
 const currentWorkspaceId = Effect.fn(function* () {
@@ -244,23 +260,26 @@ export const createProject = (input: {
   defaultEnvironmentName?: string;
 }) =>
   waitOutCreateRateLimit(
-    railway.projectCreate({
-      input: {
-        name: input.name,
-        workspaceId: input.workspaceId,
-        ...(input.description !== undefined
-          ? { description: input.description }
-          : {}),
-        ...(input.defaultEnvironmentName !== undefined
-          ? { defaultEnvironmentName: input.defaultEnvironmentName }
-          : {}),
+    railway.createProject(
+      {
+        input: {
+          name: input.name,
+          workspaceId: input.workspaceId,
+          ...(input.description !== undefined
+            ? { description: input.description }
+            : {}),
+          ...(input.defaultEnvironmentName !== undefined
+            ? { defaultEnvironmentName: input.defaultEnvironmentName }
+            : {}),
+        },
       },
-    }),
+      projectSelection,
+    ),
   );
 
 const findByName = (workspaceId: string, name: string) =>
   railway.projects
-    .items({ workspaceId, first: 50, includeDeleted: false })
+    .items({ workspaceId, first: 50, includeDeleted: false }, projectSelection)
     .pipe(
       Stream.filter((project) => !isGone(project) && project.name === name),
       Stream.take(1),
@@ -277,7 +296,7 @@ const findByName = (workspaceId: string, name: string) =>
 export const ownedProjects = Effect.fn(function* () {
   const workspaceId = yield* currentWorkspaceId();
   const projects = yield* railway.projects
-    .items({ workspaceId, first: 50, includeDeleted: false })
+    .items({ workspaceId, first: 50, includeDeleted: false }, projectSelection)
     .pipe(Stream.runCollect);
   return Array.from(projects)
     .filter(
@@ -296,23 +315,28 @@ export const projectEnvironmentIds = (project: {
   projectId: string;
   environmentId: string;
 }) =>
-  railway.environments.items({ projectId: project.projectId, first: 50 }).pipe(
-    Stream.filter((env) => env.deletedAt == null),
-    Stream.map((env) => env.id),
-    Stream.runCollect,
-    Effect.map((ids) => {
-      const set = new Set(Array.from(ids));
-      if (project.environmentId.length > 0) {
-        set.add(project.environmentId);
-      }
-      return Array.from(set);
-    }),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-      Effect.succeed(
-        project.environmentId.length > 0 ? [project.environmentId] : [],
+  railway.environments
+    .items(
+      { projectId: project.projectId, first: 50 },
+      { id: true, deletedAt: true },
+    )
+    .pipe(
+      Stream.filter((env) => env.deletedAt == null),
+      Stream.map((env) => env.id),
+      Stream.runCollect,
+      Effect.map((ids) => {
+        const set = new Set(Array.from(ids));
+        if (project.environmentId.length > 0) {
+          set.add(project.environmentId);
+        }
+        return Array.from(set);
+      }),
+      railway.catchTags(["RailwayNotFound"], () =>
+        Effect.succeed(
+          project.environmentId.length > 0 ? [project.environmentId] : [],
+        ),
       ),
-    ),
-  );
+    );
 
 export const ProjectProvider = () =>
   Provider.succeed(Project, {
@@ -381,7 +405,7 @@ export const ProjectProvider = () =>
             ? { defaultEnvironmentName: props.defaultEnvironmentName }
             : {}),
         }).pipe(
-          Effect.catchTag("RailwayValidationError", () =>
+          railway.catchTags("RailwayValidationError", () =>
             Effect.succeed(undefined),
           ),
         );
@@ -398,13 +422,16 @@ export const ProjectProvider = () =>
         props.description !== undefined &&
         props.description !== observedDescription;
       if (nameChanged || descriptionChanged) {
-        current = yield* railway.projectUpdate({
-          id: current.id,
-          input: {
-            ...(nameChanged ? { name } : {}),
-            ...(descriptionChanged ? { description: props.description } : {}),
+        current = yield* railway.updateProject(
+          {
+            id: current.id,
+            input: {
+              ...(nameChanged ? { name } : {}),
+              ...(descriptionChanged ? { description: props.description } : {}),
+            },
           },
-        });
+          projectSelection,
+        );
       }
 
       return yield* fillEnvironmentId(
@@ -420,17 +447,12 @@ export const ProjectProvider = () =>
       const projectId = output.projectId;
       if (projectId.length === 0) return;
       yield* railway
-        .projectDelete({ id: projectId })
-        .pipe(
-          Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
-        );
-      yield* getById(projectId).pipe(
-        Effect.map((project) => project === undefined),
-        Effect.repeat({
-          schedule: Schedule.spaced("1 second"),
-          until: (gone) => gone,
-          times: 8,
-        }),
+        .deleteProject({ id: projectId })
+        .pipe(railway.catchTags(["RailwayNotFound"], () => Effect.void));
+      yield* waitUntilDeleted(
+        "Project",
+        projectId,
+        getById(projectId).pipe(Effect.map((project) => project === undefined)),
       );
     }),
   });

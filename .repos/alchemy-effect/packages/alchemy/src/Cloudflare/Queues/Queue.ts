@@ -18,7 +18,7 @@ import { detachQueueConsumersOfScript } from "./Consumer.ts";
 import {
   generateLocalId,
   isLiveId,
-  LOCAL_ENTRY_URL,
+  LOCAL_PROVIDERS_URL,
   LocalRuntimeState,
   localRuntimeServices,
 } from "../LocalRuntime.ts";
@@ -400,7 +400,7 @@ const findQueueByName = Effect.fn(function* (queueName: string) {
 export const ProviderLocal = () =>
   RpcProvider.effect(
     Queue,
-    LOCAL_ENTRY_URL,
+    LOCAL_PROVIDERS_URL,
     Effect.gen(function* () {
       const localRuntimeState = yield* LocalRuntimeState;
       return {

@@ -1,6 +1,11 @@
 export * from "./CacheEventSource.ts";
+export * from "./CacheCluster.ts";
 export * from "./Connect.ts";
 export * from "./ConnectHttp.ts";
+export * from "./ConnectCacheCluster.ts";
+export * from "./ConnectCacheClusterHttp.ts";
+export * from "./ConnectReplicationGroup.ts";
+export * from "./ConnectReplicationGroupHttp.ts";
 export * from "./CopyServerlessCacheSnapshot.ts";
 export * from "./CopyServerlessCacheSnapshotHttp.ts";
 export * from "./CreateServerlessCacheSnapshot.ts";
@@ -16,3 +21,5 @@ export * from "./DescribeServerlessCachesHttp.ts";
 export * from "./ExportServerlessCacheSnapshot.ts";
 export * from "./ExportServerlessCacheSnapshotHttp.ts";
 export * from "./ServerlessCache.ts";
+export * from "./ReplicationGroup.ts";
+export * from "./SubnetGroup.ts";

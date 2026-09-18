@@ -12,6 +12,7 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const worker = yield* CronTestWorker;
     return {
+      workerName: worker.workerName,
       url: worker.url.as<string>(),
       crons: worker.crons,
     };

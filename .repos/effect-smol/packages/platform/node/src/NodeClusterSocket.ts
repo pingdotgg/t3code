@@ -31,7 +31,6 @@ import type { SqlClient } from "effect/unstable/sql/SqlClient"
 import * as NodeCrypto from "./NodeCrypto.ts"
 import * as NodeFileSystem from "./NodeFileSystem.ts"
 import * as NodeHttpClient from "./NodeHttpClient.ts"
-import * as Undici from "./Undici.ts"
 
 export {
   /**
@@ -65,7 +64,7 @@ export const layer = <
   const Storage extends "local" | "sql" | "byo" = never
 >(
   options?: {
-    readonly serialization?: "msgpack" | "ndjson" | undefined
+    readonly serialization?: "binary" | "ndjson" | undefined
     readonly serializationMaxBufferSize?: number | "unbounded" | undefined
     readonly clientOnly?: ClientOnly | undefined
     readonly storage?: Storage | undefined
@@ -128,7 +127,9 @@ export const layer = <
     Layer.provide(
       options?.serialization === "ndjson"
         ? RpcSerialization.layerNdjsonWith({ maxBufferSize: options?.serializationMaxBufferSize })
-        : RpcSerialization.layerMsgPackWith({ maxBufferSize: options?.serializationMaxBufferSize })
+        : RpcSerialization.layerSchemaBinary({
+          maxFrameSize: options?.serializationMaxBufferSize
+        })
     )
   ) as any
 }
@@ -148,10 +149,9 @@ export const layerDispatcherK8s: Layer.Layer<NodeHttpClient.Dispatcher> = Layer.
       Effect.option
     )
     if (caCertOption._tag === "Some") {
+      const Undici = yield* Effect.promise(() => import("./Undici.ts"))
       return yield* Effect.acquireRelease(
         Effect.sync(() =>
-          // oxlint cannot resolve values re-exported through the local Undici facade.
-          // oxlint-disable-next-line import/namespace
           new Undici.Agent({
             connect: {
               ca: caCertOption.value

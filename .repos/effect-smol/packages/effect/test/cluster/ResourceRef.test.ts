@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest"
 import { Deferred, Effect, Exit, Fiber, Option, Scope } from "effect"
+import { EntityAddress, EntityId, EntityType, ShardId } from "effect/unstable/cluster"
+import { isActive } from "effect/unstable/cluster/internal/interruptors"
 import { ResourceRef } from "effect/unstable/cluster/internal/resourceRef"
 
 it.live("does not wedge await after a failed rebuild", () =>
@@ -62,4 +64,44 @@ it.effect("does not let a stale rebuild overwrite a newer acquisition", () =>
     yield* Deferred.succeed(newerAcquire, void 0)
     yield* Fiber.join(newerRebuild)
     assert.strictEqual(yield* ref.await, 2)
+  })))
+
+it.effect("does not leak teardown membership when a rebuild is discarded", () =>
+  Effect.scoped(Effect.gen(function*() {
+    const parentScope = yield* Effect.scope
+    const address = EntityAddress.make({
+      shardId: ShardId.make("resource-ref-discard", 1),
+      entityType: EntityType.make("ResourceRefDiscard"),
+      entityId: EntityId.make("1")
+    })
+    const ref = yield* ResourceRef.from(parentScope, () => Effect.succeed(1), address)
+    const discarded = ref.rebuildUnsafe()
+    assert.isDefined(discarded)
+    assert.isFalse(isActive(address))
+    yield* ref.rebuildUnsafe()
+    assert.isFalse(isActive(address))
+    assert.strictEqual(yield* ref.await, 1)
+  })))
+
+it.effect("does not leak teardown membership when a rebuild is interrupted", () =>
+  Effect.scoped(Effect.gen(function*() {
+    const parentScope = yield* Effect.scope
+    const address = EntityAddress.make({
+      shardId: ShardId.make("resource-ref-interrupt", 1),
+      entityType: EntityType.make("ResourceRefInterrupt"),
+      entityId: EntityId.make("1")
+    })
+    const release = yield* Deferred.make<void>()
+    const ref = yield* ResourceRef.from(
+      parentScope,
+      (scope) =>
+        Scope.addFinalizer(scope, Deferred.await(release)).pipe(
+          Effect.andThen(Effect.succeed(1))
+        ),
+      address
+    )
+    const fiber = yield* Effect.forkChild(ref.rebuildUnsafe())
+    yield* Fiber.interrupt(fiber)
+    yield* Deferred.succeed(release, void 0)
+    assert.isFalse(isActive(address))
   })))

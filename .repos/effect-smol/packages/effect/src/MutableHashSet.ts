@@ -17,7 +17,7 @@ import type { Pipeable } from "./Pipeable.ts"
 import { pipeArguments } from "./Pipeable.ts"
 import { hasProperty } from "./Predicate.ts"
 
-const TypeId = "~effect/collections/MutableHashSet"
+const TypeId = "~effect/MutableHashSet"
 
 /**
  * A mutable hash set for storing unique values with Effect structural equality

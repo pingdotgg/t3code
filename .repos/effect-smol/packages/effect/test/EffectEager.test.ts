@@ -131,6 +131,19 @@ describe("Effect Eager Operations", () => {
         assert.strictEqual(result, 20)
       }))
 
+    it.effect("forwards arguments to pipeable operators", () =>
+      Effect.gen(function*() {
+        const fn = Effect.fnUntracedEager(
+          function*(value: string) {
+            return value.length
+          },
+          (effect, value) => Effect.map(effect, (length) => `${value}:${length}`)
+        )
+
+        const result = yield* fn("hello")
+        assert.strictEqual(result, "hello:5")
+      }))
+
     it("proxies body length", () => {
       const fn = Effect.fnUntracedEager(function*(a: string, b: number, c: boolean) {
         return c ? a.length + b : b

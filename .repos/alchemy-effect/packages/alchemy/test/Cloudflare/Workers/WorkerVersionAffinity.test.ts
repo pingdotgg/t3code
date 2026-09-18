@@ -161,9 +161,10 @@ const expectBody = Effect.fn(function* (
   );
 });
 
+// These lifecycle tests mutate the same zone-level transform ruleset.
 describe
   .skipIf(!!process.env.FAST)
-  .concurrent("Cloudflare.Worker version affinity", () => {
+  .sequential("Cloudflare.Worker version affinity", () => {
     test.provider(
       "affinity rules converge across sources and clean up on destroy",
       (stack) =>

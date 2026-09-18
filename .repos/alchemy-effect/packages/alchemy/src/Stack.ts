@@ -1,6 +1,7 @@
 import type { ConfigError } from "effect/Config";
 import { ConfigProvider } from "effect/ConfigProvider";
 import * as Context from "effect/Context";
+import type { Crypto } from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import { FileSystem } from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,13 +17,17 @@ import { AlchemyContext, AlchemyContextLive } from "./AlchemyContext.ts";
 import { type ArtifactStore, provideFreshArtifactStore } from "./Artifacts.ts";
 import { AuthProviders } from "./Auth/AuthProvider.ts";
 import { CredentialsStore, CredentialsStoreLive } from "./Auth/Credentials.ts";
-import { AlchemyProfile, ProfileLive } from "./Auth/Profile.ts";
-import { Cli } from "./Cli/Cli.ts";
+import { ProfileStore, ProfileStoreLive } from "./Auth/Profile.ts";
+// Type-only: with verbatimModuleSyntax a value import would survive emit and
+// drag the terminal helpers (node:tty, Sigil's ansi helpers) into every unbundled
+// child process that loads Stack.ts.
+import type { Interaction } from "./Interaction.ts";
 import type { Input, InputProps } from "./Input.ts";
 import * as Output from "./Output.ts";
 import type { Provider, ProviderCollectionLike } from "./Provider.ts";
 import type { ResourceBinding, ResourceLike } from "./Resource.ts";
 import { Stage } from "./Stage.ts";
+import { StackContext } from "./StackContext.ts";
 import type { State } from "./State/State.ts";
 import { loadConfigProvider } from "./Util/ConfigProvider.ts";
 import { effectClass, taggedFunction } from "./Util/effect.ts";
@@ -34,15 +39,16 @@ export type StackServices =
   | Stage
   | Scope.Scope
   | FileSystem
+  | Crypto
   | Path
   | AlchemyContext
   | HttpClient
   | ChildProcessSpawner
   | AuthProviders
-  | AlchemyProfile
+  | ProfileStore
   | ArtifactStore
   | CredentialsStore
-  | Cli;
+  | Interaction;
 
 export type ProviderServices =
   | ProviderCollectionLike
@@ -73,8 +79,8 @@ export type StackEffect<A, Err = never, Req = never> = Effect.Effect<
   | Scope.Scope
   | AuthProviders
   | AlchemyContext
-  | Cli
-  | AlchemyProfile
+  | Interaction
+  | ProfileStore
   | CredentialsStore
   | ArtifactStore
   | State
@@ -137,7 +143,7 @@ export const Stack: Context.ServiceClass<
   ): Effect.Effect<CompiledStack<A>, ConfigError>;
 } = Object.assign(
   taggedFunction(
-    Context.Service<Stack, Omit<StackSpec, "output">>()("Stack"),
+    StackContext,
     <A, Req>(
       stackName?: string,
       options?: StackProps<NoInfer<Req>>,
@@ -305,13 +311,12 @@ const platform = Layer.mergeAll(
   PlatformServices,
   FetchHttpClient.layer,
   Logger.layer([fileLogger("out")], { mergeWithExisting: true }),
-  Layer.provide(ProfileLive, PlatformServices),
+  Layer.provide(ProfileStoreLive, PlatformServices),
   Layer.provide(CredentialsStoreLive, PlatformServices),
 );
 // override alchemy state store, CLI/reporting, state, and Config
 const alchemy = (overrides?: { dev?: boolean }) =>
   Layer.mergeAll(
-    // CLI.inkCLI(),
     // optional
     overrides?.dev
       ? Layer.provide(

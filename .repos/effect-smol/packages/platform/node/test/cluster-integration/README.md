@@ -17,7 +17,7 @@ prefix, and every runner listens on an operating-system-assigned port.
 `harness.ts` exposes:
 
 - `make({ backend, entities, lockMode, config })` to create a scoped cluster harness.
-- `start(count, { assignedShardGroups, entities, runnerShardWeight })` to start in-process socket runners and a client over msgpack, optionally overriding the entity layer for those runners.
+- `start(count, { assignedShardGroups, entities, runnerShardWeight })` to start in-process socket runners and a client over SchemaBinary, optionally overriding the entity layer for those runners.
 - `stop(runner)` for graceful deregistration and shard handoff.
 - `kill(runner)` for abrupt teardown without deregistration or explicit lock cleanup.
 - `freeze(runner)` to suspend SQL heartbeats and lock refresh while leaving the runner's sockets and reserved SQL connection open.

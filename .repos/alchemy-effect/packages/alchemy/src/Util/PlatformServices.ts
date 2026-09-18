@@ -1,3 +1,5 @@
+import type { Crypto } from "effect/Crypto";
+import type { Input as DurationInput } from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type { FileSystem } from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -47,6 +49,7 @@ export const platformLayer = <A, E, R>(constructors: {
 
 export type PlatformServices =
   | ChildProcessSpawner
+  | Crypto
   | FileSystem
   | Path
   | Stdio
@@ -134,6 +137,9 @@ export const runMain = <E, A>(
 export const httpServer = (
   port: number = 0,
   host: string = "127.0.0.1",
+  options?: {
+    readonly gracefulShutdownTimeout?: DurationInput | undefined;
+  },
 ): Layer.Layer<HttpServer, ServeError> =>
   platformLayer({
     bun: async () => {
@@ -155,6 +161,10 @@ export const httpServer = (
         ),
         import("node:http"),
       ]);
-      return NodeHttpServer.layerServer(Http.createServer, { host, port });
+      return NodeHttpServer.layerServer(Http.createServer, {
+        host,
+        port,
+        gracefulShutdownTimeout: options?.gracefulShutdownTimeout,
+      });
     },
   });

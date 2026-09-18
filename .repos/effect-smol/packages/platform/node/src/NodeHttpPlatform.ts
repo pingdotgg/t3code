@@ -12,14 +12,15 @@ import * as NodeHttpCompression from "@effect/platform-node-shared/NodeHttpCompr
 import * as Effect from "effect/Effect"
 import { pipe } from "effect/Function"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import * as EtagImpl from "effect/unstable/http/Etag"
 import * as Headers from "effect/unstable/http/Headers"
 import * as HttpBody from "effect/unstable/http/HttpBody"
 import * as Platform from "effect/unstable/http/HttpPlatform"
 import * as ServerResponse from "effect/unstable/http/HttpServerResponse"
+import * as Mime from "effect/unstable/http/Mime"
 import * as Fs from "node:fs"
 import { Readable } from "node:stream"
-import Mime from "./Mime.ts"
 import * as NodeFileSystem from "./NodeFileSystem.ts"
 import * as NodeStream from "./NodeStream.ts"
 
@@ -43,7 +44,7 @@ const compression = NodeHttpCompression.make({
             NodeStream.pipeThroughDuplex(body.stream, {
               evaluate: () => NodeHttpCompression.compressTransform(algorithm, options)
             }),
-            body.contentType
+            response.headers["content-type"] ?? body.contentType
           )
         ))
       }
@@ -56,7 +57,12 @@ const compression = NodeHttpCompression.make({
         transform.on("error", (cause) => readable.destroy(cause))
         transform.on("close", () => readable.destroy())
         return Effect.succeed(
-          compressedBody(response, HttpBody.raw(readable.pipe(transform), { contentType: body.contentType }))
+          compressedBody(
+            response,
+            HttpBody.raw(readable.pipe(transform), {
+              contentType: response.headers["content-type"] ?? body.contentType
+            })
+          )
         )
       }
       default: {
@@ -77,13 +83,14 @@ export const make = Platform.make({
   platform: "node",
   compression,
   fileResponse(path, status, statusText, headers, start, end, contentLength) {
-    const stream = contentLength === 0
+    const stream = contentLength === BigInt(0)
       ? Readable.from([])
       : Fs.createReadStream(path, { start, end: end === undefined ? undefined : end - 1 })
     return ServerResponse.raw(stream, {
       headers: {
         ...headers,
-        "content-type": headers["content-type"] ?? Mime.getType(path) ?? "application/octet-stream",
+        "content-type": headers["content-type"] ??
+          Option.getOrElse(Mime.getType(path), () => "application/octet-stream"),
         "content-length": contentLength.toString()
       },
       status,
@@ -95,7 +102,8 @@ export const make = Platform.make({
       headers: Headers.merge(
         headers,
         Headers.fromRecordUnsafe({
-          "content-type": headers["content-type"] ?? Mime.getType(file.name) ?? "application/octet-stream",
+          "content-type": headers["content-type"] ??
+            Option.getOrElse(Mime.getType(file.name), () => "application/octet-stream"),
           "content-length": file.size.toString()
         })
       ),

@@ -86,7 +86,7 @@ if (wantsLive && !hasLiveCredentials) {
       new Error(
         [
           "Live Prisma bucket binding suite requested but no credentials are configured.",
-          "Set PRISMA_SERVICE_TOKEN, set PRISMA_API_TOKEN, or run `alchemy login --configure` and select `Service Token`,",
+          "Set PRISMA_SERVICE_TOKEN, set PRISMA_API_TOKEN, or run `alchemy profile` and add Prisma with `Service Token`,",
           "then rerun this live test with ALCHEMY_RUN_LIVE_PRISMA_TESTS=true.",
         ].join(" "),
       ),
@@ -335,7 +335,7 @@ const exercise = (label: string, writeBase: string, readBase: string) =>
  * - round-trip a key through the ReadWrite app by itself.
  *
  * The stack lives in `fixtures/stack.ts` so it can also be inspected
- * directly, e.g. `alchemy tail --stage test ./test/Prisma/fixtures/stack.ts`.
+ * directly, e.g. `alchemy logs --tail --stage test --config ./test/Prisma/fixtures/stack.ts`.
  */
 describe.skipIf(!runLive)("Prisma bucket binding over deployed hosts", () => {
   const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });

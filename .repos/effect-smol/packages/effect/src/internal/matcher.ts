@@ -17,7 +17,22 @@ import * as Result from "../Result.ts"
 import type { Unify } from "../Unify.ts"
 
 /** @internal */
-export const TypeId = "~effect/match/Match/Matcher"
+export const TypeId = "~effect/Match/Matcher"
+
+/** @internal */
+export type Contextual<P, Fallback> = [P] extends [never] ? Fallback : P
+
+type TagHandlers<D extends string, R, Ret> = {
+  readonly [Tag in Types.Tags<D, R> & string]: (_: Extract<R, Record<D, Tag>>) => Ret
+}
+
+type PartialTagHandlers<D extends string, R, Ret> = {
+  readonly [Tag in Types.Tags<D, R> & string]?: ((_: Extract<R, Record<D, Tag>>) => Ret) | undefined
+}
+
+type ValueTagHandlers<I> = {
+  readonly [Tag in Types.Tags<"_tag", I> & string]: (_: Extract<I, { readonly _tag: Tag }>) => any
+}
 
 const TypeMatcherProto: Omit<TypeMatcher<any, any, any, any, any, any>, "cases" | "select"> = {
   [TypeId]: {
@@ -220,23 +235,31 @@ export const valueTags: {
   <
     const I,
     P extends
-      & { readonly [Tag in Types.Tags<"_tag", I> & string]: (_: Extract<I, { readonly _tag: Tag }>) => any }
+      & ValueTagHandlers<I>
       & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", I>>]: never }
-  >(fields: P): (input: I) => Unify<ReturnType<P[keyof P]>>
+  >(
+    fields: Contextual<P, ValueTagHandlers<I>>
+  ): (input: I) => Unify<ReturnType<P[keyof P]>>
   <
     const I,
     P extends
-      & { readonly [Tag in Types.Tags<"_tag", I> & string]: (_: Extract<I, { readonly _tag: Tag }>) => any }
+      & ValueTagHandlers<I>
       & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", I>>]: never }
-  >(input: I, fields: P): Unify<ReturnType<P[keyof P]>>
+  >(
+    input: I,
+    fields: Contextual<P, ValueTagHandlers<I>>
+  ): Unify<ReturnType<P[keyof P]>>
 } = dual(
   2,
   <
     const I,
     P extends
-      & { readonly [Tag in Types.Tags<"_tag", I> & string]: (_: Extract<I, { readonly _tag: Tag }>) => any }
+      & ValueTagHandlers<I>
       & { readonly [Tag in Exclude<keyof P, Types.Tags<"_tag", I>>]: never }
-  >(input: I, fields: P): Unify<ReturnType<P[keyof P]>> => {
+  >(
+    input: I,
+    fields: Contextual<P, ValueTagHandlers<I>>
+  ): Unify<ReturnType<P[keyof P]>> => {
     const match: any = tagsExhaustive(fields as any)(makeTypeMatcher(identity, []))
     return match(input)
   }
@@ -413,14 +436,10 @@ export const discriminators = <D extends string>(field: D) =>
   R,
   Ret,
   P extends
-    & {
-      readonly [Tag in Types.Tags<D, R> & string]?:
-        | ((_: Extract<R, Record<D, Tag>>) => Ret)
-        | undefined
-    }
+    & PartialTagHandlers<D, R, Ret>
     & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never }
 >(
-  fields: P
+  fields: Contextual<P, PartialTagHandlers<D, R, Ret>>
 ) => {
   const predicate = makeWhen(
     (arg: any) => arg != null && Object.hasOwn(fields, arg[field]),
@@ -446,14 +465,10 @@ export const discriminatorsExhaustive: <D extends string>(
   R,
   Ret,
   P extends
-    & {
-      readonly [Tag in Types.Tags<D, R> & string]: (
-        _: Extract<R, Record<D, Tag>>
-      ) => Ret
-    }
+    & TagHandlers<D, R, Ret>
     & { readonly [Tag in Exclude<keyof P, Types.Tags<D, R>>]: never }
 >(
-  fields: P
+  fields: Contextual<P, TagHandlers<D, R, Ret>>
 ) => <I, F, A, Pr>(
   self: Matcher<I, F, R, A, Pr, Ret>
 ) => [Pr] extends [never] ? (u: I) => Unify<A | ReturnType<P[keyof P]>>

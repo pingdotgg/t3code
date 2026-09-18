@@ -13,18 +13,18 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@tailwindcss/postcss": "catalog:frontend",
-    "postcss": "catalog:frontend",
-    "solid-devtools": "catalog:frontend",
-    "tailwindcss": "catalog:frontend",
-    "vite": "^7.1.4",
+    "@tailwindcss/postcss": "catalog:",
+    "postcss": "catalog:",
+    "solid-devtools": "catalog:",
+    "tailwindcss": "catalog:",
+    "vite": "catalog:solid-v1",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "vite-plugin-solid": "^2.11.8"
+    "effect": "catalog:",
+    "vite-plugin-solid": "catalog:"
   },
   "dependencies": {
-    "@solidjs/router": "^0.15.1",
-    "solid-js": "^1.9.5"
+    "@solidjs/router": "catalog:solid-v1",
+    "solid-js": "catalog:"
   },
   "repository": {
     "type": "git",

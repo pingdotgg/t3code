@@ -1,0 +1,184 @@
+---
+title: "Part 2: Control access"
+description: Protect the existing Git host with one shared credential, then verify both accepted and rejected requests.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+The host from [Part 1](/git/tutorial/part-1) accepts requests from anyone.
+Add a single shared credential so only people who have it can use the host.
+This part changes access to the existing repositories; it does not recreate them.
+
+## Generate the credential
+
+Create `src/secret.ts`:
+
+```typescript
+// src/secret.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export const GitSecret = Effect.gen(function* () {
+  const Random = yield* Alchemy.Random;
+  return yield* Random("GitSecret");
+});
+```
+
+Alchemy creates this random value on the first deploy and keeps it stable across
+updates. It is the password Git clients will send.
+
+## Check the password on each request
+
+Create `src/middleware.ts`:
+
+```typescript
+// src/middleware.ts
+import { RuntimeContext } from "alchemy";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
+import { GitSecret } from "./secret.ts";
+
+export const Authentication = HttpRouter.middleware(
+  Effect.gen(function* () {
+    const secret = yield* (yield* GitSecret).text;
+    return (httpEffect) =>
+      Effect.gen(function* () {
+        const { password } = yield* HttpApiBuilder.securityDecode(
+          HttpApiSecurity.basic,
+        );
+        if (Redacted.value(password) === Redacted.value(yield* secret)) {
+          return yield* httpEffect;
+        }
+        return HttpServerResponse.empty({
+          status: 401,
+          headers: { "www-authenticate": 'Basic realm="git"' },
+        });
+      }).pipe(Effect.provide(RuntimeContext.phantom));
+  }),
+);
+```
+
+HTTP Basic has a username and password. This policy ignores the username and
+checks the password. A matching credential continues to the Git handler; other
+requests receive `401`. `WWW-Authenticate` tells Git to prompt for a credential.
+The Worker supplies `RuntimeContext` per request; the phantom layer accounts for
+that service in the middleware's type.
+
+## Apply the check to Git's routes
+
+```diff lang="typescript"
+// src/git.ts
+import * as Layer from "effect/Layer";
++import { Authentication } from "./middleware.ts";
+```
+
+Replace the start of the route assembly:
+
+```diff lang="typescript"
+// src/git.ts
+-export const GitLive = Git.ApiLive.pipe(
++const PublicRoutes = Git.ApiLive.pipe(
++  Layer.provide(Authentication.layer),
++);
++
++export const GitLive = PublicRoutes.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+```
+
+`PublicRoutes` means the routes exposed to Git and API clients. They now all pass
+through your middleware, including repository management, pushes, and clones.
+
+## Output the credential
+
+Add these imports to `alchemy.run.ts`:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Effect from "effect/Effect";
++import * as Output from "alchemy/Output";
++import * as Redacted from "effect/Redacted";
++import { GitSecret } from "./src/secret.ts";
+```
+
+Then include the generated value in the stack's outputs:
+
+```diff lang="typescript"
+// alchemy.run.ts
+    const host = yield* GitHost;
+-    return { url: host.url.as<string>() };
++    const secret = yield* GitSecret;
++    return {
++      url: host.url.as<string>(),
++      secret: Output.map(secret.text, Redacted.value),
++    };
+```
+
+This exposes the shared credential in the deployment output so you can copy it
+for the tutorial. Anyone with this credential has full access to the host.
+
+## Deploy the access policy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npx alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn alchemy deploy`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+Copy the printed credential:
+
+```sh
+export GIT_SECRET="paste-the-secret-output"
+```
+
+Keep `$HOST` from Part 1. The Worker URL and `acme/web` repository are unchanged.
+
+## Verify that anonymous requests fail
+
+```sh
+curl -i "$HOST/api/v1/repos"
+```
+
+Expect `401` and a `WWW-Authenticate: Basic realm="git"` header. If you still see
+the old `200` response immediately after deploying, repeat this check while the
+update propagates; access is protected only once the new policy is serving.
+The same request
+with the credential succeeds:
+
+```sh
+curl --fail-with-body -u "x:$GIT_SECRET" "$HOST/api/v1/repos"
+```
+
+You should see the repository created in Part 1.
+
+## Push with the credential
+
+```sh
+printf 'Access is now protected.\n' >> work/README.md
+git -C work commit -am "Require a credential"
+git -c credential.helper= -C work push origin main
+```
+
+When prompted, enter `x` as the username and the value of `$GIT_SECRET` as the
+password. The push should succeed. Clone with the same credentials to verify
+that authenticated reads work too:
+
+```sh
+git -c credential.helper= clone "$HOST/acme/web.git" private-copy
+git -C private-copy fsck --strict
+```
+
+Continue to [Part 3: Publish a repository](/git/tutorial/part-3), where reads of
+public repositories become available without the shared credential.

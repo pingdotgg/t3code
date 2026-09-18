@@ -17,6 +17,7 @@ import * as Effect from "./Effect.ts"
 import { dual } from "./Function.ts"
 import type { Inspectable } from "./Inspectable.ts"
 import { NodeInspectSymbol, toJson } from "./Inspectable.ts"
+import * as Count from "./internal/count.ts"
 import * as Option from "./Option.ts"
 import { hasProperty } from "./Predicate.ts"
 import { type ExcludeDone, isDoneCause } from "./Pull.ts"
@@ -59,9 +60,9 @@ export type State<_A, E> =
     readonly cause: Cause.Cause<E>
   }
 
-const EnqueueTypeId = "~effect/transactions/TxQueue/Enqueue"
-const DequeueTypeId = "~effect/transactions/TxQueue/Dequeue"
-const TypeId = "~effect/transactions/TxQueue"
+const EnqueueTypeId = "~effect/TxQueue/Enqueue"
+const DequeueTypeId = "~effect/TxQueue/Dequeue"
+const TypeId = "~effect/TxQueue"
 
 /**
  * Namespace containing type definitions for TxEnqueue variance annotations.
@@ -806,7 +807,7 @@ export const takeAll = <A, E>(self: TxDequeue<A, E>): Effect.Effect<Arr.NonEmpty
  *
  * **Details**
  *
- * For an open queue, waits until `min(n, capacity)` items are available, then removes that many items. If `n` is less than or equal to zero, returns an empty array without modifying the queue. If the queue is closing, drains the currently available items and transitions to `Done`. If the queue is already done, the effect fails with the queue's completion cause. This function mutates the original TxQueue by removing the taken items. It does not return a new TxQueue reference.
+ * For an open queue, waits until `min(n, capacity)` items are available, then removes that many items. Finite fractional values of `n` are rounded down. If `n` is `NaN` or non-positive, returns an empty array without modifying the queue. If the queue is closing, drains the currently available items and transitions to `Done`. If the queue is already done, the effect fails with the queue's completion cause. This function mutates the original TxQueue by removing the taken items. It does not return a new TxQueue reference.
  *
  * **Example** (Taking a fixed number of values)
  *
@@ -836,8 +837,9 @@ export const takeN: {
   <A, E>(self: TxDequeue<A, E>, n: number): Effect.Effect<Array<A>, E>
 } = dual(
   2,
-  <A, E>(self: TxDequeue<A, E>, n: number): Effect.Effect<Array<A>, E> =>
-    Effect.gen(function*() {
+  <A, E>(self: TxDequeue<A, E>, n: number): Effect.Effect<Array<A>, E> => {
+    const requestedCount = Count.normalize(n)
+    return Effect.gen(function*() {
       const state = yield* TxRef.get(self.stateRef)
 
       // Check if queue is done - forward the cause directly
@@ -848,7 +850,6 @@ export const takeN: {
       const currentSize = yield* size(self)
 
       // Determine how many items we can/should take
-      const requestedCount = n
       const maxPossible = Math.min(requestedCount, self.capacity)
 
       // If we can't get the requested amount due to capacity constraints,
@@ -889,6 +890,7 @@ export const takeN: {
 
       return Chunk.toArray(taken)
     }).pipe(Effect.tx)
+  }
 )
 
 /**
@@ -897,7 +899,7 @@ export const takeN: {
  *
  * **Details**
  *
- * If the queue is closing, drains the currently available items even when fewer than `min` are available and transitions to `Done`. Invalid ranges (`min <= 0`, `max <= 0`, or `min > max`) return an empty array. If the queue is already done, the effect fails with the queue's completion cause.
+ * Finite fractional bounds are rounded down, while `NaN` and non-positive bounds are treated as `0`. If the queue is closing, drains the currently available items even when fewer than `min` are available and transitions to `Done`. Invalid normalized ranges (`min <= 0`, `max <= 0`, or `min > max`) return an empty array. If the queue is already done, the effect fails with the queue's completion cause.
  *
  * **Example** (Taking batches within bounds)
  *
@@ -930,8 +932,10 @@ export const takeBetween: {
   <A, E>(self: TxDequeue<A, E>, min: number, max: number): Effect.Effect<Array<A>, E>
 } = dual(
   3,
-  <A, E>(self: TxDequeue<A, E>, min: number, max: number): Effect.Effect<Array<A>, E> =>
-    Effect.gen(function*() {
+  <A, E>(self: TxDequeue<A, E>, min: number, max: number): Effect.Effect<Array<A>, E> => {
+    const minimum = Count.normalize(min)
+    const maximum = Count.normalize(max)
+    return Effect.gen(function*() {
       const state = yield* TxRef.get(self.stateRef)
 
       // Check if queue is done - forward the cause directly
@@ -940,14 +944,14 @@ export const takeBetween: {
       }
 
       // Validate parameters
-      if (min <= 0 || max <= 0 || min > max) {
+      if (minimum <= 0 || maximum <= 0 || minimum > maximum) {
         return []
       }
 
       const currentSize = yield* size(self)
 
       // If we have less than minimum required items
-      if (currentSize < min) {
+      if (currentSize < minimum) {
         // If queue is closing, transition to done and return what we have
         if (state._tag === "Closing") {
           if (yield* isEmpty(self)) {
@@ -967,7 +971,7 @@ export const takeBetween: {
       }
 
       // We have at least the minimum, take up to the maximum
-      const toTake = Math.min(currentSize, max)
+      const toTake = Math.min(currentSize, maximum)
       const chunk = yield* TxChunk.get(self.items)
       const taken = Chunk.take(chunk, toTake)
       yield* TxChunk.drop(self.items, toTake)
@@ -979,6 +983,7 @@ export const takeBetween: {
 
       return Chunk.toArray(taken)
     }).pipe(Effect.tx)
+  }
 )
 
 /**

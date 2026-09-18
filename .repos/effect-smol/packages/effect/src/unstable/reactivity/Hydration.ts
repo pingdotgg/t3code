@@ -10,6 +10,7 @@
  *
  * @since 4.0.0
  */
+import * as Schema from "../../Schema.ts"
 import * as AsyncResult from "./AsyncResult.ts"
 import * as Atom from "./Atom.ts"
 import type * as AtomRegistry from "./AtomRegistry.ts"
@@ -21,7 +22,7 @@ import type * as AtomRegistry from "./AtomRegistry.ts"
  * @since 4.0.0
  */
 export interface DehydratedAtom {
-  readonly "~effect/reactivity/DehydratedAtom": true
+  readonly "~effect/reactivity/Hydration/DehydratedAtom": true
 }
 
 /**
@@ -43,15 +44,31 @@ export interface DehydratedAtomValue extends DehydratedAtom {
   readonly resultPromise?: Promise<unknown> | undefined
 }
 
+const Skipped = Symbol.for("effect/reactivity/Hydration/Skipped")
+
+const encodeOrSkip = (
+  atom: Atom.Atom<any> & Atom.Serializable<any>,
+  value: unknown
+): unknown => {
+  try {
+    return atom[Atom.SerializableTypeId].encode(value)
+  } catch (error) {
+    if (Schema.isSchemaError(error)) return Skipped
+    throw error
+  }
+}
+
 /**
  * Encodes the serializable atoms currently stored in a registry into dehydrated
  * state.
  *
  * **Details**
  *
- * Only atoms marked with `Atom.serializable` are included. `encodeInitialAs`
- * controls whether `AsyncResult.Initial` values are ignored, encoded as values, or
- * represented by promises that resolve when the atom leaves the initial state.
+ * Only atoms marked with `Atom.serializable` whose current values can be encoded
+ * are included. Atoms that fail schema encoding are skipped without throwing.
+ * `encodeInitialAs` controls whether `AsyncResult.Initial` values are ignored,
+ * encoded as values, or represented by promises that resolve when the atom
+ * leaves the initial state.
  *
  * @category dehydration
  * @since 4.0.0
@@ -74,7 +91,8 @@ export const dehydrate = (
     const value = node.value()
     const isInitial = AsyncResult.isAsyncResult(value) && AsyncResult.isInitial(value)
     if (encodeInitialResultMode === "ignore" && isInitial) return
-    const encodedValue = atom[Atom.SerializableTypeId].encode(value)
+    const encodedValue = encodeOrSkip(atom, value)
+    if (encodedValue === Skipped) return
 
     // Create a promise that resolves when the atom moves out of Initial state
     let resultPromise: Promise<unknown> | undefined
@@ -82,15 +100,15 @@ export const dehydrate = (
       resultPromise = new Promise((resolve) => {
         const unsubscribe = registry.subscribe(atom, (newValue) => {
           if (AsyncResult.isAsyncResult(newValue) && !AsyncResult.isInitial(newValue)) {
-            resolve(atom[Atom.SerializableTypeId].encode(newValue))
             unsubscribe()
+            resolve(encodeOrSkip(atom, newValue))
           }
         })
       })
     }
 
     arr.push({
-      "~effect/reactivity/DehydratedAtom": true,
+      "~effect/reactivity/Hydration/DehydratedAtom": true,
       key: key as string,
       value: encodedValue,
       dehydratedAt: now,
@@ -136,6 +154,7 @@ export const hydrate = (
     // and we should wait for it to resolve to a non-Initial state, then update the registry
     if (!datom.resultPromise) continue
     datom.resultPromise.then((resolvedValue) => {
+      if (resolvedValue === Skipped) return
       // Try to update the existing node directly instead of using setSerializable
       const nodes = registry.getNodes()
       const node = nodes.get(datom.key)

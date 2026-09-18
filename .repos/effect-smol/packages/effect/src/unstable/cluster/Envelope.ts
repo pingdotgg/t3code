@@ -14,7 +14,7 @@ import * as PrimaryKey from "../../PrimaryKey.ts"
 import type { ReadonlyRecord } from "../../Record.ts"
 import * as Schema from "../../Schema.ts"
 import * as SchemaTransformation from "../../SchemaTransformation.ts"
-import * as Headers from "../http/Headers.ts"
+import type * as Headers from "../http/Headers.ts"
 import type * as Rpc from "../rpc/Rpc.ts"
 import { EntityAddress } from "./EntityAddress.ts"
 import { type Snowflake, SnowflakeFromBigInt } from "./Snowflake.ts"
@@ -37,7 +37,7 @@ export const TypeId = "~effect/cluster/Envelope"
  * entity RPC schema, and the result is carried opaquely inside the runner
  * envelope. This schema names that hole so the outer runner encode leaves it
  * alone. It is the identity under `Schema.toCodecJson`, so JSON, NDJSON, and
- * MessagePack transports stay wire-compatible. A binary codec compiles it as a
+ * text transports stay wire-compatible. A binary codec compiles it as a
  * bytes leaf.
  *
  * @category schemas
@@ -133,7 +133,7 @@ export class PartialRequest extends Schema.Opaque<PartialRequest>()(Schema.Struc
   address: EntityAddress,
   tag: Schema.String,
   payload: OpaqueHole,
-  headers: Headers.HeadersSchema,
+  headers: Schema.Headers,
   traceId: Schema.optional(Schema.String),
   spanId: Schema.optional(Schema.String),
   sampled: Schema.optional(Schema.Boolean)

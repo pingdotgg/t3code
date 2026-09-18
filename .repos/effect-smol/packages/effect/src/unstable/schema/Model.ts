@@ -20,6 +20,7 @@ import * as Predicate from "../../Predicate.ts"
 import * as Schema from "../../Schema.ts"
 import * as SchemaGetter from "../../SchemaGetter.ts"
 import * as SchemaTransformation from "../../SchemaTransformation.ts"
+import * as UndefinedOr from "../../UndefinedOr.ts"
 import * as VariantSchema from "./VariantSchema.ts"
 
 const {
@@ -366,13 +367,13 @@ export const FieldOption: <Field extends VariantSchema.Field<any> | Schema.Top>(
       }
     > :
   never = fieldEvolve({
-    select: Schema.OptionFromNullOr,
-    insert: Schema.OptionFromNullOr,
-    update: Schema.OptionFromNullOr,
-    json: optionalOption,
-    jsonCreate: optionalOption,
-    jsonUpdate: optionalOption
-  }) as any
+    select: UndefinedOr.map(Schema.OptionFromNullOr),
+    insert: UndefinedOr.map(Schema.OptionFromNullOr),
+    update: UndefinedOr.map(Schema.OptionFromNullOr),
+    json: UndefinedOr.map(optionalOption),
+    jsonCreate: UndefinedOr.map(optionalOption),
+    jsonUpdate: UndefinedOr.map(optionalOption)
+  } as any) as any
 
 /**
  * Variant field type for SQLite booleans stored as `0 | 1` in database variants

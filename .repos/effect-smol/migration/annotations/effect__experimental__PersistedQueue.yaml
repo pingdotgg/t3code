@@ -7,6 +7,9 @@
 "@effect/experimental/PersistedQueue#make":
   replacement: effect/unstable/persistence/PersistedQueue#make
   note: Import make from the v4 unstable PersistedQueue module.
+"@effect/experimental/PersistedQueue#ErrorTypeId":
+  replacement: effect/unstable/persistence/PersistedQueue#ErrorTypeId
+  note: Retained as a string brand; the runtime marker now uses the persistence module path.
 "@effect/experimental/PersistedQueue#TypeId":
   replacement: effect/unstable/persistence/PersistedQueue#TypeId
   note: Import TypeId from the v4 unstable PersistedQueue module; it is now a string brand.

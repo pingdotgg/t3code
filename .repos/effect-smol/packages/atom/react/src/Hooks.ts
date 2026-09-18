@@ -435,8 +435,8 @@ export const useAtomSubscribe = <A>(
  * @since 4.0.0
  */
 export const useAtomRef = <A>(ref: AtomRef.ReadonlyRef<A>): A => {
-  const [, setValue] = React.useState(ref.value)
-  React.useEffect(() => ref.subscribe(setValue), [ref])
+  const [, forceUpdate] = React.useReducer((n) => n + 1, 0)
+  React.useEffect(() => ref.subscribe(forceUpdate), [ref])
   return ref.value
 }
 

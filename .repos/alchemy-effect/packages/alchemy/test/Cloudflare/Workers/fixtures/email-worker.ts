@@ -16,13 +16,13 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
  * the send→receive round trip needs a verified destination, which not every
  * account has.
  */
-const ZoneConfig = Config.string("CLOUDFLARE_TEST_DNS_ZONE_NAME").pipe(
+const ZoneConfig = Config.String("CLOUDFLARE_TEST_DNS_ZONE_NAME").pipe(
   Config.withDefault("alchemy-test-2.us"),
 );
-const InboxConfig = Config.string("CLOUDFLARE_TEST_EMAIL_INBOX").pipe(
+const InboxConfig = Config.String("CLOUDFLARE_TEST_EMAIL_INBOX").pipe(
   Config.withDefault(""),
 );
-const SenderConfig = Config.string("CLOUDFLARE_TEST_EMAIL_FROM").pipe(
+const SenderConfig = Config.String("CLOUDFLARE_TEST_EMAIL_FROM").pipe(
   Config.withDefault(""),
 );
 

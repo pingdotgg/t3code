@@ -28,7 +28,7 @@ its data**. The location must match the Server's.
 ## Mount into a Service (recommended)
 
 The `MountVolume` binding is the highest-level path: inside a
-[Service](/hetzner/compute/services)'s init, bind the Volume to a
+[Service](/hetzner/compute/services)'s constructor, bind the Volume to a
 path and use it as a plain directory at runtime. Pass the `Data`
 declaration directly — no yielding required:
 

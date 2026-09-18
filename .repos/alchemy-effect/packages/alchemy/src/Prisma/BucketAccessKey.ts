@@ -13,10 +13,12 @@ import * as ProviderLayer from "../Local/ProviderLayer.ts";
 import { Resource } from "../Resource.ts";
 import type { Bucket } from "./Bucket.ts";
 import {
-  PrismaClient,
-  isNotFound,
-  type PrismaManagementClient,
-} from "./Client.ts";
+  type GetBucketKeysResponse,
+  deleteBucketKey,
+  getBucketKeys,
+  createBucketKey,
+} from "@distilled.cloud/prisma/management";
+import { Retry } from "@distilled.cloud/prisma";
 import { physicalInstanceName } from "./Internal/EnvName.ts";
 import type { Providers } from "./Providers.ts";
 import {
@@ -26,7 +28,12 @@ import {
   resolveBucketId,
   unresolvedBucketIdOf,
 } from "./Refs.ts";
-import type { BucketKey as ApiBucketKey, BucketKeyRole } from "./Types.ts";
+import {
+  type ObservedBucketKey,
+  requiredSecretValue,
+} from "./Internal/Observed.ts";
+import type { BucketKeyRole } from "./Types.ts";
+import { PrismaPaginationError } from "./Internal/Pagination.ts";
 
 export interface BucketAccessKeyProps {
   /**
@@ -145,20 +152,39 @@ export class AmbiguousBucketAccessKeyError extends Data.TaggedError(
   message: string;
 }> {}
 
-const listKeys = (client: PrismaManagementClient, bucketId: string) =>
-  client
-    .listBucketKeys(bucketId, { limit: 100 })
-    .pipe(Effect.catchIf(isNotFound, () => Effect.succeed([])));
+// Distilled emits the cursor-paginated list operations as plain ops, so
+// callers walk `pagination` themselves (see `src/Neon/Project.ts`).
+const listKeys = (bucketId: string) =>
+  Effect.gen(function* () {
+    const keys: GetBucketKeysResponse["data"][number][] = [];
+    let cursor: string | undefined;
+    while (true) {
+      const page = yield* getBucketKeys(
+        cursor === undefined
+          ? { bucketId, limit: 100 }
+          : { bucketId, limit: 100, cursor },
+      );
+      keys.push(...page.data);
+      const nextCursor = page.pagination.nextCursor;
+      if (!page.pagination.hasMore) break;
+      if (nextCursor === null) {
+        return yield* Effect.fail(
+          new PrismaPaginationError({
+            message:
+              "Invalid Prisma Management API pagination response from getBucketKeys: hasMore was true without a non-empty nextCursor",
+          }),
+        );
+      }
+      cursor = nextCursor;
+    }
+    return keys;
+  }).pipe(Effect.catchTag("NotFound", () => Effect.succeed([])));
 
-const uniqueKeyNamed = (
-  client: PrismaManagementClient,
-  bucketId: string,
-  expectedName: string,
-) =>
-  listKeys(client, bucketId).pipe(
+const uniqueKeyNamed = (bucketId: string, expectedName: string) =>
+  listKeys(bucketId).pipe(
     Effect.flatMap((keys) => {
       const matches = keys.filter(
-        (key: ApiBucketKey) => key.name === expectedName,
+        (key: ObservedBucketKey) => key.name === expectedName,
       );
       return matches.length > 1
         ? Effect.fail(
@@ -177,7 +203,6 @@ const ProviderLive = () =>
   Provider.effect(
     BucketAccessKey,
     Effect.gen(function* () {
-      const client = yield* PrismaClient;
       return {
         stables: BUCKET_ACCESS_KEY_STABLES,
         // Bucket keys cannot be listed account-wide, and bucket deletion
@@ -215,9 +240,9 @@ const ProviderLive = () =>
           // persisted state stays authoritative for credentials; the list
           // endpoint only confirms the key still exists.
           if (!output || isPrismaDevId(output.bucketAccessKeyId)) return output;
-          const keys = yield* listKeys(client, output.bucketId);
+          const keys = yield* listKeys(output.bucketId);
           return keys.some(
-            (key: ApiBucketKey) => key.id === output.bucketAccessKeyId,
+            (key: ObservedBucketKey) => key.id === output.bucketAccessKeyId,
           )
             ? output
             : undefined;
@@ -232,10 +257,11 @@ const ProviderLive = () =>
             // state is authoritative afterwards — but only while the key
             // still exists; a revoked key falls through to mint fresh
             // credentials.
-            const keys = yield* listKeys(client, persisted.bucketId);
+            const keys = yield* listKeys(persisted.bucketId);
             if (
               keys.some(
-                (key: ApiBucketKey) => key.id === persisted.bucketAccessKeyId,
+                (key: ObservedBucketKey) =>
+                  key.id === persisted.bucketAccessKeyId,
               )
             ) {
               return persisted;
@@ -250,21 +276,30 @@ const ProviderLive = () =>
           // the deterministic name whose secret was never persisted and can
           // never be recovered. Revoke it and mint a fresh key rather than
           // leaking an unusable credential.
-          const orphan = yield* uniqueKeyNamed(client, bucketId, expectedName);
+          const orphan = yield* uniqueKeyNamed(bucketId, expectedName);
           if (orphan) {
-            yield* client
-              .deleteBucketKey(bucketId, orphan.id)
-              .pipe(Effect.catchIf(isNotFound, () => Effect.void));
+            yield* deleteBucketKey({
+              bucketId,
+              keyId: orphan.id,
+            }).pipe(Effect.catchTag("NotFound", () => Effect.void));
           }
-          const created = yield* client.createBucketKey(bucketId, {
+          const created = yield* createBucketKey({
+            bucketId,
             name: expectedName,
             role: news.role,
-          });
+          }).pipe(
+            // The secret is revealed exactly once, so a replayed create
+            // would leak an unusable key; opt out of the retry policy.
+            Retry.none,
+            Effect.map((response) => response.data),
+          );
           return {
             bucketAccessKeyId: created.id,
             bucketId,
-            accessKeyId: created.accessKeyId,
-            secretAccessKey: Redacted.make(created.secretAccessKey),
+            accessKeyId: requiredSecretValue(created.accessKeyId),
+            secretAccessKey: Redacted.make(
+              requiredSecretValue(created.secretAccessKey),
+            ),
             endpoint: created.endpoint,
             bucketName: created.bucketName,
           } satisfies BucketAccessKey["Attributes"];
@@ -273,9 +308,10 @@ const ProviderLive = () =>
           if (isPrismaDevId(output.bucketAccessKeyId)) return;
           // Bucket deletion revokes remaining keys server-side, so the key
           // may already be gone when the bucket was destroyed first.
-          yield* client
-            .deleteBucketKey(output.bucketId, output.bucketAccessKeyId)
-            .pipe(Effect.catchIf(isNotFound, () => Effect.void));
+          yield* deleteBucketKey({
+            bucketId: output.bucketId,
+            keyId: output.bucketAccessKeyId,
+          }).pipe(Effect.catchTag("NotFound", () => Effect.void));
         }),
       };
     }),

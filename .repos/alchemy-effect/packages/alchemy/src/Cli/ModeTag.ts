@@ -1,7 +1,7 @@
 import type { ProviderMode } from "../ProviderMode.ts";
 
 /**
- * Pure formatting shared by the plan/deploy renderers (Ink TUI +
+ * Pure formatting shared by the plan/deploy renderers (Sigil TUI +
  * non-interactive LoggingCli) for the local-vs-live provider-mode
  * indicator on a resource row.
  *

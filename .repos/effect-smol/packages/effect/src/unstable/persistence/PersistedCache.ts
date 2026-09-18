@@ -92,7 +92,7 @@ export const make: <
       if (exit) {
         return yield* exit
       }
-      const result = yield* Effect.exit(lookup(key))
+      const result = yield* Effect.exit(Effect.suspend(() => lookup(key)))
       yield* (store.set(key, result) as Effect.Effect<void>)
       return yield* result
     }),

@@ -40,6 +40,7 @@ import {
   UnknownError
 } from "effect/unstable/sql/SqlError"
 import * as Statement from "effect/unstable/sql/Statement"
+import { Buffer } from "node:buffer"
 import * as Tedious from "tedious"
 import type { ConnectionOptions } from "tedious/lib/connection.ts"
 import type { DataType } from "tedious/lib/data-type.ts"
@@ -311,6 +312,7 @@ export const make = (
         authentication: {
           type: (options.authType as any) ?? "default",
           options: {
+            domain: options.domain,
             userName: options.username,
             password: options.password
               ? Redacted.value(options.password)
@@ -706,6 +708,17 @@ function numberToParamName(n: number) {
   return `${Math.ceil(n + 1)}`
 }
 
+const byteArrayParameterType: DataType = {
+  ...Tedious.TYPES.VarBinary,
+  validate(value, collation, options) {
+    return Tedious.TYPES.VarBinary.validate(
+      Buffer.isBuffer(value) ? value : Buffer.from(value.buffer, value.byteOffset, value.byteLength),
+      collation,
+      options
+    )
+  }
+}
+
 /**
  * Default mapping from Effect SQL primitive value kinds to Tedious SQL Server parameter data types.
  *
@@ -718,8 +731,8 @@ export const defaultParameterTypes: Record<Statement.PrimitiveKind, DataType> = 
   bigint: Tedious.TYPES.BigInt,
   boolean: Tedious.TYPES.Bit,
   Date: Tedious.TYPES.DateTime,
-  Uint8Array: Tedious.TYPES.VarBinary,
-  Int8Array: Tedious.TYPES.VarBinary,
+  Uint8Array: byteArrayParameterType,
+  Int8Array: byteArrayParameterType,
   null: Tedious.TYPES.Bit
 }
 

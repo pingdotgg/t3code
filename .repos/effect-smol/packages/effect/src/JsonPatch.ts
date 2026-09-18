@@ -307,8 +307,8 @@ function tokenize(pointer: string): Array<string> {
   return pointer.split("/").slice(1).map(unescapeToken)
 }
 
-/** Convert a reference token to a non-negative array index (rejects `-` and negatives). */
-function toIndex(token: string): number {
+/** Converts a JSON Pointer reference token to a non-negative array index. */
+function toJsonPointerArrayIndex(token: string): number {
   if (!/^(0|[1-9]\d*)$/.test(token)) {
     throw new Error(`Invalid array index: "${token}"`)
   }
@@ -332,7 +332,7 @@ function applyOperation(doc: Schema.Json, op: JsonPatchOperation): Schema.Json {
     if (lastToken === "-" && op.op !== "add") {
       throw new Error(`"-" is not valid for ${op.op} at "${op.path}".`)
     }
-    const index = lastToken === "-" ? parent.length : toIndex(lastToken)
+    const index = lastToken === "-" ? parent.length : toJsonPointerArrayIndex(lastToken)
     const maxIndex = op.op === "add" ? parent.length : parent.length - 1
     if (index > maxIndex) throw new Error(`Array index out of bounds at "${op.path}".`)
     const updated = parent.slice()
@@ -374,7 +374,7 @@ function resolveParent(
     const token = tokens[i]
 
     if (Array.isArray(cur)) {
-      const idx = toIndex(token)
+      const idx = toJsonPointerArrayIndex(token)
       if (idx >= cur.length) return null
       stack.push({ container: cur, token: idx })
       cur = cur[idx]

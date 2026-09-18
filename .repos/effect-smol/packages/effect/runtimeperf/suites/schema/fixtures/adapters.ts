@@ -11,6 +11,11 @@ const schema = Schema.Struct({
 const input = { a: "a", b: 1 }
 const invalidInput = { a: "a", b: "invalid" }
 
+export const makeValid = () => ({
+  run: () => schema.make(input),
+  validate: (result) => assert.deepEqual(result, input)
+})
+
 export const parserExitInvalid = () => {
   const run = SchemaParser.decodeUnknownExit(schema)
   return {

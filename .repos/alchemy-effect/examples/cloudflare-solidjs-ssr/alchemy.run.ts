@@ -10,9 +10,6 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const worker = yield* Cloudflare.Website.Vite("SolidJSSrr", {
-      compatibility: {
-        flags: ["nodejs_compat"],
-      },
       assets: {
         runWorkerFirst: true,
       },

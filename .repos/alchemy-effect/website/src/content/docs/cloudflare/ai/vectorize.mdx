@@ -61,7 +61,7 @@ immutable, and replacing the parent index replaces it too.
 
 ## Bind the index to a Worker
 
-`Cloudflare.Vectorize.SearchIndex(index)` in the Worker's init phase
+`Cloudflare.Vectorize.SearchIndex(index)` in the Worker's Construction phase
 attaches the native `vectorize` binding at deploy time and resolves
 to an Effect-native client at runtime:
 

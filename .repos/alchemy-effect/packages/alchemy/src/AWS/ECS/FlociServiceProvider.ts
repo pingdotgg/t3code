@@ -37,7 +37,7 @@ import * as Stream from "effect/Stream";
 import { deepEqual } from "../../Diff.ts";
 import type { ImageSourceLike } from "../ECR/ImageSource.ts";
 import {
-  flociSidecarEntry,
+  flociProvidersUrl,
   makeDevWatchProvider,
 } from "../Local/DevWatchProvider.ts";
 import { imageSourceTrigger, restartFamilyTasks } from "./EcsDevWatch.ts";
@@ -70,7 +70,7 @@ const taskRefOf = (props: ServiceProps) =>
 export const FlociServiceProvider = () =>
   makeDevWatchProvider<Service, ServiceProps, Service["Attributes"]>(
     Service,
-    flociSidecarEntry(),
+    flociProvidersUrl(),
     {
       liveProvider: () => ServiceProvider(),
       watchConfigOf: (news, attrs) => {

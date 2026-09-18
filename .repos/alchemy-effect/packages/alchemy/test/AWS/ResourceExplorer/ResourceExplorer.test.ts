@@ -63,6 +63,15 @@ const getViewSafe = (viewArn: string) =>
     ),
   );
 
+const waitForViewGone = (viewArn: string) =>
+  getViewSafe(viewArn).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("2 seconds"),
+      until: (view) => view === undefined,
+      times: 10,
+    }),
+  );
+
 // The Resource Explorer index is an account/region singleton, so every
 // test in this file mutates the same underlying cloud state — run them
 // strictly one at a time (vitest runs tests in a file concurrently by
@@ -212,12 +221,12 @@ describe.sequential("ResourceExplorer", () => {
         expect(renamed.viewArn).not.toBe(view.viewArn);
         expect(renamed.viewName).toBe("alchemy-re2-renamed-view");
         // Old view is gone after the replacement completes.
-        const oldView = yield* getViewSafe(view.viewArn);
+        const oldView = yield* waitForViewGone(view.viewArn);
         expect(oldView).toBeUndefined();
 
         // Destroy — the view and the index are removed.
         yield* stack.destroy();
-        const goneView = yield* getViewSafe(renamed.viewArn);
+        const goneView = yield* waitForViewGone(renamed.viewArn);
         expect(goneView).toBeUndefined();
         const goneIndex = yield* waitForIndexGone;
         expect(["DELETED", "DELETING", undefined]).toContain(goneIndex);

@@ -256,6 +256,13 @@ export class WorkflowInstance extends Context.Service<
     interrupted: boolean
 
     /**
+     * Whether the current workflow run has been abandoned for replay. When
+     * `true`, callbacks registered with `Workflow.addFinalizer` are skipped as
+     * the owner-local scope closes.
+     */
+    abandoned: boolean
+
+    /**
      * When SuspendOnFailure is triggered, the cause of the failure is stored
      * here.
      */
@@ -281,6 +288,7 @@ export class WorkflowInstance extends Context.Service<
       scope,
       suspended: false,
       interrupted: false,
+      abandoned: false,
       cause: undefined,
       awaitedDeferreds: new Set(),
       activityState: {
@@ -682,6 +690,7 @@ export const layerMemory: Layer.Layer<WorkflowEngine> = Layer.effect(WorkflowEng
       readonly parent: string | undefined
       instance: WorkflowInstance["Service"]
       interrupted: boolean
+      resumeRequested: boolean
       fiber: Fiber.Fiber<Workflow.Result<unknown, unknown>> | undefined
     }
     const executions = new Map<string, ExecutionState>()
@@ -700,6 +709,18 @@ export const layerMemory: Layer.Layer<WorkflowEngine> = Layer.effect(WorkflowEng
       if (exit && exit._tag === "Success" && exit.value._tag === "Complete") {
         return
       } else if (state.fiber && !exit) {
+        // A child can finish while the parent is still releasing its activity.
+        // Preserve the wake until that run has published its suspended result.
+        if (!state.resumeRequested) {
+          state.resumeRequested = true
+          yield* Fiber.await(state.fiber).pipe(
+            Effect.flatMap(() => {
+              state.resumeRequested = false
+              return resume(executionId)
+            }),
+            Effect.forkIn(scope)
+          )
+        }
         return
       }
 
@@ -757,6 +778,7 @@ export const layerMemory: Layer.Layer<WorkflowEngine> = Layer.effect(WorkflowEng
             execute: entry.execute,
             instance: WorkflowInstance.initial(workflow, options.executionId),
             interrupted: false,
+            resumeRequested: false,
             fiber: undefined,
             parent: options.parent?.executionId
           }

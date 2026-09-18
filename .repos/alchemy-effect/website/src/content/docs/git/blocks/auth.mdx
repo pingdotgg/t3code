@@ -1,0 +1,78 @@
+---
+title: Authentication and authorization
+description: Use native Effect HTTP middleware and ordinary application effects to authorize Git operations.
+---
+
+Your application owns users, credentials, and authorization. Git's binary protocol
+runs over HTTP, so native Effect API middleware also applies to push and fetch.
+
+## Provide the request's user
+
+```typescript
+class Authentication extends HttpApiMiddleware.Service<
+  Authentication,
+  { provides: CurrentUser }
+>()("app/Authentication", { error: Unauthorized }) {}
+
+class AppApi extends HttpApi.make("app")
+  .addHttpApi(Git.Api)
+  .middleware(Authentication) {}
+```
+
+Supply `Authentication` with an ordinary layer. Its implementation resolves a
+credential and provides `CurrentUser` while running the endpoint effect. Build
+Git groups with `HttpApiBuilder.group(AppApi, ...)`, so their endpoint metadata
+includes this middleware. The [complete example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-git-service/src/api/middleware.ts)
+uses Better Auth sessions and API keys this way.
+
+`handleRaw` skips automatic payload decoding; it still runs API middleware.
+Your custom push handler can yield the same user and database services as a JSON
+handler. [Engine operations](/git/blocks/engine) shows the decode/prepare/commit flow.
+
+## Authorize proposed changes
+
+Middleware can authorize repository access before reading a pack. Once the
+handler decodes ref commands, call application policy functions. After preparing
+a push, validate its staged objects. Only then commit.
+
+| Boundary | Application decision |
+| --- | --- |
+| Before decoding | May this caller read or write this repository? |
+| After decoding commands | May these refs be created, moved, or deleted? |
+| After preparing objects | Are the incoming commits and files acceptable? |
+
+Policies can use typed errors and services. They are ordinary Effects, split into
+modules and called in sequence. Apply shared write policies to push, REST ref
+updates/deletions, and REST/GitHub pull merges; authorizing one endpoint does not
+authorize or protect the others.
+
+## Git credentials and public repositories
+
+Git sends HTTP Basic with the credential in the password field.
+`HttpApiBuilder.securityDecode(HttpApiSecurity.basic)` reads it. Return a `401`
+with `WWW-Authenticate: Basic realm="git"` when credentials are needed.
+
+`Git.isRead(request)` recognizes REST reads, upload-pack, and fetch advertisements.
+Receive-pack advertisements are writes. Resolve the repository before allowing
+anonymous reads, according to your application's public-repository policy.
+
+## Router middleware is also supported
+
+The tutorial introduces `HttpRouter.middleware` first. It can provide a typed
+`Session` service across both Git and application routes:
+
+```typescript
+const PublicRoutes = Layer.mergeAll(AppApiLive, Git.ApiLive).pipe(
+  Layer.provide(Authentication.layer),
+);
+```
+
+This `Authentication` is the tutorial's router middleware descriptor. Router
+middleware does not add error schemas to `Git.Api`. Declare application errors
+on your API when clients need to decode them. Native API middleware, as in the
+first example, carries both its provided services and its error schemas.
+
+## Internal hashing
+
+Mount `Git.InternalApiLive` outside application authentication. Its handler
+checks its own internal secret; user credentials do not authorize internal hashing.

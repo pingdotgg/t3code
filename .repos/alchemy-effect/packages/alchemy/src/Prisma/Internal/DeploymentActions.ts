@@ -1,59 +1,43 @@
 import * as Effect from "effect/Effect";
+import type { Conflict } from "@distilled.cloud/prisma";
 import {
-  isConflict,
-  isNotFound,
-  type PrismaManagementClient,
-} from "../Client.ts";
+  createDeploymentStart,
+  createDeploymentStop,
+} from "@distilled.cloud/prisma/management";
 import { observeDeployment } from "./DeploymentObserve.ts";
 
-const startConflictIsIdempotent = (
-  client: PrismaManagementClient,
-  deploymentId: string,
-  error: unknown,
-) =>
-  observeDeployment(client, deploymentId).pipe(
+const startConflictIsIdempotent = (deploymentId: string, error: Conflict) =>
+  observeDeployment(deploymentId).pipe(
     Effect.flatMap((deployment) =>
       deployment.status === "running" || deployment.status === "provisioning"
         ? Effect.succeed(undefined)
         : Effect.fail(error),
     ),
-    Effect.catchIf(isNotFound, () => Effect.fail(error)),
+    Effect.catchTag("NotFound", () => Effect.fail(error)),
   );
 
-const stopConflictIsIdempotent = (
-  client: PrismaManagementClient,
-  deploymentId: string,
-  error: unknown,
-) =>
-  observeDeployment(client, deploymentId).pipe(
+const stopConflictIsIdempotent = (deploymentId: string, error: Conflict) =>
+  observeDeployment(deploymentId).pipe(
     Effect.flatMap((deployment) =>
       deployment.status === "stopped" || deployment.status === "stopping"
         ? Effect.void
         : Effect.fail(error),
     ),
-    Effect.catchIf(isNotFound, () => Effect.fail(error)),
+    Effect.catchTag("NotFound", () => Effect.fail(error)),
   );
 
-export const startDeploymentIdempotent = (
-  client: PrismaManagementClient,
-  deploymentId: string,
-) =>
-  client
-    .startDeployment(deploymentId)
-    .pipe(
-      Effect.catchIf(isConflict, (error) =>
-        startConflictIsIdempotent(client, deploymentId, error),
-      ),
-    );
+export const startDeploymentIdempotent = (deploymentId: string) =>
+  createDeploymentStart({ deploymentId }).pipe(
+    Effect.map((response) => response.data),
+    Effect.catchTag("Conflict", (error) =>
+      startConflictIsIdempotent(deploymentId, error),
+    ),
+  );
 
-export const stopDeploymentIdempotent = (
-  client: PrismaManagementClient,
-  deploymentId: string,
-) =>
-  client
-    .stopDeployment(deploymentId)
-    .pipe(
-      Effect.catchIf(isConflict, (error) =>
-        stopConflictIsIdempotent(client, deploymentId, error),
-      ),
-    );
+export const stopDeploymentIdempotent = (deploymentId: string) =>
+  createDeploymentStop({ deploymentId }).pipe(
+    Effect.asVoid,
+    Effect.catchTag("Conflict", (error) =>
+      stopConflictIsIdempotent(deploymentId, error),
+    ),
+  );

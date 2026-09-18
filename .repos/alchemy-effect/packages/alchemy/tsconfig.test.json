@@ -2,8 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "include": ["package.json", "test"],
   "exclude": [
+    "test/Cli/fixtures/shutdown-feedback-fixture.ts",
     "test/Local/fixtures/rpc-server-entry.ts",
     "test/Local/fixtures/rpc-server-entry-b.ts",
+    "test/Local/fixtures/rpc-server-logs.ts",
     "test/Local/fixtures/rpc-spawner-parent.ts",
     "test/Local/fixtures/rpc-spawner-devserver-parent.ts",
     // Nuxt fixtures: server routes use nitro's auto-imported globals
@@ -12,8 +14,8 @@
     "test/Cloudflare/Website/fixtures/nuxt-app",
     "test/AWS/Website/fixtures/nuxt-app",
     "test/Cloudflare/Website/fixtures/nuxt-spa-app",
-    // Octane fixture: `.tsx` components use octane's JSX runtime, which
-    // conflicts with this package's default `@opentui/solid` jsxImportSource.
+    // Octane fixture: `.tsx` components use octane's JSX runtime, not
+    // the react-jsx runtime this package compiles with.
     "test/Cloudflare/Website/fixtures/octane-app",
     "test/Cloudflare/Website/fixtures/octane-spa-app",
     "test/AWS/Website/fixtures/octane-app",
@@ -42,9 +44,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    // Solid is the default JSX runtime in this package; React files opt in per-file.
     "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/solid",
     "lib": ["DOM", "DOM.Iterable", "ES2023"]
   },
   "references": [

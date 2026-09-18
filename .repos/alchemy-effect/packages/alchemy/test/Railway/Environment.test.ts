@@ -16,11 +16,11 @@ const logLevel = Effect.provideService(
 );
 
 const waitUntilEnvGone = (environmentId: string) =>
-  railway.environment({ id: environmentId }).pipe(
+  railway.environment({ id: environmentId }, { deletedAt: true }).pipe(
     Effect.map((env) =>
       env.deletedAt != null ? ("gone" as const) : ("found" as const),
     ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    railway.catchTags(["RailwayNotFound"], () =>
       Effect.succeed("gone" as const),
     ),
     Effect.repeat({
@@ -63,19 +63,25 @@ test.provider(
         `https://railway.com/project/${created.project.projectId}?environmentId=${created.environment.environmentId}`,
       );
 
-      const fetched = yield* railway.environment({
-        id: created.environment.environmentId,
-        projectId: created.project.projectId,
-      });
+      const fetched = yield* railway.environment(
+        {
+          id: created.environment.environmentId,
+          projectId: created.project.projectId,
+        },
+        { id: true, name: true, projectId: true, deletedAt: true },
+      );
       expect(fetched.id).toEqual(created.environment.environmentId);
       expect(fetched.name).toEqual(created.environment.name);
       expect(fetched.projectId).toEqual(created.project.projectId);
       expect(fetched.deletedAt).toBeNull();
 
-      const production = yield* railway.environment({
-        id: created.project.environmentId,
-        projectId: created.project.projectId,
-      });
+      const production = yield* railway.environment(
+        {
+          id: created.project.environmentId,
+          projectId: created.project.projectId,
+        },
+        { id: true, deletedAt: true },
+      );
       expect(production.id).toEqual(created.project.environmentId);
       expect(production.deletedAt).toBeNull();
 
@@ -118,10 +124,13 @@ test.provider(
         updated.project.environmentId,
       );
 
-      const fetchedUpdate = yield* railway.environment({
-        id: updated.environment.environmentId,
-        projectId: updated.project.projectId,
-      });
+      const fetchedUpdate = yield* railway.environment(
+        {
+          id: updated.environment.environmentId,
+          projectId: updated.project.projectId,
+        },
+        { id: true, name: true },
+      );
       expect(fetchedUpdate.id).toEqual(updated.environment.environmentId);
       expect(fetchedUpdate.name).toEqual(nextName);
 
@@ -132,5 +141,5 @@ test.provider(
       );
       expect(envGone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );

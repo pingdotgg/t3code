@@ -306,7 +306,7 @@ export const defaultFormatter = (options?: { colors?: boolean }): Formatter => {
       typeof globalProcess.stdout === "object" &&
       globalProcess.stdout !== null &&
       globalProcess.stdout.isTTY === true &&
-      globalProcess.env?.NO_COLOR !== "1")
+      !globalProcess.env?.NO_COLOR)
 
   // Color palette using ANSI escape codes
   const colors = useColor
@@ -380,10 +380,47 @@ const stripAnsi = (text: string): string => {
 }
 
 /**
- * Gets the visual length of a string (excluding ANSI codes).
+ * Gets the terminal display width of a string (excluding ANSI codes).
  * @internal
  */
-const visualLength = (text: string): number => stripAnsi(text).length
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" })
+
+const zeroWidthCodePoints = /[\p{Mark}\p{Control}\p{Default_Ignorable_Code_Point}]/gu
+const emojiPresentation = /\p{Emoji_Presentation}/u
+
+const isFullWidthCodePoint = (codePoint: number): boolean => {
+  if (codePoint < 0x1100) return false
+
+  return codePoint <= 0x115f ||
+    codePoint === 0x2329 ||
+    codePoint === 0x232a ||
+    (codePoint >= 0x2e80 && codePoint <= 0x303e) ||
+    (codePoint >= 0x3040 && codePoint <= 0xa4cf) ||
+    (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+    (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+    (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+    (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+    (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+    (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+    (codePoint >= 0x1b000 && codePoint <= 0x1b2ff) ||
+    (codePoint >= 0x1f200 && codePoint <= 0x1f251) ||
+    (codePoint >= 0x20000 && codePoint <= 0x3fffd)
+}
+
+const graphemeWidth = (grapheme: string): number => {
+  const visible = grapheme.replace(zeroWidthCodePoints, "")
+  if (visible.length === 0) return 0
+  if (emojiPresentation.test(grapheme) || grapheme.includes("\uFE0F")) return 2
+  return isFullWidthCodePoint(visible.codePointAt(0)!) ? 2 : 1
+}
+
+const visualLength = (text: string): number => {
+  let length = 0
+  for (const { segment } of graphemeSegmenter.segment(stripAnsi(text))) {
+    length += graphemeWidth(segment)
+  }
+  return length
+}
 
 /**
  * Helper function to pad strings to a specified width.

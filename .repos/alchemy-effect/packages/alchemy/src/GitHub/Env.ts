@@ -23,20 +23,20 @@ export interface GitHubEnv {
  * `GITHUB_SHA`, `GITHUB_REPOSITORY_OWNER`, `GITHUB_REPOSITORY`, and the optional
  * `PULL_REQUEST` variable exported by the Alchemy GitHub Action.
  */
-export const GitHubEnv: Config.Config<GitHubEnv | undefined> = Config.boolean(
+export const GitHubEnv: Config.Config<GitHubEnv | undefined> = Config.Boolean(
   "GITHUB_ACTIONS",
 ).pipe(
   Config.withDefault(false),
   // Config has no flatMap in Effect 4; a Config is itself an Effect, so the
-  // enabled branch returns the inner config for mapOrFail to evaluate.
-  Config.mapOrFail(
+  // enabled branch returns the inner config for mapEffect to evaluate.
+  Config.mapEffect(
     (enabled): Effect.Effect<GitHubEnv | undefined, Config.ConfigError> =>
       enabled
         ? Config.all({
-            sha: Config.string("GITHUB_SHA"),
-            owner: Config.string("GITHUB_REPOSITORY_OWNER"),
-            repository: Config.string("GITHUB_REPOSITORY").pipe(
-              Config.mapOrFail(
+            sha: Config.String("GITHUB_SHA"),
+            owner: Config.String("GITHUB_REPOSITORY_OWNER"),
+            repository: Config.String("GITHUB_REPOSITORY").pipe(
+              Config.mapEffect(
                 flow(
                   String.split("/"),
                   Array.get(1),
@@ -47,7 +47,7 @@ export const GitHubEnv: Config.Config<GitHubEnv | undefined> = Config.boolean(
                 ),
               ),
             ),
-            pr: Config.number("PULL_REQUEST").pipe(
+            pr: Config.Number("PULL_REQUEST").pipe(
               Config.option,
               Config.map(Option.getOrUndefined),
             ),

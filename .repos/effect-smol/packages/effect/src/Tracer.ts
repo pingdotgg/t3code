@@ -631,10 +631,24 @@ export const TracerKey = "effect/Tracer"
  */
 export const Tracer: Context.Reference<Tracer> = Context.Reference<Tracer>(TracerKey, {
   fiberCached: true,
-  defaultValue: () =>
-    make({
-      span: (options) => new NativeSpan(options)
-    })
+  defaultValue: () => nativeTracer
+})
+
+/**
+ * The default `Tracer` implementation backing the `Tracer` reference. It
+ * creates in-memory `NativeSpan` instances and does not export them anywhere.
+ *
+ * **Details**
+ *
+ * Runtime code can compare the active tracer against `nativeTracer` to detect
+ * that no tracing backend is installed and skip work that only a backend could
+ * observe, such as recording span attributes.
+ *
+ * @category references
+ * @since 4.0.0
+ */
+export const nativeTracer: Tracer = make({
+  span: (options) => new NativeSpan(options)
 })
 
 /**
@@ -644,9 +658,11 @@ export const Tracer: Context.Reference<Tracer> = Context.Reference<Tracer>(Trace
  *
  * **Details**
  *
- * The constructor initializes the span with `Started` status, inherits the
- * parent trace id or generates a new one, and always generates a new span id.
- * Attributes, events, links, and status are then mutated through `Span` methods.
+ * The constructor initializes the span with `Started` status. Trace and span
+ * identifiers, the attribute map, and the event list are created lazily on
+ * first access, so spans that are never inspected allocate as little as
+ * possible. Attributes, events, links, and status are mutated through `Span`
+ * methods.
  *
  * @see {@link Span} for the interface implemented by native spans
  *
@@ -655,8 +671,6 @@ export const Tracer: Context.Reference<Tracer> = Context.Reference<Tracer>(Trace
  */
 export class NativeSpan implements Span {
   readonly _tag = "Span"
-  readonly spanId: string
-  readonly traceId: string = "native"
   readonly sampled: boolean
 
   readonly name: string
@@ -667,8 +681,10 @@ export class NativeSpan implements Span {
   readonly kind: SpanKind
 
   status: SpanStatus
-  attributes: Map<string, unknown>
-  events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]> = []
+  _traceId: string | undefined = undefined
+  _spanId: string | undefined = undefined
+  _attributes: Map<string, unknown> | undefined = undefined
+  _events: Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]> | undefined = undefined
 
   constructor(options: {
     readonly name: string
@@ -690,9 +706,22 @@ export class NativeSpan implements Span {
       _tag: "Started",
       startTime: options.startTime
     }
-    this.attributes = new Map()
-    this.traceId = Option.getOrUndefined(options.parent)?.traceId ?? Encoding.randomHex(32)
-    this.spanId = Encoding.randomHex(16)
+  }
+
+  get traceId(): string {
+    return this._traceId ??= Option.getOrUndefined(this.parent)?.traceId ?? Encoding.randomHex(32)
+  }
+
+  get spanId(): string {
+    return this._spanId ??= Encoding.randomHex(16)
+  }
+
+  get attributes(): Map<string, unknown> {
+    return this._attributes ??= new Map()
+  }
+
+  get events(): Array<[name: string, startTime: bigint, attributes: Record<string, unknown>]> {
+    return this._events ??= []
   }
 
   end(endTime: bigint, exit: Exit.Exit<unknown, unknown>): void {

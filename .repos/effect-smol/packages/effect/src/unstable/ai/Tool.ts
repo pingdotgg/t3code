@@ -22,7 +22,7 @@ import * as Schema from "../../Schema.ts"
 import * as SchemaAST from "../../SchemaAST.ts"
 import type * as Struct from "../../Struct.ts"
 import type * as Types from "../../Types.ts"
-import type * as AiError from "./AiError.ts"
+import * as AiError from "./AiError.ts"
 import type { CodecTransformer } from "./LanguageModel.ts"
 import type * as Prompt from "./Prompt.ts"
 
@@ -818,9 +818,8 @@ export type FailureEncoded<T> = T extends Tool<
   : never
 
 /**
- * A utility type for the actual failure value that can appear in tool results.
- * When `failureMode` is `"return"`, this includes both user-defined failures
- * and `AiError`.
+ * A tool's failure type, plus {@link ExecutionFailure} in both failure modes
+ * and `AiError` in `"return"` mode.
  *
  * @category utility types
  * @since 4.0.0
@@ -829,8 +828,11 @@ export type FailureResult<T> = T extends Tool<
   infer _Name,
   infer _Config,
   infer _Requirements
-> ? _Config["failureMode"] extends "return" ? _Config["failure"]["Type"] | AiError.AiError
-  : _Config["failure"]["Type"]
+> ? _Config["failureMode"] extends "return" ?
+      | _Config["failure"]["Type"]
+      | typeof ExecutionFailure.Type
+      | AiError.AiError
+  : _Config["failure"]["Type"] | typeof ExecutionFailure.Type
   : never
 
 /**
@@ -843,47 +845,28 @@ export type FailureResultEncoded<T> = T extends Tool<
   infer _Name,
   infer _Config,
   infer _Requirements
-> ? _Config["failureMode"] extends "return" ? _Config["failure"]["Encoded"] | AiError.AiErrorEncoded
-  : _Config["failure"]["Encoded"]
+> ? _Config["failureMode"] extends "return" ?
+      | _Config["failure"]["Encoded"]
+      | typeof ExecutionFailure.Encoded
+      | AiError.AiErrorEncoded
+  : _Config["failure"]["Encoded"] | typeof ExecutionFailure.Encoded
   : never
 
 /**
- * A utility type to extract the type of the tool call result whether it
- * succeeds or fails.
- *
- * **Details**
- *
- * When `failureMode` is `"return"`, the result may also be an `AiError`.
+ * A tool's success or {@link FailureResult} type.
  *
  * @category utility types
  * @since 4.0.0
  */
-export type Result<T> = T extends Tool<
-  infer _Name,
-  infer _Config,
-  infer _Requirements
-> ? _Config["failureMode"] extends "return" ? Success<T> | Failure<T> | AiError.AiError
-  : Success<T> | Failure<T>
-  : never
+export type Result<T> = Success<T> | FailureResult<T>
 
 /**
- * A utility type to extract the encoded type of the tool call result whether
- * it succeeds or fails.
- *
- * **Details**
- *
- * When `failureMode` is `"return"`, the result may also be an encoded `AiError`.
+ * The encoded form of {@link Result}.
  *
  * @category utility types
  * @since 4.0.0
  */
-export type ResultEncoded<T> = T extends Tool<
-  infer _Name,
-  infer _Config,
-  infer _Requirements
-> ? _Config["failureMode"] extends "return" ? SuccessEncoded<T> | FailureEncoded<T> | AiError.AiErrorEncoded
-  : SuccessEncoded<T> | FailureEncoded<T>
-  : never
+export type ResultEncoded<T> = SuccessEncoded<T> | FailureResultEncoded<T>
 
 /**
  * A utility type to extract the requirements of a `Tool` call handler.
@@ -930,6 +913,19 @@ export type ResultDecodingServices<T> = T extends Tool<
   infer _Config,
   infer _Requirements
 > ? _Config["success"]["DecodingServices"] | _Config["failure"]["DecodingServices"]
+  : never
+
+/**
+ * Extracts the services required to encode tool parameters.
+ *
+ * @category utility types
+ * @since 4.0.0
+ */
+export type ParametersEncodingServices<T> = T extends Tool<
+  infer _Name,
+  infer _Config,
+  infer _Requirements
+> ? _Config["parameters"]["EncodingServices"]
   : never
 
 /**
@@ -1051,7 +1047,7 @@ const Proto = {
     return clone(this)
   },
   setParameters(this: Any, parametersSchema: Schema.Constraint) {
-    return clone(this, { parametersSchema })
+    return clone(this, { parametersSchema, jsonSchema: undefined })
   },
   setSuccess(this: Any, successSchema: Schema.Constraint) {
     return clone(this, { successSchema })
@@ -1995,6 +1991,33 @@ export const unsafeSecureJsonParse = (text: string): unknown => {
     StackTraceLimit.setStackTraceLimit(prevLimit)
   }
 }
+
+/**
+ * Schema for denied or interrupted tool calls.
+ *
+ * @category schemas
+ * @since 4.0.0
+ */
+export const ExecutionFailure = Schema.Struct({
+  type: Schema.Literals(["execution-denied", "execution-interrupted"]),
+  reason: Schema.String
+}).annotate({ identifier: "ToolExecutionFailure" })
+
+/**
+ * Returns the failure schema shared by `Toolkit` and `Response`.
+ *
+ * **Details**
+ *
+ * `AiError` comes first to restore error instances. The user schema precedes
+ * {@link ExecutionFailure} to preserve user fields.
+ *
+ * @category schemas
+ * @since 4.0.0
+ */
+export const failureResultSchema = <T extends Any>(
+  tool: T
+): Schema.Union<readonly [typeof AiError.AiError, T["failureSchema"], typeof ExecutionFailure]> =>
+  Schema.Union([AiError.AiError, tool.failureSchema, ExecutionFailure])
 
 /**
  * Type of the `EmptyParams` schema used for tools with no parameters.

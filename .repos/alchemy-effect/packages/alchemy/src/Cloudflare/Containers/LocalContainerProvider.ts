@@ -10,7 +10,7 @@ import * as RpcProvider from "../../Local/RpcProvider.ts";
 import { sha256Object } from "../../Util/sha256.ts";
 import { normalizeNulls } from "../../Util/stable.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
-import { generateLocalId, LOCAL_ENTRY_URL } from "../LocalRuntime.ts";
+import { generateLocalId, LOCAL_PROVIDERS_URL } from "../LocalRuntime.ts";
 import type {
   AnyContainerApplicationProps,
   ContainerApplication,
@@ -44,7 +44,7 @@ import { ContainerPlatform } from "./ContainerPlatform.ts";
 export const LocalContainerProvider = () =>
   RpcProvider.effect(
     ContainerPlatform,
-    LOCAL_ENTRY_URL,
+    LOCAL_PROVIDERS_URL,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -187,6 +187,7 @@ export const LocalContainerProvider = () =>
           secrets: props.secrets,
           vcpu: props.vcpu,
           memory: props.memory,
+          memoryMib: props.memoryMib,
           disk: props.disk,
           environmentVariables: Object.entries(env).map(([name, value]) => ({
             name,

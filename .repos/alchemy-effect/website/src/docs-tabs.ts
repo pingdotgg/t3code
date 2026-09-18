@@ -103,6 +103,22 @@ export const DOCS_TABS: DocsTab[] = [
     hint: "repos · secrets · events",
   },
   {
+    label: "Git",
+    href: "/git",
+    prefixes: ["/git", "/providers/git"],
+    slot: "more",
+    category: "Source & CI",
+    hint: "self-hosted git · clone · push · pull requests",
+  },
+  {
+    label: "Stripe",
+    href: "/stripe",
+    prefixes: ["/stripe", "/providers/stripe"],
+    slot: "more",
+    category: "Payments",
+    hint: "products · prices · webhooks",
+  },
+  {
     label: "Docker",
     href: "/docker",
     prefixes: ["/docker", "/providers/docker"],

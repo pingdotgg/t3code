@@ -80,7 +80,7 @@ deployEffect.pipe(adopt(decidePolicy));  // Effect<boolean>, resolved at plan ti
 
 Providers with no tag concept (e.g. APIs that always return a singleton by name) always return plain attrs from `read`, so they silently adopt unconditionally — `--adopt` is a no-op for them.
 
-For the full lost-state-store recovery walkthrough (state tree → state clear → deploy), see [Inspecting State](/cli/inspecting-state).
+For the full lost-state-store recovery walkthrough (state explorer → state delete → deploy), see [Inspecting State](/cli/inspecting-state).
 
 ## Where next
 

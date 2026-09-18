@@ -7,6 +7,7 @@ import Footer from "../components/marketing/Footer.astro";
 import PostHog from "../components/analytics/PostHog.astro";
 import ThemeProvider from "../components/ThemeProvider.astro";
 import BrandIcons from "../brand/Icons.astro";
+import StructuredData from "../components/StructuredData.astro";
 
 interface Props {
   title?: string;
@@ -14,7 +15,7 @@ interface Props {
   /**
    * Path to the page's OG image, relative to the site root. Defaults to
    * the build-time generated card for the current page (slug derived from
-   * the URL pathname). The OG endpoint at `/og/[...slug].png` produces
+   * the URL pathname). The OG endpoint at `/og/[...slug].webp` produces
    * these during `astro build`.
    */
   image?: string;
@@ -34,13 +35,13 @@ const description = props.description ?? fm.description;
 const image = props.image ?? fm.image;
 
 // Derive an OG image slug from the URL pathname when not explicitly set:
-//   "/"           → /og/index.png
-//   "/some/page"  → /og/some/page.png  (currently unused, but future-proof)
+//   "/"           → /og/index.webp
+//   "/some/page"  → /og/some/page.webp  (currently unused, but future-proof)
 const slug = (() => {
   const p = Astro.url.pathname.replace(/^\/+|\/+$/g, "");
   return p === "" ? "index" : p;
 })();
-const ogImage = new URL(image ?? `/og/${slug}.png`, Astro.site);
+const ogImage = new URL(image ?? `/og/${slug}.webp`, Astro.site);
 const canonical = new URL(Astro.url.pathname, Astro.site);
 ---
 
@@ -72,9 +73,12 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
 
     {/* Twitter / X */}
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@alchemy_run" />
     <meta name="twitter:title" content={title} />
     {description && <meta name="twitter:description" content={description} />}
     <meta name="twitter:image" content={ogImage.href} />
+
+    <StructuredData />
 
     <PostHog />
   </head>

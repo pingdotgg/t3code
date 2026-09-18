@@ -116,13 +116,13 @@ secrets:
 export const Website = Cloudflare.Website.SvelteKit("Website", {
 +  env: {
 +    CACHE: Cache,
-+    API_KEY: Config.redacted("API_KEY"),
++    API_KEY: Config.Redacted("API_KEY"),
 +  },
 });
 ```
 
 `Cache` is a description, not a deploy — Alchemy provisions the real
-namespace because the Website binds it. `Config.redacted` reads
+namespace because the Website binds it. `Config.Redacted` reads
 `API_KEY` from your environment at deploy time and binds it as a
 Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
 

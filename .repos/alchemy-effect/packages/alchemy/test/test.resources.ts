@@ -957,7 +957,7 @@ export const deleteFirstResourceProvider = () =>
     }),
   });
 
-// ── DriftResource — exercises `alchemy sync` (read + reconcile drift repair).
+// ── DriftResource — exercises `alchemy drift --repair`.
 //
 // Models a cloud with an inspectable, mutable backing store (`TestCloud`):
 // `reconcile` upserts the resource into the cloud map, `read` observes it,

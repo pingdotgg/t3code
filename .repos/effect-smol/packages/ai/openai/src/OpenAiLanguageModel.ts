@@ -19,7 +19,6 @@ import * as Predicate from "effect/Predicate"
 import * as Redactable from "effect/Redactable"
 import * as Schema from "effect/Schema"
 import * as AST from "effect/SchemaAST"
-import * as SchemaIssue from "effect/SchemaIssue"
 import * as Stream from "effect/Stream"
 import type { Span } from "effect/Tracer"
 import type { DeepMutable, Mutable, Simplify } from "effect/Types"
@@ -39,8 +38,6 @@ import { OpenAiClient } from "./OpenAiClient.ts"
 import type * as OpenAiSchema from "./OpenAiSchema.ts"
 import { addGenAIAnnotations } from "./OpenAiTelemetry.ts"
 import type * as OpenAiTool from "./OpenAiTool.ts"
-
-const formatIssue = SchemaIssue.makeFormatterDefault()
 
 const ResponseModelIds = Generated.ModelIdsResponses.members[1]
 const SharedModelIds = Generated.ModelIdsShared.members[1]
@@ -615,7 +612,7 @@ export const model = (
 export const make = Effect.fnUntraced(function*({ model, config: providerConfig }: {
   readonly model: (string & {}) | Model
   readonly config?: Omit<typeof Config.Service, "model"> | undefined
-}): Effect.fn.Return<LanguageModel.Service, never, OpenAiClient> {
+}): Effect.fn.Return<LanguageModel.LanguageModel, never, OpenAiClient> {
   const client = yield* OpenAiClient
 
   const makeConfig = Effect.gen(function*() {
@@ -881,15 +878,14 @@ const prepareMessages = Effect.fnUntraced(
 
                   if (typeof part.data === "string" && isFileId(part.data, config)) {
                     content.push({ type: "input_image", file_id: part.data, detail })
-                  }
-
-                  if (part.data instanceof URL) {
-                    content.push({ type: "input_image", image_url: part.data.toString(), detail })
-                  }
-
-                  if (part.data instanceof Uint8Array) {
-                    const base64 = Encoding.encodeBase64(part.data)
-                    const imageUrl = `data:${mediaType};base64,${base64}`
+                  } else {
+                    const imageUrl = part.data instanceof URL
+                      ? part.data.toString()
+                      : part.data instanceof Uint8Array
+                      ? `data:${mediaType};base64,${Encoding.encodeBase64(part.data)}`
+                      : /^(data:|https?:\/\/)/i.test(part.data)
+                      ? part.data
+                      : `data:${mediaType};base64,${part.data}`
                     content.push({ type: "input_image", image_url: imageUrl, detail })
                   }
                 } else if (part.mediaType === "application/pdf") {
@@ -1045,7 +1041,6 @@ const prepareMessages = Effect.fnUntraced(
                         method: "prepareMessages",
                         reason: new AiError.ToolParameterValidationError({
                           toolName: "local_shell",
-                          toolParams: part.params as Schema.Json,
                           description: error.message
                         })
                       })
@@ -1071,7 +1066,6 @@ const prepareMessages = Effect.fnUntraced(
                         method: "prepareMessages",
                         reason: new AiError.ToolParameterValidationError({
                           toolName: "shell",
-                          toolParams: part.params as Schema.Json,
                           description: error.message
                         })
                       })
@@ -1199,7 +1193,7 @@ const prepareMessages = Effect.fnUntraced(
             messages.push({
               type: "function_call_output",
               call_id: part.id,
-              output: JSON.stringify(part.result),
+              output: typeof part.result === "string" ? part.result : JSON.stringify(part.result),
               ...(Predicate.isNotNull(status) ? { status } : {})
             })
           }
@@ -1343,19 +1337,20 @@ const makeResponse = Effect.fnUntraced(
 
         case "code_interpreter_call": {
           const toolName = toolNameMapper.getCustomName("code_interpreter")
+          const status = part.status ?? "completed"
           parts.push({
             type: "tool-call",
             id: part.id,
             name: toolName,
-            params: { code: part.code, container_id: part.container_id },
+            params: { code: part.code ?? null, container_id: part.container_id },
             providerExecuted: true
           })
           parts.push({
             type: "tool-result",
             id: part.id,
             name: toolName,
-            isFailure: false,
-            result: { outputs: part.outputs },
+            isFailure: status !== "completed",
+            result: { status, outputs: part.outputs ?? null },
             providerExecuted: true
           })
           break
@@ -1374,7 +1369,7 @@ const makeResponse = Effect.fnUntraced(
             type: "tool-result",
             id: part.id,
             name: toolName,
-            isFailure: false,
+            isFailure: part.status !== "completed",
             result: {
               status: part.status,
               queries: part.queries,
@@ -1398,7 +1393,6 @@ const makeResponse = Effect.fnUntraced(
                 method: "makeResponse",
                 reason: new AiError.ToolParameterValidationError({
                   toolName,
-                  toolParams: {},
                   description: `Faled to securely JSON parse tool parameters: ${cause}`
                 })
               })
@@ -1418,6 +1412,7 @@ const makeResponse = Effect.fnUntraced(
 
         case "image_generation_call": {
           const toolName = toolNameMapper.getCustomName("image_generation")
+          const status = part.status ?? "completed"
           parts.push({
             type: "tool-call",
             id: part.id,
@@ -1429,8 +1424,10 @@ const makeResponse = Effect.fnUntraced(
             type: "tool-result",
             id: part.id,
             name: toolName,
-            isFailure: false,
-            result: { result: part.result }
+            isFailure: status !== "completed",
+            result: status === "completed"
+              ? { result: part.result }
+              : { status, result: part.result }
           })
           break
         }
@@ -1470,7 +1467,7 @@ const makeResponse = Effect.fnUntraced(
             type: "tool-result",
             id: toolId,
             name: toolName,
-            isFailure: false,
+            isFailure: Predicate.isNotNullish(part.error),
             providerExecuted: true,
             result: {
               type: "mcp_call",
@@ -1668,7 +1665,7 @@ const makeResponse = Effect.fnUntraced(
             type: "tool-result",
             id: part.id,
             name: toolName,
-            isFailure: false,
+            isFailure: part.status !== "completed",
             result: { action: part.action, status: part.status },
             providerExecuted: true
           })
@@ -1764,8 +1761,38 @@ const makeStreamResponse = Effect.fnUntraced(
       }
       readonly codeInterpreter?: {
         readonly containerId: string
+        hasCode: boolean
+        streamedCode: string
       }
     }> = {}
+
+    const finishCodeInterpreterCall = (
+      outputIndex: number,
+      code: string | null,
+      parts: Array<Response.StreamPartEncoded>
+    ) => {
+      const toolCall = activeToolCalls[outputIndex]
+      if (Predicate.isUndefined(toolCall?.codeInterpreter)) {
+        return
+      }
+      parts.push({
+        type: "tool-params-delta",
+        id: toolCall.id,
+        delta: toolCall.codeInterpreter.hasCode ? "\"}" : `${JSON.stringify(code)}}`
+      })
+      parts.push({ type: "tool-params-end", id: toolCall.id })
+      parts.push({
+        type: "tool-call",
+        id: toolCall.id,
+        name: toolCall.name,
+        params: {
+          code: toolCall.codeInterpreter.hasCode ? toolCall.codeInterpreter.streamedCode : code,
+          container_id: toolCall.codeInterpreter.containerId
+        },
+        providerExecuted: true
+      })
+      delete activeToolCalls[outputIndex]
+    }
 
     const webSearchTool = options.tools.find((tool) =>
       Tool.isProviderDefined(tool) &&
@@ -1878,7 +1905,7 @@ const makeStreamResponse = Effect.fnUntraced(
                 activeToolCalls[event.output_index] = {
                   id: event.item.id,
                   name: toolName,
-                  codeInterpreter: { containerId: event.item.container_id }
+                  codeInterpreter: { containerId: event.item.container_id, hasCode: false, streamedCode: "" }
                 }
                 parts.push({
                   type: "tool-params-start",
@@ -1889,7 +1916,7 @@ const makeStreamResponse = Effect.fnUntraced(
                 parts.push({
                   type: "tool-params-delta",
                   id: event.item.id,
-                  delta: `{"containerId":"${event.item.container_id}","code":"`
+                  delta: `{"container_id":${JSON.stringify(event.item.container_id)},"code":`
                 })
                 break
               }
@@ -2072,14 +2099,15 @@ const makeStreamResponse = Effect.fnUntraced(
               }
 
               case "code_interpreter_call": {
-                delete activeToolCalls[event.output_index]
+                finishCodeInterpreterCall(event.output_index, event.item.code ?? null, parts)
                 const toolName = toolNameMapper.getCustomName("code_interpreter")
+                const status = event.item.status ?? "completed"
                 parts.push({
                   type: "tool-result",
                   id: event.item.id,
                   name: toolName,
-                  isFailure: false,
-                  result: { outputs: event.item.outputs },
+                  isFailure: status !== "completed",
+                  result: { status, outputs: event.item.outputs ?? null },
                   providerExecuted: true
                 })
                 break
@@ -2112,15 +2140,16 @@ const makeStreamResponse = Effect.fnUntraced(
               case "file_search_call": {
                 delete activeToolCalls[event.output_index]
                 const toolName = toolNameMapper.getCustomName("file_search")
-                const results = Predicate.isNotNullish(event.item.results)
-                  ? { results: event.item.results }
-                  : undefined
                 parts.push({
                   type: "tool-result",
                   id: event.item.id,
                   name: toolName,
-                  isFailure: false,
-                  result: { ...results, status: event.item.status, queries: event.item.queries },
+                  isFailure: event.item.status !== "completed",
+                  result: {
+                    status: event.item.status,
+                    queries: event.item.queries,
+                    results: event.item.results ?? null
+                  },
                   providerExecuted: true
                 })
                 break
@@ -2147,7 +2176,6 @@ const makeStreamResponse = Effect.fnUntraced(
                       method: "makeStreamResponse",
                       reason: new AiError.ToolParameterValidationError({
                         toolName,
-                        toolParams: {},
                         description: `Failed securely JSON parse tool parameters: ${cause}`
                       })
                     })
@@ -2173,12 +2201,15 @@ const makeStreamResponse = Effect.fnUntraced(
 
               case "image_generation_call": {
                 const toolName = toolNameMapper.getCustomName("image_generation")
+                const status = event.item.status ?? "completed"
                 parts.push({
                   type: "tool-result",
                   id: event.item.id,
                   name: toolName,
-                  isFailure: false,
-                  result: { result: event.item.result },
+                  isFailure: status !== "completed",
+                  result: status === "completed"
+                    ? { result: event.item.result }
+                    : { status, result: event.item.result },
                   providerExecuted: true
                 })
                 break
@@ -2223,7 +2254,7 @@ const makeStreamResponse = Effect.fnUntraced(
                   type: "tool-result",
                   id: toolId,
                   name: toolName,
-                  isFailure: false,
+                  isFailure: Predicate.isNotNullish(event.item.error),
                   providerExecuted: true,
                   result: {
                     type: "mcp_call",
@@ -2331,7 +2362,7 @@ const makeStreamResponse = Effect.fnUntraced(
                   type: "tool-result",
                   id: event.item.id,
                   name: toolName,
-                  isFailure: false,
+                  isFailure: event.item.status !== "completed",
                   result: { action: event.item.action, status: event.item.status },
                   providerExecuted: true
                 })
@@ -2450,7 +2481,6 @@ const makeStreamResponse = Effect.fnUntraced(
                     method: "makeStreamResponse",
                     reason: new AiError.ToolParameterValidationError({
                       toolName: toolCall.name,
-                      toolParams: {},
                       description: `Failed securely JSON parse tool parameters: ${cause}`
                     })
                   })
@@ -2516,37 +2546,21 @@ const makeStreamResponse = Effect.fnUntraced(
 
           case "response.code_interpreter_call_code.delta": {
             const toolCall = activeToolCalls[event.output_index]
-            if (Predicate.isNotUndefined(toolCall)) {
+            if (Predicate.isNotUndefined(toolCall?.codeInterpreter)) {
               parts.push({
                 type: "tool-params-delta",
                 id: toolCall.id,
-                delta: InternalUtilities.escapeJSONDelta(event.delta)
+                delta: (toolCall.codeInterpreter.hasCode ? "" : "\"") +
+                  InternalUtilities.escapeJSONDelta(event.delta)
               })
+              toolCall.codeInterpreter.hasCode = true
+              toolCall.codeInterpreter.streamedCode += event.delta
             }
             break
           }
 
           case "response.code_interpreter_call_code.done": {
-            const toolCall = activeToolCalls[event.output_index]
-            if (Predicate.isNotUndefined(toolCall) && Predicate.isNotUndefined(toolCall.codeInterpreter)) {
-              const toolName = toolNameMapper.getCustomName("code_interpreter")
-              parts.push({
-                type: "tool-params-delta",
-                id: toolCall.id,
-                delta: "\"}"
-              })
-              parts.push({ type: "tool-params-end", id: toolCall.id })
-              parts.push({
-                type: "tool-call",
-                id: toolCall.id,
-                name: toolName,
-                params: {
-                  code: event.code,
-                  container_id: toolCall.codeInterpreter.containerId
-                },
-                providerExecuted: true
-              })
-            }
+            finishCodeInterpreterCall(event.output_index, event.code, parts)
             break
           }
 
@@ -3104,7 +3118,6 @@ const normalizeMcpToolCall = Effect.fnUntraced(function*<Tools extends ReadonlyA
         method,
         reason: new AiError.ToolParameterValidationError({
           toolName,
-          toolParams,
           description: `Failed to securely JSON parse tool parameters: ${cause}`
         })
       })
@@ -3195,19 +3208,13 @@ const transformToolCallParams = Effect.fnUntraced(function*<Tools extends Readon
 
   const { codec } = yield* tryCodecTransform(tool.parametersSchema, "makeResponse")
 
-  const transform = Schema.decodeEffect(codec)
-
+  // Normalize valid parameters; leave invalid ones for Toolkit.
   return yield* (
-    transform(toolParams) as Effect.Effect<unknown, Schema.SchemaError>
-  ).pipe(Effect.mapError((error) =>
-    AiError.make({
-      module: "OpenAiLanguageModel",
-      method: "makeResponse",
-      reason: new AiError.ToolParameterValidationError({
-        toolName,
-        toolParams,
-        description: formatIssue(error.issue)
-      })
-    })
-  ))
+    Schema.decodeEffect(codec)(toolParams) as Effect.Effect<unknown, Schema.SchemaError>
+  ).pipe(
+    Effect.flatMap((decoded) =>
+      Schema.encodeUnknownEffect(tool.parametersSchema)(decoded) as Effect.Effect<unknown, Schema.SchemaError>
+    ),
+    Effect.orElseSucceed(() => toolParams)
+  )
 })

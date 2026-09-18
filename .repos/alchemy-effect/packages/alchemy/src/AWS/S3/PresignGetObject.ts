@@ -1,4 +1,4 @@
-import type { CredentialsError } from "@distilled.cloud/aws/Credentials";
+import type { PresignError } from "@distilled.cloud/aws/Presign";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type { Bucket } from "./Bucket.ts";
@@ -53,9 +53,7 @@ export interface PresignGetObject extends Binding.Service<
   (
     bucket: Bucket,
   ) => Effect.Effect<
-    (
-      request: PresignGetObjectRequest,
-    ) => Effect.Effect<string, CredentialsError>
+    (request: PresignGetObjectRequest) => Effect.Effect<string, PresignError>
   >
 > {}
 

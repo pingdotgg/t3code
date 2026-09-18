@@ -134,7 +134,7 @@ export interface NuxtProps<
  * ```typescript
  * const site = yield* Cloudflare.Website.Nuxt("Website", {
  *   env: {
- *     API_KEY: Config.redacted("API_KEY"),
+ *     API_KEY: Config.Redacted("API_KEY"),
  *   },
  * });
  *

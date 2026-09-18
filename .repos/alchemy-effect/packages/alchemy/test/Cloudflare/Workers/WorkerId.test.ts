@@ -82,7 +82,7 @@ test.provider(
       // Rewrite the persisted row into the pre-rename shape: older betas
       // stored the script *name* in `workerId`.
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state
@@ -143,7 +143,7 @@ test.provider(
       // Simulate state loss: the script lives on in Cloudflare, but the
       // engine has no row for it.
       const state = yield* yield* State;
-      const stage = "test";
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state

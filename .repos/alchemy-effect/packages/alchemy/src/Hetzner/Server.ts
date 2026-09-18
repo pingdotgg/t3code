@@ -643,6 +643,21 @@ const unwrapPrivateKey = (
   return typeof value === "string" ? value : Redacted.value(value);
 };
 
+const deployKeyName = (name: string) => `${name.slice(0, 55)}-d`;
+
+const findDeployKeyId = Effect.fn(function* (id: string, name: string) {
+  const keyName = deployKeyName(name);
+  const { ssh_keys } = yield* Services.sshKeys.listSshKeys({
+    name: keyName,
+    per_page: 50,
+  });
+  const key = ssh_keys.find((item) => item.name === keyName);
+  return key !== undefined &&
+    (yield* hasAlchemyLabels(id, tagRecord(key.labels)))
+    ? key.id
+    : undefined;
+});
+
 const ensureDeployKey = Effect.fn(function* (input: {
   name: string;
   labels: Record<string, string>;
@@ -664,7 +679,7 @@ const ensureDeployKey = Effect.fn(function* (input: {
     };
   }
   const generated = yield* generateDeployKey;
-  const keyName = `${input.name.slice(0, 55)}-d`;
+  const keyName = deployKeyName(input.name);
   const created = yield* Services.sshKeys
     .createSshKey({
       name: keyName,
@@ -764,6 +779,11 @@ const waitUntilGone = (serverId: number) =>
       until: (gone) => gone,
       times: 10,
     }),
+    Effect.flatMap((gone) =>
+      gone
+        ? Effect.void
+        : Effect.fail(new ServerTimeout({ serverId, status: "deleting" })),
+    ),
   );
 
 const numericId = (
@@ -957,9 +977,10 @@ export const ServerProvider = () =>
       return undefined;
     }),
     read: Effect.fn(function* ({ id, olds, output }) {
+      const name = yield* createServerName(id, olds?.name, output?.name);
       const found = yield* observe({
         id,
-        name: olds?.name ?? output?.name,
+        name,
         outputId: output?.id ?? output?.serverId,
       });
       if (found === undefined) return undefined;
@@ -968,8 +989,14 @@ export const ServerProvider = () =>
         privateKey: output?.privateKey,
         deploySshKeyId: output?.deploySshKeyId,
       };
-      const owned = yield* hasAlchemyLabels(id, tagRecord(found.labels));
-      return owned ? attrs : Unowned(attrs);
+      if (!(yield* hasAlchemyLabels(id, tagRecord(found.labels)))) {
+        return Unowned(attrs);
+      }
+      return {
+        ...attrs,
+        deploySshKeyId:
+          attrs.deploySshKeyId ?? (yield* findDeployKeyId(id, found.name)),
+      };
     }),
     reconcile: Effect.fn(function* ({ id, news, output }) {
       const name = yield* createServerName(id, news.name, output?.name);
@@ -1156,6 +1183,9 @@ export const ServerProvider = () =>
       };
     }),
     delete: Effect.fn(function* ({ output }) {
+      // Keep the server discoverable if key deletion fails. Removing the project
+      // key does not revoke the public key already injected into the server.
+      yield* deleteDeployKey(output.deploySshKeyId);
       const current = yield* getById(output.id);
       if (current !== undefined) {
         if (current.protection.delete) {
@@ -1183,7 +1213,5 @@ export const ServerProvider = () =>
         }
         yield* waitUntilGone(current.id);
       }
-
-      yield* deleteDeployKey(output.deploySshKeyId);
     }),
   });

@@ -1,6 +1,7 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { relative } from "node:path";
+import * as Effect from "effect/Effect";
 import {
   HEADERS_VERSION,
   PLACEHOLDER_REGEX,
@@ -14,20 +15,17 @@ import type {
   MetadataStaticRedirects,
 } from "../../shared/types.ts";
 import type {
-  Logger,
   ParsedHeaders,
   ParsedRedirects,
 } from "../../shared/configuration/types.ts";
 
-export function constructRedirects({
+export const constructRedirects = Effect.fn("constructRedirects")(function* ({
   redirects,
   redirectsFile,
-  logger,
 }: {
   redirects?: ParsedRedirects;
   redirectsFile?: string;
-  logger: Logger;
-}): Pick<AssetConfig, "redirects"> {
+}) {
   if (!redirects) {
     return {};
   }
@@ -41,7 +39,7 @@ export function constructRedirects({
     ? relative(process.cwd(), redirectsFile)
     : "";
 
-  logger.log(
+  yield* Effect.log(
     `✨ Parsed ${num_valid} valid redirect rule${num_valid === 1 ? "" : "s"}.`,
   );
 
@@ -56,7 +54,7 @@ export function constructRedirects({
       }
     }
 
-    logger.warn(
+    yield* Effect.logWarning(
       `Found ${num_invalid} invalid redirect rule${num_invalid === 1 ? "" : "s"}:\n` +
         `${invalidRedirectRulesList}`,
     );
@@ -80,7 +78,7 @@ export function constructRedirects({
         };
         continue;
       } else {
-        logger.info(
+        yield* Effect.logInfo(
           `The redirect rule ${rule.from} → ${rule.status} ${rule.to} could be made more performant by bringing it above any lines with splats or placeholders.`,
         );
       }
@@ -96,18 +94,16 @@ export function constructRedirects({
       staticRules: staticRedirects,
       rules: dynamicRedirects,
     },
-  };
-}
+  } satisfies Pick<AssetConfig, "redirects">;
+});
 
-export function constructHeaders({
+export const constructHeaders = Effect.fn("constructHeaders")(function* ({
   headers,
   headersFile,
-  logger,
 }: {
   headers?: ParsedHeaders;
   headersFile?: string;
-  logger: Logger;
-}): Pick<AssetConfig, "headers"> {
+}) {
   if (!headers) {
     return {};
   }
@@ -121,7 +117,7 @@ export function constructHeaders({
     ? relative(process.cwd(), headersFile)
     : "";
 
-  logger.log(
+  yield* Effect.log(
     `✨ Parsed ${num_valid} valid header rule${num_valid === 1 ? "" : "s"}.`,
   );
 
@@ -136,7 +132,7 @@ export function constructHeaders({
       }
     }
 
-    logger.warn(
+    yield* Effect.logWarning(
       `Found ${num_invalid} invalid header rule${num_invalid === 1 ? "" : "s"}:\n` +
         `${invalidHeaderRulesList}`,
     );
@@ -166,5 +162,5 @@ export function constructHeaders({
       version: HEADERS_VERSION,
       rules,
     },
-  };
-}
+  } satisfies Pick<AssetConfig, "headers">;
+});

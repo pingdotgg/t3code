@@ -22,6 +22,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Order from "effect/Order"
 import * as Glob from "glob"
+import { fileURLToPath } from "node:url"
 
 /**
  * Context service that discovers and sorts TypeScript fixture files used by the bundle size tooling.
@@ -33,7 +34,7 @@ export class Fixtures extends Context.Service<Fixtures>()(
   "@effect/bundle/Fixtures",
   {
     make: Effect.gen(function*() {
-      const fixturesDir = new URL("../fixtures/", import.meta.url).pathname
+      const fixturesDir = fileURLToPath(new URL("../fixtures/", import.meta.url))
 
       const fixtures = yield* Effect.promise(() => Glob.glob("*.ts", { cwd: fixturesDir })).pipe(
         Effect.map(Array.sort(Order.String)),

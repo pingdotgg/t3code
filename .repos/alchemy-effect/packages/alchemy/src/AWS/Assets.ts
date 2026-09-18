@@ -91,7 +91,7 @@ export const AssetsLive = Layer.effect(
               if (!environment.endpoint) {
                 return yield* Effect.die(
                   new Error(
-                    "Assets bucket not found. Run 'alchemy aws bootstrap' to create it.",
+                    "Assets bucket not found. Run 'alchemy provider aws bootstrap' to create it.",
                   ),
                 );
               }
@@ -223,7 +223,7 @@ const getBucketTags = (bucketName: string) =>
 
 /**
  * Create the tagged assets bucket for the current account+region and wait for
- * it to be addressable. Idempotent — used by `alchemy aws bootstrap` and by
+ * it to be addressable. Idempotent — used by `alchemy provider aws bootstrap` and by
  * the transparent local-emulator bootstrap in {@link AssetsLive}.
  */
 export const createAssetsBucket = Effect.gen(function* () {

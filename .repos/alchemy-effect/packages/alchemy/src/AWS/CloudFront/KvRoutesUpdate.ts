@@ -1,3 +1,6 @@
+import * as cloudfront from "@distilled.cloud/aws/cloudfront";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as kvs from "@distilled.cloud/aws/cloudfront-keyvaluestore";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
@@ -190,6 +193,7 @@ export const KvRoutesUpdateProvider = () =>
           const fullKey = `${props.namespace}:${props.key}`;
           const etag = yield* getKvsEtag(props.store);
           const { routes, chunkNum } = yield* getRoutes(props.store, fullKey);
+          if (!routes.includes(props.entry)) return;
           const filtered = routes.filter((r) => r !== props.entry);
           if (filtered.length === 0) {
             yield* deleteKey(props.store, etag, fullKey, chunkNum);
@@ -300,7 +304,22 @@ export const KvRoutesUpdateProvider = () =>
                 namespace: output.namespace,
                 key: output.key,
                 entry: output.entry,
-              }),
+              }).pipe(
+                Effect.catchTag("ConflictException", (error) =>
+                  // The data plane reports ConflictException for deleted stores.
+                  // Confirm absence through the control plane before ignoring it.
+                  cloudfront.listKeyValueStores.pages({}).pipe(
+                    Stream.flatMap((page) =>
+                      Stream.fromIterable(page.KeyValueStoreList?.Items ?? []),
+                    ),
+                    Stream.filter((store) => store.ARN === output.store),
+                    Stream.runHead,
+                    Effect.flatMap((store) =>
+                      Option.isNone(store) ? Effect.void : Effect.fail(error),
+                    ),
+                  ),
+                ),
+              ),
             ).pipe(
               Effect.catchTag("ResourceNotFoundException", () => Effect.void),
             );

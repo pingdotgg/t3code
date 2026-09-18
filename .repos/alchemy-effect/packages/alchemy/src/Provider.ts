@@ -3,9 +3,10 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import type * as Stream from "effect/Stream";
 import type { Artifacts } from "./Artifacts.ts";
-import type { ScopedPlanStatusSession } from "./Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "./Report.ts";
 import type { Diff } from "./Diff.ts";
 import type { Input } from "./Input.ts";
 import type { InstanceId } from "./InstanceId.ts";
@@ -220,7 +221,7 @@ export interface ProviderService<
   list(): Effect.Effect<Res["Attributes"][], any, ListReq>;
   /**
    * Returns a stream of log lines for a deployed resource.
-   * Used by `alchemy tail` to stream real-time logs.
+   * Used by `alchemy logs --tail` to stream real-time logs.
    */
   tail?(input: {
     id: string;
@@ -575,13 +576,12 @@ export const collection = <
     };
   }) as any;
 
-const isProviderCollectionService = (
+export const isProviderCollectionService = (
   value: unknown,
 ): value is ProviderCollectionService => {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "kind" in value &&
+    Predicate.isObject(value) &&
+    Predicate.hasProperty(value, "kind") &&
     value.kind === "ProviderCollection"
   );
 };
@@ -592,13 +592,12 @@ const isProviderCollectionService = (
  * searching for a legacy alias, the tag key won't match, so lookup has to
  * recognize provider services by shape.
  */
-const isProviderService = (value: unknown): value is ProviderService =>
-  typeof value === "object" &&
-  value !== null &&
-  "reconcile" in value &&
-  typeof (value as ProviderService).reconcile === "function" &&
-  "delete" in value &&
-  typeof (value as ProviderService).delete === "function";
+export const isProviderService = (value: unknown): value is ProviderService =>
+  Predicate.isObject(value) &&
+  Predicate.hasProperty(value, "reconcile") &&
+  Predicate.isFunction(value.reconcile) &&
+  Predicate.hasProperty(value, "delete") &&
+  Predicate.isFunction(value.delete);
 
 /**
  * Resolve the concrete service for `mode` from a provider found in context.
@@ -662,7 +661,7 @@ export const describeDataPlane = (resource: {
   readonly Mode?: ProviderMode | undefined;
 }): Effect.Effect<DataPlaneResolution> =>
   Effect.gen(function* () {
-    const found = yield* tryFindProviderByType(resource.Type);
+    const found = yield* tryFindProviderRegistrationByType(resource.Type);
     if (Option.isNone(found)) return { kind: "unregistered" as const };
     const provider = found.value;
     if (provider.modes === undefined) return { kind: "agnostic" as const };
@@ -708,6 +707,7 @@ export const findProviderByType: {
   )) as any;
 
 /**
+ * Resolve the concrete provider for the requested or current run mode.
  * Typed provider lookup by resource class (or {@link Platform}) value. Infers
  * `R` from the class so `provider.list()` / `provider.read(...)` return the
  * resource's `Attributes` shape — prefer this over {@link findProviderByType},
@@ -757,17 +757,25 @@ export const missingProviderError = (
     fqn,
   });
 
-export const tryFindProviderByType: {
-  <R extends ResourceLike>(
-    resourceType: R["Type"],
-    mode?: ProviderMode,
-  ): Effect.Effect<Option.Option<ProviderService<R>>>;
-} = Effect.fn(function* <R extends ResourceLike>(
+/** Resolve a concrete provider, using the current run's mode when omitted. */
+export const tryFindProviderByType = <R extends ResourceLike>(
   resourceType: R["Type"],
   mode?: ProviderMode,
-) {
-  // When a mode is requested, resolve the found service to that mode's
-  // variant (building it lazily if needed) before returning.
+): Effect.Effect<Option.Option<ProviderService<R>>> =>
+  Effect.gen(function* () {
+    const found = yield* tryFindProviderRegistrationByType<R>(resourceType);
+    if (Option.isNone(found)) return found;
+    return Option.some(
+      yield* providerForMode(found.value, mode ?? (yield* defaultProviderMode)),
+    );
+  });
+
+/** Inspect registration metadata without constructing either provider variant. */
+export const tryFindProviderRegistrationByType: {
+  <R extends ResourceLike>(
+    resourceType: R["Type"],
+  ): Effect.Effect<Option.Option<ProviderService<R>>>;
+} = Effect.fn(function* <R extends ResourceLike>(resourceType: R["Type"]) {
   const found = yield* Effect.gen(function* () {
     const Tag = Provider<R>(resourceType) as unknown as Context.Service<
       Provider<R>,
@@ -808,10 +816,5 @@ export const tryFindProviderByType: {
     }
     return Option.none();
   });
-  if (Option.isNone(found)) {
-    return found;
-  }
-  return Option.some(
-    yield* providerForMode(found.value as ProviderService<R>, mode),
-  );
+  return found;
 }) as any;

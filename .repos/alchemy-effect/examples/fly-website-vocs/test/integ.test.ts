@@ -12,7 +12,6 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Fly.providers(),
   state: Alchemy.localState(),
   profile: process.env.ALCHEMY_PROFILE,
-  stage: "test",
 });
 
 const stack = beforeAll(deploy(Stack).pipe(Effect.tap(Console.log)), {

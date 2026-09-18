@@ -261,7 +261,7 @@ export declare namespace Cause {
     readonly [ReasonTypeId]: typeof ReasonTypeId
     readonly _tag: Tag
     readonly annotations: ReadonlyMap<string, unknown>
-    annotate(annotations: Context.Context<never> | ReadonlyMap<string, unknown>, options?: {
+    annotate(annotations: Context.Context<never>, options?: {
       readonly overwrite?: boolean | undefined
     }): this
   }

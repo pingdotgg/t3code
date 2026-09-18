@@ -1,5 +1,7 @@
 import * as machines from "@distilled.cloud/fly-io/machines";
+import * as Retry from "@distilled.cloud/fly-io/Retry";
 import * as Fly from "@/Fly";
+import { ensureStarted } from "@/Fly/replicas";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
 import { expect } from "alchemy-test";
@@ -96,6 +98,26 @@ test.provider(
                 protocol: "tcp",
                 internalPort: 80,
                 ports: [{ port: 80, handlers: ["http"] }],
+                checks: [
+                  {
+                    type: "http",
+                    port: 80,
+                    interval: "20s",
+                    timeout: "3s",
+                    gracePeriod: "6s",
+                    method: "HEAD",
+                    path: "/",
+                    protocol: "https",
+                    headers: [
+                      {
+                        name: "X-Alchemy-Check",
+                        values: ["ready", "routing"],
+                      },
+                    ],
+                    tlsServerName: "example.com",
+                    tlsSkipVerify: true,
+                  },
+                ],
               },
             ],
           });
@@ -123,11 +145,106 @@ test.provider(
       expect(refetched.config?.restart?.max_retries).toEqual(3);
       expect(refetched.config?.services?.[0]?.internal_port).toEqual(80);
       expect(refetched.config?.services?.[0]?.ports?.[0]?.port).toEqual(80);
+      const check = refetched.config?.services?.[0]?.checks?.[0];
+      expect(check?.type).toEqual("http");
+      expect(check?.port).toEqual(80);
+      expect(check?.interval).toEqual("20s");
+      expect(check?.timeout).toEqual("3s");
+      expect(check?.grace_period).toEqual("6s");
+      expect(check?.method).toEqual("HEAD");
+      expect(check?.path).toEqual("/");
+      expect(check?.protocol).toEqual("https");
+      expect(check?.headers?.[0]?.name).toEqual("X-Alchemy-Check");
+      expect(check?.headers?.[0]?.values).toEqual(["ready", "routing"]);
+      expect(check?.tls_server_name).toEqual("example.com");
+      expect(check?.tls_skip_verify).toEqual(true);
 
       yield* stack.destroy();
 
       const gone = yield* waitUntilGone(created.appName, created.machineId);
       expect(gone).toEqual("gone");
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+test.provider(
+  "starts an unlaunched machine and recovers from stale state",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deploy = (skipLaunch: boolean) =>
+        stack.deploy(
+          Effect.gen(function* () {
+            const app = yield* Fly.App("LaunchSite");
+            return yield* Fly.Machine("LaunchWeb", {
+              app,
+              region: "iad",
+              image: "nginx:alpine",
+              guest: { cpus: 1, memoryMb: 256 },
+              skipLaunch,
+            });
+          }),
+        );
+      const created = yield* deploy(true);
+      const target = {
+        app_name: created.appName,
+        machine_id: created.machineId,
+      };
+      const unlaunched = yield* machines.getMachine(target);
+      expect(["created", "stopped"]).toContain(unlaunched.state);
+      yield* ensureStarted(created.appName, unlaunched, true);
+      expect(["created", "stopped"]).toContain(
+        (yield* machines.getMachine(target)).state,
+      );
+
+      const waitError = yield* machines
+        .waitMachine({ ...target, state: "started", timeout: 1 })
+        .pipe(Retry.none, Effect.flip);
+      expect(["MachineWaitTimeout", "GatewayTimeout"]).toContain(
+        waitError._tag,
+      );
+
+      const launched = yield* deploy(false);
+      expect(launched.machineId).toBe(created.machineId);
+      expect(launched.state).toBe("started");
+      const running = yield* machines.getMachine(target);
+
+      const alreadyStarted = yield* ensureStarted(
+        created.appName,
+        unlaunched,
+        false,
+      );
+      expect(alreadyStarted.state).toBe("started");
+      expect(alreadyStarted.instance_id).toBe(running.instance_id);
+
+      yield* machines.stopMachine({ ...target, signal: "SIGTERM" });
+      yield* machines
+        .waitMachine({
+          ...target,
+          instance_id: running.instance_id,
+          state: "stopped",
+          timeout: 8,
+        })
+        .pipe(
+          Effect.retry({
+            while: (error) =>
+              error._tag === "GatewayTimeout" ||
+              error._tag === "MachineWaitTimeout",
+            schedule: Schedule.spaced("1 second"),
+            times: 3,
+          }),
+        );
+      expect((yield* machines.getMachine(target)).state).toBe("stopped");
+
+      const restarted = yield* ensureStarted(created.appName, running, false);
+      expect(restarted.state).toBe("started");
+      expect((yield* machines.getMachine(target)).state).toBe("started");
+
+      yield* stack.destroy();
+      expect(yield* waitUntilGone(created.appName, created.machineId)).toBe(
+        "gone",
+      );
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

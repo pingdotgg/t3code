@@ -20,7 +20,7 @@ describe("Alchemy.Stack error channel", () => {
         state: Layer.empty as any,
       },
       Effect.gen(function* () {
-        const value = yield* Config.string("SOME_CONFIG");
+        const value = yield* Config.String("SOME_CONFIG");
         return { value };
       }),
     );

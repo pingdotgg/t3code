@@ -440,12 +440,20 @@ const makeTui = async (logFile: string): Promise<Tui> => {
   // Ctrl+C is handled by US (exitOnCtrlC: false): opentui's built-in handler
   // destroys the renderer while our flush timer may still be queued, which
   // crashed with "TextBuffer is destroyed". We dispose first, then exit.
+  const hadWindow = "window" in globalThis;
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
     // Console capture is owned by StrayOutput's global patch (diverted into
     // the run log) — don't let opentui's overlay re-patch it afterwards.
     consoleMode: "disabled",
   });
+  // opentui's CliRenderer constructor does `global.window = {}` to hang
+  // `requestAnimationFrame` on it and never reads it back. The tests share
+  // this process, and browser-detecting code (emscripten loaders such as
+  // pglite under @prisma/dev) treats `typeof window === "object"` as "in a
+  // browser" and then dereferences `window.location`. Restore the plain-bun
+  // globals a non-TUI run has.
+  if (!hadWindow) delete (globalThis as { window?: unknown }).window;
   const selectionBackground = (): string =>
     renderer.themeMode === "light" ? "#d0d0d0" : "#303030";
 

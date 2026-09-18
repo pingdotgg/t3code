@@ -21,7 +21,7 @@ import { pipeArguments } from "./Pipeable.ts"
 import * as TxRef from "./TxRef.ts"
 import type { NoInfer } from "./Types.ts"
 
-const TypeId = "~effect/transactions/TxChunk"
+const TypeId = "~effect/TxChunk"
 
 /**
  * TxChunk is a transactional chunk data structure that provides Software Transactional Memory (STM)

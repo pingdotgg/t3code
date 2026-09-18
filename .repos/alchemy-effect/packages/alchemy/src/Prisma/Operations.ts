@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import { PrismaClient, type PrismaManagementClient } from "./Client.ts";
+import * as LogsClient from "./Internal/LogsClient.ts";
 import type {
   AppCreateInput,
   AppDeploymentTarget,
@@ -211,9 +212,9 @@ export const stopDeployment = (id: string) =>
 export const getDeploymentLogsRequest = (
   id: string,
   query?: DeploymentLogsQuery,
-) => withClient((client) => client.getDeploymentLogsRequest(id, query));
+) => LogsClient.getDeploymentLogsRequest(id, query);
 export const getBuildLogsRequest = (buildId: string, query?: BuildLogsQuery) =>
-  withClient((client) => client.getBuildLogsRequest(buildId, query));
+  LogsClient.getBuildLogsRequest(buildId, query);
 
 export const listEnvironmentVariables = (query?: {
   cursor?: string | null;

@@ -70,15 +70,15 @@ export const annotationExcludedKeys = new Set([
   SENTINELS_ANNOTATION_KEY,
   STRUCTURAL_ANNOTATION_KEY,
   "representation",
-  "arbitrary",
+  "arbitraryConstraint",
   "brands",
   "toJsonSchema",
   "toCode",
-  "toArbitrary",
   "toEquivalence",
   "toFormatter",
   "toCodec",
   "toCodecJson",
   "toCodecStringTree",
-  "toCodecIso"
+  "toCodecIso",
+  "toCodecArbitrary"
 ])

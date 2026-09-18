@@ -72,6 +72,24 @@ export interface Connection {
 export type Acquirer = Effect<Connection, SqlError, Scope>
 
 /**
+ * Lends a connection for the duration of one effect and takes it back on any
+ * exit, without the caller opening a scope for it.
+ *
+ * **Details**
+ *
+ * A client that can do this offers it alongside its `Acquirer`, for statements
+ * that finish with the effect that runs them. Long-lived work such as `stream`
+ * still goes through the `Acquirer`, whose lease has to outlive the effect
+ * that starts it.
+ *
+ * @category models
+ * @since 4.0.0
+ */
+export type Borrower = <A, E, R>(
+  f: (connection: Connection) => Effect<A, E, R>
+) => Effect<A, E | SqlError, R>
+
+/**
  * Service tag for a low-level SQL `Connection`.
  *
  * @category services

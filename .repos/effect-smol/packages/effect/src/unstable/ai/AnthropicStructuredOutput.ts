@@ -58,7 +58,10 @@ export function toCodecAnthropic<T, E, RD, RE>(
   readonly jsonSchema: JsonSchema.JsonSchema
 } {
   const codec = InternalStructuredOutput.toCodec(schema)
-  const unresolvedDocument = Schema.toJsonSchemaDocument(codec, { generateDescriptions: true })
+  const unresolvedDocument = Schema.toJsonSchemaDocument(codec, {
+    generateDescriptions: true,
+    onExcessProperty: "error"
+  })
   if (hasReferenceCycle(unresolvedDocument.schema, unresolvedDocument.definitions)) {
     throw new Error("AnthropicStructuredOutput: Recursive schemas are not supported")
   }

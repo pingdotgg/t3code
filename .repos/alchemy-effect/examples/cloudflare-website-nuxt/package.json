@@ -11,16 +11,16 @@
   },
   "dependencies": {
     "alchemy": "workspace:*",
-    "effect": "catalog:effect"
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
-    "@tailwindcss/vite": "catalog:frontend",
-    "@types/node": "^24.12.0",
-    "nitropack": "catalog:frontend",
-    "nuxt": "catalog:frontend",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build"
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:node24",
+    "nitropack": "catalog:",
+    "nuxt": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:"
   },
   "repository": {
     "type": "git",

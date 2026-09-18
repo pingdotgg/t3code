@@ -16,8 +16,8 @@
   },
   "dependencies": {
     "@distilled.cloud/hetzner": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect"
+    "effect": "catalog:"
   }
 }

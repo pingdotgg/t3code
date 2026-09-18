@@ -1,4 +1,4 @@
-import { type Graph, hole, Schema, type SchemaRepresentation } from "effect"
+import { type Graph, hole, Schema, SchemaRepresentation } from "effect"
 import { describe, expect, it } from "tstyche"
 
 describe("Schema.Graph", () => {
@@ -58,6 +58,6 @@ describe("Schema.Graph", () => {
   })
 
   it("exposes a kind-aware declaration reviver", () => {
-    expect(Schema.GraphReviver).type.toBe<SchemaRepresentation.DeclarationReviver<Graph.Kind>>()
+    expect(SchemaRepresentation.GraphReviver).type.toBe<SchemaRepresentation.DeclarationReviver<Graph.Kind>>()
   })
 })

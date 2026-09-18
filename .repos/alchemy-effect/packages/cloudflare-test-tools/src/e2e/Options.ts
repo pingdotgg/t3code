@@ -139,8 +139,8 @@ export declare namespace Options {
 
   /**
    * Services the harness runtime provides to a framework Layer while it is
-   * being built (from `@effect/platform-node`'s `NodeServices`, plus a
-   * dotenv/env `ConfigProvider`).
+   * being built (the package's Node platform services, plus a dotenv/env
+   * `ConfigProvider`).
    */
   type FrameworkServices = FileSystem.FileSystem | Path.Path;
 

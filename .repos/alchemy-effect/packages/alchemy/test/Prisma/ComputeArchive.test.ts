@@ -70,6 +70,34 @@ describe("createComputeArchive", () => {
     ).resolves.toBeUndefined();
   });
 
+  it.effect("rejects exclusions that remove a required static index", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "alchemy-prisma-required-index-",
+      });
+      yield* fs.makeDirectory(path.join(root, "public"));
+      yield* fs.writeFileString(path.join(root, "server.mjs"), "export {};");
+      yield* fs.writeFileString(
+        path.join(root, "public", "index.html"),
+        "site",
+      );
+
+      const error = yield* createComputeArchive({
+        directory: root,
+        entrypoint: "server.mjs",
+        ignorePrefix: "public",
+        ignore: ["*.html"],
+        requiredFiles: ["public/index.html"],
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain(
+        "Required file not found in compute artifact: public/index.html",
+      );
+    }).pipe(Effect.scoped, Effect.provide(PlatformServices)),
+  );
+
   it.effect("creates the tar.gz format expected by Prisma Compute", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -377,6 +405,28 @@ describe("createComputeArchive", () => {
         expect(names).not.toContain("bundle/foo..bar");
         expect(unsafe._tag).toBe("Failure");
       }).pipe(Effect.provide(PlatformServices)),
+  );
+
+  it.effect("validates custom ignore patterns before applying a prefix", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectory({
+        prefix: "alchemy-prisma-compute-prefixed-ignore-validation-",
+      });
+      yield* fs.writeFileString(path.join(root, "server.ts"), "safe");
+
+      const unsafe = yield* Effect.exit(
+        createComputeArchive({
+          directory: root,
+          entrypoint: "server.ts",
+          ignore: ["../outside"],
+          ignorePrefix: "public",
+        }),
+      );
+
+      expect(unsafe._tag).toBe("Failure");
+    }).pipe(Effect.provide(PlatformServices)),
   );
 
   it.effect("reports invalid archive limits as typed errors", () =>

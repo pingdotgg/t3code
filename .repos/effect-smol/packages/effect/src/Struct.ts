@@ -209,7 +209,7 @@ export const pick: {
 } = dual(
   2,
   <S extends object, const Keys extends ReadonlyArray<keyof S>>(self: S, keys: Keys) => {
-    return buildStruct(self, (k, v) => (keys.includes(k) ? [k, v] : undefined))
+    return buildStruct(self, (k, v) => (hasPropertyKey(keys, k) ? [k, v] : undefined))
   }
 )
 
@@ -245,7 +245,7 @@ export const omit: {
 } = dual(
   2,
   <S extends object, Keys extends ReadonlyArray<keyof S>>(self: S, keys: Keys) => {
-    return buildStruct(self, (k, v) => (!keys.includes(k) ? [k, v] : undefined))
+    return buildStruct(self, (k, v) => (!hasPropertyKey(keys, k) ? [k, v] : undefined))
   }
 )
 
@@ -762,7 +762,7 @@ export const mapPick: {
     keys: Keys,
     lambda: L
   ) => {
-    return buildStruct(self, (k, v) => [k, keys.includes(k) ? lambda(v) : v])
+    return buildStruct(self, (k, v) => [k, hasPropertyKey(keys, k) ? lambda(v) : v])
   }
 )
 
@@ -816,9 +816,13 @@ export const mapOmit: {
     keys: Keys,
     lambda: L
   ) => {
-    return buildStruct(self, (k, v) => [k, !keys.includes(k) ? lambda(v) : v])
+    return buildStruct(self, (k, v) => [k, !hasPropertyKey(keys, k) ? lambda(v) : v])
   }
 )
+
+function hasPropertyKey(keys: ReadonlyArray<PropertyKey>, key: PropertyKey): boolean {
+  return keys.some((candidate) => candidate === key || typeof candidate === "number" && String(candidate) === key)
+}
 
 /**
  * Walk `source`; for each key decide what to emit via the small callback.

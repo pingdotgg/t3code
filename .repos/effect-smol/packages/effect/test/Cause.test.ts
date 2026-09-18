@@ -1,6 +1,8 @@
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
+import * as Equal from "effect/Equal"
 import { pipe } from "effect/Function"
+import * as Hash from "effect/Hash"
 import * as Option from "effect/Option"
 import * as Result from "effect/Result"
 import assert from "node:assert/strict"
@@ -494,6 +496,33 @@ describe("Cause", () => {
   })
 
   describe("combine", () => {
+    it("preserves unequal reasons with colliding hashes while removing duplicates", () => {
+      class Collision implements Equal.Equal {
+        constructor(readonly value: string) {}
+        [Hash.symbol](): number {
+          return 0
+        }
+        [Equal.symbol](that: Equal.Equal): boolean {
+          return that instanceof Collision && this.value === that.value
+        }
+      }
+
+      const first = Cause.makeFailReason(new Collision("first"))
+      const second = Cause.makeFailReason(new Collision("second"))
+      const duplicate = Cause.makeFailReason(new Collision("first"))
+      assert.strictEqual(Hash.hash(first), Hash.hash(second))
+      assert.strictEqual(Equal.equals(first, second), false)
+
+      const combined = Cause.combine(
+        Cause.fromReasons([first, second, first]),
+        Cause.fromReasons([duplicate, second])
+      )
+      assert.strictEqual(combined.reasons.length, 2)
+      assert.strictEqual(combined.reasons[0], first)
+      assert.strictEqual(combined.reasons[1], second)
+      assert.strictEqual(Cause.combine(combined, Cause.fromReasons([duplicate])), combined)
+    })
+
     it("merges two causes (data-first)", () => {
       const combined = Cause.combine(Cause.fail("a"), Cause.fail("b"))
       assert.strictEqual(combined.reasons.length, 2)

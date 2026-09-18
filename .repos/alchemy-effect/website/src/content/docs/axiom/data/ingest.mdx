@@ -67,7 +67,7 @@ export const Ingest = Axiom.ApiToken("Ingest", {
   },
 });
 
-// src/worker.ts — on the Worker's init Effect, merged with its other binding layers:
+// src/worker.ts — on the Worker's constructor Effect, merged with its other binding layers:
 Effect.provide(
   Layer.mergeAll(
     Cloudflare.R2.ReadWriteBucketBinding,

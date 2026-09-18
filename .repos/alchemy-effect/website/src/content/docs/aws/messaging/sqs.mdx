@@ -142,7 +142,7 @@ the shared handle instead of declaring the queue inline:
 
 ## Resolve the queue in the consumer
 
-Yield the same `Jobs` handle in the consumer's outer init to get
+Yield the same `Jobs` handle in the consumer's constructor to get
 a typed `Queue` resource:
 
 ```diff lang="typescript"
@@ -252,7 +252,7 @@ Trigger a write, then watch the consumer's logs:
 
 ```sh
 curl -X PUT --data 'hello queue' "$URL/items/q1"
-bun alchemy logs JobsWorker --follow
+bun alchemy logs JobsWorker --tail
 ```
 
 Within a couple of seconds you'll see:

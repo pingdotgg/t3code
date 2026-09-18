@@ -12,25 +12,23 @@ import * as GitHub from "alchemy/GitHub";
 providers: Layer.mergeAll(Cloudflare.providers(), GitHub.providers()),
 ```
 
-The next `alchemy login` adds a `GitHub` step with three options:
+Run `alchemy profile edit --add GitHub` and pick between two local options:
 
 - **`gh` CLI** — shells out to `gh auth token` (recommended).
-- **Environment variables** — reads `GITHUB_ACCESS_TOKEN`, falling back
-  to `GITHUB_TOKEN` (good for CI).
 - **Stored PAT** — a personal access token entered interactively,
   saved under `~/.alchemy/credentials/<profile>/`.
 
-When `CI=true`, the login step skips the prompt and selects the
-environment-variables method automatically.
+When `CI=true`, profiles are bypassed and Alchemy reads
+`GITHUB_ACCESS_TOKEN` or `GITHUB_TOKEN` directly.
 
 See [Profiles](/environments/profiles) for how credentials are stored
 and switched.
 
 ## GitHub Enterprise
 
-All three methods work against GitHub Enterprise Server and GitHub
-Enterprise Cloud with data residency. `alchemy login --configure`
-prompts for the host — leave it blank for github.com, or enter your
+Both profile methods and CI environment credentials work against GitHub Enterprise Server and GitHub
+Enterprise Cloud with data residency. `alchemy profile edit
+re-configure GitHub` prompts for the host. Leave it blank for github.com, or enter your
 enterprise host (e.g. `github.example.com` or `acme.ghe.com`).
 
 The host is normalized into the REST API base URL automatically:
@@ -42,7 +40,7 @@ The host is normalized into the REST API base URL automatically:
 Alternatively, set the host in the environment — `GITHUB_BASE_URL`,
 `GITHUB_API_URL` (set automatically on GitHub Actions runners), or
 `GH_HOST` — and every method picks it up without reconfiguring. On an
-enterprise host, the environment-variables method also honors the `gh`
+enterprise host, CI environment resolution also honors the `gh`
 CLI's `GH_ENTERPRISE_TOKEN` / `GITHUB_ENTERPRISE_TOKEN` before falling
 back to `GITHUB_ACCESS_TOKEN` / `GITHUB_TOKEN`, and the `gh` CLI method
 runs `gh auth token --hostname <host>` (run
@@ -57,7 +55,7 @@ configuration or the environment — pass it to `providers()`:
 providers: GitHub.providers({ baseUrl: "github.example.com" }),
 ```
 
-The auth provider sees the pinned host too: `alchemy login` stops
+The auth provider sees the pinned host too: the configure flow stops
 prompting for it and authenticates against it directly.
 
 ### Per-resource host override

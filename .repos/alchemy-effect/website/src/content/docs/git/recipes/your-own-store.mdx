@@ -1,0 +1,92 @@
+---
+title: Bring your own store
+description: Bytes have to live somewhere that is neither R2 nor S3. Implement the five operations of Git.BlobStore and provide it in place of the shipped Layers.
+---
+
+The examples use `Authentication` from
+[Getting Started](/git/getting-started): the application's request middleware.
+
+Your packs have to live in a store the package does not ship for: a
+different object store, an on-premises S3 clone with its own signing,
+a store behind a private gateway. `Git.BlobStore` is a contract of five
+operations, and a Layer that implements them drops into the graph:
+
+```diff lang="typescript"
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryDurableObject),
+  Layer.provide(Git.HasherInline),
+-  Layer.provide(Git.BlobStoreR2(GitObjects)),
++  Layer.provide(BlobStoreMine),
+);
+```
+
+## The contract
+
+```typescript
+interface BlobStoreShape {
+  get(key, range?): Effect<BlobBody | null, BlobStoreError>;
+  put(key, body, { contentLength }): Effect<void, BlobStoreError>;
+  multipart(key): Effect<BlobMultipart, BlobStoreError>;
+  delete(keys): Effect<void, BlobStoreError>;
+  list(prefix): Stream<BlobMeta, BlobStoreError>;
+}
+```
+
+`get` with a range is how packs are read: a fetch asks for a few large
+windows of an immutable pack. `put` writes a whole object of known
+length. `multipart` is how a push body larger than memory is parked as
+it arrives. `delete` and `list` serve compaction and purge, never a
+serving path.
+
+## The Layer
+
+```typescript
+import * as Git from "alchemy/Git";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+export const BlobStoreMine: Layer.Layer<Git.BlobStore> = Layer.effect(
+  Git.BlobStore,
+  Effect.gen(function* () {
+    const client = yield* MyStoreClient; // yours
+
+    return {
+      get: (key, range) =>
+        client.read(key, range).pipe(
+          Effect.map((r) => (r ? { size: r.size, bytes: r.bytes, stream: r.stream } : null)),
+          Effect.mapError((e) => new Git.BlobStoreError({ reason: String(e) })),
+        ),
+      put: (key, body, { contentLength }) => /* ... */,
+      multipart: (key) => /* returns { uploadId, uploadPart, complete, abort } */,
+      delete: (keys) => /* ... */,
+      list: (prefix) => /* ... */,
+    } satisfies Git.BlobStoreShape;
+  }),
+);
+```
+
+The Layer is built once in the Worker and once in each Durable Object,
+so construction must be cheap and hold nothing with a finalizer. Open
+connections per call, not per Layer.
+
+## Rules the push path relies on
+
+Multipart parts are uniform in size except the last, 8 MiB as written
+today. `uploadPart` may be called from any isolate, and `complete`
+receives the collected parts and must accept them in any order. A
+store that enforces those two rules works with no change above it.
+
+Errors are `BlobStoreError` with a `reason`. The service retries
+nothing on your behalf, so a transient failure you want retried is
+retried inside your Layer.
+
+## Verifying it
+
+Deploy the host with your Layer, push a repository, clone it back
+under `git fsck --strict`, then push enough to trigger compaction and
+clone again. If both clones are clean, every operation has been
+exercised: `multipart` and `get` by the push, `put` by compaction and
+bundling, `delete` and `list` by deleting the repository.

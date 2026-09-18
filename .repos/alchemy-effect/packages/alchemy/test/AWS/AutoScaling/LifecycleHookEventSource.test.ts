@@ -120,6 +120,10 @@ describe("AutoScaling LifecycleHook event source + CompleteLifecycleAction", () 
                 ),
           ),
           Effect.map((json) => json as { ok: boolean; tag: string }),
+          // `repeat` only re-runs successes: a transient 502 from the
+          // Function URL (cold start right after deploy) must be retried
+          // too, the way the /health probe is.
+          Effect.retry({ schedule: Schedule.spaced("3 seconds"), times: 10 }),
           Effect.repeat({
             until: (b) =>
               b.tag !== "AccessDenied" && b.tag !== "AccessDeniedException",

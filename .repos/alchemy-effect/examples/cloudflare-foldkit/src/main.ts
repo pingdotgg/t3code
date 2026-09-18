@@ -1,7 +1,7 @@
 import { Match as M, Schema as S } from "effect";
-import { Command, Runtime } from "foldkit";
+import type { Runtime, Update } from "foldkit";
 import type { Document, HtmlBuilder } from "foldkit/html";
-import { m } from "foldkit/message";
+import { defineMessageUnion } from "foldkit/message";
 
 // MODEL
 
@@ -10,15 +10,12 @@ export type Model = typeof Model.Type;
 
 // MESSAGE
 
-export const ClickedDecrement = m("ClickedDecrement");
-export const ClickedIncrement = m("ClickedIncrement");
-export const ClickedReset = m("ClickedReset");
-
-export const Message = S.Union([
-  ClickedDecrement,
-  ClickedIncrement,
-  ClickedReset,
-]);
+export const Message = defineMessageUnion({
+  ClickedDecrement: {},
+  ClickedIncrement: {},
+  ClickedReset: {},
+});
+export const { ClickedDecrement, ClickedIncrement, ClickedReset } = Message;
 export type Message = typeof Message.Type;
 
 // UPDATE
@@ -26,24 +23,21 @@ export type Message = typeof Message.Type;
 export const update = (
   model: Model,
   message: Message,
-): readonly [Model, ReadonlyArray<Command.Command<Message>>] =>
+): Update.Return<Model, Message> =>
   M.value(message).pipe(
-    M.withReturnType<
-      readonly [Model, ReadonlyArray<Command.Command<Message>>]
-    >(),
+    M.withReturnType<Update.Return<Model, Message>>(),
     M.tagsExhaustive({
-      ClickedDecrement: () => [{ count: model.count - 1 }, []],
-      ClickedIncrement: () => [{ count: model.count + 1 }, []],
-      ClickedReset: () => [{ count: 0 }, []],
+      ClickedDecrement: () => ({ model: { count: model.count - 1 } }),
+      ClickedIncrement: () => ({ model: { count: model.count + 1 } }),
+      ClickedReset: () => ({ model: { count: 0 } }),
     }),
   );
 
 // INIT
 
-export const init: Runtime.ApplicationInit<Model, Message> = () => [
-  { count: 0 },
-  [],
-];
+export const init: Runtime.ApplicationInit<Model, Message> = () => ({
+  model: { count: 0 },
+});
 
 // VIEW
 

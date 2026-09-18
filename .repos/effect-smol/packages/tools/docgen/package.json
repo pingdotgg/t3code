@@ -1,6 +1,6 @@
 {
   "name": "@effect/docgen",
-  "version": "4.0.0-rc.112",
+  "version": "4.0.0-rc.115",
   "type": "module",
   "license": "MIT",
   "description": "An opinionated documentation generator for Effect projects",
@@ -76,9 +76,9 @@
     "@effect/vitest": "workspace:^",
     "@types/babel__code-frame": "^7.27.0",
     "@types/doctrine": "^0.0.9",
-    "@types/node": "^26.2.0",
-    "tsx": "^4.23.12",
+    "@types/node": "^26.4.1",
+    "tsx": "^4.23.13",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.11"
+    "vitest": "^5.0.0"
   }
 }

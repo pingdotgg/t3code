@@ -44,6 +44,24 @@ describe("Client", () => {
       )
     }).pipe(Effect.provide(Reactivity.layer)))
 
+  it.effect.skipIf(!isBun)("exports inside transactions", () =>
+    Effect.gen(function*() {
+      const { SqliteClient } = yield* Effect.promise(() => import("@effect/sql-sqlite-bun"))
+      const { Database } = yield* Effect.promise(() => import("bun:sqlite"))
+      const sql = yield* SqliteClient.make({ filename: ":memory:" })
+      yield* sql`CREATE TABLE test (id INTEGER PRIMARY KEY)`
+
+      const bytes = yield* sql.withTransaction(
+        sql`INSERT INTO test DEFAULT VALUES`.pipe(Effect.andThen(sql.export))
+      )
+      const snapshot = Database.deserialize(bytes)
+      try {
+        assert.deepStrictEqual(snapshot.query("SELECT * FROM test").all(), [{ id: 1 }])
+      } finally {
+        snapshot.close()
+      }
+    }).pipe(Effect.provide(Reactivity.layer)))
+
   it.effect.skipIf(!isBun)("readonly clients reject writes", () =>
     Effect.gen(function*() {
       const { SqliteClient } = yield* Effect.promise(() => import("@effect/sql-sqlite-bun"))
@@ -62,11 +80,13 @@ describe("Client", () => {
 
       const sql = yield* SqliteClient.make({ filename, readonly: true })
       assert.deepStrictEqual(yield* sql`SELECT * FROM test`, [])
-      assert.deepStrictEqual(yield* sql.withTransaction(sql`SELECT * FROM test`), [])
 
       const error = yield* Effect.flip(sql`INSERT INTO test DEFAULT VALUES`)
       assert.strictEqual(error._tag, "SqlError")
       assert(error.reason.cause instanceof Error)
       assert.match(error.reason.cause.message, /attempt to write a readonly database/i)
+
+      yield* sql`PRAGMA query_only = ON`
+      assert.deepStrictEqual(yield* sql.withTransaction(sql`SELECT * FROM test`), [])
     }).pipe(Effect.provide(Reactivity.layer)))
 })

@@ -11,6 +11,7 @@
  */
 import * as Arr from "../../Array.ts"
 import * as Effect from "../../Effect.ts"
+import * as Encoding from "../../Encoding.ts"
 import { dual } from "../../Function.ts"
 import { type Pipeable, pipeArguments } from "../../Pipeable.ts"
 import * as Predicate from "../../Predicate.ts"
@@ -1385,7 +1386,9 @@ export const UserMessage: Schema.Struct<{
   ...BaseMessage.fields,
   role: Schema.Literal("user"),
   content: Schema.Union([
-    ContentFromString,
+    ContentFromString.check(
+      Schema.makeFilter((content) => content.length === 1 && Object.keys(content[0].options).length === 0)
+    ),
     Schema.Array(Schema.Union([TextPart, FilePart]))
   ])
 }).annotate({ identifier: "UserMessage" })
@@ -1585,7 +1588,9 @@ export const AssistantMessage: Schema.Struct<{
   ...BaseMessage.fields,
   role: Schema.Literal("assistant"),
   content: Schema.Union([
-    ContentFromString,
+    ContentFromString.check(
+      Schema.makeFilter((content) => content.length === 1 && Object.keys(content[0].options).length === 0)
+    ),
     Schema.Array(Schema.Union([
       TextPart,
       FilePart,
@@ -1785,7 +1790,7 @@ export const Message: Schema.Codec<Message, MessageEncoded> = Schema.Union([
 // Prompt
 // =============================================================================
 
-const TypeId = "~effect/unstable/ai/Prompt" as const
+const TypeId = "~effect/ai/Prompt" as const
 
 /**
  * Type guard to check if a value is a Prompt.
@@ -1839,7 +1844,7 @@ export const Prompt: Schema.Codec<Prompt, PromptEncoded> = Schema.Struct({
 }).pipe(
   Schema.decodeTo(
     $Prompt,
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (input, options) =>
         Effect.mapBothEager(
           SchemaParser.decodeEffect(Schema.Array(Message))(input.content),
@@ -2122,6 +2127,16 @@ export const fromResponseParts = (parts: ReadonlyArray<Response.AnyPart>): Promp
           active.options = mergeOptions(active.options, part.metadata)
           assistantParts.push(makePart("reasoning", active))
         }
+        break
+      }
+
+      // File Parts
+      case "file": {
+        assistantParts.push(makePart("file", {
+          data: Encoding.encodeBase64(part.data),
+          mediaType: part.mediaType,
+          options: part.metadata
+        }))
         break
       }
 

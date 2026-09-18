@@ -1,3 +1,4 @@
+import type { Rpc } from "@cloudflare/workers-types";
 import type { Input } from "../../Input.ts";
 import type { Worker } from "./Worker.ts";
 
@@ -30,7 +31,9 @@ export interface WorkerEntrypointOptions {
  * A service binding to a specific entrypoint of another Worker — the value
  * form accepted in an async Worker's `env`. See {@link WorkerEntrypoint}.
  */
-export interface WorkerEntrypointBinding {
+export interface WorkerEntrypointBinding<
+  Entrypoint extends Rpc.WorkerEntrypointBranded | undefined = undefined,
+> {
   /** Brand discriminating entrypoint bindings in `env` classification. */
   readonly kind: WorkerEntrypointTypeId;
   /** The target Worker resource. */
@@ -39,6 +42,8 @@ export interface WorkerEntrypointBinding {
   readonly entrypoint: string | undefined;
   /** `ctx.props` delivered to the target entrypoint. */
   readonly props: Record<string, Input<unknown>> | undefined;
+  /** Entry-point instance type used by `InferEnv`; absent at runtime. */
+  readonly "~alchemy/entrypoint"?: Entrypoint;
 }
 
 /**
@@ -50,14 +55,12 @@ export interface WorkerEntrypointBinding {
  * an entry module as an entrypoint — is bound with `WorkerEntrypoint`,
  * which selects the class by name and can deliver `ctx.props` to it.
  *
+ * ### Defining the Target Entrypoint
+ * Export a class extending Cloudflare's native `WorkerEntrypoint` from
+ * the target Worker's module. This `Api` class defines the RPC methods
+ * that callers can invoke through a named service binding.
  *
- * ### Binding a Named Entrypoint
- * The target Worker exports a `WorkerEntrypoint` class alongside its
- * default handler; the consumer selects it by name. `InferEnv` types the
- * binding as a `Fetcher` service stub — RPC methods are called on it
- * directly.
- *
- * **Example:** Bind and call a named entrypoint
+ * **Example:** Export the Api class
  * ```typescript
  * // target/src/worker.ts
  * import { WorkerEntrypoint } from "cloudflare:workers";
@@ -68,19 +71,47 @@ export interface WorkerEntrypointBinding {
  *   }
  * }
  *
- * export default { async fetch() { return new Response("ok"); } };
+ * export default {
+ *   async fetch() {
+ *     return new Response("ok");
+ *   },
+ * };
  * ```
  *
+ * ### Binding a Named Entrypoint
+ * Import the exported `Api` class as a type and select its named export
+ * with `"Api"`. Pass its instance type (`Api`, not `typeof Api`) to get
+ * Cloudflare's native `Service<Api>` RPC client. Without a type argument,
+ * the binding is a bare `Fetcher`; the entrypoint name alone cannot
+ * identify the class's type.
+ *
+ * **Example:** Bind and call the exported Api
  * ```typescript
  * // alchemy.run.ts
- * const target = yield* Cloudflare.Worker("Target", { main: "./target/src/worker.ts" });
+ * import * as Cloudflare from "alchemy/Cloudflare";
+ * import type { Api } from "./target/src/worker.ts";
+ *
+ * const target = yield* Cloudflare.Worker("Target", {
+ *   main: "./target/src/worker.ts",
+ * });
  *
  * const caller = yield* Cloudflare.Worker("Caller", {
  *   main: "./caller/src/worker.ts",
  *   env: {
- *     API: Cloudflare.WorkerEntrypoint(target, "Api"),
+ *     API: Cloudflare.WorkerEntrypoint<Api>(target, "Api"),
  *   },
  * });
+ * ```
+ *
+ * ```typescript
+ * // caller/src/worker.ts
+ * import type { CallerEnv } from "../../alchemy.run.ts";
+ *
+ * export default {
+ *   async fetch(request: Request, env: CallerEnv) {
+ *     return new Response(await env.API.greet("alice"));
+ *   },
+ * };
  * ```
  *
  * ### Delivering ctx.props
@@ -102,10 +133,12 @@ export interface WorkerEntrypointBinding {
  * @product Workers
  * @category Workers & Compute
  */
-export const WorkerEntrypoint = (
+export const WorkerEntrypoint = <
+  Entrypoint extends Rpc.WorkerEntrypointBranded | undefined = undefined,
+>(
   worker: Worker,
   entrypointOrOptions?: string | WorkerEntrypointOptions,
-): WorkerEntrypointBinding => {
+): WorkerEntrypointBinding<NoInfer<Entrypoint>> => {
   const options =
     typeof entrypointOrOptions === "string"
       ? { entrypoint: entrypointOrOptions }
@@ -121,7 +154,7 @@ export const WorkerEntrypoint = (
 /** Structural guard for {@link WorkerEntrypointBinding} `env` values. */
 export const isWorkerEntrypoint = (
   value: unknown,
-): value is WorkerEntrypointBinding =>
+): value is WorkerEntrypointBinding<any> =>
   typeof value === "object" &&
   value !== null &&
   (value as { kind?: unknown }).kind === WorkerEntrypointTypeId;

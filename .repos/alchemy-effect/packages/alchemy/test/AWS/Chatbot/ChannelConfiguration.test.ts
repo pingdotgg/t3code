@@ -23,7 +23,7 @@ const { test } = Test.make({ providers: AWS.providers() });
 // Workspace-onboarding gate: creating a configuration against a workspace
 // that has not been authorized via the console OAuth flow is rejected with
 // the synthetic SlackWorkspaceNotAuthorized tag (patched in
-// distilled/packages/aws/patches/chatbot.json). A failed create still
+// submodules/distilled/packages/aws/patches/chatbot.json). A failed create still
 // reserves the configuration name server-side (undeletable tombstone), so
 // repeated runs of this probe surface the typed ConflictException instead —
 // both tags prove the create is rejected without onboarding.

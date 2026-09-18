@@ -108,9 +108,13 @@ const waitForTerminal = (url: string, instanceId: string) =>
 const readWorkflowRow = (stack: Test.ScratchStack) =>
   Effect.gen(function* () {
     const state = yield* yield* State.State;
-    const fqns = yield* state.list({ stack: stack.name, stage: "test" });
+    const fqns = yield* state.list({ stack: stack.name, stage: stack.stage });
     for (const fqn of fqns) {
-      const row = yield* state.get({ stack: stack.name, stage: "test", fqn });
+      const row = yield* state.get({
+        stack: stack.name,
+        stage: stack.stage,
+        fqn,
+      });
       if (
         row &&
         (row as { resourceType?: string }).resourceType ===

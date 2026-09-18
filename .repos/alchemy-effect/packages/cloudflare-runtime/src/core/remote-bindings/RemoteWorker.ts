@@ -14,6 +14,7 @@ const RemoteWorkerScript = {
       "#cloudflare-runtime-core-worker/remote-bindings/workers/remote.worker",
     ),
 };
+import { DEFAULT_COMPATIBILITY_DATE } from "../internal/constants.ts";
 import type { ConfigError, SystemError } from "../RuntimeError.shared.ts";
 import { ApiError } from "../RuntimeError.shared.ts";
 import * as Access from "./Access.ts";
@@ -134,7 +135,7 @@ export const make: (
         cfPreviewUploadConfigToken,
         wranglerSessionConfig: { workersDev: true, minimalMode: true },
         metadata: {
-          compatibilityDate: "2025-04-28",
+          compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
           bindings: options.bindings,
           mainModule: files[0].name,
         },

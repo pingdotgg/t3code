@@ -173,7 +173,7 @@ describe("SchemaRepresentation.fromJson", () => {
       representation: {
         _tag: "Union",
         types: [{ _tag: "String", checks: [] }, { _tag: "Number", checks: [] }],
-        mode: "oneOf",
+        options: { mode: "oneOf" },
         checks: []
       },
       references: {}

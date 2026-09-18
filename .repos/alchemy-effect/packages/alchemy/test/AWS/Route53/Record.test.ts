@@ -395,7 +395,7 @@ test.provider(
       // no attributes, and the Output-valued identity props lost in the
       // state round-trip.
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state

@@ -233,6 +233,12 @@ describe("Trie", () => {
     deepStrictEqual(Array.from(trie2), [["me", 1], ["mid", 3], ["mind", 2]])
   })
 
+  it("remove preserves a valued prefix", () => {
+    const trie = Trie.make(["ab", 1], ["abc", 2]).pipe(Trie.remove("abc"))
+
+    deepStrictEqual(Array.from(trie), [["ab", 1]], "valued prefix should remain after removing its extension")
+  })
+
   it("keys returns keys in sorted order", () => {
     const trie = Trie.empty<number>().pipe(
       Trie.insert("cab", 0),

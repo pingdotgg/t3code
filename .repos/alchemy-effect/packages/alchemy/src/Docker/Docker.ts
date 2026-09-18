@@ -1,9 +1,11 @@
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import { flow } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import {
   PlatformError,
@@ -11,12 +13,46 @@ import {
   type SystemErrorTag,
 } from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import type { ScopedPlanStatusSession } from "../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../Report.ts";
 import { createPhysicalName } from "../PhysicalName.ts";
+import {
+  classifyDockerRegistryError,
+  type DockerImagePublicationError,
+} from "./RegistryError.ts";
+
+/** Credentials for a single image registry, scoped to a Docker command. */
+export interface RegistryCredentials {
+  /** Registry hostname, without a URL scheme. */
+  server: string;
+  /** Registry authentication username. */
+  username: string;
+  /** Registry password or access token. */
+  password: string | Redacted.Redacted<string>;
+}
+
+const RegistryAuth = Schema.String.pipe(
+  Schema.check(
+    Schema.makeFilter((value) => {
+      const decoded = Encoding.decodeBase64(value);
+      return Result.isSuccess(decoded) && decoded.success.indexOf(58) > 0;
+    }),
+  ),
+);
+
+const decodeRegistryAuthConfig = Schema.Struct({
+  auths: Schema.Record(
+    Schema.String,
+    Schema.Struct({ auth: RegistryAuth }),
+  ).pipe(Schema.NullOr, Schema.optional),
+}).pipe(Schema.fromJsonString, (schema) =>
+  Schema.decodeEffect(schema, { onExcessProperty: "error" }),
+);
 
 export class Docker extends Context.Service<
   Docker,
@@ -80,7 +116,13 @@ export class Docker extends Context.Service<
       ) => Effect.Effect<CommandOutput, PlatformError>;
     };
     readonly image: {
-      /** Builds a new image. If a session is provided, build logs will be emitted as session notes. */
+      /**
+       * Builds locally, or publishes to a registry when credentials are
+       * supplied. With Buildx 0.26.0 or newer the image is exported straight
+       * from BuildKit (`buildx build --push`); older plugins build into the
+       * local image store and then `push`. If a session is provided, build
+       * logs will be emitted as session notes.
+       */
       readonly build: (
         options: {
           context: string;
@@ -95,7 +137,8 @@ export class Docker extends Context.Service<
           engineContext?: string;
         },
         session?: ScopedPlanStatusSession,
-      ) => Effect.Effect<CommandOutput, PlatformError>;
+        registry?: RegistryCredentials,
+      ) => Effect.Effect<CommandOutput, DockerImagePublicationError>;
       /** Pulls an image. */
       readonly pull: (
         ref: string,
@@ -113,14 +156,10 @@ export class Docker extends Context.Service<
        */
       readonly push: (
         ref: string,
-        credentials: {
-          server: string;
-          username: string;
-          password: string | Redacted.Redacted<string>;
-        },
+        credentials: RegistryCredentials,
         platform?: string,
         context?: string,
-      ) => Effect.Effect<CommandOutput, PlatformError>;
+      ) => Effect.Effect<CommandOutput, DockerImagePublicationError>;
       /** Tags an image. */
       readonly tag: (
         source: string,
@@ -465,7 +504,7 @@ export interface CommandOutput {
   stderr: string;
 }
 
-const DockerBin = Config.string("DOCKER_BIN").pipe(
+const DockerBin = Config.String("DOCKER_BIN").pipe(
   Effect.orElseSucceed(() => "docker"),
 );
 
@@ -560,6 +599,122 @@ export const DockerLive = Layer.effect(
         }),
       );
 
+    const registryEnvironment = Effect.fn("registryEnvironment")(
+      (credentials: RegistryCredentials) =>
+        Config.Redacted("DOCKER_AUTH_CONFIG").pipe(
+          Config.withDefault(Redacted.make("{}")),
+          Effect.map((value) => Redacted.value(value) || "{}"),
+          Effect.flatMap(decodeRegistryAuthConfig),
+          // Schema diagnostics may include credential input. Do not retain them.
+          Effect.mapError(() =>
+            systemError({
+              _tag: "InvalidData",
+              args: ["buildx", "build"],
+              description: "Invalid DOCKER_AUTH_CONFIG; expected an auths map.",
+            }),
+          ),
+          Effect.map((current) => {
+            const password = Redacted.isRedacted(credentials.password)
+              ? Redacted.value(credentials.password)
+              : credentials.password;
+            const auth = Encoding.encodeBase64(
+              `${credentials.username}:${password}`,
+            );
+            // Preserve Docker's file/helper fallback, contexts, and builders.
+            return {
+              DOCKER_AUTH_CONFIG: JSON.stringify({
+                auths: { ...current.auths, [credentials.server]: { auth } },
+              }),
+            };
+          }),
+        ),
+    );
+
+    // How a build reaches a registry. Buildx 0.26 is the first release
+    // embedding Docker CLI 28.3's DOCKER_AUTH_CONFIG credential store, so it
+    // can `buildx build --push` straight from BuildKit. Older plugins (e.g.
+    // the buildx bundled with Docker Desktop < 4.44) silently ignore the
+    // variable, so the image is instead `--load`ed into the local store and
+    // published with the isolated-config `push`. Without any buildx plugin
+    // the legacy builder always loads, so a plain `image build` suffices.
+    // Probed once per Docker service instance.
+    const publication = yield* Effect.cached(
+      Effect.gen(function* () {
+        const version = yield* run(["buildx", "version"]).pipe(Effect.option);
+        if (Option.isNone(version)) return "legacy" as const;
+        // Numeric template captures can consume version separators as decimals.
+        const match =
+          /^github\.com\/docker\/buildx v(\d+)\.(\d+)\.\d+(?:[-+][^\s]+)?(?:\s.*)?$/.exec(
+            version.value.stdout,
+          );
+        if (!match) return "load" as const;
+        const major = Number(match[1]);
+        const minor = Number(match[2]);
+        return major >= 1 || minor >= 26
+          ? ("export" as const)
+          : ("load" as const);
+      }),
+    );
+
+    const push: Docker["Service"]["image"]["push"] = Effect.fn(
+      function* (ref, credentials, platform, context) {
+        // Write the registry credentials directly into an isolated docker config
+        // as a plaintext `auths` entry and skip `docker login` entirely.
+        //
+        // `docker login` is the wrong tool here: on macOS Docker Desktop it routes
+        // through the shared `osxkeychain`/`desktop` credential helper *regardless*
+        // of an isolated DOCKER_CONFIG, so concurrent deploys either race the system
+        // keychain (`The specified item already exists in the keychain (-25299)`) or
+        // land the credential in the helper — leaving this isolated config without
+        // an `auths` entry, so the subsequent `docker push` fails with "no basic
+        // auth credentials". Embedding the base64 `auth` inline (the same thing
+        // `docker login` would write when no credsStore is configured) makes each
+        // deploy fully self-contained: no credential helper, no keychain, no login
+        // race. Only `push` reads this config; `build`/`pull`/`tag` keep using the
+        // global docker config (buildx builders, `docker context`, etc. intact).
+        const dir = yield* fs.makeTempDirectoryScoped({
+          prefix: "alchemy-docker-",
+        });
+        const config = yield* Effect.sync(() => {
+          const password = Redacted.isRedacted(credentials.password)
+            ? Redacted.value(credentials.password)
+            : credentials.password;
+          const auth = Buffer.from(
+            `${credentials.username}:${password}`,
+          ).toString("base64");
+          return JSON.stringify({
+            auths: {
+              [credentials.server]: { auth },
+            },
+          });
+        });
+        yield* fs.writeFileString(path.join(dir, "config.json"), config);
+        if (platform === undefined) {
+          return yield* run([...formatArgs({ context }), "push", ref], {
+            DOCKER_CONFIG: dir,
+          });
+        }
+        return yield* run(
+          [...formatArgs({ context }), "push", "--platform", platform, ref],
+          { DOCKER_CONFIG: dir },
+        ).pipe(
+          // Engines without the containerd image store reject `--platform`
+          // on push; their local tag is already narrowed to the requested
+          // platform by `pull --platform`, so a plain push is equivalent.
+          Effect.catchIf(
+            (error) =>
+              /--platform|unknown flag|containerd/i.test(String(error)),
+            () =>
+              run([...formatArgs({ context }), "push", ref], {
+                DOCKER_CONFIG: dir,
+              }),
+          ),
+        );
+      },
+      Effect.scoped,
+      Effect.mapError(classifyDockerRegistryError),
+    );
+
     return Docker.of({
       run,
       materialize: Effect.fn((options) =>
@@ -623,28 +778,71 @@ export const DockerLive = Layer.effect(
           run([...formatArgs({ context }), "container", "stop", name]),
       },
       image: {
-        build: (
+        build: Effect.fn("Docker.image.build")(function* (
           { context: buildContext, engineContext, args, ...options },
           session,
-        ) =>
-          run(
+          registry,
+        ) {
+          const tap = session
+            ? Stream.tapSink(
+                Sink.make<string>()(
+                  flow(
+                    Stream.splitLines,
+                    Stream.runForEach((line) =>
+                      session.note(line, { kind: "output" }),
+                    ),
+                  ),
+                ),
+              )
+            : undefined;
+          const buildArgs = [
+            buildContext,
+            ...formatArgs(options),
+            ...(args ?? []),
+          ];
+          const engine = formatArgs({ context: engineContext });
+          if (registry === undefined) {
+            return yield* run(
+              [...engine, "image", "build", ...buildArgs],
+              undefined,
+              tap,
+            );
+          }
+          const mode = yield* publication;
+          if (mode === "export") {
+            // Export straight from BuildKit to the registry; the image never
+            // round-trips through the local image store.
+            const env = yield* registryEnvironment(registry);
+            return yield* run(
+              [...engine, "buildx", "build", "--push", ...buildArgs],
+              env,
+              tap,
+            ).pipe(Effect.mapError(classifyDockerRegistryError));
+          }
+          // Older Buildx ignores DOCKER_AUTH_CONFIG, so a `--push` export
+          // would fail with "no basic auth credentials". Build into the local
+          // store and publish with the isolated-config `push` instead.
+          // `--load` matters for non-loading builders (docker-container):
+          // without it the result stays in the build cache and `push` sees no
+          // such tag.
+          yield* run(
             [
-              ...formatArgs({ context: engineContext }),
-              "image",
-              "build",
-              buildContext,
-              ...formatArgs(options),
-              ...(args ?? []),
+              ...engine,
+              ...(mode === "load"
+                ? ["buildx", "build", "--load"]
+                : ["image", "build"]),
+              ...buildArgs,
             ],
             undefined,
-            session
-              ? Stream.tapSink(
-                  Sink.make<string>()(
-                    flow(Stream.splitLines, Stream.runForEach(session.note)),
-                  ),
-                )
-              : undefined,
-          ),
+            tap,
+          );
+          return yield* push(
+            options.tag,
+            registry,
+            options.platform,
+            engineContext,
+          );
+        }),
         pull: (ref, platform, context) =>
           run([
             ...formatArgs({ context }),
@@ -670,60 +868,7 @@ export const DockerLive = Layer.effect(
           ]),
         tag: (source, target, context) =>
           run([...formatArgs({ context }), "image", "tag", source, target]),
-        push: Effect.fn(function* (ref, credentials, platform, context) {
-          // Write the registry credentials directly into an isolated docker config
-          // as a plaintext `auths` entry and skip `docker login` entirely.
-          //
-          // `docker login` is the wrong tool here: on macOS Docker Desktop it routes
-          // through the shared `osxkeychain`/`desktop` credential helper *regardless*
-          // of an isolated DOCKER_CONFIG, so concurrent deploys either race the system
-          // keychain (`The specified item already exists in the keychain (-25299)`) or
-          // land the credential in the helper — leaving this isolated config without
-          // an `auths` entry, so the subsequent `docker push` fails with "no basic
-          // auth credentials". Embedding the base64 `auth` inline (the same thing
-          // `docker login` would write when no credsStore is configured) makes each
-          // deploy fully self-contained: no credential helper, no keychain, no login
-          // race. Only `push` reads this config; `build`/`pull`/`tag` keep using the
-          // global docker config (buildx builders, `docker context`, etc. intact).
-          const dir = yield* fs.makeTempDirectoryScoped({
-            prefix: "alchemy-docker-",
-          });
-          const config = yield* Effect.sync(() => {
-            const password = Redacted.isRedacted(credentials.password)
-              ? Redacted.value(credentials.password)
-              : credentials.password;
-            const auth = Buffer.from(
-              `${credentials.username}:${password}`,
-            ).toString("base64");
-            return JSON.stringify({
-              auths: {
-                [credentials.server]: { auth },
-              },
-            });
-          });
-          yield* fs.writeFileString(path.join(dir, "config.json"), config);
-          if (platform === undefined) {
-            return yield* run([...formatArgs({ context }), "push", ref], {
-              DOCKER_CONFIG: dir,
-            });
-          }
-          return yield* run(
-            [...formatArgs({ context }), "push", "--platform", platform, ref],
-            { DOCKER_CONFIG: dir },
-          ).pipe(
-            // Engines without the containerd image store reject `--platform`
-            // on push; their local tag is already narrowed to the requested
-            // platform by `pull --platform`, so a plain push is equivalent.
-            Effect.catchIf(
-              (error) =>
-                /--platform|unknown flag|containerd/i.test(String(error)),
-              () =>
-                run([...formatArgs({ context }), "push", ref], {
-                  DOCKER_CONFIG: dir,
-                }),
-            ),
-          );
-        }, Effect.scoped),
+        push,
       },
       volume: {
         create: ({ context, ...options }) =>

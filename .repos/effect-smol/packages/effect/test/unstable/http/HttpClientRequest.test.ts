@@ -1,10 +1,52 @@
 import { describe, it } from "@effect/vitest"
 import { assertNone, assertSome, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
-import { Effect, Stream } from "effect"
+import { ByteSize, Effect, FileSystem, Stream } from "effect"
 import * as Option from "effect/Option"
 import { Headers, HttpBody, HttpClientRequest } from "effect/unstable/http"
 
 describe("HttpClientRequest", () => {
+  describe("bodyFile", () => {
+    const oversized = 9007199254740993n
+    const fileSystem = (size: bigint) =>
+      FileSystem.makeNoop({
+        stat: () => Effect.succeed({ size: ByteSize.bytes(size) } as FileSystem.File.Info),
+        stream: () => Stream.empty
+      })
+
+    it.each([
+      { name: "unsafe bigint offset", size: oversized + 3n, options: { offset: oversized }, expected: 3 },
+      { name: "range past EOF", size: 6n, options: { offset: 7 }, expected: 0 }
+    ])("sets the exact outgoing Content-Length for $name", async ({ expected, options, size }) => {
+      const request = await Effect.runPromise(
+        HttpClientRequest.post("https://example.com").pipe(
+          HttpClientRequest.bodyText("stale"),
+          HttpClientRequest.bodyFile("x", { ...options, contentType: "application/octet-stream" }),
+          Effect.provideService(FileSystem.FileSystem, fileSystem(size))
+        )
+      )
+      strictEqual(request.body._tag, "Stream")
+      if (request.body._tag === "Stream") {
+        strictEqual(request.body.contentLength, expected)
+      }
+      strictEqual(request.headers["content-length"], String(expected))
+      strictEqual(request.headers["content-type"], "application/octet-stream")
+      const web = await Effect.runPromise(HttpClientRequest.toWeb(request))
+      strictEqual(web.headers.get("content-length"), String(expected))
+    })
+
+    it("propagates typed BadArgument from file range validation", async () => {
+      const request = HttpClientRequest.bodyFile(HttpClientRequest.post("https://example.com"), "x", {
+        bytesToRead: "garbage"
+      })
+      const error = await Effect.runPromise(request.pipe(
+        Effect.flip,
+        Effect.provideService(FileSystem.FileSystem, fileSystem(6n))
+      ))
+      strictEqual(error._tag, "PlatformError")
+      strictEqual(error.reason._tag, "BadArgument")
+    })
+  })
+
   describe("appendUrl", () => {
     it("joins segments without slashes", () => {
       const request = HttpClientRequest.get("base").pipe(
@@ -200,6 +242,24 @@ describe("HttpClientRequest", () => {
         const webRequest2 = yield* HttpClientRequest.toWeb(request)
         strictEqual(yield* Effect.promise(() => webRequest2.text()), "{\"foo\":\"bar\"}")
       }))
+
+    it("fromWeb ignores malformed or unsafe content lengths", () => {
+      for (const contentLength of ["2junk", "1.5", "1e3", "9007199254740992"]) {
+        const request = HttpClientRequest.fromWeb(
+          new Request("http://localhost:3000", {
+            method: "POST",
+            headers: { "content-length": contentLength },
+            body: "hello"
+          })
+        )
+
+        strictEqual(request.headers["content-length"], undefined)
+        strictEqual(request.body._tag, "Raw")
+        if (request.body._tag === "Raw") {
+          strictEqual(request.body.contentLength, undefined)
+        }
+      }
+    })
 
     it.effect("toWeb stream body", () =>
       Effect.gen(function*() {

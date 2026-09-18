@@ -1,0 +1,81 @@
+---
+title: Blob Store
+description: Bulk, immutable, content-addressed bytes. R2 by default, S3 when data has to live in AWS, or any store that can do ranged reads and multipart writes.
+---
+
+`Git.BlobStore` holds everything big: compacted packs, clone bundles,
+oversize objects, and the spilled bodies of large pushes. The contract
+is what the pack plane needs and nothing more:
+
+```typescript
+interface BlobStoreShape {
+  get(key, range?): Effect<BlobBody | null>; // ranged read
+  put(key, body, { contentLength }): Effect<void>; // whole object
+  multipart(key): Effect<BlobMultipart>; // streaming write of unknown length
+  delete(keys): Effect<void>;
+  list(prefix): Stream<BlobMeta>; // purge only, never on a serving path
+}
+```
+
+The package owns no bucket. You declare one and pass it in, and the one
+Layer serves both places bytes are touched: the Worker streaming a
+clone bundle and the Durable Object writing a pack.
+
+## R2
+
+```typescript
+export const GitObjects = Cloudflare.R2.Bucket("GitObjects");
+
+Layer.provide(Git.BlobStoreR2(GitObjects))
+```
+
+The default for a Cloudflare-hosted deployment. No egress fees and no
+cross-internet hop on the serving path.
+
+## S3
+
+```typescript
+export const GitObjects = AWS.S3.Bucket("GitObjects");
+
+Layer.provide(Git.BlobStoreS3(GitObjects))
+```
+
+Compute stays on Cloudflare and bytes live in your S3 bucket.
+`BlobStoreS3(GitObjects)` mints a least-privilege IAM identity for
+the Worker (`GetObject`, `PutObject`, `DeleteObject`, `ListBucket`,
+and the multipart actions on that bucket), and signs every request
+with credentials assumed at runtime. The Layer is built over the S3
+bindings, so it runs unchanged in the Worker and in the Durable
+Object. The stack carries both provider sets:
+
+```typescript
+providers: Layer.mergeAll(Cloudflare.providers(), AWS.providers()),
+```
+
+Every read crosses the public internet, so expect higher serving
+latency than R2. Reads are coalesced into few large ranges, but the hop
+is real. [Bytes in S3, hashing on Lambda](/git/recipes/cloudflare-aws) is the
+full stack.
+
+## Your own
+
+Implement the five operations and any object store works.
+[Bring your own store](/git/recipes/your-own-store) walks through it:
+
+```typescript
+const BlobStoreMine: Layer.Layer<Git.BlobStore> = Layer.effect(
+  Git.BlobStore,
+  Effect.gen(function* () {
+    return {
+      get: (key, range) => /* ... */,
+      put: (key, body, options) => /* ... */,
+      multipart: (key) => /* ... */,
+      delete: (keys) => /* ... */,
+      list: (prefix) => /* ... */,
+    } satisfies Git.BlobStoreShape;
+  }),
+);
+```
+
+Multipart parts are uniform in size except the last. Both R2 and S3
+accept that, and it is what the push path writes.

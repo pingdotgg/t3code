@@ -1,0 +1,86 @@
+---
+title: Worker Previews
+description: Deploy a branch or pull request as a first-class Preview of another Worker — its own URL, bindings, and isolated Durable Object state, without touching production traffic.
+sidebar:
+  order: 2
+---
+
+A [Worker Preview](https://developers.cloudflare.com/workers/previews/) is
+a named copy of a Worker: own URL, own variables, secrets, and
+bindings, and isolated same-Worker Durable Object (and Container)
+state. The parent's live deployment is untouched.
+
+This is the branch and pull-request path. It is **not** a Worker
+version. Versions are for gradual rollouts and canaries — see
+[Gradual deployments](/cloudflare/compute/gradual-deployments).
+
+## Preview another stage's Worker
+
+```typescript
+const parent = yield* Cloudflare.Worker.ref("Api", { stage: "prod" });
+
+const api = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  preview: {
+    of: parent,
+    message: `PR #${process.env.PR_NUMBER}`,
+  },
+});
+
+// https://<stage>-<worker>.<account>.workers.dev
+api.url;
+```
+
+The Preview name defaults to a DNS-safe form of the stack stage
+(`pr-123`, `feat-login`). Override with `preview.name`. Destroying
+the Preview Worker deletes the Preview; the parent stays up.
+
+Bindings are whatever *this* Worker declares. Point them at staging
+resources, or let a PR stage create its own KV / D1 / R2. Same-Worker
+[Durable Object](/cloudflare/compute/durable-objects) classes are
+isolated automatically — each Preview gets its own namespace, deleted
+with the Preview. Version workers (`version.parent`) cannot host
+Durable Object classes; Previews can.
+
+## Custom-domain Preview URLs
+
+Enable Previews on the **parent** Worker's custom domain:
+
+```typescript
+yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  domain: {
+    name: "app.example.com",
+    previews: true,
+  },
+});
+```
+
+A Preview of that Worker is then at
+`https://<preview-name>.app.example.com`, plus a pinned
+`https://<deployment-id>-<preview-name>.app.example.com` per deploy.
+
+Use a dedicated Preview hostname (`previews.example.com`) when
+production already has subdomains, so the wildcard does not collide
+with `docs.example.com`.
+
+## Preview, version, or stage?
+
+| What you want | Use |
+|---|---|
+| Branch / PR with its own URL and isolated DOs | `preview.of` |
+| Canary a percentage of live traffic | `version.parent` + `version.traffic` |
+| Gradual rollout of this Worker | `version.traffic` |
+| Inspect one upload without routing | `version.traffic: 0` |
+| Persistent env, or infra that must be fully isolated (new table, matching service bindings) | A separate Alchemy **stage** |
+
+`preview` and `version.parent` cannot be set together.
+
+Service bindings from a Preview currently resolve to the bound
+Worker's **production** deployment. Crons, queue consumers, and
+production routes stay on production. For an end-to-end multi-Worker
+PR, deploy a full stage instead.
+
+Preview URLs are public. Protect them with
+[Cloudflare Access](/cloudflare/security/access) on the parent
+Worker (`access.previews` stays on by default).

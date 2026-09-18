@@ -2,8 +2,11 @@
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { createExecutionContext } from "cloudflare:test";
 import { exports, env as runtimeEnv } from "cloudflare:workers";
-import { describe, it } from "vitest";
-import { RouterInnerEntrypoint } from "../src/worker.ts";
+import { describe, it, vi } from "vitest";
+import DefaultRouterEntrypoint, {
+  RouterInnerEntrypoint,
+  RouterOuterEntrypoint,
+} from "../src/worker.ts";
 import type { Env } from "../src/worker.ts";
 
 async function fetchFromInnerEntrypoint(
@@ -14,16 +17,23 @@ async function fetchFromInnerEntrypoint(
   return new RouterInnerEntrypoint(ctx, env).fetch(request);
 }
 
-describe("runtime loopback", () => {
-  it("routes through outer->inner loopback at runtime boundary", async ({
+describe("entrypoints", () => {
+  it("uses the inner entrypoint as the default export", ({ expect }) => {
+    expect(DefaultRouterEntrypoint).toBe(RouterInnerEntrypoint);
+  });
+
+  it("routes directly through the inner entrypoint at the runtime boundary", async ({
     expect,
   }) => {
-    (runtimeEnv as unknown as Env).CONFIG = {
+    // Alchemy's generated Cloudflare.Env is empty, while the test runtime
+    // injects these router bindings dynamically.
+    const testRuntimeEnv = runtimeEnv as typeof runtimeEnv & Partial<Env>;
+    testRuntimeEnv.CONFIG = {
       has_user_worker: false,
     };
-    (runtimeEnv as unknown as Env).ASSET_WORKER = {
+    testRuntimeEnv.ASSET_WORKER = {
       async fetch(_request: Request): Promise<Response> {
-        return new Response("loopback asset worker");
+        return new Response("asset worker");
       },
       async unstable_canFetch(_request: Request): Promise<boolean> {
         return true;
@@ -35,7 +45,31 @@ describe("runtime loopback", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.text()).toBe("loopback asset worker");
+    expect(await response.text()).toBe("asset worker");
+  });
+
+  it("keeps the outer-to-inner loopback available", async ({ expect }) => {
+    const request = new Request("https://example.com");
+    const ctx = createExecutionContext();
+    const innerFetch = vi.fn(async (_request: Request) => {
+      return new Response("inner response");
+    });
+    const createInnerEntrypoint = vi.fn(() => ({ fetch: innerFetch }));
+    Object.defineProperty(ctx, "exports", {
+      value: {
+        RouterInnerEntrypoint: createInnerEntrypoint,
+      },
+    });
+
+    const response = await new RouterOuterEntrypoint(ctx, {} as Env).fetch(
+      request,
+    );
+
+    expect(createInnerEntrypoint).toHaveBeenCalledOnce();
+    expect(createInnerEntrypoint).toHaveBeenCalledWith({ props: {} });
+    expect(innerFetch).toHaveBeenCalledOnce();
+    expect(innerFetch).toHaveBeenCalledWith(request);
+    expect(await response.text()).toBe("inner response");
   });
 });
 

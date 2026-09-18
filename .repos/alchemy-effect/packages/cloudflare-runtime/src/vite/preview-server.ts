@@ -1,3 +1,4 @@
+import { DEFAULT_COMPATIBILITY_DATE } from "../core/internal/constants.ts";
 import type { BindingHooks, Module } from "../core/index.ts";
 import * as Runtime from "../core/Runtime.ts";
 import * as RuntimeServices from "../core/RuntimeServices.ts";
@@ -34,6 +35,7 @@ export interface PreviewWorkerBuild {
 
 export interface PreviewServerHandle {
   readonly address: URL;
+  readonly proxySharedSecret: string;
   readonly close: () => Promise<void>;
 }
 
@@ -57,6 +59,7 @@ export const startPreviewServer = async <B extends BindingHooks = BindingHooks>(
   build: PreviewWorkerBuild,
 ): Promise<PreviewServerHandle> => {
   const scope = Scope.makeUnsafe();
+  const proxySharedSecret = crypto.randomUUID();
   // Only sweep handles for a context we build (and tear down) ourselves; a
   // caller-provided context is process-lifetime by design (dev semantics).
   const sweep = options.context === undefined ? makeHandleSweep() : undefined;
@@ -67,13 +70,14 @@ export const startPreviewServer = async <B extends BindingHooks = BindingHooks>(
         Layer.buildWithScope(scope),
         Effect.runPromise,
       ));
-    const address = await serve(options, build).pipe(
+    const address = await serve(options, build, proxySharedSecret).pipe(
       Effect.provide(context),
       Scope.provide(scope),
       Effect.runPromise,
     );
     return {
       address,
+      proxySharedSecret,
       close: async () => {
         await closeScope(scope);
         sweep?.();
@@ -150,6 +154,7 @@ const closeScope = async (scope: Scope.Scope) => {
 const serve = Effect.fn(function* (
   options: CloudflareVitePluginOptions,
   build: PreviewWorkerBuild,
+  proxySharedSecret: string,
 ) {
   const runtime = yield* Runtime.Runtime;
   const modules = yield* Effect.promise(() => readWorkerModules(build));
@@ -158,7 +163,8 @@ const serve = Effect.fn(function* (
   return yield* runtime.start({
     name: options.worker?.name ?? `vite-preview-${crypto.randomUUID()}`,
     modules,
-    compatibilityDate: options.compatibilityDate ?? "2026-05-12",
+    proxySharedSecret,
+    compatibilityDate: options.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
     compatibilityFlags: options.compatibilityFlags ?? [],
     bindings: options.worker?.bindings ?? [],
     durableObjectNamespaces: options.worker?.durableObjectNamespaces,

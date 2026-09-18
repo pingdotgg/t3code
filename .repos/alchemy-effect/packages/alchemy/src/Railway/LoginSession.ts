@@ -1,4 +1,5 @@
 import * as railway from "@distilled.cloud/railway";
+import { CredentialsFromToken } from "@distilled.cloud/railway";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
@@ -8,14 +9,14 @@ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 export const RAILWAY_CLI_LOGIN_HOST = "https://railway.com";
 
 /**
- * Build the Railway CLI pairing URL for a {@link railway.loginSessionCreate}
+ * Build the Railway CLI pairing URL for a {@link railway.createLoginSession}
  * code.
  *
  * Mirrors `railway login --browserless`: the payload is
  * `wordCode={code}&hostname={hostname}` (URL-safe base64) on
  * `https://railway.com/cli-login?d=…`. The user confirms the pairing code
  * in the browser; {@link railway.loginSessionAuth} is the dashboard-side
- * mutation that marks the session authorized. {@link railway.loginSessionVerify}
+ * mutation that marks the session authorized. {@link railway.verifyLoginSession}
  * is a liveness check (true while the pairing session exists). The CLI then
  * polls {@link railway.loginSessionConsume} until a token is returned.
  *
@@ -25,7 +26,7 @@ export const RAILWAY_CLI_LOGIN_HOST = "https://railway.com";
  * ### Pairing URL
  * **Example:** From a session code
  * ```typescript
- * const code = yield* railway.loginSessionCreate({});
+ * const code = yield* railway.createLoginSession({});
  * const url = loginSessionUrl(code, { hostname: "dev-box" });
  * ```
  */
@@ -48,7 +49,7 @@ export const loginSessionUrl = (
  * mutations are public: they run before the user has a token.
  */
 const anonymousRailwayCredentials = (apiBaseUrl?: string) =>
-  railway.CredentialsFromToken({
+  CredentialsFromToken({
     token: "",
     tokenKind: "account",
     apiBaseUrl,
@@ -61,7 +62,7 @@ const anonymousRailway = (apiBaseUrl?: string) =>
   );
 
 export const provideAnonymousRailway = <A, E>(
-  effect: Effect.Effect<A, E, railway.RailwayOpContext>,
+  effect: Effect.Effect<A, E, railway.GraphQLRequirements>,
   apiBaseUrl?: string,
 ): Effect.Effect<A, E> =>
   effect.pipe(Effect.provide(anonymousRailway(apiBaseUrl)));
@@ -69,7 +70,7 @@ export const provideAnonymousRailway = <A, E>(
 const LOGIN_POLL_TIMES = 300;
 
 /**
- * Poll {@link railway.loginSessionVerify} then
+ * Poll {@link railway.verifyLoginSession} then
  * {@link railway.loginSessionConsume} until a token is returned, or 5 minutes
  * elapse. Mirrors `railway login --browserless`: consume is the token source;
  * verify is a liveness check. Does not cancel the session — the caller should
@@ -78,21 +79,15 @@ const LOGIN_POLL_TIMES = 300;
  * Exhaustion returns `undefined` (not a failure) so the AuthProvider can
  * surface a timeout rather than a poll error.
  */
-const missingSession = ["RailwayNotFound", "NotFound"] as const;
+const missingSession = ["RailwayNotFound"] as const;
 
-export const pollLoginSessionToken = (
-  code: string,
-): Effect.Effect<
-  string | undefined,
-  railway.RailwayOpError,
-  railway.RailwayOpContext
-> =>
-  railway.loginSessionVerify({ code }).pipe(
-    Effect.catchTag(missingSession, () => Effect.succeed(false)),
+export const pollLoginSessionToken = (code: string) =>
+  railway.verifyLoginSession({ code }).pipe(
+    railway.catchTags(missingSession, () => Effect.succeed(false)),
     Effect.flatMap(() =>
       railway
         .loginSessionConsume({ code })
-        .pipe(Effect.catchTag(missingSession, () => Effect.succeed(null))),
+        .pipe(railway.catchTags(missingSession, () => Effect.succeed(null))),
     ),
     Effect.map((token) =>
       token != null && token.length > 0 ? token : undefined,

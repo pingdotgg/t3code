@@ -38,7 +38,7 @@ describe("Command errors", () => {
     it.effect("fails with MissingOption when a required flag is absent", () =>
       Effect.gen(function*() {
         const command = Command.make("needs-value", {
-          value: Flag.string("value")
+          value: Flag.String("value")
         })
 
         const parsedInput = yield* Parser.parseArgs(Lexer.lex([]), command)
@@ -50,12 +50,12 @@ describe("Command errors", () => {
     it("throws DuplicateOption when shared parent and child flags reuse a name", () => {
       const parent = Command.make("parent").pipe(
         Command.withSharedFlags({
-          shared: Flag.string("shared")
+          shared: Flag.String("shared")
         })
       )
 
       const child = Command.make("child", {
-        shared: Flag.string("shared")
+        shared: Flag.String("shared")
       })
 
       try {
@@ -72,11 +72,11 @@ describe("Command errors", () => {
 
     it("allows parent local flags to reuse child flag names", () => {
       const parent = Command.make("parent", {
-        shared: Flag.string("shared")
+        shared: Flag.String("shared")
       })
 
       const child = Command.make("child", {
-        shared: Flag.string("shared")
+        shared: Flag.String("shared")
       })
 
       try {
@@ -89,7 +89,7 @@ describe("Command errors", () => {
     it.effect("accumulates multiple UnrecognizedOption errors", () =>
       Effect.gen(function*() {
         const command = Command.make("test", {
-          verbose: Flag.boolean("verbose")
+          verbose: Flag.Boolean("verbose")
         })
 
         const parsedInput = yield* Parser.parseArgs(
@@ -127,7 +127,7 @@ describe("Command errors", () => {
     it.effect("fails with UnexpectedArgument when a bounded variadic leaves operands", () =>
       Effect.gen(function*() {
         const command = Command.make("test", {
-          values: Argument.string("value").pipe(Argument.variadic({ max: 2 }))
+          values: Argument.String("value").pipe(Argument.variadic({ max: 2 }))
         })
 
         const parsedInput = yield* Parser.parseArgs(
@@ -143,8 +143,8 @@ describe("Command errors", () => {
     it.effect("allows a bounded variadic to leave an operand for a following argument", () =>
       Effect.gen(function*() {
         const command = Command.make("test", {
-          values: Argument.string("value").pipe(Argument.variadic({ max: 2 })),
-          destination: Argument.string("destination")
+          values: Argument.String("value").pipe(Argument.variadic({ max: 2 })),
+          destination: Argument.String("destination")
         })
 
         const parsedInput = yield* Parser.parseArgs(
@@ -162,7 +162,7 @@ describe("Command errors", () => {
     it.effect("fails with UnexpectedArgument when a fixed argument leaves operands", () =>
       Effect.gen(function*() {
         const command = Command.make("test", {
-          value: Argument.string("value")
+          value: Argument.String("value")
         })
 
         const parsedInput = yield* Parser.parseArgs(

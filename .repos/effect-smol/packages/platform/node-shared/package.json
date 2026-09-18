@@ -1,7 +1,7 @@
 {
   "name": "@effect/platform-node-shared",
   "type": "module",
-  "version": "4.0.0-rc.112",
+  "version": "4.0.0-rc.115",
   "license": "MIT",
   "description": "Unified interfaces for common platform-specific services",
   "homepage": "https://effect.website",
@@ -58,6 +58,7 @@
     }
   },
   "scripts": {
+    "benchmark:socket": "node benchmark/Socket.ts",
     "codegen": "effect-utils codegen",
     "build": "tsc -b tsconfig.json && pnpm babel",
     "babel": "babel dist --plugins annotate-pure-calls --out-dir dist --source-maps",
@@ -67,9 +68,10 @@
     "effect": "workspace:^"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.1",
     "effect": "workspace:^",
-    "tar": "^7.5.22"
+    "tar": "^7.5.22",
+    "tinybench": "^6.1.6"
   },
   "dependencies": {
     "@types/ws": "^8.18.1",

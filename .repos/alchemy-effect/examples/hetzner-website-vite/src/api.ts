@@ -37,7 +37,7 @@ export default class Api extends Hetzner.Service<Api>()(
   }),
   Effect.succeed({
     fetch: Effect.gen(function* () {
-      const databaseUrl = yield* Config.redacted("DATABASE_URL");
+      const databaseUrl = yield* Config.Redacted("DATABASE_URL");
       const db = yield* Drizzle.Postgres(Effect.succeed(databaseUrl));
       const request = yield* HttpServerRequest;
       const path = new URL(request.url, "http://service").pathname;

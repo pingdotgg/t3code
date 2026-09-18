@@ -1,9 +1,6 @@
 import { Effect, Schema, Stream } from "effect"
-import { Msgpack, Ndjson, SchemaBinary } from "effect/unstable/encoding"
-import { isNativeAccelerationEnabled, pack, Packr, unpack, Unpackr } from "msgpackr"
+import { Ndjson, SchemaBinary } from "effect/unstable/encoding"
 import assert from "node:assert/strict"
-import { Buffer } from "node:buffer"
-import { readFileSync } from "node:fs"
 import { gzipSync, zstdCompressSync } from "node:zlib"
 import protobuf, { type Message, type Type } from "protobufjs"
 import { Bench } from "tinybench"
@@ -80,108 +77,6 @@ const largeRows = Array.from({ length: repeatedRecordStreamSize }, (_, index) =>
 
 const metrics = (count: number) =>
   Object.fromEntries(Array.from({ length: count }, (_, index) => [`metric-${index}`, index * 1.25]))
-
-type InferredNode =
-  | { readonly _tag: "never" }
-  | { readonly _tag: "null" | "string" | "number" | "boolean" }
-  | { readonly _tag: "array"; readonly element: InferredNode }
-  | {
-    readonly _tag: "object"
-    readonly count: number
-    readonly fields: ReadonlyMap<string, { readonly seen: number; readonly node: InferredNode }>
-  }
-  | { readonly _tag: "union"; readonly members: ReadonlyMap<InferredNode["_tag"], InferredNode> }
-
-const inferredNever: InferredNode = { _tag: "never" }
-
-const inferredMembers = (node: InferredNode): ReadonlyMap<InferredNode["_tag"], InferredNode> =>
-  node._tag === "union" ? node.members : new Map([[node._tag, node]])
-
-const mergeInferred = (left: InferredNode, right: InferredNode): InferredNode => {
-  if (left._tag === "never") return right
-  if (right._tag === "never") return left
-  if (left._tag === right._tag) {
-    if (left._tag === "array" && right._tag === "array") {
-      return { _tag: "array", element: mergeInferred(left.element, right.element) }
-    }
-    if (left._tag === "object" && right._tag === "object") {
-      const fields = new Map(left.fields)
-      for (const [key, field] of right.fields) {
-        const previous = fields.get(key)
-        fields.set(
-          key,
-          previous === undefined
-            ? field
-            : { seen: previous.seen + field.seen, node: mergeInferred(previous.node, field.node) }
-        )
-      }
-      return { _tag: "object", count: left.count + right.count, fields }
-    }
-    if (left._tag === "union" && right._tag === "union") {
-      const members = new Map(left.members)
-      for (const [tag, member] of right.members) {
-        members.set(tag, members.has(tag) ? mergeInferred(members.get(tag)!, member) : member)
-      }
-      return { _tag: "union", members }
-    }
-    return left
-  }
-  const members = new Map(inferredMembers(left))
-  for (const [tag, member] of inferredMembers(right)) {
-    members.set(tag, members.has(tag) ? mergeInferred(members.get(tag)!, member) : member)
-  }
-  return { _tag: "union", members }
-}
-
-const inferNode = (value: unknown): InferredNode => {
-  if (value === null) return { _tag: "null" }
-  if (typeof value === "string") return { _tag: "string" }
-  if (typeof value === "number") return { _tag: "number" }
-  if (typeof value === "boolean") return { _tag: "boolean" }
-  if (Array.isArray(value)) {
-    return { _tag: "array", element: value.reduce((node, item) => mergeInferred(node, inferNode(item)), inferredNever) }
-  }
-  if (typeof value === "object") {
-    return {
-      _tag: "object",
-      count: 1,
-      fields: new Map(Object.entries(value).map(([key, field]) => [key, { seen: 1, node: inferNode(field) }]))
-    }
-  }
-  throw new Error(`Cannot infer a benchmark schema for ${typeof value}`)
-}
-
-const inferredSchema = (node: InferredNode): Schema.ConstraintCodec<unknown, unknown> => {
-  switch (node._tag) {
-    case "never":
-      return Schema.Never
-    case "null":
-      return Schema.Null
-    case "string":
-      return Schema.String
-    case "number":
-      return Schema.Number
-    case "boolean":
-      return Schema.Boolean
-    case "array":
-      return Schema.Array(inferredSchema(node.element))
-    case "union":
-      return Schema.Union(Array.from(node.members.values(), inferredSchema))
-    case "object":
-      return Schema.Struct(Object.fromEntries(Array.from(node.fields, ([key, field]) => [
-        key,
-        field.seen === node.count
-          ? inferredSchema(field.node)
-          : Schema.optionalKey(inferredSchema(field.node))
-      ])))
-  }
-}
-
-// From msgpackr's benchmark corpus at e3c852d: https://github.com/kriszyp/msgpackr/blob/e3c852df383059b9ea8a8d3e5517d6e5527bf756/tests/example4.json
-const msgpackrClinicalValue: unknown = JSON.parse(
-  readFileSync(new URL("./fixtures/msgpackr-example4.json", import.meta.url), "utf8")
-)
-const MsgpackrClinical = inferredSchema(inferNode(msgpackrClinicalValue))
 
 const protobufRoot = protobuf.parse(`
   syntax = "proto3";
@@ -405,19 +300,6 @@ const cases = [
   }
 ] as const
 
-const rawCases = [
-  {
-    name: "small record / raw serializers",
-    schema: SmallRecord,
-    value: cases[0].value
-  },
-  {
-    name: "msgpackr clinical fixture / raw serializers",
-    schema: MsgpackrClinical,
-    value: msgpackrClinicalValue
-  }
-] as const
-
 interface Format {
   readonly name: string
   readonly encodedSize: number
@@ -470,7 +352,6 @@ const prepare = <S extends Schema.ConstraintCodec<unknown, unknown>>(
   const binaryCodec = SchemaBinary.toCodec(schema)
   const fingerprintCodec = SchemaBinary.toCodec(schema, { fingerprint: true })
   const jsonCodec = Schema.fromJsonString(jsonSchema)
-  const msgpackCodec = Msgpack.schema(jsonSchema)
 
   const binaryEncode = Schema.encodeUnknownSync(binaryCodec)
   const binaryDecode = Schema.decodeUnknownSync(binaryCodec)
@@ -478,22 +359,18 @@ const prepare = <S extends Schema.ConstraintCodec<unknown, unknown>>(
   const fingerprintDecode = Schema.decodeUnknownSync(fingerprintCodec)
   const jsonEncode = Schema.encodeUnknownSync(jsonCodec)
   const jsonDecode = Schema.decodeUnknownSync(jsonCodec)
-  const msgpackEncode = Schema.encodeUnknownSync(msgpackCodec)
-  const msgpackDecode = Schema.decodeUnknownSync(msgpackCodec)
   const protobufValue = protobufFixture.encodeInput(value)
 
   const binary = binaryEncode(value)
   const fingerprint = fingerprintEncode(value).slice()
   const json = jsonEncode(value)
   const jsonBytes = textEncoder.encode(json)
-  const msgpack = msgpackEncode(value)
   const protobufBytes = protobufFixture.type.encode(protobufValue).finish()
   const protobufDecode = () => protobufFixture.decodeOutput(protobufFixture.type.decode(protobufBytes))
 
   assert.deepStrictEqual(binaryDecode(binary), value)
   assert.deepStrictEqual(fingerprintDecode(fingerprint), value)
   assert.deepStrictEqual(jsonDecode(json), value)
-  assert.deepStrictEqual(msgpackDecode(msgpack), value)
   assert.deepStrictEqual(protobufDecode(), value)
 
   return {
@@ -517,12 +394,6 @@ const prepare = <S extends Schema.ConstraintCodec<unknown, unknown>>(
         decode: () => jsonDecode(json)
       },
       {
-        name: "Msgpack",
-        ...sizes(msgpack),
-        encode: () => msgpackEncode(value),
-        decode: () => msgpackDecode(msgpack)
-      },
-      {
         name: "Protobuf",
         ...sizes(protobufBytes),
         encode: () => protobufFixture.type.encode(protobufValue).finish(),
@@ -532,86 +403,9 @@ const prepare = <S extends Schema.ConstraintCodec<unknown, unknown>>(
   }
 }
 
-const prepareRaw = <S extends Schema.ConstraintCodec<unknown, unknown>>(
-  schema: S,
-  value: S["Type"]
-): { readonly formats: ReadonlyArray<Format> } => {
-  const binaryCodec = SchemaBinary.toCodec(schema)
-  const fingerprintCodec = SchemaBinary.toCodec(schema, { fingerprint: true })
-  const msgpackCodec = Msgpack.schema(Schema.toCodecJson(schema))
-  const binaryEncode = Schema.encodeUnknownSync(binaryCodec)
-  const binaryDecode = Schema.decodeUnknownSync(binaryCodec)
-  const fingerprintEncode = Schema.encodeUnknownSync(fingerprintCodec)
-  const fingerprintDecode = Schema.decodeUnknownSync(fingerprintCodec)
-  const msgpackEncode = Schema.encodeUnknownSync(msgpackCodec)
-  const msgpackDecode = Schema.decodeUnknownSync(msgpackCodec)
-  const sharedPackr = new Packr({ structures: [] })
-
-  sharedPackr.pack(value)
-  const binary = binaryEncode(value).slice()
-  const fingerprint = fingerprintEncode(value).slice()
-  const effectMsgpack = msgpackEncode(value)
-  const sharedMsgpack = sharedPackr.pack(value).slice()
-  const plainMsgpack = pack(value).slice()
-  const json = Buffer.from(JSON.stringify(value))
-
-  assert.deepStrictEqual(binaryDecode(binary), value)
-  assert.deepStrictEqual(fingerprintDecode(fingerprint), value)
-  assert.deepStrictEqual(msgpackDecode(effectMsgpack), value)
-  assert.deepStrictEqual(sharedPackr.unpack(sharedMsgpack), value)
-  assert.deepStrictEqual(unpack(plainMsgpack), value)
-  assert.deepStrictEqual(JSON.parse(json.toString()), value)
-
-  return {
-    formats: [
-      {
-        name: "SchemaBinary",
-        ...sizes(binary),
-        encode: () => binaryEncode(value),
-        decode: () => binaryDecode(binary)
-      },
-      {
-        name: "SchemaBinary fingerprint",
-        ...sizes(fingerprint),
-        encode: () => fingerprintEncode(value),
-        decode: () => fingerprintDecode(fingerprint)
-      },
-      {
-        name: "Effect Msgpack schema",
-        ...sizes(effectMsgpack),
-        encode: () => msgpackEncode(value),
-        decode: () => msgpackDecode(effectMsgpack)
-      },
-      {
-        name: "msgpackr raw / shared structures",
-        ...sizes(sharedMsgpack),
-        encode: () => sharedPackr.pack(value),
-        decode: () => sharedPackr.unpack(sharedMsgpack)
-      },
-      {
-        name: "msgpackr raw / plain",
-        ...sizes(plainMsgpack),
-        encode: () => pack(value),
-        decode: () => unpack(plainMsgpack)
-      },
-      {
-        name: "JSON raw",
-        ...sizes(json),
-        encode: () => Buffer.from(JSON.stringify(value)),
-        decode: () => JSON.parse(json.toString())
-      }
-    ]
-  }
-}
-
 const prepared = cases.map((testCase) => ({
   name: testCase.name,
   ...prepare(testCase.schema, testCase.value, testCase.protobuf)
-}))
-
-const preparedRaw = rawCases.map((testCase) => ({
-  name: testCase.name,
-  ...prepareRaw(testCase.schema, testCase.value)
 }))
 
 const prepareStream = async <S extends Schema.ConstraintCodec<unknown, unknown>>(
@@ -635,11 +429,7 @@ const prepareStream = async <S extends Schema.ConstraintCodec<unknown, unknown>>
   })
 
   const jsonSchema = Schema.toCodecJson(schema)
-  const encodeMsgpackValue = Schema.encodeUnknownSync(jsonSchema)
-  const decodeMsgpackValue = Schema.decodeUnknownSync(jsonSchema)
-  const msgpackPackr = new Packr()
-  const msgpackStream = concatFrames(values.map((value) => msgpackPackr.pack(encodeMsgpackValue(value)).slice()))
-  const msgpackUnpackr = new Unpackr()
+  const encodeJsonValue = Schema.encodeUnknownSync(jsonSchema)
 
   const protobufFrames = values.map((value) =>
     protobufFixture.type.encodeDelimited(protobufFixture.encodeInput(value)).finish()
@@ -654,7 +444,7 @@ const prepareStream = async <S extends Schema.ConstraintCodec<unknown, unknown>>
     return decoded
   }
 
-  const ndjsonFrames = values.map((value) => textEncoder.encode(`${JSON.stringify(encodeMsgpackValue(value))}\n`))
+  const ndjsonFrames = values.map((value) => textEncoder.encode(`${JSON.stringify(encodeJsonValue(value))}\n`))
   const ndjsonStream = concatFrames(ndjsonFrames)
   const ndjsonFragments = ndjsonFrames.map((frame) => {
     return [frame.subarray(0, 1), frame.subarray(1)] as const
@@ -700,16 +490,12 @@ const prepareStream = async <S extends Schema.ConstraintCodec<unknown, unknown>>
   const decodeSingle = defaultFeeds.single
   const decodeFragmented = defaultFeeds.fragmented
   const decodeBatch = defaultFeeds.batch
-  const decodeMsgpackStream = () =>
-    msgpackUnpackr.unpackMultiple(msgpackStream).map((value) => decodeMsgpackValue(value))
-
   assert.deepStrictEqual(decodeSingle(), [values[0]])
   assert.deepStrictEqual(decodeFragmented(), [values[0]])
   assert.deepStrictEqual(decodeBatch(), values)
   assert.deepStrictEqual(fingerprintFeeds.single(), [values[0]])
   assert.deepStrictEqual(fingerprintFeeds.fragmented(), [values[0]])
   assert.deepStrictEqual(fingerprintFeeds.batch(), values)
-  assert.deepStrictEqual(decodeMsgpackStream(), values)
   assert.deepStrictEqual(decodeProtobufStream(), values)
   assert.deepStrictEqual(await decodeNdjsonSingle(), [values[0]])
   assert.deepStrictEqual(await decodeNdjsonFragmented(), [values[0]])
@@ -723,7 +509,6 @@ const prepareStream = async <S extends Schema.ConstraintCodec<unknown, unknown>>
       { name: "SchemaBinary fingerprint / single frame", framesPerOp: 1, decode: fingerprintFeeds.single },
       { name: "SchemaBinary fingerprint / batch", framesPerOp: values.length, decode: fingerprintFeeds.batch },
       { name: "SchemaBinary fingerprint / fragmented", framesPerOp: 1, decode: fingerprintFeeds.fragmented },
-      { name: "Msgpack unpackMultiple / batch", framesPerOp: values.length, decode: decodeMsgpackStream },
       { name: "Protobuf decodeDelimited / batch", framesPerOp: values.length, decode: decodeProtobufStream },
       { name: "NDJSON Channel / single frame", framesPerOp: 1, decode: decodeNdjsonSingle },
       { name: "NDJSON Channel / batch", framesPerOp: values.length, decode: decodeNdjsonBatch },
@@ -732,7 +517,6 @@ const prepareStream = async <S extends Schema.ConstraintCodec<unknown, unknown>>
     sizes: [
       { name: "SchemaBinary", frames: values.length, ...sizes(binaryStream) },
       { name: "SchemaBinary fingerprint", frames: values.length, ...sizes(fingerprintStream) },
-      { name: "Msgpack", frames: values.length, ...sizes(msgpackStream) },
       { name: "Protobuf", frames: values.length, ...sizes(protobufStream) },
       { name: "NDJSON", frames: values.length, ...sizes(ndjsonStream) }
     ]
@@ -752,27 +536,13 @@ const preparedStreams = await Promise.all([
 ].map(async ({ name, prepared }) => ({ name, ...await prepared })))
 
 console.log(`Node ${process.version}; codec and schema construction excluded from timings.`)
-console.log("JSON and Msgpack use the same Schema.toCodecJson representation; JSON sizes are UTF-8 bytes.")
-console.log(`msgpackr native acceleration enabled: ${isNativeAccelerationEnabled}.`)
-console.log(
-  "Cases suffixed with / raw serializers compare SchemaBinary's public codec with unvalidated raw serializers."
-)
+console.log("JSON sizes are UTF-8 bytes.")
 console.log("Protobuf uses prebuilt protobufjs descriptors; descriptor construction and encode adapters are excluded.")
 console.log(
   "Compare formats within a case and direction in the same run; absolute rates vary with the machine and runtime."
 )
 
 console.table(prepared.flatMap((testCase) =>
-  testCase.formats.map((format) => ({
-    Case: testCase.name,
-    Format: format.name,
-    "Raw bytes": format.encodedSize,
-    "gzip -6 bytes": format.gzipSize,
-    "zstd bytes": format.zstdSize
-  }))
-))
-
-console.table(preparedRaw.flatMap((testCase) =>
   testCase.formats.map((format) => ({
     Case: testCase.name,
     Format: format.name,
@@ -809,18 +579,6 @@ const sinkSentinel = Symbol("benchmark did not run")
 let sink: unknown = sinkSentinel
 
 for (const testCase of prepared) {
-  for (const format of testCase.formats) {
-    for (const [direction, run] of [["encode", format.encode], ["decode", format.decode]] as const) {
-      const name = `${testCase.name} / ${format.name} / ${direction}`
-      tasks.set(name, { caseName: testCase.name, formatName: format.name, direction })
-      bench.add(name, () => {
-        sink = run()
-      })
-    }
-  }
-}
-
-for (const testCase of preparedRaw) {
   for (const format of testCase.formats) {
     for (const [direction, run] of [["encode", format.encode], ["decode", format.decode]] as const) {
       const name = `${testCase.name} / ${format.name} / ${direction}`

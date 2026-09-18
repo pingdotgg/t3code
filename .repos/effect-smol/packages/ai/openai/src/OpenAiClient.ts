@@ -510,9 +510,9 @@ const makeSocket = Effect.gen(function*() {
         Effect.provideService(Socket.WebSocketConstructor, (url) =>
           makeWebSocket(url, {
             headers: request.headers
-          } as any))
+          }))
       )
-      const write = yield* socket.writer
+      const writer = yield* socket.writer
 
       yield* Scope.addFinalizerExit(scope, () => {
         tracker.clearUnsafe()
@@ -521,7 +521,7 @@ const makeSocket = Effect.gen(function*() {
 
       const incoming = yield* Queue.unbounded<ResponseStreamEvent, AiError.AiError>()
       const send = (message: typeof OpenAiSchema.CreateResponse.Encoded) =>
-        write(JSON.stringify({
+        writer.write(JSON.stringify({
           type: "response.create",
           ...message
         })).pipe(
@@ -544,7 +544,7 @@ const makeSocket = Effect.gen(function*() {
           )
         )
 
-      yield* socket.runRaw((msg) => {
+      const handleMessage = (msg: Uint8Array | string): Effect.Effect<void, AiError.AiError> | undefined => {
         const text = typeof msg === "string" ? msg : decoder.decode(msg)
         try {
           const event = decodeEvent(text)
@@ -580,7 +580,22 @@ const makeSocket = Effect.gen(function*() {
           }
           Queue.offerUnsafe(incoming, event)
         } catch {}
+        return undefined
+      }
+
+      yield* Effect.gen(function*() {
+        const { pull } = yield* socket.reader
+        while (true) {
+          const messages = yield* pull
+          for (let i = 0; i < messages.length; i++) {
+            const result = handleMessage(messages[i])
+            if (result !== undefined) {
+              yield* result
+            }
+          }
+        }
       }).pipe(
+        Effect.scoped,
         Effect.catchTag("SocketError", (error) =>
           AiError.make({
             module: "OpenAiClient",

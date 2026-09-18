@@ -54,8 +54,8 @@ export interface FlagDescriptor {
 export type FlagType =
   | { readonly _tag: "Boolean" }
   | { readonly _tag: "String" }
-  | { readonly _tag: "Integer" }
-  | { readonly _tag: "Float" }
+  | { readonly _tag: "Int" }
+  | { readonly _tag: "Finite" }
   | { readonly _tag: "Date" }
   | { readonly _tag: "Choice"; readonly values: ReadonlyArray<string> }
   | { readonly _tag: "Path"; readonly pathType: "file" | "directory" | "either" }
@@ -82,8 +82,8 @@ export interface ArgumentDescriptor {
  */
 export type ArgumentType =
   | { readonly _tag: "String" }
-  | { readonly _tag: "Integer" }
-  | { readonly _tag: "Float" }
+  | { readonly _tag: "Int" }
+  | { readonly _tag: "Finite" }
   | { readonly _tag: "Date" }
   | { readonly _tag: "Choice"; readonly values: ReadonlyArray<string> }
   | { readonly _tag: "Path"; readonly pathType: "file" | "directory" | "either" }

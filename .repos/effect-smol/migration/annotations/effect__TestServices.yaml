@@ -47,11 +47,11 @@
   replacement: "Vitest TestOptions.retry"
   note: "Configure retry in Vitest test options. To retry an Effect inside a test, use Effect.retry."
 "effect/TestServices#samples":
-  replacement: "{ fastCheck: { numRuns } }"
-  note: "Pass the run count through @effect/vitest property-test options, for example it.effect.prop(..., { fastCheck: { numRuns: samples } })."
+  replacement: "{ arbitrary: { runs } }"
+  note: "Pass the run count through @effect/vitest property-test options, for example it.effect.prop(..., { arbitrary: { runs: samples } })."
 "effect/TestServices#shrinks":
-  replacement: "none"
-  note: "The legacy maximum-shrinks service setting was removed; @effect/vitest forwards FastCheck.Parameters, which has no equivalent service value."
+  replacement: "{ arbitrary: { maxShrinks } }"
+  note: "Pass maxShrinks through @effect/vitest property-test options, for example it.effect.prop(..., { arbitrary: { maxShrinks } })."
 "effect/TestServices#size":
   replacement: "CurrentSize"
   note: "Define a custom Context.Reference<number> and yield it to read the current size."
@@ -66,19 +66,19 @@
   note: "Use the custom reference's callback, or preferably yield CurrentSize in Effect.gen."
 "effect/TestServices#testConfig":
   replacement: "none"
-  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference."
+  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference."
 "effect/TestServices#testConfigLayer":
   replacement: "none"
-  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference."
+  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference."
 "effect/TestServices#testConfigWith":
   replacement: "none"
-  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference."
+  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference."
 "effect/TestServices#withTestConfig":
   replacement: "none"
-  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference."
+  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference."
 "effect/TestServices#withTestConfigScoped":
   replacement: "none"
-  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test fastCheck options; model application state as a custom Context.Reference."
+  note: "The runner no longer reads an Effect TestConfig service. Use Vitest TestOptions and property-test arbitrary options; model application state as a custom Context.Reference."
 "effect/TestServices#TestServices":
   replacement: "TestClock.TestClock | TestConsole.TestConsole"
   note: "This is the v4 @effect/vitest test-environment union. it.effect provides both automatically; it.live provides neither override."

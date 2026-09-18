@@ -14,16 +14,16 @@
     "dev": "alchemy dev",
     "destroy": "alchemy destroy",
     "logs": "alchemy logs",
-    "tail": "alchemy tail",
+    "tail": "alchemy logs --tail",
     "test": "bun test"
   },
   "dependencies": {
     "@alchemy.run/better-auth": "workspace:*",
-    "@cloudflare/workers-types": "catalog:cloudflare",
-    "@effect/platform-bun": "catalog:effect",
-    "@effect/platform-node": "catalog:effect",
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
-    "better-auth": "catalog:auth",
-    "effect": "catalog:effect"
+    "better-auth": "catalog:",
+    "effect": "catalog:"
   }
 }

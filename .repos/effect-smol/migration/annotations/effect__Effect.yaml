@@ -528,7 +528,7 @@ effect/Effect#transposeMapOption:
   note: "Return `Effect.succeedNone` for None and map the Effect result to Some. Adapt arguments and imports to the v4 API."
 effect/Effect#try:
   replacement: "Effect.try"
-  note: "Still exported in v4; update call sites for the revised signature, options, and channel inference."
+  note: "Use the callback overload for Cause.UnknownError, or the object overload with try and catch to map failures to a custom error. The callback-only overload does not accept a custom error type parameter."
 effect/Effect#tryMap:
   replacement: "Effect.flatMap + Effect.try"
   note: "FlatMap the source value into the v4 synchronous try constructor. Adapt arguments and imports to the v4 API."
@@ -655,3 +655,9 @@ effect/Effect#zipLeft:
 effect/Effect#zipRight:
   replacement: "Effect.andThen"
   note: "Sequence the Effects and retain the second result. Adapt arguments and imports to the v4 API."
+"effect/Effect#repeatOrElse":
+  replacement: "Effect.repeatOrElse"
+  note: "The fallback receives Option<Schedule.Metadata<B, A>> instead of Option<B>. Read metadata.output for the previous schedule output and metadata.attempt for the attempt count. The error also includes schedule failures."
+"effect/Effect#tryPromise":
+  replacement: "Effect.tryPromise"
+  note: "Use the callback overload for Cause.UnknownError, or the object overload with try and catch to map failures to a custom error. The callback-only overload does not accept a custom error type parameter."

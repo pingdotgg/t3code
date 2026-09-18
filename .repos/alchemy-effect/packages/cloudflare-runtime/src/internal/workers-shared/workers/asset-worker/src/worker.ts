@@ -4,7 +4,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { PerformanceTimer } from "../../../shared/performance.ts";
 import { setupSentry } from "../../../shared/sentry.ts";
 import { mockJaegerBinding } from "../../../shared/tracing.ts";
-import { Analytics, EntrypointType } from "./analytics.ts";
+import { Analytics, EntrypointType, getRequestKind } from "./analytics.ts";
 import { AssetsManifest } from "./assets-manifest.ts";
 import { normalizeConfiguration } from "./configuration.ts";
 import { ExperimentAnalytics } from "./experiment-analytics.ts";
@@ -312,6 +312,7 @@ async function runFetchRequest(
         userAgent: userAgent,
         entrypoint: EntrypointType.Inner,
         cohort: cohort ?? "unknown",
+        requestKind: getRequestKind(request),
       });
     }
 
@@ -360,8 +361,14 @@ async function runFetchRequest(
  *
  * AssetWorkerOuter serves as the dispatch layer. It forwards all method
  * calls to AssetWorkerInner via ctx.exports.
+ *
+ * This now-unused entrypoint can be used for loopback invocations if made the
+ * default export, which is how cohorted deployments will be implemented.
+ * For now, the latency added by loopback invocations is too high for normal
+ * traffic. When that has been addressed, re-enable loopback by making this
+ * the default export.
  */
-export default class AssetWorkerOuter<TEnv extends Env = Env>
+export class AssetWorkerOuter<TEnv extends Env = Env>
   extends WorkerEntrypoint<TEnv>
   implements AssetWorkerMethods
 {
@@ -429,6 +436,7 @@ export default class AssetWorkerOuter<TEnv extends Env = Env>
           hostname: url.hostname,
           version: this.env.VERSION_METADATA.tag,
           entrypoint: EntrypointType.Outer,
+          requestKind: getRequestKind(request),
         });
       }
       sentry = setupSentry(
@@ -449,7 +457,10 @@ export default class AssetWorkerOuter<TEnv extends Env = Env>
       const response = await this.getInnerEntrypoint(cohort).fetch(request);
       analytics.setData({ status: response.status });
       if (response.status >= 500) {
-        analytics.setData({ error: "inner entrypoint error" });
+        analytics.setData({
+          error: "inner entrypoint error",
+          servedBy: "error",
+        });
       }
       return response;
     } catch (err) {
@@ -503,10 +514,10 @@ export default class AssetWorkerOuter<TEnv extends Env = Env>
 
 /*
  * AssetWorkerInner contains the actual implementation logic for all asset
- * worker methods. In production, it is instantiated by AssetWorkerOuter via
- * ctx.exports. For local development, tools such as the Vite plugin can
- * subclass AssetWorkerInner directly to override methods like unstable_exists
- * and unstable_getByETag with dev-server-backed implementations.
+ * worker methods. AssetWorkerOuter can instantiate it via ctx.exports to
+ * enable cohort-based loopback. For local development, tools such as the Vite
+ * plugin can subclass AssetWorkerInner directly to override methods like
+ * unstable_exists and unstable_getByETag with dev-server-backed implementations.
  */
 export class AssetWorkerInner<TEnv extends Env = Env>
   extends WorkerEntrypoint<TEnv>
@@ -518,19 +529,19 @@ export class AssetWorkerInner<TEnv extends Env = Env>
     const loopbackCtx = this.ctx as AssetWorkerContext;
     const traceContext = loopbackCtx.props?.traceContext ?? null;
     const cohort = this.ctx.version?.cohort;
+    const runRequest = () =>
+      runFetchRequest(
+        request,
+        this.env,
+        this.ctx,
+        this.unstable_exists.bind(this),
+        this.unstable_getByETag.bind(this),
+        cohort,
+      );
 
-    const response = await this.env.JAEGER.runWithSpanContext(
-      traceContext,
-      () =>
-        runFetchRequest(
-          request,
-          this.env,
-          this.ctx,
-          this.unstable_exists.bind(this),
-          this.unstable_getByETag.bind(this),
-          cohort,
-        ),
-    );
+    const response = traceContext
+      ? await this.env.JAEGER.runWithSpanContext(traceContext, runRequest)
+      : await runRequest();
 
     if (response instanceof Response) {
       return response;
@@ -578,3 +589,5 @@ export class AssetWorkerInner<TEnv extends Env = Env>
     return unstableExistsImpl(this.env, pathname, request);
   }
 }
+
+export default AssetWorkerInner;

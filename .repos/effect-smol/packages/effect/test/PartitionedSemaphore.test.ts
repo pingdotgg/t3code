@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, Fiber, Option, PartitionedSemaphore } from "effect"
+import { Effect, Exit, Fiber, Option, PartitionedSemaphore, Scheduler } from "effect"
 
 describe("PartitionedSemaphore", () => {
   it.effect("module-level combinators delegate to the instance api", () =>
@@ -89,4 +89,47 @@ describe("PartitionedSemaphore", () => {
       assert.strictEqual(yield* PartitionedSemaphore.available(sem), 4)
       yield* PartitionedSemaphore.take(sem, "c", 4)
     }))
+
+  for (const key of ["other", "same"]) {
+    it.effect(`interrupting a resumed waiter preserves the next ${key}-key waiter`, () =>
+      Effect.gen(function*() {
+        const tasks: Array<() => void> = []
+        let shouldYield = false
+        const scheduler: Scheduler.Scheduler = {
+          executionMode: "async",
+          makeDispatcher() {
+            return {
+              scheduleTask(task) {
+                tasks.push(task)
+              },
+              flush() {}
+            }
+          },
+          shouldYield: () => {
+            if (!shouldYield) return false
+            shouldYield = false
+            return true
+          }
+        }
+
+        const sem = yield* PartitionedSemaphore.make<string>({ permits: 1 })
+        yield* sem.take("holder", 1)
+        const first = yield* sem.take("same", 1).pipe(
+          Effect.provideService(Scheduler.Scheduler, scheduler),
+          Effect.forkChild({ startImmediately: true })
+        )
+
+        // Pause the selected waiter before its take effect finishes.
+        shouldYield = true
+        yield* sem.release(1)
+        const next = yield* sem.take(key, 1).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Fiber.interrupt(first)
+        while (tasks.length > 0) tasks.shift()!()
+
+        const exit = next.pollUnsafe()
+        yield* Fiber.interrupt(next)
+
+        assert.deepStrictEqual(exit, Exit.void)
+      }))
+  }
 })

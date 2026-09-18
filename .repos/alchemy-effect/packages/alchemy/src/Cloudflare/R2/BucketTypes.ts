@@ -9,6 +9,14 @@ export interface R2Object extends Omit<runtime.R2Object, "writeHttpMetadata"> {
 
 export interface ObjectBody extends R2Object {
   get body(): Stream.Stream<Uint8Array, R2Error>;
+  /**
+   * The platform's own body stream, untouched — for hot paths that hand
+   * bytes straight to a `Response` without an Effect stream in between
+   * (a `pipeTo` between native streams is zero JS per chunk). Consume
+   * EITHER this or `body`, never both. Absent on implementations that
+   * have no native stream to offer.
+   */
+  readonly readable?: ReadableStream<Uint8Array> | undefined;
   get bodyUsed(): boolean;
   arrayBuffer(): Effect.Effect<ArrayBuffer, R2Error>;
   bytes(): Effect.Effect<Uint8Array, R2Error>;

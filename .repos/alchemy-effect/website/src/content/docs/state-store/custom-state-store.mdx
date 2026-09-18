@@ -30,7 +30,7 @@ class State extends Context.Service<State, Effect.Effect<StateService>>()(
 ) {}
 ```
 
-This indirection matters. Commands like `alchemy login` provide the
+This indirection matters. Commands like `alchemy profile show` provide the
 state layer but never touch state, so a store must not connect to its
 backend (open a DB connection, deploy a worker, prompt for
 credentials) just because the layer was built. Wrapping the builder

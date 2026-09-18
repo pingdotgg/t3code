@@ -21,23 +21,23 @@
   "dependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
     "@distilled.cloud/railway": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
-    "@effect/sql-pg": "catalog:effect",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-pg": "catalog:",
     "alchemy": "workspace:*",
-    "drizzle-orm": "catalog:database",
-    "effect": "catalog:effect",
-    "pg": "catalog:database",
-    "react": "catalog:frontend",
-    "react-dom": "catalog:frontend"
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "pg": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "catalog:frontend",
-    "@types/pg": "catalog:database",
-    "@types/react": "catalog:frontend",
-    "@types/react-dom": "catalog:frontend",
-    "@vitejs/plugin-react": "catalog:frontend",
-    "tailwindcss": "catalog:frontend",
-    "typescript": "catalog:build",
-    "vite": "catalog:build"
+    "@tailwindcss/vite": "catalog:",
+    "@types/pg": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   }
 }

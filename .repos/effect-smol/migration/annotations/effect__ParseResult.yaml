@@ -8,6 +8,9 @@
 "effect/ParseResult#ArrayFormatterIssue":
   replacement: "StandardSchemaV1.FailureResult[\"issues\"][number]"
   note: "Use the Standard Schema issue shape returned by makeFormatterStandardSchemaV1."
+"effect/ParseResult#Composite":
+  replacement: "SchemaIssue.Composite"
+  note: "Composite parse failures moved to SchemaIssue. The v4 constructor takes the failing AST and an array of nested issues; input is retained only when reportInput is enabled."
 "effect/ParseResult#DeclarationDecodeUnknown":
   replacement: "SchemaGetter.Getter"
   note: "Custom declaration decoding now uses SchemaGetter values and Schema.declare annotations."
@@ -68,6 +71,9 @@
 "effect/ParseResult#orElse":
   replacement: "Effect.orElse"
   note: "Schema transformations now use Effect combinators."
+"effect/ParseResult#Pointer":
+  replacement: "SchemaIssue.Pointer"
+  note: "Path-qualified failures moved to SchemaIssue. Construct them with the property path and nested issue; rejected input belongs to the nested issue when reportInput is enabled."
 "effect/ParseResult#parseError":
   replacement: "Schema.SchemaError"
   note: "Construct a SchemaError from a SchemaIssue.Issue."
@@ -94,6 +100,9 @@
   replacement: "SchemaIssue.defaultFormatter"
   note: "Use the default SchemaIssue string formatter."
   example: "SchemaIssue.defaultFormatter(issue)"
+"effect/ParseResult#Transformation":
+  replacement: "SchemaIssue.Encoding"
+  note: "Transformation-stage failures are Encoding issues in v4. They retain the failing AST and nested issue; the old Encoded, Transformation, and Type kind discriminator was removed."
 "effect/ParseResult#try":
   replacement: "Effect.try"
   note: "Schema transformations now use Effect and map thrown errors to SchemaIssue values."

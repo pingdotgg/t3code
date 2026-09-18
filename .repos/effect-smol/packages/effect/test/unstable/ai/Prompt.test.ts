@@ -3,6 +3,29 @@ import { Schema } from "effect"
 import { Prompt, Response } from "effect/unstable/ai"
 
 describe("Prompt", () => {
+  describe("serialization", () => {
+    it("preserves text parts during serialization", () => {
+      const prompt = Prompt.make([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "first" },
+            { type: "text", text: "second" }
+          ]
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "response", options: { test: { cache: "ephemeral" } } }]
+        }
+      ])
+
+      assert.deepStrictEqual(
+        Schema.decodeSync(Prompt.Prompt)(Schema.encodeSync(Prompt.Prompt)(prompt)),
+        prompt
+      )
+    })
+  })
+
   describe("part schemas", () => {
     it("exports schemas for all parts and message-specific parts", () => {
       const parts = {
@@ -55,6 +78,27 @@ describe("Prompt", () => {
   })
 
   describe("fromResponseParts", () => {
+    it("preserves file-only responses as assistant messages", () => {
+      const file = Response.makePart("file", {
+        data: new Uint8Array([0, 127, 128, 255]),
+        mediaType: "application/octet-stream",
+        metadata: { example: { id: "attachment-1", generated: true } }
+      })
+
+      assert.deepStrictEqual(
+        Prompt.fromResponseParts([file]),
+        Prompt.make([{
+          role: "assistant",
+          content: [{
+            type: "file",
+            data: "AH+A/w==",
+            mediaType: "application/octet-stream",
+            options: { example: { id: "attachment-1", generated: true } }
+          }]
+        }])
+      )
+    })
+
     it("folds streamed text and reasoning deltas into an assistant message", () => {
       const parts = [
         Response.makePart("text-start", { id: "1" }),

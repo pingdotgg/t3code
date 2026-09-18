@@ -110,8 +110,8 @@ export interface ImageProps {
   /**
    * Docker build context directory. Every file under the context (plus the
    * Dockerfile, platform, and build args) participates in the content hash
-   * that identifies the image — the image is rebuilt and pushed only when
-   * that hash changes.
+   * that identifies the image. An existing image with the same hash is reused;
+   * missing images are rebuilt and pushed to the desired repository.
    */
   context: string;
   /**
@@ -158,9 +158,9 @@ export interface Image extends Resource<
  * ECR repository.
  *
  * The image is identified by a content hash over the build context,
- * Dockerfile, platform, and build args. Reconcile rebuilds and pushes only
- * when that hash changes — a content change produces a new tag and digest on
- * the same resource, so replacement is never needed.
+ * Dockerfile, platform, and build args. An existing image with that hash is
+ * reused; a missing image is rebuilt and pushed. A content change produces a
+ * new tag on the same resource, so replacement is never needed.
  *
  * ### Building Images
  * **Example:** Push to an ECR Repository
@@ -178,6 +178,21 @@ export interface Image extends Resource<
  *   context: "./app",
  * });
  * ```
+ *
+ * ### Moving an Unchanged Build Context
+ * **Example:** Relocate identical build inputs without rebuilding
+ * ```diff
+ * const image = yield* AWS.ECR.Image("AppImage", {
+ *   repositoryUri: repository.repositoryUri,
+ * -  context: "./app",
+ * +  context: "./relocated-app",
+ * });
+ * ```
+ *
+ * Absolute paths are not part of the image's identity. With identical build
+ * inputs and the same repository setting, this plans a no-op. Content,
+ * Dockerfile, platform, build-argument, and repository changes still update
+ * the image. A deleted image or auto-created repository is recreated on deploy.
  *
  * ### Build Configuration
  * **Example:** Custom Dockerfile, Platform, and Build Args
@@ -309,12 +324,19 @@ export const ImageProvider = () =>
         // the build inputs and request an update when the hash drifts from
         // the pushed tag. Replacement is never needed — a new hash is just a
         // new tag + digest on the same resource.
-        diff: Effect.fn(function* ({ news, output }) {
+        diff: Effect.fn(function* ({ news, output, olds }) {
           if (!isResolved(news) || !output) return undefined;
           const hash = yield* hashBuildInputs(news);
-          if (hash !== output.imageTag) {
+          if (
+            hash !== output.imageTag ||
+            olds.repositoryUri !== news.repositoryUri
+          ) {
             return { action: "update" } as const;
           }
+          const image = yield* describeImage(output.repositoryName, hash);
+          if (!image?.imageDigest) return { action: "update" } as const;
+          // Build paths may move without changing an existing image.
+          return { action: "noop" } as const;
         }),
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
           // Resolve the target repository: user-supplied URI, or an

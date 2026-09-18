@@ -10,7 +10,7 @@ import { Argument, Command, Flag } from "effect/unstable/cli"
 
 // You can define flags outside of commands and reuse them across multiple
 // commands.
-const workspace = Flag.string("workspace").pipe(
+const workspace = Flag.String("workspace").pipe(
   Flag.withAlias("w"),
   Flag.withDescription("Workspace to operate on"),
   Flag.withDefault("personal")
@@ -21,7 +21,7 @@ const workspace = Flag.string("workspace").pipe(
 const tasks = Command.make("tasks").pipe(
   Command.withSharedFlags({
     workspace,
-    verbose: Flag.boolean("verbose").pipe(
+    verbose: Flag.Boolean("verbose").pipe(
       Flag.withAlias("v"),
       Flag.withDescription("Print diagnostic output"),
       Flag.withDefault(false)
@@ -41,17 +41,17 @@ const Email = Schema.String.pipe(
 const create = Command.make(
   "create",
   {
-    title: Argument.string("title").pipe(
+    title: Argument.String("title").pipe(
       Argument.withDescription("Task title"),
       // Reject empty titles at parse time, so the handler only ever sees
       // valid input
       Argument.withSchema(Schema.NonEmptyString)
     ),
-    priority: Flag.choice("priority", ["low", "normal", "high"]).pipe(
+    priority: Flag.Literals("priority", ["low", "normal", "high"]).pipe(
       Flag.withDescription("Priority for the new task"),
       Flag.withDefault("normal")
     ),
-    assignee: Flag.string("assignee").pipe(
+    assignee: Flag.String("assignee").pipe(
       Flag.withDescription("Email address of the person to assign"),
       Flag.withSchema(Email),
       Flag.optional
@@ -88,11 +88,11 @@ const create = Command.make(
 const list = Command.make(
   "list",
   {
-    status: Flag.choice("status", ["open", "done", "all"]).pipe(
+    status: Flag.Literals("status", ["open", "done", "all"]).pipe(
       Flag.withDescription("Filter tasks by status"),
       Flag.withDefault("open")
     ),
-    json: Flag.boolean("json").pipe(
+    json: Flag.Boolean("json").pipe(
       Flag.withDescription("Print machine-readable output"),
       Flag.withDefault(false)
     )

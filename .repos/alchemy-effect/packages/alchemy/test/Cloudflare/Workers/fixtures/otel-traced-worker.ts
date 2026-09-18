@@ -40,7 +40,7 @@ export default class OtelTracedWorker extends Cloudflare.Worker<OtelTracedWorker
         // polls this route until it reports 200 before asserting on
         // exported telemetry.
         if (url.pathname === "/probe") {
-          const endpoint = yield* Config.string("COLLECTOR_URL").pipe(
+          const endpoint = yield* Config.String("COLLECTOR_URL").pipe(
             Effect.orDie,
           );
           const result = yield* Effect.tryPromise(() =>
@@ -71,7 +71,7 @@ export default class OtelTracedWorker extends Cloudflare.Worker<OtelTracedWorker
     Effect.provide(
       Layer.unwrap(
         Effect.gen(function* () {
-          const url = yield* Config.string("COLLECTOR_URL");
+          const url = yield* Config.String("COLLECTOR_URL");
           return Layer.mergeAll(
             Telemetry.layerOtlp({ url, serviceName: "otel-traced-test" }),
             Telemetry.layerOtlp({ traces: { url: `${url}/v1/second-traces` } }),

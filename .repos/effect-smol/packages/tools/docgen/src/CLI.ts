@@ -18,51 +18,51 @@ import * as Configuration from "./Configuration.ts"
 import * as Core from "./Core.ts"
 import * as Domain from "./Domain.ts"
 
-const projectHomepage = Flag.string("homepage").pipe(
-  Flag.withFallbackConfig(Config.string("projectHomepage")),
+const projectHomepage = Flag.String("homepage").pipe(
+  Flag.withFallbackConfig(Config.String("projectHomepage")),
   Flag.withDescription(
     "The link to the project homepage (will be shown in the Auxiliary Links of the generated documentation)"
   ),
   Flag.optional
 )
 
-const srcLink = Flag.string("srcLink").pipe(
-  Flag.withFallbackConfig(Config.string("srcLink")),
+const srcLink = Flag.String("srcLink").pipe(
+  Flag.withFallbackConfig(Config.String("srcLink")),
   Flag.withDescription("The link to the project source code"),
   Flag.optional
 )
 
-const srcDir = Flag.directory("src", { mustExist: true }).pipe(
-  Flag.withFallbackConfig(Config.string("src").pipe(Config.withDefault("src"))),
+const srcDir = Flag.Directory("src", { mustExist: true }).pipe(
+  Flag.withFallbackConfig(Config.String("src").pipe(Config.withDefault("src"))),
   Flag.withDescription("The directory in which docgen will search for TypeScript files to parse")
 )
 
-const outDir = Flag.directory("out").pipe(
-  Flag.withFallbackConfig(Config.string("out").pipe(Config.withDefault("docs"))),
+const outDir = Flag.Directory("out").pipe(
+  Flag.withFallbackConfig(Config.String("out").pipe(Config.withDefault("docs"))),
   Flag.withDescription("The directory to which docgen will generate its output markdown documents")
 )
 
-const theme = Flag.string("theme").pipe(
-  Flag.withFallbackConfig(Config.string("theme").pipe(Config.withDefault(Configuration.DEFAULT_THEME))),
+const theme = Flag.String("theme").pipe(
+  Flag.withFallbackConfig(Config.String("theme").pipe(Config.withDefault(Configuration.DEFAULT_THEME))),
   Flag.withDescription("The Jekyll theme that should be used for the generated documentation")
 )
 
-const disableSearch = Flag.boolean("disable-search").pipe(
+const disableSearch = Flag.Boolean("disable-search").pipe(
   Flag.withDescription("Whether or not search should be enabled in the generated documentation"),
   Flag.optional
 )
 
-const enableSearchAlias = Flag.boolean("enable-search").pipe(
+const enableSearchAlias = Flag.Boolean("enable-search").pipe(
   Flag.withDescription("Whether or not search should be enabled in the generated documentation"),
   Flag.optional
 )
 
-const enforceDescriptions = Flag.boolean("enforce-descriptions").pipe(
+const enforceDescriptions = Flag.Boolean("enforce-descriptions").pipe(
   Flag.withDescription("Whether or not a description for each module export should be required"),
   Flag.optional
 )
 
-const enforceExamples = Flag.boolean("enforce-examples").pipe(
+const enforceExamples = Flag.Boolean("enforce-examples").pipe(
   Flag.withDescription(
     "Whether or not @example tags for each module export should be required " +
       "(Note: examples will not be enforced in module documentation)"
@@ -70,25 +70,25 @@ const enforceExamples = Flag.boolean("enforce-examples").pipe(
   Flag.optional
 )
 
-const noEnforceVersion = Flag.boolean("no-enforce-version").pipe(
+const noEnforceVersion = Flag.Boolean("no-enforce-version").pipe(
   Flag.withDescription("Whether or not @since tags for each module export should be required"),
   Flag.optional
 )
 
-const enforceVersionAlias = Flag.boolean("enforce-version").pipe(
+const enforceVersionAlias = Flag.Boolean("enforce-version").pipe(
   Flag.withDescription("Whether or not @since tags for each module export should be required"),
   Flag.optional
 )
 
-const runExamples = Flag.boolean("run-examples").pipe(
+const runExamples = Flag.Boolean("run-examples").pipe(
   Flag.withDescription("Whether or not to execute examples discovered in the TypeScript source files"),
   Flag.optional
 )
 
-const exclude = Flag.string("exclude").pipe(
+const exclude = Flag.String("exclude").pipe(
   Flag.between(0, Infinity),
   Flag.withFallbackConfig(
-    Config.schema(Config.Array(Schema.String), "exclude").pipe(
+    Config.Array(Schema.String, "exclude").pipe(
       Config.withDefault(Array.empty<string>())
     )
   ),
@@ -100,7 +100,7 @@ const exclude = Flag.string("exclude").pipe(
 const compilerOptionsSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown))
 
 const parseCompilerOptionsFlag = (name: string, description: string) =>
-  Flag.string(name).pipe(
+  Flag.String(name).pipe(
     Flag.withDescription(description),
     Flag.mapEffect((value) =>
       Schema.decodeUnknownEffect(compilerOptionsSchema)(value).pipe(
@@ -116,7 +116,7 @@ const parseCompilerOptionsFlag = (name: string, description: string) =>
     )
   )
 
-const parseCompilerOptionsFile = Flag.file("parse-tsconfig-file", { mustExist: true }).pipe(
+const parseCompilerOptionsFile = Flag.File("parse-tsconfig-file", { mustExist: true }).pipe(
   Flag.withDescription("The TypeScript TSConfig file to use for parsing source files"),
   Flag.optional
 )
@@ -126,7 +126,7 @@ const parseCompilerOptionsInline = parseCompilerOptionsFlag(
   "The TypeScript compiler options to use for parsing source files"
 ).pipe(Flag.optional)
 
-const examplesCompilerOptionsFile = Flag.file("examples-tsconfig-file", { mustExist: true }).pipe(
+const examplesCompilerOptionsFile = Flag.File("examples-tsconfig-file", { mustExist: true }).pipe(
   Flag.withDescription("The TypeScript TSConfig file to use for examples"),
   Flag.optional
 )
@@ -193,15 +193,15 @@ export const loadConfiguration = Effect.fnUntraced(function*(
       kind: "flag"
     })
   }
-  const configuredEnableSearch = yield* Config.boolean("enableSearch").pipe(Effect.orElseSucceed(() => true))
-  const configuredEnforceDescriptions = yield* Config.boolean("enforceDescriptions").pipe(
+  const configuredEnableSearch = yield* Config.Boolean("enableSearch").pipe(Effect.orElseSucceed(() => true))
+  const configuredEnforceDescriptions = yield* Config.Boolean("enforceDescriptions").pipe(
     Effect.orElseSucceed(() => false)
   )
-  const configuredEnforceExamples = yield* Config.boolean("enforceExamples").pipe(
+  const configuredEnforceExamples = yield* Config.Boolean("enforceExamples").pipe(
     Effect.orElseSucceed(() => false)
   )
-  const configuredEnforceVersion = yield* Config.boolean("enforceVersion").pipe(Effect.orElseSucceed(() => true))
-  const configuredRunExamples = yield* Config.boolean("runExamples").pipe(Effect.orElseSucceed(() => false))
+  const configuredEnforceVersion = yield* Config.Boolean("enforceVersion").pipe(Effect.orElseSucceed(() => true))
+  const configuredRunExamples = yield* Config.Boolean("runExamples").pipe(Effect.orElseSucceed(() => false))
   return yield* Configuration.load({
     ...config,
     enableSearch: Option.match(disableSearch, {

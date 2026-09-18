@@ -133,6 +133,7 @@ export const makeNodeTarget = (
   ...makeNodeAdapterTarget(config),
   build: (context: WakuTargetBuildContext) =>
     runBuildChild({
+      runtime: "node",
       module: import.meta.url,
       rootDir: context.root,
       env: context.env,

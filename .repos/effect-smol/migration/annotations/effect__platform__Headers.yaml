@@ -29,11 +29,11 @@
   replacement: "Headers.remove / Headers.removeMany"
   note: "Use remove for one name or removeMany for an iterable; RegExp removal requires enumerating matching names."
 "@effect/platform/Headers#schema":
-  replacement: "Headers.HeadersSchema"
-  note: "The encoded-record and self schemas were consolidated into HeadersSchema."
+  replacement: "Schema.Headers"
+  note: "The encoded-record and self schemas were consolidated and moved to effect/Schema as Schema.Headers."
 "@effect/platform/Headers#schemaFromSelf":
-  replacement: "Headers.HeadersSchema"
-  note: "The encoded-record and self schemas were consolidated into HeadersSchema."
+  replacement: "Schema.Headers"
+  note: "The encoded-record and self schemas were consolidated and moved to effect/Schema as Schema.Headers."
 "@effect/platform/Headers#set":
   replacement: "Headers.set"
   note: "Retained with the same dual signature and lowercase key normalization."

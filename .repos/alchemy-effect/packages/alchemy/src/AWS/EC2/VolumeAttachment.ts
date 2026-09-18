@@ -26,7 +26,7 @@ const retryWhileIncorrectState = <A, E extends { readonly _tag: string }, R>(
     schedule: Schedule.max([Schedule.fixed(2000), Schedule.recurs(10)]),
   });
 
-import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../../Report.ts";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";

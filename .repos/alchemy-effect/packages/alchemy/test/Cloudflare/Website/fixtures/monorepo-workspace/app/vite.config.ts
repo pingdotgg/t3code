@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 // worker-rendered, so point the client build at a tiny JS entry instead
 // (which also imports across the workspace boundary, exercising the
 // external-workspace detection in a second environment). Same shape as
-// ct's fixtures/monorepo-workspace/app/vite.config.ts.
+// ct's packages/frontend-frameworks/fixtures/monorepo-workspace/app/vite.config.ts.
 export default defineConfig({
   environments: {
     client: {

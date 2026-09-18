@@ -17,7 +17,7 @@ export default class NotifyWorkflow extends Cloudflare.Workflow<NotifyWorkflow>(
   Effect.gen(function* () {
     const rooms = yield* Room;
 
-    const secret = yield* Config.redacted("WORKFLOW_SECRET").pipe(
+    const secret = yield* Config.Redacted("WORKFLOW_SECRET").pipe(
       Config.withDefault(WORKFLOW_SECRET_VALUE),
     );
 

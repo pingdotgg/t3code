@@ -61,12 +61,14 @@ const publicExports = [
   "isCompute",
   "KNOWN_REGION_IDS",
   "REGIONS",
-  "PRISMA_API_TOKEN_ENV",
-  "PRISMA_SERVICE_TOKEN_ENV",
   "PRISMA_AUTH_PROVIDER_NAME",
+  "PrismaStoredCredentials",
   "PrismaApiDecodeError",
   "PrismaApiError",
   "PrismaClientLive",
+  "PrismaDeploymentFailed",
+  "PrismaDeploymentWaitInvalidOptions",
+  "PrismaDeploymentWaitTimeout",
   "PrismaLogStreamError",
   "listWorkspaces",
   "getWorkspace",
@@ -151,6 +153,7 @@ const publicExports = [
   "normalizeEntrypoint",
   "runBuildCommand",
   "runComputeAutoBuild",
+  "runComputeStaticBuild",
   "parseDeploymentLogRecord",
   "tailDeploymentLogs",
   "waitForDeploymentStatus",
@@ -204,13 +207,18 @@ const publicPrismaDeepImports = [
 ] as const;
 
 const internalPrismaDeepImports = [
+  "Credentials",
   "Internal/DeploymentActions",
   "Internal/DeploymentObserve",
   "PrismaDevDatabase",
   "Refs",
 ] as const;
 
-const internalPrismaRootFiles = ["PrismaDevDatabase", "Refs"] as const;
+const internalPrismaRootFiles = [
+  "Credentials",
+  "PrismaDevDatabase",
+  "Refs",
+] as const;
 
 const removedPrismaDeepImports = [
   "ComputeApp",
