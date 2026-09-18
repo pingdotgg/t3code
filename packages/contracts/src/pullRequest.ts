@@ -703,6 +703,20 @@ export const PullRequestLinkedThreadsResult = Schema.Struct({
 });
 export type PullRequestLinkedThreadsResult = typeof PullRequestLinkedThreadsResult.Type;
 
+/** The complete hover card, without checks, permissions, or branch comparisons. */
+export const PullRequestPreview = Schema.Struct({
+  projectId: ProjectId,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  author: Schema.NullOr(PullRequestActor),
+  state: PullRequestState,
+  isDraft: Schema.Boolean,
+  createdAt: IsoDateTime,
+});
+export type PullRequestPreview = typeof PullRequestPreview.Type;
+
 /**
  * The small live shape a linked thread needs. Keeping it separate from detail means a sidebar
  * status check never loads permissions, repository settings, checks, or base comparison data.

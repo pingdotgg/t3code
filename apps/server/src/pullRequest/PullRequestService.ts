@@ -32,6 +32,7 @@ import {
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
   type PullRequestDetail,
+  type PullRequestPreview,
   type PullRequestDiffFileContentsInput,
   type PullRequestDiffFileContentsResult,
   type PullRequestDiffStat,
@@ -202,6 +203,9 @@ export class PullRequestService extends Context.Service<
     readonly subscribeRefreshes: Stream.Stream<number>;
     readonly refreshAfterTurn: (projectId: ProjectId) => Effect.Effect<void>;
     readonly detail: (input: PullRequestRef) => Effect.Effect<PullRequestDetail, PullRequestError>;
+    readonly preview: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestPreview, PullRequestError>;
     readonly activity: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
@@ -546,6 +550,9 @@ function withRateLimitBackoff(
           listChangeRequestStats: wrap("listChangeRequestStats", api.listChangeRequestStats),
         }),
     getChangeRequest: wrap("getChangeRequest", api.getChangeRequest),
+    ...(api.getChangeRequestPreview === undefined
+      ? {}
+      : { getChangeRequestPreview: wrap("getChangeRequestPreview", api.getChangeRequestPreview) }),
     ...(api.getChangeRequestSummary === undefined
       ? {}
       : {
@@ -1675,6 +1682,38 @@ export const make = Effect.gen(function* () {
               ? {}
               : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
           })),
+        ),
+      ),
+    );
+
+  const previewFields = (value: PullRequestPreview): PullRequestPreview => ({
+    projectId: value.projectId,
+    repository: value.repository,
+    number: value.number,
+    title: value.title,
+    url: value.url,
+    author: value.author,
+    state: value.state,
+    isDraft: value.isDraft,
+    createdAt: value.createdAt,
+  });
+  const previewUncached: PullRequestService["Service"]["preview"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project) =>
+        (project.api.getChangeRequestPreview ?? project.api.getChangeRequest)({
+          cwd: project.project.workspaceRoot,
+          repository: project.repository,
+          host: project.host,
+          number: input.number,
+        }).pipe(
+          Effect.mapError(toPullRequestError("preview")),
+          Effect.map((value) =>
+            previewFields({
+              ...value,
+              projectId: project.project.id,
+              repository: project.repository,
+            }),
+          ),
         ),
       ),
     );
@@ -2885,6 +2924,27 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit) => (Exit.isSuccess(exit) ? DETAIL_CACHE_TTL : Duration.zero),
     },
   );
+
+  const previewCache = yield* Cache.makeWith(
+    (key: string) => {
+      return previewUncached(refOfCacheKey(key));
+    },
+    {
+      capacity: DETAIL_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? DETAIL_CACHE_TTL : Duration.zero),
+    },
+  );
+  const preview: PullRequestService["Service"]["preview"] = (input) => {
+    const key = refCacheKey(input);
+    return Cache.getSuccess(detailCache, key).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Cache.get(previewCache, key),
+          onSome: (detail) => Effect.succeed(previewFields(detail)),
+        }),
+      ),
+    );
+  };
   const activity: PullRequestService["Service"]["activity"] = (input) => {
     const key = refCacheKey(input);
     return Cache.get(activityCache, key);
@@ -3131,6 +3191,7 @@ export const make = Effect.gen(function* () {
     refreshAfterTurn,
     detail: credentialCached(detail),
     activity: credentialCached(activity),
+    preview: credentialCached(preview),
     threadComments,
     diff: credentialCached(diff),
     diffFileContents,

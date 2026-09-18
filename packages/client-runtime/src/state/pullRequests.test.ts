@@ -887,6 +887,84 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
   ),
 );
 
+it.effect("keeps hover previews fresh after edits and turns", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const refreshEvents = yield* PubSub.unbounded<number>();
+      let title = "Original title";
+      let reads = 0;
+      const read = (input: unknown) =>
+        Effect.sync(() => {
+          expect(input).toEqual(reference);
+          reads++;
+          return { ...reference, title };
+        });
+      const reference = {
+        projectId: ProjectId.make("project-1"),
+        repository: "acme/web",
+        number: 1,
+        host: "github.example.com",
+      };
+      const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.fromPubSub(refreshEvents),
+        [WS_METHODS.pullRequestsPreview]: read,
+        [WS_METHODS.pullRequestsDetail]: read,
+        [WS_METHODS.pullRequestsUpdate]: (input: { title: string }) =>
+          Effect.sync(() => {
+            title = input.title;
+          }),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.sync(() => {
+            title = "Closed";
+          }),
+        [WS_METHODS.pullRequestsInvalidate]: () => Effect.void,
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: reference };
+      const preview = atoms.preview(target);
+      const unmount = registry.mount(preview);
+      yield* Effect.addFinalizer(() => Effect.sync(unmount));
+      expect(
+        (yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true })).title,
+      ).toBe(title);
+      yield* Effect.promise(() => executeAtomQuery(registry, preview));
+      expect(reads).toBe(1);
+      const edited = yield* Effect.promise(() =>
+        atoms.update.run(registry, { ...target, input: { ...reference, title: "Edited" } }),
+      );
+      expect(AsyncResult.isSuccess(edited)).toBe(true);
+      expect(
+        (yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true })).title,
+      ).toBe("Edited");
+      yield* Effect.promise(() =>
+        atoms.runAction.run(registry, { ...target, input: { ...reference, action: "close" } }),
+      );
+      expect(
+        (yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true })).title,
+      ).toBe("Closed");
+      title = "Refreshed";
+      yield* Effect.promise(() =>
+        atoms.invalidate.run(registry, {
+          environmentId: target.environmentId,
+          input: { reference },
+        }),
+      );
+      expect(
+        (yield* AtomRegistry.getResult(registry, preview, { suspendOnWaiting: true })).title,
+      ).toBe("Refreshed");
+      const refreshed = Latch.makeUnsafe();
+      const stop = registry.subscribe(preview, (result) => {
+        if (AsyncResult.isSuccess(result) && result.value.title === "After turn")
+          refreshed.openUnsafe();
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(stop));
+      title = "After turn";
+      yield* PubSub.publish(refreshEvents, 1);
+      yield* refreshed.await;
+    }),
+  ),
+);
+
 it.effect("shares close, reopen, and merge with an untouched client's mounted PR readers", () =>
   Effect.scoped(
     Effect.gen(function* () {
