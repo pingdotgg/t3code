@@ -1,3 +1,4 @@
+import { ExternalTerminalMenuItem } from "./ExternalTerminalMenuItem";
 import {
   buildRemoteOpenUrl,
   EditorId,
@@ -187,6 +188,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  terminalCwd = openInCwd,
   compact = false,
   enableShortcut = true,
 }: {
@@ -194,6 +196,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  terminalCwd?: string | null;
   compact?: boolean;
   enableShortcut?: boolean;
 }) {
@@ -302,9 +305,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       </Button>
       <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
       <Menu>
-        <MenuTrigger
-          render={<Button aria-label="Choose editor" size="icon-xs" variant="outline" />}
-        >
+        <MenuTrigger render={<Button aria-label="Open options" size="icon-xs" variant="outline" />}>
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
@@ -327,6 +328,7 @@ export const OpenInPicker = memo(function OpenInPicker({
               )}
             </>
           )}
+          <ExternalTerminalMenuItem environmentId={environmentId} cwd={terminalCwd} />
         </MenuPopup>
       </Menu>
     </Group>

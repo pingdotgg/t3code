@@ -111,6 +111,10 @@ describe("electron development launcher", () => {
       "T3 Code captures the active window when you use the snapshot shortcut.",
     );
     assert.equal(
+      values.NSAppleEventsUsageDescription,
+      "T3 Code uses your terminal app to open project directories and SSH sessions.",
+    );
+    assert.equal(
       values.NSDocumentsFolderUsageDescription,
       "T3 Code reads project files you open in the desktop app.",
     );

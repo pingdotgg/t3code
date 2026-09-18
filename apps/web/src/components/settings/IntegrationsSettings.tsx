@@ -1,3 +1,4 @@
+import { ExternalTerminalSetting } from "./ExternalTerminalSetting";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
@@ -1333,6 +1334,7 @@ export function IntegrationsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <ExternalTerminalSetting />
       {/* Server-authoritative agent access is scoped by the header selection;
           the preview defaults below are device-local and ignore it. */}
       <ProjectDefaultsSettings category="integrations" />

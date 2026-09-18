@@ -104,8 +104,10 @@ export function shouldShowOpenInPicker(input: {
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly remoteOpenMode: RemoteOpenMode;
+  readonly externalTerminalAvailable?: boolean;
 }): boolean {
   if (!input.activeProjectName) return false;
+  if (input.externalTerminalAvailable) return true;
   if (
     input.primaryEnvironmentId !== null &&
     input.activeThreadEnvironmentId === input.primaryEnvironmentId
@@ -168,6 +170,7 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
     remoteOpenMode: remoteOpenState.mode,
+    externalTerminalAvailable: window.desktopBridge?.openTerminal !== undefined,
   });
   const activeThreadRef = useMemo(
     () => scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
