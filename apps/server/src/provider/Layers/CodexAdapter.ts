@@ -2219,6 +2219,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
+  const adapterScope = yield* Scope.Scope;
   const serverConfig = yield* Effect.service(ServerConfig);
   const nativeEventLogger =
     options?.nativeEventLogger ??
@@ -2244,7 +2245,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         }
 
         const existing = sessions.get(input.threadId);
-        if (existing) {
+        if (existing && !existing.stopped) {
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
@@ -2317,19 +2318,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
-        // Fork into the session scope, not the calling fiber. `forkChild` makes
-        // this a child of `startSession`, and Effect interrupts a fiber's
-        // children when it completes, so the consumer died on return and every
-        // runtime event the session emitted afterwards was dropped.
+        // Fork into the adapter scope, not the calling fiber. This keeps the
+        // consumer alive after startSession returns and lets an exit event
+        // close the runtime's narrower session scope without self-interrupting.
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            if (event.method === "session/exited") {
-              const liveSession = sessions.get(event.threadId);
-              if (liveSession) {
-                liveSession.stopped = true;
-              }
-            }
             if (event.method === "turn/started" && event.turnId) {
               if (turnTokenUsage.activeTurnId !== event.turnId) {
                 turnTokenUsage.byTurnId.clear();
@@ -2445,8 +2439,18 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               return;
             }
             yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+
+            if (event.method === "session/exited" || event.method === "session/closed") {
+              const exitedSession = sessions.get(event.threadId);
+              if (exitedSession) {
+                exitedSession.stopped = true;
+                sessions.delete(event.threadId);
+                yield* exitedSession.runtime.close.pipe(Effect.ignore);
+                yield* Scope.close(exitedSession.scope, Exit.void).pipe(Effect.ignore);
+              }
+            }
           }),
-        ).pipe(Effect.forkIn(sessionScope));
+        ).pipe(Effect.forkIn(adapterScope));
 
         const started = yield* runtime.start().pipe(
           Effect.mapError(
@@ -2663,12 +2667,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     session: CodexAdapterSessionContext,
   ) {
-    const alreadyStopped = session.stopped;
+    if (session.stopped) {
+      return;
+    }
     session.stopped = true;
     sessions.delete(session.threadId);
-    if (!alreadyStopped) {
-      yield* session.runtime.close.pipe(Effect.ignore);
-    }
+    yield* session.runtime.close.pipe(Effect.ignore);
     yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
   });

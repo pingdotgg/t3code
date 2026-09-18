@@ -9,7 +9,6 @@ import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntim
 import { ProviderSessionDirectoryPersistenceError, ProviderValidationError } from "../Errors.ts";
 import {
   ProviderSessionDirectory,
-  type ProviderRuntimeBinding,
   type ProviderRuntimeBindingWithMetadata,
   type ProviderSessionDirectoryShape,
 } from "../Services/ProviderSessionDirectory.ts";
@@ -86,12 +85,12 @@ function toRuntimeBinding(
 const makeProviderSessionDirectory = Effect.gen(function* () {
   const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
-  const getBinding = (threadId: ThreadId) =>
+  const getBindingWithMetadata = (threadId: ThreadId) =>
     repository.getByThreadId({ threadId }).pipe(
       Effect.mapError(toPersistenceError("ProviderSessionDirectory.getBinding:getByThreadId")),
       Effect.flatMap((runtime) =>
         Option.match(runtime, {
-          onNone: () => Effect.succeed(Option.none<ProviderRuntimeBinding>()),
+          onNone: () => Effect.succeed(Option.none<ProviderRuntimeBindingWithMetadata>()),
           onSome: (value) =>
             toRuntimeBinding(value, "ProviderSessionDirectory.getBinding").pipe(
               Effect.map((binding) => Option.some(binding)),
@@ -99,6 +98,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         }),
       ),
     );
+  const getBinding: ProviderSessionDirectoryShape["getBinding"] = getBindingWithMetadata;
 
   const upsert: ProviderSessionDirectoryShape["upsert"] = Effect.fn(function* (binding, options) {
     const existing = yield* repository
@@ -201,6 +201,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     recordImportedTranscript,
     getProvider,
     getBinding,
+    getBindingWithMetadata,
     listThreadIds,
     listBindings,
   } satisfies ProviderSessionDirectoryShape;

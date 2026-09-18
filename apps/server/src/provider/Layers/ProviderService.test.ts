@@ -4947,6 +4947,8 @@ validation.layer("ProviderServiceLive validation", (it) => {
 
 const activeSessionThreadId = asThreadId("thread-active-session");
 const historicalSessionThreadId = asThreadId("thread-historical-session");
+const idleSessionThreadId = asThreadId("thread-idle-session");
+const idleSessionLastSeenAt = "2026-01-01T00:00:00.000Z";
 const listThreadIds = vi.fn(() =>
   Effect.succeed([activeSessionThreadId, historicalSessionThreadId]),
 );
@@ -4959,12 +4961,24 @@ const getBinding = vi.fn((threadId: ThreadId) =>
     }),
   ),
 );
+const getBindingWithMetadata = vi.fn((threadId: ThreadId) =>
+  Effect.succeed(
+    Option.some({
+      threadId,
+      provider: CODEX_DRIVER,
+      providerInstanceId: codexInstanceId,
+      status: "running" as const,
+      lastSeenAt: idleSessionLastSeenAt,
+    }),
+  ),
+);
 const boundedListing = makeProviderServiceLayer({
   directory: {
     upsert: () => Effect.void,
     recordImportedTranscript: () => Effect.die("unused"),
     getProvider: () => Effect.die("ProviderService.listSessions does not use getProvider"),
     getBinding,
+    getBindingWithMetadata,
     listThreadIds,
     listBindings: () => Effect.die("ProviderService.listSessions does not use listBindings"),
   },
@@ -4989,6 +5003,30 @@ boundedListing.layer("ProviderServiceLive session listing", (it) => {
       assert.equal(sessions.length, 1);
       assert.equal(listThreadIds.mock.calls.length, 0);
       assert.deepEqual(getBinding.mock.calls, [[activeSessionThreadId]]);
+    }),
+  );
+
+  it.effect("reads only the idle session binding before stopping it", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      yield* boundedListing.codex.startSession({
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: idleSessionThreadId,
+        cwd: fixtureCwd("project-idle-session"),
+        runtimeMode: "full-access",
+      });
+      getBinding.mockClear();
+      getBindingWithMetadata.mockClear();
+
+      const stopped = yield* provider.stopIdleSession({
+        threadId: idleSessionThreadId,
+        observedLastSeenAt: idleSessionLastSeenAt,
+      });
+
+      assert.equal(stopped, true);
+      assert.deepEqual(getBindingWithMetadata.mock.calls, [[idleSessionThreadId]]);
+      assert.deepEqual(getBinding.mock.calls, [[idleSessionThreadId]]);
     }),
   );
 });
@@ -5385,7 +5423,7 @@ wake.layer("ProviderServiceLive Codex session wake", (it) => {
     }),
   );
 
-  it.effect("reports a failed restore without changing the saved provider identity", () =>
+  it.effect("leaves the saved provider identity unchanged when resume fails", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
@@ -5401,18 +5439,6 @@ wake.layer("ProviderServiceLive Codex session wake", (it) => {
             detail: "thread not found",
           }),
         )) as unknown as typeof wake.codex.startSession);
-      const failureEventFiber = yield* provider.streamEvents.pipe(
-        Stream.filter(
-          (event) =>
-            event.threadId === wakeFailedThreadId &&
-            event.type === "session.state.changed" &&
-            event.payload.state === "error",
-        ),
-        Stream.runHead,
-        Effect.forkChild,
-      );
-      yield* Effect.yieldNow;
-
       const error = yield* provider
         .wakeSession({ provider: "codex", providerThreadId })
         .pipe(Effect.flip);
@@ -5422,12 +5448,6 @@ wake.layer("ProviderServiceLive Codex session wake", (it) => {
       assert.equal(after.provider, before.provider);
       assert.equal(after.providerInstanceId, before.providerInstanceId);
       assert.deepEqual(after.resumeCursor, before.resumeCursor);
-      const failureEvent = Option.getOrThrow(yield* Fiber.join(failureEventFiber));
-      assert.equal(failureEvent.type, "session.state.changed");
-      if (failureEvent.type === "session.state.changed") {
-        assert.equal(failureEvent.payload.state, "error");
-        assert.match(failureEvent.payload.reason ?? "", /thread not found/);
-      }
     }),
   );
 

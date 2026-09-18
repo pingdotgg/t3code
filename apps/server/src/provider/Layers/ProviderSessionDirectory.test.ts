@@ -67,6 +67,11 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         threadId: initialThreadId,
         provider: ProviderDriverKind.make("codex"),
       });
+      const resolvedBindingWithMetadata = yield* directory.getBindingWithMetadata(initialThreadId);
+      expect(Option.getOrThrow(resolvedBindingWithMetadata)).toMatchObject({
+        threadId: initialThreadId,
+        lastSeenAt: expect.any(String),
+      });
       if (Option.isSome(resolvedBinding)) {
         assert.equal(resolvedBinding.value.threadId, initialThreadId);
       }

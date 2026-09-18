@@ -228,6 +228,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
   getBinding: () => Effect.succeed(Option.none()),
+  getBindingWithMetadata: () => Effect.die("unused"),
   listThreadIds: () => Effect.succeed([]),
   listBindings: () => Effect.succeed([]),
 });
@@ -2679,6 +2680,45 @@ scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
         asThreadId("thread-stop"),
       ]);
       NodeAssert.equal(yield* adapter.hasSession(asThreadId("thread-stop")), false);
+    }),
+  );
+
+  it.effect("closes the externally owned session scope after the process exits", () =>
+    Effect.gen(function* () {
+      scopedLifecycleRuntimeFactory.releasedThreadIds.length = 0;
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-exit");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      const exitedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "session.exited"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-scoped-session-exited"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/exited",
+        message: "Codex App Server exited.",
+      } satisfies ProviderEvent);
+      yield* Fiber.join(exitedFiber);
+      yield* Effect.yieldNow;
+
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 1);
+      NodeAssert.deepStrictEqual(scopedLifecycleRuntimeFactory.releasedThreadIds, [threadId]);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
     }),
   );
 });

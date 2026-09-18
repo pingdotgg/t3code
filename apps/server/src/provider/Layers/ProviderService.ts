@@ -1289,33 +1289,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     () => reconcileInstanceSubscriptions,
   ).pipe(Effect.forkScoped);
 
-  const publishWakeFailure = (input: {
-    readonly instanceId: ProviderInstanceId;
-    readonly provider: ProviderDriverKind;
-    readonly threadId: ThreadId;
-    readonly reason: string;
-  }) =>
-    Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      yield* processRuntimeEvent(
-        { instanceId: input.instanceId, provider: input.provider },
-        {
-          type: "session.state.changed",
-          eventId: EventId.make(
-            `codex-wake:${input.threadId}:error:${DateTime.toEpochMillis(now)}`,
-          ),
-          provider: input.provider,
-          providerInstanceId: input.instanceId,
-          threadId: input.threadId,
-          createdAt: DateTime.formatIso(now),
-          payload: {
-            state: "error",
-            reason: input.reason,
-          },
-        },
-      );
-    });
-
   const recoverSessionForThreadUnlocked = Effect.fn("recoverSessionForThreadUnlocked")(
     function* (input: {
       readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
@@ -2200,8 +2173,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const stopIdleSession: ProviderServiceMethod<"stopIdleSession"> = Effect.fn("stopIdleSession")(
     function* (input) {
       return yield* Effect.gen(function* () {
-        const bindings = yield* directory.listBindings();
-        const binding = bindings.find((entry) => entry.threadId === input.threadId);
+        const binding = Option.getOrUndefined(
+          yield* directory.getBindingWithMetadata(input.threadId),
+        );
         if (!binding || binding.status === "stopped") {
           return false;
         }
@@ -2275,14 +2249,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         operation: "ProviderService.wakeSession",
         resumeMode: "strict",
       }).pipe(
-        Effect.tapError((error) =>
-          publishWakeFailure({
-            instanceId,
-            provider: binding.provider,
-            threadId: binding.threadId,
-            reason: error.message,
-          }),
-        ),
         withMetrics({
           counter: providerSessionsTotal,
           attributes: providerMetricAttributes(binding.provider, {

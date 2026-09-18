@@ -65,6 +65,14 @@ export interface ProviderSessionDirectoryShape {
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<ProviderRuntimeBinding>, ProviderSessionDirectoryReadError>;
 
+  /** Read one binding with its persistence activity metadata. */
+  readonly getBindingWithMetadata: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    Option.Option<ProviderRuntimeBindingWithMetadata>,
+    ProviderSessionDirectoryReadError
+  >;
+
   readonly listThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
     ProviderSessionDirectoryPersistenceError

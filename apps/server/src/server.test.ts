@@ -823,6 +823,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
             upsert: () => Effect.void,
             getBinding: () => Effect.succeed(Option.none()),
+            getBindingWithMetadata: () => Effect.die("unused"),
             listThreadIds: () => Effect.succeed([]),
             listBindings: () => Effect.succeed([]),
             ...options?.layers?.providerSessionDirectory,

@@ -233,6 +233,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getProvider: () => Effect.die("unused"),
           recordImportedTranscript: () => Effect.void,
           getBinding: () => Effect.succeed(Option.none()),
+          getBindingWithMetadata: () => Effect.die("unused"),
           listThreadIds: () => Effect.die("unused"),
           listBindings: () => Effect.die("unused"),
         });
@@ -338,6 +339,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getProvider: () => Effect.die("unused"),
           recordImportedTranscript: () => Effect.die("unused"),
           getBinding: () => Effect.die("must not read a scanner skip binding"),
+          getBindingWithMetadata: () => Effect.die("unused"),
           listThreadIds: () => Effect.die("unused"),
           listBindings: () => Effect.die("unused"),
         });
@@ -416,6 +418,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           recordImportedTranscript: () => Effect.void,
           getBinding: () =>
             Effect.succeed(bindings[0] === undefined ? Option.none() : Option.some(bindings[0])),
+          getBindingWithMetadata: () => Effect.die("unused"),
           listThreadIds: () => Effect.die("unused"),
           listBindings: () => Effect.die("unused"),
         });
@@ -457,6 +460,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getProvider: () => Effect.die("unused"),
           recordImportedTranscript: () => Effect.void,
           getBinding: () => Effect.succeed(Option.some(runningBinding)),
+          getBindingWithMetadata: () => Effect.die("unused"),
           listThreadIds: () => Effect.die("unused"),
           listBindings: () => Effect.die("unused"),
         });
@@ -512,6 +516,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
           getProvider: () => Effect.die("unused"),
           recordImportedTranscript: () => Effect.die("unused"),
           getBinding: () => Effect.succeed(Option.none()),
+          getBindingWithMetadata: () => Effect.die("unused"),
           listThreadIds: () => Effect.die("unused"),
           listBindings: () => Effect.die("unused"),
         });
