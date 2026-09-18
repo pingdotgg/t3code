@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 
 /** The relay outputs a client (web, desktop, mobile) needs at build time. */
 export interface RelayClientConfig {
-  /** Undefined until the worker has been deployed once. */
+  /** Alchemy types this as optional for workers reachable at no URL; ours always has one. */
   readonly url: string | undefined;
   readonly mobileTracingUrl: string;
   readonly mobileTracingDataset: string;
