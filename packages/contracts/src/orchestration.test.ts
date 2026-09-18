@@ -594,6 +594,24 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
   }),
 );
 
+// Builds that emit thinking traces persist reasoning as message events; the
+// union must keep decoding them.
+it.effect("decodes message events with a reasoning role", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadMessageSentPayload({
+      threadId: "thread-1",
+      messageId: "reasoning:summary:1",
+      role: "reasoning",
+      text: "thinking",
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.role, "reasoning");
+  }),
+);
+
 it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeThreadMetaUpdatedPayload({
