@@ -1,5 +1,6 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -33,7 +34,7 @@ const layer = it.layer(
         getPullRequest: mockedGetPullRequest,
       }),
     ),
-    Layer.provide(GitHubGraphQlBudget.layer),
+    Layer.provideMerge(GitHubGraphQlBudget.layer),
   ),
 );
 
@@ -255,6 +256,64 @@ it.effect(
 );
 
 layer("GitHubPullRequestCli.layer", (it) => {
+  it.effect("admits only one concurrent preview above the reserve and resumes after reset", () =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+      const resetAt = "2099-08-13T14:00:00Z";
+      yield* budget.observe(
+        "preview-budget.example",
+        encodeJson({ data: { rateLimit: { cost: 1, limit: 5_000, remaining: 501, resetAt } } }),
+      );
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  pullRequest: {
+                    number: 7,
+                    title: "Fast previews",
+                    url: "https://preview-budget.example/acme/web/pull/7",
+                    state: "OPEN",
+                    isDraft: false,
+                    createdAt: "2026-07-01T00:00:00Z",
+                    author: null,
+                  },
+                },
+                rateLimit: { cost: 1, limit: 5_000, remaining: 500, resetAt },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "preview-budget.example",
+        number: 7,
+      };
+      const results = yield* Effect.all(
+        Array.from({ length: 20 }, (_, index) =>
+          cli.getPullRequestPreview({ ...input, number: index + 1 }).pipe(Effect.result),
+        ),
+        { concurrency: "unbounded" },
+      );
+      expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+      for (const result of results) {
+        if (result._tag === "Failure") {
+          expect(result.failure._tag).toBe("SourceControlRateLimitPausedError");
+        }
+      }
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      yield* TestClock.setTime(Date.parse(resetAt));
+      yield* cli.getPullRequestPreview(input);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      yield* TestClock.setTime(now);
+    }),
+  );
+
   it.effect("loads the complete hover card with one GraphQL request", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(

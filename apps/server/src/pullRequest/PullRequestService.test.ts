@@ -161,6 +161,50 @@ it.effect("caches narrow previews and invalidates them after refresh or mutation
   }),
 );
 
+it.effect("keeps cached previews available and pauses uncached previews until quota resets", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const retryAt = Date.parse("2099-08-13T14:00:00Z");
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestPreview: ({ number }) =>
+            Effect.gen(function* () {
+              reads++;
+              if (reads === 2)
+                return yield* new PullRequestProviderError({
+                  provider: "github",
+                  operation: "getChangeRequestPreview",
+                  reason: "rate-limited",
+                  detail: "GitHub requests are paused until the rate limit resets.",
+                  retryAt,
+                });
+              return changeRequest(number, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.preview(ref);
+    const limited = yield* Effect.flip(service.preview({ ...ref, number: 2 }));
+    assert.instanceOf(limited, PullRequestOperationError);
+    if (limited._tag !== "PullRequestOperationError") return;
+    assert.include(limited.detail, "paused");
+    assert.strictEqual((yield* service.preview(ref)).number, 1);
+    for (const number of [2, 3, 4]) {
+      const paused = yield* Effect.flip(service.preview({ ...ref, number }));
+      assert.instanceOf(paused, PullRequestOperationError);
+      if (paused._tag !== "PullRequestOperationError") return;
+      assert.include(paused.detail, "paused");
+    }
+    assert.strictEqual(reads, 2);
+    yield* TestClock.setTime(retryAt);
+    assert.strictEqual((yield* service.preview({ ...ref, number: 2 })).number, 2);
+    assert.strictEqual(reads, 3);
+  }),
+);
+
 it.effect("reuses only unexpired detail for previews", () =>
   Effect.gen(function* () {
     let previewReads = 0;

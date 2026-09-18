@@ -1,12 +1,6 @@
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
-import {
-  cloneElement,
-  useEffect,
-  useState,
-  type ComponentPropsWithoutRef,
-  type ReactElement,
-} from "react";
+import { cloneElement, useState, type ComponentPropsWithoutRef, type ReactElement } from "react";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -48,37 +42,12 @@ export function PullRequestLinkPreview({
         })
       : null,
   );
-  const readDetail = useAtomQueryRunner(pullRequestEnvironment.detail, {
-    reportFailure: false,
-    reportDefect: false,
-  });
   const readPreview = useAtomQueryRunner(pullRequestEnvironment.preview, {
     reportFailure: false,
     reportDefect: false,
   });
-  const { environmentId, input } = target;
-  // Keep the page warm while the smaller hover response is displayed.
-  useEffect(() => {
-    if (!open || previewQuery.data === null) return;
-    void readDetail({
-      environmentId,
-      input,
-    }).catch(() => undefined);
-  }, [open, previewQuery.data, readDetail, environmentId, input]);
-
-  const previewLink = cloneElement(link, {
-    onPointerEnter: (event) => {
-      link.props.onPointerEnter?.(event);
-      if (event.pointerType !== "touch") void readPreview(target).catch(() => undefined);
-    },
-    onFocus: (event) => {
-      link.props.onFocus?.(event);
-      void readPreview(target).catch(() => undefined);
-    },
-  });
-
   const trigger = confirmBeforeOpen
-    ? cloneElement(previewLink, {
+    ? cloneElement(link, {
         onClick: (event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
           event.preventDefault();
@@ -98,7 +67,7 @@ export function PullRequestLinkPreview({
             .finally(() => setResolvingClick(false));
         },
       })
-    : previewLink;
+    : link;
   const detail = previewQuery.data;
   const state =
     detail === null
