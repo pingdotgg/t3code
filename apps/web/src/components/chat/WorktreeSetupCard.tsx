@@ -21,6 +21,7 @@ import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { cn } from "~/lib/utils";
+import { WorkLogRow } from "./WorkLog";
 
 interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
@@ -185,40 +186,38 @@ function StageRow({
           ? `${stage.percent}%`
           : stage.detail;
   return (
-    <div
-      ref={running ? observeVisibleAnimation : undefined}
-      className={cn(
-        "relative flex min-h-6 min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-0.5 py-0.5 text-sm leading-relaxed",
-        stageRowClassName(stage.status),
-      )}
+    <WorkLogRow
       data-worktree-setup-stage={stage.id}
       data-worktree-setup-status={stage.status}
-    >
-      <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-        <StageIcon status={stage.status} />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {trailing ? (
-        <span className="min-w-0 truncate text-xs text-muted-foreground tabular-nums">
-          {trailing}
+      icon={
+        <span className="text-icon-muted">
+          <StageIcon status={stage.status} />
         </span>
-      ) : null}
-      {elapsed !== null && stage.status !== "skipped" && stage.status !== "pending" ? (
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-          {formatDuration(elapsed)}
+      }
+      label={
+        <span
+          ref={running ? observeVisibleAnimation : undefined}
+          className={cn("relative block truncate", stageRowClassName(stage.status))}
+        >
+          {label}
+          {running ? <ShimmerOverlay>{label}</ShimmerOverlay> : null}
         </span>
-      ) : null}
-      {running ? (
-        <ShimmerOverlay>
-          <span className="flex min-h-6 items-center gap-1.5 px-0.5 py-0.5">
-            <span className="flex size-6 shrink-0 items-center justify-center">
-              <StageIcon status={stage.status} />
+      }
+      trailing={
+        <>
+          {trailing ? (
+            <span className="min-w-0 truncate text-xs text-muted-foreground tabular-nums">
+              {trailing}
             </span>
-            <span className="min-w-0 flex-1 truncate">{label}</span>
-          </span>
-        </ShimmerOverlay>
-      ) : null}
-    </div>
+          ) : null}
+          {elapsed !== null && stage.status !== "skipped" && stage.status !== "pending" ? (
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {formatDuration(elapsed)}
+            </span>
+          ) : null}
+        </>
+      }
+    />
   );
 }
 
@@ -305,24 +304,23 @@ function CollapsedSummaryRow({
         : "done";
   const label = headerLabel(snapshot);
   return (
-    <div
-      className={cn(
-        "flex min-h-6 min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 text-sm leading-relaxed",
-        stageRowClassName(status),
-      )}
+    <WorkLogRow
       data-worktree-setup-stage="summary"
       data-worktree-setup-status={status}
-    >
-      <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
-        <StageIcon status={status} />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {totalElapsed !== null ? (
-        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-          {formatDuration(totalElapsed)}
+      icon={
+        <span className="text-icon-muted">
+          <StageIcon status={status} />
         </span>
-      ) : null}
-    </div>
+      }
+      label={<span className={stageRowClassName(status)}>{label}</span>}
+      trailing={
+        totalElapsed !== null ? (
+          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+            {formatDuration(totalElapsed)}
+          </span>
+        ) : null
+      }
+    />
   );
 }
 
