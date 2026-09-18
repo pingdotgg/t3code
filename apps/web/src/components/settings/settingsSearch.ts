@@ -309,6 +309,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "interface-language",
+    title: "Interface language",
+    to: "/settings/general",
+    searchTerms: ["language locale english chinese simplified chinese menu ui translation"],
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/general",
