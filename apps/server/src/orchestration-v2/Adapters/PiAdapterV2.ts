@@ -23,6 +23,9 @@
  * Terminal-only decoration such as status, widget, title, and editor-text
  * updates has no matching T3 surface and is ignored.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import {
@@ -272,6 +275,16 @@ function providerRef(
   return { driver: PI_PROVIDER, nativeId, strength };
 }
 
+/**
+ * Compares a live `get_state.sessionFile` with a stored `nativeThreadRef`.
+ * Both are absolute paths Pi echoed back, but they can be captured through
+ * different cwds or with redundant separators, so normalize before comparing.
+ */
+function samePiSessionFile(live: string | undefined, stored: string): boolean {
+  if (live === undefined) return false;
+  return NodePath.resolve(live) === NodePath.resolve(stored);
+}
+
 const PI_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 // ── per-session state ─────────────────────────────────────────
@@ -431,6 +444,9 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         environment: options.environment,
         mcpSession,
         extensionPath,
+        // Resuming a persisted thread attaches its session file at spawn, so
+        // extensions load against the session they will actually run in.
+        sessionPath: input.initialNativeThreadId,
         runtimeMode: input.runtimePolicy.runtimeMode,
       });
       const connection: PiRpcConnection = yield* makePiRpcConnection({
@@ -2004,7 +2020,17 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         const resumeId = existing?.nativeThreadRef?.nativeId;
         const needsNewSession = resumeId == null && registrationAttempted;
         registrationAttempted = true;
-        if (resumeId != null || needsNewSession) {
+        // Pi treats `switch_session` as a full session replacement: it disposes
+        // the session and re-runs every extension factory, which invalidates
+        // contexts already bound to it. A process spawned with `--session` is
+        // already on the wanted file, so read the live session first and leave
+        // it alone when it matches.
+        let stateData = resumeId != null ? yield* request({ type: "get_state" }) : undefined;
+        const alreadyOnResumeFile =
+          resumeId != null && samePiSessionFile(recordString(stateData, "sessionFile"), resumeId);
+        if (alreadyOnResumeFile) {
+          lastNativeThreadId = resumeId;
+        } else if (resumeId != null || needsNewSession) {
           lastNativeThreadId = resumeId ?? lastNativeThreadId;
           // Even a failed lifecycle operation can change Pi's native session.
           // Never leave the old app binding or model defaults usable afterward.
@@ -2023,8 +2049,9 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           if (recordField(result, "cancelled") === true) {
             return yield* protocolError("A Pi extension cancelled the session switch");
           }
+          stateData = undefined;
         }
-        const stateData = yield* request({ type: "get_state" });
+        stateData ??= yield* request({ type: "get_state" });
         if (!modelsDiscovered) {
           const modelsData = yield* request({ type: "get_available_models" }).pipe(
             Effect.orElseSucceed(() => undefined),
