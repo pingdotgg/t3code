@@ -1,3 +1,4 @@
+import { ConnectionTraceId } from "./ConnectionTraceId";
 import { SymbolView } from "../../components/AppSymbol";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -15,7 +16,6 @@ import { MaterialButton } from "../../components/MaterialButton";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
-import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
@@ -114,23 +114,11 @@ export function ConnectionEnvironmentRow(props: {
             >
               {statusLabel}
               {statusTraceId ? (
-                <>
-                  {" Trace ID: "}
-                  <Text
-                    accessibilityHint="Copies the trace ID"
-                    accessibilityRole="button"
-                    className="underline decoration-dotted"
-                    onLongPress={(event) => {
-                      event.stopPropagation();
-                      copyTextWithHaptic(statusTraceId, { target: "connection-trace-id" });
-                    }}
-                    onPress={(event) => {
-                      event.stopPropagation();
-                    }}
-                  >
-                    {statusTraceId}
-                  </Text>
-                </>
+                <ConnectionTraceId
+                  traceId={statusTraceId}
+                  tone={hasConnectionFailure ? "danger" : "muted"}
+                  activation="longPress"
+                />
               ) : null}
             </Text>
           ) : null}
