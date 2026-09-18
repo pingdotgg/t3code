@@ -13,7 +13,7 @@ import { LaunchPlan } from "./fixtures/domain/LaunchPlan.ts"
 
 // You can use Config to create ai clients
 const AnthropicClientLayer = AnthropicClient.layerConfig({
-  apiKey: Config.redacted("ANTHROPIC_API_KEY")
+  apiKey: Config.Redacted("ANTHROPIC_API_KEY")
 }).pipe(
   // Providers typically require an HttpClient, but you can choose which one to
   // use.
@@ -21,7 +21,7 @@ const AnthropicClientLayer = AnthropicClient.layerConfig({
 )
 
 const OpenAiClientLayer = OpenAiClient.layerConfig({
-  apiKey: Config.redacted("OPENAI_API_KEY")
+  apiKey: Config.Redacted("OPENAI_API_KEY")
 }).pipe(
   Layer.provide(FetchHttpClient.layer)
 )

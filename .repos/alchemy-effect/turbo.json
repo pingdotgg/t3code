@@ -21,6 +21,11 @@
         "**/.cache/**/*.tsbuildinfo"
       ]
     },
+    "@alchemy.run/frontend-frameworks#build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "!fixtures/**"],
+      "outputs": ["dist/**", ".cache/**/*.tsbuildinfo"]
+    },
     "dev": {
       "persistent": true,
       "cache": false

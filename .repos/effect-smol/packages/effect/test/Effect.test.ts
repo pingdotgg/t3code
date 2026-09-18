@@ -7,6 +7,7 @@ import {
   Deferred,
   Duration,
   Effect,
+  Effectable,
   Exit,
   Fiber,
   type Filter,
@@ -15,6 +16,7 @@ import {
   Logger,
   type LogLevel,
   Option,
+  Ref,
   References,
   Result,
   Schedule,
@@ -53,6 +55,35 @@ describe("Effect", () => {
   it("isEffect", () => {
     assert.isTrue(Effect.isEffect(Effect.succeed(0)))
     assert.isFalse(Effect.isEffect([0]))
+  })
+
+  describe("Effectable.Class", () => {
+    it.effect("runs using asEffect", () =>
+      Effect.gen(function*() {
+        class Answer extends Effectable.Class<number> {
+          asEffect() {
+            return Effect.succeed(42)
+          }
+        }
+
+        assert.strictEqual(yield* new Answer(), 42)
+      }))
+
+    it.effect("evaluates asEffect on every execution", () =>
+      Effect.gen(function*() {
+        class Answer extends Effectable.Class<number> {
+          value = 1
+
+          asEffect() {
+            return Effect.succeed(this.value)
+          }
+        }
+
+        const answer = new Answer()
+        assert.strictEqual(yield* answer, 1)
+        answer.value = 2
+        assert.strictEqual(yield* answer, 2)
+      }))
   })
 
   describe("structural compare", () => {
@@ -153,6 +184,34 @@ describe("Effect", () => {
     assert.isFalse(use)
     assert.isTrue(release)
   })
+
+  it.effect("acquireUseRelease runs release when use throws", () =>
+    Effect.gen(function*() {
+      const resource = { id: 1 }
+      const defect = new Error("boom")
+      let releases = 0
+      let releasedResource: typeof resource | undefined
+      let releaseExit: Exit.Exit<never> | undefined
+
+      const exit = yield* Effect.acquireUseRelease(
+        Effect.succeed(resource),
+        (): Effect.Effect<never> => {
+          throw defect
+        },
+        (resource, exit) =>
+          Effect.sync(() => {
+            releases++
+            releasedResource = resource
+            releaseExit = exit
+          })
+      ).pipe(Effect.exit)
+
+      assertExitDefect(exit, defect)
+      assert.strictEqual(releases, 1)
+      assert.strictEqual(releasedResource, resource)
+      assert.isDefined(releaseExit)
+      assertExitDefect(releaseExit, defect)
+    }))
 
   it("acquireUseRelease uninterruptible", async () => {
     let acquire = false
@@ -1469,6 +1528,200 @@ describe("Effect", () => {
       }))
   })
 
+  describe("timeoutOrElse", () => {
+    const forms = ["data-first", "pipe"] as const
+
+    for (const form of forms) {
+      it.live(`${form}: factory and body follow cleanup and replay`, () =>
+        Effect.gen(function*() {
+          let stopped = false
+          let factories = 0
+          let bodies = 0
+          const order: Array<string> = []
+          const value = { fallback: true }
+          const source = Effect.never.pipe(Effect.ensuring(Effect.sync(() => {
+            stopped = true
+            order.push("stopped")
+          })))
+          const options = {
+            duration: 0,
+            orElse: () => {
+              factories++
+              order.push(`factory:${stopped}`)
+              return Effect.sync(() => {
+                bodies++
+                order.push(`body:${stopped}`)
+                return value
+              })
+            }
+          }
+          const program = form === "data-first"
+            ? Effect.timeoutOrElse(source, options)
+            : source.pipe(Effect.timeoutOrElse(options))
+          const before = [factories, bodies]
+          const first = yield* program
+          const firstStopped = stopped
+          stopped = false
+          const second = yield* program
+          assert.deepStrictEqual({
+            before,
+            factories,
+            bodies,
+            firstStopped,
+            stopped,
+            identity: [first === value, second === value],
+            order
+          }, {
+            before: [0, 0],
+            factories: 2,
+            bodies: 2,
+            firstStopped: true,
+            stopped: true,
+            identity: [true, true],
+            order: ["stopped", "factory:true", "body:true", "stopped", "factory:true", "body:true"]
+          })
+        }))
+    }
+
+    it.live("a ready source value is not confused with a zero-duration timeout", () =>
+      Effect.gen(function*() {
+        const value = Option.none()
+        let calls = 0
+        const result = yield* Effect.timeoutOrElse(Effect.succeed(value), {
+          duration: 0,
+          orElse: () => {
+            calls++
+            return Effect.succeed(Option.some("unexpected fallback"))
+          }
+        })
+        assert.deepStrictEqual([result, calls], [value, 0])
+      }))
+
+    it.live("slow fallback cannot let the original source win after timeout", () =>
+      Effect.gen(function*() {
+        const sourceGate = yield* Deferred.make<void>()
+        const sourceStopped = yield* Deferred.make<void>()
+        const fallbackStarted = yield* Deferred.make<void>()
+        const fallbackRelease = yield* Deferred.make<void>()
+        const sourceCompleted = yield* Ref.make(false)
+        const value = { fallback: true }
+        let fallbackInterrupted = false
+        const source = Deferred.await(sourceGate).pipe(
+          Effect.andThen(Ref.set(sourceCompleted, true)),
+          Effect.as({ source: true }),
+          Effect.ensuring(Deferred.succeed(sourceStopped, undefined))
+        )
+        const fiber = yield* Effect.timeoutOrElse(source, {
+          duration: 0,
+          orElse: () =>
+            Deferred.succeed(fallbackStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(fallbackRelease)),
+              Effect.as(value),
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  fallbackInterrupted = true
+                })
+              )
+            )
+        }).pipe(Effect.forkChild)
+        yield* Deferred.await(fallbackStarted)
+        yield* Deferred.succeed(sourceGate, undefined)
+        yield* Deferred.await(sourceStopped)
+        yield* Deferred.succeed(fallbackRelease, undefined)
+        const completed = yield* Ref.get(sourceCompleted)
+        const result = yield* Fiber.join(fiber)
+        assert.deepStrictEqual([result === value, completed, fallbackInterrupted], [true, false, false])
+      }))
+
+    class SourceService extends Context.Service<SourceService, { source: string }>()("timeout-test/SourceService") {}
+    class FallbackService
+      extends Context.Service<FallbackService, { fallback: string }>()("timeout-test/FallbackService")
+    {}
+    const Local = Context.Reference<string>("timeout-test/Local", { defaultValue: () => "default" })
+
+    it.live("source and fallback inherit caller context", () =>
+      Effect.gen(function*() {
+        const sourceService = { source: "source service" }
+        const fallbackService = { fallback: "fallback service" }
+        const observed: Array<unknown> = []
+        const result = yield* Effect.gen(function*() {
+          const callerId = yield* Effect.fiberId
+          const parentSpan = yield* Effect.currentSpan
+          const source = Effect.gen(function*() {
+            observed.push(
+              (yield* SourceService) === sourceService,
+              yield* Local,
+              (yield* Effect.currentSpan) === parentSpan
+            )
+            return yield* Effect.never
+          }).pipe(Effect.provideService(Local, "source-local"))
+          const value = yield* Effect.timeoutOrElse(source, {
+            duration: 0,
+            orElse: () =>
+              Effect.gen(function*() {
+                const annotations = yield* References.CurrentLogAnnotations
+                observed.push(
+                  (yield* Effect.fiberId) === callerId,
+                  yield* Local,
+                  (yield* Effect.currentSpan) === parentSpan,
+                  annotations["request"]
+                )
+                return yield* FallbackService
+              })
+          })
+          observed.push(yield* Local, (yield* Effect.currentSpan) === parentSpan)
+          return value
+        }).pipe(
+          Effect.provideService(SourceService, sourceService),
+          Effect.provideService(FallbackService, fallbackService),
+          Effect.provideService(Local, "parent-local"),
+          Effect.annotateLogs({ request: "request-value" }),
+          Effect.withSpan("timeout-parent")
+        )
+        assert.deepStrictEqual([result === fallbackService, observed], [true, [
+          true,
+          "source-local",
+          true,
+          true,
+          "parent-local",
+          true,
+          "request-value",
+          "parent-local",
+          true
+        ]])
+      }))
+
+    it.live("external interruption stops a pending fallback", () =>
+      Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        let sourceStopped = false
+        let fallbackStopped = false
+        let calls = 0
+        const fiber = yield* Effect.never.pipe(
+          Effect.ensuring(Effect.sync(() => {
+            sourceStopped = true
+          })),
+          Effect.timeoutOrElse({
+            duration: 0,
+            orElse: () => {
+              calls++
+              return Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.ensuring(Effect.sync(() => {
+                  fallbackStopped = true
+                }))
+              )
+            }
+          }),
+          Effect.forkChild
+        )
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(fiber)
+        const exit = yield* Fiber.await(fiber)
+        assert.deepStrictEqual([Exit.hasInterrupts(exit), sourceStopped, fallbackStopped, calls], [true, true, true, 1])
+      }))
+  })
+
   describe("timeoutOption", () => {
     it.live("timeout a long computation", () =>
       Effect.gen(function*() {
@@ -1515,6 +1768,21 @@ describe("Effect", () => {
   })
 
   describe("timeout", () => {
+    it.effect("timeout produces a useful error message", () =>
+      Effect.gen(function*() {
+        const duration = Duration.millis(1500)
+        const fiber = yield* Effect.never.pipe(
+          Effect.timeout(duration),
+          Effect.flip,
+          Effect.forkChild
+        )
+        yield* TestClock.adjust(Duration.millis(2000))
+        const result = yield* Fiber.join(fiber)
+        assert.include(
+          result.toString(),
+          "TimeoutError: Operation timed out after '1s 500ms'"
+        )
+      }))
     it.live("timeout a long computation", () =>
       Effect.gen(function*() {
         const result = yield* pipe(
@@ -1523,7 +1791,10 @@ describe("Effect", () => {
           Effect.timeout(10),
           Effect.flip
         )
-        assert.deepStrictEqual(result, new Cause.TimeoutError())
+        assert.deepStrictEqual(
+          result,
+          new Cause.TimeoutError("Operation timed out after '10ms'")
+        )
       }))
     it.effect("timeout interrupts the effect", () =>
       Effect.gen(function*() {
@@ -1540,7 +1811,10 @@ describe("Effect", () => {
         )
         yield* TestClock.adjust(10)
         const result = yield* Fiber.join(fiber)
-        assert.deepStrictEqual(result, new Cause.TimeoutError())
+        assert.deepStrictEqual(
+          result,
+          new Cause.TimeoutError("Operation timed out after '10ms'")
+        )
         assert.isTrue(interrupted)
       }))
   })
@@ -3267,6 +3541,23 @@ describe("Effect", () => {
         assertExitFailure(exit, Cause.fail(new AiError({ reason })))
       }))
 
+    it.effect("preserves the cause for a non-matching reason", () =>
+      Effect.gen(function*() {
+        const error = new AiError({ reason: new QuotaExceededError({ limit: 100 }) })
+        const result = yield* Effect.gen(function*() {
+          yield* Effect.addFinalizer(() => Effect.die("finalizer failure"))
+          return yield* Effect.fail(error)
+        }).pipe(
+          Effect.scoped,
+          Effect.catchReason("AiError", "RateLimitError", () => Effect.succeed("no")),
+          Effect.exit
+        )
+        assert.deepStrictEqual(
+          result,
+          Exit.failCause(Cause.combine(Cause.fail(error), Cause.die("finalizer failure")))
+        )
+      }))
+
     it.effect("ignores non-matching parent tag", () =>
       Effect.gen(function*() {
         const error = new OtherError({ message: "test" })
@@ -3340,6 +3631,25 @@ describe("Effect", () => {
         )
         assertExitFailure(exit, Cause.fail(new AiError({ reason })))
       }))
+
+    it.effect("preserves the cause for an unhandled reason", () =>
+      Effect.gen(function*() {
+        const error = new AiError({ reason: new QuotaExceededError({ limit: 100 }) })
+        const result = yield* Effect.gen(function*() {
+          yield* Effect.addFinalizer(() => Effect.die("finalizer failure"))
+          return yield* Effect.fail(error)
+        }).pipe(
+          Effect.scoped,
+          Effect.catchReasons("AiError", {
+            RateLimitError: () => Effect.succeed("handled")
+          }),
+          Effect.exit
+        )
+        assert.deepStrictEqual(
+          result,
+          Exit.failCause(Cause.combine(Cause.fail(error), Cause.die("finalizer failure")))
+        )
+      }))
   })
 
   describe("unwrapReason", () => {
@@ -3390,7 +3700,127 @@ describe("Effect", () => {
       }))
   })
 
+  describe("cached", () => {
+    it.effect("runs the effect once for concurrent callers", () =>
+      Effect.gen(function*() {
+        const release = yield* Deferred.make<void>()
+        let count = 0
+        const cached = yield* Effect.cached(
+          Effect.gen(function*() {
+            count++
+            yield* Deferred.await(release)
+            return count
+          })
+        )
+
+        const fibers = yield* Effect.forEach([1, 2, 3], () => cached.pipe(Effect.forkChild({ startImmediately: true })))
+        assert.strictEqual(count, 1)
+
+        yield* Deferred.succeed(release, void 0)
+        assert.deepStrictEqual(yield* Fiber.awaitAll(fibers), [Exit.succeed(1), Exit.succeed(1), Exit.succeed(1)])
+      }))
+
+    it.effect("replays failures", () =>
+      Effect.gen(function*() {
+        let count = 0
+        const cached = yield* Effect.cached(
+          Effect.sync(() => count++).pipe(Effect.andThen(Effect.fail("boom")))
+        )
+
+        assert.deepStrictEqual(yield* Effect.exit(cached), Exit.fail("boom"))
+        assert.deepStrictEqual(yield* Effect.exit(cached), Exit.fail("boom"))
+        assert.strictEqual(count, 1)
+      }))
+
+    it.effect("interrupting a waiter leaves the owner running", () =>
+      Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const cached = yield* Effect.cached(
+          Deferred.succeed(started, void 0).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as(42)
+          )
+        )
+
+        const owner = yield* cached.pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(started)
+        const waiter = yield* cached.pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Fiber.interrupt(waiter)
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(waiter)))
+
+        yield* Deferred.succeed(release, void 0)
+        assert.strictEqual(yield* Fiber.join(owner), 42)
+        assert.strictEqual(yield* cached, 42)
+      }))
+
+    it.effect("replays the owner's interrupted exit", () =>
+      Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        const cached = yield* Effect.cached(
+          Deferred.succeed(started, void 0).pipe(Effect.andThen(Effect.never))
+        )
+
+        const owner = yield* cached.pipe(Effect.forkChild({ startImmediately: true }))
+        yield* Deferred.await(started)
+        yield* Fiber.interrupt(owner)
+        const ownerExit = yield* Fiber.await(owner)
+        const replayedExit = yield* Effect.exit(cached)
+
+        assert.isTrue(Exit.hasInterrupts(ownerExit))
+        assert.deepStrictEqual(replayedExit, ownerExit)
+      }))
+  })
+
   describe("cachedWithTTL", () => {
+    it.effect("selects ttl from each fresh exit without evaluating on cache hits", () =>
+      Effect.gen(function*() {
+        let count = 0
+        const exits: Array<Exit.Exit<number>> = []
+        const cached = yield* Effect.cachedWithTTL(
+          Effect.sync(() => ++count),
+          (exit: Exit.Exit<number>) => {
+            exits.push(exit)
+            return Exit.isSuccess(exit) && exit.value === 1 ? "1 second" : Duration.seconds(3)
+          }
+        )
+
+        assert.strictEqual(count, 0)
+        assert.deepStrictEqual(exits, [])
+        assert.strictEqual(yield* cached, 1)
+        yield* TestClock.adjust("999 millis")
+        assert.strictEqual(yield* cached, 1)
+        assert.deepStrictEqual(exits, [Exit.succeed(1)])
+
+        yield* TestClock.adjust("1 milli")
+        assert.strictEqual(yield* cached, 2)
+        yield* TestClock.adjust("1 second")
+        assert.strictEqual(yield* cached, 2)
+        yield* TestClock.adjust("2 seconds")
+        assert.strictEqual(yield* cached, 3)
+        assert.deepStrictEqual(exits, [Exit.succeed(1), Exit.succeed(2), Exit.succeed(3)])
+      }))
+
+    it.effect("supports a piped callback that skips failures and caches successes", () =>
+      Effect.gen(function*() {
+        let count = 0
+        const exits: Array<Exit.Exit<number, string>> = []
+        const cached = yield* Effect.suspend(() => ++count === 1 ? Effect.fail("boom") : Effect.succeed(count)).pipe(
+          Effect.cachedWithTTL((exit: Exit.Exit<number, string>) => {
+            exits.push(exit)
+            return Exit.isFailure(exit) ? 0 : "1 second"
+          })
+        )
+
+        assert.deepStrictEqual(yield* Effect.exit(cached), Exit.fail("boom"))
+        assert.strictEqual(yield* cached, 2)
+        assert.strictEqual(yield* cached, 2)
+        assert.deepStrictEqual(exits, [Exit.fail("boom"), Exit.succeed(2)])
+        yield* TestClock.adjust("1 second")
+        assert.strictEqual(yield* cached, 3)
+        assert.deepStrictEqual(exits, [Exit.fail("boom"), Exit.succeed(2), Exit.succeed(3)])
+      }))
+
     it.effect("starts ttl from value creation", () =>
       Effect.gen(function*() {
         let count = 0
@@ -3429,6 +3859,17 @@ describe("Effect", () => {
     const CurrentValues = Context.Reference<ReadonlyArray<string>>("CurrentValues", {
       defaultValue: () => []
     })
+
+    it.effect("skips restoration when the provider expires before scope closure", () =>
+      Effect.gen(function*() {
+        const result = yield* Effect.gen(function*() {
+          yield* Effect.updateServiceScoped(CurrentNumber, (value) => value + 1)
+          return yield* CurrentNumber
+        }).pipe(Effect.provideService(CurrentNumber, 1), Effect.scoped)
+
+        assert.strictEqual(result, 2)
+        assert.deepStrictEqual(yield* Effect.serviceOption(CurrentNumber), Option.none())
+      }))
 
     it.effect("updates a Context.Service until the scope closes", () =>
       Effect.gen(function*() {

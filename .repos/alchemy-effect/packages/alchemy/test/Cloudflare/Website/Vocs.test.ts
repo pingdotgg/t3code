@@ -77,10 +77,12 @@ describe.concurrent("Vocs", () => {
 
         yield* expectUrlContains(`${site1.url!}/`, "Alchemy with Vocs", {
           timeout: "120 seconds",
+          headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
           label: "Vocs SSR shell and home page",
         });
         yield* expectUrlContains(`${site1.url!}/guide`, "Deployment guide", {
           timeout: "60 seconds",
+          headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
           label: "Vocs prerendered MDX guide",
         });
         yield* expectUrlContains(
@@ -88,6 +90,7 @@ describe.concurrent("Vocs", () => {
           "Interactive component",
           {
             timeout: "60 seconds",
+            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
             label: "Vocs MDX client-component page",
           },
         );
@@ -96,6 +99,7 @@ describe.concurrent("Vocs", () => {
           "hello from the Vocs public directory",
           {
             timeout: "60 seconds",
+            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
             label: "Vocs public asset",
           },
         );
@@ -104,6 +108,7 @@ describe.concurrent("Vocs", () => {
           "Alchemy with Vocs",
           {
             timeout: "60 seconds",
+            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
             label: "Vocs generated llms asset",
           },
         );
@@ -129,6 +134,7 @@ describe.concurrent("Vocs", () => {
           "This Vocs page was updated by a deployment.",
           {
             timeout: "180 seconds",
+            headers: { accept: "text/html", "user-agent": "Mozilla/5.0" },
             label: "Vocs page after source update",
           },
         );

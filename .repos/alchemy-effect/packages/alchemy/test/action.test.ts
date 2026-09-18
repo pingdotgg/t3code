@@ -318,7 +318,7 @@ describe("Apply", () => {
       const state = yield* yield* State;
       const persisted = yield* state.get({
         stack: stack.name,
-        stage: "test",
+        stage: stack.stage,
         fqn: "Sync",
       });
       expect(persisted).toMatchObject({
@@ -424,7 +424,11 @@ describe("Apply", () => {
 
         const state = yield* yield* State;
         expect(
-          yield* state.get({ stack: stack.name, stage: "test", fqn: "Sync" }),
+          yield* state.get({
+            stack: stack.name,
+            stage: stack.stage,
+            fqn: "Sync",
+          }),
         ).toMatchObject({ kind: "action", status: "ran" });
 
         // Re-deploy WITHOUT the task — state should be dropped.
@@ -433,7 +437,11 @@ describe("Apply", () => {
         void deleteSpy;
 
         expect(
-          yield* state.get({ stack: stack.name, stage: "test", fqn: "Sync" }),
+          yield* state.get({
+            stack: stack.name,
+            stage: stack.stage,
+            fqn: "Sync",
+          }),
         ).toBeUndefined();
       }),
   );

@@ -43,7 +43,7 @@ export class MysqlContainer extends Context.Service<
 
   static layerClient = this.client.pipe(Layer.provide(this.layer))
 
-  static layerClientWithTransforms = Layer.unwrap(
+  static clientWithTransforms = Layer.unwrap(
     Effect.gen(function*() {
       const container = yield* MysqlContainer
       return MysqlClient.layer({
@@ -52,7 +52,7 @@ export class MysqlContainer extends Context.Service<
         transformResultNames: String.snakeToCamel
       })
     })
-  ).pipe(Layer.provide(this.layer))
+  )
 
   static layerVitest = Layer.effect(
     this,

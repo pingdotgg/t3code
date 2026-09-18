@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "astro": "catalog:frontend"
+    "astro": "catalog:"
   }
 }
