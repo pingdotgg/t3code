@@ -6,7 +6,14 @@ import {
   type ModelSelection,
   type RuntimeMode,
   type ProviderInteractionMode,
+  type ServerSettings,
 } from "@t3tools/contracts";
+
+import {
+  resolveProjectSettings,
+  type LegacyProjectSettingsFields,
+} from "@t3tools/shared/projectSettings";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -99,4 +106,39 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     interactionMode: task.interactionMode,
     baseModelSelection: task.modelSelection,
   };
+}
+
+/** Use configured defaults before the catalog's advertised default model. */
+export function scheduledTaskDefaultModel(
+  settings: ServerSettings,
+  project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
+  entries: readonly ProviderInstanceEntry[],
+): ModelSelection | null {
+  const available = entries.filter(
+    (entry) =>
+      entry.enabled &&
+      entry.installed &&
+      entry.isAvailable &&
+      entry.snapshot.auth.status !== "unauthenticated",
+  );
+  const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
+    .defaultModelSelection;
+  for (const selection of [configured, settings.defaultModelSelection]) {
+    if (
+      selection &&
+      available.some(
+        (entry) =>
+          entry.instanceId === selection.instanceId &&
+          entry.models.find((model) => model.slug === selection.model)?.isLegacy !== true,
+      )
+    )
+      return selection;
+  }
+  const models = available.flatMap((entry) =>
+    entry.models
+      .filter((model) => !model.isLegacy)
+      .map((model) => ({ instanceId: entry.instanceId, model })),
+  );
+  const fallback = models.find(({ model }) => model.isDefault) ?? models[0];
+  return fallback ? { instanceId: fallback.instanceId, model: fallback.model.slug } : null;
 }

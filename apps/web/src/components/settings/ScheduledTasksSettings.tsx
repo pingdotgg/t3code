@@ -47,6 +47,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   matchesScheduledTaskScope,
+  scheduledTaskDefaultModel,
   taskToDraft,
   type DraftState,
   type WorkspaceMode,
@@ -514,6 +515,7 @@ function ScheduledTaskEditorDialog({
     task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
   );
   const [saving, setSaving] = useState(false);
+  const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&
     tasksQuery.data !== null &&
@@ -524,11 +526,9 @@ function ScheduledTaskEditorDialog({
   // The real model picker is keyed by a `${instanceId}:${model}` string, which
   // is exactly how the draft stores its selection.
   const firstInstance = instanceEntries[0];
-  const defaultModelKey =
-    firstInstance && firstInstance.models[0]
-      ? `${firstInstance.instanceId}:${firstInstance.models[0].slug}`
-      : "";
-  const activeSelection = splitModelKey(draft.modelKey || defaultModelKey);
+  const activeSelection = draft.modelKey
+    ? splitModelKey(draft.modelKey)
+    : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
   const activeInstanceId =
     activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
   const activeModel = activeSelection?.model ?? "";
@@ -548,8 +548,15 @@ function ScheduledTaskEditorDialog({
   };
 
   const submit = async () => {
-    if (saving || editingTaskMissing || !connected || tasksQuery.data === null) return;
-    const selection = splitModelKey(draft.modelKey || defaultModelKey);
+    if (
+      submissionPending.current ||
+      saving ||
+      editingTaskMissing ||
+      !connected ||
+      tasksQuery.data === null
+    )
+      return;
+    const selection = activeSelection;
     if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||
@@ -603,10 +610,13 @@ function ScheduledTaskEditorDialog({
       interactionMode: draft.interactionMode,
       creationSource: "web",
     };
+    // Lock before React renders, and keep successful creates locked until the form closes.
+    submissionPending.current = true;
     setSaving(true);
     const result = await upsertTask({ environmentId, input });
     setSaving(false);
     if (result._tag === "Failure") {
+      submissionPending.current = false;
       if (!isAtomCommandInterrupted(result)) {
         reportFailure("Could not save scheduled task", squashAtomCommandFailure(result));
       }

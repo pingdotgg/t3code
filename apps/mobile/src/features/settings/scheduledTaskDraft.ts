@@ -1,10 +1,40 @@
 import type {
   ModelSelection,
+  ServerConfig,
   ProjectId,
   RuntimeMode,
   ScheduledTask,
   ScheduledTaskUpsertSchedule,
 } from "@t3tools/contracts";
+
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import {
+  resolveProjectSettings,
+  type LegacyProjectSettingsFields,
+} from "@t3tools/shared/projectSettings";
+import {
+  buildModelOptions,
+  resolveDefaultableModelSelection,
+  resolveNewTaskModelSelection,
+} from "../../lib/modelOptions";
+
+export function scheduledTaskDefaultModel(
+  config: ServerConfig | null,
+  project: (LegacyProjectSettingsFields & { readonly id: ProjectId }) | null,
+): ModelSelection | null {
+  const settings = config?.settings ?? DEFAULT_SERVER_SETTINGS;
+  const configured = resolveProjectSettings(settings, project?.id ?? null, project).settings
+    .defaultModelSelection;
+  const projectDefaultSelection =
+    resolveDefaultableModelSelection(config, configured) ??
+    resolveDefaultableModelSelection(config, settings.defaultModelSelection);
+  return resolveNewTaskModelSelection({
+    draftSelection: null,
+    projectDefaultSelection,
+    stickySelection: null,
+    modelOptions: buildModelOptions(config, projectDefaultSelection),
+  });
+}
 
 export type ScheduleDraft = {
   readonly mode: "fixed_time" | "interval";
@@ -65,6 +95,7 @@ export type ScheduledTaskDraft = {
   readonly prompt: string;
   readonly projectId: ProjectId | null;
   readonly modelSelection: ModelSelection | null;
+  readonly modelSelectionIsExplicit: boolean;
   readonly schedule: ScheduleDraft;
   readonly workspace: Workspace;
   readonly baseRef: string;
@@ -114,6 +145,7 @@ export function createDraft(
     prompt: "",
     projectId,
     modelSelection,
+    modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
     workspace: "worktree",
     baseRef: "main",
@@ -131,6 +163,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     prompt: task.prompt,
     projectId: task.projectId,
     modelSelection: task.modelSelection,
+    modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),
     workspace: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",

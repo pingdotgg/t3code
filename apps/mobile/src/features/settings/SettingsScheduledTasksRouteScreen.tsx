@@ -57,9 +57,11 @@ import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   editDraft,
+  scheduledTaskDefaultModel,
   scheduleFromDraft,
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
+import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
 import {
   formatNextScheduledTaskRun,
@@ -261,17 +263,15 @@ export function SettingsScheduledTasksRouteScreen() {
   const { availableTargets, selectedTargets, selectedProjectKey, projectGroups } =
     useSettingsEnvironmentFilter();
   const selectedGroup = projectGroups.find((group) => group.key === selectedProjectKey);
-  const visibleEnvironments = selectedTargets.filter(
-    (environment) =>
-      selectedProjectKey === null ||
-      selectedGroup?.members.some(
-        (member) => member.project.environmentId === environment.environmentId,
-      ),
+  const visibleEnvironments = settingsTargetsForProject(
+    selectedTargets,
+    selectedProjectKey === null ? null : selectedGroup,
   );
   const { startEditor, resetEditor } = useScheduledTaskEditor();
   const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const insets = useSafeAreaInsets();
   const newTask = () => {
+    if (visibleEnvironments.length === 0) return;
     resetEditor();
     navigation.navigate("SettingsScheduledTaskNew");
   };
@@ -285,7 +285,7 @@ export function SettingsScheduledTasksRouteScreen() {
             label: "",
             accessibilityLabel: "New task",
             icon: { type: "sfSymbol", name: "plus" } as const,
-            disabled: availableTargets.length === 0,
+            disabled: visibleEnvironments.length === 0,
             onPress: newTask,
           }),
         ]}
@@ -298,8 +298,8 @@ export function SettingsScheduledTasksRouteScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="New task"
-              accessibilityState={{ disabled: availableTargets.length === 0 }}
-              disabled={availableTargets.length === 0}
+              accessibilityState={{ disabled: visibleEnvironments.length === 0 }}
+              disabled={visibleEnvironments.length === 0}
               onPress={newTask}
               className="size-11 items-center justify-center rounded-full disabled:opacity-50"
             >
@@ -511,7 +511,9 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
           />
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
-            Connect an environment to create a scheduled task.
+            {availableTargets.length === 0
+              ? "Connect an environment to create a scheduled task."
+              : "No environments match the current filters. Change the filters to create a task."}
           </Text>
         )}
       </ScrollView>
@@ -555,6 +557,7 @@ function TaskForm({
     label: "scheduled task upsert",
     reportFailure: false,
   });
+  const submissionPending = useRef(false);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
   const taskMissing =
     draft.task !== null &&
@@ -571,7 +574,14 @@ function TaskForm({
   };
 
   const save = async () => {
-    if (saving || dictationPending || taskMissing || environmentUnavailable) return;
+    if (
+      submissionPending.current ||
+      saving ||
+      dictationPending ||
+      taskMissing ||
+      environmentUnavailable
+    )
+      return;
     const schedule = scheduleFromDraft(draft.schedule);
     if (
       !draft.title.trim() ||
@@ -614,10 +624,13 @@ function TaskForm({
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
     };
+    // Lock before React renders, and keep successful creates locked until the form closes.
+    submissionPending.current = true;
     setSaving(true);
     const result = await upsert({ environmentId, input });
     setSaving(false);
     if (result._tag === "Failure") {
+      submissionPending.current = false;
       failure("Could not save task", result);
       return;
     }
@@ -693,7 +706,14 @@ function TaskForm({
           }))}
           onSelect={(id) => {
             const project = projects.find((item) => item.id === id);
-            if (project) setDraft({ ...draft, projectId: project.id });
+            if (project)
+              setDraft({
+                ...draft,
+                projectId: project.id,
+                modelSelection: draft.modelSelectionIsExplicit
+                  ? draft.modelSelection
+                  : scheduledTaskDefaultModel(config, project),
+              });
           }}
         />
         <PickerRow

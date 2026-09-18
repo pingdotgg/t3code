@@ -53,7 +53,11 @@ export function ScheduledTaskModelPickerRouteScreen() {
           current
             ? {
                 ...current,
-                draft: { ...current.draft, modelSelection: option.selection },
+                draft: {
+                  ...current.draft,
+                  modelSelection: option.selection,
+                  modelSelectionIsExplicit: true,
+                },
               }
             : current,
         )
@@ -67,6 +71,7 @@ export function ScheduledTaskModelPickerRouteScreen() {
                 draft: {
                   ...current.draft,
                   modelSelection: { ...current.draft.modelSelection, options },
+                  modelSelectionIsExplicit: true,
                 },
               }
             : current,

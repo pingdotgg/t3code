@@ -10,14 +10,15 @@ import {
   type SetStateAction,
 } from "react";
 
-import { buildModelOptions } from "../../lib/modelOptions";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import {
   createDraft,
+  scheduledTaskDefaultModel,
   hasScheduledTaskDraftChanges,
   type ScheduledTaskDraft,
 } from "./scheduledTaskDraft";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 
 type ScheduledTaskEditor = {
   readonly environmentId: EnvironmentId;
@@ -36,19 +37,14 @@ const ScheduledTaskEditorContext = createContext<{
 
 /** Keeps the form draft alive while its native picker routes are on top. */
 export function ScheduledTaskEditorProvider({ children }: { readonly children: ReactNode }) {
-  const { availableTargets, selectedTargets, selectedProjectKey, projectGroups } =
-    useSettingsEnvironmentFilter();
+  const { selectedTargets, selectedProjectKey, projectGroups } = useSettingsEnvironmentFilter();
   const selectedGroup = projectGroups.find((group) => group.key === selectedProjectKey);
   const configs = useServerConfigs();
   const projects = useProjects();
-  const defaultTarget =
-    selectedTargets.find(
-      (target) =>
-        selectedProjectKey === null ||
-        selectedGroup?.members.some(
-          (member) => member.project.environmentId === target.environmentId,
-        ),
-    ) ?? availableTargets[0];
+  const defaultTarget = settingsTargetsForProject(
+    selectedTargets,
+    selectedProjectKey === null ? null : selectedGroup,
+  )[0];
   const draftForEnvironment = useCallback(
     (environmentId: EnvironmentId) => {
       const environmentProjects = projects.filter(
@@ -63,7 +59,7 @@ export function ScheduledTaskEditorProvider({ children }: { readonly children: R
         ) ?? environmentProjects[0];
       return createDraft(
         project?.id ?? null,
-        buildModelOptions(configs.get(environmentId) ?? null, null)[0]?.selection ?? null,
+        scheduledTaskDefaultModel(configs.get(environmentId) ?? null, project ?? null),
       );
     },
     [configs, projects, selectedGroup],
