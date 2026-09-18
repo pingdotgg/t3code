@@ -824,6 +824,26 @@ function readNotificationThreadId(notification: CodexServerNotification): string
   }
 }
 
+export function shouldSuppressUnownedCodexNotification(
+  notification: CodexServerNotification,
+  rootProviderThreadId: string | undefined,
+  isRegisteredChild: boolean,
+): boolean {
+  const providerThreadId = readNotificationThreadId(notification);
+  if (
+    providerThreadId === undefined ||
+    rootProviderThreadId === undefined ||
+    providerThreadId === rootProviderThreadId ||
+    isRegisteredChild
+  ) {
+    return false;
+  }
+
+  // Resolution notifications complete requests owned by the parent runtime,
+  // even when Codex addresses them to a child provider thread.
+  return notification.method !== "serverRequest/resolved";
+}
+
 export function makeMemoryConsolidationNotificationFilter(): (
   notification: CodexServerNotification,
 ) => boolean {
@@ -936,12 +956,10 @@ function readRouteFields(notification: CodexServerNotification): {
  * synthetic `collabAgent/*` provider events the adapter turns into task.*
  * runtime events (timelineBypass keeps them out of the parent chat).
  *
- * WIP, probe-gated: registration is deliberately explicit-signals-only. The
- * spec's "provisionally treat unknown foreign thread ids as v2 children" rule
- * needs a live wire capture of the packaged binary before it lands — blind
- * capture risks eating unrelated traffic. Until then a child whose first
- * notification precedes registration passes through as today (no regression
- * vs main, which passes everything through).
+ * Registration is deliberately explicit-signals-only. Notifications from an
+ * unknown foreign thread stay unregistered and are suppressed at the parent
+ * boundary until one of those signals arrives, preventing unrelated provider
+ * sessions from leaking into this conversation.
  */
 interface CollabChildAgentState {
   readonly agentThreadId: string;
@@ -1939,6 +1957,20 @@ export const makeCodexSessionRuntime = (
             }
           }
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
+          return;
+        }
+
+        // Codex app-server can emit another session's thread traffic without a
+        // preceding thread/started notification. Registered collaboration
+        // children were handled above; all other foreign thread traffic must
+        // stay out of this canonical T3 conversation.
+        if (
+          shouldSuppressUnownedCodexNotification(
+            notification,
+            suppressRootId,
+            childParentTurnId !== undefined,
+          )
+        ) {
           return;
         }
 

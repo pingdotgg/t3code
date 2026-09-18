@@ -29,6 +29,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const ROOT = wireFixture.rootThreadId;
 const [CHILD_A, CHILD_B] = wireFixture.childThreadIds as [string, string];
 const MEMORY = "memory-consolidation-thread";
+const FOREIGN = "unregistered-foreign-thread";
 const decodeMcpElicitationResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -59,6 +60,22 @@ function buildScript() {
           status: "completed",
           senderThreadId: ROOT,
           receiverThreadIds: [CHILD_A, CHILD_B],
+        },
+      },
+    },
+    // A different app-server session can emit an assistant item without a
+    // preceding thread/started notification. It must not become parent chat.
+    {
+      method: "item/completed",
+      params: {
+        completedAtMs: 1,
+        threadId: FOREIGN,
+        turnId: "foreign-turn",
+        item: {
+          id: "foreign-message",
+          type: "agentMessage",
+          phase: "final_answer",
+          text: "unrelated background report",
         },
       },
     },
@@ -467,6 +484,12 @@ describe("CodexSessionRuntime collab integration", () => {
         leaked.map((event) => event.method),
         [],
         "child thread/* lifecycle must not appear as parent events",
+      );
+      assert.isFalse(
+        events.some(
+          (event) => (event.payload as { threadId?: string } | undefined)?.threadId === FOREIGN,
+        ),
+        "unregistered foreign assistant items must not appear as parent events",
       );
 
       yield* runtime.close;

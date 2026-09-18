@@ -18,6 +18,7 @@ import {
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
+  shouldSuppressUnownedCodexNotification,
   readCodexThread,
   rollbackCodexThread,
   toMcpElicitationResponse,
@@ -798,6 +799,100 @@ describe("makeMemoryConsolidationNotificationFilter", () => {
         },
       }),
       false,
+    );
+  });
+});
+
+describe("shouldSuppressUnownedCodexNotification", () => {
+  const agentMessageDelta = (threadId: string, delta: string) => ({
+    method: "item/agentMessage/delta" as const,
+    params: {
+      delta,
+      itemId: `${threadId}-message`,
+      threadId,
+      turnId: `${threadId}-turn`,
+    },
+  });
+
+  it("suppresses unregistered foreign assistant text without hiding root or child replies", () => {
+    const foreignNotifications: ReadonlyArray<
+      Parameters<typeof shouldSuppressUnownedCodexNotification>[0]
+    > = [
+      agentMessageDelta("foreign-thread", "unrelated background report"),
+      {
+        method: "item/started" as const,
+        params: {
+          startedAtMs: 1,
+          threadId: "foreign-thread",
+          turnId: "foreign-turn",
+          item: {
+            id: "foreign-message",
+            type: "agentMessage" as const,
+            text: "",
+          },
+        },
+      },
+      {
+        method: "item/completed" as const,
+        params: {
+          completedAtMs: 2,
+          threadId: "foreign-thread",
+          turnId: "foreign-turn",
+          item: {
+            id: "foreign-message",
+            type: "agentMessage" as const,
+            text: "unrelated background report",
+          },
+        },
+      },
+    ];
+    for (const notification of foreignNotifications) {
+      NodeAssert.equal(
+        shouldSuppressUnownedCodexNotification(notification, "root-thread", false),
+        true,
+      );
+    }
+    NodeAssert.equal(
+      shouldSuppressUnownedCodexNotification(
+        agentMessageDelta("root-thread", "root commentary"),
+        "root-thread",
+        false,
+      ),
+      false,
+    );
+    NodeAssert.equal(
+      shouldSuppressUnownedCodexNotification(
+        agentMessageDelta("registered-child", "child reply"),
+        "root-thread",
+        true,
+      ),
+      false,
+    );
+  });
+
+  it("keeps foreign request resolution on the parent correlation path", () => {
+    NodeAssert.equal(
+      shouldSuppressUnownedCodexNotification(
+        {
+          method: "serverRequest/resolved",
+          params: { requestId: "request-1", threadId: "foreign-thread" },
+        },
+        "root-thread",
+        false,
+      ),
+      false,
+    );
+  });
+
+  it("waits for root ownership before suppressing foreign thread startup", () => {
+    const threadStarted = makeThreadStartedNotification("foreign-thread", "appServer");
+    NodeAssert.equal(
+      shouldSuppressUnownedCodexNotification(threadStarted, undefined, false),
+      false,
+    );
+    NodeAssert.equal(
+      shouldSuppressUnownedCodexNotification(threadStarted, "root-thread", false),
+      true,
     );
   });
 });
