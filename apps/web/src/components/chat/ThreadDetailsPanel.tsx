@@ -21,6 +21,7 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { cn } from "../../lib/utils";
 import { OpenInPicker } from "./OpenInPicker";
+import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
@@ -117,18 +118,13 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
       data-thread-details-card
     >
       <ScrollArea scrollFade className="min-h-0">
-        <section aria-labelledby="thread-details-workspace-heading">
-          <div className="flex min-h-10 items-center justify-between gap-3 px-3.5 pb-1 pt-3">
-            <h3
-              id="thread-details-workspace-heading"
-              className="text-[11px] font-medium text-muted-foreground"
-            >
-              Workspace
-            </h3>
-          </div>
-
+        <ThreadDetailsSection
+          headingId="thread-details-workspace-heading"
+          title="Workspace"
+          separated={false}
+        >
           {props.versionMismatch ? (
-            <div className="mx-3 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
+            <div className="mx-1 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
               <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium">Client and server versions differ</p>
@@ -148,7 +144,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             </div>
           ) : null}
 
-          <div className="flex flex-col px-2 pb-2.5">
+          <div className="flex flex-col">
             {props.availableEnvironments.length > 1 ? (
               <BranchToolbarEnvironmentSelector
                 displayMode="panel"
@@ -185,22 +181,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               />
             ) : null}
           </div>
-        </section>
+        </ThreadDetailsSection>
 
         {props.gitCwd ? (
-          <section
-            aria-labelledby="thread-details-version-control-heading"
-            className="border-t border-border/65"
+          <ThreadDetailsSection
+            headingId="thread-details-version-control-heading"
+            title="Version Control"
           >
-            <div className="px-3.5 pb-1 pt-3">
-              <h3
-                id="thread-details-version-control-heading"
-                className="text-[11px] font-medium text-muted-foreground"
-              >
-                Version Control
-              </h3>
-            </div>
-            <div className="flex flex-col px-2 pb-2.5">
+            <div className="flex flex-col">
               {props.isGitRepo ? (
                 <BranchToolbar layout="panel" panelSection="branch" {...branchToolbarProps} />
               ) : null}
@@ -214,7 +202,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 />
               ) : null}
             </div>
-          </section>
+          </ThreadDetailsSection>
         ) : null}
 
         {!props.draftId ? (
