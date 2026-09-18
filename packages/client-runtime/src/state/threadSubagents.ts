@@ -161,8 +161,12 @@ export function deriveThreadSubagentTree(
     for (const thread of childrenByParent.get(id) ?? []) {
       if (visited.has(thread.id)) continue;
       visited.add(thread.id);
-      const shellStatus = thread.source.activityRunStatus ?? thread.source.status;
-      const status = shellStatus === "idle" ? (thread.latestRun?.status ?? "idle") : shellStatus;
+      const shellStatus =
+        thread.runtime?.status ?? thread.source.activityRunStatus ?? thread.source.status;
+      const status =
+        shellStatus === "idle" && thread.pendingBackgroundTasks.length === 0
+          ? (thread.latestRun?.status ?? "idle")
+          : shellStatus;
       const row = {
         thread,
         depth,
