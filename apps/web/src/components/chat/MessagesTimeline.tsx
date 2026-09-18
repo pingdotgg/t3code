@@ -820,6 +820,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined,
     [restoreRowIndex, restoringThreadPosition],
   );
+  // Bumped when a restore waiting for the saved anchor's rows reaches its
+  // deadline, so the restore completes even if no row change re-runs the effect.
+  const [restoreWaitTick, setRestoreWaitTick] = useState(0);
   useLayoutEffect(() => {
     if (!restoringThreadPosition || rows.length === 0) return;
     const list = listRef.current;
@@ -830,6 +833,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     let cancelled = false;
     let settleFrame: number | null = null;
+    let waitTimer: ReturnType<typeof setTimeout> | null = null;
     const viewport: HTMLElement | null = list.getScrollableNode();
     const cancelRestoration = () => {
       if (cancelled) return;
@@ -858,23 +862,43 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     viewport?.addEventListener("touchmove", cancelForNavigation, { passive: true });
     viewport?.addEventListener("pointerdown", cancelForNavigation, { passive: true });
     viewport?.ownerDocument.addEventListener("keydown", onScrollKey);
+    const removeCancelListeners = () => {
+      viewport?.removeEventListener("wheel", cancelForNavigation);
+      viewport?.removeEventListener("touchmove", cancelForNavigation);
+      viewport?.removeEventListener("pointerdown", cancelForNavigation);
+      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
+    };
+    const detach = () => {
+      if (cancelPositionRestoreRef?.current === cancelRestoration) {
+        cancelPositionRestoreRef.current = null;
+      }
+      if (waitTimer !== null) clearTimeout(waitTimer);
+      removeCancelListeners();
+    };
     const position = rememberedPosition;
     const index = position ? rows.findIndex((row) => row.id === position.rowId) : -1;
     if (position?.atEnd === false) onManualNavigation();
+    if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
     if (position?.atEnd === false && index < 0) {
       // The displayed rows may briefly be a paint-only projection of another
       // thread. Restoring against those would clamp the offset and mark the
       // restoration done before the real rows arrive, so wait for rows that
-      // contain the saved anchor (bounded) before falling back.
+      // contain the saved anchor (bounded) before falling back. Gestures keep
+      // cancelling through the wait, and the wait always terminates.
       if (restoreDeadlineRef.current === null) {
         restoreDeadlineRef.current = Date.now() + 2_000;
       }
       if (Date.now() < restoreDeadlineRef.current) {
-        return;
+        waitTimer = setTimeout(
+          () => {
+            if (!cancelled) setRestoreWaitTick((tick) => tick + 1);
+          },
+          restoreDeadlineRef.current - Date.now() + 25,
+        );
+        return detach;
       }
       restoreDeadlineRef.current = null;
     }
-    if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
     const scrolling =
       position?.atEnd === false
         ? index >= 0
@@ -931,14 +955,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     });
     return () => {
       cancelled = true;
-      if (cancelPositionRestoreRef?.current === cancelRestoration) {
-        cancelPositionRestoreRef.current = null;
-      }
       if (settleFrame !== null) cancelAnimationFrame(settleFrame);
-      viewport?.removeEventListener("wheel", cancelForNavigation);
-      viewport?.removeEventListener("touchmove", cancelForNavigation);
-      viewport?.removeEventListener("pointerdown", cancelForNavigation);
-      viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
+      detach();
     };
   }, [
     citationRequest,
@@ -947,6 +965,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listRef,
     onManualNavigation,
     rememberedPosition,
+    restoreWaitTick,
     restoringThreadPosition,
     rows,
   ]);
