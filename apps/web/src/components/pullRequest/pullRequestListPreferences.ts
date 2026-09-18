@@ -10,6 +10,7 @@ import {
 
 export const PullRequestListSort = Schema.Literals([
   "ready",
+  "blocked",
   "updated",
   "newest",
   "oldest",

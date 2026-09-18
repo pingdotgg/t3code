@@ -21,6 +21,8 @@ import {
   readPullRequestListSnapshot,
   writePullRequestListSnapshot,
   rankPullRequestMatches,
+  rankPullRequestsBlockedOnAuthor,
+  rankPullRequestsBlockedOnReviewer,
   rankPullRequestsByMergeReadiness,
   scorePullRequestMatch,
   sortPullRequestGroups,
@@ -870,6 +872,108 @@ describe("default merge-readiness ranking", () => {
 
     expect(sorted.map((group) => group.key)).toEqual(["authored", "others"]);
     expect(sorted[0]!.entries.map((row) => row.number)).toEqual(order);
+  });
+});
+
+describe("blocked-on-me ranking", () => {
+  it("ranks authored work by how surely it is the author's to unblock, newest first within a tier", () => {
+    const conflict = entry({
+      number: 1,
+      mergeability: "conflicting",
+      checksState: "failing",
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+    const olderFailing = entry({
+      number: 2,
+      checksState: "failing",
+      updatedAt: "2026-08-01T00:00:00Z",
+    });
+    const changesRequested = entry({
+      number: 3,
+      reviewDecision: "changes-requested",
+      checksState: "failing",
+      updatedAt: "2026-08-02T00:00:00Z",
+    });
+    const approved = entry({ number: 4, checksState: "passing", reviewDecision: "approved" });
+    const draft = entry({ number: 5, isDraft: true, checksState: "passing" });
+    const waiting = entry({ number: 6 });
+    const merged = entry({ number: 7, state: "merged", updatedAt: "2026-08-01T00:00:00Z" });
+    const newerClosed = entry({ number: 8, state: "closed", updatedAt: "2026-08-03T00:00:00Z" });
+    const newerFailing = entry({
+      number: 9,
+      checksState: "failing",
+      updatedAt: "2026-08-03T00:00:00Z",
+    });
+
+    expect(
+      rankPullRequestsBlockedOnAuthor([
+        waiting,
+        merged,
+        olderFailing,
+        draft,
+        approved,
+        changesRequested,
+        newerClosed,
+        conflict,
+        newerFailing,
+      ]).map((row) => row.number),
+    ).toEqual([1, 3, 9, 2, 5, 6, 4, 8, 7]);
+  });
+
+  it("ranks reviewer work with open rows first, newest first", () => {
+    const olderOpen = entry({ number: 1, updatedAt: "2026-08-01T00:00:00Z" });
+    const newerOpen = entry({ number: 2, updatedAt: "2026-08-02T00:00:00Z" });
+    const olderFinished = entry({ number: 3, state: "merged", updatedAt: "2026-08-01T00:00:00Z" });
+    const newerFinished = entry({ number: 4, state: "closed", updatedAt: "2026-08-03T00:00:00Z" });
+
+    expect(
+      rankPullRequestsBlockedOnReviewer([newerFinished, newerOpen, olderFinished, olderOpen]).map(
+        (row) => row.number,
+      ),
+    ).toEqual([2, 1, 4, 3]);
+  });
+
+  it("ranks blocked groups according to their involvement", () => {
+    const authored = [
+      entry({ number: 1, isDraft: true }),
+      entry({ number: 2, checksState: "failing" }),
+    ];
+    const reviewing = [
+      entry({ number: 3, updatedAt: "2026-08-02T00:00:00Z" }),
+      entry({ number: 4, updatedAt: "2026-08-01T00:00:00Z" }),
+    ];
+    const others = [
+      entry({ number: 5, updatedAt: "2026-08-02T00:00:00Z" }),
+      entry({ number: 6, isDraft: true }),
+    ];
+    const groups = [
+      { key: "authored", label: "Authored", entries: authored },
+      { key: "reviewRequested", label: "Review requested", entries: reviewing },
+      { key: "others", label: "Others", entries: others },
+    ] as const;
+
+    expect(
+      sortPullRequestGroups(groups, "blocked", "", undefined, "all").map((group) =>
+        group.entries.map((row) => row.number),
+      ),
+    ).toEqual([
+      [2, 1],
+      [3, 4],
+      [5, 6],
+    ]);
+    expect(
+      sortPullRequestGroups([groups[2]], "blocked", "", undefined, "authored")[0]!.entries.map(
+        (row) => row.number,
+      ),
+    ).toEqual([6, 5]);
+    expect(
+      sortPullRequestGroups([groups[2]], "blocked", "", undefined, "reviewing")[0]!.entries.map(
+        (row) => row.number,
+      ),
+    ).toEqual([5, 6]);
+    expect(sortPullRequestGroups(groups, "blocked", "needle", undefined, "authored")).toEqual(
+      groups,
+    );
   });
 });
 

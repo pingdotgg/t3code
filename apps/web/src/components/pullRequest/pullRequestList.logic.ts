@@ -1034,12 +1034,50 @@ export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEn
   });
 }
 
+function rankByTierThenRecency<Entry extends PullRequestListEntry>(
+  entries: ReadonlyArray<Entry>,
+  tier: (entry: Entry) => number,
+): ReadonlyArray<Entry> {
+  const timestamp = (entry: Entry) => toSortableTimestamp(entry.updatedAt);
+  return entries.toSorted((left, right) => {
+    const byTier = tier(left) - tier(right);
+    if (byTier !== 0) return byTier;
+    const leftUpdated = timestamp(left);
+    const rightUpdated = timestamp(right);
+    const measured = Number(leftUpdated === null) - Number(rightUpdated === null);
+    if (measured !== 0) return measured;
+    if (leftUpdated === null || rightUpdated === null) return 0;
+    return rightUpdated - leftUpdated;
+  });
+}
+
+export function rankPullRequestsBlockedOnAuthor<Entry extends PullRequestListEntry>(
+  entries: ReadonlyArray<Entry>,
+): ReadonlyArray<Entry> {
+  return rankByTierThenRecency(entries, (entry) => {
+    if (entry.state !== "open") return 6;
+    if (entry.mergeability === "conflicting") return 0;
+    if (entry.reviewDecision === "changes-requested") return 1;
+    if (entry.checksState === "failing") return 2;
+    if (entry.isDraft) return 3;
+    if (entry.checksState === "passing" && entry.reviewDecision === "approved") return 5;
+    return 4;
+  });
+}
+
+export function rankPullRequestsBlockedOnReviewer<Entry extends PullRequestListEntry>(
+  entries: ReadonlyArray<Entry>,
+): ReadonlyArray<Entry> {
+  return rankByTierThenRecency(entries, (entry) => (entry.state === "open" ? 0 : 1));
+}
+
 /** Keeps authored work first while applying the selected ordering inside every involvement group. */
 export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
   groups: ReadonlyArray<PullRequestGroup<Entry>>,
   sort: PullRequestListSort,
   searchText: string,
   hasMeasuredSize: (entry: Entry) => boolean = (entry) => entry.additions + entry.deletions > 0,
+  involvement: PullRequestInvolvement = "all",
 ): ReadonlyArray<PullRequestGroup<Entry>> {
   const sortWithinGroups = (rank: (entries: ReadonlyArray<Entry>) => ReadonlyArray<Entry>) =>
     groups.map((group) => ({ ...group, entries: rank(group.entries) }));
@@ -1048,6 +1086,20 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
     return searchText.trim().length === 0
       ? sortWithinGroups((entries) => rankPullRequestsByMergeReadiness(entries, hasMeasuredSize))
       : groups;
+  }
+  if (sort === "blocked") {
+    if (searchText.trim().length > 0) return groups;
+    const role = (key: PullRequestGroupKey) =>
+      key === "others" ? involvement : key === "authored" ? "authored" : "reviewing";
+    return groups.map((group) => {
+      const groupRole = role(group.key);
+      if (groupRole === "all") return group;
+      const rank =
+        groupRole === "authored"
+          ? rankPullRequestsBlockedOnAuthor
+          : rankPullRequestsBlockedOnReviewer;
+      return { ...group, entries: rank(group.entries) };
+    });
   }
   if (sort === "updated") return groups;
 
