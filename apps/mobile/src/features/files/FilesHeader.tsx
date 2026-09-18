@@ -56,26 +56,28 @@ export function FileHeader(props: FileHeaderProps) {
             ]
           : undefined
       }
-      menu={{
-        title: "File actions",
-        icon: "ellipsis",
-        separateBackground: false,
-        items: [
-          ...(modes.length > 0
-            ? [
-                {
-                  id: "modes",
-                  inline: true,
-                  items: modes.map((action) => ({
-                    ...action,
-                    selected: action.id === props.activeMode,
-                  })),
-                },
-              ]
-            : []),
-          ...props.actions.filter(({ inline }) => !inline),
-        ],
-      }}
+      menus={[
+        {
+          title: "File actions",
+          icon: "ellipsis",
+          separateBackground: false,
+          items: [
+            ...(modes.length > 0
+              ? [
+                  {
+                    id: "modes",
+                    inline: true,
+                    items: modes.map((action) => ({
+                      ...action,
+                      selected: action.id === props.activeMode,
+                    })),
+                  },
+                ]
+              : []),
+            ...props.actions.filter(({ inline }) => !inline),
+          ],
+        },
+      ]}
     />
   );
 }
