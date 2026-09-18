@@ -301,8 +301,7 @@ describe("normalizeProviderHealthIntervalSeconds", () => {
     expect(normalizeProviderHealthIntervalSeconds(15, 0)).toBe(min);
   });
 
-  it("treats an empty or negative value as disabled", () => {
-    expect(normalizeProviderHealthIntervalSeconds(null, min)).toBe(0);
+  it("treats a negative value as disabled", () => {
     expect(normalizeProviderHealthIntervalSeconds(-5, min)).toBe(0);
   });
 });

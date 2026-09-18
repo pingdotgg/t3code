@@ -23,7 +23,9 @@ interface ProviderHealthIntervalFieldProps {
 /**
  * Keeps typing local and normalizes on commit (blur, Enter, or a stepper
  * click), so a partially typed value below the minimum is never persisted as
- * "disabled" mid-edit.
+ * "disabled" mid-edit. An empty field reverts to the saved value instead of
+ * committing, which also keeps a stepper press on a cleared field to a single
+ * commit.
  */
 export function ProviderHealthIntervalField({
   valueSeconds,
@@ -47,6 +49,10 @@ export function ProviderHealthIntervalField({
       className="w-32"
       onValueChange={setDraft}
       onValueCommitted={(next) => {
+        if (next === null) {
+          setDraft(valueSeconds);
+          return;
+        }
         const seconds = normalizeProviderHealthIntervalSeconds(next, valueSeconds);
         setDraft(seconds);
         if (seconds !== valueSeconds) onCommit(Duration.seconds(seconds));

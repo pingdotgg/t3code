@@ -321,7 +321,7 @@ export const PROVIDER_HEALTH_INTERVAL_MIN_SECONDS = durationToSeconds(
  * value typed into the gap snaps in the direction the user was moving.
  */
 export function normalizeProviderHealthIntervalSeconds(
-  value: number | null,
+  value: number,
   previousSeconds: number,
 ): number {
   const seconds = normalizeIntervalSeconds(value);
