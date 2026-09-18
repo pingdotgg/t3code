@@ -1,4 +1,11 @@
-import { useId, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import {
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+  type RefObject,
+} from "react";
 
 import type { HsvColor } from "../../lib/color";
 import { cn } from "../../lib/utils";
@@ -11,6 +18,7 @@ function clamp(value: number) {
 function useColorDrag(
   update: (event: PointerEvent<HTMLDivElement>) => void,
   onInteractionEnd?: () => void,
+  focusTarget?: RefObject<HTMLElement | null>,
 ) {
   const [isDragging, setIsDragging] = useState(false);
   const pointerId = useRef<number | null>(null);
@@ -30,7 +38,7 @@ function useColorDrag(
       onPointerDown(event: PointerEvent<HTMLDivElement>) {
         if (pointerId.current !== null || event.button !== 0) return;
         pointerId.current = event.pointerId;
-        event.currentTarget.focus({ preventScroll: true });
+        (focusTarget?.current ?? event.currentTarget).focus({ preventScroll: true });
         event.currentTarget.setPointerCapture(event.pointerId);
         setIsDragging(true);
         update(event);
@@ -63,53 +71,95 @@ export function ColorSaturationValuePlane({
   variant = "inset",
 }: ColorControlProps<HsvColor> & { variant?: "inset" | "edge" }) {
   const instructionsId = useId();
-  const { handlers, thumbTransition } = useColorDrag((event) => {
-    const bounds = event.currentTarget.getBoundingClientRect();
-    if (!bounds.width || !bounds.height) return;
-    onChange({
-      ...value,
-      s: clamp((event.clientX - bounds.left) / bounds.width),
-      v: 1 - clamp((event.clientY - bounds.top) / bounds.height),
-    });
-  }, onInteractionEnd);
+  const saturationRef = useRef<HTMLInputElement>(null);
+  const { handlers, thumbTransition } = useColorDrag(
+    (event) => {
+      const bounds = event.currentTarget.getBoundingClientRect();
+      if (!bounds.width || !bounds.height) return;
+      onChange({
+        ...value,
+        s: clamp((event.clientX - bounds.left) / bounds.width),
+        v: 1 - clamp((event.clientY - bounds.top) / bounds.height),
+      });
+    },
+    onInteractionEnd,
+    saturationRef,
+  );
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(event.key)) return;
-    event.preventDefault();
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>, axis: "s" | "v") => {
     const step = event.shiftKey ? 0.1 : 0.02;
-    const nextValue = { ...value };
-    if (event.key === "ArrowLeft") nextValue.s = clamp(value.s - step);
-    if (event.key === "ArrowRight") nextValue.s = clamp(value.s + step);
-    if (event.key === "ArrowUp") nextValue.v = clamp(value.v + step);
-    if (event.key === "ArrowDown") nextValue.v = clamp(value.v - step);
-    onChange(nextValue);
+    let nextValue: number;
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowUp":
+        nextValue = clamp(value[axis] + step);
+        break;
+      case "ArrowLeft":
+      case "ArrowDown":
+        nextValue = clamp(value[axis] - step);
+        break;
+      case "Home":
+        nextValue = 0;
+        break;
+      case "End":
+        nextValue = 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    onChange({ ...value, [axis]: nextValue });
   };
 
   return (
     <div
-      aria-label={label}
-      aria-describedby={instructionsId}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(value.s * 100)}
-      aria-valuetext={`saturation ${Math.round(value.s * 100)}%, brightness ${Math.round(value.v * 100)}%`}
+      aria-label={`${label} saturation and brightness`}
+      role="group"
       className={cn(
-        "relative cursor-crosshair touch-none overflow-hidden bg-[linear-gradient(to_top,#000,transparent),linear-gradient(to_right,#fff,transparent)] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover",
+        "relative cursor-crosshair touch-none overflow-hidden bg-[linear-gradient(to_top,#000,transparent),linear-gradient(to_right,#fff,transparent)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-popover",
         variant === "edge" ? "h-36 rounded-none" : "h-32 rounded-lg",
         className,
       )}
-      role="slider"
       style={{
         backgroundColor: `hsl(${value.h} 100% 50%)`,
       }}
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
       {...handlers}
     >
       <span id={instructionsId} className="sr-only">
-        Use Left and Right arrows to adjust saturation, and Up and Down arrows to adjust brightness.
-        Hold Shift for larger steps.
+        Use arrow keys to adjust the focused value. Hold Shift for larger steps. Use Home and End
+        for the minimum and maximum. Press Tab to move between saturation and brightness.
       </span>
+      {(
+        [
+          ["s", "Saturation"],
+          ["v", "Brightness"],
+        ] as const
+      ).map(([axis, axisLabel]) => (
+        <label key={axis} className="contents">
+          <input
+            ref={axis === "s" ? saturationRef : undefined}
+            type="range"
+            min={0}
+            max={100}
+            step="any"
+            value={value[axis] * 100}
+            aria-label={`${label} ${axisLabel.toLowerCase()}`}
+            aria-describedby={instructionsId}
+            aria-valuetext={`${Math.round(value[axis] * 100)}%`}
+            className="peer sr-only"
+            onKeyDown={(event) => handleKeyDown(event, axis)}
+            onChange={(event) =>
+              onChange({ ...value, [axis]: event.currentTarget.valueAsNumber / 100 })
+            }
+          />
+          <span
+            aria-hidden
+            className="pointer-events-none invisible absolute bottom-2 left-2 z-10 rounded bg-popover px-1.5 py-0.5 text-xs text-popover-foreground peer-focus-visible:visible"
+          >
+            {axisLabel} {Math.round(value[axis] * 100)}%
+          </span>
+        </label>
+      ))}
       <span
         className="pointer-events-none absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.4)]"
         style={{

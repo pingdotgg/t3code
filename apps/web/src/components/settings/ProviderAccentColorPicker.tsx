@@ -33,7 +33,7 @@ function ProviderCustomColorPanel(props: {
   return (
     <div className="w-56 bg-popover">
       <ColorSaturationValuePlane
-        label="Accent color saturation and brightness"
+        label="Accent color"
         value={hsv}
         onChange={commitHsv}
         variant="edge"

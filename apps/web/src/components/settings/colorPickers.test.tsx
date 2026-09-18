@@ -41,7 +41,15 @@ afterEach(async () => {
 });
 
 function slider(label: string) {
-  return renderer!.root.findByProps({ role: "slider", "aria-label": label });
+  return renderer!.root.find(
+    (node) =>
+      (node.props.role === "slider" || node.props.type === "range") &&
+      node.props["aria-label"] === label,
+  );
+}
+
+function plane(label: string) {
+  return renderer!.root.findByProps({ role: "group", "aria-label": label });
 }
 
 async function key(label: string, key: string, shiftKey = false) {
@@ -73,7 +81,7 @@ async function frame() {
 }
 
 describe("shared color controls in settings", () => {
-  it("lets provider colors use arrow keys, bounds saturation/brightness, and wraps hue", async () => {
+  it("adjusts each provider color axis independently and reports the value being changed", async () => {
     const onCommit = vi.fn();
     await act(async () => {
       renderer = create(
@@ -81,22 +89,87 @@ describe("shared color controls in settings", () => {
       );
     });
     const hue = "Accent color hue";
-    const plane = "Accent color saturation and brightness";
+    const saturation = "Accent color saturation";
+    const brightness = "Accent color brightness";
     expect(await key(hue, "ArrowLeft")).toHaveBeenCalledOnce();
     expect(slider(hue).props["aria-valuenow"]).toBe(359);
     await key(hue, "ArrowRight");
     expect(onCommit).toHaveBeenLastCalledWith("#ff0000");
-    await key(plane, "ArrowRight", true);
-    await key(plane, "ArrowUp", true);
+    await key(saturation, "ArrowRight", true);
+    await key(brightness, "ArrowUp", true);
     expect(onCommit).toHaveBeenLastCalledWith("#ff0000");
-    await key(plane, "ArrowDown", true);
+    await key(brightness, "ArrowDown", true);
     expect(onCommit).toHaveBeenLastCalledWith("#e60000");
-    await key(plane, "ArrowLeft", true);
+    expect(slider(brightness).props.value).toBe(90);
+    expect(slider(brightness).props["aria-valuetext"]).toBe("90%");
+    expect(slider(saturation).props.value).toBe(100);
+    // Up/Down on saturation must adjust the reported saturation, not brightness.
+    await key(saturation, "ArrowDown", true);
     expect(onCommit).toHaveBeenLastCalledWith("#e61717");
-    expect(slider(plane).props["aria-valuetext"]).toBe("saturation 90%, brightness 90%");
+    expect(slider(saturation).props.value).toBe(90);
+    expect(slider(saturation).props["aria-valuetext"]).toBe("90%");
+    await key(saturation, "ArrowUp", true);
+    expect(onCommit).toHaveBeenLastCalledWith("#e60000");
+    // Left/Right on brightness must likewise leave saturation unchanged.
+    await key(brightness, "ArrowLeft", true);
+    expect(onCommit).toHaveBeenLastCalledWith("#cc0000");
+    await key(brightness, "ArrowRight", true);
+    expect(onCommit).toHaveBeenLastCalledWith("#e60000");
     onCommit.mockClear();
-    expect(await key(hue, "Tab")).not.toHaveBeenCalled();
+    expect(await key(saturation, "Tab")).not.toHaveBeenCalled();
+    expect(await key(brightness, "Tab")).not.toHaveBeenCalled();
     expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("supports Home/End and clamps each axis without changing the other", async () => {
+    const onCommit = vi.fn();
+    await act(async () => {
+      renderer = create(
+        <ProviderAccentColorPicker displayName="Codex" value="#ff0000" onCommit={onCommit} />,
+      );
+    });
+    const saturation = "Accent color saturation";
+    const brightness = "Accent color brightness";
+    await key(saturation, "Home");
+    await key(saturation, "ArrowLeft");
+    expect(slider(saturation).props.value).toBe(0);
+    expect(onCommit).toHaveBeenLastCalledWith("#ffffff");
+    await key(brightness, "Home");
+    await key(brightness, "ArrowDown");
+    expect(slider(brightness).props.value).toBe(0);
+    expect(onCommit).toHaveBeenLastCalledWith("#000000");
+    await key(saturation, "End");
+    expect(slider(saturation).props.value).toBe(100);
+    expect(slider(brightness).props.value).toBe(0);
+    await key(brightness, "End");
+    await key(brightness, "ArrowUp");
+    expect(onCommit).toHaveBeenLastCalledWith("#ff0000");
+    await key(saturation, "ArrowLeft");
+    expect(slider(saturation).props.value).toBe(98);
+    expect(onCommit).toHaveBeenLastCalledWith("#ff0505");
+  });
+
+  it("persists independent native range changes through theme batching with alpha", async () => {
+    const onChange = vi.fn();
+    await act(async () => {
+      renderer = create(<ThemeColorField role="accent" value="#ff000080" onChange={onChange} />);
+    });
+    const saturation = "Accent color saturation";
+    const brightness = "Accent color brightness";
+    await act(async () =>
+      slider(saturation).props.onChange({ currentTarget: { valueAsNumber: 50 } }),
+    );
+    await act(async () =>
+      slider(brightness).props.onChange({ currentTarget: { valueAsNumber: 50 } }),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect(frames.size).toBe(1);
+    await frame();
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("accent", "#80404080");
+    await key(brightness, "ArrowDown", true);
+    await frame();
+    expect(onChange).toHaveBeenLastCalledWith("accent", "#66333380");
+    expect(slider(saturation).props.value).toBe(50);
   });
 
   it("batches theme drag updates and flushes the final color with alpha on pointer release", async () => {
@@ -125,11 +198,11 @@ describe("shared color controls in settings", () => {
     await act(async () => {
       renderer = create(<ThemeColorField role="accent" value="#ff000080" onChange={onChange} />);
     });
-    const plane = "Accent color saturation and brightness";
-    await act(async () => slider(plane).props.onPointerDown(pointer(-50, -50)));
-    await act(async () => slider(plane).props.onPointerCancel(pointer(-50, -50)));
+    const planeLabel = "Accent color saturation and brightness";
+    await act(async () => plane(planeLabel).props.onPointerDown(pointer(-50, -50)));
+    await act(async () => plane(planeLabel).props.onPointerCancel(pointer(-50, -50)));
     expect(onChange).toHaveBeenLastCalledWith("accent", "#ffffff80");
-    await act(async () => slider(plane).props.onPointerDown(pointer(150, 150)));
+    await act(async () => plane(planeLabel).props.onPointerDown(pointer(150, 150)));
     await act(async () => renderer!.unmount());
     renderer = undefined;
     expect(onChange).toHaveBeenLastCalledWith("accent", "#00000080");
@@ -145,9 +218,9 @@ describe("shared color controls in settings", () => {
       renderer = create(render("#ff0000"));
     });
     const hue = "Accent color hue";
-    const plane = "Accent color saturation and brightness";
+    const planeLabel = "Accent color saturation and brightness";
     await key(hue, "ArrowRight", true);
-    await act(async () => slider(plane).props.onPointerDown(pointer(0, 0)));
+    await act(async () => plane(planeLabel).props.onPointerDown(pointer(0, 0)));
     await frame();
     expect(onChange).toHaveBeenLastCalledWith("accent", "#ffffff");
     await act(async () => renderer!.update(render("#ffffff")));

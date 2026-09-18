@@ -180,7 +180,7 @@ function ThemeColorPickerPanel({
       </div>
       <div className="grid gap-3 px-3 pb-3 pt-3">
         <ColorSaturationValuePlane
-          label={`${label} saturation and brightness`}
+          label={label}
           value={hsv}
           onChange={commitHsv}
           onInteractionEnd={flushPendingCommit}
