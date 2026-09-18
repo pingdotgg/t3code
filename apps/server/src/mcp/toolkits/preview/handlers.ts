@@ -10,6 +10,7 @@ import {
   type ToolActivityIcon,
   type ThreadId,
   type PreviewAutomationOperation,
+  type PreviewAutomationNavigateInput,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
   type PreviewAutomationResizeResult,
@@ -31,6 +32,8 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
+const DEFAULT_PREVIEW_NAVIGATION_TIMEOUT_MS = 15_000;
+
 /**
  * Collapses the `show` alias onto `open` and defaults tab reuse.
  *
@@ -48,6 +51,13 @@ export function normalizePreviewOpenInput(
     ...(open === undefined ? {} : { open, show: open }),
     reuseExistingTab: input.reuseExistingTab ?? true,
   };
+}
+
+/** Makes the navigation budget explicit so the host can report when navigation actually starts. */
+export function normalizePreviewNavigateInput(
+  input: PreviewAutomationNavigateInput,
+): PreviewAutomationNavigateInput & { readonly timeoutMs: number } {
+  return { ...input, timeoutMs: input.timeoutMs ?? DEFAULT_PREVIEW_NAVIGATION_TIMEOUT_MS };
 }
 
 const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
@@ -190,8 +200,10 @@ const handlers = {
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   preview_open: (input) =>
     invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
-  preview_navigate: (input) =>
-    invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
+  preview_navigate: (input) => {
+    const normalized = normalizePreviewNavigateInput(input);
+    return invokeTargeted<PreviewAutomationStatus>("navigate", normalized, normalized.timeoutMs);
+  },
   preview_resize: (input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   preview_set_appearance: (input) =>
