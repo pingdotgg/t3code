@@ -23,21 +23,32 @@ const GITHUB_TEMPLATE_DIRECTORIES = [
   "docs/PULL_REQUEST_TEMPLATE",
 ] as const;
 
-// GitLab treats the default merge request template as "Default.md" (case-insensitive).
+// GitLab's default merge request template is "Default.md" (case-insensitive) inside
+// .gitlab/merge_request_templates/. Other templates in that directory are chosen
+// explicitly by name instead of being applied by default.
 // https://docs.gitlab.com/user/project/description_templates/
-const GITLAB_TEMPLATE_PATHS = [
-  ".gitlab/merge_request_templates/Default.md",
-  ".gitlab/merge_request_templates/default.md",
-] as const;
+const GITLAB_TEMPLATE_DIRECTORIES = [".gitlab/merge_request_templates"] as const;
 
-// Azure Repos applies pull_request_template.md from the repository's .azuredevops folder
-// before any other documented location.
+// Azure Repos searches these folders in order (.azuredevops, .vsts, docs, root) for
+// pull_request_template.md or pull_request_template.txt and uses the first default
+// template it finds. Filenames and folder locations are not case sensitive.
 // https://learn.microsoft.com/en-us/azure/devops/repos/git/pull-request-templates
-const AZURE_DEVOPS_TEMPLATE_PATHS = [".azuredevops/pull_request_template.md"] as const;
+const AZURE_DEVOPS_TEMPLATE_PATHS = [
+  ".azuredevops/pull_request_template.md",
+  ".azuredevops/pull_request_template.txt",
+  ".vsts/pull_request_template.md",
+  ".vsts/pull_request_template.txt",
+  "docs/pull_request_template.md",
+  "docs/pull_request_template.txt",
+  "pull_request_template.md",
+  "pull_request_template.txt",
+] as const;
 
 interface ChangeRequestTemplatePaths {
   readonly paths: ReadonlyArray<string>;
   readonly directories: ReadonlyArray<string>;
+  // When set, directory templates must match this basename (case-insensitive).
+  readonly directoryBaseName?: string;
 }
 
 function templatePathsForProvider(
@@ -45,7 +56,11 @@ function templatePathsForProvider(
 ): ChangeRequestTemplatePaths | null {
   switch (providerKind) {
     case "gitlab":
-      return { paths: [...GITLAB_TEMPLATE_PATHS], directories: [] };
+      return {
+        paths: [],
+        directories: [...GITLAB_TEMPLATE_DIRECTORIES],
+        directoryBaseName: "Default",
+      };
     case "azure-devops":
       return { paths: [...AZURE_DEVOPS_TEMPLATE_PATHS], directories: [] };
     case "github":
@@ -130,6 +145,7 @@ function readTemplateDirectory(input: {
   readonly executeGit: ExecuteGit;
   readonly entries: ReadonlyArray<TemplateTreeEntry>;
   readonly directory: string;
+  readonly expectedBaseName?: string | undefined;
 }): Effect.Effect<DirectoryTemplateResult, GitCommandError> {
   return Effect.gen(function* () {
     const prefix = `${input.directory}/`;
@@ -138,7 +154,16 @@ function readTemplateDirectory(input: {
         return false;
       }
       const relativePath = entry.path.slice(prefix.length);
-      return !relativePath.includes("/") && relativePath.toLowerCase().endsWith(".md");
+      if (relativePath.includes("/") || !relativePath.toLowerCase().endsWith(".md")) {
+        return false;
+      }
+      if (input.expectedBaseName) {
+        const baseName = relativePath.slice(0, relativePath.lastIndexOf("."));
+        if (baseName.toLowerCase() !== input.expectedBaseName.toLowerCase()) {
+          return false;
+        }
+      }
+      return true;
     });
 
     const templates: string[] = [];
@@ -202,6 +227,7 @@ export const detectPrTemplate = Effect.fn("detectPrTemplate")(function* (
         executeGit,
         entries,
         directory,
+        expectedBaseName: templatePaths.directoryBaseName,
       });
       if (directoryTemplate._tag === "Template") {
         return Option.some(directoryTemplate.template);

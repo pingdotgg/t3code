@@ -28,9 +28,22 @@ const TEMPLATE_DIRECTORIES = [
   "docs/PULL_REQUEST_TEMPLATE",
 ] as const;
 
-const GITLAB_TEMPLATE_PATHS = [
-  ".gitlab/merge_request_templates/Default.md",
-  ".gitlab/merge_request_templates/default.md",
+const GITLAB_DEFAULT_TEMPLATE_NAMES = [
+  "Default.md",
+  "default.md",
+  "DEFAULT.MD",
+  "Default.MD",
+] as const;
+
+const AZURE_DEVOPS_TEMPLATE_PATHS = [
+  ".azuredevops/pull_request_template.md",
+  ".azuredevops/pull_request_template.txt",
+  ".vsts/pull_request_template.md",
+  ".vsts/pull_request_template.txt",
+  "docs/pull_request_template.md",
+  "docs/pull_request_template.txt",
+  "pull_request_template.md",
+  "pull_request_template.txt",
 ] as const;
 
 const PrTemplateDetectionTestLayer = GitVcsDriver.layer.pipe(
@@ -150,29 +163,71 @@ it.effect.each(TEMPLATE_DIRECTORIES)("recognizes the $0 directory", (relativeDir
   ),
 );
 
-it.effect.each(GITLAB_TEMPLATE_PATHS)(
-  "recognizes the GitLab merge request template at $0",
+it.effect.each(GITLAB_DEFAULT_TEMPLATE_NAMES)(
+  "recognizes the GitLab default template named $0",
+  (templateFileName) =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        const relativePath = `.gitlab/merge_request_templates/${templateFileName}`;
+        yield* writeTemplate(cwd, relativePath, `template from ${templateFileName}`);
+        yield* commitTemplates(cwd);
+
+        const template = yield* detectTemplate(cwd, "HEAD", "gitlab");
+        assert.strictEqual(Option.getOrUndefined(template), `template from ${templateFileName}`);
+      }),
+    ),
+);
+
+it.effect("prefers the GitLab default template over named templates", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/Default.md", "default template");
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/feature.md", "feature template");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "gitlab");
+      assert.strictEqual(Option.getOrUndefined(template), "default template");
+    }),
+  ),
+);
+
+it.effect("does not use a named GitLab template when no default exists", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/feature.md", "feature template");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "gitlab");
+      assert.isTrue(Option.isNone(template));
+    }),
+  ),
+);
+
+it.effect.each(AZURE_DEVOPS_TEMPLATE_PATHS)(
+  "recognizes the Azure DevOps template at $0",
   (relativePath) =>
     runWithTempDirectory((cwd) =>
       Effect.gen(function* () {
         yield* writeTemplate(cwd, relativePath, `template from ${relativePath}`);
         yield* commitTemplates(cwd);
 
-        const template = yield* detectTemplate(cwd, "HEAD", "gitlab");
+        const template = yield* detectTemplate(cwd, "HEAD", "azure-devops");
         assert.strictEqual(Option.getOrUndefined(template), `template from ${relativePath}`);
       }),
     ),
 );
 
-it.effect("recognizes the Azure DevOps pull request template", () =>
+it.effect("uses the first Azure DevOps template in folder precedence order", () =>
   runWithTempDirectory((cwd) =>
     Effect.gen(function* () {
-      const relativePath = ".azuredevops/pull_request_template.md";
-      yield* writeTemplate(cwd, relativePath, `template from ${relativePath}`);
+      yield* writeTemplate(cwd, ".azuredevops/pull_request_template.txt", "azuredevops txt");
+      yield* writeTemplate(cwd, ".vsts/pull_request_template.md", "vsts md");
+      yield* writeTemplate(cwd, "docs/pull_request_template.txt", "docs txt");
+      yield* writeTemplate(cwd, "pull_request_template.md", "root md");
       yield* commitTemplates(cwd);
 
       const template = yield* detectTemplate(cwd, "HEAD", "azure-devops");
-      assert.strictEqual(Option.getOrUndefined(template), `template from ${relativePath}`);
+      assert.strictEqual(Option.getOrUndefined(template), "azuredevops txt");
     }),
   ),
 );
