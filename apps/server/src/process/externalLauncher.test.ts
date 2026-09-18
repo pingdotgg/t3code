@@ -5,7 +5,6 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -16,7 +15,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as ExternalLauncher from "./externalLauncher.ts";
 
@@ -89,7 +88,7 @@ const testLayer = (input: {
       SpawnExecutableResolution,
       (command) => input.resolveExecutable?.(command) ?? command,
     ),
-    ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
+    Layer.succeed(HostProcessEnvironment, input.env ?? {}),
   );
 };
 
@@ -716,6 +715,31 @@ it.effect.skipIf(windowsHost)("reveals by opening the containing directory on Li
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+// A Dock/Finder launch starts with the bare launchd PATH and `fixPath` hydrates
+// process.env in place afterwards; discovery has to see the hydrated value.
+it.effect.skipIf(windowsHost)("discovers editors on a PATH hydrated after startup", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const cursorPath = path.join(binDir, "cursor");
+    yield* fileSystem.writeFileString(cursorPath, "#!/bin/sh\n");
+    yield* fileSystem.chmod(cursorPath, 0o755);
+
+    const emptyDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-empty-" });
+    const env: Record<string, string> = { PATH: emptyDir };
+    const editors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      env.PATH = `${binDir}:${emptyDir}`;
+      return yield* launcher.resolveAvailableEditors();
+    }).pipe(Effect.provide(testLayer({ platform: "linux", env })));
+
+    // Exact match: a lookup that fell back to the ambient process PATH would
+    // also report whatever editors the host machine has installed.
+    assert.deepEqual(editors, ["cursor"]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.skipIf(windowsHost)(
   "does not advertise a Linux file manager without a graphical session",
   () =>
@@ -968,14 +992,10 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
       Layer.mergeAll(
         launcherLayer,
         Layer.succeed(HostProcessPlatform, "win32"),
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: {
-              PATH: "C:\\t3-editor-discovery-cache-test",
-              PATHEXT: ".COM;.EXE;.BAT;.CMD",
-            },
-          }),
-        ),
+        Layer.succeed(HostProcessEnvironment, {
+          PATH: "C:\\t3-editor-discovery-cache-test",
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        }),
         TestClock.layer(),
       ),
     ),
@@ -1033,14 +1053,10 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
       Layer.mergeAll(
         launcherLayer,
         Layer.succeed(HostProcessPlatform, "win32"),
-        ConfigProvider.layer(
-          ConfigProvider.fromEnv({
-            env: {
-              PATH: "C:\\t3-editor-discovery-interrupt-test",
-              PATHEXT: ".COM;.EXE;.BAT;.CMD",
-            },
-          }),
-        ),
+        Layer.succeed(HostProcessEnvironment, {
+          PATH: "C:\\t3-editor-discovery-interrupt-test",
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        }),
       ),
     ),
   );
