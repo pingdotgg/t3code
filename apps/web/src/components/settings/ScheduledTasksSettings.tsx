@@ -13,8 +13,6 @@ import type {
   ModelSelection,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
-  ProviderInteractionMode,
-  RuntimeMode,
   ScheduledTask,
   ScheduledTaskId,
   ScheduledTaskSchedule,
@@ -47,7 +45,12 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { matchesScheduledTaskScope } from "./scheduledTasksSettings.logic";
+import {
+  matchesScheduledTaskScope,
+  taskToDraft,
+  type DraftState,
+  type WorkspaceMode,
+} from "./scheduledTasksSettings.logic";
 import { Label } from "../ui/label";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuSeparator } from "../ui/menu";
 import { ToggleGroup, Toggle } from "../ui/toggle-group";
@@ -78,41 +81,10 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 
-type ScheduleMode = "fixed" | "interval";
-type WorkspaceMode = "root" | "worktree" | "existing_worktree";
-
-interface DraftState {
-  readonly editingId: string | null;
-  readonly title: string;
-  readonly prompt: string;
-  readonly enabled: boolean;
-  readonly scheduleMode: ScheduleMode;
-  readonly intervalMinutes: string;
-  readonly timeOfDay: string;
-  readonly weekdays: ReadonlySet<number>;
-  readonly projectId: string;
-  readonly threadId: string;
-  readonly workspaceMode: WorkspaceMode;
-  readonly baseRef: string;
-  readonly startFromOrigin: boolean;
-  readonly existingWorktreePath: string;
-  readonly modelKey: string;
-  /** Not editable in the dialog, but preserved so editing an agent-created task keeps its modes. */
-  readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
-  /**
-   * The task's original model selection. The picker only edits
-   * `instanceId:model`; keeping the source object preserves provider options
-   * (reasoning, temperature, …) when the model itself is left unchanged.
-   */
-  readonly baseModelSelection: ModelSelection | null;
-}
-
 /** JS day-of-week (0 = Sunday) rendered Monday-first, matching how people read a week. */
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
-const ALL_WEEKDAYS: ReadonlySet<number> = new Set([0, 1, 2, 3, 4, 5, 6]);
 
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
@@ -164,10 +136,6 @@ function Field({
       {children}
     </div>
   );
-}
-
-function modelKey(selection: ModelSelection): string {
-  return `${selection.instanceId}:${selection.model}`;
 }
 
 function splitModelKey(value: string): ModelSelection | null {
@@ -228,41 +196,6 @@ export function relativeLabel(value: string | null): string {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `in ${hours}h`;
   return `in ${Math.round(hours / 24)}d`;
-}
-
-function taskToDraft(task: ScheduledTask): DraftState {
-  const schedule = task.schedule;
-  const weekdays =
-    schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
-      ? new Set(schedule.weekdays)
-      : new Set(ALL_WEEKDAYS);
-  return {
-    editingId: task.id,
-    title: task.title,
-    prompt: task.prompt,
-    enabled: task.enabled,
-    scheduleMode: schedule.type === "interval" ? "interval" : "fixed",
-    intervalMinutes:
-      schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
-    timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
-    weekdays,
-    projectId: task.projectId,
-    threadId: task.threadId ?? "",
-    workspaceMode: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
-    startFromOrigin:
-      task.workspaceStrategy.type === "worktree"
-        ? (task.workspaceStrategy.startFromOrigin ?? true)
-        : true,
-    existingWorktreePath:
-      task.workspaceStrategy.type === "existing_worktree"
-        ? task.workspaceStrategy.worktreePath
-        : "",
-    modelKey: modelKey(task.modelSelection),
-    runtimeMode: task.runtimeMode,
-    interactionMode: task.interactionMode,
-    baseModelSelection: task.modelSelection,
-  };
 }
 
 function statusVariant(status: ScheduledTask["lastRunStatus"]) {

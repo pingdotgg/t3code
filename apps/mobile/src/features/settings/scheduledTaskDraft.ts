@@ -141,7 +141,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     enabled: task.enabled,
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"
-        ? (task.workspaceStrategy.startFromOrigin ?? true)
+        ? (task.workspaceStrategy.startFromOrigin ?? false)
         : true,
     runtimeMode: task.runtimeMode,
   };

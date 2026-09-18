@@ -1,4 +1,10 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ScheduledTaskId,
+  type ScheduledTask,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type {
@@ -7,7 +13,7 @@ import type {
 } from "../../sidebarProjectGrouping";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 
-import { matchesScheduledTaskScope } from "./scheduledTasksSettings.logic";
+import { matchesScheduledTaskScope, taskToDraft } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
 const serverId = EnvironmentId.make("server");
@@ -113,5 +119,44 @@ describe("scheduled task settings scope", () => {
     expect(
       serverProjects.filter((project) => matchesScheduledTaskScope(scope, serverId, project.id)),
     ).toEqual([third]);
+  });
+});
+
+const legacyTask: ScheduledTask = {
+  id: ScheduledTaskId.make("legacy-task"),
+  title: "Review issues",
+  prompt: "Review open issues",
+  enabled: true,
+  schedule: { type: "interval", everyMs: 60_000 },
+  projectId: ProjectId.make("project"),
+  threadId: null,
+  workspaceStrategy: { type: "worktree", baseRef: "release" },
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  createdBy: "user",
+  creationSource: "web",
+  createdAt: "2026-09-17T00:00:00.000Z",
+  updatedAt: "2026-09-17T00:00:00.000Z",
+  nextRunAt: null,
+  lastRunAt: null,
+  lastRunStatus: "never",
+  lastRunError: null,
+  runCount: 0,
+};
+
+describe("editing scheduled task branch settings", () => {
+  it("keeps an omitted origin flag on the local base branch", () => {
+    const draft = taskToDraft(legacyTask);
+    expect(draft.baseRef).toBe("release");
+    expect(draft.startFromOrigin).toBe(false);
+  });
+
+  it.each([true, false])("preserves an explicit origin flag of %s", (startFromOrigin) => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin },
+    });
+    expect(draft.startFromOrigin).toBe(startFromOrigin);
   });
 });
