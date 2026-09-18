@@ -1,13 +1,39 @@
-import { PlusIcon } from "lucide-react";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { MessageCircleIcon, PlusIcon } from "lucide-react";
 import { useCallback } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus";
+import { useChatProject } from "../hooks/useChatProject";
+import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { Button } from "./ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
 export function NoProjectsHero() {
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { chatEnvironmentId, ensureChatProject } = useChatProject();
+  const handleNewThread = useNewThreadHandler();
+  const chatTargetEnvironmentId = chatEnvironmentId(primaryEnvironmentId);
+  const canJustChat = chatTargetEnvironmentId !== null;
+  const startChat = useCallback(async () => {
+    if (chatTargetEnvironmentId === null) return;
+    const project = await ensureChatProject(chatTargetEnvironmentId);
+    if (!project) return;
+    try {
+      await handleNewThread(scopeProjectRef(project.environmentId, project.id));
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not create thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    }
+  }, [chatTargetEnvironmentId, ensureChatProject, handleNewThread]);
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -21,11 +47,17 @@ export function NoProjectsHero() {
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
                 Add a project to start your first thread.
               </EmptyDescription>
-              <div className="mt-6 flex justify-center">
+              <div className="mt-6 flex justify-center gap-2">
                 <Button size="sm" onClick={openAddProject}>
                   <PlusIcon className="size-4" />
                   Add project
                 </Button>
+                {canJustChat ? (
+                  <Button size="sm" variant="outline" onClick={() => void startChat()}>
+                    <MessageCircleIcon className="size-4" />
+                    Just chat
+                  </Button>
+                ) : null}
               </div>
             </EmptyHeader>
           </div>

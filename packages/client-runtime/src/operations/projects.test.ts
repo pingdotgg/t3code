@@ -9,8 +9,10 @@ import * as Option from "effect/Option";
 
 import {
   buildAddProjectRemoteSourceReadiness,
+  buildChatProjectCreateCommand,
   buildProjectCreateCommand,
   canCreateProjectInEnvironment,
+  findChatProject,
   findExistingAddProject,
   getAddProjectInitialQuery,
   getCloneDestinationBrowsePath,
@@ -273,6 +275,59 @@ describe("add project shared logic", () => {
       workspaceRoot: "/work/repo",
       createWorkspaceRootIfMissing: true,
       defaultModelSelection: null,
+    });
+  });
+});
+
+describe("chat project", () => {
+  it("finds the project rooted at the environment's chat folder", () => {
+    const env = EnvironmentId.make("env-1");
+    const project = (
+      id: string,
+      environmentId: EnvironmentId,
+      workspaceRoot: string,
+    ): EnvironmentProject => ({
+      environmentId,
+      id: ProjectId.make(id),
+      title: id,
+      workspaceRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      scripts: [],
+    });
+    const projects = [
+      project("repo", env, "/repo"),
+      project("chats", env, "/home/me/.t3/chats/"),
+      project("other-env", EnvironmentId.make("env-2"), "/home/me/.t3/chats"),
+    ];
+    expect(
+      findChatProject({ projects, environmentId: env, chatWorkspaceRoot: "/home/me/.t3/chats" })
+        ?.id,
+    ).toBe("chats");
+    expect(
+      findChatProject({
+        projects,
+        environmentId: env,
+        chatWorkspaceRoot: "/home/me/.t3/elsewhere",
+      }),
+    ).toBeNull();
+  });
+
+  it("titles the created project Chats instead of the folder name", () => {
+    expect(
+      buildChatProjectCreateCommand({
+        commandId: CommandId.make("command"),
+        projectId: ProjectId.make("project"),
+        chatWorkspaceRoot: "/home/me/.t3/chats",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    ).toMatchObject({
+      type: "project.create",
+      title: "Chats",
+      workspaceRoot: "/home/me/.t3/chats",
+      createWorkspaceRootIfMissing: true,
     });
   });
 });
