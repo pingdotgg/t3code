@@ -1,13 +1,19 @@
 import { useNavigation } from "@react-navigation/native";
+import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
+import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { Platform, Pressable } from "react-native";
 
 import { ControlPillMenu } from "../../../components/ControlPill";
 import { SymbolView } from "../../../components/AppSymbol";
+import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMachineSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../../layout/native-glass-header-items";
 import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
 
-export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?: boolean }) {
+export function SettingsEnvironmentFilterHeader(props: {
+  readonly closeSettings?: boolean;
+  readonly trailingItems?: readonly NativeStackHeaderItem[];
+}) {
   const navigation = useNavigation();
   const {
     availableTargets,
@@ -27,9 +33,15 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
       : "line.3.horizontal.decrease.circle.fill";
   const filterVersion = JSON.stringify({
     selection: selectedIds === null ? null : [...selectedIds].sort(),
-    targets: availableTargets.map((entry) => [entry.environmentId, entry.label, entry.displayUrl]),
+    targets: availableTargets.map((entry) => [
+      entry.environmentId,
+      entry.label,
+      entry.displayUrl,
+      resolveEnvironmentMachineKind(entry.serverConfig),
+    ]),
     project: selectedProjectKey,
     projects: selectableProjectGroups.map((group) => [group.key, group.label]),
+    trailingItems: props.trailingItems,
   });
 
   return (
@@ -61,6 +73,12 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
                     ...availableTargets.map((entry) => ({
                       type: "action" as const,
                       label: entry.label,
+                      icon: {
+                        type: "sfSymbol" as const,
+                        name: ENVIRONMENT_MACHINE_SYMBOLS[
+                          resolveEnvironmentMachineKind(entry.serverConfig)
+                        ],
+                      },
                       description: entry.displayUrl ?? undefined,
                       state:
                         selectedIds === null || selectedIds.has(entry.environmentId)
@@ -94,6 +112,7 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
               ],
             },
           }),
+          ...(props.trailingItems ?? []),
           ...(props.closeSettings
             ? [
                 withNativeGlassHeaderItem({
@@ -142,6 +161,7 @@ export function AndroidSettingsEnvironmentFilter() {
         ...availableTargets.map((entry) => ({
           id: `environment:${entry.environmentId}`,
           title: `Environment · ${entry.label}`,
+          image: ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(entry.serverConfig)],
           subtitle: entry.displayUrl ?? undefined,
           state:
             selectedIds === null || selectedIds.has(entry.environmentId)
