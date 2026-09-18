@@ -147,7 +147,8 @@ export function splitOnboardingProjectPath(path: string): {
 } {
   const trimmed = path.replace(/[\\/]+$/, "");
   const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
-  if (trimmed.length === 0 || separatorIndex < 0) return { name: path, parent: "" };
+  if (trimmed.length === 0) return { name: path, parent: "" };
+  if (separatorIndex < 0) return { name: trimmed, parent: "" };
   return { name: trimmed.slice(separatorIndex + 1), parent: trimmed.slice(0, separatorIndex + 1) };
 }
 

@@ -371,5 +371,6 @@ describe("splitOnboardingProjectPath", () => {
     expect(splitOnboardingProjectPath("/")).toEqual({ name: "/", parent: "" });
     expect(splitOnboardingProjectPath("/t3code")).toEqual({ name: "t3code", parent: "/" });
     expect(splitOnboardingProjectPath("t3code")).toEqual({ name: "t3code", parent: "" });
+    expect(splitOnboardingProjectPath("t3code/")).toEqual({ name: "t3code", parent: "" });
   });
 });
