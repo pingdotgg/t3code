@@ -91,14 +91,18 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
       ? materializeReplayTranscriptWorkspace(replayTranscript, workspace)
       : replayTranscript,
   );
+  const fixtureInput = input.buildInput();
   const materialized = yield* materializeFixtureInput({
     scenario: input.fixtureName,
-    fixtureInput: input.buildInput(),
+    fixtureInput,
     driver: input.driver.driver,
     modelSelection: input.driver.modelSelection,
-    // Each fixture workspace is a private temp checkout — declare it as the
-    // thread's worktree so checkpoint file-restore sees an isolated worktree.
-    worktreePath: workspace,
+    // File-restore rollback is rejected in shared workspaces; only fixtures
+    // that exercise it declare their temp checkout as a private worktree so
+    // unrelated scenarios keep identical turn timing to upstream.
+    ...(fixtureInput.steps.some((step) => step.type === "rollback")
+      ? { worktreePath: workspace }
+      : {}),
   }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
   const scenario = {
     name: `${input.fixtureName}/${input.driver.driver}`,
