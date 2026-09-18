@@ -32,6 +32,7 @@ import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import { resolveCommandFailureHint } from "./VcsProcess.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
@@ -268,7 +269,14 @@ function paginateBranches(input: {
   };
 }
 
-function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
+/**
+ * Parses `git worktree list --porcelain` output, NUL-delimited with `-z` or line-delimited
+ * without it. Newline paths are only representable in the `-z` form, which git gained in 2.36.
+ */
+function parseWorktreeBranchPaths(
+  stdout: string,
+  fieldSeparator: "\0" | "\n",
+): ReadonlyMap<string, string> {
   const worktreePaths = new Map<string, string>();
   let currentPath: string | null = null;
   let currentBranch: string | null = null;
@@ -283,7 +291,7 @@ function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
     currentPrunable = false;
   };
 
-  for (const field of stdout.split("\0")) {
+  for (const field of stdout.split(fieldSeparator)) {
     if (field === "") {
       flush();
     } else if (field.startsWith("worktree ")) {
@@ -876,7 +884,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (!input.allowNonZeroExit && exitCode !== 0) {
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
-            detail: "Git command exited with a non-zero status.",
+            detail:
+              resolveCommandFailureHint(stderr.text) ??
+              "Git command exited with a non-zero status.",
             exitCode,
             stdoutLength: stdout.text.length,
             stderrLength: stderr.text.length,
@@ -965,7 +975,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         return Effect.fail(
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
-            detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
+            detail:
+              options.fallbackErrorDetail ??
+              resolveCommandFailureHint(result.stderr) ??
+              "Git command exited with a non-zero status.",
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
@@ -2762,13 +2775,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       defaultRefResult.exitCode === 0
         ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
         : null;
+    let worktreeList: { stdout: string; fieldSeparator: "\0" | "\n" } | null = null;
+    if (worktreeListResult.exitCode === 0) {
+      worktreeList = { stdout: worktreeListResult.stdout, fieldSeparator: "\0" };
+    } else {
+      // `git worktree list` gained `-z` in git 2.36; older git rejects the flag, losing every
+      // worktree path. Retry with the line-delimited porcelain, which cannot represent newline
+      // paths but covers everything else.
+      const textListResult = yield* executeGit(
+        "GitVcsDriver.listRefs.worktreeListText",
+        fetchCwd,
+        [...gitDirArgs, "worktree", "list", "--porcelain"],
+        {
+          timeoutMs: 30_000,
+          allowNonZeroExit: true,
+          maxOutputBytes: 16 * 1024 * 1024,
+        },
+      );
+      if (textListResult.exitCode === 0) {
+        worktreeList = { stdout: textListResult.stdout, fieldSeparator: "\n" };
+      }
+    }
     const parsedWorktreeEntries =
-      worktreeListResult.exitCode === 0
-        ? [...parseWorktreeBranchPaths(worktreeListResult.stdout)].map(
+      worktreeList === null
+        ? []
+        : [...parseWorktreeBranchPaths(worktreeList.stdout, worktreeList.fieldSeparator)].map(
             ([branchName, worktreePath]) =>
               [branchName, path.normalize(path.resolve(worktreePath))] as const,
-          )
-        : [];
+          );
     const existingWorktreeEntries = yield* Effect.filter(
       parsedWorktreeEntries,
       ([, worktreePath]) =>

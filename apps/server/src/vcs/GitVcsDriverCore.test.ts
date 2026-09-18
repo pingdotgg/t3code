@@ -435,6 +435,12 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
       yield* writeTextFile(cwd, "README.md", "# test\n");
       yield* runGit(["add", "."]);
       yield* runGit(["commit", "-m", "initial commit"]);
+      // `git worktree list -z` needs git 2.36+; count the per-snapshot fallback scan on older git.
+      // Spawned via the delegate so the counting spawner's one-shot delay does not consume it.
+      const zProbeHandle = yield* delegate.spawn(
+        ChildProcess.make("git", ["worktree", "list", "--porcelain", "-z"], { cwd }),
+      );
+      const supportsWorktreeListZ = (yield* zProbeHandle.exitCode) === 0;
       yield* Ref.set(spawnedArgs, []);
 
       const initialRequest = yield* driver
@@ -470,7 +476,7 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
         (args) => args.includes("worktree") && args.includes("--porcelain"),
       );
       assert.equal(snapshotRefScans.length, 1);
-      assert.equal(worktreeScans.length, 1);
+      assert.equal(worktreeScans.length, supportsWorktreeListZ ? 1 : 2);
 
       yield* driver.createRef({ cwd, refName: "feature/cache-invalidation" });
       const refreshed = yield* driver.listRefs({ cwd, limit: 100 });
@@ -615,6 +621,103 @@ it.effect("fails a ref snapshot when for-each-ref exits unsuccessfully", () =>
         exitCode: 128,
       });
       assert.equal(yield* Ref.get(snapshotAttempts), 1);
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("surfaces a sanitized hint when a git command is denied filesystem access", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const cwd = yield* makeTmpDir();
+      const deniedSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("remote")) {
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.encodeText(Stream.make("fatal: cannot mkdir .git: Permission denied")),
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, deniedSpawner),
+      );
+
+      const error = yield* driver
+        .ensureRemote({ cwd, preferredName: "origin", url: "https://github.com/t3code/demo.git" })
+        .pipe(Effect.flip);
+
+      assert.deepInclude(error, {
+        _tag: "GitCommandError",
+        operation: "GitVcsDriver.ensureRemote.listRemoteUrls",
+        detail:
+          "Permission denied. Check that the directory is owned by your user account and writable.",
+        exitCode: 128,
+      });
+    }),
+  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("falls back to line-delimited worktree porcelain when -z is unsupported", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const noZSpawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("worktree") && command.args.includes("-z")) {
+            // Git rejected `worktree list -z` before 2.36.
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(129)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.encodeText(Stream.make("error: unknown switch `z'")),
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noZSpawner),
+      );
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+
+      const worktreePath = yield* makeTmpDir();
+      yield* git(cwd, ["worktree", "add", "-b", "feature/fallback", worktreePath]).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+
+      const refs = yield* driver.listRefs({ cwd, refresh: true });
+      const listedPath = refs.refs.find((ref) => ref.name === "feature/fallback")?.worktreePath;
+
+      assert.equal(
+        listedPath === null ? null : NodeFS.realpathSync.native(listedPath),
+        NodeFS.realpathSync.native(worktreePath),
+      );
     }),
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
@@ -2116,24 +2219,36 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       () =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
           yield* initRepoWithCommit(cwd);
           const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
           const pathService = yield* Path.Path;
           const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
-          const driver = yield* GitVcsDriver.GitVcsDriver;
 
           yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
+
+          // `git worktree list -z` (git 2.36+) is the only form that can represent newline
+          // paths; older git emits them raw, which the line-delimited porcelain cannot carry.
+          const zListResult = yield* driver.execute({
+            operation: "GitVcsDriver.test.worktreeListZ",
+            cwd,
+            args: ["worktree", "list", "--porcelain", "-z"],
+            allowNonZeroExit: true,
+            timeoutMs: 10_000,
+          });
+          const supportsZ = zListResult.exitCode === 0;
 
           const refs = yield* driver.listRefs({ cwd, refresh: true });
           const listedPath = refs.refs.find(
             (ref) => ref.name === "feature/newline-path",
           )?.worktreePath;
 
-          if (typeof listedPath !== "string") {
-            return assert.fail("expected the linked branch to include its worktree path");
+          if (!supportsZ) {
+            assert.equal(listedPath, null);
+            return;
           }
           assert.equal(
-            NodeFS.realpathSync.native(listedPath),
+            NodeFS.realpathSync.native(listedPath as string),
             NodeFS.realpathSync.native(worktreePath),
           );
         }),
