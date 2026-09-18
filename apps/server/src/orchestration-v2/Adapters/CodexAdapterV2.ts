@@ -1,3 +1,4 @@
+import { historyResponseItems } from "../ContextHandoffBudget.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import {
   mcpToolPresentation,
@@ -14,7 +15,7 @@ import type { ServerProviderShape } from "../../provider/Services/ServerProvider
 import { codexRateLimitsToUpdate } from "../../provider/Layers/codexUsageLimits.ts";
 import { CodexSettings, defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
@@ -150,6 +151,18 @@ export function codexFileChangeApprovalPrompt(input: {
     return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
   }
   return input.grantRoot?.trim() || undefined;
+}
+
+// Reasoning effort changes future generation, not the existing context's tokenizer
+// or model window. All other option changes remain untrusted until new telemetry.
+export function canReuseCodexContextUsage(previous: ModelSelection, next: ModelSelection): boolean {
+  return modelSelectionsEqual(
+    {
+      ...previous,
+      options: (previous.options ?? []).filter((option) => option.id !== "reasoningEffort"),
+    },
+    { ...next, options: (next.options ?? []).filter((option) => option.id !== "reasoningEffort") },
+  );
 }
 
 export function codexProviderTurnTokenUsage(
@@ -4927,6 +4940,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          canReuseContextUsage: canReuseCodexContextUsage,
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race
           // against a long-delayed resume. Codex emits no resume-expected
@@ -5071,6 +5085,34 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     threadId: turnInput.threadId,
                     providerThreadId: turnInput.providerThread.id,
                     runId: turnInput.runId,
+                    cause,
+                  }),
+              ),
+            ),
+          injectHistory: (input) =>
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(input.providerThread);
+              return yield* client
+                .request("thread/inject_items", {
+                  threadId,
+                  items: historyResponseItems(input.messages, input.context),
+                })
+                .pipe(
+                  Effect.as(true),
+                  // Older app servers reject unknown methods before mutating history.
+                  // Transport errors and invalid payloads are ambiguous and must not
+                  // fall through to a second delivery in the current user message.
+                  Effect.catchTags({
+                    CodexAppServerRequestError: (error) =>
+                      error.code === -32601 ? Effect.succeed(false) : Effect.fail(error),
+                  }),
+                );
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterProtocolError({
+                    driver: CODEX_PROVIDER,
+                    detail: "Failed to inject historical context",
                     cause,
                   }),
               ),
