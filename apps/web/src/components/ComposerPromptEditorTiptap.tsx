@@ -135,11 +135,7 @@ export interface ComposerPromptEditorProps {
     contextIds: string[],
   ) => void;
   onVisibleSelectionChange?: () => void;
-  onCommandKeyDown?: (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
-    event: KeyboardEvent,
-    isTaskItem?: boolean,
-  ) => boolean;
+  onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
@@ -897,16 +893,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             });
           }
           if (!handler) return false;
-          const key =
-            event.key === "Tab"
-              ? ("Tab" as const)
-              : event.key === "ArrowDown"
-                ? ("ArrowDown" as const)
-                : event.key === "ArrowUp"
-                  ? ("ArrowUp" as const)
-                  : null;
-          if (!key) return false;
-          const handled = handler(key, event);
+          const handled = handler(event.key, event);
           if (handled) {
             event.preventDefault();
             event.stopPropagation();
