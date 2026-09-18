@@ -8,11 +8,17 @@ import {
   useThreadGitCenterHeaderItems,
   useThreadGitRightHeaderItems,
 } from "./ThreadGitControls";
-import type { ThreadHeaderProps } from "./ThreadHeader.types";
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
-export function useThreadHeaderOptions(props: ThreadHeaderProps) {
+export function useThreadHeaderOptions(props: {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly headerColor: string;
+  readonly usesNativeHeaderGlass: boolean;
+  readonly gitControls: Parameters<typeof ThreadGitControls>[0];
+  readonly onReturnToThread?: () => void;
+}) {
   const navigation = useNavigation();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);

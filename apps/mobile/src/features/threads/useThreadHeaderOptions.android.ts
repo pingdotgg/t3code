@@ -1,8 +1,7 @@
 import type { useThreadHeaderOptions as useIosThreadHeaderOptions } from "./useThreadHeaderOptions";
-import type { ThreadHeaderProps } from "./ThreadHeader.types";
 
 export function useThreadHeaderOptions(
-  props: ThreadHeaderProps,
+  props: Parameters<typeof useIosThreadHeaderOptions>[0],
 ): ReturnType<typeof useIosThreadHeaderOptions> {
   return {
     options: { contentStyle: { backgroundColor: props.headerColor } },
