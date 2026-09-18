@@ -214,8 +214,7 @@ export const make = Effect.gen(function* () {
         Effect.tapError((error) =>
           Effect.logDebug("checkpoint Git command failed", {
             operation: input.operation,
-            cwd: input.cwd,
-            detail: error.message,
+            errorTag: error._tag,
           }),
         ),
         Effect.retry({
