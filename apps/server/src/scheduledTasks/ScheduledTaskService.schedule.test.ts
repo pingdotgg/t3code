@@ -14,6 +14,41 @@ import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
+it.effect("rejects a stale form save after deletion while preserving explicit-id creates", () =>
+  Effect.gen(function* () {
+    const dependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.mock(ThreadLaunchService)({}),
+      Layer.mock(ThreadManagementService)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const input = yield* decodeUpsertInput({
+        id: "scheduled-task:edit-after-delete",
+        title: "Review",
+        prompt: "Review the open pull requests.",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: "project-stale-schedule",
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const created = yield* service.upsert(input);
+      const edit = yield* decodeUpsertInput({ ...input, requireExisting: true, title: "Edited" });
+      expect((yield* service.upsert(edit)).task.title).toBe("Edited");
+      yield* service.delete({ id: created.task.id });
+
+      const failure = yield* service.upsert(edit).pipe(Effect.flip);
+      expect(failure.message).toBe("Schedule task not found.");
+      expect((yield* service.list()).tasks).toEqual([]);
+
+      expect((yield* service.upsert(input)).task.id).toBe(created.task.id);
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(dependencies))));
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("preserves a due run when a save only pads the scheduled hour", () =>
   Effect.gen(function* () {
     const dueAt = DateTime.makeZonedUnsafe(
