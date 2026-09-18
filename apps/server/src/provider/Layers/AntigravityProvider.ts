@@ -274,12 +274,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const usageLimits = yield* options.usageLimits ?? Effect.succeed(undefined);
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* SubscriptionRef.update(metadata, (state) => {
-      if (
-        state.authRevision !== before.authRevision &&
-        state.draft.auth.status === "unauthenticated"
-      ) {
-        return state;
-      }
+      if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
       const workspaces = draft.workspaceSnapshots ?? [];
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;

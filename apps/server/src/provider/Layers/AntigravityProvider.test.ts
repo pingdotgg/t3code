@@ -650,6 +650,68 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect("does not let an old session start overwrite a newer authenticated session", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const staleEntered = yield* Deferred.make<void>();
+        const releaseStale = yield* Deferred.make<void>();
+        const newerLimits = makeUsageLimits({
+          checkedAt: "2026-09-18T12:00:00.000Z",
+          windows: [
+            {
+              id: "gemini_five_hour",
+              kind: "session",
+              label: "Gemini · Session",
+              usedPercent: 40,
+              windowDurationMins: 5 * 60,
+            },
+          ],
+        });
+        const staleLimits = makeUsageLimits({
+          checkedAt: "2026-09-18T11:00:00.000Z",
+          windows: [
+            {
+              id: "gemini_five_hour",
+              kind: "session",
+              label: "Gemini · Session",
+              usedPercent: 12,
+              windowDurationMins: 5 * 60,
+            },
+          ],
+        });
+        const usage = yield* Ref.make(Effect.succeed(newerLimits));
+        const harness = yield* makeHarness({
+          usageLimits: Ref.get(usage).pipe(Effect.flatten),
+        });
+        yield* harness.initialize;
+        yield* Ref.set(
+          usage,
+          Deferred.succeed(staleEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseStale)),
+            Effect.as(staleLimits),
+          ),
+        );
+        const stale = yield* harness.provider.onSessionStarted(started).pipe(Effect.forkChild);
+        yield* Deferred.await(staleEntered);
+        yield* Ref.set(usage, Effect.succeed(newerLimits));
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: {
+            sessionId: "newer-session",
+            configOptions: [
+              { ...modelConfig, currentValue: "gemini-pro-agent", options: [modelOptions[9]!] },
+            ],
+          },
+        });
+        yield* Deferred.succeed(releaseStale, undefined);
+        yield* Fiber.join(stale);
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(snapshot.models.map((model) => model.slug)).toEqual(["gemini-pro-agent"]);
+        expect(snapshot.usageLimits).toEqual(newerLimits);
+      }),
+    ),
+  );
+
   it.effect("does not let an old health result restore a signed-out account", () =>
     Effect.scoped(
       Effect.gen(function* () {
