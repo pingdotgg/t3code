@@ -182,6 +182,7 @@ import {
   liveWorkEntryLabel,
   workEntryIsActiveTurnActivity,
   resolveAssistantMessageCopyState,
+  resolveTimelineEndSettleAction,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
@@ -1008,6 +1009,120 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     });
   }, [measureContentOverflow, onContentOverflowChange]);
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
+  // Content can settle without firing a scroll event: late row measurement
+  // (markdown/images hydrating after a thread switch or a streamed turn),
+  // turn completion, and restore completion all grow contentSize while
+  // scrollTop stays fixed. Past LegendList's maintain threshold nothing
+  // re-pins, and the scroll-driven end state in ChatView goes stale — the
+  // viewport strands with the scroll-to-end pill hidden. Verifying on the
+  // next frame sees the settled positions; one frame is shared across bursts
+  // of size changes.
+  const verifyEndFrameRef = useRef<number | null>(null);
+  const verifyLatestRef = useRef<() => void>(() => {});
+  // A single away reading can race LegendList's own maintain pass: our
+  // size-change hook runs synchronously mid-measurement while maintain's
+  // re-pin resolves after. leave-end therefore needs two consecutive away
+  // frames before it clears follow.
+  const unconfirmedLeaveRef = useRef(false);
+  const cancelVerifyEndFrame = useCallback(() => {
+    if (verifyEndFrameRef.current !== null) {
+      cancelAnimationFrame(verifyEndFrameRef.current);
+      verifyEndFrameRef.current = null;
+    }
+  }, []);
+  useEffect(() => cancelVerifyEndFrame, [cancelVerifyEndFrame]);
+  const scheduleSettledEndVerification = useCallback(() => {
+    if (verifyEndFrameRef.current !== null) return;
+    verifyEndFrameRef.current = requestAnimationFrame(() => {
+      verifyEndFrameRef.current = null;
+      verifyLatestRef.current();
+    });
+  }, []);
+  const verifySettledEndPosition = useCallback(() => {
+    const list = listRef.current;
+    const state = list?.getState?.();
+    if (!list || !state) return;
+    const action = resolveTimelineEndSettleAction({
+      liveFollowEnabled,
+      isWorking,
+      anchorActive: anchoredEndSpace !== undefined,
+      disclosureSettling: disclosureToggleSettling,
+      citationActive: citationPositioning,
+      restoring: restoringThreadPosition,
+      listDataCurrent: state.data === rows,
+      isAtEnd: resolveTimelineIsAtEnd(state),
+    });
+    if (action !== "leave-end") {
+      unconfirmedLeaveRef.current = false;
+      // Someone owns this position (or may own it): never yank, only make
+      // sure the pill can appear. Deliberately not forwarding `true` — auto
+      // re-follow stays with real scroll events.
+      if (action === "report-away-from-end") {
+        onIsAtEndChange(false);
+      }
+      return;
+    }
+    if (!unconfirmedLeaveRef.current) {
+      unconfirmedLeaveRef.current = true;
+      scheduleSettledEndVerification();
+      return;
+    }
+    unconfirmedLeaveRef.current = false;
+    // Follow is still engaged but the viewport settled away from the end
+    // across consecutive frames with no gesture behind it: treat it as a
+    // real leave-end through the same path a scroll gesture takes, so the
+    // follow generation clears and the pill can appear. Pill state only —
+    // never moves the viewport.
+    onManualNavigation();
+    onIsAtEndChange(false);
+  }, [
+    anchoredEndSpace,
+    citationPositioning,
+    disclosureToggleSettling,
+    isWorking,
+    listRef,
+    liveFollowEnabled,
+    onIsAtEndChange,
+    onManualNavigation,
+    restoringThreadPosition,
+    rows,
+    scheduleSettledEndVerification,
+  ]);
+  useEffect(() => {
+    verifyLatestRef.current = verifySettledEndPosition;
+  });
+  const handleItemSizeChanged = useCallback(() => {
+    reportContentOverflow();
+    scheduleSettledEndVerification();
+  }, [reportContentOverflow, scheduleSettledEndVerification]);
+  // A frame scheduled for one thread must never verify the next: drop any
+  // pending confirmation when the thread changes. Declared before the
+  // scheduling effects so a fresh schedule in the same commit survives.
+  const verifiedThreadKeyRef = useRef(listIdentityKey);
+  useEffect(() => {
+    if (verifiedThreadKeyRef.current === listIdentityKey) return;
+    verifiedThreadKeyRef.current = listIdentityKey;
+    unconfirmedLeaveRef.current = false;
+    cancelVerifyEndFrame();
+  });
+  // A turn landing can strand a following viewport with no further size
+  // change to react to; re-check once the turn settles.
+  const wasWorkingRef = useRef(isWorking);
+  useEffect(() => {
+    const wasWorking = wasWorkingRef.current;
+    wasWorkingRef.current = isWorking;
+    if (wasWorking && !isWorking) {
+      scheduleSettledEndVerification();
+    }
+  }, [isWorking, scheduleSettledEndVerification]);
+  // Restoring to the end pins against estimated sizes; re-check once the
+  // restore has positioned the thread. The restoring flag alone re-triggers
+  // this: it flips false exactly when positioning completes.
+  useEffect(() => {
+    if (!restoringThreadPosition) {
+      scheduleSettledEndVerification();
+    }
+  }, [restoringThreadPosition, scheduleSettledEndVerification]);
   // The list's own layout effects have already run here, so estimated row
   // positions are in place. Reporting before the first paint lets a thread
   // open in its final composer layout instead of correcting it a frame later.
@@ -1323,7 +1438,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             }
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
-            onItemSizeChanged={reportContentOverflow}
+            onItemSizeChanged={handleItemSizeChanged}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
               topFadeEnabled && "topbar-scroll-fade",
