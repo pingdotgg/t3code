@@ -47,7 +47,6 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import type { Preferences } from "../../persistence/mobile-preferences";
 import {
   NativeHeaderToolbar,
   NativeStackScreenOptions,
@@ -331,12 +330,14 @@ function ThreadSettingsSessionProvider(
     (option: ModelOption) => {
       if (!favoritesLoaded) return;
       void Haptics.selectionAsync();
-      savePreferences((current: Preferences) => ({
-        modelFavorites: toggleModelFavorite(
-          current.modelFavorites ?? EMPTY_MODEL_FAVORITES,
-          option,
-        ),
-      }));
+      savePreferences({
+        transform: (current) => ({
+          modelFavorites: toggleModelFavorite(
+            current.modelFavorites ?? EMPTY_MODEL_FAVORITES,
+            option,
+          ),
+        }),
+      });
     },
     [favoritesLoaded, savePreferences],
   );
