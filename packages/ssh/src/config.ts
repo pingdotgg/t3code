@@ -108,6 +108,7 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   if (visited.has(resolvedPath) || !(yield* fs.exists(resolvedPath))) {
     return NO_HOSTS;
   }
+  if ((yield* fs.stat(resolvedPath)).type !== "File") return NO_HOSTS;
   visited.add(resolvedPath);
 
   const aliases = new Set<string>();

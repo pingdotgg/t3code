@@ -23,6 +23,7 @@ it.effect("discovers Include matches across wildcard directory components", () =
       yield* fs.writeFileString(path.join(directory, "hosts12.conf"), "Host excluded\n");
     }
     yield* fs.writeFileString(path.join(ssh, "teams", "not-a-directory"), "ignored");
+    yield* fs.makeDirectory(path.join(ssh, "teams", "one", "hosts2.conf"));
     const hosts = yield* discoverSshHosts({ homeDir });
     assert.deepEqual(
       hosts.map((host) => host.alias),
