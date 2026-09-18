@@ -177,4 +177,6 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 Select the subagent counts in a thread to see its agents and their current status.
 The counts show running and finished agents. Hover over them on web or desktop to
 see waiting and idle counts. Finished includes failed, cancelled, and stopped agents; expand the list to see
-each outcome. Nested agents appear beneath their parent.
+each outcome. Nested agents appear beneath their parent. Expand or collapse any
+agent's own counts to explore its children independently. Closing a parent keeps
+your choices for its nested branches when you reopen it.

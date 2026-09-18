@@ -1,6 +1,11 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
-import { THREAD_SUBAGENT_STATUS_LABELS } from "@t3tools/client-runtime/state/thread-subagents";
+import {
+  THREAD_SUBAGENT_STATUS_LABELS,
+  visibleThreadSubagentRows,
+  type ThreadSubagentCounts,
+} from "@t3tools/client-runtime/state/thread-subagents";
+import type { ThreadId } from "@t3tools/contracts";
 import { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { environmentThreadShells } from "../../state/threads";
@@ -8,18 +13,22 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 
-/** Keep the disclosure inside the row while its children extend below the row. */
-export function useThreadSubagents(thread: EnvironmentThreadShell, selected = false) {
-  const [expandedThread, setExpandedThread] = useState<string | null>(null);
-  const key = `${thread.environmentId}:${thread.id}`;
-  const expanded = expandedThread === key;
-  const model = useAtomValue(
-    environmentThreadShells.subagentTreeAtom({
-      environmentId: thread.environmentId,
-      threadId: thread.id,
-    }),
-  );
-  if (model.rows.length === 0) return { toggle: null, tree: null };
+/** Reuse the count control for the thread and every branch with descendants. */
+function SubagentToggle({
+  thread,
+  counts,
+  expanded,
+  onToggle,
+  selected = false,
+  compact = false,
+}: {
+  thread: EnvironmentThreadShell;
+  counts: ThreadSubagentCounts;
+  expanded: boolean;
+  onToggle: () => void;
+  selected?: boolean;
+  compact?: boolean;
+}) {
   const textClassName = selected
     ? Platform.OS === "android"
       ? "text-thread-selected-foreground-muted"
@@ -31,55 +40,120 @@ export function useThreadSubagents(thread: EnvironmentThreadShell, selected = fa
       : "accent-user-bubble-foreground-muted"
     : "accent-foreground-muted";
 
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      accessibilityLabel={`Subagents for ${thread.title}: ${counts.label}`}
+      accessibilityHint={expanded ? "Collapses the subagents." : "Expands the subagents."}
+      hitSlop={12}
+      onPress={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+      className="min-h-5 flex-row items-center gap-1 self-start"
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      <SymbolView
+        name="person.2"
+        size={12}
+        type="monochrome"
+        tintColorClassName={tintColorClassName}
+      />
+      {compact ? (
+        <>
+          <SymbolView
+            name="circle"
+            size={10}
+            type="monochrome"
+            tintColorClassName={tintColorClassName}
+          />
+          <Text className={cn("text-xs tabular-nums", textClassName)}>{counts.running}</Text>
+          <SymbolView
+            name="checkmark"
+            size={10}
+            type="monochrome"
+            tintColorClassName={tintColorClassName}
+          />
+          <Text className={cn("text-xs tabular-nums", textClassName)}>{counts.finished}</Text>
+        </>
+      ) : (
+        <Text className={cn("text-xs tabular-nums", textClassName)}>
+          {counts.running} running · {counts.finished} finished
+        </Text>
+      )}
+      <SymbolView
+        name={expanded ? "chevron.up" : "chevron.down"}
+        size={10}
+        type="monochrome"
+        tintColorClassName={tintColorClassName}
+      />
+    </Pressable>
+  );
+}
+
+/** Keep the disclosure inside the row while its children extend below the row. */
+export function useThreadSubagents(thread: EnvironmentThreadShell, selected = false) {
+  const key = `${thread.environmentId}:${thread.id}`;
+  const [expansion, setExpansion] = useState(() => ({ key, ids: new Set<ThreadId>() }));
+  const expandedIds = expansion.key === key ? expansion.ids : new Set<ThreadId>();
+  const expanded = expandedIds.has(thread.id);
+  const toggleThread = (id: ThreadId) => {
+    setExpansion((current) => {
+      const ids = new Set(current.key === key ? current.ids : []);
+      if (ids.has(id)) ids.delete(id);
+      else ids.add(id);
+      return { key, ids };
+    });
+  };
+  const model = useAtomValue(
+    environmentThreadShells.subagentTreeAtom({
+      environmentId: thread.environmentId,
+      threadId: thread.id,
+    }),
+  );
+  if (model.rows.length === 0) return { toggle: null, tree: null };
+
   return {
     toggle: (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        accessibilityLabel={`Subagents for ${thread.title}: ${model.label}`}
-        accessibilityHint={expanded ? "Collapses the subagents." : "Expands the subagents."}
-        hitSlop={12}
-        onPress={(event) => {
-          event.stopPropagation();
-          setExpandedThread(expanded ? null : key);
-        }}
-        className="min-h-5 flex-row items-center gap-1"
-        style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-      >
-        <SymbolView
-          name="person.2"
-          size={12}
-          type="monochrome"
-          tintColorClassName={tintColorClassName}
-        />
-        <Text className={cn("text-xs tabular-nums", textClassName)}>
-          {model.running} running · {model.finished} finished
-        </Text>
-        <SymbolView
-          name={expanded ? "chevron.up" : "chevron.down"}
-          size={10}
-          type="monochrome"
-          tintColorClassName={tintColorClassName}
-        />
-      </Pressable>
+      <SubagentToggle
+        thread={thread}
+        counts={model}
+        expanded={expanded}
+        onToggle={() => toggleThread(thread.id)}
+        selected={selected}
+      />
     ),
     tree: expanded ? (
       <View className="mx-5 mb-1 border-l border-border-subtle">
-        {model.rows.map(({ thread: agent, depth, status }) => (
-          <View
-            key={agent.id}
-            className="flex-row items-center gap-2 py-1"
-            style={{ paddingLeft: (Math.min(depth, 4) + 1) * 12 }}
-          >
-            <View className="absolute left-0 top-1/2 w-2 border-t border-border-subtle" />
-            <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
-              {agent.title}
-            </Text>
-            <Text className="text-xs text-foreground-muted">
-              {THREAD_SUBAGENT_STATUS_LABELS[status]}
-            </Text>
-          </View>
-        ))}
+        {visibleThreadSubagentRows(model.rows, expandedIds).map(
+          ({ thread: agent, depth, status, descendants }) => (
+            <View
+              key={agent.id}
+              className="py-1"
+              style={{ paddingLeft: (Math.min(depth, 4) + 1) * 12 }}
+            >
+              <View className="absolute left-0 top-3 w-2 border-t border-border-subtle" />
+              <View className="flex-row items-center gap-2">
+                <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
+                  {agent.title}
+                </Text>
+                <Text className="text-xs text-foreground-muted">
+                  {THREAD_SUBAGENT_STATUS_LABELS[status]}
+                </Text>
+              </View>
+              {descendants.total > 0 ? (
+                <SubagentToggle
+                  thread={agent}
+                  counts={descendants}
+                  expanded={expandedIds.has(agent.id)}
+                  onToggle={() => toggleThread(agent.id)}
+                  compact
+                />
+              ) : null}
+            </View>
+          ),
+        )}
       </View>
     ) : null,
   };
