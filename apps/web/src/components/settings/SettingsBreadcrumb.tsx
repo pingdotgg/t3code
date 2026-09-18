@@ -45,6 +45,7 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
 }
 
 export interface SettingsScopeBreadcrumbProps {
+  readonly environmentOnly?: boolean;
   readonly value: SettingsScopeSearch;
   readonly groups: readonly SidebarProjectSnapshot[];
   readonly environments: readonly EnvironmentPresentation[];
@@ -84,10 +85,14 @@ export function SettingsBreadcrumb({
           <WorkspaceBreadcrumbItem className="min-w-0 shrink">
             <EnvironmentScopeMenu {...scope} />
           </WorkspaceBreadcrumbItem>
-          <WorkspaceBreadcrumbSeparator />
-          <WorkspaceBreadcrumbItem className="min-w-0 shrink">
-            <ProjectScopeMenu {...scope} />
-          </WorkspaceBreadcrumbItem>
+          {scope.environmentOnly ? null : (
+            <>
+              <WorkspaceBreadcrumbSeparator />
+              <WorkspaceBreadcrumbItem className="min-w-0 shrink">
+                <ProjectScopeMenu {...scope} />
+              </WorkspaceBreadcrumbItem>
+            </>
+          )}
         </>
       ) : null}
     </WorkspaceBreadcrumb>
@@ -127,6 +132,7 @@ function ScopeMenu({
 }
 
 function EnvironmentScopeMenu({
+  environmentOnly,
   value,
   groups,
   environments,
@@ -167,14 +173,18 @@ function EnvironmentScopeMenu({
           if (typeof next === "string") onChange(selectEnvironmentAxis(value, next));
         }}
       >
-        <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
-          <span className="flex min-w-0 items-center gap-2">
-            <LayersIcon aria-hidden className="size-3.5" />
-            <span className="min-w-0 flex-1 truncate">All environments</span>
-            <MenuRadioItemIndicator />
-          </span>
-        </MenuRadioItem>
-        <MenuSeparator />
+        {environmentOnly ? null : (
+          <>
+            <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
+              <span className="flex min-w-0 items-center gap-2">
+                <LayersIcon aria-hidden className="size-3.5" />
+                <span className="min-w-0 flex-1 truncate">All environments</span>
+                <MenuRadioItemIndicator />
+              </span>
+            </MenuRadioItem>
+            <MenuSeparator />
+          </>
+        )}
         {environments.map((environment) => (
           <MenuRadioItem key={environment.environmentId} value={environment.environmentId}>
             <span className="flex min-w-0 items-center gap-2">

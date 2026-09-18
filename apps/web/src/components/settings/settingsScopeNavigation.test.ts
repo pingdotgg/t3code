@@ -190,6 +190,40 @@ describe("settings scope navigation", () => {
     expect(router.state.location.search).toEqual({ machine: "provider-server" });
   });
 
+  it("replaces a scheduled-task deep link with the breadcrumb machine and retains it across categories", async () => {
+    const router = createSettingsRouter();
+    await router.load();
+    await router.navigate({
+      to: "/settings/scheduled-tasks",
+      search: {
+        environmentId: EnvironmentId.make("task-server"),
+        taskId: ScheduledTaskId.make("task-1"),
+      },
+    });
+    expect(router.state.location.search).toEqual({
+      machine: "task-server",
+      environmentId: "task-server",
+      taskId: "task-1",
+    });
+    const historyLength = router.history.length;
+    await router.navigate({
+      to: "/settings/scheduled-tasks",
+      search: { machine: "another-server" },
+      replace: true,
+    });
+    expect(router.state.location.search).toEqual({ machine: "another-server" });
+    expect(router.history.length).toBe(historyLength);
+    await router.navigate({ to: "/settings/general" });
+    expect(router.state.location.search).toEqual({ machine: "another-server" });
+    router.history.back();
+    await router.load();
+    expect(router.state.location.pathname).toBe("/settings/scheduled-tasks");
+    expect(router.state.location.search).toEqual({ machine: "another-server" });
+    router.history.back();
+    await router.load();
+    expect(router.state.location.pathname).toBe("/settings/general");
+  });
+
   it("preserves the environment from an initially loaded legacy provider URL", async () => {
     const router = createSettingsRouter(
       "/settings/providers?environmentId=provider-server&instanceId=codex-work",

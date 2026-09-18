@@ -5,6 +5,7 @@ import {
   useCanGoBack,
   useLocation,
   useNavigate,
+  useSearch,
 } from "@tanstack/react-router";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
@@ -20,7 +21,7 @@ import {
   useSettingsScope,
 } from "../components/settings/SettingsScopeContext";
 import { useSettingsProjectGroups } from "../components/settings/useSettingsProjectGroups";
-import { useEnvironments } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
 import {
   retainSettingsScope,
@@ -98,8 +99,13 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     );
   }
   // Device-local pages ignore the scope entirely; the project page follows
-  // remembered members while a grouping change replaces its URL key.
-  if (DEVICE_ONLY_PATHS.has(pathname) || pathname === "/settings/projects") {
+  // remembered members while a grouping change replaces its URL key. Scheduled
+  // tasks keep their machine switcher available when the selected machine disconnects.
+  if (
+    DEVICE_ONLY_PATHS.has(pathname) ||
+    pathname === "/settings/projects" ||
+    pathname === "/settings/scheduled-tasks"
+  ) {
     return children;
   }
   if (scope.kind === "unavailable")
@@ -121,6 +127,11 @@ function SettingsContentLayout() {
   const { search, selectScope } = useSettingsScope();
   const groups = useSettingsProjectGroups();
   const { environments } = useEnvironments();
+  const routeSearch = useSearch({ strict: false });
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const scheduledTasks = location.pathname === "/settings/scheduled-tasks";
+  const scheduledTasksEnvironmentId =
+    routeSearch.environmentId ?? search.machine ?? primaryEnvironmentId ?? undefined;
   const [restoreSignal, setRestoreSignal] = useState(0);
   const showScope = !DEVICE_ONLY_PATHS.has(location.pathname);
   const navigateBackWithinApp = useCallback(() => {
@@ -160,9 +171,24 @@ function SettingsContentLayout() {
             <SettingsBreadcrumb
               pathname={location.pathname}
               scope={
-                showScope
-                  ? { value: search, groups, environments, onChange: selectScope }
-                  : undefined
+                scheduledTasks
+                  ? {
+                      environmentOnly: true,
+                      value: { machine: scheduledTasksEnvironmentId },
+                      groups,
+                      environments,
+                      onChange: (next) => {
+                        if (!next.machine || next.machine === scheduledTasksEnvironmentId) return;
+                        void navigate({
+                          to: "/settings/scheduled-tasks",
+                          search: { machine: next.machine },
+                          replace: true,
+                        });
+                      },
+                    }
+                  : showScope
+                    ? { value: search, groups, environments, onChange: selectScope }
+                    : undefined
               }
             />
             {location.pathname === "/settings/general" ? (
@@ -190,11 +216,20 @@ function SettingsContentLayout() {
 
 function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
+  const routeSearch = useSearch({ strict: false });
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const navigate = Route.useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   return (
     <SettingsScopeProvider
-      search={rawSearch}
+      search={
+        pathname === "/settings/scheduled-tasks"
+          ? {
+              machine:
+                routeSearch.environmentId ?? rawSearch.machine ?? primaryEnvironmentId ?? undefined,
+            }
+          : rawSearch
+      }
       onChange={(next) => {
         // Send every axis so the retain middleware sees an explicit target
         // even when the choice is "all", which is the absence of a key.
