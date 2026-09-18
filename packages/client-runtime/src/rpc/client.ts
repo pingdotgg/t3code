@@ -5,6 +5,7 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { RpcClientError } from "effect/unstable/rpc";
@@ -183,6 +184,8 @@ interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   ) => Effect.Effect<void, never, never>;
   readonly retryExpectedFailureAfter?: Duration.Input;
   readonly resubscribe?: Stream.Stream<unknown, never, never>;
+  /** Reopen a remotely ended/interrupted stream while its session remains active. */
+  readonly resubscribeOnEndAfter?: Duration.Input;
 }
 
 function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
@@ -238,6 +241,19 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                       );
                     }),
                   ).pipe(
+                    (stream) =>
+                      options?.resubscribeOnEndAfter === undefined
+                        ? stream
+                        : stream.pipe(
+                            // Broker eviction arrives as a remote interruption. Local
+                            // cancellation (unmount/session switch) still stops this stream.
+                            Stream.catchCause((cause) =>
+                              Cause.hasInterruptsOnly(cause)
+                                ? Stream.empty
+                                : Stream.failCause(cause),
+                            ),
+                            Stream.repeat(Schedule.spaced(options.resubscribeOnEndAfter)),
+                          ),
                     Stream.tapCause((cause) =>
                       options?.onDefect !== undefined &&
                       cause.reasons.some(

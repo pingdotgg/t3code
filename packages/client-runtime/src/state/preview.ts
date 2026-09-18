@@ -1,12 +1,14 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { type PreviewAutomationHost, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { subscribe } from "../rpc/client.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
 } from "./runtime.ts";
 
 export const previewAutomationHostFocusConcurrencyKey = (value: {
@@ -45,9 +47,12 @@ export function createPreviewEnvironmentAtoms<R, E>(
       // unmounted projects stop contributing probe candidates on the server.
       idleTtlMs: 0,
     }),
-    automationRequests: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    automationRequests: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:preview:automation-requests",
-      tag: WS_METHODS.previewAutomationConnect,
+      subscribe: (input: PreviewAutomationHost) =>
+        subscribe(WS_METHODS.previewAutomationConnect, input, {
+          resubscribeOnEndAfter: "250 millis",
+        }),
       // Automation requests are commands, not cached query data. Dispose the
       // stream immediately with its owner so stale requests cannot replay when
       // a thread remounts and the server can clear disconnected hosts promptly.

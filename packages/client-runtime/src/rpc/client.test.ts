@@ -319,7 +319,11 @@ describe("environment RPC", () => {
       } as unknown as WsRpcProtocolClient;
       const { activeSession, retryCount, supervisor } = yield* makeHarness();
 
-      const subscriptionFiber = yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+      const subscriptionFiber = yield* subscribe(
+        WS_METHODS.subscribeTerminalEvents,
+        {},
+        { resubscribeOnEndAfter: "250 millis" },
+      ).pipe(
         Stream.runDrain,
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.forkChild,
@@ -328,6 +332,8 @@ describe("environment RPC", () => {
       for (let attempt = 0; attempt < 100 && subscriptions.length < 1; attempt += 1) {
         yield* Effect.yieldNow;
       }
+      yield* TestClock.adjust("1 second");
+      expect(subscriptions).toEqual(["first"]);
       yield* SubscriptionRef.set(activeSession, Option.none());
       yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
 
@@ -339,6 +345,105 @@ describe("environment RPC", () => {
       expect(subscriptions).toEqual(["first", "second"]);
       expect(yield* Ref.get(retryCount)).toBe(0);
     }),
+  );
+
+  it.effect.each(["completed", "interrupted"] as const)(
+    "reopens a %s automation stream after a delay without replacing its session",
+    (ending) =>
+      Effect.gen(function* () {
+        const requests = yield* Queue.unbounded<never, Cause.Done>();
+        const subscribed = yield* Deferred.make<void>();
+        const replacementReceived = yield* Deferred.make<void>();
+        let subscriptions = 0;
+        const client = {
+          [WS_METHODS.previewAutomationConnect]: () => {
+            subscriptions += 1;
+            return subscriptions === 1
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(requests)),
+                )
+              : Stream.succeed({ type: "connected", connectionId: "replacement" }).pipe(
+                  Stream.concat(Stream.never),
+                );
+          },
+        } as unknown as WsRpcProtocolClient;
+        const { activeSession, retryCount, supervisor } = yield* makeHarness();
+        yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+        const fiber = yield* subscribe(
+          WS_METHODS.previewAutomationConnect,
+          { clientId: "desktop", environmentId: TARGET.environmentId },
+          { resubscribeOnEndAfter: "250 millis" },
+        ).pipe(
+          Stream.runForEach((event) => {
+            expect(event).toEqual({ type: "connected", connectionId: "replacement" });
+            return Deferred.succeed(replacementReceived, undefined);
+          }),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(subscribed);
+        // RPC delivers a server-side interruption by failing its response queue.
+        yield* ending === "completed"
+          ? Queue.end(requests)
+          : Queue.failCause(requests, Cause.interrupt());
+        yield* TestClock.adjust("249 millis");
+        expect(subscriptions).toBe(1);
+        yield* TestClock.adjust("1 millis");
+        expect(subscriptions).toBe(2);
+        yield* Deferred.await(replacementReceived);
+        yield* Fiber.interrupt(fiber);
+        expect(yield* Ref.get(retryCount)).toBe(0);
+      }),
+  );
+
+  it.effect.each(["unmount", "session replacement"] as const)(
+    "cancels a pending automation resubscription on %s",
+    (cancellation) =>
+      Effect.gen(function* () {
+        const firstSubscribed = yield* Deferred.make<void>();
+        const secondSubscribed = yield* Deferred.make<void>();
+        const subscriptions: string[] = [];
+        const firstClient = {
+          [WS_METHODS.previewAutomationConnect]: () => {
+            subscriptions.push("first");
+            return Stream.fromEffect(Deferred.succeed(firstSubscribed, undefined)).pipe(
+              Stream.drain,
+            );
+          },
+        } as unknown as WsRpcProtocolClient;
+        const secondClient = {
+          [WS_METHODS.previewAutomationConnect]: () => {
+            subscriptions.push("second");
+            return Stream.fromEffect(Deferred.succeed(secondSubscribed, undefined)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.never),
+            );
+          },
+        } as unknown as WsRpcProtocolClient;
+        const { activeSession, supervisor } = yield* makeHarness();
+        yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
+        const fiber = yield* subscribe(
+          WS_METHODS.previewAutomationConnect,
+          { clientId: "desktop", environmentId: TARGET.environmentId },
+          { resubscribeOnEndAfter: "250 millis" },
+        ).pipe(
+          Stream.runDrain,
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(firstSubscribed);
+        yield* TestClock.adjust("100 millis");
+        if (cancellation === "unmount") {
+          yield* Fiber.interrupt(fiber);
+        } else {
+          yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
+          yield* Deferred.await(secondSubscribed);
+        }
+        yield* TestClock.adjust("250 millis");
+        expect(subscriptions).toEqual(cancellation === "unmount" ? ["first"] : ["first", "second"]);
+        yield* Fiber.interrupt(fiber);
+      }),
   );
 
   it.effect("surfaces domain subscription failures without reconnecting", () =>
@@ -499,6 +604,7 @@ describe("environment RPC", () => {
                 expectedFailureCount += 1;
               }),
             retryExpectedFailureAfter: "250 millis",
+            resubscribeOnEndAfter: "250 millis",
           },
         ).pipe(
           Stream.runDrain,
