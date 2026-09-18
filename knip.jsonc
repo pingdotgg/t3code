@@ -22,6 +22,7 @@
         "src/bin.ts!",
         "src/claude-history-worker.ts!",
         "scripts/cli.ts",
+        "scripts/measure-pr-preview.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/verify-background-live.ts",
         "scripts/evaluate-thread-titles.ts",

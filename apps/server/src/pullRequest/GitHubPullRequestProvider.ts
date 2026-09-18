@@ -1,7 +1,4 @@
-import * as Cache from "effect/Cache";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import type {
   PullRequestActor,
   PullRequestCapabilities,
@@ -11,7 +8,6 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
-import { PinnedGitHubCredential } from "../sourceControl/GitHubCli.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
@@ -194,35 +190,6 @@ const rendersEmpty = (body: string): boolean =>
 export const make = Effect.gen(function* () {
   const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-  const repositoryAccessCache = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
-      return cli.getRepositoryAccess({ cwd, repository, host });
-    },
-    {
-      capacity: 128,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(10) : Duration.zero),
-    },
-  );
-  const getRepositoryAccess = (input: {
-    readonly cwd: string;
-    readonly repository: string;
-    readonly host: string;
-  }) =>
-    PinnedGitHubCredential.pipe(
-      Effect.flatMap((credential) =>
-        Cache.get(
-          repositoryAccessCache,
-          JSON.stringify([
-            input.cwd,
-            input.repository,
-            input.host,
-            credential?.credentialFingerprint ?? null,
-          ]),
-        ),
-      ),
-    );
-
   const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
     new PullRequestProviderError({
       provider: "github",
@@ -392,6 +359,9 @@ export const make = Effect.gen(function* () {
     getChangeRequestStack: (input) =>
       cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 
+    getChangeRequestPreview: (input) =>
+      cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
+
     getChangeRequestChecks: (input) =>
       readChecks(input).pipe(
         Effect.map(({ state, checks }) => ({ state, checks })),
@@ -399,47 +369,31 @@ export const make = Effect.gen(function* () {
       ),
 
     getChangeRequest: (input) =>
-      Effect.all(
-        [
-          readChecks(input).pipe(
-            Effect.flatMap((pullRequest) =>
-              (pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                ? Effect.succeed(null)
-                : cli
-                    .getPullRequestBaseComparison({
-                      ...input,
-                      headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                    })
-                    .pipe(Effect.orElseSucceed(() => null))
-              ).pipe(Effect.map((comparison) => ({ pullRequest, comparison }))),
-            ),
-          ),
-          getRepositoryAccess(input),
-          cli.getViewerAccess(input),
-        ],
-        { concurrency: 3 },
-      ).pipe(
-        Effect.mapError(fail("getChangeRequest")),
-        Effect.map(([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
-          ...detail.pullRequest,
-          reviewers: detail.pullRequest.reviewRequestLogins.map((login) => ({
+      readChecks(input).pipe(
+        Effect.map((pullRequest): ProviderChangeRequestDetail => ({
+          ...pullRequest,
+          author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
+          reviewers: pullRequest.reviewRequestLogins.map((login) => ({
             login,
             name: null,
             avatarUrl: null,
           })),
-          mergeCapabilities: repository.mergeCapabilities,
+          mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
           viewerPermissions: gitHubViewerPermissions({
-            ...viewerAccess,
-            canUpdateBranch: detail.comparison?.viewerCanUpdate === true,
+            ...pullRequest.viewerAccess,
+            canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
           }),
           baseComparison:
-            detail.comparison === null || detail.comparison.behindBy === null
+            pullRequest.comparison === null || pullRequest.comparison.behindBy === null
               ? "unknown"
-              : detail.comparison.behindBy > 0
+              : pullRequest.comparison.behindBy > 0
                 ? "behind"
                 : "up-to-date",
-          ...(detail.comparison?.behindBy == null ? {} : { behindBy: detail.comparison.behindBy }),
+          ...(pullRequest.comparison?.behindBy == null
+            ? {}
+            : { behindBy: pullRequest.comparison.behindBy }),
         })),
+        Effect.mapError(fail("getChangeRequest")),
       ),
 
     getChangeRequestActivity: (input) =>
