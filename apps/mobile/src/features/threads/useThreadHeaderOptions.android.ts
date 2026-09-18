@@ -1,4 +1,4 @@
-import type { useThreadHeaderOptions as useIosThreadHeaderOptions } from "./useThreadHeaderOptions.ios";
+import type { useThreadHeaderOptions as useIosThreadHeaderOptions } from "./useThreadHeaderOptions";
 import type { ThreadHeaderProps } from "./ThreadHeader.types";
 
 export function useThreadHeaderOptions(
