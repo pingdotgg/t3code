@@ -111,6 +111,12 @@ overrides:
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64-musl": "-"
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-arm64": "-"
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-x64": "-"
+  # Alchemy's Ink fork declares React as a hard dependency, but the relay only
+  # reaches its terminal-capability helpers; the TUI is never imported, so the
+  # extra React copy is pure install weight.
+  "@alchemy.run/sigil>react": "-"
+  "@alchemy.run/sigil>react-reconciler": "-"
+  "@alchemy.run/sigil>scheduler": "-"
   "@clerk/backend": "catalog:"
   "@clerk/clerk-js": "catalog:"
   "@clerk/clerk-js>@base-org/account": "-"
