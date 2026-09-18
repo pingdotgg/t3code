@@ -138,7 +138,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
                 icon: "magnifyingglass",
                 onPress: () => setSearchOpen(true),
               },
-              ...(search.onRefresh
+              ...(search.refreshInToolbar && search.onRefresh
                 ? [
                     {
                       accessibilityLabel: search.refreshAccessibilityLabel ?? "Refresh",
