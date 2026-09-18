@@ -27,13 +27,14 @@ function statusClass(status: keyof typeof THREAD_SUBAGENT_STATUS_LABELS) {
   return "text-muted-foreground";
 }
 
-/** Reuse the count control for the thread and every branch with descendants. */
+/** Show root counts or an inline disclosure for a nested branch. */
 function SubagentToggle({
   thread,
   counts,
   expanded,
   onToggle,
   compact = false,
+  disclosureOnly = false,
   treeId,
 }: {
   thread: EnvironmentThreadShell;
@@ -41,6 +42,7 @@ function SubagentToggle({
   expanded: boolean;
   onToggle: () => void;
   compact?: boolean;
+  disclosureOnly?: boolean;
   treeId?: string;
 }) {
   return (
@@ -61,21 +63,25 @@ function SubagentToggle({
       }}
       className="gap-1 text-[11px] tabular-nums text-muted-foreground hover:text-foreground"
     >
-      <BotIcon aria-hidden className="size-3" />
-      {compact ? (
+      {disclosureOnly ? null : (
         <>
-          <CircleDotIcon aria-hidden className="size-2.5 text-info" />
-          <span>{counts.running}</span>
-          <CheckIcon aria-hidden className="size-2.5" />
-          <span>{counts.finished}</span>
-        </>
-      ) : (
-        <>
-          <span className={counts.running > 0 ? "text-info" : undefined}>
-            {counts.running} running
-          </span>
-          <span aria-hidden>·</span>
-          <span>{counts.finished} finished</span>
+          <BotIcon aria-hidden className="size-3" />
+          {compact ? (
+            <>
+              <CircleDotIcon aria-hidden className="size-2.5 text-info" />
+              <span>{counts.running}</span>
+              <CheckIcon aria-hidden className="size-2.5" />
+              <span>{counts.finished}</span>
+            </>
+          ) : (
+            <>
+              <span className={counts.running > 0 ? "text-info" : undefined}>
+                {counts.running} running
+              </span>
+              <span aria-hidden>·</span>
+              <span>{counts.finished} finished</span>
+            </>
+          )}
         </>
       )}
       <ChevronDownIcon aria-hidden className={cn("size-3", expanded && "rotate-180")} />
@@ -134,13 +140,24 @@ export function useSidebarSubagents(thread: EnvironmentThreadShell, compact = fa
                   style={{ paddingLeft: (Math.min(depth, 4) + 1) * 12 }}
                 >
                   <div className="flex min-w-0 items-center gap-1.5">
-                    <span
-                      aria-hidden
-                      className={cn(
-                        "size-1.5 shrink-0 rounded-full bg-current",
-                        statusClass(status),
-                      )}
-                    />
+                    {descendants.total > 0 ? (
+                      <SubagentToggle
+                        thread={agent}
+                        counts={descendants}
+                        expanded={expandedIds.has(agent.id)}
+                        onToggle={() => toggleThread(agent.id)}
+                        disclosureOnly
+                      />
+                    ) : (
+                      <span
+                        aria-hidden
+                        className="inline-flex size-3 shrink-0 items-center justify-center"
+                      >
+                        <span
+                          className={cn("size-1.5 rounded-full bg-current", statusClass(status))}
+                        />
+                      </span>
+                    )}
                     <Tooltip>
                       <TooltipTrigger
                         render={<span className="min-w-0 flex-1 truncate text-secondary-label" />}
@@ -153,15 +170,6 @@ export function useSidebarSubagents(thread: EnvironmentThreadShell, compact = fa
                       {THREAD_SUBAGENT_STATUS_LABELS[status]}
                     </span>
                   </div>
-                  {descendants.total > 0 ? (
-                    <SubagentToggle
-                      thread={agent}
-                      counts={descendants}
-                      expanded={expandedIds.has(agent.id)}
-                      onToggle={() => toggleThread(agent.id)}
-                      compact
-                    />
-                  ) : null}
                 </li>
               ),
             )
