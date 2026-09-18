@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -34,9 +35,6 @@ const makeDesktopClerkLayer = (isDevelopment = true, events: string[] = []) => {
     stateDir: "/tmp/t3-state",
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
-    userDataDirName: isDevelopment ? "t3code-dev" : "t3code",
-    legacyUserDataDirName: isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)",
-    path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
   const electronApp = {
@@ -49,6 +47,7 @@ const makeDesktopClerkLayer = (isDevelopment = true, events: string[] = []) => {
   return DesktopClerk.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodePath.layerPosix,
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
