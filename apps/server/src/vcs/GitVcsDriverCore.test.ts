@@ -868,6 +868,18 @@ for (const scenario of [
     expected: "could not update a local reference",
   },
   {
+    name: "unrelated remote chatter",
+    stderr:
+      "remote: Help: authentication failed, connection refused, cannot lock ref\nremote: unrelated service error",
+    expected: "git fetch origin failed",
+  },
+  {
+    name: "HTTPS DNS failure",
+    stderr:
+      "fatal: unable to access 'https://example.com/repo.git/': Could not resolve host: example.com",
+    expected: "could not reach the remote",
+  },
+  {
     name: "unknown failure",
     stderr: "fatal: unexpected remote failure",
     expected: "git fetch origin failed",
