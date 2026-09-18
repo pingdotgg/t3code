@@ -97,6 +97,36 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/stripe@1.0.0-rc.12"
 
 overrides:
+  # Security floors for transitive dependencies with published advisories. Each
+  # key is scoped to the major the dependents already declare so no edge crosses
+  # a breaking version; the bare "pkg@" convergence form is not honoured on this
+  # pnpm and rewrites edges unconditionally.
+  "tar@7": 7.5.22
+  "form-data@4": 4.0.6
+  "js-yaml@4": 4.3.2
+  "builder-util-runtime@9": 9.7.0
+  "fast-uri@3": 3.1.6
+  "@xmldom/xmldom@0.8": 0.8.15
+  "@xmldom/xmldom@0.9": 0.9.12
+  "brace-expansion@1": 1.1.21
+  "brace-expansion@2": 2.1.4
+  "brace-expansion@5": 5.0.12
+  "undici@7": 7.29.1
+  "lodash@4": 4.18.1
+  "shell-quote@1": 1.10.0
+  "browserslist@4": 4.29.0
+  "ip-address@10": 10.3.1
+  "qs@6": 6.16.0
+  "postcss@8": 8.5.28
+  "nanoid@3": 3.3.19
+  "svgo@4": 4.1.0
+  "smol-toml@1": 1.8.0
+  "path-to-regexp@6": 6.3.0
+  "valibot@1": 1.4.2
+  "devalue@5": 5.9.2
+  "baseline-browser-mapping@2": 2.11.0
+  "hono@4": 4.13.5
+  "@hono/node-server@1": 1.19.15
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
   "@react-navigation/core": 7.21.13
   # The dbus-next patch drops usocket from the package, but pnpm resolves from the
