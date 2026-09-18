@@ -114,6 +114,11 @@ function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   return Exit.isSuccess(result) ? result.value : undefined;
 }
 
+/**
+ * Formats any failure cause from the OpenCode SDK or runtime as a diagnostic
+ * string. It runs inside cleanup and recovery paths, so it must never throw,
+ * whatever shape the cause has.
+ */
 export function openCodeRuntimeErrorDetail(cause: unknown): string {
   if (OpenCodeRuntimeError.is(cause)) return cause.detail;
   // Effect's TimeoutError can be constructed without a message, so `message`
