@@ -189,9 +189,9 @@ export function V2LifecycleRow(props: {
         label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
         trailing={
           <InlineButton
+            variant="link"
             aria-label={`Open ${item.title ?? "created thread"}`}
             onClick={() => props.onOpenThread(item.targetThreadId)}
-            className="rounded-sm text-primary hover:underline"
           >
             Open chat
           </InlineButton>
