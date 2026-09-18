@@ -61,14 +61,6 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { type OpenCode2AdapterShape } from "../Services/OpenCode2Adapter.ts";
-import {
-  buildOpenCode2SessionRules,
-  openCode2McpServerName,
-  parseOpenCode2ModelSlug,
-  toOpenCode2FileParts,
-  withOpenCode2Variant,
-} from "../opencode2Runtime.ts";
-import type { OpenCode2Connection, OpenCodeClient } from "../opencode2Runtime.ts";
 import * as OpenCode2Runtime from "../opencode2Runtime.ts";
 
 const PROVIDER = ProviderDriverKind.make("opencode2");
@@ -382,7 +374,7 @@ interface OpenCode2Subagent {
 
 interface OpenCode2SessionContext {
   session: ProviderSession;
-  readonly client: OpenCodeClient;
+  readonly client: OpenCode2Runtime.OpenCodeClient;
   readonly directory: string;
   openCodeSessionId: string;
   /** Root session plus subagent child sessions, all routed to this thread. */
@@ -458,8 +450,11 @@ export function makeOpenCode2Adapter(
 
     // One connection per adapter: settings are fixed at construction, so the
     // health probe runs once per adapter instead of once per session start.
-    let cachedConnection: OpenCode2Connection | undefined;
-    const connect = (): Effect.Effect<OpenCode2Connection, ProviderAdapterRequestError> =>
+    let cachedConnection: OpenCode2Runtime.OpenCode2Connection | undefined;
+    const connect = (): Effect.Effect<
+      OpenCode2Runtime.OpenCode2Connection,
+      ProviderAdapterRequestError
+    > =>
       Effect.gen(function* () {
         if (cachedConnection) {
           return cachedConnection;
@@ -2453,7 +2448,7 @@ export function makeOpenCode2Adapter(
       // case the shared server restarted with different config. Sent even when
       // empty so a session that moved to full-access gets its rules cleared.
       if (context.appliedRulesMode) {
-        const ruleset = buildOpenCode2SessionRules({
+        const ruleset = OpenCode2Runtime.buildOpenCode2SessionRules({
           runtimeMode: context.appliedRulesMode,
           ownMcpServerName: context.mcpServerName,
         });
@@ -2609,7 +2604,7 @@ export function makeOpenCode2Adapter(
       runtimeMode: RuntimeMode,
     ): Effect.Effect<void, ProviderAdapterRequestError> =>
       Effect.gen(function* () {
-        const ruleset = buildOpenCode2SessionRules({
+        const ruleset = OpenCode2Runtime.buildOpenCode2SessionRules({
           runtimeMode,
           ownMcpServerName: context.mcpServerName,
         });
@@ -2773,7 +2768,7 @@ export function makeOpenCode2Adapter(
         }
 
         const sessionScope = yield* Scope.make();
-        const mcpServerName = openCode2McpServerName(
+        const mcpServerName = OpenCode2Runtime.openCode2McpServerName(
           openCode2Settings.mcpServerName,
           input.threadId,
         );
@@ -2781,13 +2776,13 @@ export function makeOpenCode2Adapter(
           Effect.gen(function* () {
             const connection = yield* connect();
             const client = connection.client;
-            const ruleset = buildOpenCode2SessionRules({
+            const ruleset = OpenCode2Runtime.buildOpenCode2SessionRules({
               runtimeMode: input.runtimeMode,
               ownMcpServerName: mcpServerName,
             });
             const agent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
-            const parsedModel = withOpenCode2Variant(
-              parseOpenCode2ModelSlug(input.modelSelection?.model),
+            const parsedModel = OpenCode2Runtime.withOpenCode2Variant(
+              OpenCode2Runtime.parseOpenCode2ModelSlug(input.modelSelection?.model),
               getModelSelectionStringOptionValue(input.modelSelection, "variant"),
             );
 
@@ -3078,8 +3073,8 @@ export function makeOpenCode2Adapter(
             issue: `OpenCode 2 model selection is bound to instance '${modelSelection.instanceId}', expected '${boundInstanceId}'.`,
           });
         }
-        const parsedModel = withOpenCode2Variant(
-          parseOpenCode2ModelSlug(modelSelection?.model),
+        const parsedModel = OpenCode2Runtime.withOpenCode2Variant(
+          OpenCode2Runtime.parseOpenCode2ModelSlug(modelSelection?.model),
           getModelSelectionStringOptionValue(modelSelection, "variant"),
         );
         if (modelSelection !== undefined && modelSelection.model && !parsedModel) {
@@ -3093,7 +3088,7 @@ export function makeOpenCode2Adapter(
         const text = input.input?.trim();
         // v2 ingests files natively as URI attachments (the runtime's part
         // builder already applies the v1 native-file gating rules).
-        const fileParts = toOpenCode2FileParts({
+        const fileParts = OpenCode2Runtime.toOpenCode2FileParts({
           attachments: input.attachments,
           resolveAttachmentPath: (attachment) =>
             resolveAttachmentPath({
@@ -3589,7 +3584,7 @@ export function makeOpenCode2Adapter(
       // Fork copies the parent's rules; re-assert them anyway in case the
       // mode changed since (empty clears them when the thread is full-access).
       if (context.appliedRulesMode) {
-        const ruleset = buildOpenCode2SessionRules({
+        const ruleset = OpenCode2Runtime.buildOpenCode2SessionRules({
           runtimeMode: context.appliedRulesMode,
           ownMcpServerName: context.mcpServerName,
         });

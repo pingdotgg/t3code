@@ -27,7 +27,7 @@ import {
   makePendingOpenCode2Provider,
 } from "../Layers/OpenCode2Provider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import { OpenCode2Runtime } from "../opencode2Runtime.ts";
+import * as OpenCode2Runtime from "../opencode2Runtime.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -56,7 +56,7 @@ export type OpenCode2DriverEnv =
   | BackgroundPolicy.BackgroundPolicy
   | Crypto.Crypto
   | FileSystem.FileSystem
-  | OpenCode2Runtime
+  | OpenCode2Runtime.OpenCode2Runtime
   | Path.Path
   | ServerConfig
   | ServerSettingsService;
@@ -72,7 +72,7 @@ export const OpenCode2Driver: ProviderDriver<OpenCode2Settings, OpenCode2DriverE
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig;
-      const openCode2Runtime = yield* OpenCode2Runtime;
+      const openCode2Runtime = yield* OpenCode2Runtime.OpenCode2Runtime;
       const serverSettings = yield* ServerSettingsService;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -98,7 +98,7 @@ export const OpenCode2Driver: ProviderDriver<OpenCode2Settings, OpenCode2DriverE
       const checkProviderForCwd = (cwd: string) =>
         checkOpenCode2ProviderStatus(effectiveConfig, cwd).pipe(
           Effect.map(stampIdentity),
-          Effect.provideService(OpenCode2Runtime, openCode2Runtime),
+          Effect.provideService(OpenCode2Runtime.OpenCode2Runtime, openCode2Runtime),
         );
       const checkProvider = checkProviderForCwd(serverConfig.cwd);
 
