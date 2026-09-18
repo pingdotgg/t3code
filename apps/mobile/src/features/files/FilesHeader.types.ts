@@ -4,8 +4,6 @@ export interface FilesBrowserHeaderProps {
   readonly onSearchQueryChange: (query: string) => void;
   readonly onRefresh: () => void;
   readonly onBack: () => void;
-  readonly headerColor: string;
-  readonly sheetSurfaceColor: string;
 }
 
 export interface FileHeaderProps {

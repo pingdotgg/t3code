@@ -307,9 +307,6 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const { fileInspector, layout, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const [searchQuery, setSearchQuery] = useState("");
   const { themeAppearance: highlightTheme } = useAppearancePreferences();
-  const theme = useUniwindTheme();
-  const headerColor = theme["--color-header"];
-  const sheetSurfaceColor = theme["--color-sheet-solid"];
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
@@ -425,8 +422,6 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         onSearchQueryChange={setSearchQuery}
         onRefresh={entriesQuery.refresh}
         onBack={handleReturnToThread}
-        headerColor={headerColor}
-        sheetSurfaceColor={sheetSurfaceColor}
       />
       <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
         <FileTreeBrowser
