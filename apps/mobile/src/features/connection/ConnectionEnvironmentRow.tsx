@@ -5,8 +5,9 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Platform, Alert, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 
@@ -16,8 +17,13 @@ import { MaterialButton } from "../../components/MaterialButton";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
-import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
+import type {
+  ConnectedEnvironmentSummary,
+  EnvironmentUpdateInput,
+} from "../../state/remote-runtime-types";
+import { environmentCatalog } from "../../connection/catalog";
 import { serverEnvironment } from "../../state/server";
+import { usePreparedConnection } from "../../state/session";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 
@@ -32,6 +38,27 @@ function connectionStatusLabel(environment: ConnectedEnvironmentSummary): string
   });
 }
 
+/** Splits a one-address-per-line field. */
+function parseRouteList(value: string): ReadonlyArray<string> {
+  return value.split(/\s+/u).filter((line) => line !== "");
+}
+
+/** The saved routes of a pairing this device made itself; null for anything else. */
+function useSavedRoutes(environmentId: EnvironmentId) {
+  const entry = useAtomValue(environmentCatalog.catalogValueAtom).entries.get(environmentId);
+  const profile = entry === undefined ? null : Option.getOrNull(entry.profile);
+  return useMemo(
+    () =>
+      profile?._tag === "BearerConnectionProfile"
+        ? {
+            alternateHttpBaseUrls: profile.alternateHttpBaseUrls ?? [],
+            pinnedRoute: profile.pinnedRoute === true,
+          }
+        : null,
+    [profile],
+  );
+}
+
 export function ConnectionEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
   readonly expanded: boolean;
@@ -41,11 +68,19 @@ export function ConnectionEnvironmentRow(props: {
   readonly onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   readonly onUpdate: (
     environmentId: EnvironmentId,
-    updates: { readonly label: string; readonly displayUrl: string },
+    updates: EnvironmentUpdateInput,
   ) => Promise<AtomCommandResult<unknown, unknown>>;
 }) {
   const [label, setLabel] = useState(props.environment.environmentLabel);
   const [url, setUrl] = useState(props.environment.displayUrl);
+  const savedRoutes = useSavedRoutes(props.environment.environmentId);
+  const [routes, setRoutes] = useState(savedRoutes?.alternateHttpBaseUrls.join("\n") ?? "");
+  const [pinnedRoute, setPinnedRoute] = useState(savedRoutes?.pinnedRoute ?? false);
+  // A multi-route pairing may be connected over an alternate address; show
+  // the one actually in use rather than the saved preferred one.
+  const activeHttpBaseUrl = Option.getOrNull(
+    usePreparedConnection(props.environment.environmentId),
+  )?.httpBaseUrl;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
@@ -63,6 +98,9 @@ export function ConnectionEnvironmentRow(props: {
     const result = await props.onUpdate(props.environment.environmentId, {
       label: label.trim(),
       displayUrl: url.trim(),
+      ...(savedRoutes === null
+        ? {}
+        : { alternateHttpBaseUrls: parseRouteList(routes), pinnedRoute }),
     });
     if (AsyncResult.isSuccess(result)) {
       props.onToggle();
@@ -73,7 +111,7 @@ export function ConnectionEnvironmentRow(props: {
       "Could not update environment",
       error instanceof Error ? error.message : "The environment could not be updated.",
     );
-  }, [label, url, props]);
+  }, [label, url, routes, pinnedRoute, savedRoutes, props]);
 
   return (
     <Animated.View layout={LinearTransition.duration(250)} className="bg-card">
@@ -102,7 +140,9 @@ export function ConnectionEnvironmentRow(props: {
             </Text>
           </View>
           <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-            {props.environment.displayUrl}
+            {props.environment.connectionState === "connected" && activeHttpBaseUrl
+              ? activeHttpBaseUrl
+              : props.environment.displayUrl}
           </Text>
           {statusLabel ? (
             <Text
@@ -163,7 +203,7 @@ export function ConnectionEnvironmentRow(props: {
               />
 
               <ConnectionFormField
-                label="URL"
+                label="Preferred URL"
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
@@ -171,6 +211,29 @@ export function ConnectionEnvironmentRow(props: {
                 value={url}
                 onChangeText={setUrl}
               />
+              {savedRoutes === null ? null : (
+                <>
+                  <ConnectionFormField
+                    label="Other URLs"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    multiline
+                    placeholder={"https://machine.tailnet.ts.net\nOne address per line"}
+                    value={routes}
+                    onChangeText={setRoutes}
+                  />
+                  <View className="flex-row items-center justify-between gap-3">
+                    <View className="flex-1 gap-0.5">
+                      <Text className="text-sm text-foreground">Always use the preferred URL</Text>
+                      <Text className="text-xs text-foreground-muted">
+                        Off dials every address at once and keeps the first one that answers.
+                      </Text>
+                    </View>
+                    <ThemedSwitch value={pinnedRoute} onValueChange={setPinnedRoute} />
+                  </View>
+                </>
+              )}
             </>
           )}
 

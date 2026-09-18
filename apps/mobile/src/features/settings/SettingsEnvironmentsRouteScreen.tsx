@@ -2,6 +2,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollVie
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentUpdateInput } from "../../state/remote-runtime-types";
 import { useCallback, useState } from "react";
 import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -49,10 +50,7 @@ export function SettingsEnvironmentsRouteScreen() {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
   }, []);
   const handleUpdateEnvironment = useCallback(
-    (
-      environmentId: EnvironmentId,
-      updates: { readonly label: string; readonly displayUrl: string },
-    ) => {
+    (environmentId: EnvironmentId, updates: EnvironmentUpdateInput) => {
       if (!SHOWCASE_ENABLED) return onUpdateEnvironment(environmentId, updates);
       const actualEnvironment = environmentSections.localEnvironments.find(
         (environment) => environment.environmentId === environmentId,

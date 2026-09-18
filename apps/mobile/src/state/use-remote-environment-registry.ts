@@ -10,7 +10,11 @@ import { environmentPresentations } from "./presentation";
 import { useWorkspaceState } from "../state/workspace";
 import type { SavedRemoteConnection } from "../lib/connection";
 import { appAtomRegistry } from "./atom-registry";
-import type { ConnectedEnvironmentSummary, EnvironmentRuntimeState } from "./remote-runtime-types";
+import type {
+  ConnectedEnvironmentSummary,
+  EnvironmentRuntimeState,
+  EnvironmentUpdateInput,
+} from "./remote-runtime-types";
 import { environmentSession } from "./session";
 import { environmentCatalog } from "../connection/catalog";
 import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-projections";
@@ -156,10 +160,8 @@ export function useRemoteConnections() {
     [controller],
   );
   const onUpdateEnvironment = useCallback(
-    (
-      environmentId: EnvironmentId,
-      updates: { readonly label: string; readonly displayUrl: string },
-    ) => controller.updateEnvironment(environmentId, updates),
+    (environmentId: EnvironmentId, updates: EnvironmentUpdateInput) =>
+      controller.updateEnvironment(environmentId, updates),
     [controller],
   );
 

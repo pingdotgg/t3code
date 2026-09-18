@@ -13,6 +13,7 @@ import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilit
 import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
 import { BearerConnectionTarget } from "./model.ts";
 import {
+  mergeBearerRoutes,
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
@@ -231,6 +232,94 @@ describe("connection onboarding", () => {
         },
         credential: { token: "bearer-token" },
       });
+    }),
+  );
+
+  it.effect(
+    "keeps saved routes when editing without touching them and drops the preferred duplicate",
+    () =>
+      Effect.gen(function* () {
+        const environmentId = EnvironmentId.make("environment-paired");
+        const entry = Option.some({
+          target: new BearerConnectionTarget({
+            environmentId,
+            label: "Saved",
+            connectionId: "bearer:environment-paired",
+          }),
+          profile: Option.some(
+            new BearerConnectionProfile({
+              connectionId: "bearer:environment-paired",
+              environmentId,
+              label: "Saved",
+              httpBaseUrl: "http://lan.example.test/",
+              wsBaseUrl: "ws://lan.example.test/",
+              alternateHttpBaseUrls: ["https://tailnet.example.test/"],
+              pinnedRoute: true,
+            }),
+          ),
+          enabled: true,
+        });
+        const credential = Option.some(new BearerConnectionCredential({ token: "bearer-token" }));
+
+        const untouched = yield* prepareBearerConnectionUpdate({
+          input: { environmentId, label: "Saved", httpBaseUrl: "http://lan.example.test" },
+          entry,
+          credential,
+        });
+        expect(untouched.profile).toMatchObject({
+          alternateHttpBaseUrls: ["https://tailnet.example.test/"],
+          pinnedRoute: true,
+        });
+
+        const swapped = yield* prepareBearerConnectionUpdate({
+          input: {
+            environmentId,
+            label: "Saved",
+            httpBaseUrl: "https://tailnet.example.test",
+            alternateHttpBaseUrls: [
+              "http://lan.example.test/",
+              "wss://tailnet.example.test/ws",
+              "http://lan.example.test",
+            ],
+            pinnedRoute: false,
+          },
+          entry,
+          credential,
+        });
+        expect(swapped.profile).toMatchObject({
+          httpBaseUrl: "https://tailnet.example.test/",
+          alternateHttpBaseUrls: ["http://lan.example.test/"],
+          pinnedRoute: false,
+        });
+      }),
+  );
+
+  it.effect("re-pairing a saved environment keeps its previous address as an alternate route", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const paired = yield* preparePairingRegistration({
+        host: "tailnet.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer(calls))));
+      const previousProfile = new BearerConnectionProfile({
+        connectionId: "bearer:environment-paired",
+        environmentId: EnvironmentId.make("environment-paired"),
+        label: "Saved",
+        httpBaseUrl: "http://lan.example.test/",
+        wsBaseUrl: "ws://lan.example.test/",
+        alternateHttpBaseUrls: ["https://tailnet.example.test/"],
+      });
+      const previous = Option.some({
+        target: paired.target,
+        profile: Option.some(previousProfile),
+        enabled: true,
+      });
+
+      expect(mergeBearerRoutes(paired, previous).profile).toMatchObject({
+        httpBaseUrl: "https://tailnet.example.test/",
+        alternateHttpBaseUrls: ["http://lan.example.test/"],
+      });
+      expect(mergeBearerRoutes(paired, Option.none())).toBe(paired);
     }),
   );
 

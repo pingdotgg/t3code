@@ -41,7 +41,10 @@ import {
   type EnvironmentId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
+import {
+  type BearerConnectionProfile,
+  connectionStatusText,
+} from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -76,6 +79,7 @@ import {
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
+import { EditSavedBackendDialog } from "./EditSavedBackendDialog";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
 import { CommandShortcut } from "../ui/command";
@@ -159,6 +163,7 @@ import { desktopSshHostsStateAtom, filterDiscoveredSshHosts } from "~/state/desk
 import { desktopWslStateAtom, refreshDesktopWslState } from "~/state/desktopWslState";
 import {
   type EnvironmentPresentation,
+  useEnvironmentHttpBaseUrl,
   useEnvironments,
   usePrimaryEnvironment,
   useRelayEnvironmentDiscovery,
@@ -1434,6 +1439,7 @@ type SavedBackendListRowProps = {
   removingEnvironmentId: EnvironmentId | null;
   onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   onRemove: (environment: EnvironmentPresentation) => void;
+  onEdit: (profile: BearerConnectionProfile) => void;
 };
 
 /**
@@ -1478,11 +1484,23 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
  * the update icon appears only when that machine can take an update; the
  * row menu holds the icon override, trace ID, and removal.
  */
+/** Only a pairing this device saved itself has addresses the user can edit. */
+function editableBearerProfile(environment: EnvironmentPresentation) {
+  const { entry } = environment;
+  return entry.target._tag === "BearerConnectionTarget" &&
+    !isDesktopLocalConnectionTarget(entry.target) &&
+    Option.isSome(entry.profile) &&
+    entry.profile.value._tag === "BearerConnectionProfile"
+    ? entry.profile.value
+    : null;
+}
+
 function SavedBackendListRow({
   environment,
   removingEnvironmentId,
   onSetEnabled,
   onRemove,
+  onEdit,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
@@ -1538,8 +1556,16 @@ function SavedBackendListRow({
     environment.serverConfig ??
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
+  // A multi-route pairing may be connected over an alternate address; show
+  // the one actually in use rather than the saved preferred one.
+  const activeHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
+  const editableProfile = editableBearerProfile(environment);
   const subtitleText = [
-    environmentTransportLabel(environment),
+    environmentTransportLabel(
+      isConnected && editableProfile !== null && activeHttpBaseUrl !== null
+        ? { ...environment, displayUrl: activeHttpBaseUrl }
+        : environment,
+    ),
     resumingServerUpdate ? "Restarting" : status.text,
     enabled && versionMismatch ? serverVersion : null,
   ]
@@ -1643,6 +1669,9 @@ function SavedBackendListRow({
           />
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
+          ) : null}
+          {editableProfile ? (
+            <MenuItem onClick={() => onEdit(editableProfile)}>Edit…</MenuItem>
           ) : null}
           <MenuSeparator />
           <MenuItem variant="destructive" onClick={() => onRemove(environment)}>
@@ -1966,6 +1995,9 @@ export function ConnectionsSettings() {
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
+  const [editingSavedProfile, setEditingSavedProfile] = useState<BearerConnectionProfile | null>(
+    null,
+  );
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
@@ -3769,8 +3801,16 @@ export function ConnectionsSettings() {
             removingEnvironmentId={removingSavedEnvironmentId}
             onSetEnabled={handleSetSavedBackendEnabled}
             onRemove={handleRemoveSavedBackend}
+            onEdit={setEditingSavedProfile}
           />
         ))}
+        {editingSavedProfile ? (
+          <EditSavedBackendDialog
+            key={editingSavedProfile.connectionId}
+            profile={editingSavedProfile}
+            onClose={() => setEditingSavedProfile(null)}
+          />
+        ) : null}
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}

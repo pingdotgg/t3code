@@ -1,4 +1,7 @@
-import { ConnectionOnboarding } from "@t3tools/client-runtime/connection";
+import {
+  type BearerConnectionUpdateInput,
+  ConnectionOnboarding,
+} from "@t3tools/client-runtime/connection";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
@@ -27,9 +30,6 @@ export const updateBearerConnection = createRuntimeCommand(connectionAtomRuntime
     mode: "serial",
     key: (input: { readonly environmentId: EnvironmentId }) => input.environmentId,
   },
-  execute: (input: {
-    readonly environmentId: EnvironmentId;
-    readonly label: string;
-    readonly httpBaseUrl: string;
-  }) => ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.updateBearer(input))),
+  execute: (input: BearerConnectionUpdateInput) =>
+    ConnectionOnboarding.pipe(Effect.flatMap((onboarding) => onboarding.updateBearer(input))),
 });

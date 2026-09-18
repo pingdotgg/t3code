@@ -20,6 +20,14 @@ export interface ConnectedEnvironmentSummary {
   readonly connectionErrorTraceId: string | null;
 }
 
+/** Fields a user can change on a saved pairing. Omitted route fields keep their saved value. */
+export interface EnvironmentUpdateInput {
+  readonly label: string;
+  readonly displayUrl: string;
+  readonly alternateHttpBaseUrls?: ReadonlyArray<string>;
+  readonly pinnedRoute?: boolean;
+}
+
 export interface SelectedThreadRef {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;

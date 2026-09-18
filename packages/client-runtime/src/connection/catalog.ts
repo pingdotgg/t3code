@@ -20,10 +20,24 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
   "BearerConnectionProfile",
   {
     ...ConnectionProfileBase,
+    /** The preferred route. It is the only route used while `pinnedRoute` is set. */
     httpBaseUrl: Schema.String,
     wsBaseUrl: Schema.String,
+    /**
+     * Other addresses that reach the same environment, such as a LAN address next
+     * to a tailnet one. Absent on profiles saved before routes existed.
+     */
+    alternateHttpBaseUrls: Schema.optionalKey(Schema.Array(Schema.String)),
+    /** True stops automatic route selection and always dials `httpBaseUrl`. */
+    pinnedRoute: Schema.optionalKey(Schema.Boolean),
   },
 ) {}
+
+/** Routes to try, preferred first. A pinned profile yields only its preferred route. */
+export function bearerRouteCandidates(profile: BearerConnectionProfile): ReadonlyArray<string> {
+  if (profile.pinnedRoute === true) return [profile.httpBaseUrl];
+  return [...new Set([profile.httpBaseUrl, ...(profile.alternateHttpBaseUrls ?? [])])];
+}
 
 export class SshConnectionProfile extends Schema.TaggedClass<SshConnectionProfile>()(
   "SshConnectionProfile",

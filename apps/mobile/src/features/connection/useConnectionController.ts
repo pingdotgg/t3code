@@ -4,6 +4,7 @@ import {
   RelayConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentUpdateInput } from "../../state/remote-runtime-types";
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
@@ -103,15 +104,8 @@ export function useConnectionController() {
     [setEnvironmentEnabledMutation],
   );
   const updateEnvironment = useCallback(
-    (
-      environmentId: EnvironmentId,
-      updates: { readonly label: string; readonly displayUrl: string },
-    ) =>
-      updateBearer({
-        environmentId,
-        label: updates.label,
-        httpBaseUrl: updates.displayUrl,
-      }),
+    (environmentId: EnvironmentId, { displayUrl, ...updates }: EnvironmentUpdateInput) =>
+      updateBearer({ environmentId, httpBaseUrl: displayUrl, ...updates }),
     [updateBearer],
   );
 

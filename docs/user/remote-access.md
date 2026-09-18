@@ -62,6 +62,20 @@ created in Settings can only be copied from the client that created them while
 its Connections page stays open. If you leave or reload that page, create
 another link to share.
 
+### Reach one machine over several addresses
+
+A machine you sometimes reach over your LAN and sometimes over a tailnet can
+keep both addresses in one saved environment. Pair it again from the other
+address, or open its **Edit…** action under **Settings → Connections** on web
+and desktop, or expand it under **Settings → Environments** on mobile, and add
+the extra addresses under **Other URLs**.
+
+When connecting, the client dials every address at once and keeps the first one
+that answers as that machine. The environment row shows the address in use.
+Switch on **Always use the preferred URL** to stop that and connect only through
+the preferred address. Threads, credentials, and settings are the same over
+every address, because they belong to the machine rather than the route.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
