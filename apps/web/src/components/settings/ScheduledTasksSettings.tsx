@@ -227,8 +227,7 @@ export function ScheduledTasksSettings(target: {
         headerAction={
           <Button
             size="xs"
-            variant="ghost"
-            className="font-normal text-muted-foreground/60 hover:text-muted-foreground"
+            variant="ghost-muted"
             disabled={!defaultEnvironment}
             onClick={() =>
               defaultEnvironment &&
