@@ -3723,6 +3723,93 @@ describe("ProviderCommandReactor", () => {
   );
 
   effectIt.effect(
+    "does not stop a newer session on the same thread when an earlier interrupt fails late",
+    () =>
+      Effect.gen(function* () {
+        const interruptStarted = yield* Deferred.make<void>();
+        const failInterrupt = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            interruptTurnEffect: () =>
+              Deferred.succeed(interruptStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(failInterrupt)),
+                Effect.andThen(
+                  Effect.fail(
+                    new ProviderAdapterRequestError({
+                      provider: "codex",
+                      method: "thread.interrupt",
+                      detail: "provider session disappeared",
+                    }),
+                  ),
+                ),
+              ),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const now = "2026-01-01T00:00:00.000Z";
+        const later = "2026-01-01T00:00:01.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-before-late-failure"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-1"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-late-failure"),
+          threadId,
+          createdAt: now,
+        });
+        yield* Deferred.await(interruptStarted);
+
+        // The thread moves on to a fresh session while the interrupt is pending.
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-newer"),
+          threadId,
+          session: {
+            threadId,
+            status: "starting",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: later,
+          },
+          createdAt: later,
+        });
+        // drain would wait for the pending interrupt; wait for the projection instead.
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const current = (await harness.readModel()).threads.find(
+              (entry) => entry.id === threadId,
+            );
+            return current?.session?.updatedAt === later;
+          }),
+        );
+
+        yield* Deferred.succeed(failInterrupt, undefined);
+        yield* Effect.promise(() => harness.drain());
+
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(thread?.session).toMatchObject({ status: "starting", activeTurnId: null });
+        expect(harness.stopSession).not.toHaveBeenCalled();
+      }),
+  );
+
+  effectIt.effect(
     "stops a running session and records the failure when provider interrupt fails",
     () =>
       Effect.gen(function* () {

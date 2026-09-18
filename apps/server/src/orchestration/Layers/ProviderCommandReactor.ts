@@ -1543,6 +1543,10 @@ const make = Effect.gen(function* () {
           !latestSession ||
           latestSession.status === "stopped" ||
           latestSession.status === "ready" ||
+          // The interrupt runs off the command worker, so the thread may have
+          // moved on to a newer session or turn by the time it fails. Only the
+          // session this interrupt was asked about may be forced to stop.
+          latestSession.updatedAt !== session.updatedAt ||
           (event.payload.turnId !== undefined &&
             latestSession.activeTurnId !== null &&
             latestSession.activeTurnId !== event.payload.turnId)
