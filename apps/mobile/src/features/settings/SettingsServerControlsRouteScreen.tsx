@@ -22,6 +22,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsControlRow } from "./components/SettingsControlRow";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
@@ -454,21 +455,21 @@ function FanoutSwitchRow(props: {
   }
 
   return (
-    <View className="flex-row items-center gap-4 p-4">
-      <SymbolView name={props.icon} size={22} tintColorClassName="accent-icon" />
-      <View className="min-w-0 flex-1 gap-1">
-        <Text className="text-lg text-foreground">{props.label}</Text>
-        <Text className="text-sm text-foreground-muted">{props.subtitle}</Text>
-      </View>
+    <SettingsControlRow
+      disabled={props.disabled}
+      icon={props.icon}
+      label={props.label}
+      subtitle={props.subtitle}
+    >
       <Pressable
         accessibilityLabel={`Set ${props.label} on for selected environments`}
         accessibilityRole="button"
         disabled={props.disabled}
-        className="rounded-full bg-subtle px-3 py-2 active:opacity-70 disabled:opacity-40"
+        className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
         onPress={() => props.onValueChange(true)}
       >
         <Text className="text-sm font-t3-medium text-foreground">Mixed · Set on</Text>
       </Pressable>
-    </View>
+    </SettingsControlRow>
   );
 }
