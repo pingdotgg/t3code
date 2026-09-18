@@ -225,17 +225,17 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
 
 const updateFlags = {
   ...projectLocationFlags,
-  channel: Flag.choice("channel", CLI_RELEASE_CHANNELS).pipe(
+  channel: Flag.Literals("channel", CLI_RELEASE_CHANNELS).pipe(
     Flag.withDescription(
       "Release channel to follow. Defaults to the channel this t3 was published on.",
     ),
     Flag.optional,
   ),
-  allowDowngrade: Flag.boolean("allow-downgrade").pipe(
+  allowDowngrade: Flag.Boolean("allow-downgrade").pipe(
     Flag.withDescription("Allow moving to an older version than the one running."),
     Flag.withDefault(false),
   ),
-  yes: Flag.boolean("yes").pipe(
+  yes: Flag.Boolean("yes").pipe(
     Flag.withAlias("y"),
     Flag.withDescription(
       "Restart the background service without asking. Required to restart it from a script, where there is no prompt.",
@@ -244,7 +244,7 @@ const updateFlags = {
   ),
 };
 
-const versionArgument = Argument.string("version").pipe(
+const versionArgument = Argument.String("version").pipe(
   Argument.withDescription(
     "Exact version to install. Defaults to the newest release on the channel.",
   ),
@@ -388,7 +388,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       });
     }
     const confirmed = yield* Prompt.run(
-      Prompt.confirm({ message: "Install the preview build anyway?", initial: false }),
+      Prompt.Confirm({ message: "Install the preview build anyway?", initial: false }),
     ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
     if (!confirmed) {
       yield* Console.log("Left as is.");
@@ -474,7 +474,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       restartService = true;
     } else if (process.stdin.isTTY && process.stdout.isTTY) {
       restartService = yield* Prompt.run(
-        Prompt.confirm({
+        Prompt.Confirm({
           message: "Restart the background service once the download is verified?",
           initial: true,
         }),

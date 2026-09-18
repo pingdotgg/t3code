@@ -14,7 +14,32 @@ const makeEffectCheckedSchema = () =>
 const makeEffectTemplateLiteralSchema = () =>
   Schema.TemplateLiteral(["prefix-", Schema.String, "-middle-", Schema.Number, "-suffix"])
 
+const templateLiteral256Parts = Array.from({ length: 256 }, (_, index) => Schema.Literal(`part${index}`))
+const makeEffectTemplateLiteral256Schema = () => Schema.TemplateLiteral(templateLiteral256Parts)
+
 const makeEffectRecordSchema = () => Schema.Record(Schema.String, Schema.String)
+const makeEffectEncodedRecordSchema = () =>
+  Schema.Record(
+    Schema.String.pipe(Schema.decodeTo(Schema.Number, SchemaTransformation.passthrough())),
+    Schema.String
+  )
+
+const makeEffectObject2Schema = () =>
+  Schema.Struct({
+    name: Schema.String,
+    age: Schema.Number
+  })
+
+const makeObjectFields = (size: number) =>
+  Object.fromEntries(Array.from({ length: size }, (_, index) => [`field${index}`, Schema.NonEmptyString]))
+
+const object32Fields = makeObjectFields(32)
+const object256Fields = makeObjectFields(256)
+
+const makeEffectObject32Schema = () => Schema.Struct(object32Fields)
+const makeEffectObject256Schema = () => Schema.Struct(object256Fields)
+
+const object2Input = { name: "John", age: 42 }
 
 const literalValues100 = Array.from({ length: 100 }, (_, index) => `value${index}`)
 
@@ -51,6 +76,36 @@ const makeEffectEncodingChain = (size) => {
 export const effectSchemaCreationTemplateLiteral = () => ({
   run: makeEffectTemplateLiteralSchema,
   validate: (schema) => assert.equal(schema.ast._tag, "TemplateLiteral")
+})
+
+export const effectSchemaCreationTemplateLiteral256 = () => ({
+  run: makeEffectTemplateLiteral256Schema,
+  validate: (schema) => assert.equal(schema.ast._tag, "TemplateLiteral")
+})
+
+export const effectSchemaCreationObject2 = () => ({
+  run: makeEffectObject2Schema,
+  validate: (schema) => assert.equal(schema.ast._tag, "Objects")
+})
+
+export const effectSchemaCreationObject32 = () => ({
+  run: makeEffectObject32Schema,
+  validate: (schema) => assert.equal(schema.ast._tag, "Objects")
+})
+
+export const effectSchemaCreationObject256 = () => ({
+  run: makeEffectObject256Schema,
+  validate: (schema) => assert.equal(schema.ast._tag, "Objects")
+})
+
+export const effectSchemaCreationEncodedRecord = () => ({
+  run: makeEffectEncodedRecordSchema,
+  validate: (schema) => assert.equal(schema.ast._tag, "Objects")
+})
+
+export const effectFirstMakeObject2 = () => ({
+  run: () => makeEffectObject2Schema().make(object2Input),
+  validate: (result) => assert.deepEqual(result, object2Input)
 })
 
 export const effectFirstDecodeCheckedObject32 = () => ({

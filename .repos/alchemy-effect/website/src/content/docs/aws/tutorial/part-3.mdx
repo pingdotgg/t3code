@@ -90,10 +90,11 @@ already deployed). Subsequent runs are fast because Alchemy diffs and
 skips unchanged resources.
 
 :::note[Which stage do tests deploy to?]
-The test harness defaults to a stage named `test`, separate from the
-`dev_<user>` stage your `alchemy deploy` runs target — so tests never
-clobber your working deployment. More on stages in
-[Part 4](/aws/tutorial/part-4).
+The test harness defaults to `test_$USER` (e.g. `test_sam`),
+separate from the `live_$USER` / `dev_$USER` stages your
+`alchemy deploy` / `alchemy dev` runs target — so tests never
+clobber your working deployment, and two people running the suite
+don't collide. More on stages in [Part 4](/aws/tutorial/part-4).
 :::
 
 ## Add HTTP assertions

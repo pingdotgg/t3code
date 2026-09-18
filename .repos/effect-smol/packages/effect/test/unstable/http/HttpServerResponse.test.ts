@@ -5,6 +5,61 @@ import { HttpBody, HttpClientRequest, HttpClientResponse, HttpServerResponse } f
 const TestValue = Context.Reference<number>("test/TestValue", { defaultValue: () => 0 })
 
 describe("HttpServerResponse", () => {
+  describe("toWeb", () => {
+    it.each([
+      { status: 200, withoutBody: true },
+      { status: 304, withoutBody: false }
+    ])(
+      "preserves representation headers for status $status with withoutBody=$withoutBody",
+      ({ status, withoutBody }) => {
+        const web = HttpServerResponse.toWeb(HttpServerResponse.text("body", { status }), { withoutBody })
+
+        assert.strictEqual(web.body, null)
+        assert.strictEqual(web.headers.get("content-length"), "4")
+        assert.strictEqual(web.headers.get("content-type"), "text/plain")
+      }
+    )
+
+    it.each([
+      { status: 200, withoutBody: true },
+      { status: 204, withoutBody: false },
+      { status: 205, withoutBody: false },
+      { status: 304, withoutBody: false }
+    ])("cancels raw streams for status $status with withoutBody=$withoutBody", async ({ status, withoutBody }) => {
+      let cancelled = false
+      const body = new ReadableStream({
+        cancel() {
+          cancelled = true
+        }
+      })
+      try {
+        const web = HttpServerResponse.toWeb(HttpServerResponse.raw(body, { status }), { withoutBody })
+
+        assert.strictEqual(web.status, status)
+        assert.strictEqual(web.body, null)
+        assert.strictEqual(await web.text(), "")
+        assert.strictEqual(cancelled, true)
+      } finally {
+        await body.cancel()
+      }
+    })
+
+    for (const status of [204, 205, 304]) {
+      it.each([
+        { name: "text", response: HttpServerResponse.text("body", { status }) },
+        { name: "uint8Array", response: HttpServerResponse.uint8Array(new Uint8Array([1]), { status }) },
+        { name: "raw", response: HttpServerResponse.raw("body", { status }) },
+        { name: "formData", response: HttpServerResponse.formData(new FormData(), { status }) },
+        { name: "stream", response: HttpServerResponse.stream(Stream.succeed(new Uint8Array([1])), { status }) }
+      ])(`omits $name bodies for status ${status}`, ({ response }) => {
+        const web = HttpServerResponse.toWeb(response)
+
+        assert.strictEqual(web.status, status)
+        assert.strictEqual(web.body, null)
+      })
+    }
+  })
+
   it("setHeader overrides body-derived content headers", () => {
     const response = HttpServerResponse.text("body").pipe(
       HttpServerResponse.setHeader("content-type", "text/custom"),
@@ -15,9 +70,23 @@ describe("HttpServerResponse", () => {
     assert.strictEqual(response.headers["content-length"], "1")
   })
 
+  it.effect("fromWeb preserves content-length through a Web round trip", () =>
+    Effect.gen(function*() {
+      const response = HttpServerResponse.fromWeb(
+        new Response("hello", { headers: { "content-length": "5" } })
+      )
+      const roundTrip = HttpServerResponse.toWeb(response)
+
+      assert.strictEqual(yield* Effect.promise(() => roundTrip.text()), "hello")
+      assert.strictEqual(roundTrip.headers.get("content-length"), "5")
+    }))
+
   it.effect("fromClientResponse preserves status, headers, cookies, and json", () =>
     Effect.gen(function*() {
-      const request = HttpClientRequest.get("http://localhost:3000/todos/1")
+      const request = HttpClientRequest.get("http://localhost:3000/todos/1?existing=1", {
+        urlParams: { value: "a#b" },
+        hash: "fragment"
+      })
       const clientResponse = HttpServerResponse.toClientResponse(
         HttpServerResponse.jsonUnsafe({ foo: "bar" }, { status: 201 }).pipe(
           HttpServerResponse.setHeader("x-test", "ok"),
@@ -29,6 +98,8 @@ describe("HttpServerResponse", () => {
       const response = HttpServerResponse.fromClientResponse(clientResponse)
       const roundTrip = HttpServerResponse.toClientResponse(response, { request })
 
+      assert.strictEqual(clientResponse.url, "http://localhost:3000/todos/1?existing=1&value=a%23b")
+      assert.strictEqual(roundTrip.url, clientResponse.url)
       assert.strictEqual(response.status, 201)
       assert.strictEqual(response.headers["content-type"], "application/json")
       assert.strictEqual(response.headers["x-test"], "ok")
@@ -50,6 +121,7 @@ describe("HttpServerResponse", () => {
 
       const response = HttpServerResponse.fromClientResponse(clientResponse)
       const roundTrip = HttpServerResponse.toClientResponse(response)
+      assert.strictEqual(roundTrip.url, "")
       const text = yield* roundTrip.text.pipe(
         Effect.provideService(TestValue, 420)
       )
@@ -85,6 +157,22 @@ describe("HttpServerResponse", () => {
       assert.strictEqual(response.status, 200)
       assert.strictEqual(yield* roundTrip.text, "")
     }))
+
+  it("fromClientResponse ignores malformed or unsafe content lengths", () => {
+    const request = HttpClientRequest.get("http://localhost:3000")
+    for (const contentLength of ["2junk", "1.5", "1e3", "9007199254740992"]) {
+      const clientResponse = HttpClientResponse.fromWeb(
+        request,
+        new Response("hello", { headers: { "content-length": contentLength } })
+      )
+      const response = HttpServerResponse.fromClientResponse(clientResponse)
+
+      assert.strictEqual(response.body._tag, "Stream")
+      if (response.body._tag === "Stream") {
+        assert.strictEqual(response.body.contentLength, undefined)
+      }
+    }
+  })
 
   it("synchronizes body metadata headers for empty and replaced bodies", () => {
     const emptyBytes = HttpServerResponse.uint8Array(new Uint8Array())

@@ -28,7 +28,7 @@ For a given AWS service, the end state should include:
 
 Start from the distilled spec in:
 
-- `.vendor/distilled/@distilled.cloud/aws/src/services/<service>.ts`
+- `submodules/distilled/packages/aws/src/services/<service>.ts`
 
 Never start from ad-hoc memory of the AWS service. The distilled spec is the source of truth for operations.
 

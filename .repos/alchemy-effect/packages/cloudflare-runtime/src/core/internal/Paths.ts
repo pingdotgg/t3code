@@ -35,7 +35,7 @@ export const PathsLive = Layer.effect(
     const makeWith =
       (options: { env: string; fallback: Array<string> }) =>
       (...prefix: Array<string>) =>
-        Config.string(options.env).pipe(
+        Config.String(options.env).pipe(
           Effect.orElseSucceed(() => path.join(home, ...options.fallback)),
           Effect.map((root) => path.join(root, ...prefix)),
           Effect.tap((path) =>

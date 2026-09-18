@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
 import { Schema } from "effect"
-import { HttpApiEndpoint, HttpApiSchema } from "effect/unstable/httpapi"
+import { HttpApiEndpoint, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 
 const Events = Schema.Struct({
   event: Schema.Literal("user.created"),
@@ -376,6 +376,18 @@ describe("HttpApiEndpoint WithHeaders schemas", () => {
     })
 
     assert.isTrue(endpoint.success.has(wrapped))
+  })
+
+  it("preserves disableCodecs through derived endpoints", () => {
+    const endpoint = HttpApiEndpoint.get("list", "/users", {
+      disableCodecs: true,
+      success: Schema.Struct({ a: Schema.String })
+    })
+
+    assert.isTrue(endpoint.disableCodecs)
+    assert.isTrue(endpoint.prefix("/api").disableCodecs)
+    assert.isTrue(endpoint.annotate(OpenApi.Title, "Users").disableCodecs)
+    assert.isFalse(HttpApiEndpoint.get("plain", "/plain").disableCodecs)
   })
 
   it("keeps a wrapped stream schema as the inner schema", () => {

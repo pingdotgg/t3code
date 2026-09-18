@@ -50,7 +50,7 @@ export function SettingsEnvironmentFilterHeader(props: { readonly closeSettings?
                   label:
                     selectedIds === null
                       ? "All environments"
-                      : `${selectedTargets.length} environments`,
+                      : `${selectedTargets.length} ${selectedTargets.length === 1 ? "environment" : "environments"}`,
                   items: [
                     {
                       type: "action",

@@ -1,5 +1,6 @@
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
+// Alchemy modifications: preserves the original KV failure as Error.cause after retries are exhausted.
 import type { Toucan } from "toucan-js";
 
 export type AssetMetadata = {
@@ -10,7 +11,7 @@ export async function getAssetWithMetadataFromKV(
   assetsKVNamespace: KVNamespace,
   assetKey: string,
   sentry?: Toucan,
-  retries = 1,
+  retries = 3,
 ) {
   let attempts = 0;
 

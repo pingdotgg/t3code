@@ -16,7 +16,7 @@ const CONFIG_REDACTED_VALUE = (process.env.CONFIG_REDACTED =
   "config-redacted-value");
 const CONFIG_REDACTED_INIT_VALUE = (process.env.CONFIG_REDACTED_INIT =
   "config-redacted-init-value");
-// Read via `Config.string("HOST").pipe(Config.nested("CONFIG_NESTED"))` —
+// Read via `Config.String("HOST").pipe(Config.nested("CONFIG_NESTED"))` —
 // binds under the flattened `CONFIG_NESTED_HOST` key.
 const CONFIG_NESTED_HOST_VALUE = (process.env.CONFIG_NESTED_HOST =
   "config-nested-host-value");
