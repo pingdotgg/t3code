@@ -307,6 +307,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "prepared-run.fail":
     case "run.interrupt":
     case "queued-message.promote-to-steer":
+    case "queue.resume":
     case "queued-run.reorder":
     case "queued-run.cancel":
     case "queued-run.edit":
@@ -994,7 +995,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        projection.runs.some(isBlockingRun)
+        projection.runs.some(isBlockingRun) ||
+        projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
       ) {
         return;
       }
@@ -1546,7 +1548,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     for (const threadId of threadIds) {
       const resumedThread = yield* Effect.gen(function* () {
         const projection = yield* projectionStore.getThreadProjection(threadId);
-        if (projection.runs.some(isBlockingRun) || nextQueuedRun(projection) === undefined) {
+        if (
+          projection.runs.some(isBlockingRun) ||
+          projection.runs.some((run) => run.status === "queued" && run.queueHeld === true) ||
+          nextQueuedRun(projection) === undefined
+        ) {
           return false;
         }
         yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
@@ -4154,6 +4160,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           rootNodeId,
           activeAttemptId: attemptId,
           status: "queued",
+          ...(projection.runs.some(
+            (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
+          )
+            ? { queueHeld: true }
+            : {}),
           queuePosition:
             Math.max(
               0,
@@ -8317,6 +8328,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "queued-message.promote-to-steer":
         yield* dispatchQueuedMessagePromoteToSteer(command, events, effects);
         break;
+      case "queue.resume": {
+        const projection = yield* mapDispatchError(command)(
+          projectionStore.getThreadProjection(command.threadId),
+        );
+        if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} is not active.`,
+          });
+        }
+        const now = yield* DateTime.now;
+        const queued = projection.runs.filter((run) => run.status === "queued");
+        for (const run of queued) {
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...run, queueHeld: false },
+          });
+        }
+        if (queued.length === 0) {
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "thread.metadata-updated",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: projection.thread,
+          });
+        }
+        break;
+      }
       case "queued-run.reorder":
         yield* dispatchQueuedRunReorder(command, events);
         break;
@@ -8411,6 +8461,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+      if (command.type === "queue.resume") {
+        yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+      }
       return {
         sequence: receipt.resultSequence,
         storedEvents,
@@ -8499,6 +8552,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
+    if (command.type === "queue.resume") {
+      yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
+    }
     if (command.type === "notification.delivery.accept") {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
     }
@@ -8564,21 +8620,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.forkDetach,
   );
 
-  // The high-water subscription deliberately skips history, so recover the
-  // two terminal side effects from current projections instead: one queued
-  // run per idle thread, plus any app-owned child result not yet transferred.
-  yield* resumeQueuedRuns.pipe(
-    Effect.tap((resumed) =>
-      resumed === 0
-        ? Effect.void
-        : Effect.logInfo("Resumed queued V2 runs after recovery", { resumed }),
-    ),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Failed to recover queued V2 runs", {
-        cause,
-      }),
-    ),
-  );
+  // Recover child results from projections. Queue recovery instead holds
+  // unstarted runs until an explicit queue.resume command arrives.
   yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
     Effect.flatMap((threadIds) =>
       Effect.forEach(
