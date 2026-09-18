@@ -26,7 +26,7 @@ export function scheduleDraftForTask(task: ScheduledTask): ScheduleDraft {
         ...DEFAULT_SCHEDULE,
         timeOfDay: task.schedule.timeOfDay,
         weekdays: task.schedule.weekdays?.length
-          ? [...task.schedule.weekdays]
+          ? [...new Set(task.schedule.weekdays)].sort((a, b) => a - b)
           : [0, 1, 2, 3, 4, 5, 6],
       }
     : {
@@ -43,13 +43,18 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
       ? { type: "interval", everyMs: minutes * 60_000 }
       : null;
   }
-  if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(draft.timeOfDay) || draft.weekdays.length === 0) {
+  const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
+  if (
+    !/^([01]?\d|2[0-3]):[0-5]\d$/.test(draft.timeOfDay) ||
+    weekdays.length === 0 ||
+    weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)
+  ) {
     return null;
   }
   return {
     type: "fixed_time",
     timeOfDay: draft.timeOfDay,
-    ...(draft.weekdays.length === 7 ? {} : { weekdays: [...draft.weekdays].sort((a, b) => a - b) }),
+    ...(weekdays.length === 7 ? {} : { weekdays }),
   };
 }
 

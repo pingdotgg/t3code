@@ -100,6 +100,27 @@ describe("scheduleFromDraft", () => {
     });
   });
 
+  it("does not add a missing run day when an existing schedule contains duplicates", () => {
+    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [1, 2, 3, 4, 5, 6, 6] })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      weekdays: [1, 2, 3, 4, 5, 6],
+    });
+    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [0, 1, 2, 3, 4, 5, 6, 6] })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+    });
+  });
+
+  it.each([-1, 7, 1.5, NaN])(
+    "rejects invalid weekday %s instead of scheduling every day",
+    (day) => {
+      expect(
+        scheduleFromDraft({ ...DEFAULT_SCHEDULE, weekdays: [0, 1, 2, 3, 4, 5, day] }),
+      ).toBeNull();
+    },
+  );
+
   it("rejects malformed times and sub-minute or fractional intervals", () => {
     expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, timeOfDay: "25:00" })).toBeNull();
     expect(

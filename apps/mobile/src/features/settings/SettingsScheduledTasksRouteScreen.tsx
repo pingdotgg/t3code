@@ -110,11 +110,11 @@ function timePickerValue(value: string): Date {
 }
 
 function repeatLabel(weekdays: ReadonlyArray<number>): string {
-  if (weekdays.length === 7) return "Every day";
-  if (weekdays.length === 5 && [1, 2, 3, 4, 5].every((day) => weekdays.includes(day)))
-    return "Weekdays";
+  const days = new Set(weekdays);
+  if (days.size === 7) return "Every day";
+  if (days.size === 5 && [1, 2, 3, 4, 5].every((day) => days.has(day))) return "Weekdays";
   return (
-    DAYS.filter((day) => weekdays.includes(day.index))
+    DAYS.filter((day) => days.has(day.index))
       .map((day) => day.label)
       .join(", ") || "Choose days"
   );
