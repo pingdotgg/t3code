@@ -13,6 +13,7 @@ import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
 import { createEnvironmentThreadShellAtoms } from "./threadShell.ts";
+import { visibleThreadSubagentRows } from "./threadSubagents.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
@@ -291,6 +292,44 @@ describe("subagent thread trees", () => {
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [cycle, a] });
     const atom = threads.subagentTreeAtom({ environmentId, threadId: root.id });
     expect(registry.get(atom).rows.map((row) => row.thread.id)).toEqual([a.id]);
+    expect(registry.get(atom).rows[0]?.descendants.total).toBe(0);
+    registry.dispose();
+  });
+
+  it("expands nested branches independently while retaining hidden descendant counts", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const a = child("a", "completed");
+    const b = child("b", "running", a.id);
+    const c = child("c", "waiting", b.id);
+    const d = child("d", "completed", a.id);
+    const sibling = child("sibling", "idle");
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, a, b, c, d, sibling],
+    });
+    const atom = threads.subagentTreeAtom({ environmentId, threadId: root.id });
+    const dispose = registry.mount(atom);
+    const tree = registry.get(atom);
+    const visibleIds = (expanded: ReadonlyArray<ThreadId>) =>
+      visibleThreadSubagentRows(tree.rows, new Set(expanded)).map((row) => row.thread.id);
+
+    expect(visibleIds([])).toEqual([a.id, sibling.id]);
+    expect(visibleIds([a.id])).toEqual([a.id, b.id, d.id, sibling.id]);
+    expect(visibleIds([a.id, b.id])).toEqual([a.id, b.id, c.id, d.id, sibling.id]);
+    expect(visibleIds([b.id])).toEqual([a.id, sibling.id]);
+    expect(visibleIds([a.id, b.id])).toEqual([a.id, b.id, c.id, d.id, sibling.id]);
+    expect(tree.rows[0]?.descendants.label).toBe("1 running · 1 finished · 1 waiting");
+    expect(tree.rows[1]?.descendants.label).toBe("0 running · 0 finished · 1 waiting");
+    expect(tree.rows[2]?.descendants.total).toBe(0);
+    expect(tree.label).toBe("1 running · 2 finished · 1 waiting · 1 idle");
+
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [root, a, b, { ...c, status: "completed" }, d, sibling],
+    });
+    expect(registry.get(atom).rows[0]?.descendants.label).toBe("1 running · 2 finished");
+    expect(registry.get(atom).rows[1]?.descendants.label).toBe("0 running · 1 finished");
+    dispose();
     registry.dispose();
   });
 });
