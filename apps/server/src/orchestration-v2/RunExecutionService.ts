@@ -852,6 +852,10 @@ export const layer: Layer.Layer<
                 if (Cause.hasInterruptsOnly(cause)) {
                   return yield* Effect.failCause(cause);
                 }
+                yield* Effect.logError("orchestration V2 run preparation failed", {
+                  runId: input.run.id,
+                  cause,
+                });
                 yield* writeFinalRunEvents({
                   run: input.run,
                   rootNode: input.rootNode,
