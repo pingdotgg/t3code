@@ -13,6 +13,7 @@ import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-scree
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
+import { MaterialButton } from "../../components/MaterialButton";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
@@ -59,6 +60,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun, "reorder queued message");
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
+  const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
+  const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const busyRef = useRef(false);
   const [draggedRunId, setDraggedRunId] = useState<RunId | null>(null);
@@ -180,6 +183,26 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       contentContainerClassName="px-5 pb-6"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
+      {workflow?.isHeld && queuedRuns.length > 0 ? (
+        <View className="gap-2 py-3">
+          <Text className="text-sm text-foreground-muted">Queue held after restart</Text>
+          <MaterialButton
+            label="Resume queue"
+            disabled={resuming || busyRunId !== null}
+            onPress={async () => {
+              if (busyRef.current) return;
+              busyRef.current = true;
+              setResuming(true);
+              try {
+                await resume({ ...target, input: { threadId: target.threadId } });
+              } finally {
+                busyRef.current = false;
+                setResuming(false);
+              }
+            }}
+          />
+        </View>
+      ) : null}
       {queuedRuns.length === 0 ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
           No messages waiting in this queue.

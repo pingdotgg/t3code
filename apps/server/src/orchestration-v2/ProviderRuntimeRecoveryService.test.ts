@@ -455,7 +455,7 @@ it.effect("cancels a stale waiting run when no checkpoint capture can finish it"
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("cancels accepted queued work instead of replaying it after restart", () => {
+it.effect("holds accepted queued work without cancelling its execution state after restart", () => {
   const threadId = ThreadId.make("thread_queued_restart");
   const runId = RunId.make("run_queued_restart");
   const attemptId = RunAttemptId.make("attempt_queued_restart");
@@ -523,20 +523,18 @@ it.effect("cancels accepted queued work instead of replaying it after restart", 
   return Effect.gen(function* () {
     const summary =
       yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile("startup");
-    assert.equal(summary.terminalizedRuns, 1);
+    assert.equal(summary.terminalizedRuns, 0);
     const command = committedInput;
     assert.isNotNull(command);
     if (command === null) return;
     const runEvent = command.events.find((event) => event.type === "run.updated");
     const attemptEvent = command.events.find((event) => event.type === "run-attempt.updated");
     const nodeEvent = command.events.find((event) => event.type === "node.updated");
-    assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.status : null, "cancelled");
-    assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.queuePosition : 1, null);
-    assert.equal(
-      attemptEvent?.type === "run-attempt.updated" ? attemptEvent.payload.status : null,
-      "cancelled",
-    );
-    assert.equal(nodeEvent?.type === "node.updated" ? nodeEvent.payload.status : null, "cancelled");
+    assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.status : null, "queued");
+    assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.queuePosition : null, 1);
+    assert.equal(runEvent?.type === "run.updated" ? runEvent.payload.queueHeld : false, true);
+    assert.isUndefined(attemptEvent);
+    assert.isUndefined(nodeEvent);
   }).pipe(Effect.provide(layer));
 });
 

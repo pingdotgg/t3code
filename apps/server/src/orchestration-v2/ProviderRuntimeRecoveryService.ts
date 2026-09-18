@@ -63,7 +63,6 @@ function nonterminalRuns(projection: ProjectionRuntimeRecoveryState) {
   return projection.runs.filter((run) => {
     const status: string = run.status;
     return (
-      run.status === "queued" ||
       status === "preparing" ||
       run.status === "starting" ||
       run.status === "running" ||
@@ -203,6 +202,20 @@ export const make = Effect.gen(function* () {
           ]
         : [];
       const events: Array<OrchestrationV2DomainEvent> = [];
+      // Queued runs have not started provider work. Preserve their execution
+      // identities and order, but require explicit consent before draining them.
+      for (const run of projection.runs) {
+        if (run.status !== "queued" || run.queueHeld === true) continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "run.updated",
+          threadId: projection.thread.id,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...run, queueHeld: true },
+        });
+      }
       for (const request of requests) {
         events.push({
           id: yield* allocateEventId(),
