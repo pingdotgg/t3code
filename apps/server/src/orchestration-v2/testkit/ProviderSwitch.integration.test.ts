@@ -35,7 +35,10 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { CommandPolicyCapabilityUnsupportedError } from "../CommandPolicy.ts";
 import { ClaudeProviderCapabilitiesV2 } from "../Adapters/ClaudeAdapterV2.ts";
-import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
+import {
+  CodexProviderCapabilitiesV2,
+  canReuseCodexContextUsage,
+} from "../Adapters/CodexAdapterV2.ts";
 import { AcpProviderCapabilitiesV2 } from "../Adapters/AcpAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "../Adapters/CursorAdapterV2.ts";
 import { layer as eventSinkLayer } from "../EventSink.ts";
@@ -115,6 +118,7 @@ function makeTestAdapter(input: {
   readonly failResumeOnce?: Ref.Ref<boolean>;
   readonly initialContextUsage?: OrchestrationV2ProviderThread["contextUsage"];
   readonly getModelContextWindow?: (selection: ModelSelection) => number | undefined;
+  readonly canReuseContextUsage?: ProviderAdapterV2SessionRuntime["canReuseContextUsage"];
   readonly failedRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
@@ -152,6 +156,9 @@ function makeTestAdapter(input: {
           ...(input.getModelContextWindow === undefined
             ? {}
             : { getModelContextWindow: input.getModelContextWindow }),
+          ...(input.canReuseContextUsage === undefined
+            ? {}
+            : { canReuseContextUsage: input.canReuseContextUsage }),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               const createdAt = yield* DateTime.now;
@@ -379,6 +386,10 @@ describe("orchestration v2 provider switching", () => {
     "screenshot-option-change-native",
     "screenshot-model-change-retry-native",
     "screenshot-option-change-retry-native",
+    "prior-images-reasoning-change-replacement-native",
+    "prior-images-reasoning-change-replacement-small-native",
+    "prior-images-reasoning-change-native",
+    "prior-images-reasoning-change-retry-native",
     "prior-images-native",
     "prior-images-fallback",
     "imported-prior-images-native",
@@ -395,7 +406,9 @@ describe("orchestration v2 provider switching", () => {
           const cwd = yield* checkpointWorkspace(`handoff-${scenario}`);
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
-          const modelScenario = scenario.includes("model") || scenario.includes("option-change");
+          const reasoningScenario = scenario.includes("reasoning-change");
+          const modelScenario =
+            scenario.includes("model") || scenario.includes("option-change") || reasoningScenario;
           const failStartOnce = yield* Ref.make(false);
           const failResumeOnce = yield* Ref.make(false);
           const generation = yield* Ref.make(0);
@@ -408,9 +421,11 @@ describe("orchestration v2 provider switching", () => {
             ? CLAUDE_MODEL_SELECTION
             : {
                 ...CLAUDE_MODEL_SELECTION,
-                ...(scenario.includes("option-change")
-                  ? { options: [{ id: "contextWindow", value: "1m" }] }
-                  : { model: `${CLAUDE_MODEL_SELECTION.model}-large` }),
+                ...(reasoningScenario
+                  ? { options: [{ id: "reasoningEffort", value: "low" }] }
+                  : scenario.includes("option-change")
+                    ? { options: [{ id: "contextWindow", value: "1m" }] }
+                    : { model: `${CLAUDE_MODEL_SELECTION.model}-large` }),
               };
           const registry = makeProviderAdapterRegistryLayer([
             makeTestAdapter({
@@ -435,19 +450,21 @@ describe("orchestration v2 provider switching", () => {
               ...(scenario.includes("reported-capacity")
                 ? { initialContextUsage: { usedTokens: 999_999, maxTokens: 1_000_000 } }
                 : {}),
-              ...(modelScenario
-                ? {
-                    getModelContextWindow: (selection: ModelSelection) =>
-                      selection.model.endsWith("-large") ||
-                      selection.options?.some(
-                        (option) => option.id === "contextWindow" && option.value === "1m",
-                      )
-                        ? 1_000_000
-                        : 32_000,
-                  }
-                : scenario === "large-current-input" || priorImages
-                  ? { getModelContextWindow: () => 32_000 }
-                  : {}),
+              ...(reasoningScenario
+                ? { canReuseContextUsage: canReuseCodexContextUsage }
+                : modelScenario
+                  ? {
+                      getModelContextWindow: (selection: ModelSelection) =>
+                        selection.model.endsWith("-large") ||
+                        selection.options?.some(
+                          (option) => option.id === "contextWindow" && option.value === "1m",
+                        )
+                          ? 1_000_000
+                          : 32_000,
+                    }
+                  : scenario === "large-current-input" || priorImages
+                    ? { getModelContextWindow: () => 32_000 }
+                    : {}),
               ...(scenario.endsWith("-native") || scenario === "large-current-input"
                 ? { injectedHistory }
                 : {}),
@@ -486,11 +503,18 @@ describe("orchestration v2 provider switching", () => {
                 creationSource: "web",
                 text,
                 attachments:
-                  scenario.startsWith("screenshot") && ordinal >= targetOrdinal
-                    ? screenshots
-                    : priorImages && ordinal === (scenario.startsWith("imported") ? 1 : 2)
-                      ? [screenshot]
-                      : [],
+                  reasoningScenario && ordinal === 2
+                    ? Array.from({ length: 8 }, (_, index) => ({
+                        ...screenshot,
+                        id: `prior-${index}`,
+                      }))
+                    : reasoningScenario && ordinal >= targetOrdinal
+                      ? [screenshot, { ...screenshot, id: "current-2" }]
+                      : scenario.startsWith("screenshot") && ordinal >= targetOrdinal
+                        ? screenshots
+                        : priorImages && ordinal === (scenario.startsWith("imported") ? 1 : 2)
+                          ? [screenshot]
+                          : [],
                 modelSelection: selection,
                 dispatchMode: { type: "start_immediately" },
               });
@@ -542,7 +566,7 @@ describe("orchestration v2 provider switching", () => {
             yield* Effect.addFinalizer(() => Effect.sync(() => spy?.mockRestore()));
             const current = scenario.startsWith("compact")
               ? "/compact"
-              : capacityScenario
+              : capacityScenario && !reasoningScenario
                 ? "x".repeat(70_000)
                 : scenario === "large-current-input"
                   ? "x".repeat(9_000)
@@ -551,7 +575,11 @@ describe("orchestration v2 provider switching", () => {
             // not be charged as existing context on the subsequent handoff.
             if (returning) {
               if (scenario.includes("unsent")) yield* Ref.set(failStartOnce, true);
-              yield* dispatch(2, "Establish target", CLAUDE_MODEL_SELECTION);
+              yield* dispatch(
+                2,
+                reasoningScenario ? "x".repeat(27_460) : "Establish target",
+                CLAUDE_MODEL_SELECTION,
+              );
               yield* wait(2);
               if (modelScenario) {
                 const target = (yield* orchestrator.getThreadProjection(
@@ -569,8 +597,18 @@ describe("orchestration v2 provider switching", () => {
                       payload: {
                         ...target,
                         contextUsage: {
-                          usedTokens: 30_000,
-                          maxTokens: 32_000,
+                          usedTokens: reasoningScenario
+                            ? replaceNative
+                              ? 63_000
+                              : 37_321
+                            : 30_000,
+                          maxTokens: reasoningScenario
+                            ? replaceNative
+                              ? scenario.includes("small")
+                                ? 32_000
+                                : 64_000
+                              : 258_400
+                            : 32_000,
                           autoCompactThreshold: 31_000,
                         },
                       },
@@ -640,13 +678,45 @@ describe("orchestration v2 provider switching", () => {
             if (scenario.includes("retry")) {
               const failed = yield* orchestrator.getThreadProjection(threadId);
               assert.equal(failed.runs.at(-1)?.status, "failed");
-              assert.isNull(
-                failed.providerThreads.find(
+              const failedUsage = failed.providerThreads.find(
+                (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+              )!.contextUsage;
+              if (reasoningScenario) {
+                assert.deepEqual(failedUsage, { usedTokens: 37_321, maxTokens: 258_400 });
+              } else {
+                assert.isNull(failedUsage);
+              }
+              if (reasoningScenario) {
+                const target = failed.providerThreads.find(
                   (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
-                )!.contextUsage,
-              );
+                )!;
+                yield* orchestrator.dispatch({
+                  type: "provider-session.detach",
+                  commandId: CommandId.make("detach-before-reasoning-retry"),
+                  threadId,
+                  providerSessionId: target.providerSessionId!,
+                });
+                yield* worker.drain();
+              }
               yield* dispatch(targetOrdinal + 1, current, targetSelection);
               yield* wait(targetOrdinal + 1);
+            }
+            if (reasoningScenario && replaceNative) {
+              const replaced = yield* orchestrator.getThreadProjection(threadId);
+              assert.equal(
+                replaced.runs.at(-1)?.status,
+                scenario.includes("small") ? "failed" : "completed",
+              );
+              const target = replaced.providerThreads.find(
+                (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
+              )!;
+              assert.isNull(target.contextUsage);
+              assert.equal(yield* Ref.get(generation), 2);
+              assert.equal(
+                (yield* Ref.get(capturedTurns)).at(-1)!.driver,
+                scenario.includes("small") ? CODEX_DRIVER : CLAUDE_DRIVER,
+              );
+              return;
             }
             if (replaceNative) {
               if (scenario.includes("legacy-replacement")) {
@@ -695,6 +765,7 @@ describe("orchestration v2 provider switching", () => {
                 ? yield* encodeJson(yield* Ref.get(injectedHistory))
                 : (yield* Ref.get(capturedTurns)).at(-1)!.text;
               const shouldFit =
+                reasoningScenario ||
                 scenario.startsWith("imported") ||
                 scenario.includes("telemetry") ||
                 scenario.includes("unsent") ||
@@ -709,7 +780,13 @@ describe("orchestration v2 provider switching", () => {
                 assert.include(context, sourceText);
                 assert.include(
                   projection.contextHandoffs
-                    .filter((record) => record.targetRunId === projection.runs.at(-1)!.id)
+                    .filter(
+                      (record) =>
+                        record.targetRunId ===
+                        (reasoningScenario && scenario.includes("retry")
+                          ? projection.runs.find((run) => run.ordinal === targetOrdinal)!.id
+                          : projection.runs.at(-1)!.id),
+                    )
                     .flatMap((record) => record.delivery?.itemIds ?? []),
                   sourceItem.id,
                 );
@@ -725,6 +802,10 @@ describe("orchestration v2 provider switching", () => {
                 (thread) => thread.id === latestAttempt.providerThreadId,
               )!;
               assert.equal(latestAttempt.nativeThreadId, target.nativeThreadRef!.nativeId);
+              if (reasoningScenario) {
+                assert.deepEqual(target.contextUsage, { usedTokens: 37_321, maxTokens: 258_400 });
+                assert.lengthOf((yield* Ref.get(capturedTurns)).at(-1)!.attachments, 2);
+              }
               if (replaceNative) assert.equal(yield* Ref.get(generation), 2);
               return;
             }

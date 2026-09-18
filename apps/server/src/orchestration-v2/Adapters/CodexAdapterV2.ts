@@ -15,7 +15,7 @@ import type { ServerProviderShape } from "../../provider/Services/ServerProvider
 import { codexRateLimitsToUpdate } from "../../provider/Layers/codexUsageLimits.ts";
 import { CodexSettings, defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
@@ -151,6 +151,18 @@ export function codexFileChangeApprovalPrompt(input: {
     return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
   }
   return input.grantRoot?.trim() || undefined;
+}
+
+// Reasoning effort changes future generation, not the existing context's tokenizer
+// or model window. All other option changes remain untrusted until new telemetry.
+export function canReuseCodexContextUsage(previous: ModelSelection, next: ModelSelection): boolean {
+  return modelSelectionsEqual(
+    {
+      ...previous,
+      options: (previous.options ?? []).filter((option) => option.id !== "reasoningEffort"),
+    },
+    { ...next, options: (next.options ?? []).filter((option) => option.id !== "reasoningEffort") },
+  );
 }
 
 export function codexProviderTurnTokenUsage(
@@ -4928,6 +4940,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          canReuseContextUsage: canReuseCodexContextUsage,
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race
           // against a long-delayed resume. Codex emits no resume-expected

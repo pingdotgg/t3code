@@ -565,11 +565,29 @@ export const layer: Layer.Layer<
       const sameSelection =
         previousSelection === undefined ||
         modelSelectionsEqual(previousSelection, run.modelSelection);
+      const sameNativeThread =
+        loadedProviderThread.nativeThreadRef?.nativeId === providerThread.nativeThreadRef?.nativeId;
+      const previousUsage = loadedProviderThread.contextUsage ?? providerThread.contextUsage;
+      const compatibleUsage =
+        previousSelection !== undefined &&
+        session.canReuseContextUsage?.(previousSelection, run.modelSelection) &&
+        previousUsage != null
+          ? {
+              usedTokens: previousUsage.usedTokens,
+              ...(previousUsage.maxTokens === undefined
+                ? {}
+                : { maxTokens: previousUsage.maxTokens }),
+            }
+          : null;
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
         // Persist invalidation before delivery: a failed start must not let the next
         // attempt mistake old-model telemetry for usage of the new selection.
-        contextUsage: sameSelection ? (loadedProviderThread.contextUsage ?? null) : null,
+        contextUsage: sameSelection
+          ? (loadedProviderThread.contextUsage ?? null)
+          : sameNativeThread
+            ? compatibleUsage
+            : null,
         id: providerThread.id,
         driver: session.driver,
         providerInstanceId: run.providerInstanceId,
@@ -701,9 +719,6 @@ export const layer: Layer.Layer<
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
-      const sameNativeThread =
-        runningProviderThread.nativeThreadRef?.nativeId ===
-        providerThread.nativeThreadRef?.nativeId;
       const settledHandoffs = projection.contextHandoffs.filter(
         (handoff) =>
           handoff.toProviderThreadId === providerThread.id &&
@@ -787,7 +802,7 @@ export const layer: Layer.Layer<
           : 0;
       const reportedUsage = sameSelection
         ? (runningProviderThread.contextUsage ?? providerThread.contextUsage)
-        : undefined;
+        : compatibleUsage;
       const modelContextWindow =
         session.getModelContextWindow?.(run.modelSelection) ?? reportedUsage?.maxTokens;
       // Replacing a native thread clears its usage, not the selected model's capacity.

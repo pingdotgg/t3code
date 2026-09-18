@@ -509,6 +509,10 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => Effect.Effect<boolean>;
   /** Capacity for the requested model/options, independent of native thread usage. */
   readonly getModelContextWindow?: (modelSelection: ModelSelection) => number | undefined;
+  /** Whether an option-only change preserves measured native usage and capacity.
+   * Compaction thresholds are still discarded. Unknown transitions invalidate usage.
+   */
+  readonly canReuseContextUsage?: (previous: ModelSelection, next: ModelSelection) => boolean;
   readonly ensureThread: (
     input: ProviderAdapterV2EnsureThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;

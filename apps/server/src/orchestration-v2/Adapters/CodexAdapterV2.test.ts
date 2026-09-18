@@ -61,6 +61,7 @@ import {
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import {
   buildCodexTurnStartParams,
+  canReuseCodexContextUsage,
   CODEX_DEFAULT_INSTANCE_ID,
   CODEX_DRIVER_KIND,
   codexBackgroundCommandDetail,
@@ -85,6 +86,33 @@ const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerRep
 const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
 const decodeReplayTranscriptJson = Schema.decodeUnknownEffect(replayTranscriptJson);
 const encodeStringJson = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+
+describe("Codex context usage compatibility", () => {
+  const previous: ModelSelection = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-6-astra",
+  };
+  it("retains measured usage for reasoning-only changes in either direction", () => {
+    const low: ModelSelection = { ...previous, options: [{ id: "reasoningEffort", value: "low" }] };
+    assert.isTrue(canReuseCodexContextUsage(previous, low));
+    assert.isTrue(canReuseCodexContextUsage(low, previous));
+    assert.isTrue(
+      canReuseCodexContextUsage(low, {
+        ...low,
+        options: [{ id: "reasoningEffort", value: "high" }],
+      }),
+    );
+  });
+  it("invalidates usage for model, instance, context-window and unknown option changes", () => {
+    for (const next of [
+      { ...previous, model: "other-model" },
+      { ...previous, instanceId: ProviderInstanceId.make("other-codex") },
+      { ...previous, options: [{ id: "contextWindow", value: "32k" }] },
+      { ...previous, options: [{ id: "customOption", value: "value" }] },
+    ])
+      assert.isFalse(canReuseCodexContextUsage(previous, next));
+  });
+});
 
 describe("CodexAdapterV2 file change approvals", () => {
   it("uses nonblank reasons before sorted file operations and renamed paths", () => {
