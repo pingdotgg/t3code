@@ -51,6 +51,8 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
       expect(JSON.stringify(schema), tool.name).not.toContain('"$ref"');
     }
   }
+  expect(names.has("t3_thread_launch")).toBe(true);
+  expect(names.has("t3_thread_start")).toBe(false);
 });
 
 const threadId = ThreadId.make("mcp-core-thread");
