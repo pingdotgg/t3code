@@ -77,11 +77,20 @@ function FilesBrowserHeader(props: {
         value: props.searchQuery,
         onChangeText: props.onSearchQueryChange,
         placeholder: "Search files",
-        onRefresh: props.onRefresh,
-        refreshAccessibilityLabel: "Refresh files",
         closeAccessibilityLabel: "Close file search",
         clearAccessibilityLabel: "Clear file search",
       }}
+      menus={
+        Platform.OS === "android"
+          ? [
+              {
+                title: "File options",
+                icon: "ellipsis",
+                items: [{ id: "refresh", title: "Refresh files", onPress: props.onRefresh }],
+              },
+            ]
+          : undefined
+      }
     />
   );
 }
