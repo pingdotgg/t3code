@@ -63,6 +63,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
                 unstable_headerToolbarItems: compactSearch
                   ? () => [
                       createNativeMailSearchToolbarItem({
+                        showsSearchDismissButton: true,
                         placeholder: search.compactPlaceholder ?? search.placeholder,
                         onSearchTextChange: search.onChangeText,
                         searchTextChangeId: `${headerId}-search-text`,
