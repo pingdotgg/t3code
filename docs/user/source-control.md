@@ -145,6 +145,45 @@ does not show its diff, so marks are made and read on web and desktop.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
   or rate limits.
 
+## Track Issues Beside the Work
+
+**Browse every tracker in one place**
+
+- The **Issues** page in web and desktop lists issues from the primary connected environment.
+  Browsing issues across several environments is not yet supported.
+- Filter by state, project, host, or label. Assignment, author, and mention filters depend on the host.
+- Free-text search asks hosts that support search; other results are filtered locally.
+- Supports GitHub Issues, GitLab Issues, Bitbucket Issues, Azure DevOps work items, and Linear.
+  Forgejo issues are not yet supported; open them on the host website.
+- Available actions depend on the host and your permissions.
+
+**Read and act on one without leaving T3 Code**
+
+- Open several issues as tabs in the right panel, beside a thread or on the page
+- Read the description and the conversation, comment, close (with a reason where the host
+  records one), reopen, rename, edit the body, and change labels and assignees
+- File a new issue from the **New issue** button
+- The change requests that reference an issue are listed on it, and the issues a pull request
+  cites or closes are listed on the pull request — either one opens the other beside it
+
+**Connect Linear**
+
+Open **Settings → Integrations → Issue Tracking**, then select **Add account** under **Linear
+accounts**. Enter a Linear API key, then choose an account and team for each project. You can add
+several accounts. Keys stay on the connected server.
+
+Linear supports browsing, search, comments, reactions, and agent handoffs. Create issues and change
+their title, description, state, labels, or assignees in Linear. Disconnecting a saved account removes
+its key and project connections.
+
+**Hand one to an agent**
+
+- **Solve** starts a thread on the issue, with the issue attached as context
+- **Ask** and **Explain** answer a question about the issue without changing any code
+- **Add to composer** attaches the issue to a thread you are already in, rather than starting a
+  new one
+- Issue content is marked as untrusted context. Review it before sending it to an agent.
+
 ## Linked pull requests
 
 A thread can hold several pull requests, including reviews from another repository on the same host.

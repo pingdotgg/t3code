@@ -63,6 +63,12 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("allows read access for the side-effect-free Linear status", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.issueTrackersStatus)).toBe(
+      AuthOrchestrationReadScope,
+    );
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

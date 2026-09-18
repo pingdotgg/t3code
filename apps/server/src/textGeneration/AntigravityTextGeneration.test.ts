@@ -335,6 +335,43 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect("generates tasks and related issue matches without changing the project", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        outputs: [
+          '{"prompt":"  Fix the login callback.  "}',
+          '{"matches":[{"candidate":1,"confidence":"high","reason":"Same callback"}]}',
+        ],
+      });
+      const source = {
+        kind: "issue" as const,
+        provider: "github",
+        repository: "acme/web",
+        number: 1,
+        title: "Login fails",
+        url: "https://github.com/acme/web/issues/1",
+        body: "The callback fails.",
+      };
+      const common = { cwd: fixture.projectDirectory, modelSelection };
+      expect(
+        yield* fixture.textGeneration.generateWorkItemTask({
+          ...common,
+          mode: "compound",
+          items: [source],
+        }),
+      ).toEqual({ prompt: "Fix the login callback." });
+      expect(
+        yield* fixture.textGeneration.findWorkItemMatches({
+          ...common,
+          relationship: "duplicate",
+          source,
+          candidates: [{ ...source, number: 2 }],
+        }),
+      ).toEqual({ matches: [{ candidate: 1, confidence: "high", reason: "Same callback" }] });
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
+
   it.effect.each(["tool_call", "tool_call_update"] as const)(
     "aborts on %s even without a permission request",
     (sessionUpdate) =>

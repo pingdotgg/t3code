@@ -189,6 +189,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
   it.effect("uses restrictive permissions for the secret directory and files", () =>
     Effect.gen(function* () {
       const chmodCalls: Array<{ readonly path: string; readonly mode: number }> = [];
+      let committed = false;
       const recordingFileSystemLayer = Layer.effect(
         FileSystem.FileSystem,
         Effect.gen(function* () {
@@ -198,9 +199,13 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
             ...fileSystem,
             makeDirectory: () => Effect.void,
             writeFile: () => Effect.void,
-            rename: () => Effect.void,
+            rename: () =>
+              Effect.sync(() => {
+                committed = true;
+              }),
             chmod: (path, mode) =>
               Effect.sync(() => {
+                if (committed) throw new Error("Post-commit chmod failed");
                 chmodCalls.push({ path: String(path), mode });
               }),
           } satisfies FileSystem.FileSystem;
@@ -221,7 +226,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.isTrue(
         chmodCalls.some((call) => call.mode === 0o700 && /[\\/]secrets$/.test(call.path)),
       );
-      assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
+      assert.strictEqual(chmodCalls.filter((call) => call.mode === 0o600).length, 1);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

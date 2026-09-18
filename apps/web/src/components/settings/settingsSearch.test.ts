@@ -10,6 +10,7 @@ import {
   searchableSetting,
   searchSettings,
   SETTINGS_SEARCH_ITEMS,
+  SETTINGS_SECTION_LABELS,
   type SettingsSearchItem,
 } from "./settingsSearch";
 
@@ -314,6 +315,18 @@ describe("searchSettings", () => {
     });
   });
 
+  it("routes Linear issue tracking to integrations", () => {
+    expect(SETTINGS_SECTION_LABELS["/settings/source-control"]).toBe("Source Control");
+    expect(Object.keys(SETTINGS_SECTION_LABELS)).not.toContain("/settings/issue-tracking");
+    expect(searchSettings("issue tracking")[0]).toMatchObject({
+      id: "linear",
+      to: "/settings/integrations",
+    });
+    expect(searchSettings("Linear")[0]).toMatchObject({
+      id: "linear",
+      to: "/settings/integrations",
+    });
+  });
   it.each([
     ["default model", "default-model", "/settings/general"],
     ["new threads", "new-threads", "/settings/general"],

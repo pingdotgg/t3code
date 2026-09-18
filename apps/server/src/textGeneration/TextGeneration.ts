@@ -1,7 +1,13 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  ModelSelection,
+  ProviderInstanceId,
+  WorkItemMatchRelationship,
+  WorkItemTaskMode,
+} from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
@@ -77,6 +83,41 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface WorkItemTaskGenerationInput {
+  cwd: string;
+  mode: WorkItemTaskMode;
+  items: ReadonlyArray<{
+    readonly kind: "issue" | "pull-request";
+    readonly provider: string;
+    readonly repository: string;
+    readonly number: number;
+    readonly title: string;
+    readonly url: string;
+    readonly body: string;
+  }>;
+  modelSelection: ModelSelection;
+}
+
+export interface WorkItemTaskGenerationResult {
+  prompt: string;
+}
+
+export interface WorkItemMatchGenerationInput {
+  cwd: string;
+  relationship: WorkItemMatchRelationship;
+  source: WorkItemTaskGenerationInput["items"][number];
+  candidates: ReadonlyArray<WorkItemTaskGenerationInput["items"][number]>;
+  modelSelection: ModelSelection;
+}
+
+export interface WorkItemMatchGenerationResult {
+  matches: ReadonlyArray<{
+    candidate: number;
+    confidence: "high" | "medium";
+    reason: string;
+  }>;
+}
+
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -108,6 +149,14 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    readonly generateWorkItemTask: (
+      input: WorkItemTaskGenerationInput,
+    ) => Effect.Effect<WorkItemTaskGenerationResult, TextGenerationError>;
+
+    readonly findWorkItemMatches: (
+      input: WorkItemMatchGenerationInput,
+    ) => Effect.Effect<WorkItemMatchGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -115,7 +164,9 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateWorkItemTask"
+  | "findWorkItemMatches";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -167,6 +218,14 @@ export const make = Effect.gen(function* () {
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
         ),
+      ),
+    generateWorkItemTask: (input) =>
+      resolveInstance(registry, "generateWorkItemTask", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateWorkItemTask(input)),
+      ),
+    findWorkItemMatches: (input) =>
+      resolveInstance(registry, "findWorkItemMatches", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.findWorkItemMatches(input)),
       ),
   });
 });
