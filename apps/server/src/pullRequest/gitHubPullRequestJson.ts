@@ -1073,14 +1073,6 @@ export function buildReviewSubmissionJson(input: {
   });
 }
 
-/**
- * `viewerPermission` rides along with the merge settings rather than being asked for on its own:
- * `gh repo view --json` serves both out of the same GraphQL repository object, so the viewer's
- * standing on the repository costs no request of its own.
- */
-export const REPOSITORY_ACCESS_JSON_FIELDS =
-  "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerPermission";
-
 export interface GitHubPullRequestListItem {
   readonly stack?: PullRequestStackMembership;
   /** The author's node id, kept so a batch can resolve the avatar the listing does not carry. */
@@ -1528,7 +1520,6 @@ const decodeWorkflowRunApprovals = decodeJsonResult(Schema.Array(RawWorkflowRunA
 const decodePullRequestHeads = decodeJsonResult(Schema.Array(RawPullRequestHeadSchema));
 const decodeActivity = decodeJsonResult(RawActivitySchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
-const decodeRepositoryAccess = decodeJsonResult(RawRepositoryAccessSchema);
 const decodeReviewThreads = decodeJsonResult(RawReviewThreadsSchema);
 const decodeReviewThreadComments = decodeJsonResult(RawReviewThreadCommentsSchema);
 
@@ -2091,7 +2082,7 @@ export function decodeReviewThreadCommentsJson(raw: string): Result.Result<
   });
 }
 
-/** What one `gh repo view` answers: what the repository allows, and where the viewer stands. */
+/** Repository settings returned alongside the pull request viewer permissions. */
 export interface GitHubRepositoryAccess {
   readonly mergeCapabilities: PullRequestMergeCapabilities;
   readonly canWrite: boolean;
@@ -2121,22 +2112,6 @@ function toCanWrite(viewerPermission: string | null | undefined): boolean {
 /** Triage is the least role GitHub lets label a pull request; it is not a write. */
 function toCanTriage(viewerPermission: string | null | undefined): boolean {
   return viewerPermission?.trim().toUpperCase() === "TRIAGE" || toCanWrite(viewerPermission);
-}
-
-export function decodeRepositoryAccessJson(
-  raw: string,
-): Result.Result<GitHubRepositoryAccess, DecodeFailure> {
-  const decoded = decodeRepositoryAccess(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed({
-        mergeCapabilities: {
-          merge: decoded.success.mergeCommitAllowed,
-          squash: decoded.success.squashMergeAllowed,
-          rebase: decoded.success.rebaseMergeAllowed,
-        },
-        canWrite: toCanWrite(decoded.success.viewerPermission),
-      })
-    : Result.fail(decoded.failure);
 }
 
 /**
@@ -2467,15 +2442,10 @@ export interface GitHubViewerAccess {
   readonly canUpdateBranch?: boolean;
 }
 
-/**
- * The viewer's standing, asked on its own. Only the write path needs this: reading a pull request
- * already carries the same three fields on calls it was making anyway, and this exists so that a
- * merge or a close is decided by what GitHub says now rather than by what the page was told when
- * it loaded.
- */
+/** Core detail and write checks share one read of permissions and merge settings. */
 export const VIEWER_PERMISSIONS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
-    viewerPermission
+    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
     pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor }
   }
 }`;
@@ -2483,7 +2453,7 @@ export const VIEWER_PERMISSIONS_GRAPHQL_QUERY = `query($owner: String!, $name: S
 const RawViewerPermissionsSchema = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.Struct({
-      viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
+      ...RawRepositoryAccessSchema.fields,
       /** Null for a number that names no pull request the viewer can see. */
       pullRequest: Schema.NullOr(RawViewerFieldsSchema),
     }),
@@ -2494,13 +2464,18 @@ const decodeViewerPermissions = decodeJsonResult(RawViewerPermissionsSchema);
 
 export function decodeViewerPermissionsJson(
   raw: string,
-): Result.Result<GitHubViewerAccess, DecodeFailure> {
+): Result.Result<GitHubViewerAccess & GitHubRepositoryAccess, DecodeFailure> {
   const decoded = decodeViewerPermissions(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
   const repository = decoded.success.data.repository;
   return Result.succeed({
+    mergeCapabilities: {
+      merge: repository.mergeCommitAllowed,
+      squash: repository.squashMergeAllowed,
+      rebase: repository.rebaseMergeAllowed,
+    },
     canWrite: toCanWrite(repository.viewerPermission),
     canTriage: toCanTriage(repository.viewerPermission),
     ...toPullRequestViewerFields(repository.pullRequest),

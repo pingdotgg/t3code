@@ -306,10 +306,13 @@ describe("gitHubViewerPermissions", () => {
               comments: [],
               commits: [],
             }),
-          getRepositoryAccess: () =>
+          getViewerAccess: () =>
             GitHubCli.PinnedGitHubCredential.pipe(
               Effect.map((credential) => ({
                 canWrite: false,
+                canTriage: false,
+                canUpdate: true,
+                didAuthor: false,
                 mergeCapabilities: {
                   merge: true,
                   squash: credential?.credentialFingerprint !== "restricted",
@@ -317,13 +320,6 @@ describe("gitHubViewerPermissions", () => {
                 },
               })),
             ),
-          getViewerAccess: () =>
-            Effect.succeed({
-              canWrite: false,
-              canTriage: false,
-              canUpdate: true,
-              didAuthor: false,
-            }),
         }),
       ),
     ),
@@ -413,13 +409,14 @@ describe("gitHubViewerPermissions", () => {
             ]),
           getPullRequestBaseComparison: () =>
             Effect.succeed({ behindBy: 0, viewerCanUpdate: true }),
-          getRepositoryAccess: () =>
+          getViewerAccess: () =>
             Effect.succeed({
               canWrite: true,
+              canTriage: true,
+              canUpdate: true,
+              didAuthor: false,
               mergeCapabilities: { merge: true, squash: true, rebase: true },
             }),
-          getViewerAccess: () =>
-            Effect.succeed({ canWrite: true, canTriage: true, canUpdate: true, didAuthor: false }),
         }),
       ),
     ),
@@ -476,13 +473,14 @@ it.effect("reads branch comparison and workflow approvals concurrently", () =>
               Effect.andThen(Deferred.await(comparisonStarted)),
               Effect.as([{ id: 123, name: "tests", url: "https://example.com/runs/123" }]),
             ),
-          getRepositoryAccess: () =>
+          getViewerAccess: () =>
             Effect.succeed({
               canWrite: true,
+              canTriage: true,
+              canUpdate: true,
+              didAuthor: false,
               mergeCapabilities: { merge: true, squash: true, rebase: true },
             }),
-          getViewerAccess: () =>
-            Effect.succeed({ canWrite: true, canTriage: true, canUpdate: true, didAuthor: false }),
         }),
       ),
     );
@@ -524,13 +522,14 @@ it.effect("does not classify same-repository gates as fork workflow approvals", 
         getPullRequestBaseComparison: () => Effect.succeed({ behindBy: 0, viewerCanUpdate: true }),
         listWorkflowRunsRequiringApproval: () =>
           Effect.die("same-repository pull requests must not probe fork workflow approvals"),
-        getRepositoryAccess: () =>
+        getViewerAccess: () =>
           Effect.succeed({
             canWrite: true,
+            canTriage: true,
+            canUpdate: true,
+            didAuthor: false,
             mergeCapabilities: { merge: true, squash: true, rebase: true },
           }),
-        getViewerAccess: () =>
-          Effect.succeed({ canWrite: true, canTriage: true, canUpdate: true, didAuthor: false }),
       }),
     ),
   ),
@@ -571,13 +570,14 @@ it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
               limit: 1_000,
             }),
           ),
-        getRepositoryAccess: () =>
+        getViewerAccess: () =>
           Effect.succeed({
             canWrite: true,
+            canTriage: true,
+            canUpdate: true,
+            didAuthor: false,
             mergeCapabilities: { merge: true, squash: true, rebase: true },
           }),
-        getViewerAccess: () =>
-          Effect.succeed({ canWrite: true, canTriage: true, canUpdate: true, didAuthor: false }),
       }),
     ),
   ),
@@ -610,13 +610,14 @@ it.effect("propagates workflow discovery rate limits", () =>
               cause: new Error("rate limited"),
             }),
           ),
-        getRepositoryAccess: () =>
+        getViewerAccess: () =>
           Effect.succeed({
             canWrite: true,
+            canTriage: true,
+            canUpdate: true,
+            didAuthor: false,
             mergeCapabilities: { merge: true, squash: true, rebase: true },
           }),
-        getViewerAccess: () =>
-          Effect.succeed({ canWrite: true, canTriage: true, canUpdate: true, didAuthor: false }),
       }),
     ),
   ),
@@ -646,7 +647,13 @@ describe("getViewerPermissions", () => {
           getViewerAccess: () =>
             Effect.sync(() => {
               accessReads++;
-              return { canWrite: true, canTriage: true, canUpdate: true, didAuthor: false };
+              return {
+                canWrite: true,
+                canTriage: true,
+                canUpdate: true,
+                didAuthor: false,
+                mergeCapabilities: { merge: true, squash: true, rebase: true },
+              };
             }),
         }),
       ),
@@ -663,7 +670,13 @@ describe("getViewerPermissions", () => {
       getPullRequestDetail: () => Effect.succeed(openDetail),
       getPullRequestBaseComparison: () => comparison,
       getViewerAccess: () =>
-        Effect.succeed({ canWrite: true, canTriage: true, canUpdate: true, didAuthor: false }),
+        Effect.succeed({
+          canWrite: true,
+          canTriage: true,
+          canUpdate: true,
+          didAuthor: false,
+          mergeCapabilities: { merge: true, squash: true, rebase: true },
+        }),
     });
 
   it.effect("offers update-branch when the comparison grants it", () =>
@@ -709,7 +722,13 @@ describe("getViewerPermissions", () => {
           getViewerAccess: (input) =>
             Effect.sync(() => {
               viewerAllowReserve = input.allowReserve;
-              return { canWrite: true, canTriage: true, canUpdate: true, didAuthor: false };
+              return {
+                canWrite: true,
+                canTriage: true,
+                canUpdate: true,
+                didAuthor: false,
+                mergeCapabilities: { merge: true, squash: true, rebase: true },
+              };
             }),
         }),
       ),
@@ -744,7 +763,13 @@ describe("getViewerPermissions", () => {
               }),
             ),
           getViewerAccess: () =>
-            Effect.succeed({ canWrite: true, canTriage: true, canUpdate: true, didAuthor: false }),
+            Effect.succeed({
+              canWrite: true,
+              canTriage: true,
+              canUpdate: true,
+              didAuthor: false,
+              mergeCapabilities: { merge: true, squash: true, rebase: true },
+            }),
         }),
       ),
     ),

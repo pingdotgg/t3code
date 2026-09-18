@@ -1,7 +1,4 @@
-import * as Cache from "effect/Cache";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import type {
   PullRequestActor,
   PullRequestCapabilities,
@@ -11,7 +8,6 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
-import { PinnedGitHubCredential } from "../sourceControl/GitHubCli.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
@@ -193,35 +189,6 @@ const rendersEmpty = (body: string): boolean =>
 export const make = Effect.gen(function* () {
   const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
-  const repositoryAccessCache = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
-      return cli.getRepositoryAccess({ cwd, repository, host });
-    },
-    {
-      capacity: 128,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(10) : Duration.zero),
-    },
-  );
-  const getRepositoryAccess = (input: {
-    readonly cwd: string;
-    readonly repository: string;
-    readonly host: string;
-  }) =>
-    PinnedGitHubCredential.pipe(
-      Effect.flatMap((credential) =>
-        Cache.get(
-          repositoryAccessCache,
-          JSON.stringify([
-            input.cwd,
-            input.repository,
-            input.host,
-            credential?.credentialFingerprint ?? null,
-          ]),
-        ),
-      ),
-    );
-
   const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
     new PullRequestProviderError({
       provider: "github",
@@ -401,19 +368,13 @@ export const make = Effect.gen(function* () {
               ).pipe(Effect.map((extra) => ({ pullRequest, ...extra }))),
             ),
           ),
-          getRepositoryAccess({
-            cwd: input.cwd,
-            repository: input.repository,
-            host: input.host,
-          }),
-          // A small permissions query replaces the deeply paginated review-thread walk on the
-          // core path. Writes ask again immediately before mutating, so this is presentation.
+          // Repository merge settings travel with the viewer permissions.
           cli.getViewerAccess(input),
         ],
-        { concurrency: 3 },
+        { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map(([detail, repository, viewerAccess]): ProviderChangeRequestDetail => ({
+        Effect.map(([detail, viewerAccess]): ProviderChangeRequestDetail => ({
           ...detail.pullRequest,
           author: withAvatar(detail.pullRequest.author, new Map<string, string>(), input.host),
           checks: withWorkflowApprovals(
@@ -429,7 +390,7 @@ export const make = Effect.gen(function* () {
             name: null,
             avatarUrl: null,
           })),
-          mergeCapabilities: repository.mergeCapabilities,
+          mergeCapabilities: viewerAccess.mergeCapabilities,
           viewerPermissions: gitHubViewerPermissions({
             ...viewerAccess,
             canUpdateBranch: detail.comparison?.viewerCanUpdate === true,

@@ -3423,6 +3423,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
               JSON.stringify({
                 data: {
                   repository: {
+                    mergeCommitAllowed: true,
+                    squashMergeAllowed: false,
+                    rebaseMergeAllowed: true,
                     viewerPermission: "READ",
                     pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
                   },
@@ -3443,7 +3446,11 @@ layer("GitHubPullRequestCli.layer", (it) => {
         // One request, because both answers hang off the same repository object.
         assert.strictEqual(mockedExecute.mock.calls.length, 1);
         expect(callAt(0).args).toContain("number=7");
+        expect(callAt(0).args.at(-1)).toContain(
+          "mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed",
+        );
         expect(access).toEqual({
+          mergeCapabilities: { merge: true, squash: false, rebase: true },
           canWrite: false,
           canTriage: false,
           canUpdate: true,
@@ -3585,6 +3592,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
               JSON.stringify({
                 data: {
                   repository: {
+                    mergeCommitAllowed: true,
+                    squashMergeAllowed: false,
+                    rebaseMergeAllowed: true,
                     viewerPermission: "READ",
                     pullRequest: { viewerCanUpdate: true, viewerDidAuthor: true },
                   },
@@ -3612,44 +3622,13 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       expect(access).toEqual({
+        mergeCapabilities: { merge: true, squash: false, rebase: true },
         canWrite: false,
         canTriage: false,
         canUpdate: true,
         didAuthor: true,
       });
       yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
-    }),
-  );
-
-  it.effect("reads the viewer's role off the same call as the merge settings", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValue(
-        Effect.succeed(
-          output(
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify({
-              mergeCommitAllowed: false,
-              squashMergeAllowed: true,
-              rebaseMergeAllowed: true,
-              viewerPermission: "WRITE",
-            }),
-          ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
-
-      const access = yield* cli.getRepositoryAccess({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-      });
-
-      assert.strictEqual(mockedExecute.mock.calls.length, 1);
-      expect(callAt(0).args).toContain(
-        "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed,viewerPermission",
-      );
-      assert.isTrue(access.canWrite);
-      expect(access.mergeCapabilities).toEqual({ merge: false, squash: true, rebase: true });
     }),
   );
 

@@ -55,7 +55,10 @@ const services = GitHubPullRequestCli.layer.pipe(
 const decodeJson = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const graphqlCost = Effect.fn("measurePrPreview.graphqlCost")(function* (read: Read) {
-  if (read.cost || !read.graphqlRequests) return read.cost;
+  // The REST quota probe synthesizes rateLimit.cost for budget admission.
+  // It does not spend GraphQL points.
+  if (!read.graphqlRequests) return 0;
+  if (read.cost) return read.cost;
   const vcs = yield* VcsProcess.VcsProcess;
   let cost = 0;
   let found = 0;
