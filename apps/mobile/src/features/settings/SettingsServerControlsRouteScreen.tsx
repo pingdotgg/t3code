@@ -10,7 +10,7 @@ import {
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
 import { useRef, useState, type ComponentProps } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RUNTIME_MODE_CHOICES } from "../threads/thread-settings-options";
@@ -21,7 +21,9 @@ import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
+import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsControlRow } from "./components/SettingsControlRow";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
@@ -219,7 +221,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     }
                   >
                     {WORKSPACE_CHOICES.map((choice, index) => (
-                      <ChoiceRow
+                      <SettingsChoiceRow
                         key={choice.mode}
                         label={choice.label}
                         description={choice.description}
@@ -239,7 +241,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     }
                   >
                     {RUNTIME_MODE_CHOICES.map((choice, index) => (
-                      <ChoiceRow
+                      <SettingsChoiceRow
                         key={choice.mode}
                         label={choice.label}
                         description={choice.description}
@@ -289,7 +291,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     }
                   >
                     {STREAMING_CHOICES.map((choice, index) => (
-                      <ChoiceRow
+                      <SettingsChoiceRow
                         key={choice.mode}
                         label={choice.label}
                         description={choice.description}
@@ -353,49 +355,6 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   );
 }
 
-function ChoiceRow(props: {
-  readonly label: string;
-  readonly description: string;
-  readonly selected: boolean;
-  readonly separated: boolean;
-  readonly disabled: boolean;
-  readonly onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityState={{ checked: props.selected, disabled: props.disabled }}
-      className={
-        props.separated
-          ? "flex-row items-center gap-4 border-t border-border-subtle p-4 active:opacity-70"
-          : "flex-row items-center gap-4 p-4 active:opacity-70"
-      }
-      disabled={props.disabled}
-      onPress={props.onPress}
-    >
-      <View className="min-w-0 flex-1 gap-1">
-        <Text
-          className={
-            Platform.OS === "android" ? "text-base text-foreground" : "text-lg text-foreground"
-          }
-        >
-          {props.label}
-        </Text>
-        <Text className="text-sm leading-normal text-foreground-muted">{props.description}</Text>
-      </View>
-      {props.selected ? (
-        <SymbolView
-          name="checkmark"
-          size={18}
-          tintColorClassName="accent-icon"
-          type="monochrome"
-          weight="semibold"
-        />
-      ) : null}
-    </Pressable>
-  );
-}
-
 function MixedValuesLabel(props: { readonly projectSelected: boolean }) {
   return (
     <Text
@@ -433,21 +392,21 @@ function FanoutSwitchRow(props: {
   }
 
   return (
-    <View className="flex-row items-center gap-4 p-4">
-      <SymbolView name={props.icon} size={22} tintColorClassName="accent-icon" />
-      <View className="min-w-0 flex-1 gap-1">
-        <Text className="text-lg text-foreground">{props.label}</Text>
-        <Text className="text-sm text-foreground-muted">{props.subtitle}</Text>
-      </View>
+    <SettingsControlRow
+      disabled={props.disabled}
+      icon={props.icon}
+      label={props.label}
+      subtitle={props.subtitle}
+    >
       <Pressable
         accessibilityLabel={`Set ${props.label} on for selected environments`}
         accessibilityRole="button"
         disabled={props.disabled}
-        className="rounded-full bg-subtle px-3 py-2 active:opacity-70 disabled:opacity-40"
+        className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
         onPress={() => props.onValueChange(true)}
       >
         <Text className="text-sm font-t3-medium text-foreground">Mixed · Set on</Text>
       </Pressable>
-    </View>
+    </SettingsControlRow>
   );
 }

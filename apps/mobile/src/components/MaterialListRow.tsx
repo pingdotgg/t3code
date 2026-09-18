@@ -9,6 +9,7 @@ import { SymbolView } from "./AppSymbol";
 /** Shared geometry for Material navigation and selection lists. Group rows in one card. */
 export function MaterialListRow({
   title,
+  titleClassName,
   subtitle,
   leading,
   trailing,
@@ -16,6 +17,7 @@ export function MaterialListRow({
   ...props
 }: Omit<ComponentProps<typeof Pressable>, "children"> & {
   readonly title: string;
+  readonly titleClassName?: string;
   readonly subtitle?: string | null;
   readonly leading?: ReactNode;
   readonly trailing?: ReactNode;
@@ -38,7 +40,7 @@ export function MaterialListRow({
     >
       {leading ? <View className="size-6 items-center justify-center">{leading}</View> : null}
       <View className="min-w-0 flex-1 gap-1">
-        <AppText className="text-base text-foreground" numberOfLines={2}>
+        <AppText className={cn("text-base text-foreground", titleClassName)} numberOfLines={2}>
           {title}
         </AppText>
         {subtitle ? (

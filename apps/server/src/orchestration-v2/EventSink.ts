@@ -159,6 +159,8 @@ export interface EventSinkV2Shape {
   readonly stream: (input?: {
     readonly threadId?: ThreadId;
     readonly afterSequence?: number;
+    /** Filter before queuing live events so a busy worker retains only the events it handles. */
+    readonly eventType?: OrchestrationV2DomainEvent["type"];
     /** Bound RPC subscribers; internal workers must not drop their subscription under load. */
     readonly bounded?: boolean;
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
@@ -196,6 +198,20 @@ const baseLayer: Layer.Layer<
     const projectionStore = yield* ProjectionStoreV2;
     const turnItemPositions = yield* TurnItemPositionStoreV2;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
+    const liveEventsByType = new Map<
+      OrchestrationV2DomainEvent["type"],
+      PubSub.PubSub<OrchestrationV2StoredEvent>
+    >();
+    const publishLiveEvents = (events: ReadonlyArray<OrchestrationV2StoredEvent>) =>
+      Effect.gen(function* () {
+        yield* PubSub.publishAll(liveEvents, events);
+        for (const [type, pubsub] of liveEventsByType) {
+          yield* PubSub.publishAll(
+            pubsub,
+            events.filter((stored) => stored.event.type === type),
+          );
+        }
+      });
 
     // A user can answer after terminal normalization reads the pending request.
     // Recheck inside the write transaction so stale cleanup cannot erase answers.
@@ -324,7 +340,7 @@ const baseLayer: Layer.Layer<
         yield* effectOutbox.notifyAvailable(input.effects.length);
       }
       yield* eventStore.publishCommitted(storedEvents);
-      yield* PubSub.publishAll(liveEvents, storedEvents);
+      yield* publishLiveEvents(storedEvents);
       return storedEvents;
     });
 
@@ -378,7 +394,7 @@ const baseLayer: Layer.Layer<
         );
         if (result.committed) {
           yield* eventStore.publishCommitted(result.storedEvents);
-          yield* PubSub.publishAll(liveEvents, result.storedEvents);
+          yield* publishLiveEvents(result.storedEvents);
         }
         return result;
       },
@@ -439,7 +455,7 @@ const baseLayer: Layer.Layer<
       );
       if (result.committed) {
         yield* eventStore.publishCommitted(result.storedEvents);
-        yield* PubSub.publishAll(liveEvents, result.storedEvents);
+        yield* publishLiveEvents(result.storedEvents);
       }
       return result;
     });
@@ -517,7 +533,7 @@ const baseLayer: Layer.Layer<
       }
       if (result.committed) {
         yield* eventStore.publishCommitted(result.storedEvents);
-        yield* PubSub.publishAll(liveEvents, result.storedEvents);
+        yield* publishLiveEvents(result.storedEvents);
       }
       return {
         receipt: result.receipt,
@@ -556,6 +572,7 @@ const baseLayer: Layer.Layer<
       readonly afterSequence: number;
       readonly throughSequence: number;
       readonly threadId?: ThreadId;
+      readonly eventType?: OrchestrationV2DomainEvent["type"];
     }): Stream.Stream<OrchestrationV2StoredEvent, unknown> => {
       const pageSize = 256;
       const loop = (afterSequence: number): Stream.Stream<OrchestrationV2StoredEvent, unknown> =>
@@ -565,6 +582,7 @@ const baseLayer: Layer.Layer<
               afterSequence,
               throughSequence: input.throughSequence,
               ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+              ...(input.eventType === undefined ? {} : { eventType: input.eventType }),
               limit: pageSize,
             })
             .pipe(
@@ -587,31 +605,44 @@ const baseLayer: Layer.Layer<
 
     const stream = (input?: Parameters<EventSinkV2Shape["stream"]>[0]) => {
       const afterSequence = input?.afterSequence ?? 0;
-      const matchesThread = (stored: OrchestrationV2StoredEvent) =>
-        input?.threadId === undefined || stored.event.threadId === input.threadId;
+      const matches = (stored: OrchestrationV2StoredEvent) =>
+        (input?.threadId === undefined || stored.event.threadId === input.threadId) &&
+        (input?.eventType === undefined || stored.event.type === input.eventType);
       const replay = (throughSequence: number) =>
         catchUp({
           afterSequence,
           throughSequence,
           ...(input?.threadId === undefined ? {} : { threadId: input.threadId }),
-        });
-      if (input?.bounded === true) {
-        return replayAndBufferProjectedLiveEvents({
-          subscribe: PubSub.subscribe(liveEvents),
-          latestSequence: eventStore.latestSequence(),
-          afterSequence,
-          filter: matchesThread,
-          replay,
-          project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
-        });
-      }
+          ...(input?.eventType === undefined ? {} : { eventType: input.eventType }),
+        }).pipe(Stream.filter(matches));
       return Stream.unwrap(
         Effect.gen(function* () {
-          const subscription = yield* PubSub.subscribe(liveEvents);
+          let pubsub = liveEvents;
+          if (input?.eventType !== undefined) {
+            const existing = liveEventsByType.get(input.eventType);
+            if (existing !== undefined) {
+              pubsub = existing;
+            } else {
+              const created = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
+              pubsub = liveEventsByType.get(input.eventType) ?? created;
+              liveEventsByType.set(input.eventType, pubsub);
+            }
+          }
+          if (input?.bounded === true) {
+            return replayAndBufferProjectedLiveEvents({
+              subscribe: PubSub.subscribe(pubsub),
+              latestSequence: eventStore.latestSequence(),
+              afterSequence,
+              filter: matches,
+              replay,
+              project: (stored) => ({ ...stored, event: projectDomainEventForWire(stored.event) }),
+            });
+          }
+          const subscription = yield* PubSub.subscribe(pubsub);
           const highWater = yield* eventStore.latestSequence();
           const live = Stream.fromSubscription(subscription).pipe(
             Stream.filter((stored) => stored.sequence > Math.max(highWater, afterSequence)),
-            Stream.filter(matchesThread),
+            Stream.filter(matches),
           );
           return Stream.concat(replay(highWater), live);
         }),

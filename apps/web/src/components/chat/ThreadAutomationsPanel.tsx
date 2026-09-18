@@ -7,6 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { cn } from "../../lib/utils";
 import { relativeLabel, scheduleLabel } from "../settings/ScheduledTasksSettings";
 import { useEnvironmentQuery } from "../../state/query";
@@ -97,18 +98,11 @@ export function ThreadAutomationsPanel(props: {
   };
 
   return (
-    <section
-      aria-labelledby="thread-details-automations-heading"
-      className="border-t border-border/65 px-2 pb-2.5 pt-2"
+    <ThreadDetailsSection
+      headingId="thread-details-automations-heading"
+      title="Automations"
       data-thread-automations-panel
-    >
-      <div className="mb-1 flex min-h-8 items-center justify-between gap-2 px-2">
-        <h3
-          id="thread-details-automations-heading"
-          className="text-[11px] font-medium text-muted-foreground"
-        >
-          Automations
-        </h3>
+      actions={
         <Tooltip>
           <TooltipTrigger
             render={
@@ -116,8 +110,13 @@ export function ThreadAutomationsPanel(props: {
                 size="icon-xs"
                 variant="ghost"
                 className={THREAD_DETAILS_PANEL_ICON_ACTION_CLASS}
-                aria-label="Manage schedule tasks"
-                onClick={() => void navigate({ to: "/settings/scheduled-tasks" })}
+                aria-label="Manage scheduled tasks"
+                onClick={() =>
+                  void navigate({
+                    to: "/settings/scheduled-tasks",
+                    search: { environmentId: props.environmentId },
+                  })
+                }
               >
                 <Settings2Icon className="size-3.5" />
               </Button>
@@ -125,8 +124,8 @@ export function ThreadAutomationsPanel(props: {
           />
           <TooltipPopup>Manage schedule tasks</TooltipPopup>
         </Tooltip>
-      </div>
-
+      }
+    >
       {tasksQuery.error !== null ? (
         <p className="px-2.5 py-1.5 text-[11px] text-destructive">
           Could not load automations: {tasksQuery.error}
@@ -185,6 +184,6 @@ export function ThreadAutomationsPanel(props: {
           </li>
         ))}
       </ul>
-    </section>
+    </ThreadDetailsSection>
   );
 }

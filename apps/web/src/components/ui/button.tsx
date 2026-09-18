@@ -99,8 +99,9 @@ export { Button, buttonVariants };
 export function InlineButton({
   className,
   underline = false,
+  variant = "default",
   ...props
-}: React.ComponentProps<"button"> & { underline?: boolean }) {
+}: React.ComponentProps<"button"> & { underline?: boolean; variant?: "default" | "link" }) {
   return (
     <button
       type="button"
@@ -108,6 +109,7 @@ export function InlineButton({
       className={cn(
         "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-64",
         underline && "border-b border-transparent hover:border-current",
+        variant === "link" && "rounded-sm text-primary hover:underline",
         className,
       )}
       {...props}

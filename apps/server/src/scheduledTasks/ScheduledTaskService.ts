@@ -297,8 +297,10 @@ export const layer = Layer.effect(
     // Run-state columns (last_run_*, run_count) are intentionally absent from
     // the conflict clause: they are owned by the run transitions below, and a
     // concurrent settings save must not overwrite an in-flight increment.
-    const saveTask = (task: ScheduledTask) =>
-      sql`
+    // Check existence in the write itself so an edit cannot undo a deletion
+    // that landed after upsert loaded the previous task.
+    const saveTask = (task: ScheduledTask, requireExisting: boolean) =>
+      sql<{ task_id: string }>`
         INSERT INTO scheduled_tasks (
           task_id,
           title,
@@ -321,7 +323,7 @@ export const layer = Layer.effect(
           last_run_error,
           run_count
         )
-        VALUES (
+        SELECT
           ${task.id},
           ${task.title},
           ${task.prompt},
@@ -342,7 +344,8 @@ export const layer = Layer.effect(
           ${task.lastRunStatus},
           ${task.lastRunError},
           ${task.runCount}
-        )
+        WHERE ${requireExisting ? 0 : 1} = 1
+           OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
         DO UPDATE SET
           title = excluded.title,
@@ -358,9 +361,15 @@ export const layer = Layer.effect(
           creation_source = excluded.creation_source,
           updated_at = excluded.updated_at,
           next_run_at = excluded.next_run_at
+        RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not save schedule task.", { taskId: task.id, cause }),
+        ),
+        Effect.flatMap((rows) =>
+          rows.length > 0
+            ? Effect.void
+            : taskError("Schedule task not found.", { taskId: task.id }),
         ),
       );
 
@@ -764,7 +773,7 @@ export const layer = Layer.effect(
           lastRunError: existingTask?.lastRunError ?? null,
           runCount: existingTask?.runCount ?? 0,
         };
-        yield* saveTask(task);
+        yield* saveTask(task, input.requireExisting === true);
         yield* notifyChanged;
         return { task };
       });

@@ -1,19 +1,16 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
-import { SymbolView } from "../../components/AppSymbol";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
-import { Platform, View } from "react-native";
+import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
-import { ConnectionEnvironmentRow } from "../connection/ConnectionEnvironmentRow";
+import { LocalEnvironmentList } from "../connection/LocalEnvironmentList";
 import { GitHubRoutingSettings } from "../connection/GitHubRoutingSettings";
 import { splitEnvironmentSections } from "../connection/environmentSections";
-import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import {
@@ -45,7 +42,6 @@ export function SettingsEnvironmentsRouteScreen() {
   const connectedCloudEnvironments = SHOWCASE_ENABLED
     ? SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS
     : environmentSections.connectedCloudEnvironments;
-  const hasLocalEnvironments = localEnvironments.length > 0;
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const headerIconColor = useUniwindTheme()["--color-icon"];
 
@@ -118,42 +114,15 @@ export function SettingsEnvironmentsRouteScreen() {
           paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
       >
-        {hasLocalEnvironments ? (
-          <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
-            {localEnvironments.map((environment, index) => (
-              <View
-                key={environment.environmentId}
-                collapsable={false}
-                className={cn(index !== 0 && "border-t border-border")}
-              >
-                <ConnectionEnvironmentRow
-                  environment={environment}
-                  expanded={expandedId === environment.environmentId}
-                  onToggle={() => handleToggle(environment.environmentId)}
-                  onReconnect={onReconnectEnvironment}
-                  onRemove={onRemoveEnvironmentPress}
-                  onSetEnabled={onSetEnvironmentEnabled}
-                  onUpdate={handleUpdateEnvironment}
-                />
-              </View>
-            ))}
-          </View>
-        ) : (
-          <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card px-6 py-8">
-            <View className="h-12 w-12 items-center justify-center rounded-[16px] bg-subtle">
-              <SymbolView
-                name="point.3.connected.trianglepath.dotted"
-                size={20}
-                tintColorClassName={"accent-icon-muted"}
-                type="monochrome"
-              />
-            </View>
-            <Text className="text-center text-sm leading-normal text-foreground-muted">
-              No environments connected yet.{"\n"}Tap{" "}
-              <Text className="font-t3-bold text-foreground">+</Text> to add one.
-            </Text>
-          </View>
-        )}
+        <LocalEnvironmentList
+          environments={localEnvironments}
+          expandedId={expandedId}
+          onToggle={handleToggle}
+          onReconnect={onReconnectEnvironment}
+          onRemove={onRemoveEnvironmentPress}
+          onSetEnabled={onSetEnvironmentEnabled}
+          onUpdate={handleUpdateEnvironment}
+        />
 
         {/* Always mounted: already-connected relay environments must stay
             visible (and removable) even when cloud config is missing or the

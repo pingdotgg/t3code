@@ -550,6 +550,101 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
       ),
   );
 
+  it.effect("filters worker replay and live queues without losing matching events", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const sink = yield* EventSinkV2;
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        const thread = makeThread(ThreadId.make("thread:filtered-worker"), now);
+        const other = makeThread(ThreadId.make("thread:filtered-worker-other"), now);
+        const run: OrchestrationV2Run = {
+          id: RunId.make("run:filtered-worker"),
+          threadId: thread.id,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:filtered-worker"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          queuePosition: null,
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        const runEvent = (id: string, payload: OrchestrationV2Run): OrchestrationV2DomainEvent => ({
+          id: EventId.make(id),
+          type: "run.updated",
+          threadId: payload.threadId,
+          runId: payload.id,
+          occurredAt: now,
+          payload,
+        });
+        const history = yield* sink.write({
+          events: [
+            threadCreatedEvent({ id: "event:filtered-worker:created", thread, now }),
+            threadCreatedEvent({ id: "event:filtered-worker:other", thread: other, now }),
+            runEvent("event:filtered-worker:history", run),
+            runEvent("event:filtered-worker:other-history", {
+              ...run,
+              id: RunId.make("run:filtered-worker-other"),
+              threadId: other.id,
+            }),
+          ],
+        });
+        // Unrelated payloads must be skipped in SQL, before decoding or
+        // allocating their bodies, even when a retained row is unreadable.
+        const original = yield* sql<{ readonly payload_json: string }>`
+          SELECT payload_json FROM orchestration_events
+          WHERE sequence = ${history[0]!.sequence}
+        `;
+        yield* Effect.acquireRelease(
+          sql`
+            UPDATE orchestration_events SET payload_json = 'unreadable unrelated payload'
+            WHERE sequence = ${history[0]!.sequence}
+          `,
+          () =>
+            sql`
+              UPDATE orchestration_events SET payload_json = ${original[0]!.payload_json}
+              WHERE sequence = ${history[0]!.sequence}
+            `.pipe(Effect.orDie),
+        );
+        const pull = yield* Stream.toPull(
+          sink.stream({ threadId: thread.id, eventType: "run.updated" }),
+        );
+        assert.deepEqual(
+          (yield* pull).map((stored) => stored.sequence),
+          [history[2]!.sequence],
+        );
+        // The worker is occupied with the previous batch while the thread
+        // publishes output. Its live queue must receive just run updates.
+        yield* sink.write({
+          events: Array.from({ length: LIVE_STREAM_MAX_ITEMS + 1 }, (_, index) => ({
+            id: EventId.make(`event:filtered-worker:output:${index}`),
+            type: "thread.metadata-updated" as const,
+            threadId: thread.id,
+            occurredAt: now,
+            payload: { ...thread, title: `Output ${index}` },
+          })),
+        });
+        const live = yield* sink.write({
+          events: [
+            runEvent("event:filtered-worker:live:1", { ...run, status: "interrupted" }),
+            runEvent("event:filtered-worker:live:2", { ...run, status: "failed" }),
+          ],
+        });
+        assert.deepEqual(
+          (yield* pull).map((stored) => stored.sequence),
+          live.map((stored) => stored.sequence),
+        );
+      }),
+    ),
+  );
+
   it.effect("paginates catch-up beyond the event-store read limit", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
