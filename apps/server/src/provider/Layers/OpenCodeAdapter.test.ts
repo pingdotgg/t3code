@@ -8031,4 +8031,76 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         yield* adapter.stopSession(threadId);
       }),
   );
+
+  it.effect(
+    "still warns and schedules recovery when a timed-out prompt's cleanup abort also times out",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-prompt-timeout-abort-timeout");
+        const promptStarted = promiseWithResolvers<void>();
+        const abortStarted = promiseWithResolvers<void>();
+        const abortRelease = promiseWithResolvers<void>();
+        runtimeMock.state.autoPromptEcho = false;
+        runtimeMock.state.promptAsyncImplementation = () => {
+          promptStarted.resolve(undefined);
+          return new Promise<void>(() => {});
+        };
+        runtimeMock.state.abortImplementation = async () => {
+          abortStarted.resolve(undefined);
+          await abortRelease.promise;
+        };
+        const warningFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId && event.type === "runtime.warning"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const sendFiber = yield* adapter
+          .sendTurn({
+            threadId,
+            input: "This prompt never gets a response",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("opencode"),
+              "opencode/kimi-k3",
+            ),
+          })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Effect.promise(() => promptStarted.promise);
+
+        // The prompt times out, its cleanup abort hangs, and the abort's own
+        // timeout fires. The warning must carry the timeout, not a crash.
+        yield* advanceTestClock(10_000);
+        yield* Effect.promise(() => abortStarted.promise);
+        yield* advanceTestClock(1_000);
+
+        const warning = Option.getOrThrow(
+          yield* Fiber.join(warningFiber).pipe(Effect.timeout("1 second")),
+        );
+        NodeAssert.equal(warning.type, "runtime.warning");
+        if (warning.type !== "runtime.warning") return;
+        NodeAssert.equal(
+          warning.payload.message,
+          "OpenCode prompt submission failed and its cleanup abort did not complete.",
+        );
+        const detail = warning.payload.detail;
+        NodeAssert.equal(typeof detail, "string");
+        if (typeof detail !== "string") return;
+        NodeAssert.equal(detail, "Operation timed out after '1s'");
+
+        // Recovery polls OpenCode for the prompt's message before giving up.
+        yield* advanceTestClock(1_000);
+        NodeAssert.ok(runtimeMock.state.messageCalls.length >= 1);
+
+        const sendResult = yield* Fiber.join(sendFiber);
+        NodeAssert.equal(Exit.isFailure(sendResult), true);
+        abortRelease.resolve(undefined);
+        runtimeMock.state.abortImplementation = null;
+        yield* adapter.stopSession(threadId);
+      }),
+  );
 });
