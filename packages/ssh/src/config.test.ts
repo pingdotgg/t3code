@@ -97,6 +97,33 @@ describe("ssh config", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("discovers hosts through quoted and escaped Include paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      yield* fs.makeDirectory(sshDir);
+      const files = ["team space.conf", "team#hash.conf", "team=equals.conf", "escaped space.conf"];
+      for (const [index, file] of files.entries()) {
+        yield* fs.writeFileString(path.join(sshDir, file), `Host target-${index}\n`);
+      }
+      yield* fs.writeFileString(
+        path.join(sshDir, "config"),
+        [
+          "Include=\"team space.conf\" 'team#hash.conf' team=equals.conf escaped\\ space.conf # ignored.conf",
+          'Host "quoted-host" # ignored-host',
+          'Include "unterminated.conf',
+        ].join("\n"),
+      );
+      const hosts = yield* discoverSshHosts({ homeDir });
+      assert.deepEqual(
+        hosts.map((host) => host.alias),
+        ["quoted-host", "target-0", "target-1", "target-2", "target-3"],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("parses known_hosts entries without returning hashed hosts", () =>
     Effect.sync(() => {
       assert.deepEqual(
