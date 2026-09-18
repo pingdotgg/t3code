@@ -447,6 +447,24 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("opens workspace-root links as the singleton files explorer", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "README.md");
+    store.openFile(refA, ".");
+    store.openFile(refA, ".");
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.activeSurfaceId).toBe("files");
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["file:README.md", "files"]);
+    store.closeSurface(refA, "files");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).activeSurfaceId,
+    ).toBe("file:README.md");
+    store.openFile(refA, ".");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).activeSurfaceId,
+    ).toBe("files");
+  });
+
   it("replaces the standalone explorer with peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
