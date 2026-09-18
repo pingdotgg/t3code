@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as P from "effect/Predicate";
+import * as Result from "effect/Result";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import * as NodeURL from "node:url";
 
@@ -265,8 +266,35 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
       return { client, url, external: true, version } satisfies OpenCode2Connection;
     });
 
-  const connectEnsuredBackgroundService = (binaryPath: string | undefined) =>
+  const connectBackgroundService = (binaryPath: string | undefined) =>
     Effect.gen(function* () {
+      // A registered v1 service is skipped here so `ensure` below replaces it
+      // with a v2 one instead of this adapter adopting it.
+      const discovered = yield* OpenCodeLocalService.discover({
+        version: isOpenCode2Version,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.mapError((cause) =>
+          ensureRuntimeError("connect", "Failed to read the local service registration.", cause),
+        ),
+      );
+      if (discovered) {
+        const headers = discovered.auth
+          ? { authorization: basicAuthHeader(discovered.auth.username, discovered.auth.password) }
+          : {};
+        const client = yield* clientFor(discovered.url, headers);
+        const probe = yield* Effect.result(probeConnection(client));
+        if (Result.isSuccess(probe)) {
+          return {
+            client,
+            url: discovered.url,
+            external: false,
+            version: probe.success,
+          } satisfies OpenCode2Connection;
+        }
+        // The service may have stopped after discovery's own health check.
+        // Let ensure recover it, then validate the replacement below.
+      }
       const command = openCode2ServiceCommand(binaryPath);
       const endpoint = yield* OpenCodeLocalService.ensure({
         version: isOpenCode2Version,
@@ -290,41 +318,6 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
         external: false,
         version,
       } satisfies OpenCode2Connection;
-    });
-
-  const connectBackgroundService = (binaryPath: string | undefined) =>
-    Effect.gen(function* () {
-      // A registered v1 service is skipped here so `ensure` below replaces it
-      // with a v2 one instead of this adapter adopting it.
-      const discovered = yield* OpenCodeLocalService.discover({
-        version: isOpenCode2Version,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.mapError((cause) =>
-          ensureRuntimeError("connect", "Failed to read the local service registration.", cause),
-        ),
-      );
-      if (discovered) {
-        const headers = discovered.auth
-          ? { authorization: basicAuthHeader(discovered.auth.username, discovered.auth.password) }
-          : {};
-        const client = yield* clientFor(discovered.url, headers);
-        return yield* Effect.gen(function* () {
-          const version = yield* probeConnection(client);
-          return {
-            client,
-            url: discovered.url,
-            external: false,
-            version,
-          } satisfies OpenCode2Connection;
-        }).pipe(
-          Effect.matchEffect({
-            onFailure: () => connectEnsuredBackgroundService(binaryPath),
-            onSuccess: Effect.succeed,
-          }),
-        );
-      }
-      return yield* connectEnsuredBackgroundService(binaryPath);
     });
 
   const connect: OpenCode2Runtime["Service"]["connect"] = (input) =>

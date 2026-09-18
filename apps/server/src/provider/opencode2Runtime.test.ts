@@ -1,7 +1,8 @@
 import * as NodeAssert from "node:assert/strict";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
+import { it, vi } from "@effect/vitest";
+import { Service as OpenCodeLocalService } from "@opencode/client/effect/service";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -63,6 +64,57 @@ const connectWithRequestLog = (serverUrl: string, healthBody?: Record<string, un
     );
     return { exit, requestedUrls: yield* Ref.get(requestedUrls) };
   });
+
+it.effect("recovers when the discovered service fails before the second health probe", () =>
+  Effect.gen(function* () {
+    const discover = vi
+      .spyOn(OpenCodeLocalService, "discover")
+      .mockReturnValue(Effect.succeed({ url: "http://127.0.0.1:49374", auth: undefined }));
+    const ensure = vi
+      .spyOn(OpenCodeLocalService, "ensure")
+      .mockReturnValue(Effect.succeed({ url: "http://127.0.0.1:49375" }));
+    const requestedUrls: string[] = [];
+    const httpClient = HttpClient.make((request) => {
+      requestedUrls.push(request.url);
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          request.url.startsWith("http://127.0.0.1:49374/")
+            ? new Response("Unavailable", { status: 503 })
+            : Response.json(HEALTH_BODY),
+        ),
+      );
+    });
+    yield* Effect.gen(function* () {
+      const runtime = yield* OpenCode2Runtime;
+      const connection = yield* runtime.connect({ binaryPath: "/opt/opencode2" });
+      NodeAssert.equal(connection.url, "http://127.0.0.1:49375");
+      NodeAssert.equal(connection.version, "2.0.8");
+      NodeAssert.deepEqual(requestedUrls, [
+        "http://127.0.0.1:49374/api/info",
+        "http://127.0.0.1:49375/api/info",
+      ]);
+      NodeAssert.deepEqual(ensure.mock.calls[0]?.[0]?.command, [
+        "/opt/opencode2",
+        "serve",
+        "--service",
+      ]);
+    }).pipe(
+      Effect.provide(
+        OpenCode2RuntimeLive.pipe(
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, httpClient)),
+          Layer.provide(NodeServices.layer),
+        ),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          discover.mockRestore();
+          ensure.mockRestore();
+        }),
+      ),
+    );
+  }),
+);
 
 it.effect("probes an external server at its configured URL", () =>
   Effect.gen(function* () {
