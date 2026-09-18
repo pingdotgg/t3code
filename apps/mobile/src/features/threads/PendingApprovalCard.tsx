@@ -1,9 +1,10 @@
+import { RequestActionButton } from "./RequestActionButton";
 import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderApprovalOption,
 } from "@t3tools/contracts";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
@@ -47,30 +48,19 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       ) : null}
       <View className="flex-row flex-wrap gap-2.5">
         {options.map((option) => (
-          <Pressable
+          <RequestActionButton
             key={option.decision}
-            className={`items-center justify-center rounded-[14px] px-3.5 py-3 ${
+            label={option.label}
+            tone={
               option.decision === "accept"
-                ? "bg-primary"
+                ? "primary"
                 : option.decision === "decline"
-                  ? "bg-danger"
-                  : "bg-subtle-strong"
-            }`}
+                  ? "danger"
+                  : "secondary"
+            }
             disabled={props.respondingApprovalId === props.approval.requestId}
             onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
-          >
-            <Text
-              className={`text-sm ${
-                option.decision === "accept"
-                  ? "font-t3-extrabold text-primary-foreground"
-                  : option.decision === "decline"
-                    ? "font-t3-bold text-danger-foreground"
-                    : "font-t3-bold text-foreground"
-              }`}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
+          />
         ))}
       </View>
     </View>

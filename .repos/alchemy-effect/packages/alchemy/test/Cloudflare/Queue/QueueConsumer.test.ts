@@ -277,7 +277,7 @@ test.provider("adopts existing consumer after local state loss", (stack) =>
       const state = yield* yield* State;
       yield* state.delete({
         stack: stack.name,
-        stage: "test",
+        stage: stack.stage,
         fqn: "Consumer",
       });
     }).pipe(Effect.provide(stack.state));
@@ -354,7 +354,7 @@ test.provider(
         const state = yield* yield* State;
         yield* state.delete({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "Consumer",
         });
       }).pipe(Effect.provide(stack.state));
@@ -448,7 +448,7 @@ test.provider(
         const state = yield* yield* State;
         yield* state.delete({
           stack: stack.name,
-          stage: "test",
+          stage: stack.stage,
           fqn: "Consumer",
         });
       }).pipe(Effect.provide(stack.state));
@@ -520,7 +520,7 @@ test.provider("suppresses deletion of a dev-only consumer", (stack) =>
       const state = yield* yield* State;
       yield* state.set({
         stack: stack.name,
-        stage: "test",
+        stage: stack.stage,
         fqn: "Consumer",
         value: {
           kind: "resource",
@@ -556,7 +556,7 @@ test.provider("suppresses deletion of a dev-only consumer", (stack) =>
       const state = yield* yield* State;
       return yield* state.get({
         stack: stack.name,
-        stage: "test",
+        stage: stack.stage,
         fqn: "Consumer",
       });
     });
@@ -608,12 +608,12 @@ test.provider("promotes a dev consumer to a live consumer on deploy", (stack) =>
       const state = yield* yield* State;
       const currentConsumer = (yield* state.get({
         stack: stack.name,
-        stage: "test",
+        stage: stack.stage,
         fqn: "Consumer",
       })) as CreatedResourceState;
       yield* state.set({
         stack: stack.name,
-        stage: "test",
+        stage: stack.stage,
         fqn: "Consumer",
         value: {
           ...currentConsumer,

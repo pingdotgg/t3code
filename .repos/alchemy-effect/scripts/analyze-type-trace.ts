@@ -46,7 +46,7 @@ const BUCKETS = [
   "packages/alchemy/src/AWS",
   "packages/alchemy/src/Cloudflare",
   "packages/alchemy/src (core)",
-  "distilled/*/lib",
+  "submodules/distilled/*/lib",
   "node_modules/effect",
   "other node_modules",
   "typescript libs",
@@ -72,7 +72,9 @@ function bucketIdOf(p: string | undefined): number {
 // segment, purely for display.
 const rel = (p: string | undefined) => {
   if (!p) return "?";
-  const m = p.match(/(?:packages|distilled|node_modules|examples|scripts)\/.*$/);
+  const m = p.match(
+    /(?:packages|submodules|distilled|node_modules|examples|scripts)\/.*$/,
+  );
   return m ? m[0] : p;
 };
 

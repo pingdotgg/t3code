@@ -71,6 +71,35 @@ describe("Formatter", () => {
       strictEqual(format({ toString: () => "custom" }), `custom`)
     })
 
+    it("handles throwing property getters", () => {
+      const value = Object.defineProperty({ safe: 1 }, "unsafe", {
+        enumerable: true,
+        get() {
+          throw new Error("getter defect")
+        }
+      })
+
+      strictEqual(format(value), `{"safe":1,"unsafe":"[property access threw]"}`)
+    })
+
+    it("handles hostile Proxies", () => {
+      const { proxy, revoke } = Proxy.revocable({}, {})
+      revoke()
+
+      strictEqual(format(proxy), `[inspection threw]`)
+    })
+
+    it("does not expose a value when redaction throws", () => {
+      const value = {
+        toString: () => "secret",
+        [Redactable.symbolRedactable]() {
+          throw new Error("redaction defect")
+        }
+      }
+
+      strictEqual(format(value), `[inspection threw]`)
+    })
+
     it("array", () => {
       strictEqual(format([1, 2, 3n]), `[1,2,3n]`)
     })
@@ -134,6 +163,13 @@ describe("Formatter", () => {
     it("Error", () => {
       strictEqual(format(new Error("a")), `Error: a`)
       strictEqual(format(new Error("a", { cause: "b" })), `Error: a (cause: "b")`)
+      strictEqual(format(new Error("a", { cause: 0 })), `Error: a (cause: 0)`)
+      strictEqual(format(new Error("a", { cause: false })), `Error: a (cause: false)`)
+      strictEqual(format(new Error("a", { cause: "" })), `Error: a (cause: "")`)
+      strictEqual(format(new Error("a", { cause: null })), `Error: a (cause: null)`)
+      strictEqual(format(new Error("a", { cause: 0n })), `Error: a (cause: 0n)`)
+      strictEqual(format(new Error("a", { cause: Number.NaN })), `Error: a (cause: NaN)`)
+      strictEqual(format(new Error("a", { cause: undefined })), `Error: a`)
     })
 
     it("Date", () => {
@@ -468,7 +504,7 @@ describe("Formatter", () => {
     it("allows user-provided transformations to report their input", () => {
       const schema = Schema.String.pipe(
         Schema.decode({
-          decode: SchemaGetter.transformOrFail((input, options) =>
+          decode: SchemaGetter.transformEffect((input, options) =>
             Effect.fail(new SchemaIssue.InvalidValue(undefined, input, options))
           ),
           encode: SchemaGetter.passthrough()
@@ -534,26 +570,29 @@ describe("Formatter", () => {
       strictEqual(formatIssue(oneOf.failure), `Expected exactly one member to match the input "a"`)
     })
 
-    it("respects annotated parse options", () => {
-      const enabled = Schema.String.annotate({ parseOptions: { reportInput: true } })
-      const enabledResult = SchemaParser.decodeUnknownResult(enabled)(1, { reportInput: false })
+    it("runtime reportInput overrides preset options and reaches nested schemas", () => {
+      const enabledResult = SchemaParser.decodeUnknownResult(Schema.String, { reportInput: false })(1, {
+        reportInput: true
+      })
       assertTrue(Result.isFailure(enabledResult))
       strictEqual(enabledResult.failure.input, 1)
 
-      const disabled = Schema.String.annotate({ parseOptions: { reportInput: false } })
-      const disabledResult = SchemaParser.decodeUnknownResult(disabled)(1, { reportInput: true })
+      const disabledResult = SchemaParser.decodeUnknownResult(Schema.String, { reportInput: true })(1, {
+        reportInput: false
+      })
       assertTrue(Result.isFailure(disabledResult))
       assertFalse(SchemaIssue.hasInput(disabledResult.failure))
 
-      const nestedDisabled = Schema.Struct({ value: disabled })
+      const nested = Schema.Struct({ value: Schema.String })
       const nestedInput = { value: 1 }
-      const nestedResult = SchemaParser.decodeUnknownResult(nestedDisabled)(nestedInput, { reportInput: true })
+      const nestedResult = SchemaParser.decodeUnknownResult(nested)(nestedInput, { reportInput: true })
       assertTrue(Result.isFailure(nestedResult))
       assertTrue(nestedResult.failure._tag === "Composite")
       strictEqual(nestedResult.failure.input, nestedInput)
       const pointer = nestedResult.failure.issues[0]
       assertTrue(pointer._tag === "Pointer")
-      assertFalse(SchemaIssue.hasInput(pointer.issue))
+      assertTrue(SchemaIssue.hasInput(pointer.issue))
+      strictEqual(pointer.issue.input, 1)
     })
 
     it.effect("distinguishes present undefined from absent input in forbidden", () =>

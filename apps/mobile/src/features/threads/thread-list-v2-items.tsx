@@ -24,6 +24,7 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderInstanceIcon } from "../../components/ProviderIcon";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import { cn } from "../../lib/cn";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
@@ -31,6 +32,7 @@ import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
+  THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
@@ -95,96 +97,130 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
 /** Rounded-row radius shared with the v1 sidebar rows. */
 const SIDEBAR_V2_ROW_RADIUS = 12;
 
+function ThreadListV2Section(props: {
+  readonly label: string;
+  readonly pane?: "screen" | "sidebar";
+  readonly tone?: "default" | "snoozed";
+  readonly disclosure?: {
+    readonly expanded: boolean;
+    readonly disabled?: boolean;
+    readonly onToggle: () => void;
+    readonly accessibilityLabel: string;
+    readonly accessibilityHint: string;
+  };
+}) {
+  const snoozed = props.tone === "snoozed";
+  const className = cn(
+    "mb-1.5 mt-4 flex-row items-center gap-2.5",
+    props.pane === "sidebar" ? "px-3" : "px-5",
+  );
+  const content = (
+    <>
+      <Text
+        className={cn(
+          "text-xs font-t3-medium",
+          snoozed ? "text-foreground-secondary" : "text-foreground-tertiary",
+        )}
+      >
+        {props.label}
+      </Text>
+      <View className={cn("h-px flex-1", snoozed ? "bg-primary/20" : "bg-border")} />
+      {props.disclosure ? (
+        <SymbolView
+          name="chevron.down"
+          size={10}
+          tintColorClassName={snoozed ? "accent-icon-muted" : "accent-foreground-muted"}
+          type="monochrome"
+          style={{ transform: [{ rotate: props.disclosure.expanded ? "180deg" : "0deg" }] }}
+        />
+      ) : null}
+    </>
+  );
+
+  return props.disclosure ? (
+    <Pressable
+      accessibilityHint={props.disclosure.accessibilityHint}
+      accessibilityLabel={props.disclosure.accessibilityLabel}
+      accessibilityRole="button"
+      accessibilityState={{
+        disabled: props.disclosure.disabled,
+        expanded: props.disclosure.expanded,
+      }}
+      className={className}
+      disabled={props.disclosure.disabled}
+      onPress={props.disclosure.onToggle}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      {content}
+    </Pressable>
+  ) : (
+    <View className={className}>{content}</View>
+  );
+}
+
 /** Section label + rule: the only structure in an otherwise flat list. */
 export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
 }) {
-  return (
-    <View
-      className={cn(
-        "mb-1.5 mt-4 flex-row items-center gap-2.5",
-        props.pane === "sidebar" ? "px-3" : "px-5",
-      )}
-    >
-      <Text className="text-xs font-t3-medium text-foreground-tertiary">{props.label}</Text>
-      <View className="h-px flex-1 bg-border" />
-    </View>
-  );
+  return <ThreadListV2Section {...props} />;
 });
 
-export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(props: {
+type ThreadListV2ShelfHeaderProps = {
   readonly count: number;
   readonly disabled?: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
-}) {
+};
+
+function ThreadListV2ShelfHeader(
+  props: ThreadListV2ShelfHeaderProps & { readonly kind: "snoozed" | "settled" },
+) {
+  const label = props.kind === "snoozed" ? "Snoozed" : "Settled";
   return (
-    <Pressable
-      accessibilityHint={
-        props.expanded ? "Collapses the snoozed threads." : "Expands the snoozed threads."
-      }
-      accessibilityLabel={props.count === 1 ? "1 snoozed thread" : `${props.count} snoozed threads`}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
-      className={cn(
-        "mb-1.5 mt-4 flex-row items-center gap-2.5",
-        props.pane === "sidebar" ? "px-3" : "px-5",
-      )}
-      disabled={props.disabled}
-      onPress={props.onToggle}
-      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-    >
-      <Text className="text-xs font-t3-medium text-foreground-secondary">
-        {props.expanded ? "Snoozed" : `Snoozed (${props.count})`}
-      </Text>
-      <View className="h-px flex-1 bg-primary/20" />
-      <SymbolView
-        name="chevron.down"
-        size={10}
-        tintColorClassName="accent-icon-muted"
-        type="monochrome"
-        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
-      />
-    </Pressable>
+    <ThreadListV2Section
+      label={props.expanded ? label : `${label} (${props.count})`}
+      pane={props.pane}
+      tone={props.kind === "snoozed" ? "snoozed" : "default"}
+      disclosure={{
+        expanded: props.expanded,
+        disabled: props.disabled,
+        onToggle: props.onToggle,
+        accessibilityLabel: `${props.count} ${props.kind} ${props.count === 1 ? "thread" : "threads"}`,
+        accessibilityHint: `${props.expanded ? "Collapses" : "Expands"} the ${props.kind} threads.`,
+      }}
+    />
   );
+}
+
+export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="snoozed" />;
 });
 
-export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(props: {
-  readonly count: number;
-  readonly disabled?: boolean;
-  readonly expanded: boolean;
-  readonly onToggle: () => void;
-  readonly pane?: "screen" | "sidebar";
+export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="settled" />;
+});
+
+export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
+  readonly hiddenCount: number;
+  readonly onPress: () => void;
 }) {
   return (
     <Pressable
-      accessibilityHint={
-        props.expanded ? "Collapses the settled threads." : "Expands the settled threads."
-      }
-      accessibilityLabel={props.count === 1 ? "1 settled thread" : `${props.count} settled threads`}
       accessibilityRole="button"
-      accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
-      className={cn(
-        "mb-1.5 mt-4 flex-row items-center gap-2.5",
-        props.pane === "sidebar" ? "px-3" : "px-5",
-      )}
-      disabled={props.disabled}
-      onPress={props.onToggle}
+      accessibilityLabel={`Show ${Math.min(props.hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
+      onPress={props.onPress}
+      className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
-      <Text className="text-xs font-t3-medium text-foreground-tertiary">
-        {props.expanded ? "Settled" : `Settled (${props.count})`}
+      <Text className="text-xs font-t3-medium text-foreground-muted">
+        Show more ({props.hiddenCount} settled hidden)
       </Text>
-      <View className="h-px flex-1 bg-border" />
-      <SymbolView
-        name="chevron.down"
-        size={10}
-        tintColorClassName="accent-foreground-muted"
-        type="monochrome"
-        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
-      />
     </Pressable>
   );
 });
@@ -635,6 +671,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
+      if (nativeEvent.event === "copy-thread-id") {
+        copyTextWithHaptic(thread.id, { target: "thread-id" });
+      }
       if (nativeEvent.event === "delete") handleDelete();
       if (nativeEvent.event === "snooze:custom") {
         setCustomSnoozeOpen(true);
@@ -1130,6 +1169,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                     },
                   ]
                 : []),
+              { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
               ...(snoozedRow
                 ? snoozedMenuActions
                 : !props.settlementSupported

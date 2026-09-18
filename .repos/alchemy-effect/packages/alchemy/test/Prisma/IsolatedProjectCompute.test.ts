@@ -1,5 +1,6 @@
 import * as Prisma from "@/Prisma";
 import * as Test from "@/Test/Alchemy";
+import { getProject, getService } from "@distilled.cloud/prisma/management";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
@@ -58,6 +59,18 @@ test.provider.skipIf(!runLive)(
           Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 30 }),
         );
         expect(health).toEqual({ ok: true });
+
+        yield* stack.destroy();
+        const projectGone = yield* getProject({ id: app.projectId }).pipe(
+          Effect.as(false),
+          Effect.catchTag("NotFound", () => Effect.succeed(true)),
+        );
+        const appGone = yield* getService({ serviceId: app.appId }).pipe(
+          Effect.as(false),
+          Effect.catchTag("NotFound", () => Effect.succeed(true)),
+        );
+        expect(projectGone).toBe(true);
+        expect(appGone).toBe(true);
       } finally {
         yield* stack.destroy().pipe(Effect.ignore);
         yield* removeIsolatedProject(project);
