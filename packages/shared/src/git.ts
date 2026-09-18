@@ -246,8 +246,7 @@ export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | nu
       if (
         !["https:", "ssh:", "git:"].includes(remote.protocol) ||
         remote.hostname.toLowerCase() !== "github.com" ||
-        remote.search ||
-        remote.hash ||
+        /[?#]/.test(trimmed) ||
         /\s/.test(trimmed)
       ) {
         return null;

@@ -172,6 +172,8 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
     "https://github.com/T3Tools/T3Code/extra",
     "https://github.com/T3Tools/T3Code.git?other=repo",
     "https://github.com/T3Tools/T3Code.git#fragment",
+    "https://github.com/T3Tools/T3Code.git?",
+    "https://github.com/T3Tools/T3Code.git#",
     "https://github.com/T3Tools/T3 Code.git",
     "ssh://git@github.com:invalid/T3Tools/T3Code.git",
   ])("does not infer a GitHub repository from %s", (remote) => {
