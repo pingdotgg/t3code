@@ -121,13 +121,10 @@ describe("scheduleFromDraft", () => {
     },
   );
 
-  it("rejects malformed times and sub-minute or fractional intervals", () => {
+  it("rejects malformed times and sub-minute intervals", () => {
     expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, timeOfDay: "25:00" })).toBeNull();
     expect(
       scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes: "0" }),
-    ).toBeNull();
-    expect(
-      scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes: "1.5" }),
     ).toBeNull();
     expect(
       scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes: "15" }),
@@ -136,4 +133,26 @@ describe("scheduleFromDraft", () => {
       everyMs: 900_000,
     });
   });
+
+  it.each([
+    ["1.5", 90_000],
+    ["1000001", 60_000_060_000],
+    [String(60_001 / 60_000), 60_001],
+    [String(65_000 / 60_000), 65_000],
+    [String(123_456 / 60_000), 123_456],
+  ])("preserves a valid %s minute interval when saving", (intervalMinutes, everyMs) => {
+    expect(scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes })).toEqual({
+      type: "interval",
+      everyMs,
+    });
+  });
+
+  it.each(["NaN", "Infinity", "9007199254740991", "0.5"])(
+    "rejects intervals that cannot be written as safe whole milliseconds: %s",
+    (intervalMinutes) => {
+      expect(
+        scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "interval", intervalMinutes }),
+      ).toBeNull();
+    },
+  );
 });

@@ -124,7 +124,8 @@ function FormField(props: {
   readonly label: string;
   readonly value: string;
   readonly onChange: (value: string) => void;
-  readonly keyboardType?: "numeric";
+  readonly keyboardType?: "decimal-pad";
+  readonly disabled?: boolean;
   readonly placeholder?: string;
   readonly borderTop?: boolean;
 }) {
@@ -138,6 +139,7 @@ function FormField(props: {
       <RNTextInput
         accessibilityLabel={props.label}
         value={props.value}
+        readOnly={props.disabled}
         onChangeText={props.onChange}
         textAlignVertical="center"
         keyboardType={props.keyboardType}
@@ -488,7 +490,9 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
                 voiceInput={voiceInput}
               />
             }
-            setDraft={(draft) => setEditor({ ...editor, draft })}
+            setDraft={(draft) => {
+              if (!saving) setEditor({ ...editor, draft });
+            }}
             onSaved={() => setSaved(true)}
             onChangeEnvironment={(target) => {
               if (target.environmentId === editor.environmentId) return;
@@ -588,7 +592,7 @@ function TaskForm({
       return;
     }
     const input: ScheduledTaskUpsertInput = {
-      ...(draft.task ? { id: draft.task.id } : {}),
+      ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
       title: draft.title.trim(),
       prompt: draft.prompt.trim(),
       projectId: draft.projectId,
@@ -621,7 +625,12 @@ function TaskForm({
   };
 
   return (
-    <View className="gap-5">
+    <View
+      className="gap-5"
+      pointerEvents={saving ? "none" : "auto"}
+      accessibilityElementsHidden={saving}
+      importantForAccessibility={saving ? "no-hide-descendants" : "auto"}
+    >
       {taskMissing ? (
         <Text className="px-1 text-base text-danger-foreground">This task no longer exists.</Text>
       ) : null}
@@ -662,6 +671,7 @@ function TaskForm({
       <SettingsSection title="Task">
         <FormField
           label="Name"
+          disabled={saving}
           value={draft.title}
           placeholder="Check for issues"
           onChange={(title) => setDraft({ ...draft, title })}
@@ -751,6 +761,7 @@ function TaskForm({
         {draft.workspace === "existing_worktree" ? (
           <FormField
             label="Checkout path"
+            disabled={saving}
             value={draft.checkoutPath}
             borderTop
             onChange={(checkoutPath) => setDraft({ ...draft, checkoutPath })}
@@ -843,15 +854,23 @@ function TaskForm({
             />
           </>
         ) : (
-          <FormField
-            label="Minutes between runs"
-            value={draft.schedule.intervalMinutes}
-            keyboardType="numeric"
-            borderTop
-            onChange={(intervalMinutes) =>
-              setDraft({ ...draft, schedule: { ...draft.schedule, intervalMinutes } })
-            }
-          />
+          <>
+            <FormField
+              label="Minutes between runs"
+              value={draft.schedule.intervalMinutes}
+              keyboardType="decimal-pad"
+              disabled={saving}
+              borderTop
+              onChange={(intervalMinutes) =>
+                setDraft({ ...draft, schedule: { ...draft.schedule, intervalMinutes } })
+              }
+            />
+            {Number(draft.schedule.intervalMinutes) < 1 ? (
+              <Text className="px-4 pb-3 text-sm text-danger-foreground">
+                Intervals must be at least 1 minute. Update this interval before saving.
+              </Text>
+            ) : null}
+          </>
         )}
         <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
           <Text className="min-w-0 flex-1 text-lg text-foreground">Enabled</Text>

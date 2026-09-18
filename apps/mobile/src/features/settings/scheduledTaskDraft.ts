@@ -39,9 +39,9 @@ export function scheduleDraftForTask(task: ScheduledTask): ScheduleDraft {
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
   if (draft.mode === "interval") {
     const minutes = Number(draft.intervalMinutes);
-    return Number.isSafeInteger(minutes) && minutes >= 1 && minutes <= 1_000_000
-      ? { type: "interval", everyMs: minutes * 60_000 }
-      : null;
+    // Undo floating-point noise from displaying existing millisecond intervals as minutes.
+    const everyMs = Math.round(minutes * 60_000);
+    return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
   }
   const weekdays = [...new Set(draft.weekdays)].sort((a, b) => a - b);
   if (
