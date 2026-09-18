@@ -1,6 +1,6 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import {
@@ -12,7 +12,7 @@ import type { ThreadHeaderProps } from "./ThreadHeader.types";
 
 type NativeHeaderItems = ReadonlyArray<Record<string, unknown>>;
 
-export function ThreadHeader(props: ThreadHeaderProps) {
+export function useThreadHeaderOptions(props: ThreadHeaderProps) {
   const navigation = useNavigation();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
@@ -75,42 +75,39 @@ export function ThreadHeader(props: ThreadHeaderProps) {
     [navigation],
   );
 
-  return (
-    <>
-      <NativeStackScreenOptions
-        optionsVersion={props.gitControls.projectScripts}
-        options={{
-          headerShown: true,
-          headerTitle: props.title,
-          headerTitleStyle: props.usesNativeHeaderGlass
-            ? {
-                fontSize: 17,
-                fontWeight: "800",
-              }
-            : undefined,
-          title: props.title,
-          headerBackVisible: !layout.usesSplitView,
-          // Compact uses the NATIVE back button when a previous route exists;
-          // deep links / cold starts get an explicit Home button instead.
-          // Split view always uses its custom left items.
-          unstable_headerLeftItems: layout.usesSplitView
-            ? () => splitLeftHeaderItems
-            : canGoBack
-              ? undefined
-              : () => compactHomeHeaderItems,
-          // Search lives in the persistent sidebar, so the split header keeps
-          // the git controls on the RIGHT (no center items — center space is
-          // reserved for future breadcrumbs/status).
-          unstable_headerRightItems: () =>
-            layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
-          unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
-          contentStyle: undefined,
-        }}
-      />
-
-      {!layout.usesSplitView && !props.usesNativeHeaderGlass ? (
+  const options: AppNativeStackNavigationOptions = {
+    headerShown: true,
+    headerTitle: props.title,
+    headerTitleStyle: props.usesNativeHeaderGlass
+      ? {
+          fontSize: 17,
+          fontWeight: "800",
+        }
+      : undefined,
+    title: props.title,
+    headerBackVisible: !layout.usesSplitView,
+    // Compact uses the NATIVE back button when a previous route exists;
+    // deep links / cold starts get an explicit Home button instead.
+    // Split view always uses its custom left items.
+    unstable_headerLeftItems: layout.usesSplitView
+      ? () => splitLeftHeaderItems
+      : canGoBack
+        ? undefined
+        : () => compactHomeHeaderItems,
+    // Search lives in the persistent sidebar, so the split header keeps
+    // the git controls on the RIGHT (no center items — center space is
+    // reserved for future breadcrumbs/status).
+    unstable_headerRightItems: () =>
+      layout.usesSplitView ? threadCenterHeaderItems : compactRightHeaderItems,
+    unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
+    contentStyle: undefined,
+  };
+  return {
+    options,
+    sidebar: false,
+    fallback:
+      !layout.usesSplitView && !props.usesNativeHeaderGlass ? (
         <ThreadGitControls {...props.gitControls} showActionControls />
-      ) : null}
-    </>
-  );
+      ) : null,
+  };
 }
