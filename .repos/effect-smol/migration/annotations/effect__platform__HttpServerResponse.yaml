@@ -6,7 +6,7 @@
   note: "Now effectful and safe; use expireCookieUnsafe for synchronous throwing behavior."
 "@effect/platform/HttpServerResponse#file":
   replacement: "HttpServerResponse.file"
-  note: "Retained with updated FileSystem stream options."
+  note: "Retained; offset and bytesToRead accept ByteSize.Input, while chunkSize uses number. Path-backed responses validate ranges and clamp content length to the available bytes."
 "@effect/platform/HttpServerResponse#formData":
   replacement: "HttpServerResponse.formData"
   note: "Moved unchanged."
@@ -61,3 +61,6 @@
 "@effect/platform/HttpServerResponse#urlParams":
   replacement: "HttpServerResponse.urlParams"
   note: "Retained and widened to accept UrlParams.Input."
+"@effect/platform/HttpServerResponse#fileWeb":
+  replacement: "HttpServerResponse.fileWeb"
+  note: "Web File offset, bytesToRead, and chunkSize options use number, unlike path-backed ByteSize.Input ranges."

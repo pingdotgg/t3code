@@ -268,6 +268,28 @@ describe("HttpApiSchema", () => {
     it("defaults the response encoding to Json", () => {
       assert.strictEqual(HttpApiSchema.getResponseEncoding(WrappedUserNotFound.ast)._tag, "Json")
     })
+
+    it("uses the body defaults instead of source response metadata", () => {
+      const schema = Schema.String.pipe(
+        HttpApiSchema.status(429),
+        HttpApiSchema.asText(),
+        HttpApiSchema.encodeToWithHeaders({
+          body: Schema.String,
+          headers: { "x-note": Schema.String }
+        }, {
+          decode: ({ body }) => body,
+          encode: (body) => ({ body, headers: { "x-note": "test" } })
+        })
+      )
+
+      assert.deepStrictEqual({
+        status: HttpApiSchema.getStatusError(schema.ast),
+        encoding: HttpApiSchema.getResponseEncoding(schema.ast)
+      }, {
+        status: 500,
+        encoding: { _tag: "Json", contentType: "application/json" }
+      })
+    })
   })
 
   it("does not identify buffered schemas as stream schemas", () => {

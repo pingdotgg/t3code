@@ -1,5 +1,6 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 
 const DIFF_THEME_NAMES = {
   light: "pierre-light",
@@ -143,8 +144,18 @@ export function getRenderablePatch(
   }
 }
 
+/**
+ * What the patch called the file, as the file's own name. Git writes a name holding a tab, a
+ * newline, a quote or a backslash quoted and escaped, and the parser hands one of those back still
+ * escaped. A viewed mark, a review comment and a file's contents are all asked for by this path,
+ * and the host knows the file only under the name it really has.
+ */
+function fileDiffPath(raw: string): string {
+  return unquoteGitPatchPath(raw);
+}
+
 export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
-  return fileDiff.name ?? fileDiff.prevName ?? "";
+  return fileDiffPath(fileDiff.name ?? fileDiff.prevName ?? "");
 }
 
 /**
@@ -152,11 +163,16 @@ export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
  * path, and the hosts that resolve a diff position against both sides need both names.
  */
 export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string {
-  return fileDiff.prevName ?? fileDiff.name ?? "";
+  return fileDiffPath(fileDiff.prevName ?? fileDiff.name ?? "");
 }
 
+/**
+ * Stable across re-renders of the same file, distinct for every block in a
+ * patch. A type change (regular file to symlink) arrives as a deletion and an
+ * addition of the same path, so the change type is part of the identity.
+ */
 export function buildFileDiffIdentityKey(fileDiff: FileDiffMetadata): string {
-  return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}`;
+  return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}\u0000${fileDiff.type}`;
 }
 
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {

@@ -281,7 +281,7 @@ const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: bo
 const generateCommand = Command.make(
   "generate",
   {
-    skipDownload: Flag.boolean("skip-download").pipe(Flag.withDefault(false)),
+    skipDownload: Flag.Boolean("skip-download").pipe(Flag.withDefault(false)),
   },
   ({ skipDownload }) => generateSchemas(skipDownload),
 ).pipe(Command.withDescription("Generate Effect ACP schemas from the pinned ACP release assets."));

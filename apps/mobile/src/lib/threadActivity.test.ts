@@ -2513,7 +2513,7 @@ describe("buildThreadFeed", () => {
   });
 
   it.each(["tool", "failed-tool", "assistant", "turn", "unknown-turn"] as const)(
-    "preserves a %s boundary in expanded activity history",
+    "keeps thoughts in order across a %s in expanded activity history",
     (boundary) => {
       const turnId = TurnId.make("reasoning-boundary");
       const messages: OrchestrationThread["messages"] = [1, 3].map((second) => ({
@@ -2576,8 +2576,10 @@ describe("buildThreadFeed", () => {
         (entry) => entry.type === "message" && entry.message.role === "reasoning",
       );
       if (boundary === "failed-tool") {
-        expect(rows.filter((entry) => entry.type === "work-toggle")).toHaveLength(3);
-        expect(rows.some((entry) => entry.type === "work-toggle" && entry.hasFailure)).toBe(true);
+        // A failed call stays inside the run instead of splitting it.
+        expect(rows.filter((entry) => entry.type === "work-toggle")).toMatchObject([
+          { hasFailure: true, hiddenCount: 3 },
+        ]);
       }
       expect(reasoningRows).toEqual(
         messages.map((message) => ({

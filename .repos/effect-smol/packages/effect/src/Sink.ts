@@ -21,6 +21,7 @@ import * as Exit from "./Exit.ts"
 import type * as Filter from "./Filter.ts"
 import type { LazyArg } from "./Function.ts"
 import { constant, constFalse, constTrue, constVoid, dual, identity, pipe } from "./Function.ts"
+import * as Count from "./internal/count.ts"
 import * as internalStream from "./internal/stream.ts"
 import * as Option from "./Option.ts"
 import { type Pipeable, pipeArguments } from "./Pipeable.ts"
@@ -322,7 +323,7 @@ export const fromTransform = <In, A, E, R, L = never>(
  *   Channel.pipeTo(Sink.toChannel(Sink.sum))
  * )
  *
- * await Effect.runPromise(Channel.runDone(channel)) // => [6]
+ * await Effect.runPromise(Channel.runDrain(channel)) // => [6]
  * ```
  *
  * @category constructors
@@ -821,6 +822,10 @@ export const foldArray = <S, In, E = never, R = never>(
  *
  * **Details**
  *
+ * Finite fractional values of `max` are rounded down. If `max` is `NaN` or
+ * non-positive, the sink completes with the initial state without consuming
+ * input.
+ *
  * If the sink stops in the middle of a pulled array, the remaining elements
  * from that array are returned as leftovers.
  *
@@ -831,14 +836,17 @@ export const foldUntil = <S, In, E = never, R = never>(
   s: LazyArg<S>,
   max: number,
   f: (s: S, input: In) => Effect.Effect<S, E, R>
-): Sink<S, In, In, E, R> =>
-  fold<readonly [S, number], In, E, R>(
+): Sink<S, In, In, E, R> => {
+  const count = Count.normalize(max)
+  if (count === 0) return sync(s)
+  return fold<readonly [S, number], In, E, R>(
     () => [s(), 0],
-    (tuple) => tuple[1] < max,
-    ([output, count], input) => Effect.map(f(output, input), (s) => [s, count + 1] as const)
+    (tuple) => tuple[1] < count,
+    ([output, consumed], input) => Effect.map(f(output, input), (s) => [s, consumed + 1] as const)
   ).pipe(
     map((tuple) => tuple[0])
   )
+}
 
 /**
  * A sink that returns whether all elements satisfy the specified predicate.
@@ -1143,32 +1151,34 @@ export const mapLeftover: {
  *
  * **Details**
  *
- * If `n` is less than or equal to zero, the sink completes with an empty array.
- * If more elements are pulled than needed, the remaining elements from the same
- * array are returned as leftovers.
+ * Finite fractional values of `n` are rounded down. If `n` is `NaN` or
+ * non-positive, the sink completes with an empty array. If more elements are
+ * pulled than needed, the remaining elements from the same array are returned
+ * as leftovers.
  *
  * @category constructors
  * @since 2.0.0
  */
-export const take = <In>(n: number): Sink<Array<In>, In, In> =>
-  fromTransform((upstream) => {
+export const take = <In>(n: number): Sink<Array<In>, In, In> => {
+  const count = Count.normalize(n)
+  return fromTransform((upstream) => {
     const taken: Array<In> = []
-    if (n <= 0) {
+    if (count === 0) {
       return Effect.succeed([taken] as const)
     }
     let leftover: NonEmptyReadonlyArray<In> | undefined = undefined
     return upstream.pipe(
       Effect.flatMap((arr) => {
-        if (taken.length + arr.length <= n) {
+        if (taken.length + arr.length <= count) {
           taken.push(...arr)
-          if (taken.length === n) {
+          if (taken.length === count) {
             return Cause.done()
           }
           return Effect.void
         }
         for (let i = 0; i < arr.length; i++) {
           taken.push(arr[i])
-          if (taken.length === n) {
+          if (taken.length === count) {
             if ((i + 1) < arr.length) {
               leftover = arr.slice(i + 1) as any
             }
@@ -1181,6 +1191,7 @@ export const take = <In>(n: number): Sink<Array<In>, In, In> =>
       Pull.catchDone(() => Effect.succeed([taken, leftover] as const))
     )
   })
+}
 
 /**
  * Runs this sink until it yields a result, then uses that result to create
@@ -1236,7 +1247,12 @@ export const flatMap: {
             return upstream
           }),
           scope
-        )
+        ).pipe(Effect.map((end): End<A1, L | L1> => {
+          if (!leftover) {
+            return end
+          }
+          return [end[0], end[1] ? [...end[1], ...leftover] : leftover]
+        }))
     )
   }))
 

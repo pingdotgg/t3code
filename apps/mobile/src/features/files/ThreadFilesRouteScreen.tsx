@@ -2,7 +2,7 @@ import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/Stac
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
@@ -16,7 +16,6 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
 import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
-import { AppText as Text } from "../../components/AppText";
 import { AudioFilePreview } from "../../components/AudioFilePreview";
 import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
@@ -49,6 +48,7 @@ import {
 } from "../layout/workspace-sidebar-toolbar";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadRouteScreen } from "../threads/ThreadRouteScreen";
+import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
@@ -161,10 +161,7 @@ function FileContent(props: {
 
   if (isAudioFile) {
     return props.previewUri === null ? (
-      <View className="flex-1 items-center justify-center gap-3 bg-sheet px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">Loading file...</Text>
-      </View>
+      <FilePreviewLoading message="Loading file..." />
     ) : (
       <AudioFilePreview uri={props.previewUri} onRetry={props.onRetryPreview} />
     );
@@ -196,25 +193,15 @@ function FileContent(props: {
   }
 
   if (props.fileContents === null) {
-    return (
-      <View className="flex-1 items-center justify-center gap-3 bg-sheet px-6">
-        <ActivityIndicator />
-        <Text className="text-center text-sm text-foreground-muted">Loading file...</Text>
-      </View>
-    );
+    return <FilePreviewLoading message="Loading file..." />;
   }
 
   return (
     <View className="flex-1 bg-sheet">
       {props.truncated ? (
-        <View className="border-b border-warning-border bg-warning px-4 py-2">
-          <Text className="text-2xs font-t3-bold uppercase text-warning-foreground">
-            Partial file
-          </Text>
-          <Text className="text-xs leading-snug text-warning-foreground">
-            Preview limited to the first 1 MB of a truncated file.
-          </Text>
-        </View>
+        <FilePreviewNotice title="Partial file">
+          Preview limited to the first 1 MB of a truncated file.
+        </FilePreviewNotice>
       ) : null}
       {props.activeMode === "preview" && isMarkdown ? (
         <FileMarkdownPreview

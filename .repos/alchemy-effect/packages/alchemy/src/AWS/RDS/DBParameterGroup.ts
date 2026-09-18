@@ -1,4 +1,5 @@
 import * as rds from "@distilled.cloud/aws/rds";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
@@ -25,15 +26,13 @@ export interface DBParameterGroupProps {
   /**
    * Instance parameter overrides, e.g. `{ time_zone: "Australia/Sydney" }`.
    *
-   * When set, this map is the group's entire user-owned surface: entries are
-   * written, and any parameter RDS reports as user-set but absent here is
-   * reset to its engine default. `{}` therefore resets every override, while
-   * OMITTING the prop leaves parameters alone entirely — which is what makes
-   * it safe to adopt a group that was tuned elsewhere.
+   * This map is the group's entire user-owned surface: entries are written,
+   * and undeclared user overrides are reset to engine defaults. Omitting the
+   * map is equivalent to `{}`, including on adoption and unchanged-input deploys.
    *
    * Values must be in the form RDS reports back (it canonicalises some — a
-   * boolean set as `ON` reads back as `1`), or the two never compare equal
-   * and every deploy re-issues the modify.
+   * boolean set as `ON` reads back as `1`). Reconciliation waits for those
+   * reported values and fails if they do not converge within the observation budget.
    *
    * Static parameters are applied with `pending-reboot`, dynamic parameters
    * with `immediate`.
@@ -66,8 +65,9 @@ export interface DBParameterGroup extends Resource<
      */
     description: string | undefined;
     /**
-     * The parameter overrides this resource manages; `{}` when `parameters`
-     * is omitted and the group's settings are owned elsewhere.
+     * Observed user overrides and explicitly managed engine defaults.
+     * Omitting `parameters` removes all user overrides during reconciliation.
+     * These are group settings; static values still require an instance reboot.
      */
     parameters: Record<string, string>;
     /**
@@ -137,6 +137,12 @@ const retryWhileParameterGroupBusy = <A, E extends { _tag: string }, R>(
     schedule: Schedule.max([Schedule.fixed("5 seconds"), Schedule.recurs(10)]),
   });
 
+class DBParameterGroupNotSettled extends Data.TaggedError(
+  "DBParameterGroupNotSettled",
+)<{
+  name: string;
+}> {}
+
 export const DBParameterGroupProvider = () =>
   Provider.effect(
     DBParameterGroup,
@@ -157,6 +163,16 @@ export const DBParameterGroupProvider = () =>
             ),
           );
         return response?.DBParameterGroups?.[0];
+      });
+
+      const readTags = Effect.fn(function* (arn: string | undefined) {
+        if (!arn) return {};
+        const response = yield* rds.listTagsForResource({ ResourceName: arn });
+        return Object.fromEntries(
+          (response.TagList ?? []).flatMap(({ Key, Value }) =>
+            Key !== undefined && Value !== undefined ? [[Key, Value]] : [],
+          ),
+        );
       });
 
       // All parameters (defaults + overrides) with their current values and
@@ -185,12 +201,15 @@ export const DBParameterGroupProvider = () =>
           );
       });
 
-      const toUserParameterRecord = (
+      const toManagedParameterRecord = (
         parameters: rds.Parameter[],
+        desired: Record<string, string> = {},
       ): Record<string, string> =>
         Object.fromEntries(
           parameters.flatMap((p) =>
-            p.ParameterName !== undefined && p.ParameterValue !== undefined
+            p.ParameterName !== undefined &&
+            p.ParameterValue !== undefined &&
+            (p.Source === "user" || Object.hasOwn(desired, p.ParameterName))
               ? [[p.ParameterName, p.ParameterValue]]
               : [],
           ),
@@ -212,23 +231,38 @@ export const DBParameterGroupProvider = () =>
           ) {
             return { action: "replace" } as const;
           }
-          // Props alone would miss an out-of-band edit: the engine's fallback
-          // compares props, so a console change to a parameter this resource
-          // owns would never schedule the reconcile that corrects it.
-          if (
-            news.parameters !== undefined &&
-            output !== undefined &&
-            !deepEqual(news.parameters, output.parameters)
-          ) {
-            return { action: "update" } as const;
+          if (output !== undefined) {
+            const group = yield* readGroup(output.dbParameterGroupName);
+            if (!group) return { action: "update", stables: [] } as const;
+            const desired = news.parameters ?? {};
+            const parameters = yield* readParameters(
+              output.dbParameterGroupName,
+            ).pipe(
+              Effect.catchTag("DBParameterGroupNotFoundFault", () =>
+                Effect.succeed(undefined),
+              ),
+            );
+            if (parameters === undefined) {
+              return { action: "update", stables: [] } as const;
+            }
+            const observed = toManagedParameterRecord(parameters, desired);
+            const desiredTags = {
+              ...news.tags,
+              ...(yield* createInternalTags(id)),
+            };
+            if (
+              !deepEqual(desired, observed) ||
+              !deepEqual(
+                desiredTags,
+                yield* readTags(group.DBParameterGroupArn),
+              )
+            ) {
+              return { action: "update" } as const;
+            }
           }
         }),
         list: () =>
-          // AWS account/region collection (pattern (a)): exhaustively paginate
-          // describeDBParameterGroups and map each group to the exact `read`
-          // Attributes shape. `read` derives `tags` from the cached output
-          // (the describe response does not surface tags), so list returns
-          // `tags: {}` to match — a future read/delete can hydrate them.
+          // Collection reads omit per-group tags and parameters; read hydrates them.
           rds.describeDBParameterGroups.pages({}).pipe(
             Stream.runCollect,
             Effect.map((chunk) =>
@@ -268,9 +302,9 @@ export const DBParameterGroupProvider = () =>
           if (!group?.DBParameterGroupName) {
             return undefined;
           }
-          // Unlike tags, parameters come back from the API.
-          const parameters = toUserParameterRecord(
-            yield* readUserParameters(group.DBParameterGroupName),
+          const parameters = toManagedParameterRecord(
+            yield* readParameters(group.DBParameterGroupName),
+            olds?.parameters,
           );
           return {
             dbParameterGroupName: group.DBParameterGroupName,
@@ -278,14 +312,14 @@ export const DBParameterGroupProvider = () =>
             family: group.DBParameterGroupFamily ?? olds?.family ?? "",
             description: group.Description,
             parameters,
-            tags: output?.tags ?? {},
+            tags: yield* readTags(group.DBParameterGroupArn),
           };
         }),
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
           const name =
             output?.dbParameterGroupName ?? (yield* toName(id, news));
           const internalTags = yield* createInternalTags(id);
-          const desiredTags = { ...internalTags, ...news.tags };
+          const desiredTags = { ...news.tags, ...internalTags };
 
           // Observe — fetch live parameter-group state.
           let observed = yield* readGroup(name);
@@ -319,12 +353,9 @@ export const DBParameterGroupProvider = () =>
             }
           }
 
-          // Sync parameters — diff observed cloud values against desired.
-          // Only when the prop is present: reconcile also runs on adopt, so
-          // defaulting an omitted map to {} would reset every override on a
-          // group that was tuned elsewhere.
-          const desiredParameters = news.parameters;
-          if (desiredParameters !== undefined) {
+          // Omission owns an empty override map, including on adoption.
+          const desiredParameters = news.parameters ?? {};
+          {
             const byName = new Map(
               (yield* readParameters(name)).flatMap((p) =>
                 p.ParameterName !== undefined
@@ -391,9 +422,7 @@ export const DBParameterGroupProvider = () =>
 
           const dbParameterGroupArn = observed.DBParameterGroupArn;
 
-          // Sync tags — diff prior recorded tags against desired (the
-          // describe response does not surface tags directly).
-          const observedTags = output?.tags ?? {};
+          const observedTags = yield* readTags(dbParameterGroupArn);
           const { removed, upsert } = diffTags(observedTags, desiredTags);
           if (upsert.length > 0 && dbParameterGroupArn) {
             yield* rds.addTagsToResource({
@@ -408,13 +437,33 @@ export const DBParameterGroupProvider = () =>
             });
           }
 
+          // A successful modify/reset only acknowledges the request. Read back
+          // the managed group values, including absence of undeclared overrides.
+          // Reuse the existing parameter-group consistency budget; retry reads
+          // for a pending observation, never repeat accepted mutations here.
+          const parameters = yield* readParameters(name).pipe(
+            Effect.flatMap((parameters) => {
+              const observed = toManagedParameterRecord(
+                parameters,
+                desiredParameters,
+              );
+              return deepEqual(desiredParameters, observed)
+                ? Effect.succeed(observed)
+                : Effect.fail(new DBParameterGroupNotSettled({ name }));
+            }),
+            Effect.retry({
+              while: (error) => error._tag === "DBParameterGroupNotSettled",
+              schedule: Schedule.spaced("5 seconds"),
+              times: 8,
+            }),
+          );
           yield* session.note(dbParameterGroupArn ?? name);
           return {
             dbParameterGroupName: observed.DBParameterGroupName,
             dbParameterGroupArn,
             family: observed.DBParameterGroupFamily ?? news.family,
             description: observed.Description,
-            parameters: desiredParameters ?? {},
+            parameters,
             tags: desiredTags,
           };
         }),
