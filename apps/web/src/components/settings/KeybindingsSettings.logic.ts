@@ -283,6 +283,9 @@ export function buildKeybindingCommandOptions(
 }
 
 export function commandLabel(command: KeybindingCommand): string {
+  if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";
+  if (command === "composer.sendBackground") return "Composer: Start in Background";
+  if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message as Steer";
   if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread ID";
   const raw = String(command);
   if (raw.startsWith("script.") && raw.endsWith(".run")) {

@@ -20,6 +20,9 @@ describe("KeybindingsSettings.logic", () => {
   it("lists composer, provider, and pull request commands with editable defaults", () => {
     const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
     for (const command of [
+      "composer.sendAlternate",
+      "composer.sendBackground",
+      "thread.steerQueuedMessage",
       "composer.host",
       "composer.effort",
       "composer.mode",
@@ -36,6 +39,14 @@ describe("KeybindingsSettings.logic", () => {
         conflicts: [],
       });
     }
+  });
+  it("finds the editable shortcut for sending the first queued message", () => {
+    expect(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "first queued")).toContainEqual(
+      expect.objectContaining({
+        command: "thread.steerQueuedMessage",
+        key: "mod+shift+enter",
+      }),
+    );
   });
   it.each(["pu", "pull request", "copy link", "thread id"])(
     "finds the copy link shortcut with %s",

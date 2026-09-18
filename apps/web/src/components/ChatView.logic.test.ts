@@ -775,9 +775,10 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(false);
   });
 
-  it("acknowledges a settled newer turn", () => {
+  it("acknowledges a settled newer background turn", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestRun: completedTurn, runtime: readySession }),
+      { submissionIntent: "background" },
     );
     const newerTurn = {
       ...completedTurn,
