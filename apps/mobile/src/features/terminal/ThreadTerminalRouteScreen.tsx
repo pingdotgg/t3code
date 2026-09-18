@@ -1,8 +1,7 @@
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
-import type { MenuAction } from "@react-native-menu/menu";
 import { SymbolView } from "../../components/AppSymbol";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { ScreenHeader } from "../../components/ScreenHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Platform, Pressable, View } from "react-native";
@@ -19,13 +18,11 @@ import {
   useKeyboardState,
 } from "react-native-keyboard-controller";
 
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import {
   ComposerToolbarButton,
   ComposerToolbarRow,
   ComposerToolbarScroller,
 } from "../../components/ComposerToolbar";
-import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
 import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -52,8 +49,6 @@ import {
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolbar";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { getMobileTerminalTheme } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
@@ -84,6 +79,90 @@ import {
 } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
+
+function TerminalHeader(props: {
+  readonly subtitle: string;
+  readonly isEnvironmentReady: boolean;
+  readonly fontSize: number;
+  readonly terminalId: string;
+  readonly sessions: ReadonlyArray<TerminalMenuSession>;
+  readonly status: Parameters<typeof getTerminalStatusLabel>[0];
+  readonly workspaceRoot: string;
+  readonly onCloseTerminal: () => void;
+  readonly onDecreaseFontSize: () => void;
+  readonly onIncreaseFontSize: () => void;
+  readonly onOpenNewTerminal: () => void;
+  readonly onSelectTerminal: (terminalId: string) => void;
+}) {
+  return (
+    <ScreenHeader
+      title="Terminal"
+      subtitle={props.subtitle}
+      onBack={props.onCloseTerminal}
+      backInSplitView={{
+        accessibilityLabel: "Close terminal",
+        icon: "xmark",
+        separateBackground: true,
+      }}
+      menus={
+        props.isEnvironmentReady
+          ? [
+              {
+                title: "Terminal options",
+                icon: "terminal",
+                status: getTerminalStatusLabel(props.status),
+                items: [
+                  {
+                    id: "text-size",
+                    title: "Text size",
+                    icon: "textformat.size",
+                    inline: true,
+                    items: [
+                      {
+                        id: "font-decrease",
+                        title: `A- ${Math.max(MIN_TERMINAL_FONT_SIZE, props.fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`,
+                        disabled: props.fontSize <= MIN_TERMINAL_FONT_SIZE,
+                        onPress: props.onDecreaseFontSize,
+                      },
+                      {
+                        id: "font-increase",
+                        title: `A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, props.fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`,
+                        disabled: props.fontSize >= MAX_TERMINAL_FONT_SIZE,
+                        onPress: props.onIncreaseFontSize,
+                      },
+                    ],
+                  },
+                  ...props.sessions.map((session) => ({
+                    id: `terminal-session:${session.terminalId}`,
+                    title: session.displayLabel,
+                    icon: "terminal",
+                    subtitle: [
+                      getTerminalStatusLabel({
+                        status: session.status,
+                        hasRunningSubprocess: session.hasRunningSubprocess,
+                      }),
+                      basename(session.cwd),
+                    ]
+                      .filter(Boolean)
+                      .join(" · "),
+                    selected: session.terminalId === props.terminalId,
+                    onPress: () => props.onSelectTerminal(session.terminalId),
+                  })),
+                  {
+                    id: "terminal-new",
+                    title: "Open new terminal",
+                    icon: "plus",
+                    subtitle: `Start another shell in ${basename(props.workspaceRoot) ?? "this workspace"}`,
+                    onPress: props.onOpenNewTerminal,
+                  },
+                ],
+              },
+            ]
+          : undefined
+      }
+    />
+  );
+}
 
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
@@ -171,7 +250,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
   const { state: workspaceState } = useWorkspaceState();
-  const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const params = props.route.params;
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
@@ -483,7 +561,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
 
   const terminalTheme = getMobileTerminalTheme(themeId, appearanceScheme);
-  const usesNativeHeaderGlass = Platform.OS === "ios";
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;
   const headerSubtitle = selectedThreadProject?.title ?? "";
@@ -1003,67 +1080,6 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     setTerminalFontSize(stepTerminalFontSize(fontSize, 1));
   }, [fontSize, setTerminalFontSize]);
 
-  // Android mirror of the iOS NativeHeaderToolbar terminal menu below: text
-  // size, session switching, and "Open new terminal", rendered through the
-  // token-styled anchored menu (the native header items are iOS-only).
-  const androidTerminalMenuActions = useMemo<MenuAction[]>(
-    () => [
-      {
-        id: "text-size",
-        title: "Text size",
-        subactions: [
-          {
-            id: "font-decrease",
-            title: `A- ${Math.max(MIN_TERMINAL_FONT_SIZE, fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`,
-            attributes: fontSize <= MIN_TERMINAL_FONT_SIZE ? { disabled: true } : undefined,
-          },
-          {
-            id: "font-increase",
-            title: `A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`,
-            attributes: fontSize >= MAX_TERMINAL_FONT_SIZE ? { disabled: true } : undefined,
-          },
-        ],
-      },
-      ...terminalMenuSessions.map((session): MenuAction => ({
-        id: `terminal-session:${session.terminalId}`,
-        title: session.displayLabel,
-        subtitle: [getTerminalStatusLabel({ status: session.status }), basename(session.cwd)]
-          .filter(Boolean)
-          .join(" · "),
-        state: session.terminalId === terminalId ? ("on" as const) : undefined,
-      })),
-      {
-        id: "terminal-new",
-        title: "Open new terminal",
-        image: "plus",
-        subtitle: `Start another shell in ${basename(selectedThreadProject?.workspaceRoot ?? null) ?? "this workspace"}`,
-      },
-    ],
-    [fontSize, selectedThreadProject?.workspaceRoot, terminalId, terminalMenuSessions],
-  );
-
-  const handleAndroidTerminalMenuAction = useCallback(
-    (event: { nativeEvent: { event: string } }) => {
-      const id = event.nativeEvent.event;
-      if (id === "font-decrease") {
-        handleDecreaseFontSize();
-        return;
-      }
-      if (id === "font-increase") {
-        handleIncreaseFontSize();
-        return;
-      }
-      if (id === "terminal-new") {
-        handleOpenNewTerminal();
-        return;
-      }
-      if (id.startsWith("terminal-session:")) {
-        handleSelectTerminal(id.slice("terminal-session:".length));
-      }
-    },
-    [handleDecreaseFontSize, handleIncreaseFontSize, handleOpenNewTerminal, handleSelectTerminal],
-  );
-
   const handleClearTerminal = useCallback(() => {
     if (!selectedThread) {
       return;
@@ -1169,116 +1185,23 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           }}
         />
       ) : null}
-      <NativeStackScreenOptions
-        options={{
-          // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS — the pty
-          // scrolls internally, nothing for glass to sample). Default title/subtitle
-          // styling, like every other page.
-          // Android draws its own in-flow header (AndroidScreenHeader below);
-          // the native stack header stays iOS-only.
-          headerShown: Platform.OS !== "android",
-          title: "Terminal",
-          unstable_headerSubtitle:
-            usesNativeHeaderGlass && headerSubtitle.length > 0 ? headerSubtitle : undefined,
+      <TerminalHeader
+        subtitle={headerSubtitle}
+        isEnvironmentReady={isEnvironmentReady}
+        fontSize={fontSize}
+        terminalId={terminalId}
+        sessions={terminalMenuSessions}
+        status={{
+          status: terminal.status,
+          hasRunningSubprocess: terminal.hasRunningSubprocess,
         }}
+        workspaceRoot={selectedThreadProject.workspaceRoot}
+        onCloseTerminal={handleCloseTerminal}
+        onDecreaseFontSize={handleDecreaseFontSize}
+        onIncreaseFontSize={handleIncreaseFontSize}
+        onOpenNewTerminal={handleOpenNewTerminal}
+        onSelectTerminal={handleSelectTerminal}
       />
-
-      {Platform.OS === "android" ? (
-        <AndroidScreenHeader
-          title="Terminal"
-          subtitle={headerSubtitle}
-          leading={<AndroidWorkspaceSidebarButton />}
-          onBack={handleCloseTerminal}
-          trailing={
-            <>
-              {isEnvironmentReady ? (
-                <ControlPillMenu
-                  actions={androidTerminalMenuActions}
-                  isAnchoredToRight
-                  title={getTerminalStatusLabel({
-                    status: terminal.status,
-                    hasRunningSubprocess: terminal.hasRunningSubprocess,
-                  })}
-                  onPressAction={handleAndroidTerminalMenuAction}
-                >
-                  <AndroidHeaderIconButton accessibilityLabel="Terminal options" icon="terminal" />
-                </ControlPillMenu>
-              ) : null}
-            </>
-          }
-        />
-      ) : null}
-
-      {layout.usesSplitView ? (
-        <NativeHeaderToolbar placement="left">
-          <NativeHeaderToolbar.Button
-            accessibilityLabel="Close terminal"
-            icon="xmark"
-            onPress={handleCloseTerminal}
-            separateBackground
-          />
-          <NativeHeaderToolbar.Button
-            accessibilityLabel={panes.primarySidebarVisible ? "Maximize terminal" : "Show threads"}
-            icon={
-              panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
-            }
-            onPress={togglePrimarySidebar}
-            separateBackground
-          />
-        </NativeHeaderToolbar>
-      ) : null}
-
-      {isEnvironmentReady ? (
-        <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Menu icon="terminal" title="Terminal options" separateBackground>
-            <NativeHeaderToolbar.Label>
-              {getTerminalStatusLabel({
-                status: terminal.status,
-                hasRunningSubprocess: terminal.hasRunningSubprocess,
-              })}
-            </NativeHeaderToolbar.Label>
-            <NativeHeaderToolbar.Menu icon="textformat.size" inline title="Text size">
-              <NativeHeaderToolbar.Label>Text size</NativeHeaderToolbar.Label>
-              <NativeHeaderToolbar.MenuAction
-                disabled={fontSize <= MIN_TERMINAL_FONT_SIZE}
-                discoverabilityLabel="Decrease terminal text size"
-                onPress={handleDecreaseFontSize}
-              >
-                <NativeHeaderToolbar.Label>{`A- ${Math.max(MIN_TERMINAL_FONT_SIZE, fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
-              <NativeHeaderToolbar.MenuAction
-                disabled={fontSize >= MAX_TERMINAL_FONT_SIZE}
-                discoverabilityLabel="Increase terminal text size"
-                onPress={handleIncreaseFontSize}
-              >
-                <NativeHeaderToolbar.Label>{`A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`}</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
-            </NativeHeaderToolbar.Menu>
-            {terminalMenuSessions.map((session) => (
-              <NativeHeaderToolbar.MenuAction
-                key={session.terminalId}
-                icon={session.terminalId === terminalId ? "checkmark" : "terminal"}
-                onPress={() => handleSelectTerminal(session.terminalId)}
-                subtitle={[
-                  getTerminalStatusLabel({ status: session.status }),
-                  basename(session.cwd),
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              >
-                <NativeHeaderToolbar.Label>{session.displayLabel}</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
-            ))}
-            <NativeHeaderToolbar.MenuAction
-              icon="plus"
-              onPress={handleOpenNewTerminal}
-              subtitle={`Start another shell in ${basename(selectedThreadProject.workspaceRoot) ?? "this workspace"}`}
-            >
-              <NativeHeaderToolbar.Label>Open new terminal</NativeHeaderToolbar.Label>
-            </NativeHeaderToolbar.MenuAction>
-          </NativeHeaderToolbar.Menu>
-        </NativeHeaderToolbar>
-      ) : null}
 
       <MaterialScreenContent>
         <View
