@@ -70,7 +70,9 @@ export function reconcileEnvFile(
   entries: Readonly<Record<string, string>>,
 ): string {
   const lines = contents === "" ? [] : contents.replace(/\n$/u, "").split("\n");
-  const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/u;
+  // The forms `parseEnv` treats as an assignment: leading whitespace, an
+  // optional `export`, and whitespace around `=`.
+  const assignment = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/u;
   const pending = new Map(Object.entries(entries));
   const out: string[] = [];
   for (const line of lines) {
