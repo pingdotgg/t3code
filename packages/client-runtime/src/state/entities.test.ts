@@ -207,6 +207,18 @@ function makeHarness(
 describe("environment entity projections", () => {
   it("composes detail collections with authoritative shell workspace metadata", () => {
     const messages: OrchestrationThread["messages"] = [];
+    const pullRequests = [
+      {
+        host: "github.com",
+        repository: "acme/repository",
+        number: 6,
+        url: "https://github.com/acme/repository/pull/6",
+        source: "manual" as const,
+        linkedAt: "2026-03-09T12:00:00.000Z",
+        stack: null,
+        snapshot: null,
+      },
+    ];
     const detail = {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
@@ -229,6 +241,7 @@ describe("environment entity projections", () => {
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
       unsettledAt: "2026-03-09T12:00:00.000Z",
+      pullRequests,
     };
 
     const merged = mergeEnvironmentThread(detail, shell);
@@ -239,8 +252,10 @@ describe("environment entity projections", () => {
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
       unsettledAt: "2026-03-09T12:00:00.000Z",
+      pullRequests,
     });
     expect(merged?.messages).toBe(messages);
+    expect(merged?.pullRequests).toBe(pullRequests);
   });
 
   it("preserves untouched project and thread identities across unrelated shell updates", () => {
