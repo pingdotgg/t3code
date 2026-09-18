@@ -100,6 +100,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
       traceMaxFiles: 10,
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
       otlpExportIntervalMs: 10_000,
       otlpServiceName: "t3-server",
       otlpHeaders: undefined,
