@@ -67,7 +67,7 @@ interface CustomNoticeConfigEntry {
 }
 
 interface PackageNoticeOverrideConfigEntry {
-  readonly generatedNotice?: GeneratedNoticeConfigEntry;
+  readonly generatedNotices?: ReadonlyArray<GeneratedNoticeConfigEntry>;
   readonly license?: string;
   readonly name?: string;
   readonly noticeFile?: string;
@@ -257,8 +257,16 @@ function decodePackageOverrides(value: unknown): ReadonlyArray<PackageNoticeOver
       entry.generatedNotice === undefined
         ? undefined
         : decodeGeneratedNotice(entry.generatedNotice, `${context} generated notice`);
-    if (noticeFile !== undefined && generatedNotice !== undefined) {
-      throw new Error(`${context} cannot define both "noticeFile" and "generatedNotice".`);
+    const generatedNotices = decodeGeneratedNotices(entry.generatedNotices, context);
+    if (
+      Number(noticeFile !== undefined) +
+        Number(generatedNotice !== undefined) +
+        Number(generatedNotices !== undefined) >
+      1
+    ) {
+      throw new Error(
+        `${context} can define only one of "noticeFile", "generatedNotice", or "generatedNotices".`,
+      );
     }
     const sourceUrl = readOptionalString(entry, "sourceUrl", context);
     return {
@@ -267,7 +275,8 @@ function decodePackageOverrides(value: unknown): ReadonlyArray<PackageNoticeOver
       ...(version !== undefined ? { version } : {}),
       ...(license !== undefined ? { license } : {}),
       ...(noticeFile !== undefined ? { noticeFile } : {}),
-      ...(generatedNotice !== undefined ? { generatedNotice } : {}),
+      ...(generatedNotice !== undefined ? { generatedNotices: [generatedNotice] } : {}),
+      ...(generatedNotices !== undefined ? { generatedNotices } : {}),
       ...(sourceUrl !== undefined ? { sourceUrl } : {}),
     };
   });
@@ -396,9 +405,7 @@ function configuredGeneratedNotices(
 ): ReadonlyArray<GeneratedNoticeConfigEntry> {
   return [
     ...config.customNotices.flatMap((notice) => notice.generatedNotices ?? []),
-    ...config.packageOverrides.flatMap((override) =>
-      override.generatedNotice ? [override.generatedNotice] : [],
-    ),
+    ...config.packageOverrides.flatMap((override) => override.generatedNotices ?? []),
   ];
 }
 
@@ -780,9 +787,9 @@ async function packageEntry(
   }
 
   const repositoryKey = repositoryNoticeKey(collected.packageJson, license);
-  const noticeText = override?.generatedNotice
+  const noticeText = override?.generatedNotices
     ? await generatedNoticeText(
-        [override.generatedNotice],
+        override.generatedNotices,
         configDirectory,
         allowMissingGeneratedNotices,
       )
@@ -793,7 +800,7 @@ async function packageEntry(
       : ((await packageNoticeText(collected.packageRoot, packageNotices)) ??
         (repositoryKey ? repositoryNotices.get(repositoryKey) : undefined));
   if (!noticeText) {
-    if (override?.generatedNotice && allowMissingGeneratedNotices) return null;
+    if (override?.generatedNotices && allowMissingGeneratedNotices) return null;
     throw new Error(
       `${name}@${version} does not include a license or notice file. Add a package override with "noticeFile" or "generatedNotice" in the third-party license config.`,
     );
