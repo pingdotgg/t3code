@@ -119,7 +119,11 @@ const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 export class CheckpointBaselineCleanupError extends Schema.TaggedError<CheckpointBaselineCleanupError>()(
   "CheckpointBaselineCleanupError",
   { scopeId: CheckpointScopeId, ordinalWithinScope: Schema.Number, cause: Schema.Defect() },
-) {}
+) {
+  override get message(): string {
+    return `Failed to clean up checkpoint baseline ${this.ordinalWithinScope} for scope ${this.scopeId}.`;
+  }
+}
 
 export interface CheckpointServiceV2Shape {
   readonly prepareRootRunScope: (input: {
