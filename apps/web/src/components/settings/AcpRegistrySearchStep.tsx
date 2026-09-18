@@ -14,6 +14,7 @@ import { type FormEvent, useEffect, useLayoutEffect, useRef, useState } from "re
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { ScrollArea } from "../ui/scroll-area";
@@ -204,12 +205,9 @@ export function AcpRegistrySearchStep({
       </div>
 
       {search.error || prepareError ? (
-        <div
-          aria-live="polite"
-          className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        >
-          {prepareError ?? search.error}
-        </div>
+        <Alert variant="error" role="status" aria-live="polite">
+          <AlertDescription>{prepareError ?? search.error}</AlertDescription>
+        </Alert>
       ) : null}
 
       {isInitialSearch ? (

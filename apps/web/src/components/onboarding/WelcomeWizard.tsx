@@ -64,6 +64,7 @@ import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { T3Wordmark } from "../T3Wordmark";
+import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -567,13 +568,9 @@ function PairingForm({
           />
         </div>
         {errorMessage ? (
-          <div
-            id="onboarding-pairing-error"
-            role="alert"
-            className="rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive"
-          >
-            {errorMessage}
-          </div>
+          <Alert id="onboarding-pairing-error" variant="error">
+            <AlertDescription>{errorMessage}</AlertDescription>
+          </Alert>
         ) : null}
         <Collapsible>
           <div className="flex items-center justify-between gap-3">
