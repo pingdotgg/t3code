@@ -1,3 +1,4 @@
+import { ProcessSignalActions } from "./ProcessSignalActions";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   ActivityIcon,
@@ -535,24 +536,7 @@ function ProcessActions({
   }
   const isSignaling = signalingKeys.has(processIdentityKey(process));
   return (
-    <div className="flex items-center justify-end gap-1.5">
-      <button
-        type="button"
-        disabled={isSignaling}
-        className="cursor-pointer text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
-        onClick={() => onSignal(process, "SIGINT")}
-      >
-        INT
-      </button>
-      <button
-        type="button"
-        disabled={isSignaling}
-        className="cursor-pointer text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
-        onClick={() => onSignal(process, "SIGKILL")}
-      >
-        KILL
-      </button>
-    </div>
+    <ProcessSignalActions disabled={isSignaling} onSignal={(signal) => onSignal(process, signal)} />
   );
 }
 

@@ -1,3 +1,4 @@
+import { ProcessSignalActions } from "./ProcessSignalActions";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AlertTriangleIcon,
@@ -309,51 +310,6 @@ function ProcessNameCell({
   );
 }
 
-function ProcessSignalActions({
-  process,
-  isSignaling,
-  onSignal,
-}: {
-  process: ServerProcessDiagnosticsEntry;
-  isSignaling: boolean;
-  onSignal: (pid: number, signal: ServerProcessSignal) => void;
-}) {
-  return (
-    <div className="flex items-center justify-end gap-1.5">
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              disabled={isSignaling}
-              className="cursor-pointer text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
-              onClick={() => onSignal(process.pid, "SIGINT")}
-            >
-              INT
-            </button>
-          }
-        />
-        <TooltipPopup side="top">Send SIGINT</TooltipPopup>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              disabled={isSignaling}
-              className="cursor-pointer text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-              onClick={() => onSignal(process.pid, "SIGKILL")}
-            >
-              KILL
-            </button>
-          }
-        />
-        <TooltipPopup side="top">Send SIGKILL</TooltipPopup>
-      </Tooltip>
-    </div>
-  );
-}
-
 function ProcessDiagnosticsTable({
   processes,
   signalingPid,
@@ -469,9 +425,8 @@ function ProcessDiagnosticsTable({
               </td>
               <td className="p-2 align-middle sm:pr-4">
                 <ProcessSignalActions
-                  process={process}
-                  isSignaling={signalingPid === process.pid}
-                  onSignal={onSignal}
+                  disabled={signalingPid === process.pid}
+                  onSignal={(signal) => onSignal(process.pid, signal)}
                 />
               </td>
             </tr>
