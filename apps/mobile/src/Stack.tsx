@@ -10,7 +10,7 @@ import {
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -89,6 +89,7 @@ import { useAppShortcuts } from "./features/shortcuts/useAppShortcuts";
 import { useIncomingShare } from "./features/sharing/IncomingShareProvider";
 import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
+  incomingShareIdOfSheetRoute,
   transitionIncomingSharePresentation,
 } from "./features/sharing/incoming-share-presentation";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
@@ -482,22 +483,47 @@ function ThreadOutboxDrainWorker() {
 function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
+  // The navigator's own helpers, not useNavigation(): the layout renders
+  // outside the helpers context, so useNavigation() falls back to the container
+  // ref, whose actions are dropped until the navigator's focus listener
+  // registers. Its effect runs after this one on the first commit.
+  readonly navigation: {
+    readonly navigate: (name: "NewTaskSheet", params: object) => void;
+  };
 }) {
-  const navigation = useNavigation();
-  const { pendingShare } = useIncomingShare();
+  const { navigation } = props;
+  const { pendingShare, discardShare } = useIncomingShare();
   const sharePresentationRef = useRef(EMPTY_INCOMING_SHARE_PRESENTATION_STATE);
+  const [sharePresentationRetry, setSharePresentationRetry] = useState(0);
   useAgentNotificationNavigation();
   // Presents the T3 Connect onboarding sheet after an in-session sign-in.
   useConnectOnboardingNavigation();
   // Launcher app shortcuts: routes shortcut taps and tracks opened threads.
   useAppShortcuts(props.state);
   useEffect(() => {
-    const topRouteName = props.state.routes[props.state.index]?.name;
+    const sheet = incomingShareIdOfSheetRoute(props.state, "NewTaskSheet");
     const transition = transitionIncomingSharePresentation(sharePresentationRef.current, {
-      isShareSheetPresented: topRouteName === "NewTaskSheet",
+      isSheetPresented: sheet.isSheetPresented,
+      sheetShareId: sheet.shareId,
       pendingShareId: pendingShare?.id ?? null,
     });
     sharePresentationRef.current = transition.state;
+    if (transition.shareIdToDiscard) {
+      const shareId = transition.shareIdToDiscard;
+      discardShare(shareId).catch((error: unknown) => {
+        console.warn("[incoming-share] could not discard dismissed share", error);
+        // Drop the latch so the share is presented again instead of sitting
+        // in the inbox unreachable until the next foreground refresh.
+        if (sharePresentationRef.current.discardedShareId === shareId) {
+          // Only the latch: a newer share may already be presented.
+          sharePresentationRef.current = {
+            ...sharePresentationRef.current,
+            discardedShareId: null,
+          };
+          setSharePresentationRetry((attempt) => attempt + 1);
+        }
+      });
+    }
     if (!transition.shareIdToPresent) {
       return;
     }
@@ -505,7 +531,7 @@ function RootStackLayout(props: {
       screen: "NewTask",
       params: { incomingShareId: transition.shareIdToPresent },
     });
-  }, [navigation, pendingShare, props.state]);
+  }, [discardShare, navigation, pendingShare, props.state, sharePresentationRetry]);
   // Full pathname (sheets included) for keyboard-command scoping; the
   // workspace layout only reacts to the underlying non-overlay route.
   const path = getPathFromState(props.state, navigationPathConfig);

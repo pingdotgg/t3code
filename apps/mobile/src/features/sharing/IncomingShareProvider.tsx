@@ -20,6 +20,7 @@ import {
 import { createIncomingSharePayloadReader } from "./incoming-share-native";
 import { IncomingShareInbox } from "./incoming-share-inbox";
 import { persistComposerAttachmentFile } from "../../lib/composerImages";
+import { scheduleUnusedComposerAttachmentCleanup } from "../../state/use-composer-drafts";
 import {
   loadIncomingShareDrafts,
   removeIncomingShareDraft,
@@ -37,6 +38,8 @@ type IncomingShareContextValue = {
     expectedDestination: IncomingShareDestination,
   ) => Promise<void>;
   readonly consumeShare: (shareId: string) => Promise<void>;
+  /** Drops a share the user walked away from, along with the files it owned. */
+  readonly discardShare: (shareId: string) => Promise<void>;
   readonly refresh: () => Promise<void>;
 };
 
@@ -296,6 +299,20 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
       setDrafts(snapshot);
     }
   }, []);
+  const discardShare = useCallback(
+    async (shareId: string) => {
+      const discarded = drafts.find((draft) => draft.id === shareId);
+      const snapshot = await incomingShareInbox.consume(shareId);
+      if (discarded) {
+        // The inbox entry was the only owner of these files.
+        scheduleUnusedComposerAttachmentCleanup(discarded.attachments);
+      }
+      if (mountedRef.current) {
+        setDrafts(snapshot);
+      }
+    },
+    [drafts],
+  );
   const reserveShare = useCallback(
     async (shareId: string, destination: IncomingShareDestination) => {
       const snapshot = await incomingShareInbox.reserve(shareId, destination);
@@ -328,10 +345,12 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
       releaseShareReservation,
       reserveShare,
       consumeShare,
+      discardShare,
       refresh,
     }),
     [
       consumeShare,
+      discardShare,
       drafts,
       error,
       getShare,
