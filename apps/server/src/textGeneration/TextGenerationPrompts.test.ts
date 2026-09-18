@@ -69,6 +69,28 @@ describe("buildCommitMessagePrompt", () => {
 
     expect(result.prompt).toContain("Additional instructions:");
     expect(result.prompt).toContain("Use a terse repository-specific subject.");
+    expect(result.prompt).toContain(
+      "- subject must be imperative, <= 72 chars, and no trailing period",
+    );
+  });
+
+  it("lets inferred repository conventions outrank the default format", () => {
+    const result = buildCommitMessagePrompt({
+      branch: "main",
+      stagedSummary: "M a.ts",
+      stagedPatch: "diff",
+      includeBranch: false,
+      policy: {
+        kind: "repo_conventions",
+        commitInstructions: "Subjects end with a period.",
+        inferRepositoryConventions: true,
+      },
+    });
+
+    expect(result.prompt).toContain("take precedence over the defaults below");
+    expect(result.prompt).toContain("- by default, subject is imperative, <= 72 chars");
+    expect(result.prompt).not.toContain("- subject must be imperative");
+    expect(result.prompt).toContain("Subjects end with a period.");
   });
 });
 

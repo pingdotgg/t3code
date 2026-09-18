@@ -91,7 +91,9 @@ Use a thread's Git actions to commit, push, and create a pull request. T3 Code c
 messages, review titles, and descriptions from your changes.
 
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
-uses the project's instructions and recent commit subjects.
+follows the commit conventions in the project's root `AGENTS.md` (and `CLAUDE.md` when Claude Code
+writes the text), then the style of recent commit subjects. Conventions kept only in `README.md`
+or `CONTRIBUTING.md` are not read; copy them into `AGENTS.md`.
 
 ## Review and merge
 
