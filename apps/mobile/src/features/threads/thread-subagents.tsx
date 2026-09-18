@@ -13,21 +13,21 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 
-/** Reuse the count control for the thread and every branch with descendants. */
+/** Show root counts or an inline disclosure for a nested branch. */
 function SubagentToggle({
   thread,
   counts,
   expanded,
   onToggle,
   selected = false,
-  compact = false,
+  disclosureOnly = false,
 }: {
   thread: EnvironmentThreadShell;
   counts: ThreadSubagentCounts;
   expanded: boolean;
   onToggle: () => void;
   selected?: boolean;
-  compact?: boolean;
+  disclosureOnly?: boolean;
 }) {
   const textClassName = selected
     ? Platform.OS === "android"
@@ -54,33 +54,18 @@ function SubagentToggle({
       className="min-h-5 flex-row items-center gap-1 self-start"
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
-      <SymbolView
-        name="person.2"
-        size={12}
-        type="monochrome"
-        tintColorClassName={tintColorClassName}
-      />
-      {compact ? (
+      {disclosureOnly ? null : (
         <>
           <SymbolView
-            name="circle"
-            size={10}
+            name="person.2"
+            size={12}
             type="monochrome"
             tintColorClassName={tintColorClassName}
           />
-          <Text className={cn("text-xs tabular-nums", textClassName)}>{counts.running}</Text>
-          <SymbolView
-            name="checkmark"
-            size={10}
-            type="monochrome"
-            tintColorClassName={tintColorClassName}
-          />
-          <Text className={cn("text-xs tabular-nums", textClassName)}>{counts.finished}</Text>
+          <Text className={cn("text-xs tabular-nums", textClassName)}>
+            {counts.running} running · {counts.finished} finished
+          </Text>
         </>
-      ) : (
-        <Text className={cn("text-xs tabular-nums", textClassName)}>
-          {counts.running} running · {counts.finished} finished
-        </Text>
       )}
       <SymbolView
         name={expanded ? "chevron.up" : "chevron.down"}
@@ -134,7 +119,18 @@ export function useThreadSubagents(thread: EnvironmentThreadShell, selected = fa
               style={{ paddingLeft: (Math.min(depth, 4) + 1) * 12 }}
             >
               <View className="absolute left-0 top-3 w-2 border-t border-border-subtle" />
-              <View className="flex-row items-center gap-2">
+              <View className="min-h-5 flex-row items-center gap-2">
+                {descendants.total > 0 ? (
+                  <SubagentToggle
+                    thread={agent}
+                    counts={descendants}
+                    expanded={expandedIds.has(agent.id)}
+                    onToggle={() => toggleThread(agent.id)}
+                    disclosureOnly
+                  />
+                ) : (
+                  <View className="w-2.5" />
+                )}
                 <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
                   {agent.title}
                 </Text>
@@ -142,15 +138,6 @@ export function useThreadSubagents(thread: EnvironmentThreadShell, selected = fa
                   {THREAD_SUBAGENT_STATUS_LABELS[status]}
                 </Text>
               </View>
-              {descendants.total > 0 ? (
-                <SubagentToggle
-                  thread={agent}
-                  counts={descendants}
-                  expanded={expandedIds.has(agent.id)}
-                  onToggle={() => toggleThread(agent.id)}
-                  compact
-                />
-              ) : null}
             </View>
           ),
         )}
