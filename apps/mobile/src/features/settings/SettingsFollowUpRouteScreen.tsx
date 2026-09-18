@@ -1,15 +1,15 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { Platform, Pressable, ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR, type FollowUpBehavior } from "../../lib/followUpBehavior";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 
 const FOLLOW_UP_OPTIONS: ReadonlyArray<{
@@ -56,37 +56,15 @@ export function SettingsFollowUpRouteScreen() {
       >
         <SettingsSection title="While the agent is running">
           {FOLLOW_UP_OPTIONS.map((option, index) => (
-            <Pressable
+            <SettingsChoiceRow
               key={option.behavior}
-              accessibilityRole="radio"
-              accessibilityState={{
-                checked: selectedBehavior === option.behavior,
-                disabled: !preferencesReady,
-              }}
+              label={option.label}
+              description={option.description}
+              selected={selectedBehavior === option.behavior}
+              separated={index > 0}
               disabled={!preferencesReady}
               onPress={() => savePreferences({ followUpBehavior: option.behavior })}
-              className={
-                index === 0
-                  ? "flex-row items-center gap-4 p-4"
-                  : "flex-row items-center gap-4 border-t border-border-subtle p-4"
-              }
-            >
-              <View className="min-w-0 flex-1 gap-1">
-                <Text className="text-lg text-foreground">{option.label}</Text>
-                <Text className="text-sm leading-normal text-foreground-muted">
-                  {option.description}
-                </Text>
-              </View>
-              {selectedBehavior === option.behavior ? (
-                <SymbolView
-                  name="checkmark"
-                  size={18}
-                  tintColorClassName={"accent-icon"}
-                  type="monochrome"
-                  weight="semibold"
-                />
-              ) : null}
-            </Pressable>
+            />
           ))}
         </SettingsSection>
         <Text className="px-2 text-sm text-foreground-muted">
