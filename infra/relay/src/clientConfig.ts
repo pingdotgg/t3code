@@ -84,12 +84,14 @@ export function reconcileEnvFile(
       continue;
     }
     // A quoted value can span lines; skip to its closing quote so the
-    // continuation lines go with the assignment they belong to.
+    // continuation lines go with the assignment they belong to. With no
+    // closing quote in the file, parseEnv treats the opening line as the
+    // whole value, so nothing after it is consumed.
     const rawValue = match[2] ?? "";
     const quote = /^(['"`])/u.exec(rawValue)?.[1];
     if (quote !== undefined && !closesQuote(rawValue, quote)) {
-      while (index + 1 < lines.length && !lines[index + 1]!.includes(quote)) index += 1;
-      index += 1;
+      const closing = lines.findIndex((candidate, at) => at > index && candidate.includes(quote));
+      if (closing !== -1) index = closing;
     }
     // The first occurrence keeps its position; later duplicates are dropped.
     const value = pending.get(name);
