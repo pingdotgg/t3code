@@ -1,3 +1,4 @@
+// @effect-diagnostics anyUnknownInErrorContext:off - ScratchStack.deploy is typed with `any` in its error channel by Alchemy.
 import { inMemoryState } from "alchemy/State";
 import * as Test from "alchemy/Test/Vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -25,6 +26,14 @@ describe("reconcileEnvFile", () => {
 
   it("appends a newline before adding to a file without one", () => {
     expect(reconcileEnvFile("A=1", { B: "2" })).toBe("A=1\nB=2\n");
+  });
+
+  it("collapses duplicate assignments to one, since parseEnv lets the last win", () => {
+    expect(reconcileEnvFile("A=old\nKEEP=1\nA=older\n", { A: "new" })).toBe("A=new\nKEEP=1\n");
+  });
+
+  it("leaves a commented-out assignment alone", () => {
+    expect(reconcileEnvFile("#A=old\n", { A: "new" })).toBe("#A=old\nA=new\n");
   });
 });
 
@@ -94,6 +103,34 @@ describe("PublishClientConfig", () => {
       expect(third).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v2\n");
       expect(third).not.toContain("client-v1");
       expect(third).toContain("KEEP=yes\n");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  test.provider("refuses a value with a line break rather than corrupting the file", (stack) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relay-client-config-" });
+      const target = path.join(dir, "client.env");
+      const exit = yield* stack
+        .deploy(
+          Effect.gen(function* () {
+            return yield* PublishClientConfig({
+              ...clientConfig("v1"),
+              clientTracingDataset: "relay-traces\nINJECTED=1",
+            });
+          }),
+        )
+        .pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({ T3CODE_RELAY_CLIENT_CONFIG_ENV: target }),
+            ),
+          ),
+          Effect.exit,
+        );
+      expect(exit._tag).toBe("Failure");
+      expect(yield* fs.exists(target)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

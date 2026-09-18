@@ -50,26 +50,44 @@ export const relayClientConfigEnv = (config: RelayClientConfig & { readonly url:
     T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: Redacted.value(config.clientTracingToken),
   }) as const;
 
-/** Replaces or appends each `NAME=value` line, leaving unrelated lines alone. */
+export class EnvValueNotSingleLineError extends Schema.TaggedError<EnvValueNotSingleLineError>()(
+  "EnvValueNotSingleLineError",
+  { name: Schema.String },
+) {
+  override get message(): string {
+    return `${this.name} contains a line break and cannot be written as one .env assignment.`;
+  }
+}
+
+/**
+ * Replaces or appends each `NAME=value` assignment, leaving unrelated lines
+ * alone. Every existing line for a name is dropped, not just the first: the
+ * file is read with `parseEnv`, where the last duplicate wins, so a stale
+ * second copy would override the value just written.
+ */
 export function reconcileEnvFile(
   contents: string,
   entries: Readonly<Record<string, string>>,
 ): string {
-  let next = contents;
-  for (const [name, value] of Object.entries(entries)) {
-    const entry = `${name}=${value}`;
-    const pattern = new RegExp(`^${name}=.*$`, "mu");
-    if (pattern.test(next)) {
-      next = next.replace(pattern, entry);
+  const lines = contents === "" ? [] : contents.replace(/\n$/u, "").split("\n");
+  const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=/u;
+  const pending = new Map(Object.entries(entries));
+  const out: string[] = [];
+  for (const line of lines) {
+    const name = assignment.exec(line)?.[1];
+    if (name === undefined || !(name in entries)) {
+      out.push(line);
       continue;
     }
-    if (!next) {
-      next = `${entry}\n`;
-      continue;
+    // The first occurrence keeps its position; later duplicates are dropped.
+    const value = pending.get(name);
+    if (value !== undefined) {
+      out.push(`${name}=${value}`);
+      pending.delete(name);
     }
-    next = `${next}${next.endsWith("\n") ? "" : "\n"}${entry}\n`;
   }
-  return next;
+  for (const [name, value] of pending) out.push(`${name}=${value}`);
+  return out.length === 0 ? "" : `${out.join("\n")}\n`;
 }
 
 /**
@@ -93,11 +111,14 @@ export const PublishClientConfig = Alchemy.Action(
     return Effect.fn(function* (input: RelayClientConfig) {
       const url = input.url;
       if (url === undefined) return yield* new RelayUrlUnavailableError();
+      const entries = relayClientConfigEnv({ ...input, url });
+      // Provider responses are copied in verbatim; a line break in one would
+      // become an extra assignment.
+      for (const [name, value] of Object.entries(entries)) {
+        if (/[\r\n]/u.test(value)) return yield* new EnvValueNotSingleLineError({ name });
+      }
       const existing = (yield* fs.exists(target)) ? yield* fs.readFileString(target) : "";
-      yield* fs.writeFileString(
-        target,
-        reconcileEnvFile(existing, relayClientConfigEnv({ ...input, url })),
-      );
+      yield* fs.writeFileString(target, reconcileEnvFile(existing, entries));
       yield* Console.log(`Wrote relay client configuration to ${target}`);
       return { path: target };
     });
