@@ -1,5 +1,6 @@
 import {
   type ClaudeSettings,
+  type ServerProvider,
   type ModelCapabilities,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -399,6 +400,26 @@ const probeClaudeCapabilities = (
     Effect.map((result) => (Result.isSuccess(result) ? result.success : undefined)),
   );
 };
+
+/** Read commands in the same workspace as the session that will invoke them. */
+export const readClaudeWorkspaceSnapshot = Effect.fn("readClaudeWorkspaceSnapshot")(function* (
+  config: ClaudeSettings,
+  machineSnapshot: ServerProvider,
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+) {
+  const [capabilities, skills] = yield* Effect.all([
+    probeClaudeCapabilities(config, environment, cwd),
+    discoverClaudeSkills(config, cwd, environment),
+  ]);
+  // A failed workspace probe must not become a permanently cached global menu.
+  if (!capabilities) return { ...machineSnapshot, status: "error" as const };
+  return {
+    ...machineSnapshot,
+    skills,
+    slashCommands: dedupeSlashCommands([COMPACT_SLASH_COMMAND, ...capabilities.slashCommands]),
+  };
+});
 
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,

@@ -4,7 +4,12 @@ import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
-import { ClaudeSettings } from "@t3tools/contracts";
+import {
+  ClaudeSettings,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -17,6 +22,7 @@ import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
   probeClaudeCapabilities,
+  readClaudeWorkspaceSnapshot,
 } from "./ClaudeProvider.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
@@ -53,6 +59,78 @@ it("isolates Claude capability probes without dropping workspace setting sources
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
+  it.effect("keeps workspace commands separate from the machine and other projects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-workspace-commands-" });
+      const config = decodeClaudeSettings({
+        binaryPath: "claude",
+        homePath: path.join(root, "home"),
+      });
+      const machine = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        enabled: true,
+        installed: true,
+        status: "ready",
+        version: "1.0.0",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-09-18T00:00:00.000Z",
+        models: [],
+        skills: [],
+        slashCommands: [{ name: "server-only" }],
+      } as const satisfies ServerProvider;
+      let failProbe = false;
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        ({ options }) =>
+          ({
+            initializationResult: async () => {
+              if (failProbe) throw new Error("workspace initialization failed");
+              return {
+                commands: [
+                  {
+                    name: path.basename(options?.cwd ?? ""),
+                    description: "Project command",
+                    argumentHint: "[target]",
+                  },
+                ],
+              };
+            },
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+              rate_limits_available: false,
+            }),
+          }) as ReturnType<typeof ClaudeSdk.query>,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+      for (const name of ["first-project", "second-project"]) {
+        const cwd = path.join(root, name);
+        yield* fs.makeDirectory(path.join(cwd, ".claude", "skills", "local-skill"), {
+          recursive: true,
+        });
+        yield* fs.writeFileString(
+          path.join(cwd, ".claude", "skills", "local-skill", "SKILL.md"),
+          "Local skill",
+        );
+        const scoped = yield* readClaudeWorkspaceSnapshot(config, machine, cwd, {});
+        assert.deepEqual(
+          scoped.slashCommands.map((command) => command.name),
+          ["compact", name],
+        );
+        assert.deepEqual(scoped.slashCommands[1]?.input, { hint: "[target]" });
+        assert.equal(scoped.skills[0]?.name, "local-skill");
+        assert.deepEqual(scoped.auth, machine.auth);
+      }
+      failProbe = true;
+      const failed = yield* readClaudeWorkspaceSnapshot(config, machine, root, {});
+      assert.equal(failed.status, "error");
+      failProbe = false;
+      const recovered = yield* readClaudeWorkspaceSnapshot(config, machine, root, {});
+      assert.equal(recovered.status, "ready");
+      assert.deepEqual(machine.slashCommands, [{ name: "server-only" }]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("serializes strict no-MCP options and still resolves account capabilities", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

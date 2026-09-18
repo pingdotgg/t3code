@@ -35,6 +35,7 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
+  readClaudeWorkspaceSnapshot,
 } from "../Layers/ClaudeProvider.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { resolveClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
@@ -60,7 +61,6 @@ import {
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
-import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -234,11 +234,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const snapshotForCwd = (cwd: string) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot
-          : Effect.all([
-              snapshot.getSnapshot,
-              discoverClaudeSkills(effectiveConfig, cwd, processEnv),
-            ]).pipe(
-              Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
+          : snapshot.getSnapshot.pipe(
+              Effect.flatMap((machineSnapshot) =>
+                readClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
+              ),
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
             );
