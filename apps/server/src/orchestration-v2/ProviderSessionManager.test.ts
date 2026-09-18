@@ -1,3 +1,4 @@
+import * as NetAddress from "effect/unstable/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -400,7 +401,7 @@ function makeTestLayer(input: {
 }
 
 const fakeHttpServer = HttpServer.HttpServer.of({
-  address: { _tag: "TcpAddress", hostname: "127.0.0.1", port: 43123 },
+  address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
   serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
 });
 
