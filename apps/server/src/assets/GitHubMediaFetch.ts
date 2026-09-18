@@ -1,7 +1,8 @@
-import Mime from "@effect/platform-node/Mime";
+import * as Mime from "effect/unstable/http/Mime";
 import { githubMediaFileName } from "@t3tools/shared/githubMedia";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import {
   FetchHttpClient,
@@ -176,7 +177,7 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   const contentType = MEDIA_CONTENT_TYPE_PATTERN.test(upstreamType)
     ? upstreamType
-    : (Mime.getType(githubMediaFileName(asset.url))?.toLowerCase() ?? "");
+    : Option.getOrElse(Mime.getType(githubMediaFileName(asset.url)), () => "").toLowerCase();
   if (!MEDIA_CONTENT_TYPE_PATTERN.test(contentType)) {
     return HttpServerResponse.empty({ status: 415, headers });
   }

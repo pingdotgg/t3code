@@ -7,11 +7,12 @@ import * as Apply from "alchemy/Apply";
 import { ArtifactStore, createArtifactStore, provideFreshArtifactStore } from "alchemy/Artifacts";
 import { AuthProviders } from "alchemy/Auth/AuthProvider";
 import { CredentialsStoreLive } from "alchemy/Auth/Credentials";
-import { ProfileLive } from "alchemy/Auth/Profile";
+import { ProfileStoreLive } from "alchemy/Auth/Profile";
 import * as Cloudflare from "alchemy/Cloudflare";
-import { Cli } from "alchemy/Cli/Cli";
+import { layerNonInteractive } from "alchemy/Interaction";
 import { LoggingCli } from "alchemy/Cli/LoggingCli";
 import * as Plan from "alchemy/Plan";
+import { Cli } from "alchemy/Report";
 import * as Stage from "alchemy/Stage";
 import * as State from "alchemy/State/State";
 import { TelemetryLive } from "alchemy/Telemetry/Layer";
@@ -195,7 +196,7 @@ const loadDeployConfigProvider = Effect.fn("relay.deploy.loadConfigProvider")(fu
   );
 });
 
-const relayDeployStage = Config.nonEmptyString("stage").pipe(
+const relayDeployStage = Config.NonEmptyString("stage").pipe(
   Config.option,
   Config.map(
     Option.getOrElse(() => `dev_${process.env.USER ?? process.env.USERNAME ?? "unknown"}`),
@@ -219,7 +220,7 @@ const writeGithubOutput = Effect.fn("relay.deploy.writeGithubOutput")(function* 
   outcome: RelayDeployOutcome,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const githubOutputPath = yield* Config.nonEmptyString("GITHUB_OUTPUT");
+  const githubOutputPath = yield* Config.NonEmptyString("GITHUB_OUTPUT");
   yield* fs.writeFileString(
     githubOutputPath,
     serializeGithubOutput({
@@ -259,11 +260,16 @@ const deployBaseServices = Layer.mergeAll(
   Layer.succeed(AuthProviders, {}),
   Layer.succeed(ArtifactStore, createArtifactStore()),
   Layer.provideMerge(AlchemyContextLive, PlatformServices),
-  Layer.provide(ProfileLive, PlatformServices),
+  Layer.provide(ProfileStoreLive, PlatformServices),
   Layer.provide(CredentialsStoreLive, PlatformServices),
   FetchHttpClient.layer,
   TelemetryLive,
-  LoggingCli,
+  // LoggingCli captures the prompt environment when it is built.
+  Layer.provide(LoggingCli, PlatformServices),
+  // Alchemy's auth providers prompt through this service. None are configured
+  // here and the apply confirmation is this script's own prompt, so a prompt
+  // reaching it is a typed failure rather than a hang in CI.
+  layerNonInteractive(),
 );
 const deployServices = deployBaseServices;
 
@@ -376,7 +382,7 @@ const runRelayDeploy = Effect.fn("relay.deploy.run")(
     if (!options.yes && changed) {
       yield* cli.displayPlan(plan);
       const approved = yield* Prompt.run(
-        Prompt.confirm({
+        Prompt.Confirm({
           message: "Apply this relay deployment?",
         }),
       );
@@ -445,43 +451,43 @@ export const deploy = Effect.fn("relay.deploy")(function* (options: RelayDeployO
 export const relayDeployCommand = Command.make(
   "relay-deploy",
   {
-    dryRun: Flag.boolean("dry-run").pipe(
+    dryRun: Flag.Boolean("dry-run").pipe(
       Flag.withDescription("Dry run the deployment without applying changes."),
       Flag.withDefault(false),
     ),
-    force: Flag.boolean("force").pipe(
+    force: Flag.Boolean("force").pipe(
       Flag.withDescription("Force updates for resources that would otherwise no-op."),
       Flag.withDefault(false),
     ),
-    envFile: Flag.string("env-file").pipe(
+    envFile: Flag.String("env-file").pipe(
       Flag.withDescription(
         "Environment file to load. Defaults to infra/relay/.env with process env fallback.",
       ),
       Flag.optional,
     ),
-    stage: Flag.string("stage").pipe(
+    stage: Flag.String("stage").pipe(
       Flag.withDescription("Stage to deploy. Defaults to dev_${USER}."),
       Flag.optional,
     ),
-    yes: Flag.boolean("yes").pipe(
+    yes: Flag.Boolean("yes").pipe(
       Flag.withDescription("Skip the deployment confirmation prompt."),
       Flag.withDefault(false),
     ),
-    adopt: Flag.boolean("adopt").pipe(
+    adopt: Flag.Boolean("adopt").pipe(
       Flag.withDescription("Adopt pre-existing cloud resources that conflict with this stack."),
       Flag.withDefault(false),
     ),
-    githubOutput: Flag.boolean("github-output").pipe(
+    githubOutput: Flag.Boolean("github-output").pipe(
       Flag.withDescription("Append relay deployment metadata to GITHUB_OUTPUT."),
       Flag.withDefault(false),
     ),
-    githubEnvFile: Flag.string("github-env-file").pipe(
+    githubEnvFile: Flag.String("github-env-file").pipe(
       Flag.withDescription(
         "Write relay client tracing variables to a file suitable for GITHUB_ENV.",
       ),
       Flag.optional,
     ),
-    readState: Flag.boolean("read-state").pipe(
+    readState: Flag.Boolean("read-state").pipe(
       Flag.withDescription("Read the deployed stack output without planning or applying changes."),
       Flag.withDefault(false),
     ),

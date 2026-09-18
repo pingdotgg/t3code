@@ -462,16 +462,16 @@ export const buildNpmPlatformPackages = Effect.fn("buildNpmPlatformPackages")(fu
 const command = Command.make(
   "build-npm-platform-packages",
   {
-    archivesDir: Flag.string("archives-dir").pipe(
+    archivesDir: Flag.String("archives-dir").pipe(
       Flag.withDescription("Directory holding the release's t3-<version>-<platform> archives."),
     ),
-    version: Flag.string("version").pipe(
+    version: Flag.String("version").pipe(
       Flag.withDescription(
         "Exact release version; selects the archives and versions the packages.",
       ),
     ),
-    outputDir: Flag.string("output-dir").pipe(Flag.withDefault("npm-packages")),
-    allowMissing: Flag.boolean("allow-missing").pipe(
+    outputDir: Flag.String("output-dir").pipe(Flag.withDefault("npm-packages")),
+    allowMissing: Flag.Boolean("allow-missing").pipe(
       Flag.withDefault(false),
       Flag.withDescription("Build a launcher that lists only the platforms present."),
     ),

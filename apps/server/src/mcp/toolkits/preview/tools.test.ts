@@ -65,10 +65,12 @@ it("exports exact object result schemas for preview actions", () => {
     "preview_wait_for",
   ] as const;
   for (const name of actionNames) {
+    // Effect's tool schemas follow the decoder default since rc.113 and leave
+    // unmodeled result keys open.
     expect(Tool.getJsonSchemaFromSchema(PreviewToolkit.tools[name].successSchema)).toEqual({
       type: "object",
       properties: { toolIcon: expect.any(Object) },
-      additionalProperties: false,
+      additionalProperties: true,
       description: "The preview action completed successfully.",
     });
   }

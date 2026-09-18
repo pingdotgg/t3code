@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { HttpServer } from "effect/unstable/http";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 
 import * as EnvironmentAuth from "../src/auth/EnvironmentAuth.ts";
 import * as ServiceLauncherClient from "../src/cloud/serviceLauncherClient.ts";
@@ -104,7 +105,7 @@ const startupDependencies = Layer.mergeAll(
   Layer.succeed(
     HttpServer.HttpServer,
     HttpServer.HttpServer.of({
-      address: { _tag: "TcpAddress", hostname: "127.0.0.1", port: 3773 },
+      address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 3773),
       serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
     }),
   ),

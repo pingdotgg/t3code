@@ -178,7 +178,7 @@ export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissi
   }
 }
 
-const envT3Home = Config.string("T3CODE_HOME").pipe(Config.option);
+const envT3Home = Config.String("T3CODE_HOME").pipe(Config.option);
 
 const resolveThemePaths = Effect.fn(function* (explicitBaseDir: Option.Option<string>) {
   // Same precedence as the rest of the CLI: --base-dir, then T3CODE_HOME,
@@ -463,11 +463,11 @@ const resolvableThemeIds = Effect.fn(function* (themesDir: string) {
 
 const themeSetCommand = Command.make("set", {
   baseDir: baseDirFlag,
-  id: Flag.string("id").pipe(
+  id: Flag.String("id").pipe(
     Flag.withDescription("Theme id to publish a file under, instead of its filename."),
     Flag.optional,
   ),
-  theme: Argument.string("theme").pipe(
+  theme: Argument.String("theme").pipe(
     Argument.withDescription(
       'A theme id (a built-in, or one this machine publishes — themes/nightfall.json is "nightfall"), or a path to a theme JSON file to publish and set in one step.',
     ),

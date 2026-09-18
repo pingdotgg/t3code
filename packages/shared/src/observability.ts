@@ -702,7 +702,7 @@ function parseBigInt(input: string): bigint {
 export const OtlpHeadersFromString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.Record(Schema.String, Schema.String),
-    SchemaTransformation.transformOrFail({
+    SchemaTransformation.transformEffect({
       decode: (input) => {
         const headers: Record<string, string> = {};
         for (const pair of input.split(",")) {

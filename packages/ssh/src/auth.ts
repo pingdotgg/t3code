@@ -185,7 +185,7 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
   const platform = yield* HostProcessPlatform;
   const hostDisplay = input.baseEnv
     ? input.baseEnv.DISPLAY
-    : yield* Config.string("DISPLAY").pipe(
+    : yield* Config.String("DISPLAY").pipe(
         Config.option,
         Effect.orElseSucceed(() => Option.none<string>()),
         Effect.map(Option.getOrUndefined),

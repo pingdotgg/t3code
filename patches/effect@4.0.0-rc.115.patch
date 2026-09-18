@@ -1,8 +1,8 @@
 diff --git a/dist/unstable/ai/McpServer.js b/dist/unstable/ai/McpServer.js
-index ce9dda4..95c38f2 100644
+index e8b9be4..9cffc5c 100644
 --- a/dist/unstable/ai/McpServer.js
 +++ b/dist/unstable/ai/McpServer.js
-@@ -444,6 +444,26 @@ const runWithProtocolState = /*#__PURE__*/Effect.fnUntraced(function* (options,
+@@ -450,6 +450,26 @@ const runWithProtocolState = /*#__PURE__*/Effect.fnUntraced(function* (options,
    const defaultLogLevel = yield* CurrentLogLevel;
    const isHttp = Option.isSome(yield* Effect.serviceOption(HttpRouter.HttpRouter));
    const sessions = protocolState.sessions;
@@ -29,7 +29,7 @@ index ce9dda4..95c38f2 100644
    const clientProtocols = new Map();
    const activeRequests = new Map();
    const clientProfiles = new Map();
-@@ -942,7 +962,7 @@ export const layerHttp = options => {
+@@ -948,7 +968,7 @@ export const layerHttp = options => {
    const methodNotAllowed = request => isAllowedMcpOrigin(request, options.allowedOrigins) ? Effect.succeed(methodNotAllowedResponse) : Effect.succeed(HttpServerResponse.empty({
      status: 403
    }));
@@ -38,6 +38,19 @@ index ce9dda4..95c38f2 100644
    return Layer.merge(layerWithProtocolState(options), routes).pipe(Layer.provide(layerMcpProtocolHttp(options)), Layer.provide(protocolState), Layer.provide(RpcSerialization.layerJsonRpc()));
  };
  const layerMcpProtocolHttp = options => Layer.effect(RpcServer.Protocol)(Effect.gen(function* () {
+diff --git a/dist/unstable/http/HttpClientResponse.js b/dist/unstable/http/HttpClientResponse.js
+index 59a2b12..ef54250 100644
+--- a/dist/unstable/http/HttpClientResponse.js
++++ b/dist/unstable/http/HttpClientResponse.js
+@@ -180,7 +180,7 @@ class WebHttpClientResponse extends Inspectable.Class {
+     if (this.cachedCookies) {
+       return this.cachedCookies;
+     }
+-    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie());
++    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie?.() ?? []);
+   }
+   get remoteAddress() {
+     return Option.none();
 diff --git a/dist/unstable/rpc/RpcClient.d.ts b/dist/unstable/rpc/RpcClient.d.ts
 index 1a471aa..7233784 100644
 --- a/dist/unstable/rpc/RpcClient.d.ts
@@ -92,7 +105,7 @@ index 1a471aa..7233784 100644
  /**
   * Represents optional client protocol hooks that run when a transport connects
 diff --git a/dist/unstable/rpc/RpcClient.js b/dist/unstable/rpc/RpcClient.js
-index ec78917..342f9d7 100644
+index c586c60..49886d8 100644
 --- a/dist/unstable/rpc/RpcClient.js
 +++ b/dist/unstable/rpc/RpcClient.js
 @@ -49,6 +49,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
@@ -244,40 +257,40 @@ index ec78917..342f9d7 100644
          }
        case "Defect":
          {
-@@ -603,7 +633,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+@@ -598,7 +628,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
    // `parser` is replaced on every connect, and a stateful serialization
    // encodes against the connection it is writing to, so the ping is encoded
    // when it is sent rather than once up front.
--  const pinger = yield* makePinger(Effect.suspend(() => write(parser.encode(constPing))));
-+  const pinger = yield* makePinger(Effect.suspend(() => write(parser.encode(constPing))), Option.isSome(hooks) ? hooks.value : undefined);
+-  const pinger = yield* makePinger(Effect.suspend(() => writer.write(parser.encode(constPing))));
++  const pinger = yield* makePinger(Effect.suspend(() => writer.write(parser.encode(constPing))), Option.isSome(hooks) ? hooks.value : undefined);
    let currentError;
-   const onOpen = Effect.suspend(() => {
-     currentError = undefined;
-@@ -630,8 +660,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
-           body: () => {
-             const response = responses[i++];
-             if (response._tag === "Pong") {
--              pinger.onPong();
--              return Effect.void;
-+              return pinger.onPong;
-             }
-             if (Object.hasOwn(response, "requestId")) {
-               const requestId = response.requestId;
-@@ -660,12 +689,12 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+   const broadcast = response => Effect.forEach(clientIds, clientId => writeResponse(clientId, response));
+   const broadcastError = error => {
+@@ -618,8 +648,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+         body: () => {
+           const response = responses[i++];
+           if (response._tag === "Pong") {
+-            pinger.onPong();
+-            return Effect.void;
++            return pinger.onPong;
+           }
+           if (Object.hasOwn(response, "requestId")) {
+             const requestId = response.requestId;
+@@ -664,12 +693,12 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+           yield* processData(frames[i]);
+         }
        }
-     }, {
-       onOpen
--    }).pipe(Effect.raceFirst(Effect.flatMap(pinger.timeout, () => Effect.fail(new Socket.SocketError({
-+    }).pipe(Effect.raceFirst(Effect.flatMap(pinger.timeout, () => (Option.isSome(hooks) && hooks.value.onPingTimeout ? hooks.value.onPingTimeout : Effect.void).pipe(Effect.andThen(Effect.fail(new Socket.SocketError({
+-    }).pipe(Effect.scoped, Effect.raceFirst(Effect.flatMap(pinger.timeout, () => Effect.fail(new Socket.SocketError({
++    }).pipe(Effect.scoped, Effect.raceFirst(Effect.flatMap(pinger.timeout, () => (Option.isSome(hooks) && hooks.value.onPingTimeout ? hooks.value.onPingTimeout : Effect.void).pipe(Effect.andThen(Effect.fail(new Socket.SocketError({
        reason: new Socket.SocketOpenError({
          kind: "Timeout",
          cause: new Error("ping timeout")
        })
 -    })))));
 +    })))))));
-   }).pipe(Effect.flatMap(() => Effect.fail(new Socket.SocketError({
-     reason: new Socket.SocketCloseError({
-       code: 1000
+   }).pipe(Option.isSome(hooks) ? Effect.ensuring(hooks.value.onDisconnect) : identity, Effect.tapCause(cause => {
+     const error = Cause.findError(cause);
+     const hasError = Result.isSuccess(error);
 @@ -710,20 +739,28 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
    };
  }));
@@ -324,19 +337,16 @@ index ec78917..342f9d7 100644
  /**
   * Represents optional client protocol hooks that run when a transport connects
   * and disconnects.
-diff --git a/dist/unstable/http/HttpClientResponse.js b/dist/unstable/http/HttpClientResponse.js
---- a/dist/unstable/http/HttpClientResponse.js
-+++ b/dist/unstable/http/HttpClientResponse.js
-@@ -177,3 +177,3 @@
-     }
--    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie());
-+    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie?.() ?? []);
-   }
 diff --git a/src/unstable/http/HttpClientResponse.ts b/src/unstable/http/HttpClientResponse.ts
+index cbf047f..c7d5cc2 100644
 --- a/src/unstable/http/HttpClientResponse.ts
 +++ b/src/unstable/http/HttpClientResponse.ts
-@@ -309,3 +309,3 @@
+@@ -321,7 +321,7 @@ class WebHttpClientResponse extends Inspectable.Class implements HttpClientRespo
+     if (this.cachedCookies) {
+       return this.cachedCookies
      }
 -    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie())
 +    return this.cachedCookies = Cookies.fromSetCookie(this.source.headers.getSetCookie?.() ?? [])
    }
+ 
+   get remoteAddress(): Option.Option<string> {

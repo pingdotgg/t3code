@@ -506,19 +506,19 @@ const formatSize = (bytes: number): string =>
 export const migrateDevDbCommand = Command.make(
   "migrate-dev-db",
   {
-    projects: Flag.integer("projects").pipe(
+    projects: Flag.Int("projects").pipe(
       Flag.withDefault(5),
       Flag.withDescription("How many recently updated projects to keep."),
     ),
-    threadsPerProject: Flag.integer("threads-per-project").pipe(
+    threadsPerProject: Flag.Int("threads-per-project").pipe(
       Flag.withDefault(10),
       Flag.withDescription("How many recent stopped threads to keep per project."),
     ),
-    baseDir: Flag.string("base-dir").pipe(
+    baseDir: Flag.String("base-dir").pipe(
       Flag.optional,
       Flag.withDescription("Isolated .t3 directory. Defaults to the current worktree's .t3."),
     ),
-    source: Flag.string("source").pipe(
+    source: Flag.String("source").pipe(
       Flag.optional,
       Flag.withDescription("Source database. Defaults to ~/.t3/userdata/state.sqlite."),
     ),

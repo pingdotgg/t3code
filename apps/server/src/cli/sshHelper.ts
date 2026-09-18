@@ -30,9 +30,9 @@ const tryPort = (port: number) =>
 
 /** Prints the first free loopback port from the preferred one, scanning `window` ports. */
 const pickPort = Command.make("pick-port", {
-  portFile: Argument.string("port-file"),
-  defaultPort: Argument.integer("default-port"),
-  scanWindow: Argument.integer("scan-window"),
+  portFile: Argument.String("port-file"),
+  defaultPort: Argument.Int("default-port"),
+  scanWindow: Argument.Int("scan-window"),
 }).pipe(
   Command.withHandler(({ portFile, defaultPort, scanWindow }) =>
     Effect.promise(async () => {
@@ -71,9 +71,9 @@ const probe = (port: number, probeTimeoutMs: number) =>
 
 /** Exits 0 once the loopback server answers, 1 when the deadline passes first. */
 const waitReady = Command.make("wait-ready", {
-  port: Argument.integer("port"),
-  timeoutMs: Argument.integer("timeout-ms"),
-  probeTimeoutMs: Argument.integer("probe-timeout-ms"),
+  port: Argument.Int("port"),
+  timeoutMs: Argument.Int("timeout-ms"),
+  probeTimeoutMs: Argument.Int("probe-timeout-ms"),
 }).pipe(
   Command.withHandler(({ port, timeoutMs, probeTimeoutMs }) =>
     Effect.promise(async () => {
@@ -89,7 +89,7 @@ const waitReady = Command.make("wait-ready", {
 
 /** Prints `<pid> <port>` for a live default-home server, or exits 1. */
 const runtimePort = Command.make("runtime-port", {
-  runtimeFile: Argument.string("runtime-file"),
+  runtimeFile: Argument.String("runtime-file"),
 }).pipe(
   Command.withHandler(({ runtimeFile }) =>
     Effect.sync(() => {
