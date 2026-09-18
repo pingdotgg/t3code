@@ -106,7 +106,11 @@ export function CustomSnoozeSheet(props: {
             onClose={props.onClose}
             onSubmit={submit}
           >
-            <Host matchContents colorScheme={themeAppearance}>
+            <Host
+              matchContents={{ vertical: true }}
+              colorScheme={themeAppearance}
+              style={{ width: popoverWidth }}
+            >
               <VStack
                 spacing={16}
                 modifiers={[padding({ all: 16 }), foregroundStyle(colors["--color-foreground"])]}
