@@ -121,7 +121,7 @@ export const OpenCode2Driver: ProviderDriver<OpenCode2Settings, OpenCode2DriverE
             new ProviderDriverError({
               driver: DRIVER_KIND,
               instanceId,
-              detail: `Failed to build OpenCode 2 snapshot: ${cause.message ?? String(cause)}`,
+              detail: "Failed to build OpenCode 2 snapshot.",
               cause,
             }),
         ),

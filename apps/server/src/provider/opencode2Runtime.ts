@@ -126,13 +126,20 @@ export function openCode2McpServerBase(baseName: string | undefined): string {
 }
 
 /**
- * Deterministic per-thread MCP server name on a shared OpenCode server. MCP
- * names allow letters, digits, `_`, and `-`; the base is sanitized so the
- * isolation rules can predict it, and the thread id is hashed beyond the
- * length cap so two threads in one directory hold independent registrations.
+ * Deterministic per-instance, per-thread MCP server name on a shared OpenCode
+ * server. MCP names allow letters, digits, `_`, and `-`; the base is sanitized
+ * so the isolation rules can predict it, and the thread id is hashed beyond
+ * the length cap so two threads in one directory hold independent
+ * registrations.
  */
-export function openCode2McpServerName(baseName: string | undefined, threadId: string): string {
-  const base = openCode2McpServerBase(baseName);
+export function openCode2McpServerName(
+  baseName: string | undefined,
+  threadId: string,
+  instanceId?: string,
+): string {
+  const base = openCode2McpServerBase(
+    instanceId ? `${baseName ?? OPENCODE2_MCP_NAMESPACE}-${instanceId}` : baseName,
+  );
   const name = `${base}-${threadId}`.replaceAll(/[^a-zA-Z0-9_-]/g, "_");
   if (name.length <= OPENCODE2_MCP_NAME_MAX_LENGTH) {
     return name;

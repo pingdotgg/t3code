@@ -171,6 +171,12 @@ it("keeps per-thread names valid and predictable, including the hashed path", ()
   NodeAssert.ok(/^[a-zA-Z0-9_-]+$/.test(name));
   NodeAssert.ok(name.startsWith(`${openCode2McpServerBase("corp.io")}-`));
 
+  const instanceA = openCode2McpServerName("corp.io", threadId, "instance-a");
+  const instanceB = openCode2McpServerName("corp.io", threadId, "instance-b");
+  NodeAssert.notEqual(instanceA, instanceB);
+  NodeAssert.ok(instanceA.includes("instance-a"));
+  NodeAssert.ok(instanceB.includes("instance-b"));
+
   // Beyond the length cap the name is hashed; the sanitized namespace prefix
   // must still keep the result a valid MCP name in the reserved namespace
   // (regression: the hashed path kept `corp.io` and emitted an invalid name).

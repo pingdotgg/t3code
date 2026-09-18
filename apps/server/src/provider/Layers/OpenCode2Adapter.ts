@@ -2771,6 +2771,7 @@ export function makeOpenCode2Adapter(
         const mcpServerName = OpenCode2Runtime.openCode2McpServerName(
           openCode2Settings.mcpServerName,
           input.threadId,
+          boundInstanceId,
         );
         const startedExit = yield* Effect.exit(
           Effect.gen(function* () {
