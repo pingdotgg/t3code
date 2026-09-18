@@ -1,3 +1,4 @@
+import { ComposerContextLabel } from "./ComposerContextLabel";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -825,22 +826,7 @@ export function BranchToolbarBranchSelector({
                 displayMode === "panel" && THREAD_DETAILS_PANEL_ICON_CLASS,
               )}
             />
-            <span
-              data-composer-label
-              className={cn(
-                "min-w-0 max-w-[240px] truncate",
-                displayMode === "panel"
-                  ? "max-w-none flex-1 text-left"
-                  : "transition-[max-width,opacity] duration-300 ease-out group-data-[compact]/composer-context:max-w-0 group-data-[compact]/composer-context:opacity-0",
-              )}
-            >
-              <span
-                data-composer-label-motion
-                className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
-              >
-                {triggerLabel}
-              </span>
-            </span>
+            <ComposerContextLabel displayMode={displayMode}>{triggerLabel}</ComposerContextLabel>
             {displayMode === "panel" ? (
               <span data-slot="select-icon">
                 <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
