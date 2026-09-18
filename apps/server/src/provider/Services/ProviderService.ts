@@ -20,6 +20,8 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderSessionWakeRequest,
+  ProviderSessionWakeResult,
   ProviderStopSessionInput,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
@@ -87,6 +89,23 @@ export interface ProviderServiceShape {
   readonly stopSession: (
     input: ProviderStopSessionInput,
   ) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Stop a session only when its persisted last-seen stamp still matches.
+   * Used by the idle reaper so a concurrent wake can refresh activity first.
+   */
+  readonly stopIdleSession: (input: {
+    readonly threadId: ThreadId;
+    readonly observedLastSeenAt: string;
+  }) => Effect.Effect<boolean, ProviderServiceError>;
+
+  /**
+   * Restore a T3-managed Codex session from its provider thread id.
+   * Does not submit a turn or start a fresh Codex or T3 thread.
+   */
+  readonly wakeSession: (
+    input: ProviderSessionWakeRequest,
+  ) => Effect.Effect<ProviderSessionWakeResult, ProviderServiceError>;
 
   /**
    * List active provider sessions.

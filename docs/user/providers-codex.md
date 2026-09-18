@@ -72,6 +72,27 @@ when it resets, when Codex reports them. Send the message again after the reset.
 message also says whether your workspace owner needs to add credits or raise the
 spend limit to continue sooner.
 
+## Resume a queued Codex session
+
+T3 Code restores a Codex session on request so Codex can read its own queue.
+It does not watch the queue for you.
+
+1. Run `codex queue` in the Codex home that the target T3 instance uses.
+2. Send an authenticated wake request to that T3 environment.
+3. If the response is lost or restore fails for a short time, send **wake**
+   again. Do not send the queued message again.
+
+A successful response means the session is available. It does not mean Codex
+consumed the queue item or finished a turn. Codex can process the item on a
+later watcher pass.
+
+```bash
+curl -X POST "$T3_ENVIRONMENT_URL/api/orchestration/provider-session/wake" \
+  -H "Authorization: Bearer $T3_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"provider\":\"codex\",\"providerThreadId\":\"$CODEX_THREAD_ID\"}"
+```
+
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` with an optional description, for

@@ -162,7 +162,9 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     return Stream.fromQueue(this.eventQueue);
   }
 
-  close = Effect.promise(() => this.closeImpl());
+  close = Effect.promise(() => this.closeImpl()).pipe(
+    Effect.tap(() => Queue.shutdown(this.eventQueue)),
+  );
 
   emit(event: ProviderEvent) {
     return Queue.offer(this.eventQueue, event).pipe(Effect.asVoid);
@@ -295,6 +297,26 @@ validationLayer("CodexAdapterLive validation", (it) => {
         serviceTier: "priority",
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
+      });
+    }),
+  );
+
+  it.effect("forwards strict resume to the Codex runtime", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-strict-resume"),
+        resumeCursor: { threadId: "codex-saved" },
+        runtimeMode: "full-access",
+        resumeMode: "strict",
+      });
+
+      NodeAssert.equal(validationRuntimeFactory.factory.mock.calls[0]?.[0]?.resumeMode, "strict");
+      NodeAssert.deepEqual(validationRuntimeFactory.factory.mock.calls[0]?.[0]?.resumeCursor, {
+        threadId: "codex-saved",
       });
     }),
   );
@@ -1750,6 +1772,32 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("unloads a session after the Codex process exits", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      NodeAssert.equal(yield* adapter.hasSession(asThreadId("thread-1")), true);
+      const exitedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "session.exited"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-session-exited"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/exited",
+        message: "Codex App Server exited.",
+      } satisfies ProviderEvent);
+
+      yield* Fiber.join(exitedFiber);
+      NodeAssert.equal(yield* adapter.hasSession(asThreadId("thread-1")), false);
+    }),
+  );
+
   it.effect("maps retryable Codex error notifications to runtime.warning", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
@@ -2652,6 +2700,77 @@ const scopedFailureLayer = it.layer(
     Layer.provideMerge(NodeServices.layer),
   ),
 );
+
+const failingStartRuntimeFactory = makeRuntimeFactory();
+const failingStartLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: (options) =>
+          Effect.gen(function* () {
+            const runtime = yield* failingStartRuntimeFactory.factory(options);
+            runtime.start = (() =>
+              Effect.gen(function* () {
+                yield* runtime.emit({
+                  id: asEventId("evt-connecting"),
+                  kind: "session",
+                  provider: ProviderDriverKind.make("codex"),
+                  threadId: options.threadId,
+                  createdAt: "2026-01-01T00:00:00.000Z",
+                  method: "session/connecting",
+                  message: "Starting Codex App Server session.",
+                });
+                return yield* new CodexErrors.CodexAppServerRequestError({
+                  code: -32603,
+                  errorMessage: "thread not found",
+                });
+              })) as unknown as FakeCodexRuntime["start"];
+            return runtime;
+          }),
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+failingStartLayer("CodexAdapterLive failed restore delivery", (it) => {
+  it.effect("delivers a terminal session event when strict resume fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const terminalEventFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.type === "session.state.changed" && event.payload.state === "error",
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-resume-fail"),
+          runtimeMode: "full-access",
+          resumeCursor: { threadId: "saved-thread" },
+          resumeMode: "strict",
+        })
+        .pipe(Effect.result);
+
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(yield* adapter.hasSession(asThreadId("thread-resume-fail")), false);
+      const terminalEvent = yield* Fiber.join(terminalEventFiber);
+      NodeAssert.equal(terminalEvent._tag, "Some");
+      if (terminalEvent._tag === "Some" && terminalEvent.value.type === "session.state.changed") {
+        NodeAssert.equal(terminalEvent.value.payload.reason, "thread not found");
+      }
+    }).pipe(TestClock.withLive),
+  );
+});
 
 scopedFailureLayer("CodexAdapterLive scoped startup failure", (it) => {
   it.effect("closes the externally owned session scope when startSession fails", () =>

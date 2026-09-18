@@ -178,6 +178,7 @@ export interface CodexSessionRuntimeOptions {
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
   readonly resumeCursor?: CodexResumeCursor;
+  readonly resumeMode?: "strict";
   readonly appServerArgs?: ReadonlyArray<string>;
   /** Capabilities the session's `t3-code` MCP credential grants; drives the prompt blocks. */
   readonly mcpCapabilities?: ReadonlySet<string>;
@@ -500,10 +501,40 @@ function normalizeCodexModelSlug(
   return normalized;
 }
 
-function readResumeCursorThreadId(
+export function readCodexResumeCursorThreadId(
   resumeCursor: ProviderSession["resumeCursor"],
 ): string | undefined {
   return isCodexResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
+}
+
+function isCodexSessionIdleForResumeReady(session: ProviderSession): boolean {
+  return (
+    session.status !== "running" &&
+    session.status !== "error" &&
+    session.status !== "closed" &&
+    session.activeTurnId === undefined
+  );
+}
+
+export function mergeCodexResumeStartupSession(
+  current: ProviderSession,
+  opened: {
+    readonly cwd: string;
+    readonly model: string;
+    readonly thread: { readonly id: string };
+  },
+  updatedAt: string,
+): { readonly session: ProviderSession; readonly emitReady: boolean } {
+  const preserveStatus = !isCodexSessionIdleForResumeReady(current);
+  const session = {
+    ...current,
+    cwd: opened.cwd,
+    model: opened.model,
+    resumeCursor: { threadId: opened.thread.id },
+    updatedAt,
+    ...(preserveStatus ? {} : { status: "ready" as const }),
+  } satisfies ProviderSession;
+  return { session, emitReady: !preserveStatus };
 }
 
 function runtimeModeToThreadConfig(input: RuntimeMode): {
@@ -728,6 +759,7 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly resumeMode?: "strict" | "fallback";
 }): Effect.Effect<typeof CodexThreadResumeMetadata.Type, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
   const startParams = buildThreadStartParams({
@@ -738,13 +770,22 @@ export const openCodexThread = (input: {
   });
 
   if (resumeThreadId === undefined) {
+    if (input.resumeMode === "strict") {
+      return Effect.fail(
+        CodexErrors.CodexAppServerRequestError.invalidParams(
+          "strict Codex resume requires a saved provider thread id",
+          undefined,
+          { method: "thread/resume" },
+        ),
+      );
+    }
     return input.client.request("thread/start", startParams);
   }
 
   // Older providers may still return history despite excludeTurns. Only the
   // session metadata is needed here, so unrelated historical items cannot
   // prevent resuming a valid provider thread.
-  return input.client.raw
+  const resume = input.client.raw
     .request("thread/resume", {
       threadId: resumeThreadId,
       ...startParams,
@@ -762,16 +803,33 @@ export const openCodexThread = (input: {
           ),
         ),
       ),
-      Effect.catchIf(isRecoverableThreadResumeError, (error) =>
-        Effect.logWarning("codex app-server thread resume fell back to fresh start", {
-          threadId: input.threadId,
-          requestedRuntimeMode: input.runtimeMode,
-          resumeThreadId,
-          recoverable: true,
-          cause: error,
-        }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+    );
+
+  if (input.resumeMode === "strict") {
+    return resume.pipe(
+      Effect.filterOrFail(
+        (opened) => opened.thread.id === resumeThreadId,
+        (opened) =>
+          CodexErrors.CodexAppServerRequestError.invalidParams(
+            `strict Codex resume expected thread '${resumeThreadId}' but received '${opened.thread.id}'`,
+            { expectedThreadId: resumeThreadId, receivedThreadId: opened.thread.id },
+            { method: "thread/resume" },
+          ),
       ),
     );
+  }
+
+  return resume.pipe(
+    Effect.catchIf(isRecoverableThreadResumeError, (error) =>
+      Effect.logWarning("codex app-server thread resume fell back to fresh start", {
+        threadId: input.threadId,
+        requestedRuntimeMode: input.runtimeMode,
+        resumeThreadId,
+        recoverable: true,
+        cause: error,
+      }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
+    ),
+  );
 };
 
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
@@ -1167,7 +1225,7 @@ function toCodexUserInputAnswers(
 }
 
 function currentProviderThreadId(session: ProviderSession): string | undefined {
-  return readResumeCursorThreadId(session.resumeCursor);
+  return readCodexResumeCursorThreadId(session.resumeCursor);
 }
 
 function updateSession(
@@ -2368,33 +2426,41 @@ export const makeCodexSessionRuntime = (
 
     const start = Effect.fn("CodexSessionRuntime.start")(function* () {
       yield* emitSessionEvent("session/connecting", "Starting Codex App Server session.");
-      yield* client.request("initialize", buildCodexInitializeParams());
-      yield* client.notify("initialized", undefined);
+      return yield* Effect.gen(function* () {
+        yield* client.request("initialize", buildCodexInitializeParams());
+        yield* client.notify("initialized", undefined);
 
-      const requestedModel = normalizeCodexModelSlug(options.model);
+        const requestedModel = normalizeCodexModelSlug(options.model);
 
-      const opened = yield* openCodexThread({
-        client,
-        threadId: options.threadId,
-        runtimeMode: options.runtimeMode,
-        cwd: options.cwd,
-        requestedModel,
-        serviceTier: options.serviceTier,
-        resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
-      });
+        const resumeThreadId = readCodexResumeCursorThreadId(options.resumeCursor);
+        const opened = yield* openCodexThread({
+          client,
+          threadId: options.threadId,
+          runtimeMode: options.runtimeMode,
+          cwd: options.cwd,
+          requestedModel,
+          serviceTier: options.serviceTier,
+          resumeThreadId,
+          resumeMode: options.resumeMode ?? "fallback",
+        });
 
-      const providerThreadId = opened.thread.id;
-      const session = {
-        ...(yield* Ref.get(sessionRef)),
-        status: "ready",
-        cwd: opened.cwd,
-        model: opened.model,
-        resumeCursor: { threadId: providerThreadId },
-        updatedAt: yield* nowIso,
-      } satisfies ProviderSession;
-      yield* Ref.set(sessionRef, session);
-      yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
-      return session;
+        const updatedAt = yield* nowIso;
+        const merged = yield* Ref.modify(sessionRef, (current) => {
+          const next = mergeCodexResumeStartupSession(current, opened, updatedAt);
+          return [next, next.session] as const;
+        });
+        if (merged.emitReady) {
+          yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
+        }
+        return yield* Ref.get(sessionRef);
+      }).pipe(
+        Effect.tapError((error) =>
+          updateSession(sessionRef, {
+            status: "error",
+            lastError: error.message,
+          }),
+        ),
+      );
     });
 
     const readProviderThreadId = Effect.gen(function* () {

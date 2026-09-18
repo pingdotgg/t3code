@@ -38,6 +38,7 @@ import {
   OrchestrationShellSnapshot,
   OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   PullRequestDiffInput,
   PullRequestDiffResult,
@@ -67,6 +68,9 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_scope",
   "scope_not_granted",
   "invalid_command",
+  "ambiguous_provider_session",
+  "provider_instance_unavailable",
+  "workspace_missing",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -95,6 +99,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
+  "orchestration_provider_session_wake_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -191,7 +196,11 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "provider_session_not_found",
+  "thread_unavailable",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedError<EnvironmentResourceNotFoundError>()(
@@ -337,6 +346,25 @@ const EnvironmentOrchestrationDispatchErrors = [
   EnvironmentScopeRequiredError,
   EnvironmentInternalError,
 ] as const;
+const EnvironmentOrchestrationProviderSessionWakeErrors = [
+  EnvironmentRequestInvalidError,
+  EnvironmentScopeRequiredError,
+  EnvironmentResourceNotFoundError,
+  EnvironmentInternalError,
+] as const;
+
+export const ProviderSessionWakeRequest = Schema.Struct({
+  provider: Schema.Literal("codex"),
+  providerThreadId: TrimmedNonEmptyString,
+  providerInstanceId: Schema.optional(ProviderInstanceId),
+});
+export type ProviderSessionWakeRequest = typeof ProviderSessionWakeRequest.Type;
+
+export const ProviderSessionWakeResult = Schema.Struct({
+  threadId: ThreadId,
+  outcome: Schema.Literals(["restored", "already-loaded"]),
+});
+export type ProviderSessionWakeResult = typeof ProviderSessionWakeResult.Type;
 
 export interface EnvironmentSessionPrincipalShape {
   readonly sessionId: AuthSessionId;
@@ -535,6 +563,14 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
       payload: ClientOrchestrationCommand,
       success: DispatchResult,
       error: EnvironmentOrchestrationDispatchErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("wakeProviderSession", "/api/orchestration/provider-session/wake", {
+      headers: OptionalBearerHeaders,
+      payload: ProviderSessionWakeRequest,
+      success: ProviderSessionWakeResult,
+      error: EnvironmentOrchestrationProviderSessionWakeErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

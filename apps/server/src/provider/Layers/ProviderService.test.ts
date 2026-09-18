@@ -56,6 +56,7 @@ import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
   ProviderUnsupportedError,
+  ProviderSessionWakeTargetError,
   ProviderValidationError,
   ProviderWorkspaceMissingError,
   type ProviderAdapterError,
@@ -413,12 +414,64 @@ const hasMetricSnapshot = (
       Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
   );
 
+const decodeThreadShell = Schema.decodeUnknownSync(OrchestrationThreadShell);
+
+function makeThreadShell(threadId: ThreadId): OrchestrationThreadShell {
+  return decodeThreadShell({
+    id: threadId,
+    projectId: ProjectId.make("project-wake"),
+    title: "Wake test",
+    modelSelection: createModelSelection(codexInstanceId, "gpt-5.4"),
+    runtimeMode: "full-access",
+    branch: null,
+    worktreePath: null,
+    latestTurn: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    session: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+  });
+}
+
+function makeProjectionLayer(threadIds: ReadonlyArray<ThreadId>) {
+  const threads = new Map(threadIds.map((threadId) => [threadId, makeThreadShell(threadId)]));
+  return Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+    getTurnStartMessage: () => Effect.die("unused"),
+    getImportedAgentSessionSources: () => Effect.die("unused"),
+    getUserInputActivity: () => Effect.die("unused"),
+    listActivitiesByKind: () => Effect.die("unused"),
+    getCommandReadModel: () => Effect.die("unused"),
+    getSnapshot: () => Effect.die("unused"),
+    getShellSnapshot: () => Effect.die("unused"),
+    getDeletedWorktreeThreads: () => Effect.die("unused"),
+    getArchivedShellSnapshot: () => Effect.die("unused"),
+    getSnapshotSequence: () => Effect.die("unused"),
+    getCounts: () => Effect.die("unused"),
+    getEventReplayStats: () => Effect.die("unused"),
+    getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
+    getProjectShells: () => Effect.die("unused"),
+    getProjectShellById: () => Effect.die("unused"),
+    getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+    getThreadCheckpointContext: () => Effect.die("unused"),
+    getFullThreadDiffContext: () => Effect.die("unused"),
+    getThreadRuntimeContext: () => Effect.die("unused"),
+    getThreadShellById: (threadId) => Effect.succeed(Option.fromNullishOr(threads.get(threadId))),
+    getThreadDetailById: () => Effect.die("unused"),
+    getThreadDetailSnapshot: () => Effect.die("unused"),
+    searchThreads: () => Effect.die("unused"),
+  });
+}
+
 function makeProviderServiceLayer(
   input: {
     readonly directory?: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
     readonly supportsConversationRollback?: boolean;
     readonly analyticsLayer?: Layer.Layer<AnalyticsService.AnalyticsService>;
     readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
+    readonly threadIds?: ReadonlyArray<ThreadId>;
   } = {},
 ) {
   const codex = makeFakeCodexAdapter(CODEX_DRIVER, input.supportsConversationRollback);
@@ -444,12 +497,16 @@ function makeProviderServiceLayer(
       ? ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer))
       : Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, input.directory);
 
+  const projectionLayer =
+    input.threadIds === undefined ? Layer.empty : makeProjectionLayer(input.threadIds);
+
   const layer = it.layer(
     Layer.mergeAll(
       makeProviderServiceLive().pipe(
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
+        Layer.provide(projectionLayer),
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
         Layer.provideMerge(input.analyticsLayer ?? AnalyticsService.layerTest),
@@ -5150,3 +5207,630 @@ describe("agent browser access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+const wakeRestoreThreadId = asThreadId("thread-wake-restore");
+const wakeLoadedThreadId = asThreadId("thread-wake-loaded");
+const wakeErrorThreadId = asThreadId("thread-wake-error");
+const wakeActivityThreadId = asThreadId("thread-wake-activity");
+const wakeRunningThreadId = asThreadId("thread-wake-running");
+const wakeDeadThreadId = asThreadId("thread-wake-dead");
+const wakeConcurrentThreadId = asThreadId("thread-wake-concurrent");
+const wakeInterruptedThreadId = asThreadId("thread-wake-interrupted");
+const wakeRetryThreadId = asThreadId("thread-wake-retry");
+const wakeFailedThreadId = asThreadId("thread-wake-failed");
+const wakeIdleThreadId = asThreadId("thread-wake-idle");
+const wakeAmbiguousAThreadId = asThreadId("thread-wake-ambiguous-a");
+const wakeAmbiguousBThreadId = asThreadId("thread-wake-ambiguous-b");
+const wakeMissingWorkspaceThreadId = asThreadId("thread-wake-missing-workspace");
+const wake = makeProviderServiceLayer({
+  threadIds: [
+    wakeRestoreThreadId,
+    wakeLoadedThreadId,
+    wakeErrorThreadId,
+    wakeActivityThreadId,
+    wakeRunningThreadId,
+    wakeDeadThreadId,
+    wakeConcurrentThreadId,
+    wakeInterruptedThreadId,
+    wakeRetryThreadId,
+    wakeFailedThreadId,
+    wakeIdleThreadId,
+    wakeAmbiguousAThreadId,
+    wakeAmbiguousBThreadId,
+    wakeMissingWorkspaceThreadId,
+  ],
+});
+
+wake.layer("ProviderServiceLive Codex session wake", (it) => {
+  const startCodex = (
+    threadId: ThreadId,
+    providerThreadId: string,
+    cwdName: string,
+    resumeCursor?: unknown,
+  ) =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      return yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd(cwdName),
+        runtimeMode: "full-access",
+        resumeCursor: resumeCursor ?? { threadId: providerThreadId },
+      });
+    });
+
+  it.effect("restores a stopped Codex session without submitting a turn", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-restore";
+      yield* startCodex(wakeRestoreThreadId, providerThreadId, "wake-restore");
+      yield* provider.stopSession({ threadId: wakeRestoreThreadId });
+      wake.codex.startSession.mockClear();
+      wake.codex.sendTurn.mockClear();
+
+      const result = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+
+      assert.equal(result.threadId, wakeRestoreThreadId);
+      assert.equal(result.outcome, "restored");
+      assert.equal(wake.codex.startSession.mock.calls.length, 1);
+      assert.equal(wake.codex.sendTurn.mock.calls.length, 0);
+      const startInput = wake.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(startInput?.resumeMode, "strict");
+      assert.deepEqual(startInput?.resumeCursor, { threadId: providerThreadId });
+      assert.equal(startInput?.threadId, wakeRestoreThreadId);
+    }),
+  );
+
+  it.effect("reuses a loaded idle session on repeated wake", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-loaded";
+      yield* startCodex(wakeLoadedThreadId, providerThreadId, "wake-loaded");
+      wake.codex.startSession.mockClear();
+      wake.codex.sendTurn.mockClear();
+
+      const first = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+      const second = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+
+      assert.equal(first.outcome, "already-loaded");
+      assert.equal(second.outcome, "already-loaded");
+      assert.equal(wake.codex.startSession.mock.calls.length, 0);
+      assert.equal(wake.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("does not replace a healthy running session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-running";
+      yield* startCodex(wakeRunningThreadId, providerThreadId, "wake-running");
+      wake.codex.updateSession(wakeRunningThreadId, (session) => ({
+        ...session,
+        status: "running",
+        activeTurnId: asTurnId("turn-running"),
+      }));
+      wake.codex.startSession.mockClear();
+
+      const received = yield* Ref.make<string[]>([]);
+      const subscriber = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        event.type === "session.state.changed"
+          ? Ref.update(received, (current) => [...current, event.payload.state])
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+
+      const result = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+      yield* advanceTestClock(50);
+
+      assert.equal(result.outcome, "already-loaded");
+      assert.equal(wake.codex.startSession.mock.calls.length, 0);
+      assert.deepEqual(yield* Ref.get(received), []);
+      yield* Fiber.interrupt(subscriber);
+    }),
+  );
+
+  it.effect("reuses a loaded session after a failed turn", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-error";
+      yield* startCodex(wakeErrorThreadId, providerThreadId, "wake-error");
+      wake.codex.updateSession(wakeErrorThreadId, (session) => ({
+        ...session,
+        status: "error",
+        activeTurnId: undefined,
+        lastError: "queued turn failed",
+      }));
+      wake.codex.startSession.mockClear();
+
+      const received = yield* Ref.make<string[]>([]);
+      const subscriber = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        event.type === "session.state.changed"
+          ? Ref.update(received, (current) => [...current, event.payload.state])
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+
+      const result = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+      yield* advanceTestClock(50);
+
+      assert.equal(result.outcome, "already-loaded");
+      assert.equal(wake.codex.startSession.mock.calls.length, 0);
+      assert.deepEqual(yield* Ref.get(received), ["starting", "error"]);
+      yield* Fiber.interrupt(subscriber);
+    }),
+  );
+
+  it.effect("counts an explicit wake of a loaded idle session as session activity", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-activity";
+      yield* startCodex(wakeActivityThreadId, providerThreadId, "wake-activity");
+      wake.codex.startSession.mockClear();
+
+      const received = yield* Ref.make<
+        Array<{ readonly state: string; readonly preserveActiveTurn: boolean }>
+      >([]);
+      const subscriber = yield* Stream.runForEach(provider.streamEvents, (event) =>
+        event.type === "session.state.changed"
+          ? Ref.update(received, (current) => [
+              ...current,
+              {
+                state: event.payload.state,
+                preserveActiveTurn: event.payload.preserveActiveTurn === true,
+              },
+            ])
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+      yield* advanceTestClock(50);
+
+      const result = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+      yield* advanceTestClock(50);
+
+      assert.equal(result.outcome, "already-loaded");
+      assert.equal(wake.codex.startSession.mock.calls.length, 0);
+      assert.deepEqual(yield* Ref.get(received), [
+        { state: "starting", preserveActiveTurn: false },
+        { state: "ready", preserveActiveTurn: true },
+      ]);
+      yield* Fiber.interrupt(subscriber);
+    }),
+  );
+
+  it.effect("serializes concurrent wakes onto one restore", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-concurrent";
+      yield* startCodex(wakeConcurrentThreadId, providerThreadId, "wake-concurrent");
+      yield* provider.stopSession({ threadId: wakeConcurrentThreadId });
+      wake.codex.startSession.mockClear();
+
+      const [first, second] = yield* Effect.all(
+        [
+          provider.wakeSession({ provider: "codex", providerThreadId }),
+          provider.wakeSession({ provider: "codex", providerThreadId }),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      assert.equal(wake.codex.startSession.mock.calls.length, 1);
+      const outcomes = [first.outcome, second.outcome].toSorted();
+      assert.deepEqual(outcomes, ["already-loaded", "restored"]);
+    }),
+  );
+
+  it.effect("releases the lifecycle lock when restore is interrupted", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-interrupted";
+      yield* startCodex(wakeInterruptedThreadId, providerThreadId, "wake-interrupted");
+      yield* provider.stopSession({ threadId: wakeInterruptedThreadId });
+      wake.codex.startSession.mockClear();
+      const firstStarted = yield* Deferred.make<void>();
+      wake.codex.startSession.mockImplementationOnce((() =>
+        Deferred.succeed(firstStarted, undefined).pipe(
+          Effect.andThen(Effect.never),
+        )) as unknown as typeof wake.codex.startSession);
+
+      const firstWake = yield* provider
+        .wakeSession({ provider: "codex", providerThreadId })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstStarted);
+      yield* Fiber.interrupt(firstWake);
+
+      const retry = yield* provider.wakeSession({ provider: "codex", providerThreadId });
+
+      assert.equal(retry.outcome, "restored");
+      assert.equal(wake.codex.startSession.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("reuses the restored session when the caller retries wake", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-retry";
+      yield* startCodex(wakeRetryThreadId, providerThreadId, "wake-retry");
+      yield* provider.stopSession({ threadId: wakeRetryThreadId });
+      wake.codex.startSession.mockClear();
+      wake.codex.sendTurn.mockClear();
+
+      const first = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+      const retry = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+
+      assert.equal(first.outcome, "restored");
+      assert.equal(retry.outcome, "already-loaded");
+      assert.equal(wake.codex.startSession.mock.calls.length, 1);
+      assert.equal(wake.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("leaves the saved provider identity unchanged when resume fails", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const providerThreadId = "codex-wake-failed";
+      yield* startCodex(wakeFailedThreadId, providerThreadId, "wake-failed");
+      yield* provider.stopSession({ threadId: wakeFailedThreadId });
+      const before = Option.getOrThrow(yield* directory.getBinding(wakeFailedThreadId));
+      wake.codex.startSession.mockImplementationOnce((() =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "thread/resume",
+            detail: "thread not found",
+          }),
+        )) as unknown as typeof wake.codex.startSession);
+
+      const error = yield* provider
+        .wakeSession({ provider: "codex", providerThreadId })
+        .pipe(Effect.flip);
+
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      const after = Option.getOrThrow(yield* directory.getBinding(wakeFailedThreadId));
+      assert.equal(after.provider, before.provider);
+      assert.equal(after.providerInstanceId, before.providerInstanceId);
+      assert.deepEqual(after.resumeCursor, before.resumeCursor);
+    }),
+  );
+
+  it.effect("rejects a missing Codex target before starting a session", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      wake.codex.startSession.mockClear();
+      const error = yield* provider
+        .wakeSession({ provider: "codex", providerThreadId: "codex-missing" })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ProviderSessionWakeTargetError);
+      assert.equal(error.reason, "not_found");
+      assert.equal(wake.codex.startSession.mock.calls.length, 0);
+      assert.equal(wake.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("rejects an ambiguous Codex target", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-ambiguous";
+      yield* startCodex(wakeAmbiguousAThreadId, providerThreadId, "wake-ambiguous-a");
+      yield* startCodex(wakeAmbiguousBThreadId, providerThreadId, "wake-ambiguous-b");
+      wake.codex.startSession.mockClear();
+
+      const error = yield* provider
+        .wakeSession({ provider: "codex", providerThreadId })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderSessionWakeTargetError);
+      assert.equal(error.reason, "ambiguous");
+      assert.equal(wake.codex.startSession.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("rejects a missing workspace without changing the saved identity", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const providerThreadId = "codex-wake-missing-workspace";
+      const cwd = fixtureCwd("wake-missing-workspace");
+      yield* startCodex(wakeMissingWorkspaceThreadId, providerThreadId, "wake-missing-workspace");
+      yield* provider.stopSession({ threadId: wakeMissingWorkspaceThreadId });
+      const before = Option.getOrThrow(yield* directory.getBinding(wakeMissingWorkspaceThreadId));
+      NodeFS.rmSync(cwd, { recursive: true, force: true });
+      wake.codex.startSession.mockClear();
+
+      const error = yield* provider
+        .wakeSession({ provider: "codex", providerThreadId })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderWorkspaceMissingError);
+      const after = Option.getOrThrow(yield* directory.getBinding(wakeMissingWorkspaceThreadId));
+      assert.equal(after.provider, before.provider);
+      assert.deepEqual(after.resumeCursor, before.resumeCursor);
+      assert.equal(wake.codex.startSession.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("does not stop a session whose last-seen stamp changed", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const providerThreadId = "codex-wake-idle";
+      yield* startCodex(wakeIdleThreadId, providerThreadId, "wake-idle");
+      const beforeWake = (yield* directory.listBindings()).find(
+        (binding) => binding.threadId === wakeIdleThreadId,
+      );
+      assert.ok(beforeWake);
+      wake.codex.stopSession.mockClear();
+      yield* advanceTestClock(1000);
+
+      const woken = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+      const afterWake = (yield* directory.listBindings()).find(
+        (binding) => binding.threadId === wakeIdleThreadId,
+      );
+      assert.ok(afterWake);
+      assert.equal(woken.outcome, "already-loaded");
+      assert.notEqual(afterWake.lastSeenAt, beforeWake.lastSeenAt);
+
+      const stopped = yield* provider.stopIdleSession({
+        threadId: wakeIdleThreadId,
+        observedLastSeenAt: beforeWake.lastSeenAt,
+      });
+
+      assert.equal(stopped, false);
+      assert.equal(wake.codex.stopSession.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("restores a closed loaded runtime instead of adopting it", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const providerThreadId = "codex-wake-dead";
+      yield* startCodex(wakeDeadThreadId, providerThreadId, "wake-dead");
+      wake.codex.updateSession(wakeDeadThreadId, (session) => ({
+        ...session,
+        status: "closed",
+        activeTurnId: undefined,
+      }));
+      wake.codex.startSession.mockClear();
+      wake.codex.sendTurn.mockClear();
+
+      const result = yield* provider.wakeSession({
+        provider: "codex",
+        providerThreadId,
+      });
+
+      assert.equal(result.outcome, "restored");
+      assert.equal(wake.codex.startSession.mock.calls.length, 1);
+      assert.equal(wake.codex.sendTurn.mock.calls.length, 0);
+    }),
+  );
+
+  it.effect("rejects a Codex binding whose T3 thread is gone", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("thread-wake-gone");
+      yield* directory.upsert({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        resumeCursor: { threadId: "codex-wake-gone" },
+        runtimeMode: "full-access",
+      });
+      wake.codex.startSession.mockClear();
+
+      const error = yield* provider
+        .wakeSession({ provider: "codex", providerThreadId: "codex-wake-gone" })
+        .pipe(Effect.flip);
+
+      assert.instanceOf(error, ProviderSessionWakeTargetError);
+      assert.equal(error.reason, "thread_unavailable");
+      assert.equal(wake.codex.startSession.mock.calls.length, 0);
+    }),
+  );
+});
+
+it.effect("wakeSession rejects a disabled Codex instance before restore", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("thread-wake-disabled");
+    const providerThreadId = "codex-wake-disabled";
+    const codex = makeFakeCodexAdapter();
+    const registryBase = makeAdapterRegistryMock({ [CODEX_DRIVER]: codex.adapter });
+    const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
+      ...registryBase,
+      getInstanceInfo: (instanceId) =>
+        Effect.succeed({
+          instanceId,
+          driverKind: CODEX_DRIVER,
+          displayName: undefined,
+          enabled: false,
+          continuationIdentity: {
+            driverKind: CODEX_DRIVER,
+            continuationKey: "codex:instance:codex",
+          },
+        }),
+    };
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
+    const layer = Layer.mergeAll(
+      makeProviderServiceLive().pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(makeProjectionLayer([threadId])),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      ),
+      directoryLayer,
+    );
+
+    const error = yield* Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      yield* directory.upsert({
+        threadId,
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        resumeCursor: { threadId: providerThreadId },
+        runtimeMode: "full-access",
+        runtimePayload: { cwd: fixtureCwd("wake-disabled") },
+      });
+      const provider = yield* ProviderService.ProviderService;
+      return yield* provider.wakeSession({ provider: "codex", providerThreadId }).pipe(Effect.flip);
+    }).pipe(Effect.provide(layer));
+
+    assert.instanceOf(error, ProviderSessionWakeTargetError);
+    assert.equal(error.reason, "instance_unavailable");
+    assert.equal(codex.startSession.mock.calls.length, 0);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("wakeSession does not overwrite a newer provider instance binding", () =>
+  Effect.gen(function* () {
+    const threadId = asThreadId("thread-wake-stale-binding");
+    const providerThreadId = "codex-wake-stale";
+    const personalInstanceId = ProviderInstanceId.make("codex-personal");
+    const primary = makeFakeCodexAdapter();
+    const personal = makeFakeCodexAdapter();
+    const listed = yield* Deferred.make<void>();
+    const continueWake = yield* Deferred.make<void>();
+    let listCalls = 0;
+    const registryBase = makeStaticInstanceRegistry([
+      [codexInstanceId, primary.adapter],
+      [personalInstanceId, personal.adapter],
+    ]);
+    const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
+      ...registryBase,
+      getInstanceInfo: (instanceId) =>
+        Effect.succeed({
+          instanceId,
+          driverKind: CODEX_DRIVER,
+          displayName: undefined,
+          enabled: true,
+          continuationIdentity: {
+            driverKind: CODEX_DRIVER,
+            continuationKey: "codex:home:shared",
+          },
+        }),
+    };
+    const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+      Layer.provide(SqlitePersistenceMemory),
+    );
+    const innerDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(runtimeRepositoryLayer),
+    );
+    const directoryScope = yield* Scope.make();
+    const innerContext = yield* Layer.build(innerDirectoryLayer).pipe(
+      Scope.provide(directoryScope),
+    );
+    const innerDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
+      Effect.provide(innerContext),
+    );
+    const wrappedDirectory: ProviderSessionDirectory.ProviderSessionDirectory["Service"] = {
+      ...innerDirectory,
+      listBindings: () =>
+        Effect.gen(function* () {
+          const result = yield* innerDirectory.listBindings();
+          listCalls += 1;
+          if (listCalls === 1) {
+            yield* Deferred.succeed(listed, undefined);
+            yield* Deferred.await(continueWake);
+          }
+          return result;
+        }),
+    };
+    const directoryLayer = Layer.succeed(
+      ProviderSessionDirectory.ProviderSessionDirectory,
+      wrappedDirectory,
+    );
+    const layer = Layer.mergeAll(
+      makeProviderServiceLive().pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(directoryLayer),
+        Layer.provide(makeProjectionLayer([threadId])),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      ),
+      directoryLayer,
+    );
+
+    const binding = yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("wake-stale-primary"),
+        runtimeMode: "full-access",
+        resumeCursor: { threadId: providerThreadId },
+      });
+      yield* provider.stopSession({ threadId });
+      primary.startSession.mockClear();
+      personal.startSession.mockClear();
+
+      const wakeFiber = yield* provider
+        .wakeSession({ provider: "codex", providerThreadId })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(listed);
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: personalInstanceId,
+        threadId,
+        cwd: fixtureCwd("wake-stale-personal"),
+        runtimeMode: "full-access",
+        resumeCursor: { threadId: providerThreadId },
+      });
+      yield* Deferred.succeed(continueWake, undefined);
+      yield* Fiber.join(wakeFiber);
+      return Option.getOrThrow(yield* directory.getBinding(threadId));
+    }).pipe(Effect.provide(layer));
+    yield* Scope.close(directoryScope, Exit.void);
+
+    assert.equal(binding.providerInstanceId, personalInstanceId);
+    assert.deepEqual(binding.resumeCursor, { threadId: providerThreadId });
+    assert.equal(primary.startSession.mock.calls.length, 0);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

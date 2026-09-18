@@ -93,11 +93,13 @@ export class ProviderWorkspaceMissingError extends Schema.TaggedError<ProviderWo
   "ProviderWorkspaceMissingError",
   {
     threadId: Schema.String,
-    cwd: Schema.String,
+    cwd: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return `This thread's workspace folder no longer exists or is not a directory: ${this.cwd}. Restore the folder at this path before retrying.`;
+    return this.cwd === undefined
+      ? "This thread has no saved workspace folder. Open the thread from an existing workspace before retrying."
+      : `This thread's workspace folder no longer exists or is not a directory: ${this.cwd}. Restore the folder at this path before retrying.`;
   }
 }
 
@@ -187,6 +189,41 @@ export class ProviderSessionNotFoundError extends Schema.TaggedError<ProviderSes
   }
 }
 
+export const ProviderSessionWakeTargetReason = Schema.Literals([
+  "not_found",
+  "ambiguous",
+  "thread_unavailable",
+  "instance_unavailable",
+]);
+export type ProviderSessionWakeTargetReason = typeof ProviderSessionWakeTargetReason.Type;
+
+/**
+ * ProviderSessionWakeTargetError - Restore-only wake could not name one
+ * T3-managed Codex session.
+ */
+export class ProviderSessionWakeTargetError extends Schema.TaggedError<ProviderSessionWakeTargetError>()(
+  "ProviderSessionWakeTargetError",
+  {
+    reason: ProviderSessionWakeTargetReason,
+    providerThreadId: Schema.String,
+    providerInstanceId: Schema.optional(Schema.String),
+    threadId: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "not_found":
+        return `No T3 Codex session is bound to provider thread '${this.providerThreadId}'.`;
+      case "ambiguous":
+        return `More than one T3 Codex session is bound to provider thread '${this.providerThreadId}'.`;
+      case "thread_unavailable":
+        return `The T3 thread for Codex session '${this.providerThreadId}' is archived or deleted.`;
+      case "instance_unavailable":
+        return `The Codex instance for session '${this.providerThreadId}' is unavailable.`;
+    }
+  }
+}
+
 /**
  * ProviderSessionDirectoryPersistenceError - Session directory persistence failure.
  */
@@ -216,6 +253,7 @@ export type ProviderServiceError =
   | ProviderWorkspaceMissingError
   | ProviderInstanceNotFoundError
   | ProviderSessionNotFoundError
+  | ProviderSessionWakeTargetError
   | ProviderSessionDirectoryPersistenceError
   | ProviderAdapterError
   | CheckpointServiceError;

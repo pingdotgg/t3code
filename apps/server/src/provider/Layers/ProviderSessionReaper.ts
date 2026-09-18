@@ -94,25 +94,31 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
-        const reaped = yield* providerService.stopSession({ threadId: binding.threadId }).pipe(
-          Effect.tap(() =>
-            Effect.logInfo("provider.session.reaped", {
-              threadId: binding.threadId,
-              provider: binding.provider,
-              idleDurationMs,
-              reason: "inactivity_threshold",
-            }),
-          ),
-          Effect.as(true),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("provider.session.reaper.stop-failed", {
-              threadId: binding.threadId,
-              provider: binding.provider,
-              idleDurationMs,
-              cause,
-            }).pipe(Effect.as(false)),
-          ),
-        );
+        const reaped = yield* providerService
+          .stopIdleSession({
+            threadId: binding.threadId,
+            observedLastSeenAt: binding.lastSeenAt,
+          })
+          .pipe(
+            Effect.tap((stopped) =>
+              stopped
+                ? Effect.logInfo("provider.session.reaped", {
+                    threadId: binding.threadId,
+                    provider: binding.provider,
+                    idleDurationMs,
+                    reason: "inactivity_threshold",
+                  })
+                : Effect.void,
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("provider.session.reaper.stop-failed", {
+                threadId: binding.threadId,
+                provider: binding.provider,
+                idleDurationMs,
+                cause,
+              }).pipe(Effect.as(false)),
+            ),
+          );
 
         if (reaped) {
           reapedCount += 1;

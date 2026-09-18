@@ -58,6 +58,16 @@ describe("ProviderSessionStartInput", () => {
     ).toThrow();
   });
 
+  it("accepts an optional strict resume flag", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "codex",
+      runtimeMode: "full-access",
+      resumeMode: "strict",
+    });
+    expect(parsed.resumeMode).toBe("strict");
+  });
+
   it("accepts claude runtime knobs", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",

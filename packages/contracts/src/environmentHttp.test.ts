@@ -41,6 +41,16 @@ describe("environment HTTP errors", () => {
         reason: "thread_not_found",
         traceId,
       }),
+      new EnvironmentResourceNotFoundError({
+        code: "not_found",
+        reason: "provider_session_not_found",
+        traceId,
+      }),
+      new EnvironmentRequestInvalidError({
+        code: "invalid_request",
+        reason: "ambiguous_provider_session",
+        traceId,
+      }),
       new EnvironmentInternalError({
         code: "internal_error",
         reason: "orchestration_snapshot_failed",
@@ -53,6 +63,8 @@ describe("environment HTTP errors", () => {
       "orchestration:read",
       "current_session_revoke_not_allowed",
       "thread_not_found",
+      "provider_session_not_found",
+      "ambiguous_provider_session",
       "orchestration_snapshot_failed",
     ];
     errors.forEach((error, index) => {

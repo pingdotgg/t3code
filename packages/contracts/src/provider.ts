@@ -63,6 +63,8 @@ export const ProviderSessionStartInput = Schema.Struct({
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
+  // codex restore-only wake forbids falling back to a fresh thread
+  resumeMode: Schema.optional(Schema.Literal("strict")),
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 

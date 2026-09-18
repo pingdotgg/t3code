@@ -188,6 +188,9 @@ describe("ProviderSessionReaper", () => {
               stoppedThreadIds.add(request.threadId);
             })) as ReturnType<ProviderServiceShape["stopSession"]>,
     );
+    const stopIdleSession = vi.fn<ProviderServiceShape["stopIdleSession"]>((request) =>
+      stopSession({ threadId: request.threadId }).pipe(Effect.as(true)),
+    );
 
     const providerService: ProviderServiceShape = {
       startSession: () => unsupported(),
@@ -197,6 +200,8 @@ describe("ProviderSessionReaper", () => {
       respondToRequest: () => unsupported(),
       respondToUserInput: () => unsupported(),
       stopSession,
+      stopIdleSession,
+      wakeSession: () => unsupported(),
       listSessions: () => Effect.succeed([]),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       assertConversationRollbackSupported: () => unsupported(),
@@ -268,7 +273,7 @@ describe("ProviderSessionReaper", () => {
     );
 
     runtime = ManagedRuntime.make(layer);
-    return { stopSession, stoppedThreadIds };
+    return { stopSession, stopIdleSession, stoppedThreadIds };
   }
 
   it("reaps stale persisted sessions without active turns", async () => {
@@ -315,6 +320,10 @@ describe("ProviderSessionReaper", () => {
     await waitFor(() => harness.stopSession.mock.calls.length === 1);
 
     expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
+    expect(harness.stopIdleSession.mock.calls[0]?.[0]).toEqual({
+      threadId,
+      observedLastSeenAt: "2026-04-14T00:00:00.000Z",
+    });
     expect(harness.stoppedThreadIds.has(threadId)).toBe(true);
   });
 

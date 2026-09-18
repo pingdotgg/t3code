@@ -4,7 +4,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe } from "vite-plus/test";
-import { DEFAULT_MODEL, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_MODEL, ProviderDriverKind, ThreadId, TurnId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
@@ -17,6 +17,7 @@ import {
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
+  mergeCodexResumeStartupSession,
   openCodexThread,
   readCodexThread,
   rollbackCodexThread,
@@ -1056,4 +1057,166 @@ describe("openCodexThread", () => {
       NodeAssert.equal(error.errorMessage, "timed out waiting for server");
     }),
   );
+
+  it.effect("strict resume never falls back to thread/start", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: "thread/start" | "thread/resume" }> = [];
+      const client = {
+        request: (
+          method: "thread/start",
+          _payload: CodexRpc.ClientRequestParamsByMethod["thread/start"],
+        ) => {
+          calls.push({ method });
+          return Effect.die("strict resume must not start a fresh Codex thread");
+        },
+        raw: {
+          request: (
+            method: "thread/resume",
+            _payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"],
+          ) => {
+            calls.push({ method });
+            return Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32603,
+                errorMessage: "thread not found",
+              }),
+            );
+          },
+        },
+      };
+
+      const error = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "saved-thread",
+        resumeMode: "strict",
+      }).pipe(Effect.flip);
+
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.deepStrictEqual(
+        calls.map((call) => call.method),
+        ["thread/resume"],
+      );
+    }),
+  );
+
+  it.effect("strict resume without a saved thread id never calls thread/start", () =>
+    Effect.gen(function* () {
+      const error = yield* openCodexThread({
+        client: {
+          request: () => Effect.die("strict resume must not start a fresh Codex thread"),
+          raw: {
+            request: () => Effect.die("strict resume without a cursor must not call thread/resume"),
+          },
+        },
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: undefined,
+        resumeMode: "strict",
+      }).pipe(Effect.flip);
+
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(
+        error.errorMessage,
+        "strict Codex resume requires a saved provider thread id",
+      );
+    }),
+  );
+
+  it.effect("strict resume fails when thread/resume returns a different thread id", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: "thread/start" | "thread/resume" }> = [];
+      const error = yield* openCodexThread({
+        client: {
+          request: (
+            method: "thread/start",
+            _payload: CodexRpc.ClientRequestParamsByMethod["thread/start"],
+          ) => {
+            calls.push({ method });
+            return Effect.die("strict resume must not start a fresh Codex thread");
+          },
+          raw: {
+            request: (
+              method: "thread/resume",
+              _payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"],
+            ) => {
+              calls.push({ method });
+              return Effect.succeed(makeThreadOpenResponse("other-thread"));
+            },
+          },
+        },
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "saved-thread",
+        resumeMode: "strict",
+      }).pipe(Effect.flip);
+
+      NodeAssert.ok(isCodexAppServerRequestError(error));
+      NodeAssert.equal(
+        error.errorMessage,
+        "strict Codex resume expected thread 'saved-thread' but received 'other-thread'",
+      );
+      NodeAssert.deepStrictEqual(
+        calls.map((call) => call.method),
+        ["thread/resume"],
+      );
+    }),
+  );
+});
+
+describe("Codex resume startup merge", () => {
+  const baseSession = {
+    provider: ProviderDriverKind.make("codex"),
+    status: "connecting" as const,
+    runtimeMode: "full-access" as const,
+    threadId: ThreadId.make("thread-1"),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("writes ready when no turn has started", () => {
+    const merged = mergeCodexResumeStartupSession(
+      baseSession,
+      { cwd: "/tmp/project", model: "gpt-5.3-codex", thread: { id: "codex-1" } },
+      "2026-01-01T00:00:01.000Z",
+    );
+    NodeAssert.equal(merged.emitReady, true);
+    NodeAssert.equal(merged.session.status, "ready");
+    NodeAssert.deepEqual(merged.session.resumeCursor, { threadId: "codex-1" });
+  });
+
+  it("keeps a running turn instead of overwriting it with ready", () => {
+    const merged = mergeCodexResumeStartupSession(
+      {
+        ...baseSession,
+        status: "running",
+        activeTurnId: TurnId.make("turn-queued"),
+      },
+      { cwd: "/tmp/project", model: "gpt-5.3-codex", thread: { id: "codex-1" } },
+      "2026-01-01T00:00:01.000Z",
+    );
+    NodeAssert.equal(merged.emitReady, false);
+    NodeAssert.equal(merged.session.status, "running");
+    NodeAssert.equal(merged.session.activeTurnId, "turn-queued");
+  });
+
+  it("keeps a completed error instead of emitting ready", () => {
+    const merged = mergeCodexResumeStartupSession(
+      { ...baseSession, status: "error", lastError: "resume failed" },
+      { cwd: "/tmp/project", model: "gpt-5.3-codex", thread: { id: "codex-1" } },
+      "2026-01-01T00:00:01.000Z",
+    );
+    NodeAssert.equal(merged.emitReady, false);
+    NodeAssert.equal(merged.session.status, "error");
+  });
 });

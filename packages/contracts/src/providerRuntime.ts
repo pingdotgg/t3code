@@ -283,6 +283,7 @@ const SessionStateChangedPayload = Schema.Struct({
   state: RuntimeSessionState,
   reason: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(Schema.Unknown),
+  preserveActiveTurn: Schema.optional(Schema.Boolean),
 });
 export type SessionStateChangedPayload = typeof SessionStateChangedPayload.Type;
 

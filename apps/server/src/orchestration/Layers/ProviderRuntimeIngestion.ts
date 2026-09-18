@@ -1784,6 +1784,10 @@ const make = Effect.gen(function* () {
           : Option.none();
       const hasPendingTurnStart =
         Option.isSome(pendingTurnStart) && thread.session?.status === "starting";
+      const preservesActiveTurn =
+        activeTurnId !== null &&
+        event.type === "session.state.changed" &&
+        event.payload.preserveActiveTurn === true;
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -1847,6 +1851,7 @@ const make = Effect.gen(function* () {
           switch (event.type) {
             case "session.state.changed": {
               const runtimeStatus = orchestrationSessionStatusFromRuntimeState(event.payload.state);
+              if (preservesActiveTurn) return "running";
               return hasPendingTurnStart && runtimeStatus === "ready" ? "starting" : runtimeStatus;
             }
             case "turn.started":
@@ -1872,13 +1877,16 @@ const make = Effect.gen(function* () {
             : isTerminalTurn || event.type === "session.exited"
               ? null
               : event.type === "session.state.changed" &&
+                  !preservesActiveTurn &&
                   !sessionStatusAllowsActiveTurn(
                     orchestrationSessionStatusFromRuntimeState(event.payload.state),
                   )
                 ? null
                 : activeTurnId;
         const lastError =
-          event.type === "session.state.changed" && event.payload.state === "error"
+          event.type === "session.state.changed" &&
+          event.payload.state === "error" &&
+          !preservesActiveTurn
             ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
             : event.type === "turn.completed" &&
                 normalizeRuntimeTurnState(event.payload.state) === "failed"

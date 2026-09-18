@@ -34,6 +34,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -66,7 +67,6 @@ import {
   makeCodexSessionRuntime,
   type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
-  type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -1454,6 +1454,7 @@ function mapToRuntimeEvents(
         type: "session.state.changed",
         payload: {
           state: "ready",
+          preserveActiveTurn: true,
           ...(event.message ? { reason: event.message } : {}),
         },
       },
@@ -2245,7 +2246,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         }
 
         const existing = sessions.get(input.threadId);
-        if (existing && !existing.stopped) {
+        if (existing) {
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
@@ -2265,6 +2266,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),
+          ...(input.resumeMode === "strict" ? { resumeMode: "strict" as const } : {}),
           runtimeMode: input.runtimeMode,
           ...(input.modelSelection?.instanceId === boundInstanceId
             ? { model: input.modelSelection.model }
@@ -2324,6 +2326,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
+            if (event.method === "session/exited") {
+              const liveSession = sessions.get(event.threadId);
+              if (liveSession) {
+                liveSession.stopped = true;
+              }
+            }
             if (event.method === "turn/started" && event.turnId) {
               if (turnTokenUsage.activeTurnId !== event.turnId) {
                 turnTokenUsage.byTurnId.clear();
@@ -2452,11 +2460,32 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 cause,
               }),
           ),
-          Effect.onError(() =>
-            runtime.close.pipe(
+          Effect.catch((error) =>
+            Fiber.interrupt(eventFiber).pipe(
+              Effect.andThen(runtime.close.pipe(Effect.ignore)),
               Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
-              Effect.andThen(Fiber.interrupt(eventFiber)),
-              Effect.ignore,
+              Effect.andThen(
+                input.resumeMode === "strict"
+                  ? DateTime.now.pipe(
+                      Effect.flatMap((now) =>
+                        Queue.offer(runtimeEventQueue, {
+                          type: "session.state.changed",
+                          eventId: EventId.make(NodeCrypto.randomUUID()),
+                          provider: PROVIDER,
+                          providerInstanceId: boundInstanceId,
+                          threadId: input.threadId,
+                          createdAt: DateTime.formatIso(now),
+                          payload: {
+                            state: "error",
+                            reason: error.detail,
+                          },
+                        }),
+                      ),
+                      Effect.asVoid,
+                    )
+                  : Effect.void,
+              ),
+              Effect.andThen(Effect.fail(error)),
             ),
           ),
         );
@@ -2657,12 +2686,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const stopSessionInternal = Effect.fn("stopSessionInternal")(function* (
     session: CodexAdapterSessionContext,
   ) {
-    if (session.stopped) {
-      return;
-    }
+    const alreadyStopped = session.stopped;
     session.stopped = true;
     sessions.delete(session.threadId);
-    yield* session.runtime.close.pipe(Effect.ignore);
+    if (!alreadyStopped) {
+      yield* session.runtime.close.pipe(Effect.ignore);
+    }
     yield* Effect.ignore(Scope.close(session.scope, Exit.void));
     yield* Fiber.interrupt(session.eventFiber).pipe(Effect.ignore);
   });
