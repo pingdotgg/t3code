@@ -1968,38 +1968,47 @@ function AutoSettleDaysInput({
   value: number;
   onCommit: (days: number) => void;
 }) {
-  // Local draft so the field can be emptied mid-edit; the setting only moves
-  // on valid input and snaps back to the persisted value on blur.
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
-    setDraft(String(value));
-  }, [value]);
+  const [draft, setDraft] = useState<number | null>(value);
+  const [savedValue, setSavedValue] = useState(value);
+  if (savedValue !== value) {
+    setSavedValue(value);
+    setDraft(value);
+  }
 
   return (
-    <Input
-      size="sm"
-      type="number"
+    <NumberField
+      value={draft}
       min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
       max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      className="w-full sm:w-24"
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        // Number(), not parseInt: "3.5" must be rejected (not truncated to a
-        // committed 3 while the field shows 3.5) — commit only when the
-        // persisted value matches the displayed one.
-        const parsed = Number(event.target.value);
-        if (
-          Number.isInteger(parsed) &&
-          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
-        ) {
-          onCommit(parsed);
+      step={1}
+      size="sm"
+      className="w-auto"
+      onValueChange={setDraft}
+      onValueCommitted={(next) => {
+        if (next === null) setDraft(value);
+        else {
+          const days = Math.min(
+            MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+            Math.max(MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS, Math.round(next)),
+          );
+          setDraft(days);
+          onCommit(days);
         }
       }}
-      onBlur={() => setDraft(String(value))}
-      aria-label="Days of inactivity before auto-settle"
-    />
+    >
+      <NumberFieldGroup>
+        <NumberFieldDecrement aria-label="Decrease days of inactivity before auto-settle" />
+        <NumberFieldInput
+          aria-label="Days of inactivity before auto-settle"
+          size={new Intl.NumberFormat().format(draft ?? value).length}
+          className="field-sizing-content w-auto min-w-[1ch] grow-0 text-right in-data-[size=sm]:px-1"
+        />
+        <span aria-hidden="true" className="self-center pr-2 text-xs">
+          days
+        </span>
+        <NumberFieldIncrement aria-label="Increase days of inactivity before auto-settle" />
+      </NumberFieldGroup>
+    </NumberField>
   );
 }
 
