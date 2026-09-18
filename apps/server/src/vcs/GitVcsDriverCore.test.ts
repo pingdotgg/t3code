@@ -2496,6 +2496,93 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    for (const scenario of [
+      { name: "stalled signing", lines: ["signing"], authError: true },
+      {
+        name: "stalled signing during fetch-all",
+        lines: ["signing"],
+        authError: true,
+        fetchAll: true,
+      },
+      { name: "a stalled network handshake", lines: ["packet"], authError: false },
+      { name: "a slow fetch after signing", lines: ["signing", "packet"], authError: false },
+      {
+        name: "a second signing request",
+        lines: ["signing", "packet", "signing"],
+        authError: true,
+      },
+      { name: "an older SSH client", lines: ["signing"], authError: false, oldSsh: true },
+      { name: "a custom SSH command", lines: ["signing"], authError: false, customSsh: true },
+    ]) {
+      it.effect(`limits SSH authorization waiting for ${scenario.name}`, () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const outputRead = yield* Deferred.make<void>();
+          const complete = yield* Deferred.make<void>();
+          let attempts = 0;
+          let released = false;
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (!ChildProcess.isStandardCommand(command))
+                return yield* Effect.die("unexpected command");
+              if (scenario.oldSsh && command.command === "ssh") return makeNonRepositoryHandle();
+              if (command.args[0] !== "fetch") {
+                return makeSuccessfulHandle(
+                  scenario.customSsh ? "core.sshcommand custom-ssh\n" : "",
+                );
+              }
+              attempts++;
+              if (scenario.customSsh) assert.isUndefined(command.options.env?.GIT_SSH_COMMAND);
+              yield* Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  released = true;
+                }),
+              );
+              return ChildProcessSpawner.makeHandle({
+                ...makeSuccessfulHandle(""),
+                exitCode: Deferred.await(complete).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                stderr: Stream.encodeText(
+                  Stream.make(
+                    scenario.lines
+                      .map((line) =>
+                        line === "signing"
+                          ? "debug3: sshconnect2.c:sign_and_send_pubkey():1407 (bin=/usr/bin/ssh, pid=1): signing using ssh-ed25519 SHA256:test\n"
+                          : "debug3: packet.c:ssh_packet_send2_wrapped():1245 (bin=/usr/bin/ssh, pid=1): send packet: type 50\n",
+                      )
+                      .join(""),
+                  ).pipe(Stream.ensuring(Deferred.succeed(outputRead, undefined))),
+                ),
+              });
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(ServerConfigLayer),
+          );
+          const fetching = yield* driver
+            .fetchRemote({
+              cwd,
+              remoteName: "origin",
+              ...(scenario.fetchAll ? {} : { refName: "main" }),
+            })
+            .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(outputRead);
+          yield* TestClock.adjust("11 seconds");
+          if (!scenario.authError) yield* Deferred.succeed(complete, undefined);
+          const result = yield* Fiber.join(fetching);
+          if (scenario.authError) {
+            assert.isTrue(Result.isFailure(result));
+            if (Result.isFailure(result))
+              assert.include(result.failure.detail, "SSH key authorization");
+          } else {
+            assert.isTrue(Result.isSuccess(result));
+          }
+          assert.equal(attempts, 1);
+          assert.isTrue(released);
+        }),
+      );
+    }
+
     for (const failure of ["offline", "auth", "timeout"] as const) {
       it.effect(`does not retry a scoped fetch after ${failure}`, () =>
         Effect.gen(function* () {
