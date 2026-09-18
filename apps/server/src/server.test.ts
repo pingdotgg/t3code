@@ -1767,15 +1767,28 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const path = yield* Path.Path;
       const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-encoded-" });
       yield* fs.writeFileString(path.join(staticDir, "index.html"), "fallback");
-      for (const name of ["a space.js", "日本語.js", "literal%20.js", "hash#name.js"]) {
+      for (const name of [
+        "a space.js",
+        "日本語.js",
+        "literal%20.js",
+        "hash#name.js",
+        "..config.js",
+      ]) {
         yield* fs.writeFileString(path.join(staticDir, name), `// ${name}`);
       }
       yield* buildAppUnderTest({ config: { staticDir } });
-      for (const name of ["a space.js", "日本語.js", "literal%20.js", "hash#name.js"]) {
-        const response = yield* HttpClient.get(`/${encodeURIComponent(name)}`);
+      for (const name of [
+        "a space.js",
+        "日本語.js",
+        "literal%20.js",
+        "hash#name.js",
+        "..config.js",
+      ]) {
+        const encodedName = encodeURIComponent(name).replaceAll(".", "%2e");
+        const response = yield* HttpClient.get(`/${encodedName}`);
         assert.equal(response.status, 200);
         assert.equal(yield* response.text, `// ${name}`);
-        const head = yield* HttpClient.head(`/${encodeURIComponent(name)}`, {
+        const head = yield* HttpClient.head(`/${encodedName}`, {
           headers: { "accept-encoding": "identity" },
         });
         assert.equal(head.status, 200);

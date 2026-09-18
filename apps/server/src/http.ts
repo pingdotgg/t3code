@@ -554,9 +554,9 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     }
     if (staticRequestPath === "/") staticRequestPath = "/index.html";
     const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
-    const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
+    const hasRawLeadingParentSegment = /^\.\.(?:[/\\]|$)/.test(rawStaticRelativePath);
     const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
-    const hasPathTraversalSegment = staticRelativePath.startsWith("..");
+    const hasPathTraversalSegment = /^\.\.(?:[/\\]|$)/.test(staticRelativePath);
     if (
       staticRelativePath.length === 0 ||
       hasRawLeadingParentSegment ||
