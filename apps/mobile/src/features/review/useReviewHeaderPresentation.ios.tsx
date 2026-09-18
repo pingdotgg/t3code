@@ -3,7 +3,7 @@ import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { vcsEnvironment } from "../../state/vcs";
-import { ThreadGitMenu } from "../threads/ThreadGitControls";
+import { useThreadGitMenuDefinition } from "../threads/ThreadGitControls";
 import type { ReviewHeaderProps, ReviewHeaderPresentation } from "./ReviewHeader.types";
 
 export function useReviewHeaderPresentation(props: ReviewHeaderProps): ReviewHeaderPresentation {
@@ -22,21 +22,19 @@ export function useReviewHeaderPresentation(props: ReviewHeaderProps): ReviewHea
   // selected thread (it always does when reached from the thread's toolbar).
   const gitMenuAvailable =
     selectedThread !== null && String(selectedThread.id) === String(props.threadId);
+  const gitMenu = useThreadGitMenuDefinition({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    currentBranch: selectedThread?.branch ?? null,
+    gitStatus: gitStatusQuery.data,
+    gitOperationLabel: gitState.gitOperationLabel,
+    onPull: gitActions.onPullSelectedThreadBranch,
+    onRunAction: gitActions.onRunSelectedThreadGitAction,
+  });
   return {
     title: props.title,
     subtitle: props.subtitle,
     menuIcon: "ellipsis",
-    trailing:
-      gitMenuAvailable && selectedThread !== null ? (
-        <ThreadGitMenu
-          environmentId={props.environmentId}
-          threadId={props.threadId}
-          currentBranch={selectedThread.branch ?? null}
-          gitStatus={gitStatusQuery.data}
-          gitOperationLabel={gitState.gitOperationLabel}
-          onPull={gitActions.onPullSelectedThreadBranch}
-          onRunAction={gitActions.onRunSelectedThreadGitAction}
-        />
-      ) : null,
+    gitMenu: gitMenuAvailable ? gitMenu : null,
   };
 }

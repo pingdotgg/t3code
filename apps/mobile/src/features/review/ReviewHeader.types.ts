@@ -1,14 +1,13 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { ReviewSectionMenu } from "./review-section-menu";
 import type { ReviewSectionItem } from "./reviewModel";
-import type { ReactNode } from "react";
-import type { ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
+import type { ScreenHeaderMenuItem, ScreenHeaderMenu } from "../../components/ScreenHeader.types";
 import type { AppSymbolName } from "../../components/AppSymbol";
 
 export interface ReviewHeaderPresentation {
   readonly title: string;
   readonly subtitle: string;
-  readonly trailing: ReactNode;
+  readonly gitMenu: ScreenHeaderMenu | null;
   readonly menuIcon: AppSymbolName;
   readonly refreshAction?: ScreenHeaderMenuItem;
 }

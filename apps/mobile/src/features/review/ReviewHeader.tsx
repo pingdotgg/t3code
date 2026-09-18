@@ -28,7 +28,6 @@ export function ReviewHeader(props: ReviewHeaderProps) {
       hideBottomBorder
       options={{ headerTintColor: props.iconColor, headerTitle: props.title }}
       backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
-      trailing={presentation.trailing}
       actions={
         props.showChangedFilesToggle
           ? [
@@ -43,41 +42,44 @@ export function ReviewHeader(props: ReviewHeaderProps) {
             ]
           : undefined
       }
-      menu={
-        props.showSectionToolbar
-          ? {
-              title: "Select diff",
-              icon: presentation.menuIcon,
-              items: [
-                {
-                  id: "sections",
-                  inline: true,
-                  items: [
-                    sectionAction(props.sectionMenu.workingTree, "Working tree"),
-                    sectionAction(props.sectionMenu.branchChanges, "Branch changes"),
-                    sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
-                  ],
-                },
-                ...(props.sectionMenu.turns.length > 0
-                  ? [
-                      {
-                        id: "turns",
-                        title: "Turn",
-                        items: props.sectionMenu.turns.map((section) => ({
-                          id: `section:${section.id}`,
-                          title: section.title,
-                          subtitle: section.subtitle ?? undefined,
-                          selected: section.id === props.selectedSection?.id,
-                          onPress: () => props.onSelectSection(section.id),
-                        })),
-                      },
-                    ]
-                  : []),
-                ...(presentation.refreshAction ? [presentation.refreshAction] : []),
-              ],
-            }
-          : undefined
-      }
+      menus={[
+        ...(presentation.gitMenu ? [presentation.gitMenu] : []),
+        ...(props.showSectionToolbar
+          ? [
+              {
+                title: "Select diff",
+                icon: presentation.menuIcon,
+                items: [
+                  {
+                    id: "sections",
+                    inline: true,
+                    items: [
+                      sectionAction(props.sectionMenu.workingTree, "Working tree"),
+                      sectionAction(props.sectionMenu.branchChanges, "Branch changes"),
+                      sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                    ],
+                  },
+                  ...(props.sectionMenu.turns.length > 0
+                    ? [
+                        {
+                          id: "turns",
+                          title: "Turn",
+                          items: props.sectionMenu.turns.map((section) => ({
+                            id: `section:${section.id}`,
+                            title: section.title,
+                            subtitle: section.subtitle ?? undefined,
+                            selected: section.id === props.selectedSection?.id,
+                            onPress: () => props.onSelectSection(section.id),
+                          })),
+                        },
+                      ]
+                    : []),
+                  ...(presentation.refreshAction ? [presentation.refreshAction] : []),
+                ],
+              },
+            ]
+          : []),
+      ]}
     />
   );
 }
