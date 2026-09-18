@@ -1427,6 +1427,83 @@ describe("deriveMessagesTimelineRows", () => {
     }
   });
 
+  it.each(["steer", "promoted_queued_to_steer"] as const)(
+    "keeps the duration header at the initiating prompt when %s arrives before output",
+    (inputIntent) => {
+      const runId = RunId.make("steered-run");
+      const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
+      const prompt = (id: string, second: number, intent: "turn_start" | typeof inputIntent) => ({
+        kind: "message" as const,
+        id,
+        createdAt: time(second),
+        message: {
+          id: MessageId.make(id),
+          role: "user" as const,
+          text: id,
+          runId,
+          inputIntent: intent,
+          createdAt: time(second),
+          updatedAt: time(second),
+          streaming: false,
+        },
+      });
+      const entries = [prompt("initial-prompt", 0, "turn_start"), prompt("steer", 5, inputIntent)];
+      const work = {
+        kind: "work" as const,
+        id: "work",
+        createdAt: time(8),
+        entry: {
+          id: "work",
+          createdAt: time(8),
+          runId,
+          label: "Ran command",
+          tone: "tool" as const,
+        },
+      };
+      const final = {
+        kind: "message" as const,
+        id: "final",
+        createdAt: time(20),
+        message: {
+          id: MessageId.make("final"),
+          role: "assistant" as const,
+          text: "Done",
+          runId,
+          createdAt: time(20),
+          updatedAt: time(20),
+          streaming: false,
+        },
+      };
+      for (const isWorking of [true, false]) {
+        for (const expanded of [true, false]) {
+          const rows = deriveMessagesTimelineRows({
+            timelineEntries: [...entries, work, final],
+            latestRun: {
+              runId,
+              status: isWorking ? "running" : "completed",
+              startedAt: time(0),
+              completedAt: isWorking ? null : time(20),
+            },
+            isWorking,
+            activeTurnStartedAt: time(0),
+            expandedRunIds: expanded ? new Set([runId]) : new Set(),
+            turnDiffSummaries: [],
+            supportsConversationRollback: false,
+          });
+          expect(rows.slice(0, 3).map((row) => row.id)).toEqual([
+            "initial-prompt",
+            isWorking ? "working-indicator-row" : `turn-fold:${runId}`,
+            "steer",
+          ]);
+          expect(rows[1]?.createdAt).toBe(time(0));
+          if (!isWorking) expect(rows[1]).toMatchObject({ label: "Worked for 20s", expanded });
+          expect(rows.some((row) => row.id === "final")).toBe(true);
+          expect(rows.some((row) => row.id === "work")).toBe(isWorking || expanded);
+        }
+      }
+    },
+  );
+
   it("keeps the previous turn folded while a newly sent message awaits its turn", () => {
     // Right after send, isWorking is true but latestRun still points at the
     // previous, settled turn — it must stay folded through that window.
