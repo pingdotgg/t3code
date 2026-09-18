@@ -560,6 +560,10 @@ export const layer: Layer.Layer<
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
       readonly refreshAfterTurn: Effect.Effect<void>;
+      readonly writeIfRunCurrent?: {
+        readonly activeAttemptId: RunAttemptId;
+        readonly expectedStatus: OrchestrationV2Run["status"];
+      };
     }) =>
       Effect.gen(function* () {
         const completedAt = yield* DateTime.now;
@@ -652,7 +656,7 @@ export const layer: Layer.Layer<
         const checkpointCaptureCommandId = CommandId.make(
           `command:effect:checkpoint.capture:${input.run.id}`,
         );
-        yield* eventSink.writeWithEffects({
+        const finalization = {
           effects:
             input.terminal.status === "completed"
               ? [
@@ -760,57 +764,27 @@ export const layer: Layer.Layer<
               payload: finalizedProviderThread,
             },
           ],
-        });
+        } satisfies Parameters<typeof eventSink.writeWithEffects>[0];
+        if (input.writeIfRunCurrent !== undefined) {
+          const result = yield* eventSink.writeIfRunCurrent({
+            threadId: input.run.threadId,
+            runId: input.run.id,
+            activeAttemptId: input.writeIfRunCurrent.activeAttemptId,
+            expectedStatus: input.writeIfRunCurrent.expectedStatus,
+            events: finalization.events,
+          });
+          if (!result.committed) {
+            return;
+          }
+        } else {
+          yield* eventSink.writeWithEffects(finalization);
+        }
         yield* input.refreshAfterTurn;
       });
 
     return RunExecutionServiceV2.of({
       startRootRun: (input) =>
         Effect.gen(function* () {
-          const responseStreamingMode = yield* serverSettings.getSettings.pipe(
-            Effect.map(
-              (settings) =>
-                resolveProjectSettings(settings, input.appThread.projectId).settings
-                  .responseStreamingMode,
-            ),
-            Effect.mapError(
-              (cause) =>
-                new RunExecutionStartError({
-                  commandId: input.commandId,
-                  runId: input.run.id,
-                  cause,
-                }),
-            ),
-          );
-          yield* checkpointService
-            .captureBaseline({
-              scope: input.checkpointScope,
-              ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-            })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning(
-                      "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                      { runId: input.run.id },
-                    ),
-              ),
-              Effect.mapError(
-                (cause) =>
-                  new RunExecutionStartError({
-                    commandId: input.commandId,
-                    runId: input.run.id,
-                    cause,
-                  }),
-              ),
-            );
-          if (
-            input.shouldStartProviderTurn !== undefined &&
-            !(yield* input.shouldStartProviderTurn())
-          ) {
-            return;
-          }
           // Startup failure and stream shutdown can report the same attempt.
           const refreshAfterTurn = yield* Effect.cached(
             finalizationObserver.refreshAfterTurn(input.appThread.projectId).pipe(
@@ -823,7 +797,6 @@ export const layer: Layer.Layer<
               ),
             ),
           );
-          const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const makeFailedTerminalEvent = (
             failure: OrchestrationV2ProviderFailure,
             failureItemOrdinal: number,
@@ -843,6 +816,79 @@ export const layer: Layer.Layer<
             failure,
             threadDisposition: "reusable",
           });
+          const responseStreamingMode = yield* Effect.gen(function* () {
+            const responseStreamingMode = yield* serverSettings.getSettings.pipe(
+              Effect.map(
+                (settings) =>
+                  resolveProjectSettings(settings, input.appThread.projectId).settings
+                    .responseStreamingMode,
+              ),
+            );
+            yield* checkpointService
+              .captureBaseline({
+                scope: input.checkpointScope,
+                ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+              })
+              .pipe(
+                Effect.catchCause((cause) =>
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.failCause(cause)
+                    : Effect.logWarning(
+                        "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                        { runId: input.run.id },
+                      ),
+                ),
+              );
+            if (
+              input.shouldStartProviderTurn !== undefined &&
+              !(yield* input.shouldStartProviderTurn())
+            ) {
+              return null;
+            }
+            return responseStreamingMode;
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.gen(function* () {
+                if (Cause.hasInterruptsOnly(cause)) {
+                  return yield* Effect.failCause(cause);
+                }
+                yield* writeFinalRunEvents({
+                  run: input.run,
+                  rootNode: input.rootNode,
+                  checkpointScope: input.checkpointScope,
+                  providerThread: input.providerThread,
+                  attempt: input.attempt,
+                  terminal: makeFailedTerminalEvent(
+                    makeProviderFailure({
+                      cause: Cause.squash(cause),
+                      message: Cause.prettyErrors(cause)[0]?.message,
+                      class: "unknown",
+                    }),
+                    input.providerTurnOrdinal * 100 + 1,
+                  ),
+                  failureItemPersisted: false,
+                  refreshAfterTurn,
+                  writeIfRunCurrent: {
+                    activeAttemptId: input.attemptId,
+                    expectedStatus: "running",
+                  },
+                });
+                return null;
+              }),
+            ),
+            Effect.mapError(
+              (cause) =>
+                new RunExecutionStartError({
+                  commandId: input.commandId,
+                  runId: input.run.id,
+                  cause,
+                }),
+            ),
+          );
+          if (responseStreamingMode === null) {
+            return;
+          }
+          const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
           const latestProviderThread = yield* Ref.make(input.providerThread);
           const routeIdentity: ProviderEventRouteIdentity = {
