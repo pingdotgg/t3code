@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deploy": "node -- scripts/deploy.ts",
+    "deploy": "alchemy deploy",
     "push:android:smoke": "node scripts/android-push-smoke.ts",
     "push:android:watch": "node scripts/android-push-watch.ts",
     "destroy": "alchemy destroy",
