@@ -388,7 +388,7 @@ function TimeColumn({
       aria-label={label}
       className="flex max-h-48 min-w-14 flex-col overflow-y-auto p-1"
     >
-      {options.map((option) => {
+      {options.map((option, optionIndex) => {
         const selected = option.value === value;
         return (
           <button
@@ -396,7 +396,27 @@ function TimeColumn({
             type="button"
             role="radio"
             aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
             onClick={() => onSelect(option.value)}
+            onKeyDown={(event) => {
+              const nextIndex =
+                event.key === "ArrowDown"
+                  ? (optionIndex + 1) % options.length
+                  : event.key === "ArrowUp"
+                    ? (optionIndex - 1 + options.length) % options.length
+                    : event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? options.length - 1
+                        : null;
+
+              if (nextIndex === null || nextIndex === optionIndex) return;
+              const nextOption = options[nextIndex];
+              if (!nextOption) return;
+              event.preventDefault();
+              onSelect(nextOption.value);
+              listRef.current?.querySelectorAll<HTMLButtonElement>("button")[nextIndex]?.focus();
+            }}
             className={cn(
               "flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md px-2 text-base outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 sm:text-sm",
               selected ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-accent",
