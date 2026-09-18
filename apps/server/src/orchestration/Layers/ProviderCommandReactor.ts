@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -1191,6 +1192,10 @@ const make = Effect.gen(function* () {
         }),
       ),
   );
+  // Provider interrupts run off the command worker: a provider's cancel can
+  // hang, and the worker is shared by every thread and provider. The set lets
+  // `drain` still wait for them.
+  const interruptFibers = yield* FiberSet.make();
   const threadTitleRegenerationWorker = yield* makeDrainableWorker(
     processThreadTitleRegenerationSafely,
   );
@@ -1596,9 +1601,12 @@ const make = Effect.gen(function* () {
     };
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService
-      .interruptTurn({ threadId: event.payload.threadId })
-      .pipe(Effect.catchCause(recoverInterruptFailure));
+    yield* FiberSet.run(
+      interruptFibers,
+      providerService
+        .interruptTurn({ threadId: event.payload.threadId })
+        .pipe(Effect.catchCause(recoverInterruptFailure)),
+    );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -1929,6 +1937,7 @@ const make = Effect.gen(function* () {
     start,
     drain: Effect.gen(function* () {
       yield* worker.drain;
+      yield* FiberSet.awaitEmpty(interruptFibers);
       yield* threadTitleRegenerationWorker.drain;
     }),
   } satisfies ProviderCommandReactorShape;

@@ -3623,6 +3623,105 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  // Live clock: the bound below must fire while the reactor is genuinely stuck.
+  effectIt.live("keeps serving other threads while a provider interrupt hangs", () =>
+    Effect.gen(function* () {
+      const interruptStarted = yield* Deferred.make<void>();
+      const releaseInterrupt = yield* Deferred.make<void>();
+      const otherThreadStarted = yield* Deferred.make<void>();
+      const otherThreadId = ThreadId.make("thread-2");
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          // An OpenCode cancel that never settles: the provider's problem,
+          // but it must not become the command worker's problem.
+          interruptTurnEffect: () =>
+            Deferred.succeed(interruptStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseInterrupt)),
+            ),
+          startSessionEffect: (session) =>
+            session.threadId === otherThreadId
+              ? Deferred.succeed(otherThreadStarted, undefined).pipe(Effect.as(session))
+              : Effect.succeed(session),
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-hanging-interrupt"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-hanging"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: now,
+      });
+      yield* Deferred.await(interruptStarted);
+
+      yield* harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-other-thread"),
+        threadId: otherThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Other thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-other-thread"),
+        threadId: otherThreadId,
+        message: {
+          messageId: MessageId.make("message-other-thread"),
+          role: "user",
+          text: "hello from another thread",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      });
+
+      // The other thread's start must not queue behind the hung interrupt:
+      // its session starts and its turn is sent while the interrupt is still
+      // pending.
+      yield* Deferred.await(otherThreadStarted).pipe(Effect.timeout("5 seconds"));
+      yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === otherThreadId,
+      );
+      expect(thread?.session).toMatchObject({ providerName: "codex" });
+      expect(thread?.session?.status).not.toBe("stopped");
+      expect(yield* Deferred.isDone(releaseInterrupt)).toBe(false);
+
+      yield* Deferred.succeed(releaseInterrupt, undefined);
+      yield* Effect.promise(() => harness.drain());
+    }),
+  );
+
   effectIt.effect(
     "stops a running session and records the failure when provider interrupt fails",
     () =>
