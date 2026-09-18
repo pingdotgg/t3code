@@ -110,8 +110,13 @@ export function ThreadAutomationsPanel(props: {
                 size="icon-xs"
                 variant="ghost"
                 className={THREAD_DETAILS_PANEL_ICON_ACTION_CLASS}
-                aria-label="Manage schedule tasks"
-                onClick={() => void navigate({ to: "/settings/scheduled-tasks" })}
+                aria-label="Manage scheduled tasks"
+                onClick={() =>
+                  void navigate({
+                    to: "/settings/scheduled-tasks",
+                    search: { environmentId: props.environmentId },
+                  })
+                }
               >
                 <Settings2Icon className="size-3.5" />
               </Button>
