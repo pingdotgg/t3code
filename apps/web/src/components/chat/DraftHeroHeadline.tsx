@@ -22,6 +22,8 @@ import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
   MenuItem,
+  MenuGroup,
+  MenuGroupLabel,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -47,6 +49,7 @@ export function DraftHeroHeadline({
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const favoriteProjectKeys = useClientSettings((settings) => settings.favoriteProjectKeys);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
   const setLogicalProjectDraftThreadId = useComposerDraftStore(
     (store) => store.setLogicalProjectDraftThreadId,
@@ -113,6 +116,22 @@ export function DraftHeroHeadline({
       }),
     [activeProjectRef, projectGroups],
   );
+  const pickerSections = useMemo(() => {
+    const favoriteKeys = new Set(favoriteProjectKeys);
+    const favorites = projectPickerEntries.filter(({ group }) =>
+      group.memberProjects.some((member) => favoriteKeys.has(member.physicalProjectKey)),
+    );
+    const favoriteEntries = new Set(favorites);
+    return favorites.length === 0
+      ? [{ label: null, entries: projectPickerEntries }]
+      : [
+          { label: "Favorites", entries: favorites },
+          {
+            label: "Projects",
+            entries: projectPickerEntries.filter((entry) => !favoriteEntries.has(entry)),
+          },
+        ].filter((section) => section.entries.length > 0);
+  }, [favoriteProjectKeys, projectPickerEntries]);
   const projectEntryByKey = useMemo(
     () => new Map(projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const)),
     [projectPickerEntries],
@@ -188,33 +207,38 @@ export function DraftHeroHeadline({
             }
           }}
         >
-          {projectPickerEntries.map(({ group }) => {
-            return (
-              <MenuRadioItem
-                key={group.projectKey}
-                value={group.projectKey}
-                closeOnClick
-                className="[&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
-              >
-                <ProjectFavicon project={group} className="size-4 shrink-0" />
-                <Tooltip>
-                  <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
-                    {group.displayName}
-                  </TooltipTrigger>
-                  <TooltipPopup side="top" className="max-w-80">
-                    {group.displayName}
-                  </TooltipPopup>
-                </Tooltip>
-                {showProjectEnvironments ? (
-                  <ProjectEnvironmentBadge
-                    group={group}
-                    primaryEnvironmentId={primaryEnvironmentId}
-                    machineByEnvironmentId={environmentMachineById}
-                  />
-                ) : null}
-              </MenuRadioItem>
-            );
-          })}
+          {pickerSections.map((section) => (
+            <MenuGroup key={section.label ?? "projects"}>
+              {section.label ? <MenuGroupLabel>{section.label}</MenuGroupLabel> : null}
+              {section.entries.map(({ group }) => {
+                return (
+                  <MenuRadioItem
+                    key={group.projectKey}
+                    value={group.projectKey}
+                    closeOnClick
+                    className="[&>span:last-child]:flex [&>span:last-child]:min-w-0 [&>span:last-child]:items-center [&>span:last-child]:gap-2"
+                  >
+                    <ProjectFavicon project={group} className="size-4 shrink-0" />
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
+                        {group.displayName}
+                      </TooltipTrigger>
+                      <TooltipPopup side="top" className="max-w-80">
+                        {group.displayName}
+                      </TooltipPopup>
+                    </Tooltip>
+                    {showProjectEnvironments ? (
+                      <ProjectEnvironmentBadge
+                        group={group}
+                        primaryEnvironmentId={primaryEnvironmentId}
+                        machineByEnvironmentId={environmentMachineById}
+                      />
+                    ) : null}
+                  </MenuRadioItem>
+                );
+              })}
+            </MenuGroup>
+          ))}
         </MenuRadioGroup>
         <MenuSeparator />
         <MenuItem onClick={openAddProject}>

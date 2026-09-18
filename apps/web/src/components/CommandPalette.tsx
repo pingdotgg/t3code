@@ -76,7 +76,7 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { useClientSettings } from "../hooks/useSettings";
+import { persistClientSettingsUpdate, useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
@@ -141,10 +141,12 @@ import {
   buildBrowseGroups,
   buildCommandPaletteProjectMetadata,
   buildProjectActionItems,
+  buildProjectSelectorGroups,
+  toggleFavoriteProjectKeys,
+  type CommandPaletteGroup,
   buildRootGroups,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
-  enumerateCommandPaletteItems,
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
   type CommandPaletteSubmenuItem,
@@ -1258,61 +1260,85 @@ function OpenCommandPaletteDialog(props: {
 
   const projectThreadItems = useMemo(
     () =>
-      enumerateCommandPaletteItems(
-        buildProjectActionItems({
-          projects: pickerProjects,
-          valuePrefix: "new-thread-in",
-          searchTerms: (project) => {
-            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            const location = projectEnvironmentLocationById.get(project.environmentId);
-            return [
-              ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
-                []),
-              ...(location ? [location.label] : []),
-            ];
-          },
-          renderDescription: (project) => {
-            const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
-              kind: "remote",
-              label: "Remote",
-              machine: "server" as const,
-            };
-            return (
-              <span className="flex min-w-0 items-center gap-1">
-                <span className="inline-flex min-w-0 items-center gap-1">
-                  {location.kind === "remote" ? (
-                    <EnvironmentMachineIcon
-                      aria-hidden
-                      kind={location.machine}
-                      className={COMMAND_PALETTE_META_ICON_CLASS}
-                    />
-                  ) : null}
-                  <span className="truncate">{location.label}</span>
-                </span>
-                <CommandPaletteMetaDot />
-                <span className="truncate">{project.workspaceRoot}</span>
+      buildProjectActionItems({
+        projects: pickerProjects,
+        valuePrefix: "new-thread-in",
+        favorite: (project) => {
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          if (!group) return undefined;
+          const memberKeys = group.memberProjects.map((member) => member.physicalProjectKey);
+          const isFavorite = memberKeys.some((key) =>
+            clientSettings.favoriteProjectKeys.includes(key),
+          );
+          return {
+            isFavorite,
+            label: isFavorite ? "Remove from favorites" : "Add to favorites",
+            toggle: () => {
+              void persistClientSettingsUpdate((current) => {
+                return {
+                  ...current,
+                  favoriteProjectKeys: toggleFavoriteProjectKeys(
+                    current.favoriteProjectKeys,
+                    memberKeys,
+                  ),
+                };
+              }).catch((error) => {
+                console.error("Failed to update project favorite", error);
+              });
+            },
+          };
+        },
+        searchTerms: (project) => {
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const location = projectEnvironmentLocationById.get(project.environmentId);
+          return [
+            ...(group?.memberProjects.flatMap((member) => [member.title, member.workspaceRoot]) ??
+              []),
+            ...(location ? [location.label] : []),
+          ];
+        },
+        renderDescription: (project) => {
+          const location = projectEnvironmentLocationById.get(project.environmentId) ?? {
+            kind: "remote",
+            label: "Remote",
+            machine: "server" as const,
+          };
+          return (
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="inline-flex min-w-0 items-center gap-1">
+                {location.kind === "remote" ? (
+                  <EnvironmentMachineIcon
+                    aria-hidden
+                    kind={location.machine}
+                    className={COMMAND_PALETTE_META_ICON_CLASS}
+                  />
+                ) : null}
+                <span className="truncate">{location.label}</span>
               </span>
+              <CommandPaletteMetaDot />
+              <span className="truncate">{project.workspaceRoot}</span>
+            </span>
+          );
+        },
+        icon: projectFavicon,
+        runProject: async (project) => {
+          const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
+          const contextualRefBelongsToGroup =
+            contextualProjectRef !== null &&
+            group?.memberProjectRefs.some(
+              (projectRef) =>
+                projectRef.environmentId === contextualProjectRef.environmentId &&
+                projectRef.projectId === contextualProjectRef.projectId,
             );
-          },
-          icon: projectFavicon,
-          runProject: async (project) => {
-            const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
-            const contextualRefBelongsToGroup =
-              contextualProjectRef !== null &&
-              group?.memberProjectRefs.some(
-                (projectRef) =>
-                  projectRef.environmentId === contextualProjectRef.environmentId &&
-                  projectRef.projectId === contextualProjectRef.projectId,
-              );
-            await handleNewThread(
-              contextualRefBelongsToGroup
-                ? contextualProjectRef
-                : scopeProjectRef(project.environmentId, project.id),
-            );
-          },
-        }),
-      ),
+          await handleNewThread(
+            contextualRefBelongsToGroup
+              ? contextualProjectRef
+              : scopeProjectRef(project.environmentId, project.id),
+          );
+        },
+      }),
     [
+      clientSettings.favoriteProjectKeys,
       contextualProjectRef,
       handleNewThread,
       pickerProjects,
@@ -1395,14 +1421,7 @@ function OpenCommandPaletteDialog(props: {
   const pushPaletteView = useCallback(
     (view: CommandPaletteView): void => {
       browseNavigation.invalidate();
-      setViewStack((previousViews) => [
-        ...previousViews,
-        {
-          addonIcon: view.addonIcon,
-          groups: view.groups,
-          ...(view.initialQuery ? { initialQuery: view.initialQuery } : {}),
-        },
-      ]);
+      setViewStack((previousViews) => [...previousViews, view]);
       setHighlightedItemValue(null);
       setQuery(view.initialQuery ?? "");
     },
@@ -1491,7 +1510,7 @@ function OpenCommandPaletteDialog(props: {
     (
       environmentId: EnvironmentId,
       readinessBySource: AddProjectRemoteSourceReadiness,
-    ): CommandPaletteView["groups"] => {
+    ): ReadonlyArray<CommandPaletteGroup> => {
       const sourceItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [
         {
           kind: "action",
@@ -1637,7 +1656,7 @@ function OpenCommandPaletteDialog(props: {
     }),
   );
 
-  const addProjectEnvironmentGroups = useMemo<CommandPaletteView["groups"]>(
+  const addProjectEnvironmentGroups = useMemo<ReadonlyArray<CommandPaletteGroup>>(
     () => [
       {
         value: "environments",
@@ -1709,21 +1728,10 @@ function OpenCommandPaletteDialog(props: {
       currentProjectEnvironmentId && currentProjectId
         ? `new-thread-in:${currentProjectEnvironmentId}:${currentProjectId}`
         : null;
-    const prioritized = currentPrefix
-      ? [
-          ...projectThreadItems.filter((item) => item.value === currentPrefix),
-          ...projectThreadItems.filter((item) => item.value !== currentPrefix),
-        ]
-      : projectThreadItems;
     pushPaletteView({
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [
-        {
-          value: "projects",
-          label: "Projects",
-          items: enumerateCommandPaletteItems(prioritized),
-        },
-      ],
+      kind: "project-selector",
+      ...(currentPrefix ? { priorityValue: currentPrefix } : {}),
     });
   }, [
     clearOpenIntent,
@@ -1731,7 +1739,7 @@ function OpenCommandPaletteDialog(props: {
     currentProjectEnvironmentId,
     currentProjectId,
     openIntent,
-    projectThreadItems,
+    projectThreadItems.length,
     pushPaletteView,
   ]);
 
@@ -1765,14 +1773,20 @@ function OpenCommandPaletteDialog(props: {
       });
     }
 
+    const projectSelectorView: CommandPaletteView = {
+      kind: "project-selector",
+      addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
+    };
     actionItems.push({
-      kind: "submenu",
+      kind: "action",
+      keepOpen: true,
       value: "action:new-thread-in",
       searchTerms: ["new thread", "project", "pick", "choose", "select"],
       title: "New thread in...",
       icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-      addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      run: async () => {
+        pushPaletteView(projectSelectorView);
+      },
     });
   }
 
@@ -2102,18 +2116,19 @@ function OpenCommandPaletteDialog(props: {
   const sourceSelectionViewValue =
     addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
   const activeGroups =
-    addProjectEnvironmentId !== null &&
-    currentView !== null &&
-    currentView.groups[0]?.value === sourceSelectionViewValue
-      ? buildAddProjectSourceGroups(
-          addProjectEnvironmentId,
-          buildAddProjectRemoteSourceReadiness(sourceControlDiscovery.data),
-        )
-      : currentView?.groups[0]?.value === "themes"
-        ? changeThemeItem.groups
-        : currentView?.groups[0]?.value === "appearance"
-          ? changeAppearanceItem.groups
-          : (currentView?.groups ?? rootGroups);
+    currentView?.kind === "project-selector"
+      ? buildProjectSelectorGroups(projectThreadItems, currentView.priorityValue)
+      : addProjectEnvironmentId !== null &&
+          currentView?.groups[0]?.value === sourceSelectionViewValue
+        ? buildAddProjectSourceGroups(
+            addProjectEnvironmentId,
+            buildAddProjectRemoteSourceReadiness(sourceControlDiscovery.data),
+          )
+        : currentView?.groups[0]?.value === "themes"
+          ? changeThemeItem.groups
+          : currentView?.groups[0]?.value === "appearance"
+            ? changeAppearanceItem.groups
+            : (currentView?.groups ?? rootGroups);
 
   const filteredGroups = filterCommandPaletteGroups({
     activeGroups,
@@ -2577,7 +2592,7 @@ function OpenCommandPaletteDialog(props: {
     };
   }, [addProjectCloneFlow]);
 
-  let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
+  let displayedGroups: ReadonlyArray<CommandPaletteGroup> = filteredGroups;
   if (addProjectCloneFlow?.step === "repository") {
     displayedGroups = [];
   } else if (addProjectCloneFlow?.step === "confirm") {
@@ -2665,6 +2680,23 @@ function OpenCommandPaletteDialog(props: {
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (
+      event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      event.key === "Enter"
+    ) {
+      const favorite = displayedGroups
+        .flatMap((group) => group.items)
+        .find((item) => item.value === highlightedItemValue)?.favorite;
+      if (favorite) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) favorite.toggle();
+        return;
+      }
+    }
     const command = resolveShortcutCommand(event, keybindings, {
       platform: navigator.platform,
       context: { modelPickerOpen: false },

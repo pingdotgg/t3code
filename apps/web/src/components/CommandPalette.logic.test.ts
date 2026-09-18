@@ -5,6 +5,8 @@ import {
   buildBrowseGroups,
   buildCommandPaletteProjectMetadata,
   buildProjectActionItems,
+  buildProjectSelectorGroups,
+  toggleFavoriteProjectKeys,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   enumerateCommandPaletteItems,
@@ -363,6 +365,97 @@ describe("buildProjectActionItems", () => {
       expect.arrayContaining(["t3dotgg/fleet", "fleet", "/Users/theo/Code/p/fleet"]),
     );
     expect(iconTitles).toEqual(["fleet"]);
+  });
+});
+
+describe("toggleFavoriteProjectKeys", () => {
+  it("retains favorites when a repository group splits into physical projects", () => {
+    const local = "local:/repo";
+    const remote = "remote:/repo";
+    const favorites = toggleFavoriteProjectKeys(["other:/project"], [local, remote]);
+    expect(favorites).toEqual(["other:/project", local, remote]);
+    const withoutLocal = toggleFavoriteProjectKeys(favorites, [local]);
+    expect(withoutLocal).toEqual(["other:/project", remote]);
+    expect(toggleFavoriteProjectKeys(withoutLocal, [local, remote])).toEqual(["other:/project"]);
+  });
+
+  it("preserves successive toggles of different groups without duplicate keys", () => {
+    const first = toggleFavoriteProjectKeys([], ["local:/one", "local:/one"]);
+    expect(first).toEqual(["local:/one"]);
+    expect(toggleFavoriteProjectKeys(first, ["local:/two"])).toEqual(["local:/one", "local:/two"]);
+  });
+});
+
+describe("buildProjectSelectorGroups", () => {
+  it("moves favorites into their own section, preserves priority, and numbers the result", () => {
+    const projects = [
+      { ...makeProject({ id: ProjectId.make("alpha"), title: "Alpha" }), displayName: "Alpha" },
+      { ...makeProject({ id: ProjectId.make("beta"), title: "Beta" }), displayName: "Beta" },
+      { ...makeProject({ id: ProjectId.make("gamma"), title: "Gamma" }), displayName: "Gamma" },
+    ];
+    const items = buildProjectActionItems({
+      projects,
+      valuePrefix: "new-thread-in",
+      icon: () => null,
+      favorite: (project) => ({
+        isFavorite: project.id === ProjectId.make("beta"),
+        label: "Toggle favorite",
+        toggle: () => undefined,
+      }),
+      runProject: async () => undefined,
+    });
+
+    const groups = buildProjectSelectorGroups(items, "new-thread-in:environment-local:gamma");
+
+    expect(groups.map((group) => group.label)).toEqual(["Favorites", "Projects"]);
+    expect(groups.map((group) => group.items.map((item) => item.title))).toEqual([
+      ["Beta"],
+      ["Gamma", "Alpha"],
+    ]);
+    expect(groups.flatMap((group) => group.items.map((item) => item.shortcutCommand))).toEqual([
+      "thread.jump.1",
+      "thread.jump.2",
+      "thread.jump.3",
+    ]);
+  });
+
+  it("puts the current favorite first with the first shortcut", () => {
+    const items = buildProjectActionItems({
+      projects: [
+        { ...makeProject({ id: ProjectId.make("alpha"), title: "Alpha" }), displayName: "Alpha" },
+        { ...makeProject({ id: ProjectId.make("beta"), title: "Beta" }), displayName: "Beta" },
+      ],
+      valuePrefix: "new-thread-in",
+      icon: () => null,
+      favorite: () => ({
+        isFavorite: true,
+        label: "Remove from favorites",
+        toggle: () => undefined,
+      }),
+      runProject: async () => undefined,
+    });
+    const groups = buildProjectSelectorGroups(items, "new-thread-in:environment-local:beta");
+    expect(groups.map((group) => group.label)).toEqual(["Favorites"]);
+    expect(groups[0]?.items.map((item) => [item.title, item.shortcutCommand])).toEqual([
+      ["Beta", "thread.jump.1"],
+      ["Alpha", "thread.jump.2"],
+    ]);
+  });
+
+  it("omits an empty favorites section", () => {
+    const items = buildProjectActionItems({
+      projects: [{ ...makeProject(), displayName: "Project" }],
+      valuePrefix: "new-thread-in",
+      icon: () => null,
+      favorite: () => ({
+        isFavorite: false,
+        label: "Add to favorites",
+        toggle: () => undefined,
+      }),
+      runProject: async () => undefined,
+    });
+
+    expect(buildProjectSelectorGroups(items).map((group) => group.label)).toEqual(["Projects"]);
   });
 });
 

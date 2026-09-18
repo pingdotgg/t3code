@@ -13,6 +13,12 @@ an existing worktree, use **New thread in this worktree** from the branch toolba
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
 
+On web and desktop, open **New thread in...** in the command palette and star a
+project to keep it in **Favorites**. Star it again to remove it. Favorites stay
+with each project when you change project grouping and appear first in the new
+thread’s project chooser too. You can also highlight a project in the command
+palette and press `Alt+Enter` to toggle its favorite status.
+
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`

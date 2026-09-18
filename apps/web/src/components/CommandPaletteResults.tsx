@@ -1,5 +1,5 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, StarIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
   type CommandPaletteActionItem,
@@ -14,6 +14,8 @@ import {
   CommandList,
   CommandShortcut,
 } from "./ui/command";
+import { Button } from "./ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "~/lib/utils";
 
 function foldAsciiCase(value: string): string {
@@ -205,6 +207,35 @@ function CommandPaletteResultRow(props: {
         </span>
       )}
       {props.item.titleTrailingContent}
+      {props.item.favorite ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={props.item.favorite.label}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.item.favorite?.toggle();
+                }}
+              >
+                <StarIcon
+                  className={cn(
+                    "size-3",
+                    props.item.favorite.isFavorite && "fill-current text-yellow-500",
+                  )}
+                />
+              </Button>
+            }
+          />
+          <TooltipPopup side="top">{props.item.favorite.label} (Alt+Enter)</TooltipPopup>
+        </Tooltip>
+      ) : null}
       {props.item.timestamp ? (
         <span className="min-w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground/70">
           {props.item.timestamp}

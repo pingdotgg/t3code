@@ -141,6 +141,11 @@ export interface CommandPaletteItem {
   readonly titleLeadingContent?: ReactNode;
   /** Optional content rendered inline after the title text (before the timestamp). */
   readonly titleTrailingContent?: ReactNode;
+  readonly favorite?: {
+    readonly isFavorite: boolean;
+    readonly label: string;
+    readonly toggle: () => void;
+  };
   readonly shortcutCommand?: KeybindingCommand;
   /** Sorts after every other match in its group; see `SettingsSearchItem.secondary`. */
   readonly secondary?: boolean;
@@ -165,10 +170,23 @@ export interface CommandPaletteGroup {
   readonly items: ReadonlyArray<CommandPaletteActionItem | CommandPaletteSubmenuItem>;
 }
 
-export interface CommandPaletteView {
+export type CommandPaletteView = {
   readonly addonIcon: ReactNode;
-  readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+} & (
+  | { readonly kind: "project-selector"; readonly priorityValue?: string; readonly groups?: never }
+  | { readonly kind?: "groups"; readonly groups: ReadonlyArray<CommandPaletteGroup> }
+);
+
+/** Favorites follow physical projects even when their display groups change. */
+export function toggleFavoriteProjectKeys(
+  favoriteKeys: ReadonlyArray<string>,
+  memberKeys: ReadonlyArray<string>,
+): string[] {
+  const members = new Set(memberKeys);
+  return favoriteKeys.some((key) => members.has(key))
+    ? favoriteKeys.filter((key) => !members.has(key))
+    : [...new Set([...favoriteKeys, ...memberKeys])];
 }
 
 export function enumerateCommandPaletteItems(
@@ -214,25 +232,66 @@ export function buildProjectActionItems(input: {
   runProject: (project: CommandPaletteProject) => Promise<void>;
   searchTerms?: (project: CommandPaletteProject) => ReadonlyArray<string>;
   renderDescription?: (project: CommandPaletteProject) => ReactNode;
+  favorite?: (project: CommandPaletteProject) => CommandPaletteItem["favorite"];
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
-  return input.projects.map((project) => ({
-    kind: "action",
-    value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [
-      project.displayName,
-      project.title,
-      project.workspaceRoot,
-      ...(input.searchTerms?.(project) ?? []),
-    ],
-    title: project.displayName,
-    description: input.renderDescription?.(project) ?? project.workspaceRoot,
-    icon: input.icon(project),
-    ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
-    run: async () => {
-      await input.runProject(project);
-    },
-  }));
+  return input.projects.map((project) => {
+    const favorite = input.favorite?.(project);
+    return {
+      kind: "action",
+      value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
+      searchTerms: [
+        project.displayName,
+        project.title,
+        project.workspaceRoot,
+        ...(input.searchTerms?.(project) ?? []),
+      ],
+      title: project.displayName,
+      description: input.renderDescription?.(project) ?? project.workspaceRoot,
+      icon: input.icon(project),
+      ...(favorite ? { favorite } : {}),
+      ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
+      run: async () => {
+        await input.runProject(project);
+      },
+    };
+  });
+}
+
+export function buildProjectSelectorGroups(
+  items: ReadonlyArray<CommandPaletteActionItem>,
+  priorityValue?: string | null,
+): CommandPaletteGroup[] {
+  const orderedItems = priorityValue
+    ? [
+        ...items.filter((item) => item.value === priorityValue),
+        ...items.filter((item) => item.value !== priorityValue),
+      ]
+    : items;
+  const favorites = orderedItems.filter((item) => item.favorite?.isFavorite === true);
+  const projects = orderedItems.filter((item) => item.favorite?.isFavorite !== true);
+  const enumeratedItems = enumerateCommandPaletteItems([...favorites, ...projects]);
+
+  return [
+    ...(favorites.length > 0
+      ? [
+          {
+            value: "favorite-projects",
+            label: "Favorites",
+            items: enumeratedItems.slice(0, favorites.length),
+          },
+        ]
+      : []),
+    ...(projects.length > 0
+      ? [
+          {
+            value: "projects",
+            label: "Projects",
+            items: enumeratedItems.slice(favorites.length),
+          },
+        ]
+      : []),
+  ];
 }
 
 export type BuildThreadActionItemsThread = Pick<
