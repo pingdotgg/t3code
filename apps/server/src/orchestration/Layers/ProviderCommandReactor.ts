@@ -113,6 +113,23 @@ function mapProviderSessionStatusToOrchestrationStatus(
   }
 }
 
+/**
+ * Whether a thread's session row was replaced after `before` was read. The row
+ * has no identity of its own, and lifecycle events rewrite it in place with a
+ * new `updatedAt`, so a replacement shows up as a different provider instance,
+ * a different active turn, or a restart: a session only returns to `starting`
+ * through a new turn start.
+ */
+function sessionWasReplaced(before: OrchestrationSession, after: OrchestrationSession): boolean {
+  return (
+    after.providerInstanceId !== before.providerInstanceId ||
+    (before.activeTurnId !== null &&
+      after.activeTurnId !== null &&
+      after.activeTurnId !== before.activeTurnId) ||
+    (before.status !== "starting" && after.status === "starting")
+  );
+}
+
 const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
   event.commandId !== null ? `command:${event.commandId}` : `event:${event.eventId}`;
 
@@ -1546,7 +1563,7 @@ const make = Effect.gen(function* () {
           // The interrupt runs off the command worker, so the thread may have
           // moved on to a newer session or turn by the time it fails. Only the
           // session this interrupt was asked about may be forced to stop.
-          latestSession.updatedAt !== session.updatedAt ||
+          sessionWasReplaced(session, latestSession) ||
           (event.payload.turnId !== undefined &&
             latestSession.activeTurnId !== null &&
             latestSession.activeTurnId !== event.payload.turnId)

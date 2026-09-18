@@ -3810,6 +3810,101 @@ describe("ProviderCommandReactor", () => {
   );
 
   effectIt.effect(
+    "still stops the same session when a lifecycle update rewrites it before the interrupt fails",
+    () =>
+      Effect.gen(function* () {
+        const interruptStarted = yield* Deferred.make<void>();
+        const failInterrupt = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            interruptTurnEffect: () =>
+              Deferred.succeed(interruptStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(failInterrupt)),
+                Effect.andThen(
+                  Effect.fail(
+                    new ProviderAdapterRequestError({
+                      provider: "codex",
+                      method: "thread.interrupt",
+                      detail: "provider session disappeared",
+                    }),
+                  ),
+                ),
+              ),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const now = "2026-01-01T00:00:00.000Z";
+        const later = "2026-01-01T00:00:01.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-before-rewrite"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-1"),
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("cmd-turn-interrupt-rewrite"),
+          threadId,
+          turnId: asTurnId("turn-1"),
+          createdAt: now,
+        });
+        yield* Deferred.await(interruptStarted);
+
+        // Runtime ingestion rewrites the row for a lifecycle event on the same
+        // session and turn; only `updatedAt` moves.
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-set-rewrite"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("turn-1"),
+            lastError: null,
+            updatedAt: later,
+          },
+          createdAt: later,
+        });
+        yield* Effect.promise(() =>
+          waitFor(async () => {
+            const current = (await harness.readModel()).threads.find(
+              (entry) => entry.id === threadId,
+            );
+            return current?.session?.updatedAt === later;
+          }),
+        );
+
+        yield* Deferred.succeed(failInterrupt, undefined);
+        yield* Effect.promise(() => harness.drain());
+
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(thread?.session).toMatchObject({
+          status: "stopped",
+          activeTurnId: null,
+          lastError: "provider session disappeared",
+        });
+        expect(
+          thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+        ).toMatchObject({ payload: { detail: "provider session disappeared" } });
+        expect(harness.stopSession).toHaveBeenCalledWith({ threadId });
+      }),
+  );
+
+  effectIt.effect(
     "stops a running session and records the failure when provider interrupt fails",
     () =>
       Effect.gen(function* () {
