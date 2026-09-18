@@ -72,14 +72,24 @@ export function reconcileEnvFile(
   const lines = contents === "" ? [] : contents.replace(/\n$/u, "").split("\n");
   // The forms `parseEnv` treats as an assignment: leading whitespace, an
   // optional `export`, and whitespace around `=`.
-  const assignment = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/u;
+  const assignment = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/u;
   const pending = new Map(Object.entries(entries));
   const out: string[] = [];
-  for (const line of lines) {
-    const name = assignment.exec(line)?.[1];
-    if (name === undefined || !(name in entries)) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const match = assignment.exec(line);
+    const name = match?.[1];
+    if (match === null || name === undefined || !(name in entries)) {
       out.push(line);
       continue;
+    }
+    // A quoted value can span lines; skip to its closing quote so the
+    // continuation lines go with the assignment they belong to.
+    const rawValue = match[2] ?? "";
+    const quote = /^(['"`])/u.exec(rawValue)?.[1];
+    if (quote !== undefined && !closesQuote(rawValue, quote)) {
+      while (index + 1 < lines.length && !lines[index + 1]!.includes(quote)) index += 1;
+      index += 1;
     }
     // The first occurrence keeps its position; later duplicates are dropped.
     const value = pending.get(name);
@@ -91,6 +101,10 @@ export function reconcileEnvFile(
   for (const [name, value] of pending) out.push(`${name}=${value}`);
   return out.length === 0 ? "" : `${out.join("\n")}\n`;
 }
+
+/** Whether a value that opens with `quote` also closes on the same line. */
+const closesQuote = (value: string, quote: string): boolean =>
+  value.length > 1 && value.slice(1).includes(quote);
 
 /**
  * Writes the relay's client configuration into the repo-root `.env` so the

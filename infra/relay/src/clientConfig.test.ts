@@ -38,6 +38,11 @@ describe("reconcileEnvFile", () => {
     );
   });
 
+  it("replaces a quoted multi-line value whole", () => {
+    expect(reconcileEnvFile('A="one\ntwo"\nKEEP=1\n', { A: "new" })).toBe("A=new\nKEEP=1\n");
+    expect(reconcileEnvFile("A='x'\nKEEP=1\n", { A: "new" })).toBe("A=new\nKEEP=1\n");
+  });
+
   it("leaves a commented-out assignment alone", () => {
     expect(reconcileEnvFile("#A=old\n", { A: "new" })).toBe("#A=old\nA=new\n");
   });
