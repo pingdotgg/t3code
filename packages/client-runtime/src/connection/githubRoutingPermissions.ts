@@ -45,11 +45,20 @@ export function gitHubRoutingConnectionKey(entry: ConnectionCatalogEntry): strin
       urls.some((url) => url.username || url.password)
     )
       return null;
-    return JSON.stringify([
-      target._tag,
-      target.environmentId,
-      ...urls.map((url) => url.href.replace(/\/+$/, "")),
-    ]);
+    // Alternate routes can become the active connection, so they are part of
+    // the consent identity: adding one asks for GitHub routing consent again.
+    const alternateHttpBaseUrls =
+      profile?._tag === "BearerConnectionProfile"
+        ? (profile.alternateHttpBaseUrls ?? []).map((url) => new URL(url).href).sort()
+        : [];
+    return JSON.stringify(
+      [
+        target._tag,
+        target.environmentId,
+        ...urls.map((url) => url.href),
+        ...alternateHttpBaseUrls,
+      ].map((href) => href.replace(/\/+$/, "")),
+    );
   } catch {
     return null;
   }
