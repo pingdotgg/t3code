@@ -1,0 +1,36 @@
+diff --git a/ios/Legacy/Services/Permissions/EXPermissionsService.m b/ios/Legacy/Services/Permissions/EXPermissionsService.m
+--- a/ios/Legacy/Services/Permissions/EXPermissionsService.m
++++ b/ios/Legacy/Services/Permissions/EXPermissionsService.m
+@@ -32,8 +32,11 @@
+ 
+ - (void)registerRequesters:(NSArray<id<EXPermissionsRequester>> *)newRequesters {
+   for (id<EXPermissionsRequester> requester in newRequesters) {
+-    [_requesters setObject:requester forKey:[[requester class] permissionType]];
+-    [_requestersByClass setObject:requester forKey:[requester class]];
++    NSString *permissionType = [[requester class] permissionType];
++    @synchronized (self) {
++      [_requesters setObject:requester forKey:permissionType];
++      [_requestersByClass setObject:requester forKey:[requester class]];
++    }
+   }
+ }
+ 
+@@ -162,12 +165,16 @@
+ 
+ - (id<EXPermissionsRequester>)getPermissionRequesterForType:(NSString *)type
+ {
+-  return _requesters[type];
++  @synchronized (self) {
++    return _requesters[type];
++  }
+ }
+ 
+ - (id<EXPermissionsRequester>)getPermissionRequesterForClass:(Class)requesterClass
+ {
+-  return [_requestersByClass objectForKey:requesterClass];
++  @synchronized (self) {
++    return [_requestersByClass objectForKey:requesterClass];
++  }
+ }
+ 
+ @end
