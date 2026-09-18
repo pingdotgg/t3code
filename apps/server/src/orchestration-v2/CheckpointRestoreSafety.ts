@@ -1,6 +1,9 @@
 import type { OrchestrationV2AppThread, OrchestrationV2CheckpointScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
+import type * as ProjectionProjects from "../persistence/Services/ProjectionProjects.ts";
 import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 
 export const SHARED_WORKSPACE_RESTORE_MESSAGE =
@@ -15,9 +18,11 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
     dependencies: {
       readonly fileSystem: FileSystem.FileSystem;
       readonly projections: ProjectionStoreV2["Service"];
+      readonly projects: ProjectionProjects.ProjectionProjectRepository["Service"];
+      readonly path: Path.Path;
     },
   ) {
-    const { fileSystem, projections } = dependencies;
+    const { fileSystem, projections, projects, path } = dependencies;
     const worktreePath = thread.worktreePath;
     let shared = worktreePath == null;
     if (!shared && worktreePath !== null) {
@@ -30,10 +35,20 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
         for (const otherThread of [...shell.threads, ...shell.archivedThreads]) {
           if (otherThread.id === thread.id || otherThread.deletedAt !== null) continue;
           const other = yield* projections.getCheckpointContext(otherThread.id);
+          const providerContext = yield* projections.getThreadProviderContext(otherThread.id);
           const paths = [
             otherThread.worktreePath,
             ...other.checkpointScopes.map((candidate) => candidate.cwd),
+            // A failed turn can leave an errored session with a live event stream.
+            ...providerContext.providerSessions
+              .filter((session) => session.status !== "stopped")
+              .map((session) => session.cwd),
           ].filter((value): value is string => value !== null);
+          if (otherThread.worktreePath === null) {
+            const project = yield* projects.getById({ projectId: otherThread.projectId });
+            if (Option.isNone(project)) return false;
+            paths.push(project.value.workspaceRoot);
+          }
           for (const candidate of paths) {
             if (checkedPaths.has(candidate)) continue;
             checkedPaths.add(candidate);
@@ -44,7 +59,16 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
                   error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
                 ),
               );
-            if (otherCwd === cwd) {
+            const contains = (parent: string, child: string) => {
+              const relative = path.relative(parent, child);
+              return (
+                relative === "" ||
+                (!path.isAbsolute(relative) &&
+                  relative !== ".." &&
+                  !relative.startsWith(`..${path.sep}`))
+              );
+            };
+            if (otherCwd !== null && (contains(cwd, otherCwd) || contains(otherCwd, cwd))) {
               shared = true;
               break;
             }

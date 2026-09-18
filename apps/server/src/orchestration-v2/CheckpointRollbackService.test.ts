@@ -12,6 +12,8 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Layer from "effect/Layer";
 
@@ -28,7 +30,14 @@ import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
 const checkpointRollbackServiceLayer = checkpointRollbackLayer.pipe(
-  Layer.provide(NodeServices.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.mock(ProjectionProjectRepository)({
+        getById: () => Effect.succeed(Option.none()),
+      }),
+    ),
+  ),
 );
 
 it.effect("rejects a non-ready checkpoint before opening a session or restoring files", () => {
@@ -428,6 +437,7 @@ it.effect.each([
         idAllocatorLayer,
         Layer.mock(ProjectionStoreV2)({
           getThreadProjection: () => Effect.succeed(projection),
+          getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
           getCheckpointContext: () =>
             Effect.succeed({
               checkpointScopes: [{ cwd: process.cwd() }],
@@ -502,13 +512,21 @@ it.effect.skipIf(!symlinksSupported)(
             threads: [],
             archivedThreads: [{ id: otherId, deletedAt: null, worktreePath: alias } as never],
           }),
+        getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
         getCheckpointContext: () =>
           Effect.succeed({ runs: [], checkpointScopes: [], checkpoints: [] }),
       } as never);
       const isolated = yield* isCheckpointRestoreIsolated(
         { id: threadId, worktreePath: cwd },
         { cwd },
-        { fileSystem, projections },
+        {
+          fileSystem,
+          path,
+          projections,
+          projects: ProjectionProjectRepository.of({
+            getById: () => Effect.succeed(Option.none()),
+          } as never),
+        },
       );
       assert.isFalse(isolated);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

@@ -10,7 +10,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+
+import * as ProjectionProjects from "../persistence/Services/ProjectionProjects.ts";
 
 import {
   isCheckpointRestoreIsolated,
@@ -83,6 +86,8 @@ export const layer: Layer.Layer<
   | ProviderSessionManagerV2
   | RuntimePolicyV2
   | FileSystem.FileSystem
+  | Path.Path
+  | ProjectionProjects.ProjectionProjectRepository
 > = Layer.effect(
   CheckpointRollbackServiceV2,
   Effect.gen(function* () {
@@ -93,6 +98,8 @@ export const layer: Layer.Layer<
     const sessions = yield* ProviderSessionManagerV2;
     const runtimePolicy = yield* RuntimePolicyV2;
     const fileSystem = yield* FileSystem.FileSystem;
+    const projects = yield* ProjectionProjects.ProjectionProjectRepository;
+    const path = yield* Path.Path;
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -138,7 +145,12 @@ export const layer: Layer.Layer<
 
       if (
         input.restoreFiles !== false &&
-        !(yield* isCheckpointRestoreIsolated(projection.thread, scope, { fileSystem, projections }))
+        !(yield* isCheckpointRestoreIsolated(projection.thread, scope, {
+          fileSystem,
+          projections,
+          projects,
+          path,
+        }))
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "shared-workspace",

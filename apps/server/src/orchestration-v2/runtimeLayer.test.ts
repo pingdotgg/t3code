@@ -27,6 +27,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -517,6 +518,35 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
             (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request.type),
             ["provider-thread.rollback"],
           );
+          const path = yield* Path.Path.pipe(Effect.provide(NodeServices.layer));
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("runtime-rollback-ancestor-create"),
+            threadId: ThreadId.make("runtime-rollback-ancestor"),
+            projectId: ProjectId.make("runtime-rollback-readiness-project"),
+            title: "Ancestor workspace owner",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: path.dirname(process.cwd()),
+          });
+          const overlapCommandId = CommandId.make("runtime-rollback-overlap");
+          const overlapSequence = yield* orchestrator.getThreadEventSequence(threadId);
+          const overlap = yield* orchestrator
+            .dispatch({
+              type: "checkpoint.rollback",
+              commandId: overlapCommandId,
+              threadId,
+              checkpointId,
+              scopeId: scope.id,
+            })
+            .pipe(Effect.flip);
+          assert.match(String(overlap.cause), /isolated worktree/);
+          assert.equal(yield* orchestrator.getThreadEventSequence(threadId), overlapSequence);
+          assert.deepEqual(yield* outbox.listByCommandId(overlapCommandId), []);
           yield* orchestrator.dispatch({
             type: "thread.metadata.update",
             commandId: CommandId.make("runtime-rollback-share"),
@@ -564,7 +594,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive", (it) => {
           assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
         }
       }
-    }),
+    }).pipe(Effect.provide(Layer.fresh(TestLayer))),
   );
 
   it.effect("resolves delivery intent against the active run and starts after it completes", () =>

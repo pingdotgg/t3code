@@ -3,7 +3,7 @@ import {
   OrchestrationEventInfrastructureLayerLive,
   OrchestrationLayerLive,
 } from "../orchestration/runtimeLayer.ts";
-import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
+import * as ProjectionProjects from "../persistence/Layers/ProjectionProjects.ts";
 import { layer as providerSessionRuntimeLayer } from "../persistence/ProviderSessionRuntime.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ProviderAuthServiceLive } from "../provider/Layers/ProviderAuthService.ts";
@@ -51,7 +51,7 @@ import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts"
 import { layer as scheduledTaskServiceLayer } from "../scheduledTasks/ScheduledTaskService.ts";
 
 const runtimePolicyProvided = runtimePolicyLayerFromProjectRepository.pipe(
-  Layer.provide(ProjectionProjectRepositoryLive),
+  Layer.provide(ProjectionProjects.ProjectionProjectRepositoryLive),
 );
 
 const eventStoreProvided = eventStoreLayer.pipe(
@@ -80,7 +80,7 @@ const legacyV1ThreadImporterProvided = legacyV1ThreadImporterLayer.pipe(
 export const ProjectServiceLayerLive = projectServiceLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      ProjectionProjectRepositoryLive,
+      ProjectionProjects.ProjectionProjectRepositoryLive,
       OrchestrationLayerLive,
       projectionStoreLayer,
       eventSinkProvided,
@@ -155,6 +155,7 @@ const runtimeRequestServiceProvided = runtimeRequestServiceLayer.pipe(
 const checkpointRollbackServiceProvided = checkpointRollbackServiceLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ProjectionProjects.ProjectionProjectRepositoryLive,
       checkpointServiceProvided,
       eventSinkProvided,
       idAllocatorLayer,
@@ -188,7 +189,7 @@ const orchestratorProvided = orchestratorLayer.pipe(
       commandReceiptStoreProvided,
       contextHandoffServiceProvided,
       idAllocatorLayer,
-      ProjectionProjectRepositoryLive,
+      ProjectionProjects.ProjectionProjectRepositoryLive,
       providerAdapterRegistryProvided,
       // Same layer reference as the continuation worker and the adapter
       // infrastructure so layer memoization yields one shared request queue.
@@ -246,7 +247,11 @@ const providerContinuationWorkerProvided = providerContinuationWorkerLive.pipe(
 );
 const threadTitleRegenerationProvided = threadTitleRegenerationServiceLayer.pipe(
   Layer.provide(
-    Layer.mergeAll(threadManagementProvided, ProjectionProjectRepositoryLive, TextGeneration.layer),
+    Layer.mergeAll(
+      threadManagementProvided,
+      ProjectionProjects.ProjectionProjectRepositoryLive,
+      TextGeneration.layer,
+    ),
   ),
 );
 const effectExecutorProvided = effectExecutorLayer.pipe(
