@@ -2,7 +2,7 @@
  * @since 4.0.0
  */
 
-import { normalizePath, type Plugin } from "vite"
+import { normalizePath, type Plugin, transformWithOxc } from "vite"
 import type { TestUserConfig } from "vitest/config"
 import * as Protocol from "./Protocol.ts"
 import * as Source from "./Source.ts"
@@ -95,7 +95,7 @@ export const plugin = (): Plugin => {
       }
 
       this.addWatchFile(loaded.file)
-      return loadExamples(loaded.file, loaded.version).then((snippets) => {
+      return loadExamples(loaded.file, loaded.version).then(async (snippets) => {
         if (loaded.kind === "collector") {
           return collectorModule(loaded.file, snippets, loaded.version)
         }
@@ -105,7 +105,13 @@ export const plugin = (): Plugin => {
           throw new Error(`Unknown documentation snippet module '${id}'`)
         }
 
-        return transform(snippet.source, loaded.file, snippet.line)
+        const source = transform(snippet.source, loaded.file, snippet.line)
+        if (Source.isMarkdown(loaded.file)) {
+          // Seed the source map with the snippet's document offset. Oxc removes
+          // these blank lines from the emitted code but preserves their mapping.
+          return transformWithOxc("\n".repeat(snippet.line) + source, loaded.file, { lang: "ts" })
+        }
+        return source
       })
     },
     watchChange(id) {

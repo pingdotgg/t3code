@@ -5,6 +5,7 @@ import * as Output from "@/Output";
 import * as Test from "@/Test/Alchemy";
 import * as workers from "@distilled.cloud/cloudflare/workers";
 import { describe, expect } from "alchemy-test";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
@@ -71,71 +72,77 @@ test(
   { timeout: 60_000 },
 );
 
-// Every name here is a fresh UUID, so each is CREATED by this test's request —
-// which is the only moment a `locationHint` has any say.
-const coloFor = (url: string, hint?: string) =>
-  Effect.gen(function* () {
-    const client = freshConn(yield* HttpClient.HttpClient);
-    const query = `name=${crypto.randomUUID()}${hint ? `&hint=${hint}` : ""}`;
-    return yield* client.get(`${url}/colo?${query}`).pipe(
-      Effect.flatMap((res) =>
-        res.status === 200
-          ? Effect.flatMap(res.json, (body) => {
-              const colo = (body as { colo?: string }).colo;
-              return colo && colo !== "unknown"
-                ? Effect.succeed(colo)
-                : Effect.fail(new Error(`no colo: ${JSON.stringify(body)}`));
-            })
-          : Effect.fail(new Error(`Worker not ready: ${res.status}`)),
-      ),
-      Effect.retry({ schedule: readinessSchedule, times: readinessRetries }),
-    );
-  });
+class DurableObjectLocationNotReady extends Data.TaggedError(
+  "DurableObjectLocationNotReady",
+)<{ readonly message: string }> {}
 
-// The CONTROL for the test below. Without a hint, an instance is created
-// wherever its first request came from — so two unhinted instances, created by
-// two requests from this same test, must land in the same colo.
-//
-// This is what makes "the hinted pair differ" mean anything. If unhinted
-// instances could scatter across colos on their own, a passing hint test would
-// prove nothing: the difference could just be noise in how this box's requests
-// get routed. Pinning the baseline first rules that out.
+const locationFor = Effect.fn(function* (
+  url: string,
+  options: { name?: string; hint?: Cloudflare.DurableObjectLocationHint } = {},
+) {
+  const client = freshConn(yield* HttpClient.HttpClient);
+  const name = options.name ?? (yield* Effect.sync(() => crypto.randomUUID()));
+  const query = `name=${encodeURIComponent(name)}${options.hint ? `&hint=${options.hint}` : ""}`;
+  return yield* client.get(`${url}/colo?${query}`).pipe(
+    Effect.flatMap((res) =>
+      Effect.gen(function* () {
+        if (res.status !== 200) {
+          return yield* new DurableObjectLocationNotReady({
+            message: `Worker not ready: ${res.status}`,
+          });
+        }
+        const body = (yield* res.json) as {
+          id: string;
+          colo: string;
+          locationHintRead: boolean;
+        };
+        if (!body.id || !body.colo || body.colo === "unknown") {
+          return yield* new DurableObjectLocationNotReady({
+            message: `Instance not ready: ${JSON.stringify(body)}`,
+          });
+        }
+        return body;
+      }),
+    ),
+    Effect.retry({ schedule: readinessSchedule, times: readinessRetries }),
+  );
+});
+
+// Nearby placement is best-effort; named identity is the stable contract.
 test(
-  "unhinted instances are created in the caller's colo",
+  "unhinted lookups preserve named instance identity",
   Effect.gen(function* () {
     const { url } = yield* stack;
+    const name = yield* Effect.sync(() => crypto.randomUUID());
+    const [first, second] = yield* Effect.all(
+      [locationFor(url, { name }), locationFor(url, { name })],
+      { concurrency: 2 },
+    );
+    const other = yield* locationFor(url);
 
-    const [first, second] = yield* Effect.all([coloFor(url), coloFor(url)], {
-      concurrency: 2,
-    });
-
-    expect(first).toBe(second);
+    expect(first.id).toMatch(/^[0-9a-f]{64}$/);
+    expect(first.id).toBe(second.id);
+    expect(first.id).not.toBe(other.id);
+    for (const result of [first, second, other]) {
+      expect(result.locationHintRead).toBe(false);
+    }
   }).pipe(logLevel),
   { timeout: 60_000 },
 );
 
-// `locationHint` steers where an instance is CREATED. Two brand-new names are
-// hinted at opposite sides of the planet and asked which colo they ended up
-// in. Given the control above — unhinted instances all land in this caller's
-// one colo — the pair can only come apart if the hint reached the runtime. If
-// it were dropped on the floor (the old `getByName(name)` signature ignored
-// Cloudflare's options bag), both would be created in that same colo and this
-// fails.
-//
-// The assertion is "different colos", not "this exact colo": a hint is
-// best-effort — Cloudflare places the instance in the nearest location it can
-// to the hinted region, which is not necessarily a colo inside it.
+// The getter is read by the real native namespace only when options reach it.
 test(
-  "locationHint places new instances in different regions",
+  "locationHint reaches the native namespace for new instances",
   Effect.gen(function* () {
     const { url } = yield* stack;
-
     const [wnam, apac] = yield* Effect.all(
-      [coloFor(url, "wnam"), coloFor(url, "apac")],
+      [locationFor(url, { hint: "wnam" }), locationFor(url, { hint: "apac" })],
       { concurrency: 2 },
     );
 
-    expect(wnam).not.toBe(apac);
+    expect(wnam.locationHintRead).toBe(true);
+    expect(apac.locationHintRead).toBe(true);
+    expect(wnam.id).not.toBe(apac.id);
   }).pipe(logLevel),
   { timeout: 60_000 },
 );

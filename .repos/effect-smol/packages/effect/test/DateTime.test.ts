@@ -280,6 +280,12 @@ describe("DateTime", () => {
   })
 
   describe("setPartsUtc", () => {
+    it("applies calendar parts without intermediate overflow", () => {
+      const date = DateTime.makeUnsafe("2024-01-31T12:34:56.789Z")
+      const updated = DateTime.setPartsUtc(date, { month: 2, day: 1 })
+      strictEqual(DateTime.formatIso(updated), "2024-02-01T12:34:56.789Z")
+    })
+
     it("partial", () => {
       const date = DateTime.makeUnsafe({
         year: 2024,

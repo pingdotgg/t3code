@@ -752,7 +752,9 @@ export const batched = dual<
 
 /**
  * A `Logger` which outputs logs in a "pretty" format and writes them to the
- * console.
+ * console. Chooses between tty and browser implementation. If the runtime
+ * platform is known and fixed, prefer {@link consolePrettyBrowser} or
+ * {@link consolePrettyTty}.
  *
  * **Details**
  *
@@ -763,23 +765,134 @@ export const batched = dual<
  * **Example** (Logging with pretty console output)
  *
  * ```ts import.meta.vitest
- * import { Logger } from "effect"
+ * import { Effect, Logger } from "effect"
  *
- * const prettyLogger = Logger.consolePretty({ colors: false })
- * Logger.isLogger(prettyLogger) // => true
+ * const prettyLogger = Logger.layer([Logger.consolePretty()])
+ *
+ * Effect.log("hello").pipe(
+ *   Effect.withLogSpan('label'),
+ *   Effect.annotateLogs('key', 'value'),
+ *   Effect.provide(prettyLogger),
+ *   Effect.runSync
+ * )
  * ```
  *
+ * **Example** (Logging with console.error, when the environment has TTY)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, Layer, Logger } from "effect"
+ *
+ * const prettyLoggerLayer = Layer.merge(
+ *   Logger.layer([Logger.consolePretty()]),
+ *   Layer.succeed(Logger.LogToStderr, true)
+ * )
+ *
+ * Effect.log('hello').pipe(
+ *   Effect.provide(prettyLoggerLayer),
+ *   Effect.runSync
+ * )
+ * ```
+ *
+ * @see {@link consolePrettyBrowser} for browser-specific implementation
+ * @see {@link consolePrettyTty} for the TTY-mode implementation
  * @category constructors
  * @since 4.0.0
  */
 export const consolePretty: (
   options?: {
     readonly colors?: "auto" | boolean | undefined
-    readonly stderr?: boolean | undefined
     readonly formatDate?: ((date: Date) => string) | undefined
     readonly mode?: "browser" | "tty" | "auto" | undefined
   }
 ) => Logger<unknown, void> = effect.consolePretty
+
+/**
+ * A `Logger` which outputs logs in a "pretty" format and writes them to the
+ * console. Intended to be used on platforms with a browser console.
+ *
+ * **Details**
+ *
+ * For example, pretty output can render as
+ * `[09:37:17.579] INFO (#1) label=0ms: hello` followed by an annotation line
+ * such as `key: value`.
+ *
+ * **Example** (Logging with pretty console output)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, Logger } from "effect"
+ *
+ * const prettyLogger = Logger.layer([Logger.consolePrettyBrowser()])
+ *
+ * Effect.log("hello").pipe(
+ *   Effect.withLogSpan('label'),
+ *   Effect.annotateLogs('key', 'value'),
+ *   Effect.provide(prettyLogger),
+ *   Effect.runSync
+ * )
+ * ```
+ *
+ * @see {@link consolePretty} for the platform-independent implementation
+ * @category constructors
+ * @since 4.0.0
+ */
+export const consolePrettyBrowser: (
+  options?: {
+    readonly colors?: boolean | undefined
+    readonly formatDate?: ((date: Date) => string) | undefined
+  }
+) => Logger<unknown, void> = effect.prettyLoggerBrowser
+
+/**
+ * A `Logger` which outputs logs in a "pretty" format and writes them to the
+ * console. Intended to be used on platforms with tty console.
+ *
+ * **Details**
+ *
+ * For example, pretty output can render as
+ * `[09:37:17.579] INFO (#1) label=0ms: hello` followed by an annotation line
+ * such as `key: value`.
+ *
+ * **Example** (Logging with pretty console output)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, Logger } from "effect"
+ *
+ * const prettyLogger = Logger.layer([Logger.consolePrettyTty()])
+ *
+ * Effect.log("hello").pipe(
+ *   Effect.withLogSpan('label'),
+ *   Effect.annotateLogs('key', 'value'),
+ *   Effect.provide(prettyLogger),
+ *   Effect.runSync
+ * )
+ * ```
+ *
+ * **Example** (Logging with console.error)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, Layer, Logger } from "effect"
+ *
+ * const prettyLoggerLayer = Layer.merge(
+ *   Logger.layer([Logger.consolePrettyTty()]),
+ *   Layer.succeed(Logger.LogToStderr, true)
+ * )
+ *
+ * Effect.log('hello').pipe(
+ *   Effect.provide(prettyLoggerLayer),
+ *   Effect.runSync
+ * )
+ * ```
+ *
+ * @see {@link consolePretty} for the platform-independent implementation
+ * @category constructors
+ * @since 4.0.0
+ */
+export const consolePrettyTty: (
+  options?: {
+    readonly colors?: boolean | undefined
+    readonly formatDate?: ((date: Date) => string) | undefined
+  }
+) => Logger<unknown, void> = effect.prettyLoggerTty
 
 /**
  * A `Logger` which outputs logs using the [logfmt](https://brandur.org/logfmt)
@@ -951,9 +1064,8 @@ export const layer = <
  *
  * const writes: Array<string> = []
  * const file = {
- *   write: (buffer: Uint8Array) => Effect.sync(() => {
+ *   writeAll: (buffer: Uint8Array) => Effect.sync(() => {
  *     writes.push(new TextDecoder().decode(buffer).trim())
- *     return FileSystem.Size(buffer.length)
  *   })
  * } as unknown as FileSystem.File
  * const fileSystem = FileSystem.makeNoop({ open: () => Effect.succeed(file) })
@@ -977,9 +1089,8 @@ export const layer = <
  *
  * const writes: Array<string> = []
  * const file = {
- *   write: (buffer: Uint8Array) => Effect.sync(() => {
+ *   writeAll: (buffer: Uint8Array) => Effect.sync(() => {
  *     writes.push(new TextDecoder().decode(buffer).trim())
- *     return FileSystem.Size(buffer.length)
  *   })
  * } as unknown as FileSystem.File
  * const fileSystem = FileSystem.makeNoop({ open: () => Effect.succeed(file) })
@@ -1030,7 +1141,7 @@ export const toFile = dual<
       const encoder = new TextEncoder()
       return yield* batched(self, {
         window: options?.batchWindow ?? 1000,
-        flush: (output) => effect.ignore(logFile.write(encoder.encode(output.join("\n") + "\n")))
+        flush: (output) => effect.ignore(logFile.writeAll(encoder.encode(output.join("\n") + "\n")))
       })
     })
 )

@@ -1,7 +1,9 @@
-import { describe, expect, it } from "@effect/vitest"
-import { Context, Effect, Exit, Fiber, Latch, Layer, Option, Schema } from "effect"
+import { assert, describe, expect, it } from "@effect/vitest"
+import { Cause, Context, Effect, Exit, Fiber, Latch, Layer, Option, Schema } from "effect"
 import { TestClock } from "effect/testing"
 import {
+  ClusterError,
+  ClusterSchema,
   EntityAddress,
   EntityId,
   EntityType,
@@ -48,6 +50,24 @@ describe("MessageStorage", () => {
         })
         expect(result._tag).toEqual("Success")
       }).pipe(Effect.provide(MessageStorage.MemoryDriver.layer)))
+
+    it.effect("removes a queued Interrupt when clearing an address", () =>
+      Effect.gen(function*() {
+        const storage = yield* MessageStorage.MessageStorage
+        const snowflake = yield* Snowflake.Generator
+        const request = yield* makeRequest()
+        yield* storage.saveRequest(request)
+        yield* storage.saveEnvelope(Message.OutgoingEnvelope.interrupt({
+          id: snowflake.nextUnsafe(),
+          requestId: request.envelope.requestId,
+          address: request.envelope.address
+        }))
+
+        yield* storage.clearAddress(request.envelope.address)
+
+        const messages = yield* storage.unprocessedMessages([request.envelope.address.shardId])
+        expect(messages.map(({ envelope }) => envelope._tag)).toEqual([])
+      }).pipe(Effect.provide(MemoryLayer)))
 
     it.effect("encoded unprocessedMessages fails closed for an empty address filter", () =>
       Effect.gen(function*() {
@@ -207,11 +227,98 @@ describe("MessageStorage", () => {
         yield* latch.await
         yield* Fiber.await(fiber)
       }).pipe(Effect.provide(MemoryLayer)))
+
+    it.effect("unregisterShardReplyHandlers fails parked waiters during rebalance", () =>
+      Effect.gen(function*() {
+        const storage = yield* MessageStorage.MessageStorage
+        const request = yield* makeRequest()
+        const fiber = yield* storage.registerReplyHandler(
+          new Message.OutgoingRequest({
+            ...request,
+            respond: () => Effect.void
+          })
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(1)
+
+        yield* storage.unregisterShardReplyHandlers(request.envelope.address.shardId)
+        const exit = yield* Fiber.await(fiber)
+
+        assert(Exit.isFailure(exit))
+        const error = Cause.findErrorOption(exit.cause)
+        assert(Option.isSome(error))
+        assert(error.value instanceof ClusterError.EntityNotAssignedToRunner)
+      }).pipe(Effect.provide(MemoryLayer)))
+
+    it.effect("unregisterShardReplyHandlers annotates parked waiters during shutdown", () =>
+      Effect.gen(function*() {
+        const storage = yield* MessageStorage.MessageStorage
+        const request = yield* makeRequest()
+        const fiber = yield* storage.registerReplyHandler(
+          new Message.OutgoingRequest({
+            ...request,
+            respond: () => Effect.void
+          })
+        ).pipe(Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust(1)
+
+        yield* storage.unregisterShardReplyHandlers(request.envelope.address.shardId, { interrupt: true })
+        const exit = yield* Fiber.await(fiber)
+
+        assert(Exit.isFailure(exit))
+        assert(Cause.hasInterruptsOnly(exit.cause))
+        assert(exit.cause.reasons.some((reason) =>
+          reason._tag === "Interrupt" && reason.annotations.has(ClusterSchema.Abandon.key)
+        ))
+      }).pipe(Effect.provide(MemoryLayer)))
+
+    it.effect("reply handlers receive the persisted defect fallback for unencodable replies", () =>
+      Effect.gen(function*() {
+        const storage = yield* MessageStorage.MessageStorage
+        const snowflake = yield* Snowflake.Generator
+        const latch = yield* Latch.make()
+        const request = yield* makeRequest({ rpc: UnknownSuccessRpc })
+        yield* storage.saveRequest(request)
+        let received: Reply.Reply<any> | undefined
+        const fiber = yield* storage.registerReplyHandler(
+          new Message.OutgoingRequest({
+            ...request,
+            respond: (reply) => {
+              received = reply
+              return latch.open
+            }
+          })
+        ).pipe(Effect.forkChild)
+        yield* TestClock.adjust(1)
+        yield* storage.saveReply(
+          new Reply.ReplyWithContext({
+            reply: new Reply.WithExit({
+              id: snowflake.nextUnsafe(),
+              requestId: request.envelope.requestId,
+              exit: Exit.succeed(new Error("not json encodable")) as any
+            }),
+            context: request.context,
+            rpc: request.rpc
+          })
+        )
+        yield* latch.await
+        yield* Fiber.await(fiber)
+        expect(received?._tag).toEqual("WithExit")
+        const exit = (received as Reply.WithExit<any>).exit
+        expect(Exit.isFailure(exit)).toBe(true)
+        expect(JSON.stringify(exit)).toContain("MalformedMessage")
+        const stored = yield* storage.repliesForUnfiltered([request.envelope.requestId])
+        expect(JSON.stringify(stored)).toContain("MalformedMessage")
+      }).pipe(Effect.provide(MemoryLayer)))
   })
 })
 
 export const GetUserRpc = Rpc.make("GetUser", {
   payload: { id: Schema.Number }
+})
+
+const UnknownSuccessRpc = Rpc.make("UnknownSuccess", {
+  payload: { id: Schema.Number },
+  success: Schema.Unknown
 })
 
 export const makeRequest = Effect.fnUntraced(function*(options?: {

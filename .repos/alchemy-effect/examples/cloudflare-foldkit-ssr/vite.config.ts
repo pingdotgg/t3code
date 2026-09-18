@@ -11,6 +11,8 @@ const buildId =
   process.env.FOLDKIT_BUILD_ID ?? `local-${Date.now().toString(36)}`;
 
 export default defineConfig({
+  // Client and server must receive the same buildId from this config evaluation.
+  builder: { sharedConfigBuild: true },
   // NOTE: the plugin's `ssr: { serverEntry }` option is deliberately NOT set.
   // It serves rendered pages from the Vite dev server by loading the entry
   // through `ssrLoadModule`, which requires a runnable `ssr` environment —

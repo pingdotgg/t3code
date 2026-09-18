@@ -1,6 +1,6 @@
 "effect/JSONSchema#fromAST":
   replacement: "Schema.toJsonSchemaDocument"
-  note: "Wrap a low-level AST with Schema.make, then generate a document; v4 generation targets draft 2020-12."
+  note: "Wrap a low-level AST with Schema.make, then generate a draft 2020-12 document. Generation defaults to onExcessProperty: 'ignore'; use 'error' for closed objects. JSON Schema validation is approximate and does not replace Effect decoding."
   example: "Schema.toJsonSchemaDocument(Schema.make(ast))"
 "effect/JSONSchema#JsonSchema7":
   replacement: "JsonSchema.JsonSchema"
@@ -67,5 +67,5 @@
   note: "Schema metadata now uses string-keyed Schema annotations; JSON Schema-specific checks use toJsonSchema annotations."
 "effect/JSONSchema#make":
   replacement: "Schema.toJsonSchemaDocument"
-  note: "Generate draft 2020-12, then call JsonSchema.toDocumentDraft07 when draft-07 output is required."
+  note: "Generate draft 2020-12, then call JsonSchema.toDocumentDraft07 when draft-07 output is required. Generation now defaults to onExcessProperty: 'ignore'; pass 'error' to retain closed-object output, and use the same option when decoding to reject excess properties. The earlier v4 additionalProperties generation option was removed. JSON Schema validation is approximate and does not replace Effect decoding."
   example: "JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))"
