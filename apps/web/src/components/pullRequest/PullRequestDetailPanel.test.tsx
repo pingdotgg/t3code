@@ -294,6 +294,8 @@ describe.each([
           terminalOpen: false,
           previewFocus: false,
           previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
         })}
       />,
     );

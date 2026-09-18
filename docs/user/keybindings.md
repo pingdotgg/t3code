@@ -84,7 +84,14 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, and `modelPickerOpen`. Unknown keys evaluate to `false`.
+`previewOpen`, `modelPickerOpen`, `isWeb`, and `isDesktop`. `isWeb` is true in a
+browser tab. `isDesktop` is true in the desktop app. Unknown keys evaluate to
+`false`.
+
+`mod+1` through `mod+9` jump to the first nine threads, and to models while the
+model picker is open. Those defaults use `isDesktop` so they do not steal the
+browser's tab-switch shortcuts. Remove that condition in Settings if you want
+the same jumps in a browser.
 
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 
