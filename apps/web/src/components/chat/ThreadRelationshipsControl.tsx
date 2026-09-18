@@ -1,3 +1,4 @@
+import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
@@ -282,45 +283,36 @@ export function ThreadRelationshipsPanel(props: {
       : (graph.nodes.get(mergeTargetThreadId)?.thread?.title ?? null);
 
   return (
-    <section
-      aria-labelledby="thread-details-lineage-heading"
-      className="border-t border-border/65 px-2 pb-2.5 pt-2"
+    <ThreadDetailsSection
+      headingId="thread-details-lineage-heading"
+      title="Lineage"
       data-thread-relationships-panel
+      actions={
+        canDetach ? (
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className={THREAD_DETAILS_PANEL_ICON_ACTION_CLASS}
+                  aria-label="More thread actions"
+                  disabled={busyAction !== null}
+                />
+              }
+            >
+              <MoreHorizontalIcon className="size-3.5" />
+            </MenuTrigger>
+            <MenuPopup align="end" className={THREAD_DETAILS_PANEL_MENU_POPUP_CLASS}>
+              <MenuItem onClick={() => void detach()}>
+                <UnplugIcon className="size-3.5" />
+                Disconnect agent session
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        ) : null
+      }
     >
-      <div className="flex min-h-6 items-center justify-between gap-2 px-2">
-        <h3
-          id="thread-details-lineage-heading"
-          className="text-[11px] font-medium text-muted-foreground"
-        >
-          Lineage
-        </h3>
-        <div className="flex shrink-0 items-center gap-1">
-          {canDetach ? (
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    className={THREAD_DETAILS_PANEL_ICON_ACTION_CLASS}
-                    aria-label="More thread actions"
-                    disabled={busyAction !== null}
-                  />
-                }
-              >
-                <MoreHorizontalIcon className="size-3.5" />
-              </MenuTrigger>
-              <MenuPopup align="end" className={THREAD_DETAILS_PANEL_MENU_POPUP_CLASS}>
-                <MenuItem onClick={() => void detach()}>
-                  <UnplugIcon className="size-3.5" />
-                  Disconnect agent session
-                </MenuItem>
-              </MenuPopup>
-            </Menu>
-          ) : null}
-        </div>
-      </div>
-
       {groups.map((group) => (
         <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
           {(visibleRows) =>
@@ -471,6 +463,6 @@ export function ThreadRelationshipsPanel(props: {
           }
         </ThreadLineageGroup>
       ))}
-    </section>
+    </ThreadDetailsSection>
   );
 }
