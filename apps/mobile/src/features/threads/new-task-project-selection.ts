@@ -19,6 +19,23 @@ export function getProjectScopeSelectionTarget(
   );
 }
 
+export function filterProjectScopes(
+  scopes: ReadonlyArray<HomeProjectScope>,
+  searchText: string,
+): ReadonlyArray<HomeProjectScope> {
+  const query = searchText.trim().toLowerCase();
+  if (!query) return scopes;
+  return scopes.filter(
+    (scope) =>
+      scope.title.toLowerCase().includes(query) ||
+      scope.projects.some(
+        (project) =>
+          project.title.toLowerCase().includes(query) ||
+          project.workspaceRoot.toLowerCase().includes(query),
+      ),
+  );
+}
+
 function getOnlySelectableProject(
   projectScopes: ReadonlyArray<HomeProjectScope>,
 ): EnvironmentProject | null {
