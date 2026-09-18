@@ -23,8 +23,8 @@ export const acpMcpBridgeCommand = Command.make("acp-mcp-bridge").pipe(
 
 /** Terminal fallback for ACP agents that do not expose injected MCP servers. */
 export const acpMcpCallCommand = Command.make("acp-mcp-call", {
-  tool: Argument.string("tool"),
-  argumentsJson: Argument.string("arguments-json"),
+  tool: Argument.String("tool"),
+  argumentsJson: Argument.String("arguments-json"),
 }).pipe(
   Command.withDescription("Call one T3 Code MCP tool from an ACP agent terminal."),
   Command.unlisted,

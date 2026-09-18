@@ -226,7 +226,7 @@ it.layer(
             return new Proxy(file, {
               get(target, key) {
                 if (key === "readAlloc") {
-                  return (size: FileSystem.SizeInput) => {
+                  return (size: number) => {
                     bodyReads += 1;
                     return target.readAlloc(size);
                   };
