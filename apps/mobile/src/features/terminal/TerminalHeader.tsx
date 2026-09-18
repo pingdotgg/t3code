@@ -51,7 +51,10 @@ export function TerminalHeader(props: TerminalHeaderProps) {
                     title: session.displayLabel,
                     icon: "terminal",
                     subtitle: [
-                      getTerminalStatusLabel({ status: session.status }),
+                      getTerminalStatusLabel({
+                        status: session.status,
+                        hasRunningSubprocess: session.hasRunningSubprocess,
+                      }),
                       basename(session.cwd),
                     ]
                       .filter(Boolean)
