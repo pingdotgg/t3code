@@ -12,6 +12,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 
@@ -100,7 +101,13 @@ it.effect("preserves installed status after probes and cleans failed agent activ
             )
           : Effect.void,
     ).pipe(
-      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          ServerConfig.layerTest(home, home),
+          Net.layer,
+          ServerSettingsService.layerTest(),
+        ),
+      ),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(
         HttpClient.HttpClient,

@@ -1,7 +1,9 @@
 import * as NodeCrypto from "node:crypto";
 import {
+  DEFAULT_DEVICE_STREAM_SOURCE,
   type DeviceHostSummary,
   DevicePlatformAvailability,
+  type DeviceStreamSource,
   type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import { runSshCommand, baseSshArgs, resolveSshCommand } from "@t3tools/ssh/command";
@@ -19,6 +21,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
@@ -56,13 +59,15 @@ const bootstrap = (
   config: SshDeviceHostConfig,
   owner: string,
   mode: "probe" | "start" | "agent-start" | "stop-agent" | "stop",
+  // Only the start modes reach the hub spawn; the rest never read it.
+  streamSource: DeviceStreamSource = DEFAULT_DEVICE_STREAM_SOURCE,
 ) =>
   runSshCommand(targetFor(config), {
     preHostArgs: identityArgs(config),
     remoteCommandArgs: commandArgs(
       'command -v node >/dev/null 2>&1 || { echo "Node is missing from the non-interactive SSH PATH" >&2; exit 1; }; exec node',
     ),
-    stdin: remoteDeviceScript(owner, mode),
+    stdin: remoteDeviceScript(owner, mode, streamSource),
     timeoutMs: mode === "start" || mode === "agent-start" ? 1_300_000 : 45_000,
   }).pipe(
     Effect.mapError(
@@ -106,6 +111,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const parentScope = yield* Scope.Scope;
   const ssh = yield* resolveSshCommand;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const environmentId = yield* fs
     .readFileString(server.environmentIdPath)
     .pipe(Effect.orElseSucceed(() => server.stateDir));
@@ -168,7 +174,13 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     DeviceHost.DeviceHostError
   > {
     activated = true;
-    const result = yield* provide(bootstrap(config, owner, wantsAgent ? "agent-start" : "start"));
+    const streamSource = yield* settings.getSettings.pipe(
+      Effect.map((value) => value.deviceStreamSource),
+      Effect.orElseSucceed(() => DEFAULT_DEVICE_STREAM_SOURCE),
+    );
+    const result = yield* provide(
+      bootstrap(config, owner, wantsAgent ? "agent-start" : "start", streamSource),
+    );
     yield* onStatus("starting");
     const remote = yield* decodeStarted(result.stdout.trim()).pipe(
       Effect.mapError(

@@ -188,6 +188,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       enabled: value.enableDeviceSupport,
       agentAccessEnabled: value.enableAgentDeviceAccess,
       onboardingCompleted: value.deviceOnboardingCompleted,
+      streamSource: value.deviceStreamSource,
     })),
     Effect.mapError(
       (cause) =>
@@ -209,6 +210,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       sessions: [],
       onboardingCompleted: initialSettings.onboardingCompleted,
       agentAccessEnabled: initialSettings.agentAccessEnabled,
+      streamSource: initialSettings.streamSource,
       hubBasePath: DEVICE_HUB_ROUTE_PREFIX,
       revision: 0,
     },
@@ -457,6 +459,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       const currentSettings = yield* readDeviceSettings;
       const nextEnabled = input.enabled ?? currentSettings.enabled;
       const nextAgentAccess = input.agentAccessEnabled ?? currentSettings.agentAccessEnabled;
+      const nextStreamSource = input.streamSource ?? currentSettings.streamSource;
+      const streamSourceChanged = nextStreamSource !== currentSettings.streamSource;
       yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
           yield* settings
@@ -468,6 +472,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               ...(input.onboardingCompleted === undefined
                 ? {}
                 : { deviceOnboardingCompleted: input.onboardingCompleted }),
+              ...(streamSourceChanged ? { deviceStreamSource: nextStreamSource } : {}),
             })
             .pipe(
               Effect.mapError(
@@ -481,6 +486,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             );
           if (!nextEnabled) {
             yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
+          } else if (streamSourceChanged) {
+            // The source is a hub start argument, so a running hub keeps the old
+            // one until it is restarted. Open panels reconnect through `list`.
+            yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
           } else if (input.agentAccessEnabled === false) {
             yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
           }
@@ -493,6 +502,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             sessions: nextEnabled ? state.sessions : [],
             bootingDevices: nextEnabled ? state.bootingDevices : [],
             agentAccessEnabled: nextAgentAccess,
+            streamSource: nextStreamSource,
             onboardingCompleted: input.onboardingCompleted ?? state.onboardingCompleted,
           }));
         }),

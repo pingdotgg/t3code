@@ -8,7 +8,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
-import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { AGENT_DEVICE_VERSION, deviceHubArgs, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -35,6 +35,17 @@ it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
     });
   }),
 );
+
+it("starts remote hubs on the configured capture source", () => {
+  // The hub default (grpc-screenshot) streams nothing on some emulators and
+  // never works on physical devices, so the source must reach the remote spawn.
+  expect(remoteDeviceScript("owner", "start", "scrcpy")).toContain(
+    JSON.stringify(deviceHubArgs("scrcpy")),
+  );
+  expect(remoteDeviceScript("owner", "start", "grpc-screenshot")).toContain(
+    JSON.stringify(deviceHubArgs("grpc-screenshot")),
+  );
+});
 
 it.effect("preserves shell metacharacters and newlines in remote arguments", () =>
   Effect.gen(function* () {
@@ -98,7 +109,7 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           await NodeFSP.writeFile(
             file,
             `const originalKill = process.kill; process.kill = (pid, signal) => { if (signal === 'SIGTERM') require('node:fs').appendFileSync(${JSON.stringify(NodePath.join(home, "stops"))}, pid+'\\n'); return originalKill(pid, signal); };\n` +
-              remoteDeviceScript(owner, mode)
+              remoteDeviceScript(owner, mode, "scrcpy")
                 .replace(DEVICE_HUB_VERSION, upgraded ? nextHubVersion : DEVICE_HUB_VERSION)
                 .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
           );
@@ -187,7 +198,7 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           ).toBe(String(upgradedDaemon.pid));
           expect(repaired.daemonPort).not.toBe(upgraded.daemonPort);
           // Stop still uses the recorded entry when a future pinned package is not installed yet.
-          const originalScript = remoteDeviceScript("one", "stop-agent");
+          const originalScript = remoteDeviceScript("one", "stop-agent", "scrcpy");
           const upgradedStop = NodePath.join(home, "upgraded-stop.cjs");
           await NodeFSP.writeFile(
             upgradedStop,

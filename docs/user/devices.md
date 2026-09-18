@@ -50,6 +50,12 @@ notification; Android adds orientation and toggling the network. The drawer
 only shows what the platform can do, and every control reflects the value read
 back from the device after a change.
 
+Android also has **Video source**, which picks how frames are captured: scrcpy
+works on emulators and physical devices, while gRPC screenshot is emulator-only
+and produces no video on some emulators. It applies to every Android device on
+that environment, so changing it restarts device support and briefly interrupts
+open streams.
+
 ## Agents and devices
 
 When an agent opens a device, it floats over the chat in web and desktop clients

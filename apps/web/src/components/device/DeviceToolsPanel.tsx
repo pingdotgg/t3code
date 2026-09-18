@@ -3,6 +3,7 @@ import type {
   DeviceActionInput,
   DeviceDetail,
   DevicePermission,
+  DeviceStreamSource,
   DeviceSummary,
   DeviceTextSize,
   EnvironmentId,
@@ -24,7 +25,7 @@ import { Spinner } from "~/components/ui/spinner";
 import { Switch } from "~/components/ui/switch";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
-import { deviceEnvironment } from "~/state/device";
+import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
@@ -39,6 +40,15 @@ type ActionBody = DeviceActionInput extends infer A
     ? Omit<A, "hostId" | "deviceId">
     : never
   : never;
+
+/**
+ * serve-emu reads Android frames from one of these. The hub takes it as a start
+ * argument, so switching restarts every device host on the environment.
+ */
+const STREAM_SOURCES: ReadonlyArray<{ value: DeviceStreamSource; label: string }> = [
+  { value: "scrcpy", label: "scrcpy" },
+  { value: "grpc-screenshot", label: "gRPC screenshot" },
+];
 
 const TEXT_SIZES: ReadonlyArray<{ value: DeviceTextSize; label: string }> = [
   { value: "small", label: "Small" },
@@ -163,6 +173,22 @@ export function DeviceToolsPanel(props: {
     [environmentId, runAction, target],
   );
 
+  const { state: deviceState } = useDeviceState(environmentId);
+  const configure = useAtomCommand(deviceEnvironment.configure);
+  const [streamSourcePending, setStreamSourcePending] = useState(false);
+  const changeStreamSource = useCallback(
+    async (value: DeviceStreamSource) => {
+      setStreamSourcePending(true);
+      try {
+        const result = await configure({ environmentId, input: { streamSource: value } });
+        if (result._tag !== "Success") setError(formatEnvironmentQueryError(result.cause));
+      } finally {
+        setStreamSourcePending(false);
+      }
+    },
+    [configure, environmentId],
+  );
+
   const settings = detail?.settings;
   const foregroundApp = foreground === undefined ? (detail?.foregroundApp ?? null) : foreground;
   const disabled = pending || detail === null;
@@ -257,6 +283,17 @@ export function DeviceToolsPanel(props: {
               onChange={(value) => act({ type: "setTextSize", value })}
             />
           </Row>
+          {isIos ? null : (
+            <Row label="Video source">
+              <ChoiceSelect
+                ariaLabel="Video source"
+                value={deviceState.streamSource}
+                options={STREAM_SOURCES}
+                disabled={streamSourcePending}
+                onChange={changeStreamSource}
+              />
+            </Row>
+          )}
           {isIos ? (
             <>
               <Row label="Liquid Glass">

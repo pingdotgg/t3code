@@ -178,3 +178,167 @@ describe("iOS input startup", () => {
     client.stop();
   });
 });
+
+describe("Android video handshake", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const SIZE = { width: 576, height: 1280 };
+
+  /** Lets the async `VideoDecoder.isConfigSupported` handshake settle. */
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  const semuKeyframe = () => {
+    const annexB = [0, 0, 0, 1, 0x67, 0x42, 0xc0, 0x29, 0, 0, 0, 1, 0x65, 0xaa];
+    const buffer = new ArrayBuffer(16 + annexB.length);
+    const view = new DataView(buffer);
+    view.setUint32(0, 0x53454d55);
+    view.setUint8(4, 1);
+    view.setUint8(5, 1);
+    view.setBigUint64(8, 1000n);
+    new Uint8Array(buffer).set(annexB, 16);
+    return buffer;
+  };
+
+  const semuDelta = () => {
+    const annexB = [0, 0, 0, 1, 0x41, 0x9a, 0x02];
+    const buffer = new ArrayBuffer(16 + annexB.length);
+    const view = new DataView(buffer);
+    view.setUint32(0, 0x53454d55);
+    view.setUint8(4, 1);
+    view.setUint8(5, 0);
+    view.setBigUint64(8, 2000n);
+    new Uint8Array(buffer).set(annexB, 16);
+    return buffer;
+  };
+
+  const setup = () => {
+    const sockets: FakeSocket[] = [];
+    class FakeSocket {
+      static OPEN = 1;
+      readyState = 1;
+      binaryType = "";
+      onopen: (() => void) | null = null;
+      onmessage: ((event: { data: ArrayBuffer | string }) => void) | null = null;
+      onclose: ((event: { code: number; reason: string }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      send = vi.fn();
+      close = vi.fn();
+      constructor() {
+        sockets.push(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", FakeSocket);
+
+    const decoders: FakeDecoder[] = [];
+    class FakeDecoder {
+      static isConfigSupported = () => Promise.resolve({ supported: true });
+      state = "unconfigured";
+      decodeQueueSize = 0;
+      output: (frame: unknown) => void;
+      constructor(init: { output: (frame: unknown) => void }) {
+        this.output = init.output;
+        decoders.push(this);
+      }
+      configure = vi.fn(() => {
+        this.state = "configured";
+      });
+      decode = vi.fn(() => {
+        this.output({ displayWidth: SIZE.width, displayHeight: SIZE.height, close: () => {} });
+      });
+      close = vi.fn(() => {
+        this.state = "closed";
+      });
+    }
+    vi.stubGlobal("VideoDecoder", FakeDecoder);
+    vi.stubGlobal(
+      "EncodedVideoChunk",
+      class {
+        constructor(readonly init: unknown) {}
+      },
+    );
+
+    const canvas = { width: 0, height: 0, getContext: () => null } as unknown as HTMLCanvasElement;
+    const onStatus = vi.fn();
+    const client = createDeviceStreamClient(
+      {
+        platform: "android",
+        deviceId: "emulator-5554",
+        access: {
+          httpBase: "http://test/api/device-hub",
+          wsBase: "ws://test/api/device-hub",
+          credentials: true,
+          query: {},
+        },
+      },
+      canvas,
+      {
+        onStatus,
+        onScreen: vi.fn(),
+        onUnauthorized: vi.fn(),
+        onMjpegFallback: vi.fn(),
+        onInputConnected: vi.fn(),
+      },
+    );
+    return { client, sockets, decoders, onStatus };
+  };
+
+  const videoSession = (size: { width: number; height: number }) =>
+    JSON.stringify({ type: "video-session", size });
+
+  it("paints the SPS keyframe instead of asking serve-emu to restart the encoder", async () => {
+    const { client, sockets, decoders, onStatus } = setup();
+    client.start();
+    const socket = sockets[0]!;
+    socket.onmessage?.({ data: videoSession(SIZE) });
+    socket.onmessage?.({ data: semuKeyframe() });
+    await flush();
+
+    expect(decoders[0]?.decode).toHaveBeenCalledTimes(1);
+    expect(socket.send).not.toHaveBeenCalled();
+    expect(onStatus).toHaveBeenCalledWith("streaming", undefined);
+    client.stop();
+  });
+
+  it("does not reset video for deltas that arrive while the decoder is configuring", async () => {
+    const { client, sockets } = setup();
+    client.start();
+    const socket = sockets[0]!;
+    socket.onmessage?.({ data: semuKeyframe() });
+    socket.onmessage?.({ data: semuDelta() });
+    await flush();
+
+    expect(socket.send).not.toHaveBeenCalled();
+    client.stop();
+  });
+
+  it("drops a decoder configured from a socket that closed while support was checked", async () => {
+    const { client, sockets, decoders, onStatus } = setup();
+    client.start();
+    const socket = sockets[0]!;
+    socket.onmessage?.({ data: semuKeyframe() });
+    socket.onclose?.({ code: 1006, reason: "" });
+    await flush();
+
+    expect(decoders[0]?.decode).not.toHaveBeenCalled();
+    expect(onStatus).not.toHaveBeenCalledWith("streaming", undefined);
+    client.stop();
+  });
+
+  it("keeps the decoder across a same-size encoder restart and rebuilds it on a new size", async () => {
+    const { client, sockets, decoders } = setup();
+    client.start();
+    const socket = sockets[0]!;
+    socket.onmessage?.({ data: semuKeyframe() });
+    await flush();
+    const decoder = decoders[0]!;
+
+    socket.onmessage?.({ data: videoSession(SIZE) });
+    expect(decoder.close).not.toHaveBeenCalled();
+
+    socket.onmessage?.({ data: videoSession({ width: 1280, height: 576 }) });
+    expect(decoder.close).toHaveBeenCalledTimes(1);
+    client.stop();
+  });
+});
