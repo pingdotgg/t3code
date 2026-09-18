@@ -7962,4 +7962,71 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.deepEqual(closeCallsDuringRun, []);
     }),
   );
+
+  it.effect(
+    "still warns and schedules recovery when a timed-out prompt's cleanup abort fails without a message",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-prompt-timeout-abort-without-message");
+        runtimeMock.state.autoPromptEcho = false;
+        runtimeMock.state.promptAsyncImplementation = () => new Promise<void>(() => {});
+        runtimeMock.state.abortImplementation = async () => {
+          // Effect's TimeoutError can be constructed without a message; older
+          // builds of this adapter crashed while formatting such an error.
+          const error = new Error("placeholder");
+          Object.defineProperty(error, "message", { value: undefined, writable: true });
+          throw error;
+        };
+        const warningFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId && event.type === "runtime.warning"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("opencode"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const sendFiber = yield* adapter
+          .sendTurn({
+            threadId,
+            input: "This prompt never gets a response",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("opencode"),
+              "opencode/kimi-k3",
+            ),
+          })
+          .pipe(Effect.exit, Effect.forkChild);
+        while (runtimeMock.state.promptCalls.length === 0) {
+          yield* Effect.yieldNow;
+        }
+
+        yield* advanceTestClock(10_000);
+
+        const warning = Option.getOrThrow(
+          yield* Fiber.join(warningFiber).pipe(Effect.timeout("1 second")),
+        );
+        NodeAssert.equal(warning.type, "runtime.warning");
+        if (warning.type !== "runtime.warning") return;
+        NodeAssert.equal(
+          warning.payload.message,
+          "OpenCode prompt submission failed and its cleanup abort did not complete.",
+        );
+        const detail = warning.payload.detail;
+        NodeAssert.equal(typeof detail, "string");
+        if (typeof detail !== "string") return;
+        NodeAssert.notEqual(detail, "");
+        NodeAssert.doesNotMatch(detail, /Cannot read properties|is not a function/);
+        NodeAssert.ok(runtimeMock.state.abortCalls.length >= 1);
+
+        // Recovery polls OpenCode for the prompt's message before giving up.
+        yield* advanceTestClock(1_000);
+        NodeAssert.ok(runtimeMock.state.messageCalls.length >= 1);
+
+        const sendResult = yield* Fiber.join(sendFiber);
+        NodeAssert.equal(Exit.isFailure(sendResult), true);
+        yield* adapter.stopSession(threadId);
+      }),
+  );
 });
