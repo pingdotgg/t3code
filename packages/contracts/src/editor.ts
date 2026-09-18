@@ -17,6 +17,13 @@ type EditorDefinition = {
    * `zed://ssh/<host><path>` shape.
    */
   readonly remoteScheme?: string;
+  /**
+   * Path of the CLI shipped inside the macOS app bundle, relative to an
+   * Applications folder. Installing the CLI shim on PATH is an optional
+   * extra step for macOS editors, so discovery also accepts the bundled CLI
+   * under `/Applications` or `~/Applications` and launches through it.
+   */
+  readonly macAppCommand?: string;
 };
 
 export const EDITORS = [
@@ -58,8 +65,16 @@ export const EDITORS = [
     commands: ["zed", "zeditor"],
     launchStyle: "direct-path",
     remoteScheme: "zed",
+    macAppCommand: "Zed.app/Contents/MacOS/cli",
   },
-  { id: "antigravity", label: "Antigravity", commands: ["agy"], launchStyle: "goto" },
+  {
+    id: "antigravity",
+    label: "Antigravity",
+    // `agy` is the standalone Antigravity CLI, not the IDE.
+    commands: ["agy-ide", "antigravity-ide"],
+    launchStyle: "goto",
+    macAppCommand: "Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide",
+  },
   { id: "idea", label: "IntelliJ IDEA", commands: ["idea"], launchStyle: "line-column" },
   { id: "aqua", label: "Aqua", commands: ["aqua"], launchStyle: "line-column" },
   { id: "clion", label: "CLion", commands: ["clion"], launchStyle: "line-column" },
