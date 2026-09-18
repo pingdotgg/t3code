@@ -1115,6 +1115,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       scheduleSettledEndVerification();
     }
   }, [isWorking, scheduleSettledEndVerification]);
+  // Suppression owns positioning for its window (anchor on send, disclosure
+  // settle on fold): an away reading ignored there is lost unless something
+  // re-checks, so re-verify when either suppression clears.
+  const prevSuppressionRef = useRef({ anchor: false, disclosure: false });
+  useEffect(() => {
+    const prev = prevSuppressionRef.current;
+    const anchor = anchoredEndSpace !== undefined;
+    const next = { anchor, disclosure: disclosureToggleSettling };
+    prevSuppressionRef.current = next;
+    if ((prev.anchor && !next.anchor) || (prev.disclosure && !next.disclosure)) {
+      scheduleSettledEndVerification();
+    }
+  });
   // Restoring to the end pins against estimated sizes; re-check once the
   // restore has positioned the thread. The restoring flag alone re-triggers
   // this: it flips false exactly when positioning completes.

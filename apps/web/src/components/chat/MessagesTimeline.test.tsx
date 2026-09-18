@@ -11,6 +11,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import type { TimelineEntry } from "../../session-logic";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
 
@@ -1113,6 +1114,7 @@ describe("MessagesTimeline", () => {
     isWorking?: boolean;
     threadKey?: string;
     resetAfterMount?: boolean;
+    entries?: TimelineEntry[];
   }) {
     legendListMock.geometry = { ...STRANDED_GEOMETRY };
     legendListMock.scrollToEndCalls = 0;
@@ -1129,7 +1131,7 @@ describe("MessagesTimeline", () => {
       onManualNavigation: () => {
         manualNavigationCalls.push(1);
       },
-      timelineEntries: [buildVerifyWorkEntry()],
+      timelineEntries: input.entries ?? [buildVerifyWorkEntry()],
     };
     props.listRef.current = {
       getState: () =>
@@ -1265,6 +1267,35 @@ describe("MessagesTimeline", () => {
       expect(atEndCalls).toEqual([false, false]);
       // Verification never scrolls; with no remembered position the restore
       // path pins via initialScrollAtEnd instead of scrollToEnd.
+      expect(legendListMock.scrollToEndCalls).toBe(0);
+    } finally {
+      unmountVerifyRenderer(renderer);
+    }
+  });
+
+  it("verifies when anchor suppression clears", () => {
+    const userEntry = buildUserTimelineEntry("Hello");
+    const { renderer, atEndCalls, manualNavigationCalls, flushFrames, props } =
+      mountTimelineForEndVerification({
+        threadKey: "env-verify:thread-6",
+        entries: [userEntry],
+      });
+    try {
+      // Anchor the first user message, then release it: clearing the
+      // suppression must schedule a fresh verification.
+      act(() => {
+        renderer.update(<MessagesTimeline {...props} anchorMessageId={userEntry.message.id} />);
+      });
+      flushFrames();
+      flushFrames();
+      expect(manualNavigationCalls).toEqual([]);
+      act(() => {
+        renderer.update(<MessagesTimeline {...props} anchorMessageId={null} />);
+      });
+      flushFrames();
+      flushFrames();
+      expect(manualNavigationCalls).toHaveLength(1);
+      expect(atEndCalls).toContain(false);
       expect(legendListMock.scrollToEndCalls).toBe(0);
     } finally {
       unmountVerifyRenderer(renderer);
