@@ -1,13 +1,15 @@
-import {
-  type DirItem,
-  type DirSearchResult,
-  type FileItem,
-  FileFinder,
-  type GrepCursor,
-  type MixedItem,
-  type MixedSearchResult,
-  type Result,
-  type SearchResult,
+import * as NodeModule from "node:module";
+
+import type {
+  DirItem,
+  DirSearchResult,
+  FileItem,
+  FileFinder as FileFinderType,
+  GrepCursor,
+  MixedItem,
+  MixedSearchResult,
+  Result,
+  SearchResult,
 } from "@ff-labs/fff-node";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -25,6 +27,13 @@ import type {
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
+// fff-node stays external to the CLI bundle because it dlopens a native
+// library. A static `import` of an external package is a hard error inside a
+// Node single-executable (only built-ins resolve there), so load it through
+// `require`, which reads from the real filesystem in every runtime.
+const requireForFff = NodeModule.createRequire(import.meta.url);
+const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
+
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
@@ -33,7 +42,7 @@ const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 
-export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedErrorClass<WorkspaceSearchIndexCreateFailed>()(
+export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedError<WorkspaceSearchIndexCreateFailed>()(
   "WorkspaceSearchIndexCreateFailed",
   {
     cwd: Schema.String,
@@ -46,7 +55,7 @@ export class WorkspaceSearchIndexCreateFailed extends Schema.TaggedErrorClass<Wo
   }
 }
 
-export class WorkspaceSearchIndexScanTimedOut extends Schema.TaggedErrorClass<WorkspaceSearchIndexScanTimedOut>()(
+export class WorkspaceSearchIndexScanTimedOut extends Schema.TaggedError<WorkspaceSearchIndexScanTimedOut>()(
   "WorkspaceSearchIndexScanTimedOut",
   {
     cwd: Schema.String,
@@ -58,7 +67,7 @@ export class WorkspaceSearchIndexScanTimedOut extends Schema.TaggedErrorClass<Wo
   }
 }
 
-export class WorkspaceSearchIndexSearchFailed extends Schema.TaggedErrorClass<WorkspaceSearchIndexSearchFailed>()(
+export class WorkspaceSearchIndexSearchFailed extends Schema.TaggedError<WorkspaceSearchIndexSearchFailed>()(
   "WorkspaceSearchIndexSearchFailed",
   {
     cwd: Schema.String,
@@ -73,7 +82,7 @@ export class WorkspaceSearchIndexSearchFailed extends Schema.TaggedErrorClass<Wo
   }
 }
 
-export class WorkspaceSearchIndexRefreshFailed extends Schema.TaggedErrorClass<WorkspaceSearchIndexRefreshFailed>()(
+export class WorkspaceSearchIndexRefreshFailed extends Schema.TaggedError<WorkspaceSearchIndexRefreshFailed>()(
   "WorkspaceSearchIndexRefreshFailed",
   {
     cwd: Schema.String,
@@ -86,7 +95,7 @@ export class WorkspaceSearchIndexRefreshFailed extends Schema.TaggedErrorClass<W
   }
 }
 
-export class WorkspaceSearchIndexDestroyFailed extends Schema.TaggedErrorClass<WorkspaceSearchIndexDestroyFailed>()(
+export class WorkspaceSearchIndexDestroyFailed extends Schema.TaggedError<WorkspaceSearchIndexDestroyFailed>()(
   "WorkspaceSearchIndexDestroyFailed",
   {
     cwd: Schema.String,
@@ -330,7 +339,7 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
 
 const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(function* <E>(
   cwd: string,
-  finder: FileFinder,
+  finder: FileFinderType,
   onFailure: (input: { readonly reason: string; readonly cause?: unknown }) => E,
 ): Effect.fn.Return<void, E | WorkspaceSearchIndexScanTimedOut> {
   const result = yield* Effect.tryPromise({
@@ -551,6 +560,8 @@ function parseWorkspaceSearchIndexKey(key: string): {
  * workspace root and variant. WorkspaceSearchIndexMap owns memoization and
  * idle cleanup; using a default cwd here would mix resources from different
  * workspaces.
+ *
+ * @public Service construction is part of the canonical Effect module API.
  */
 export const layer = (key: string) => {
   const { cwd, variant } = parseWorkspaceSearchIndexKey(key);

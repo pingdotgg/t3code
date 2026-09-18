@@ -8,7 +8,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as OpenCodeRuntime from "./opencodeRuntime.ts";
 
-export const OPENCODE_SERVER_IDLE_TTL = "30 seconds";
+const OPENCODE_SERVER_IDLE_TTL = "30 seconds";
 
 interface OpenCodeServerOwnerState {
   server: OpenCodeRuntime.OpenCodeServerProcess | null;
@@ -176,6 +176,7 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   });
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const layer = (input: {
   readonly binaryPath: string;
   readonly directory: string;

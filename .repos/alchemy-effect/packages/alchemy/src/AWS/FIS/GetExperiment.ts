@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * dynamically, so this is an account-level binding addressed by experiment
  * id. Provide the implementation with
  * `Effect.provide(AWS.FIS.GetExperimentHttp)`.
- * @binding
- * @section Running Experiments
- * @example Poll an Experiment's State
+ * ### Running Experiments
+ * **Example:** Poll an Experiment's State
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getExperiment = yield* AWS.FIS.GetExperiment();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const { experiment } = yield* getExperiment({ id: experimentId });
  * console.log(experiment?.state?.status);
  * ```
+ *
+ * @binding
  */
 export interface GetExperiment extends Binding.Service<
   GetExperiment,

@@ -3,7 +3,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
-import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../../Report.ts";
 import { isResolved } from "../../Diff.ts";
 import * as Provider from "../../Provider.ts";
 import { Resource } from "../../Resource.ts";
@@ -83,9 +83,8 @@ export interface NetworkInterfaceAttachment extends Resource<
  * `networkInterfaceId`/`instanceId`/`deviceIndex` triple. Changing any of them
  * replaces the attachment.
  *
- * @resource
- * @section Attaching a Network Interface
- * @example Attach a Secondary ENI to an Instance
+ * ### Attaching a Network Interface
+ * **Example:** Attach a Secondary ENI to an Instance
  * ```typescript
  * const attachment = yield* AWS.EC2.NetworkInterfaceAttachment("SecondaryEni", {
  *   networkInterfaceId: eni.networkInterfaceId,
@@ -97,6 +96,8 @@ export interface NetworkInterfaceAttachment extends Resource<
  * Device index 0 is the instance's primary interface, so secondary interfaces
  * use index 1 and up. The ENI's IPs and security groups now apply to the
  * instance on that interface.
+ *
+ * @resource
  */
 export const NetworkInterfaceAttachment = Resource<NetworkInterfaceAttachment>(
   "AWS.EC2.NetworkInterfaceAttachment",

@@ -1,15 +1,16 @@
 import { SymbolView } from "../components/AppSymbol";
 import { memo, useEffect, useRef, useState } from "react";
-import { Pressable, type ColorValue } from "react-native";
+import { Alert, Pressable, type ColorValue } from "react-native";
 
-import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { tryCopyTextWithHaptic } from "../lib/copyTextWithHaptic";
 
 const COPY_FEEDBACK_DURATION_MS = 1200;
 
 export const CopyTextButton = memo(function CopyTextButton(props: {
   readonly accessibilityLabel: string;
   readonly text: string;
-  readonly tintColor: ColorValue;
+  readonly onCopy?: () => Promise<void>;
+  readonly tintColor?: ColorValue;
   readonly copiedTintColor?: ColorValue;
   readonly backgroundColor?: ColorValue;
   readonly borderColor?: ColorValue;
@@ -34,8 +35,18 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
       accessibilityLabel={copied ? "Copied" : props.accessibilityLabel}
       disabled={props.text.length === 0}
       hitSlop={8}
-      onPress={() => {
-        copyTextWithHaptic(props.text);
+      onPress={async () => {
+        try {
+          if (props.onCopy) await props.onCopy();
+          else if (!(await tryCopyTextWithHaptic(props.text))) {
+            // A refused clipboard write is the common failure, and silence reads as success.
+            Alert.alert("Could not copy", "Try again.");
+            return;
+          }
+        } catch {
+          Alert.alert("Could not copy", "Try again.");
+          return;
+        }
         setCopied(true);
         if (resetTimeoutRef.current) {
           clearTimeout(resetTimeoutRef.current);
@@ -65,6 +76,7 @@ export const CopyTextButton = memo(function CopyTextButton(props: {
         }
         size={props.iconSize ?? 13}
         tintColor={copied ? (props.copiedTintColor ?? props.tintColor) : props.tintColor}
+        tintColorClassName={props.tintColor ? undefined : "accent-foreground"}
         type="monochrome"
       />
     </Pressable>

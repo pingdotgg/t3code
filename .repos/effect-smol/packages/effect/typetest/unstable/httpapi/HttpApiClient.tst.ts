@@ -33,7 +33,11 @@ describe("HttpApiClient", () => {
       )
       const f = client.group.a
       expect<Parameters<typeof f>[0]>().type.toBe<
-        { readonly params: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly params: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
     })
   })
@@ -56,7 +60,11 @@ describe("HttpApiClient", () => {
       )
       const f = client.group.a
       expect<Parameters<typeof f>[0]>().type.toBe<
-        { readonly query: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly query: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
     })
   })
@@ -177,7 +185,7 @@ describe("HttpApiClient", () => {
         Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>
       >()
       expect<Parameters<typeof client.topHealth>[0]>().type.toBe<
-        void | { readonly responseMode?: ResponseMode } | undefined
+        void | { readonly sseOptions?: Sse.DecodeOptions | undefined; readonly responseMode?: ResponseMode } | undefined
       >()
       expect(client).type.not.toHaveProperty("top")
     })
@@ -201,10 +209,18 @@ describe("HttpApiClient", () => {
 
       expect<keyof GeneratedClient>().type.toBe<"users" | "lookup">()
       expect<Parameters<typeof client.users.lookup>[0]>().type.toBe<
-        { readonly payload: { readonly name: string }; readonly responseMode?: ResponseMode }
+        {
+          readonly payload: { readonly name: string }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect<Parameters<typeof client.lookup>[0]>().type.toBe<
-        { readonly query: { readonly token: string }; readonly responseMode?: ResponseMode }
+        {
+          readonly query: { readonly token: string }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect(client.users.lookup({ payload: { name: "Ada" } })).type.toBe<
         Effect.Effect<{ readonly userId: string }, HttpClientError.HttpClientError | Schema.SchemaError>
@@ -230,7 +246,11 @@ describe("HttpApiClient", () => {
 
       expect<keyof GeneratedClient>().type.toBe<"getUser">()
       expect<Parameters<typeof client.getUser>[0]>().type.toBe<
-        { readonly params: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly params: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect(client.getUser({ params: { id: 1 } })).type.toBe<
         Effect.Effect<{ readonly id: string }, HttpClientError.HttpClientError | Schema.SchemaError>
@@ -258,10 +278,14 @@ describe("HttpApiClient", () => {
 
       expect<keyof GeneratedClient>().type.toBe<"getUser" | "health">()
       expect<Parameters<typeof client.getUser>[0]>().type.toBe<
-        { readonly params: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly params: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect<Parameters<typeof client.health>[0]>().type.toBe<
-        void | { readonly responseMode?: ResponseMode } | undefined
+        void | { readonly sseOptions?: Sse.DecodeOptions | undefined; readonly responseMode?: ResponseMode } | undefined
       >()
       expect(client.getUser({ params: { id: 1 } })).type.toBe<
         Effect.Effect<{ readonly id: string }, HttpClientError.HttpClientError | Schema.SchemaError>
@@ -291,7 +315,11 @@ describe("HttpApiClient", () => {
 
       expect<keyof UsersClient>().type.toBe<"getUser">()
       expect<Parameters<typeof client.getUser>[0]>().type.toBe<
-        { readonly params: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly params: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect(client.getUser({ params: { id: 1 } })).type.toBe<
         Effect.Effect<{ readonly id: string }, HttpClientError.HttpClientError | Schema.SchemaError>
@@ -312,7 +340,11 @@ describe("HttpApiClient", () => {
 
       expect<keyof UsersClient>().type.toBe<"getUser">()
       expect<Parameters<typeof client.getUser>[0]>().type.toBe<
-        { readonly params: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly params: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect(client.getUser({ params: { id: 1 } })).type.toBe<
         Effect.Effect<{ readonly id: string }, HttpClientError.HttpClientError | Schema.SchemaError>
@@ -347,10 +379,18 @@ describe("HttpApiClient", () => {
       expect<keyof Effect.Success<typeof usersClient>>().type.toBe<"lookup">()
       expect<keyof Effect.Success<typeof adminsClient>>().type.toBe<"lookup">()
       expect<Parameters<typeof selectedUsers.lookup>[0]>().type.toBe<
-        { readonly params: { readonly userId: string }; readonly responseMode?: ResponseMode }
+        {
+          readonly params: { readonly userId: string }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect<Parameters<typeof selectedAdmins.lookup>[0]>().type.toBe<
-        { readonly query: { readonly email: string }; readonly responseMode?: ResponseMode }
+        {
+          readonly query: { readonly email: string }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect(selectedUsers.lookup).type.not.toBeCallableWith({ query: { email: "admin@example.com" } })
       expect(selectedAdmins.lookup).type.not.toBeCallableWith({ params: { userId: "1" } })
@@ -375,7 +415,11 @@ describe("HttpApiClient", () => {
       )
       const f = client.group.a
       expect<Parameters<typeof f>[0]>().type.toBe<
-        { readonly headers: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly headers: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
     })
   })
@@ -393,7 +437,9 @@ describe("HttpApiClient", () => {
         HttpApiClient.make(Api).pipe(Effect.provide(FetchHttpClient.layer))
       )
       const f = client.group.a
-      expect<Parameters<typeof f>[0]>().type.toBe<void | { readonly responseMode?: ResponseMode } | undefined>()
+      expect<Parameters<typeof f>[0]>().type.toBe<
+        void | { readonly sseOptions?: Sse.DecodeOptions | undefined; readonly responseMode?: ResponseMode } | undefined
+      >()
     })
 
     it("derives the request payload from a field record", () => {
@@ -413,7 +459,11 @@ describe("HttpApiClient", () => {
       )
       const f = client.group.a
       expect<Parameters<typeof f>[0]>().type.toBe<
-        { readonly payload: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly payload: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
     })
 
@@ -432,7 +482,11 @@ describe("HttpApiClient", () => {
       )
       const f = client.group.a
       expect<Parameters<typeof f>[0]>().type.toBe<
-        { readonly payload: FormData; readonly responseMode?: ResponseMode }
+        {
+          readonly payload: FormData
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
     })
 
@@ -451,7 +505,11 @@ describe("HttpApiClient", () => {
       )
       const f = client.group.a
       expect<Parameters<typeof f>[0]>().type.toBe<
-        { readonly payload: FormData; readonly responseMode?: ResponseMode }
+        {
+          readonly payload: FormData
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
     })
   })
@@ -559,7 +617,11 @@ describe("HttpApiClient", () => {
 
       type Request = Parameters<typeof f>[0]
       expect<Request>().type.toBe<
-        { readonly params: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly params: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect(f).type.toBeCallableWith({ params: { id: 1 } })
       expect(f).type.toBeCallableWith({ params: { id: 1 }, responseMode: "decoded-only" })
@@ -616,15 +678,23 @@ describe("HttpApiClient", () => {
         HttpApiClient.make(Api).pipe(Effect.provide(FetchHttpClient.layer))
       )
       const f = client.group.a
+      const sseOptions = hole<Sse.DecodeOptions>()
 
       type Event = { readonly event: "user.created"; readonly data: string }
       type StreamError = { readonly reason: string }
       type ClientStream = Stream.Stream<
         Event,
-        StreamError | HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry
+        StreamError | HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry | Sse.SseError
       >
 
+      expect<Parameters<typeof f>[0]>().type.toBe<
+        void | { readonly sseOptions?: Sse.DecodeOptions | undefined; readonly responseMode?: ResponseMode } | undefined
+      >()
+      expect(f).type.not.toBeCallableWith({}, { sseOptions: {} })
       expect(f()).type.toBe<
+        Effect.Effect<ClientStream, HttpClientError.HttpClientError | Schema.SchemaError>
+      >()
+      expect(f({ sseOptions })).type.toBe<
         Effect.Effect<ClientStream, HttpClientError.HttpClientError | Schema.SchemaError>
       >()
       expect(f({ responseMode: "decoded-only" })).type.toBe<
@@ -636,8 +706,85 @@ describe("HttpApiClient", () => {
           HttpClientError.HttpClientError | Schema.SchemaError
         >
       >()
+      expect(f({ responseMode: "decoded-and-response", sseOptions })).type.toBe<
+        Effect.Effect<
+          [ClientStream, HttpClientResponse.HttpClientResponse],
+          HttpClientError.HttpClientError | Schema.SchemaError
+        >
+      >()
       expect(f({ responseMode: "response-only" })).type.toBe<
         Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>
+      >()
+      expect(f).type.not.toBeCallableWith({ sseOptions: { maxEventSize: "4" } })
+    })
+
+    it("widens only the body stream errors for WithHeaders StreamSse successes", () => {
+      const Api = HttpApi.make("Api")
+        .add(
+          HttpApiGroup.make("group")
+            .add(
+              HttpApiEndpoint.get("a", "/a", {
+                success: HttpApiSchema.WithHeaders(
+                  HttpApiSchema.StreamSse({
+                    data: Schema.Struct({ id: Schema.String }),
+                    error: Schema.Struct({ reason: Schema.String })
+                  }),
+                  { "x-count": Schema.Int }
+                )
+              })
+            )
+        )
+      const client = Effect.runSync(
+        HttpApiClient.make(Api).pipe(Effect.provide(FetchHttpClient.layer))
+      )
+      const f = client.group.a
+
+      type ClientStream = Stream.Stream<
+        { readonly id: string },
+        | { readonly reason: string }
+        | HttpClientError.HttpClientError
+        | Schema.SchemaError
+        | Sse.Retry
+        | Sse.SseError
+      >
+      type Success = HttpApiSchema.withHeaders<ClientStream, { readonly "x-count": number }>
+
+      expect(f()).type.toBe<
+        Effect.Effect<Success, HttpClientError.HttpClientError | Schema.SchemaError>
+      >()
+      expect(f({ responseMode: "decoded-and-response" })).type.toBe<
+        Effect.Effect<
+          [Success, HttpClientResponse.HttpClientResponse],
+          HttpClientError.HttpClientError | Schema.SchemaError
+        >
+      >()
+    })
+
+    it("widens the body transport error for WithHeaders StreamUint8Array successes", () => {
+      const Api = HttpApi.make("Api")
+        .add(
+          HttpApiGroup.make("group")
+            .add(
+              HttpApiEndpoint.get("a", "/a", {
+                success: HttpApiSchema.WithHeaders(
+                  HttpApiSchema.StreamUint8Array(),
+                  { "x-count": Schema.Int }
+                )
+              })
+            )
+        )
+      const client = Effect.runSync(
+        HttpApiClient.make(Api).pipe(Effect.provide(FetchHttpClient.layer))
+      )
+      const f = client.group.a
+
+      type Success = HttpApiSchema.withHeaders<
+        Stream.Stream<Uint8Array, HttpClientError.HttpClientError>,
+        { readonly "x-count": number }
+      >
+
+      expect(f()).type.toBe<
+        Effect.Effect<Success, HttpClientError.HttpClientError | Schema.SchemaError>
       >()
     })
 
@@ -663,7 +810,7 @@ describe("HttpApiClient", () => {
       type StreamError = { readonly reason: string }
       type ClientStream = Stream.Stream<
         Data,
-        StreamError | HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry
+        StreamError | HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry | Sse.SseError
       >
 
       expect(f()).type.toBe<
@@ -697,7 +844,7 @@ describe("HttpApiClient", () => {
       type Data = { readonly id: string }
       type ClientStream = Stream.Stream<
         Data,
-        HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry
+        HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry | Sse.SseError
       >
 
       expect(f()).type.toBe<
@@ -764,7 +911,7 @@ describe("HttpApiClient", () => {
 
       type ClientStream = Stream.Stream<
         Event,
-        StreamError | HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry
+        StreamError | HttpClientError.HttpClientError | Schema.SchemaError | Sse.Retry | Sse.SseError
       >
 
       expect(f({ responseMode: "decoded-only" })).type.toBe<
@@ -843,7 +990,7 @@ describe("HttpApiClient", () => {
     })
 
     it("preserves custom client errors when normalizing HttpClientError", () => {
-      class CustomClientError extends Schema.ErrorClass<CustomClientError>("CustomClientError")({
+      class CustomClientError extends Schema.Error<CustomClientError>("CustomClientError")({
         _tag: Schema.tag("CustomClientError")
       }) {}
 
@@ -901,10 +1048,19 @@ describe("HttpApiClient", () => {
         {
           readonly params: { readonly id: string }
           readonly query: { readonly page: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
           readonly responseMode?: ResponseMode
         }
       >()
+      const sseOptions = hole<Sse.DecodeOptions>()
+
       expect(getUser({ params: { id: "1" }, query: { page: 1 } })).type.toBe<
+        Effect.Effect<
+          { readonly id: string; readonly age: number },
+          HttpClientError.HttpClientError | Schema.SchemaError
+        >
+      >()
+      expect(getUser({ params: { id: "1" }, query: { page: 1 }, sseOptions })).type.toBe<
         Effect.Effect<
           { readonly id: string; readonly age: number },
           HttpClientError.HttpClientError | Schema.SchemaError
@@ -926,7 +1082,11 @@ describe("HttpApiClient", () => {
       )
 
       expect<Parameters<typeof searchUsers>[0]>().type.toBe<
-        { readonly query: { readonly q: string }; readonly responseMode?: ResponseMode }
+        {
+          readonly query: { readonly q: string }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect(searchUsers).type.not.toBeCallableWith({ params: { id: "1" }, query: { page: 1 } })
     })
@@ -949,7 +1109,11 @@ describe("HttpApiClient", () => {
       const getUser = hole<Effect.Success<typeof endpointClient>>()
 
       expect<Parameters<typeof getUser>[0]>().type.toBe<
-        { readonly params: { readonly id: number }; readonly responseMode?: ResponseMode }
+        {
+          readonly params: { readonly id: number }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
+          readonly responseMode?: ResponseMode
+        }
       >()
       expect(getUser({ params: { id: 1 } })).type.toBe<
         Effect.Effect<{ readonly id: string }, HttpClientError.HttpClientError | Schema.SchemaError>
@@ -957,10 +1121,10 @@ describe("HttpApiClient", () => {
     })
 
     it("selects within the requested group when endpoint identifiers overlap", () => {
-      class UsersEndpointError extends Schema.TaggedErrorClass<UsersEndpointError>()("UsersEndpointError", {}) {}
-      class AdminsEndpointError extends Schema.TaggedErrorClass<AdminsEndpointError>()("AdminsEndpointError", {}) {}
-      class UsersClientError extends Schema.TaggedErrorClass<UsersClientError>()("UsersClientError", {}) {}
-      class AdminsClientError extends Schema.TaggedErrorClass<AdminsClientError>()("AdminsClientError", {}) {}
+      class UsersEndpointError extends Schema.TaggedError<UsersEndpointError>()("UsersEndpointError", {}) {}
+      class AdminsEndpointError extends Schema.TaggedError<AdminsEndpointError>()("AdminsEndpointError", {}) {}
+      class UsersClientError extends Schema.TaggedError<UsersClientError>()("UsersClientError", {}) {}
+      class AdminsClientError extends Schema.TaggedError<AdminsClientError>()("AdminsClientError", {}) {}
 
       class UsersMiddleware extends HttpApiMiddleware.Service<UsersMiddleware, {
         clientError: UsersClientError
@@ -1030,6 +1194,7 @@ describe("HttpApiClient", () => {
           readonly query: { readonly page: number }
           readonly payload: { readonly name: string }
           readonly headers: { readonly "x-user": string }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
           readonly responseMode?: ResponseMode
         }
       >()
@@ -1039,6 +1204,7 @@ describe("HttpApiClient", () => {
           readonly query: { readonly scope: string }
           readonly payload: { readonly role: "admin" }
           readonly headers: { readonly "x-admin": string }
+          readonly sseOptions?: Sse.DecodeOptions | undefined
           readonly responseMode?: ResponseMode
         }
       >()
@@ -1117,7 +1283,7 @@ describe("HttpApiClient", () => {
         readonly customService: "customService"
       }
 
-      class CustomClientError extends Schema.ErrorClass<CustomClientError>("CustomClientError")({
+      class CustomClientError extends Schema.Error<CustomClientError>("CustomClientError")({
         _tag: Schema.tag("CustomClientError")
       }) {}
 
@@ -1159,11 +1325,11 @@ describe("HttpApiClient", () => {
 
   describe("client middleware", () => {
     it("requires layers and includes errors for required client middleware", () => {
-      class RequiredClientError extends Schema.ErrorClass<RequiredClientError>("RequiredClientError")({
+      class RequiredClientError extends Schema.Error<RequiredClientError>("RequiredClientError")({
         _tag: Schema.tag("RequiredClientError")
       }) {}
 
-      class OptionalClientError extends Schema.ErrorClass<OptionalClientError>("OptionalClientError")({
+      class OptionalClientError extends Schema.Error<OptionalClientError>("OptionalClientError")({
         _tag: Schema.tag("OptionalClientError")
       }) {}
 
@@ -1212,7 +1378,7 @@ describe("HttpApiClient", () => {
     })
 
     it("enforces required middleware for makeWith, group, and endpoint", () => {
-      class RequiredClientError extends Schema.ErrorClass<RequiredClientError>("RequiredClientError")({
+      class RequiredClientError extends Schema.Error<RequiredClientError>("RequiredClientError")({
         _tag: Schema.tag("RequiredClientError")
       }) {}
 

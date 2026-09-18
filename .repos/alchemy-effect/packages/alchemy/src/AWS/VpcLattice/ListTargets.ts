@@ -20,9 +20,8 @@ export interface ListTargetsRequest extends Omit<
  * status — useful for health dashboards and for compute that verifies its own
  * registration. Provide the implementation with
  * `Effect.provide(AWS.VpcLattice.ListTargetsHttp)`.
- * @binding
- * @section Managing Targets at Runtime
- * @example List the target group's targets
+ * ### Managing Targets at Runtime
+ * **Example:** List the target group's targets
  * ```typescript
  * const listTargets = yield* AWS.VpcLattice.ListTargets(targetGroup);
  *
@@ -31,6 +30,8 @@ export interface ListTargetsRequest extends Omit<
  *   yield* Effect.log(`${target.id}: ${target.status}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListTargets extends Binding.Service<
   ListTargets,

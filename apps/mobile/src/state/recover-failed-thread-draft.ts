@@ -16,7 +16,11 @@ export async function recoverFailedThreadDraft(message: QueuedThreadMessage): Pr
   const source = getComposerDraftSnapshot(sourceKey);
   if (source.text.length === 0 && source.attachments.length === 0) return;
 
-  await mergeComposerDraftContent(targetKey, { text: source.text, attachments: [] });
+  await mergeComposerDraftContent(targetKey, {
+    text: source.text,
+    context: source.context,
+    attachments: [],
+  });
   const existingIds = new Set(
     getComposerDraftSnapshot(targetKey).attachments.map((attachment) => attachment.id),
   );

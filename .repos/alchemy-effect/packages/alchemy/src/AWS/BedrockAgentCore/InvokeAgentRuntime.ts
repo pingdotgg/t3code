@@ -17,9 +17,8 @@ export interface InvokeAgentRuntimeRequest extends Omit<
  * land on the same sandbox). Provide `AgentCore.InvokeAgentRuntimeHttp` on
  * the Function effect to implement the binding.
  *
- * @binding
- * @section Invoking an Agent
- * @example Invoke a Hosted Agent
+ * ### Invoking an Agent
+ * **Example:** Invoke a Hosted Agent
  * ```typescript
  * // init
  * const invoke = yield* AgentCore.InvokeAgentRuntime(runtime);
@@ -35,6 +34,8 @@ export interface InvokeAgentRuntimeRequest extends Omit<
  *   }),
  * };
  * ```
+ *
+ * @binding
  */
 export interface InvokeAgentRuntime extends Binding.Service<
   InvokeAgentRuntime,

@@ -103,8 +103,8 @@ export interface DataSetEventSourceProps extends EventRouteProps {
  * Provide the host-specific implementation layer (e.g.
  * `AWS.Lambda.EventSource`) on the Function effect.
  *
- * @section Consuming Data Exchange Events
- * @example Process Newly Published Revisions
+ * ### Consuming Data Exchange Events
+ * **Example:** Process Newly Published Revisions
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *

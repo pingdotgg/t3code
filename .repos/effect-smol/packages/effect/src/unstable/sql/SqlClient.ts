@@ -12,10 +12,12 @@ import { Clock } from "../../Clock.ts"
 import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
 import * as Exit from "../../Exit.ts"
+import { identity } from "../../Function.ts"
 import * as Option from "../../Option.ts"
 import type * as Queue from "../../Queue.ts"
 import type { ReadonlyRecord } from "../../Record.ts"
 import * as Scope from "../../Scope.ts"
+import * as Semaphore from "../../Semaphore.ts"
 import * as Stream from "../../Stream.ts"
 import * as Tracer from "../../Tracer.ts"
 import type { NoInfer } from "../../Types.ts"
@@ -108,10 +110,30 @@ export declare namespace SqlClient {
    */
   export interface MakeOptions {
     readonly acquirer: Connection.Acquirer
+    /**
+     * Lends a connection for one statement instead of leasing one into a
+     * scope. A client that can do this saves the scope and finalizer per
+     * statement; `stream`, transactions, and `reserve` keep the `acquirer`,
+     * whose lease outlives the effect that starts it.
+     */
+    readonly borrower?: Connection.Borrower | undefined
     readonly compiler: Compiler
     readonly transactionAcquirer?: Connection.Acquirer
     readonly spanAttributes: ReadonlyArray<readonly [string, unknown]>
     readonly transactionService?: Context.Service<TransactionConnection, TransactionConnection.Service>
+    /**
+     * Whether the transaction control statements - `BEGIN`, `COMMIT`,
+     * `ROLLBACK`, and the savepoint pair - can be prepared like any other
+     * statement.
+     *
+     * **Details**
+     *
+     * They run on every transaction and never change, so a database that can
+     * prepare them stops parsing them again each time. Off by default,
+     * because several databases refuse to prepare transaction control at all;
+     * a driver has to say that its own does not.
+     */
+    readonly prepareTransactionControls?: boolean | undefined
     readonly beginTransaction?: string | undefined
     readonly rollback?: string | undefined
     readonly commit?: string | undefined
@@ -126,6 +148,7 @@ export declare namespace SqlClient {
 }
 
 let clientIdCounter = 0
+let transactionSemaphoreIdCounter = 0
 
 /**
  * Constructs a `SqlClient` from connection acquirers, a compiler, transaction
@@ -151,6 +174,9 @@ export const make = Effect.fnUntraced(function*(options: SqlClient.MakeOptions) 
   const rollback = options.rollback ?? "ROLLBACK"
   const rollbackSavepoint = options.rollbackSavepoint ?? ((name: string) => `ROLLBACK TO SAVEPOINT ${name}`)
   const transactionAcquirer = options.transactionAcquirer ?? options.acquirer
+  const control = options.prepareTransactionControls === true
+    ? (conn: Connection.Connection, sql: string) => conn.execute(sql, [], undefined)
+    : (conn: Connection.Connection, sql: string) => conn.executeUnprepared(sql, [], undefined)
   const withTransaction = makeWithTransaction({
     transactionService,
     spanAttributes: options.spanAttributes,
@@ -158,16 +184,27 @@ export const make = Effect.fnUntraced(function*(options: SqlClient.MakeOptions) 
       Scope.make(),
       (scope) => Effect.map(Scope.provide(transactionAcquirer!, scope), (conn) => [scope, conn] as const)
     ),
-    begin: (conn) => conn.executeUnprepared(beginTransaction, [], undefined),
-    savepoint: (conn, id) => conn.executeUnprepared(savepoint(`effect_sql_${id}`), [], undefined),
-    commit: (conn) => conn.executeUnprepared(commit, [], undefined),
-    rollback: (conn) => conn.executeUnprepared(rollback, [], undefined),
-    rollbackSavepoint: (conn, id) => conn.executeUnprepared(rollbackSavepoint(`effect_sql_${id}`), [], undefined)
+    begin: (conn) => control(conn, beginTransaction),
+    savepoint: (conn, id) => control(conn, savepoint(`effect_sql_${id}`)),
+    commit: (conn) => control(conn, commit),
+    rollback: (conn) => control(conn, rollback),
+    rollbackSavepoint: (conn, id) => control(conn, rollbackSavepoint(`effect_sql_${id}`))
   })
 
   const reactivity = yield* Reactivity
+  // A statement inside a transaction has to run on that transaction's
+  // connection, so borrowing is only for statements that reach the pool.
+  const borrower: Connection.Borrower | undefined = options.borrower === undefined ? undefined : (f) =>
+    Effect.flatMap(
+      Effect.serviceOption(transactionService),
+      Option.match({
+        onNone: () => options.borrower!(f),
+        onSome: ([conn]) => f(conn)
+      })
+    )
+
   const client: SqlClient = Object.assign(
-    Statement.make(getConnection, options.compiler, options.spanAttributes, options.transformRows),
+    Statement.make(getConnection, options.compiler, options.spanAttributes, options.transformRows, borrower),
     {
       [TypeId]: TypeId as typeof TypeId,
       safe: undefined as any,
@@ -182,7 +219,8 @@ export const make = Effect.fnUntraced(function*(options: SqlClient.MakeOptions) 
           getConnection,
           options.compiler.withoutTransform,
           options.spanAttributes,
-          undefined
+          undefined,
+          borrower
         )
         const client = Object.assign(statement, {
           ...this,
@@ -227,67 +265,75 @@ export const makeWithTransaction = <I, S>(options: {
   readonly commit: (conn: NoInfer<S>) => Effect.Effect<void, SqlError>
   readonly rollback: (conn: NoInfer<S>) => Effect.Effect<void, SqlError>
   readonly rollbackSavepoint: (conn: NoInfer<S>, id: number) => Effect.Effect<void, SqlError>
-}) =>
-<R, E, A>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> => {
-  return Effect.uninterruptibleMask((restore) =>
-    Effect.useSpan(
-      "sql.transaction",
-      { kind: "client" },
-      (span) =>
-        Effect.withFiber<A, E | SqlError, R>((fiber) => {
-          for (const [key, value] of options.spanAttributes) {
-            span.attribute(key, value)
-          }
-          const services = fiber.context
-          const clock = fiber.getRef(Clock)
-          const connOption = Context.getOption(services, options.transactionService)
-          const conn = connOption._tag === "Some"
-            ? Effect.succeed([undefined, connOption.value[0]] as const)
-            : options.acquireConnection
-          const id = connOption._tag === "Some" ? connOption.value[1] + 1 : 0
-          return Effect.flatMap(
-            conn,
-            (
-              [scope, conn]
-            ) =>
-              (id === 0 ? options.begin(conn) : options.savepoint(conn, id)).pipe(
-                Effect.flatMap(() =>
-                  Effect.provideContext(
-                    restore(effect),
-                    Context.mutate(services, (services) =>
-                      services.pipe(
-                        Context.add(options.transactionService, [conn, id]),
-                        Context.add(Tracer.ParentSpan, span)
-                      ))
-                  )
-                ),
-                Effect.exit,
-                Effect.flatMap((exit) => {
-                  let effect: Effect.Effect<void>
-                  if (Exit.isSuccess(exit)) {
-                    if (id === 0) {
-                      span.event("db.transaction.commit", clock.currentTimeNanosUnsafe())
-                      effect = Effect.orDie(options.commit(conn))
-                    } else {
-                      span.event("db.transaction.savepoint", clock.currentTimeNanosUnsafe())
-                      effect = Effect.void
-                    }
-                  } else {
-                    span.event("db.transaction.rollback", clock.currentTimeNanosUnsafe())
-                    effect = Effect.orDie(
-                      id > 0
-                        ? options.rollbackSavepoint(conn, id)
-                        : options.rollback(conn)
-                    )
-                  }
-                  const withScope = scope !== undefined ? Effect.ensuring(effect, Scope.close(scope, exit)) : effect
-                  return Effect.flatMap(withScope, () => exit)
-                })
-              )
-          )
-        })
-    )
+}) => {
+  const transactionSemaphore = Context.Service<Semaphore.Semaphore>(
+    `effect/sql/SqlClient/TransactionSemaphore/${transactionSemaphoreIdCounter++}`
   )
+  return <R, E, A>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | SqlError, R> =>
+    Effect.uninterruptibleMask((restore) =>
+      Effect.useSpan(
+        "sql.transaction",
+        { kind: "client" },
+        (span) =>
+          Effect.withFiber<A, E | SqlError, R>((fiber) => {
+            for (const [key, value] of options.spanAttributes) {
+              span.attribute(key, value)
+            }
+            const services = fiber.context
+            const clock = fiber.getRef(Clock)
+            const connOption = Context.getOption(services, options.transactionService)
+            const conn = connOption._tag === "Some"
+              ? Effect.succeed([undefined, connOption.value[0]] as const)
+              : options.acquireConnection
+            const id = connOption._tag === "Some" ? connOption.value[1] + 1 : 0
+            const transaction = Effect.flatMap(
+              conn,
+              (
+                [scope, conn]
+              ) =>
+                (id === 0 ? options.begin(conn) : options.savepoint(conn, id)).pipe(
+                  Effect.flatMap(() =>
+                    Effect.onExitPrimitive(
+                      Effect.provideContext(
+                        restore(effect),
+                        services.pipe(
+                          Context.add(options.transactionService, [conn, id]),
+                          Context.add(transactionSemaphore, Semaphore.makeUnsafe(1)),
+                          Context.add(Tracer.ParentSpan, span)
+                        )
+                      ),
+                      (exit) => {
+                        let effect: Effect.Effect<void>
+                        if (Exit.isSuccess(exit)) {
+                          if (id === 0) {
+                            span.event("db.transaction.commit", clock.currentTimeNanosUnsafe())
+                            effect = Effect.orDie(options.commit(conn))
+                          } else {
+                            span.event("db.transaction.savepoint", clock.currentTimeNanosUnsafe())
+                            effect = Effect.void
+                          }
+                        } else {
+                          span.event("db.transaction.rollback", clock.currentTimeNanosUnsafe())
+                          effect = Effect.orDie(
+                            id > 0
+                              ? options.rollbackSavepoint(conn, id)
+                              : options.rollback(conn)
+                          )
+                        }
+                        return Effect.flatMap(effect, () => exit)
+                      },
+                      true
+                    )
+                  ),
+                  scope ? (eff) => Effect.onExitPrimitive(eff, (exit) => Scope.close(scope, exit), true) : identity
+                )
+            )
+            return id === 0
+              ? transaction
+              : Context.getUnsafe(services, transactionSemaphore).withPermit(transaction)
+          })
+      )
+    )
 }
 
 /**
@@ -333,7 +379,7 @@ export const TransactionConnection = (
  * Context reference used by SQL integrations to opt in to safe integer
  * handling; defaults to `false`.
  *
- * @category references
+ * @category services
  * @since 4.0.0
  */
 export const SafeIntegers = Context.Reference<boolean>("effect/sql/SqlClient/SafeIntegers", {

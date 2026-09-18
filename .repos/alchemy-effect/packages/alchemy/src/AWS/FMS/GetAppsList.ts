@@ -12,9 +12,8 @@ export interface GetAppsListRequest extends fms.GetAppsListRequest {}
  *
  * Returns the specified Firewall Manager applications list. Provide the
  * implementation with `Effect.provide(AWS.FMS.GetAppsListHttp)`.
- * @binding
- * @section Applications Lists
- * @example Read an Applications List
+ * ### Applications Lists
+ * **Example:** Read an Applications List
  * ```typescript
  * // init — account-level binding takes no resource
  * const getAppsList = yield* AWS.FMS.GetAppsList();
@@ -23,6 +22,8 @@ export interface GetAppsListRequest extends fms.GetAppsListRequest {}
  * const result = yield* getAppsList({ ListId: listId });
  * console.log(result.AppsList?.AppsList?.length);
  * ```
+ *
+ * @binding
  */
 export interface GetAppsList extends Binding.Service<
   GetAppsList,

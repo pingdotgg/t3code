@@ -4,6 +4,7 @@ import { Cause, Context, Effect, Latch, Layer } from "effect"
 import * as Schema from "effect/Schema"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 import * as Atom from "effect/unstable/reactivity/Atom"
+import * as AtomRef from "effect/unstable/reactivity/AtomRef"
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
 import * as Hydration from "effect/unstable/reactivity/Hydration"
 import * as React from "react"
@@ -11,10 +12,18 @@ import { Suspense } from "react"
 import { renderToString } from "react-dom/server"
 import { ErrorBoundary } from "react-error-boundary"
 import { beforeEach, describe, expect, it, test, vi } from "vitest"
-import { HydrationBoundary, RegistryContext, RegistryProvider, useAtomSuspense, useAtomValue } from "../src/index.ts"
+import {
+  HydrationBoundary,
+  RegistryContext,
+  RegistryProvider,
+  useAtomRef,
+  useAtomSuspense,
+  useAtomValue
+} from "../src/index.ts"
 import * as ScopedAtom from "../src/ScopedAtom.ts"
 
-describe("atom-react", () => {
+// Tests share the DOM and registry.
+describe("atom-react", { concurrent: false }, () => {
   let registry: AtomRegistry.AtomRegistry
 
   beforeEach(() => {
@@ -135,6 +144,67 @@ describe("atom-react", () => {
 
       expect(screen.getByTestId("loading")).toBeInTheDocument()
     })
+
+    test("suspense subscriptions are isolated per registry", async () => {
+      const atom = Atom.make(AsyncResult.initial<string>())
+      const firstRegistry = AtomRegistry.make()
+      const secondRegistry = AtomRegistry.make()
+
+      function TestComponent({ id }: { readonly id: string }) {
+        const value = useAtomSuspense(atom).value
+        return <div data-testid={`${id}-value`}>{value}</div>
+      }
+
+      render(
+        <RegistryContext.Provider value={firstRegistry}>
+          <Suspense fallback={<div data-testid="first-loading">Loading...</div>}>
+            <TestComponent id="first" />
+          </Suspense>
+        </RegistryContext.Provider>
+      )
+      render(
+        <RegistryContext.Provider value={secondRegistry}>
+          <Suspense fallback={<div data-testid="second-loading">Loading...</div>}>
+            <TestComponent id="second" />
+          </Suspense>
+        </RegistryContext.Provider>
+      )
+
+      act(() => {
+        secondRegistry.set(atom, AsyncResult.success("second"))
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId("second-value")).toHaveTextContent("second")
+      })
+      expect(screen.getByTestId("first-loading")).toBeInTheDocument()
+
+      act(() => {
+        firstRegistry.set(atom, AsyncResult.success("first"))
+      })
+
+      await waitFor(() => {
+        expect(screen.getByTestId("first-value")).toHaveTextContent("first")
+      })
+    })
+  })
+
+  test("useAtomRef updates after switching refs", () => {
+    const first = AtomRef.make(0)
+    const second = AtomRef.make(1)
+
+    function TestComponent({ source }: { readonly source: AtomRef.ReadonlyRef<number> }) {
+      return <div data-testid="value">{useAtomRef(source)}</div>
+    }
+
+    const { rerender } = render(<TestComponent source={first} />)
+    rerender(<TestComponent source={second} />)
+
+    act(() => {
+      second.set(0)
+    })
+
+    expect(screen.getByTestId("value")).toHaveTextContent("0")
   })
 
   describe("ScopedAtom", () => {

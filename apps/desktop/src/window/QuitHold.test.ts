@@ -178,12 +178,33 @@ describe("makeQuitShortcutHandler", () => {
     await harness.holdFor(QUIT_HOLD_DURATION_MS + 200);
     await harness.send(makeInput({ type: "keyUp", key: "Meta", meta: false }));
     harness.preventDefault.mockClear();
-    await harness.send(makeInput({ meta: false, isAutoRepeat: true }));
-    expect(harness.preventDefault).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS * 2);
+    // Repeats without the modifier prove Q is still down, so they hold the
+    // quit back for as long as they keep arriving.
+    await harness.holdFor(QUIT_HOLD_RELEASE_GRACE_MS * 2, { meta: false });
+    expect(harness.preventDefault).toHaveBeenCalled();
     expect(harness.quit).not.toHaveBeenCalled();
     await harness.send(makeInput({ type: "keyUp", meta: false }));
     expect(harness.quit).toHaveBeenCalledTimes(1);
+  });
+
+  it("commits a concealed hold when the last Q repeat is never released", async () => {
+    // macOS can drop the final Q keyUp. The quit must land on its own once
+    // repeats stop, rather than sitting armed until an unrelated key arrives.
+    const harness = makeHarness();
+    await harness.send(makeInput({}));
+    await harness.holdFor(QUIT_HOLD_DURATION_MS + 200);
+    await harness.send(makeInput({ type: "keyUp", key: "Meta", meta: false }));
+    await harness.send(makeInput({ meta: false, isAutoRepeat: true }));
+
+    vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS);
+    expect(harness.quit).toHaveBeenCalledTimes(1);
+
+    // A lone Cmd tap afterwards must not quit a second time.
+    harness.quit.mockClear();
+    await harness.send(makeInput({ key: "Meta" }));
+    await harness.send(makeInput({ type: "keyUp", key: "Meta", meta: false }));
+    vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS * 4);
+    expect(harness.quit).not.toHaveBeenCalled();
   });
 
   it("does not quit when the hold stops before the duration", async () => {

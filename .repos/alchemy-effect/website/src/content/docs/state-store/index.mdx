@@ -12,9 +12,11 @@ state of your infrastructure.
 ## How state is stored
 
 Each resource's state is keyed by its **fully qualified name** (FQN),
-which includes the namespace path and logical ID. State is scoped by
-**stack name** and **stage**, so different stacks and environments
-are fully isolated.
+which includes the namespace path and
+[logical ID](/infrastructure-as-code/resource#logical-id). State is
+scoped by [stack name](/infrastructure-as-code/stack) and
+[**stage**](/environments/stages), so different stacks and
+environments are fully isolated.
 
 A resource's persisted state includes:
 
@@ -23,7 +25,7 @@ A resource's persisted state includes:
 - **Output attributes** — the values returned after creation
 - **Instance ID** — a unique identifier for this instance
 - **Lifecycle status** — `created`, `updating`, `deleting`, etc.
-- **Bindings** — data attached by policies and event sources
+- **[Bindings](/infrastructure-as-effects/binding)** — data attached by policies and event sources
 
 ## Local state
 
@@ -117,6 +119,28 @@ you want a dedicated store per Cloudflare account or per team:
 ```typescript
 state: Cloudflare.state({ workerName: "alchemy-state-store-team-a" }),
 ```
+
+## Postgres state store
+
+`postgresState()` persists state in a Postgres database you already run, and it locks: each `(stack, stage)` holds a session advisory lock for the duration of a run, so two concurrent deploys of the same stage cannot interleave.
+
+```typescript
+import { postgresState } from "alchemy/State/PostgresState";
+import * as Config from "effect/Config";
+
+Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Prisma.providers(),
+    state: postgresState({ url: Config.Redacted("STATE_DATABASE_URL") }),
+  },
+  Effect.gen(function* () {
+    // ...
+  }),
+);
+```
+
+It is imported from `alchemy/State/PostgresState` rather than the `State` barrel because it depends on the optional `pg` driver, which must stay out of bundled worker code. Install `pg` and `@effect/sql-pg` to use it.
 
 ## State and lifecycle
 

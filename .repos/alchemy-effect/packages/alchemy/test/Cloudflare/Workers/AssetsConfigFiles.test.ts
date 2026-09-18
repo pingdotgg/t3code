@@ -46,7 +46,7 @@ describe.concurrent("Cloudflare.Worker assets config files", () => {
               return yield* Cloudflare.Worker("AssetsConfigFiles", {
                 script: workerScript(marker),
                 assets,
-                subdomain: { enabled: true },
+                workersDev: true,
                 compatibility: {
                   date: "2024-01-01",
                 },

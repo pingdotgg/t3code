@@ -35,6 +35,8 @@ export type ModelPickerJumpKeybindingCommand =
   (typeof MODEL_PICKER_JUMP_KEYBINDING_COMMANDS)[number];
 
 const THREAD_KEYBINDING_COMMANDS = [
+  "thread.stop",
+  "thread.steerQueuedMessage",
   "thread.previous",
   "thread.next",
   "thread.copyReference",
@@ -46,6 +48,8 @@ export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number
 
 const MODEL_PICKER_KEYBINDING_COMMANDS = [
   "modelPicker.toggle",
+  "modelPicker.previousProvider",
+  "modelPicker.nextProvider",
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ] as const;
 export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
@@ -60,6 +64,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
   "rightPanel.close",
+  "pullRequest.copyNumber",
   "diff.toggle",
   "preview.toggle",
   "preview.refresh",
@@ -70,8 +75,16 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "commandPalette.toggle",
   "filePicker.toggle",
   "projectSearch.toggle",
+  "theme.select",
+  "appearance.cycle",
   "themeEditor.toggle",
   "composer.stash",
+  "composer.host",
+  "composer.effort",
+  "composer.mode",
+  "composer.workspace",
+  "composer.previousWorktree",
+  "composer.branch",
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
@@ -173,7 +186,7 @@ export const ResolvedKeybindingsConfig = ForwardCompatibleArray(ResolvedKeybindi
 );
 export type ResolvedKeybindingsConfig = typeof ResolvedKeybindingsConfig.Type;
 
-export class KeybindingsConfigError extends Schema.TaggedErrorClass<KeybindingsConfigError>()(
+export class KeybindingsConfigError extends Schema.TaggedError<KeybindingsConfigError>()(
   "KeybindingsConfigParseError",
   {
     configPath: Schema.String,

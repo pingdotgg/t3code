@@ -7,10 +7,14 @@ const apiGatewayOptions = (options: TestOptions | undefined): TestOptions => {
     typeof options === "number" ? { timeout: options } : options;
   return {
     ...normalized,
-    // Once a file owns the service lease, an individual lifecycle should
-    // finish well inside two minutes. Fail there rather than concealing a
-    // provider hang behind the full-run timeout.
-    timeout: normalized?.timeout ?? 120_000,
+    // Once a file owns the service lease an individual lifecycle is fast —
+    // observed passes at suite concurrency 32 run 3–30s. The failures that
+    // motivated this budget were throttle storms at concurrency 64: the
+    // account-wide REST control-plane quota is shared with ApiGatewayV2 and
+    // the rest of the run, so distilled's TooManyRequests backoff can stack
+    // a 3s operation past 120s. 300s absorbs the storm while still failing
+    // a genuine provider hang fast relative to the full-run timeout.
+    timeout: normalized?.timeout ?? 300_000,
     // API Gateway REST mutations share an account-wide throttle. A timed-out
     // retry starts with a fresh scratch state and therefore cannot reclaim the
     // physical API from the interrupted attempt, so these live tests run once.

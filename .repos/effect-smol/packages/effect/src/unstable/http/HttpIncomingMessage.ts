@@ -9,9 +9,9 @@
  *
  * @since 4.0.0
  */
+import type * as ByteSize from "../../ByteSize.ts"
 import * as Context from "../../Context.ts"
 import * as Effect from "../../Effect.ts"
-import type * as FileSystem from "../../FileSystem.ts"
 import type * as Inspectable from "../../Inspectable.ts"
 import type * as Option from "../../Option.ts"
 import { hasProperty } from "../../Predicate.ts"
@@ -20,7 +20,7 @@ import * as Schema from "../../Schema.ts"
 import type { ParseOptions } from "../../SchemaAST.ts"
 import type * as Stream from "../../Stream.ts"
 import type * as Headers from "./Headers.ts"
-import * as UrlParams from "./UrlParams.ts"
+import type * as UrlParams from "./UrlParams.ts"
 
 /**
  * Type identifier for `HttpIncomingMessage` values.
@@ -37,6 +37,16 @@ export const TypeId = "~effect/http/HttpIncomingMessage"
  * @since 4.0.0
  */
 export const isHttpIncomingMessage = (u: unknown): u is HttpIncomingMessage => hasProperty(u, TypeId)
+
+/**
+ * Options for parsing an incoming HTTP message body as JSON.
+ *
+ * @category models
+ * @since 4.0.0
+ */
+export interface JsonOptions {
+  readonly reviver?: Parameters<typeof JSON.parse>[1] | undefined
+}
 
 /**
  * Common model for incoming HTTP messages, with headers, remote address, and effectful body accessors.
@@ -61,12 +71,21 @@ export interface HttpIncomingMessage<E = unknown> extends Inspectable.Inspectabl
  * @category schemas
  * @since 4.0.0
  */
-export const schemaBodyJson = <S extends Schema.Constraint>(schema: S, options?: ParseOptions | undefined) => {
+export const schemaBodyJson = <S extends Schema.Constraint>(
+  schema: S,
+  options?: (ParseOptions & JsonOptions) | undefined
+) => {
   const decode = Schema.decodeEffect(Schema.toCodecJson(schema))
+  const decodeJson = options?.reviver === undefined
+    ? undefined
+    : Schema.decodeEffect(Schema.fromJsonString(Schema.toCodecJson(schema), options))
   return <E>(
     self: HttpIncomingMessage<E>
   ): Effect.Effect<S["Type"], E | Schema.SchemaError, S["DecodingServices"]> =>
-    Effect.flatMap(self.json, (u) => decode(u, options))
+    decodeJson === undefined
+      ? Effect.flatMap(self.json, (u) => decode(u, options))
+      : Effect.flatMap(self.text, (body) =>
+        body === "" ? Effect.flatMap(self.json, (u) => decode(u, options)) : decodeJson(body, options))
 }
 
 /**
@@ -83,7 +102,7 @@ export const schemaBodyUrlParams = <
   schema: Schema.ConstraintCodec<A, I, RD, unknown>,
   options?: ParseOptions | undefined
 ) => {
-  const decode = UrlParams.schemaRecord.pipe(
+  const decode = Schema.RecordFromUrlParams.pipe(
     Schema.decodeTo(schema),
     Schema.decodeEffect
   )
@@ -111,7 +130,7 @@ export const schemaHeaders = <A, I extends Readonly<Record<string, string | unde
  * @category references
  * @since 4.0.0
  */
-export const MaxBodySize = Context.Reference<FileSystem.Size | undefined>(
+export const MaxBodySize = Context.Reference<ByteSize.ByteSize | undefined>(
   "effect/http/HttpIncomingMessage/MaxBodySize",
   { defaultValue: () => undefined }
 )

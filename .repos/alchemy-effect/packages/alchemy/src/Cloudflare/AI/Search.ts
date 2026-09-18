@@ -24,19 +24,11 @@ export type Parse = {
    * How pages are discovered:
    * - `"sitemap"` (default) — read `<seed>/sitemap.xml` (found via
    *   `robots.txt`) and index the URLs it lists.
-   * - `"crawl"` — start at `source` and follow links.
-   * - `"feed-rss"` — treat the seed as an RSS / Atom feed.
+   * - `"discover"` — start at `source` and follow links.
    * @default "sitemap"
    */
   type?: NonNullable<WebCrawlerParams["parseType"]>;
 } & NonNullable<WebCrawlerParams["parseOptions"]>;
-
-/**
- * Link-discovery options for a web crawler (mainly for `parse.type: "crawl"`):
- * `depth`, `includeSubdomains`, `includeExternalLinks`, `maxAge`, and `source`
- * (`"all"` | `"sitemaps"` | `"links"`).
- */
-export type Crawl = NonNullable<WebCrawlerParams["crawlOptions"]>;
 
 /**
  * Where crawled content is stored. Cloudflare provisions managed storage by
@@ -94,7 +86,6 @@ export type R2Props = SharedProps & {
   /** R2 data-residency jurisdiction of the source bucket. */
   jurisdiction?: string;
   parse?: never;
-  crawl?: never;
   store?: never;
 };
 
@@ -107,8 +98,6 @@ export type WebCrawlerProps = SharedProps & {
   source: Input<string>;
   /** How pages are discovered and parsed. */
   parse?: Parse;
-  /** How links are followed from the seed. */
-  crawl?: Crawl;
   /** Where crawl output is stored (defaults to managed storage). */
   store?: Store;
   prefix?: never;
@@ -164,11 +153,8 @@ export type Search = SearchInstance & {
  * is usable anywhere a `SearchInstance` is expected — pass it straight to
  * `Cloudflare.AI.QuerySearch(search)` or a Worker's `env`.
  *
- * @resource
- * @product AI Search
- * @category AI
- * @section Creating an AI Search pipeline
- * @example R2-backed instance (token provisioned for you)
+ * ### Creating an AI Search pipeline
+ * **Example:** R2-backed instance (token provisioned for you)
  * Pass an {@link Bucket} as `source` — its presence selects R2.
  * ```typescript
  * const bucket = yield* Cloudflare.R2.Bucket("docs");
@@ -177,7 +163,7 @@ export type Search = SearchInstance & {
  * });
  * ```
  *
- * @example Index only part of a bucket
+ * **Example:** Index only part of a bucket
  * ```typescript
  * const search = yield* Cloudflare.AI.Search("docs-search", {
  *   source: bucket,
@@ -187,7 +173,7 @@ export type Search = SearchInstance & {
  * });
  * ```
  *
- * @example Reuse an existing service token
+ * **Example:** Reuse an existing service token
  * ```typescript
  * const search = yield* Cloudflare.AI.Search("docs-search", {
  *   source: bucket,
@@ -195,29 +181,28 @@ export type Search = SearchInstance & {
  * });
  * ```
  *
- * @example Web-crawler source
+ * **Example:** Web-crawler source
  * Pass a URL as `source` to crawl and index a website (no service token
- * needed). `parse.type` defaults to `"sitemap"`; use `"crawl"` to follow
+ * needed). `parse.type` defaults to `"sitemap"`; use `"discover"` to follow
  * links from the seed instead.
  * ```typescript
  * const search = yield* Cloudflare.AI.Search("site-search", {
  *   source: "https://example.com",
- *   parse: { type: "crawl", contentSelector: [{ path: "/docs", selector: "main" }] },
- *   crawl: { depth: 3, includeSubdomains: true },
+ *   parse: { type: "discover", contentSelector: [{ path: "/docs", selector: "main" }] },
  * });
  * ```
  *
- * @example Store crawl output in your own bucket
+ * **Example:** Store crawl output in your own bucket
  * ```typescript
  * const store = yield* Cloudflare.R2.Bucket("crawl-store");
  * const search = yield* Cloudflare.AI.Search("site-search", {
  *   source: "https://example.com",
- *   parse: { type: "crawl" },
+ *   parse: { type: "discover" },
  *   store: { bucket: store },
  * });
  * ```
  *
- * @section Binding to an Effect Worker
+ * ### Binding to an Effect Worker
  *
  * The returned `search` is an {@link SearchInstance}. Bind it during the
  * Worker's init phase with `Cloudflare.AI.QuerySearch(search)`, which
@@ -226,7 +211,7 @@ export type Search = SearchInstance & {
  * `Effect`s. Provide `Cloudflare.AI.QuerySearchBinding` in the Worker's
  * runtime layer.
  *
- * @example Effect Worker that answers from AI Search
+ * **Example:** Effect Worker that answers from AI Search
  * ```typescript
  * import * as Cloudflare from "alchemy/Cloudflare";
  * import * as Effect from "effect/Effect";
@@ -257,7 +242,7 @@ export type Search = SearchInstance & {
  * ) {}
  * ```
  *
- * @section Binding to an Async Worker
+ * ### Binding to an Async Worker
  *
  * For a vanilla `async fetch` Worker, pass the `search` under `Worker.env`.
  * The engine attaches the same single-instance `ai_search` binding (see
@@ -265,7 +250,7 @@ export type Search = SearchInstance & {
  * bucket → instance → worker, and `InferEnv` types `env.SEARCH` as the
  * runtime `SearchInstance` handle — no hand-written types.
  *
- * @example Async Worker that answers from AI Search
+ * **Example:** Async Worker that answers from AI Search
  * ```typescript
  * // stack.ts
  * const bucket = yield* Cloudflare.R2.Bucket("docs");
@@ -293,6 +278,10 @@ export type Search = SearchInstance & {
  * ```
  *
  * @see https://developers.cloudflare.com/ai-search/
+ *
+ * @resource
+ * @product AI Search
+ * @category AI
  */
 export const Search = (id: string, props: Props) =>
   Effect.gen(function* () {
@@ -303,7 +292,6 @@ export const Search = (id: string, props: Props) =>
       exclude,
       jurisdiction,
       parse,
-      crawl,
       store,
       namespace,
       ...shared
@@ -359,7 +347,6 @@ export const Search = (id: string, props: Props) =>
       const webCrawler = clean({
         parseType,
         parseOptions: clean(parseOptions),
-        crawlOptions: crawl ? clean(crawl) : undefined,
         storeOptions: store
           ? clean({
               storageId: store.bucket.bucketName,
@@ -391,7 +378,7 @@ export const Search = (id: string, props: Props) =>
   }).pipe(CoreNamespace.push(id));
 
 /** Drop `undefined` entries; return `undefined` when nothing is left. */
-const clean = <T extends Record<string, unknown>>(
+const clean = <T extends object>(
   obj: T,
 ): { [K in keyof T]: T[K] } | undefined => {
   const entries = Object.entries(obj).filter(([, v]) => v !== undefined);

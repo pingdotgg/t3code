@@ -15,7 +15,7 @@
     "destroy": "alchemy destroy"
   },
   "dependencies": {
-    "@distilled.cloud/aws": "catalog:",
+    "@distilled.cloud/aws": "workspace:*",
     "alchemy": "workspace:*",
     "effect": "catalog:"
   }

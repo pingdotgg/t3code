@@ -19,14 +19,15 @@ export interface DeregisterTargetsRequest extends Omit<
  * Deregisters targets from the bound {@link TargetGroup} at runtime — the
  * graceful-drain half of dynamic self-registration. Provide the
  * implementation with `Effect.provide(AWS.VpcLattice.DeregisterTargetsHttp)`.
- * @binding
- * @section Managing Targets at Runtime
- * @example Deregister a target
+ * ### Managing Targets at Runtime
+ * **Example:** Deregister a target
  * ```typescript
  * const deregisterTargets = yield* AWS.VpcLattice.DeregisterTargets(targetGroup);
  *
  * yield* deregisterTargets({ targets: [{ id: "10.0.1.10", port: 80 }] });
  * ```
+ *
+ * @binding
  */
 export interface DeregisterTargets extends Binding.Service<
   DeregisterTargets,

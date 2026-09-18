@@ -10,6 +10,8 @@ import * as HttpClient from "effect/unstable/http/HttpClient"
 import * as HttpClientError from "effect/unstable/http/HttpClientError"
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse"
+import * as Socket from "effect/unstable/socket/Socket"
+import { WS } from "vitest-websocket-mock"
 
 describe("OpenAiClient", () => {
   describe("make", () => {
@@ -289,12 +291,38 @@ describe("OpenAiClient", () => {
         assert.strictEqual(result.reason._tag, "AuthenticationError")
         if (result.reason._tag === "AuthenticationError") {
           assert.strictEqual(result.reason.kind, "InvalidKey")
+          assert.strictEqual(
+            result.reason.description,
+            "Invalid API key (POST https://api.openai.com/v1/responses) [code: invalid_api_key] [requestId: req_openai]"
+          )
+          assert.include(result.reason.message, "Invalid API key")
         }
       }).pipe(Effect.provide(makeTestLayer(undefined, {
         _tag: "Json",
         status: 401,
-        body: { error: { message: "Invalid API key" } }
+        body: { error: { message: "Invalid API key", type: "invalid_request_error", code: "invalid_api_key" } },
+        headers: { "x-request-id": "req_openai" }
       }))))
+
+    it("preserves and truncates a fallback HTTP response", () => {
+      const body = `${"a".repeat(200)}b`
+      const reason = Errors.mapStatusCodeToReason({
+        status: 400,
+        headers: {},
+        message: undefined,
+        metadata: { errorCode: null, errorType: null, requestId: null },
+        http: makeHttpContext("https://api.openai.com/v1/responses", body)
+      })
+
+      assert.strictEqual(reason._tag, "InvalidRequestError")
+      if (reason._tag !== "InvalidRequestError") {
+        throw new Error("Expected InvalidRequestError")
+      }
+      assert.strictEqual(
+        reason.description,
+        `HTTP 400 (POST https://api.openai.com/v1/responses) Response: ${"a".repeat(200)}...`
+      )
+    })
 
     it.effect("maps 403 status to AuthenticationError with InsufficientPermissions", () =>
       Effect.gen(function*() {
@@ -305,6 +333,8 @@ describe("OpenAiClient", () => {
         assert.strictEqual(result.reason._tag, "AuthenticationError")
         if (result.reason._tag === "AuthenticationError") {
           assert.strictEqual(result.reason.kind, "InsufficientPermissions")
+          assert.include(result.reason.description ?? "", "Access denied")
+          assert.include(result.reason.message, "Access denied")
         }
       }).pipe(Effect.provide(makeTestLayer(undefined, {
         _tag: "Json",
@@ -344,6 +374,34 @@ describe("OpenAiClient", () => {
             code: "insufficient_quota"
           }
         }
+      }))))
+
+    it.effect("maps OpenAI-compatible 402 errors to QuotaExhaustedError", () =>
+      Effect.gen(function*() {
+        const client = yield* OpenAiClient.OpenAiClient
+        const result = yield* client.createResponse({ model: "grok-4", input: "test" }).pipe(Effect.flip)
+
+        assert.strictEqual(result._tag, "AiError")
+        assert.strictEqual(result.reason._tag, "QuotaExhaustedError")
+        assert.isFalse(result.isRetryable)
+      }).pipe(Effect.provide(makeTestLayer(undefined, {
+        _tag: "Json",
+        status: 402,
+        body: { error: "Your balance is too low", code: "billing_insufficient_balance" }
+      }))))
+
+    it.effect("maps OpenAI-compatible insufficient balance errors to QuotaExhaustedError", () =>
+      Effect.gen(function*() {
+        const client = yield* OpenAiClient.OpenAiClient
+        const result = yield* client.createResponse({ model: "grok-4", input: "test" }).pipe(Effect.flip)
+
+        assert.strictEqual(result._tag, "AiError")
+        assert.strictEqual(result.reason._tag, "QuotaExhaustedError")
+        assert.isFalse(result.isRetryable)
+      }).pipe(Effect.provide(makeTestLayer(undefined, {
+        _tag: "Json",
+        status: 429,
+        body: { error: "Your balance is too low", code: "billing_insufficient_balance" }
       }))))
 
     it("mapStatusCodeToReason detects insufficient_quota as QuotaExhaustedError", () => {
@@ -448,6 +506,59 @@ describe("OpenAiClient", () => {
   })
 
   describe("createResponseStream", () => {
+    it.live("terminates an SSE stream at response.failed", () =>
+      Effect.gen(function*() {
+        const client = yield* OpenAiClient.OpenAiClient
+        const [, stream] = yield* client.createResponseStream({ model: "gpt-4o", input: "test" })
+        const result = yield* Stream.runCollect(stream).pipe(Effect.timeoutOption("100 millis"))
+
+        assert.strictEqual(result._tag, "Some")
+      }).pipe(Effect.provide(makeTestLayer(undefined, {
+        _tag: "Sse",
+        events: [{
+          type: "response.failed",
+          sequence_number: 1,
+          response: makeResponseBody({ status: "failed" })
+        }],
+        keepOpen: true
+      }))))
+
+    it.live("terminates a WebSocket stream at response.failed", () =>
+      Effect.gen(function*() {
+        const server = yield* Effect.acquireRelease(
+          Effect.sync(() => new WS("wss://api.openai.com/v1/responses", { jsonProtocol: true })),
+          (server) =>
+            Effect.sync(() => {
+              server.close()
+              WS.clean()
+            })
+        )
+        const event = {
+          type: "response.failed",
+          sequence_number: 1,
+          response: makeResponseBody({ status: "failed" })
+        }
+        const result = yield* OpenAiClient.withWebSocketMode(
+          Effect.gen(function*() {
+            const client = yield* OpenAiClient.OpenAiClient
+            const [, stream] = yield* client.createResponseStream({ model: "gpt-4o", input: "test" })
+            const [events] = yield* Effect.all([
+              Stream.runCollect(stream),
+              Effect.promise(() => server.nextMessage).pipe(
+                Effect.tap(() => Effect.sync(() => server.send(event)))
+              )
+            ], { concurrency: "unbounded" })
+            return events
+          })
+        ).pipe(
+          Effect.provide(makeTestLayer()),
+          Effect.provideService(Socket.WebSocketConstructor, (url) => new globalThis.WebSocket(url)),
+          Effect.timeoutOption("1 second")
+        )
+
+        assert.strictEqual(result._tag, "Some")
+      }))
+
     it.effect("accepts keepalive stream events", () =>
       Effect.gen(function*() {
         const client = yield* OpenAiClient.OpenAiClient
@@ -500,6 +611,138 @@ describe("OpenAiClient", () => {
         ]
       }))))
 
+    it.effect("accepts response stream events without sequence numbers", () =>
+      Effect.gen(function*() {
+        const client = yield* OpenAiClient.OpenAiClient
+        const [, stream] = yield* client.createResponseStream({
+          model: "gpt-4o",
+          input: "test"
+        })
+
+        const events = yield* Stream.runCollect(stream)
+        const decoded = globalThis.Array.from(events)
+
+        assert.deepStrictEqual(decoded.map((event) => event.type), [
+          "response.created",
+          "response.output_item.added",
+          "response.content_part.added",
+          "response.output_text.delta",
+          "response.reasoning_text.delta",
+          "response.reasoning_text.done",
+          "response.content_part.done",
+          "response.completed"
+        ])
+        assert.deepStrictEqual(decoded[0], {
+          type: "response.created",
+          response: {
+            id: "resp_test123",
+            object: "response",
+            model: "gpt-4o-mini",
+            created_at: 1,
+            output: [],
+            error: null,
+            incomplete_details: null
+          }
+        })
+        assert.deepStrictEqual(decoded[3], {
+          type: "response.output_text.delta",
+          output_index: 0,
+          item_id: "msg_123",
+          content_index: 0,
+          delta: "hello",
+          sequence_number: 4
+        })
+        assert.deepStrictEqual([decoded[2], decoded[4], decoded[5], decoded[6]], [
+          {
+            type: "response.content_part.added",
+            output_index: 0,
+            item_id: "rs_tmp_123",
+            content_index: 0,
+            part: { type: "reasoning_text", text: "" }
+          },
+          {
+            type: "response.reasoning_text.delta",
+            output_index: 0,
+            item_id: "rs_tmp_123",
+            content_index: 0,
+            delta: "thinking..."
+          },
+          {
+            type: "response.reasoning_text.done",
+            output_index: 0,
+            item_id: "rs_tmp_123",
+            content_index: 0,
+            text: "thinking..."
+          },
+          {
+            type: "response.content_part.done",
+            output_index: 0,
+            item_id: "rs_tmp_123",
+            content_index: 0,
+            part: { type: "reasoning_text", text: "thinking..." }
+          }
+        ])
+      }).pipe(Effect.provide(makeTestLayer(undefined, {
+        _tag: "Sse",
+        events: [
+          {
+            type: "response.created",
+            response: makeResponseBody({ status: "in_progress" })
+          },
+          {
+            type: "response.output_item.added",
+            output_index: 0,
+            item: {
+              id: "msg_123",
+              type: "message",
+              role: "assistant",
+              status: "in_progress",
+              content: []
+            }
+          },
+          {
+            type: "response.content_part.added",
+            output_index: 0,
+            item_id: "rs_tmp_123",
+            content_index: 0,
+            part: { type: "reasoning_text", text: "" }
+          },
+          {
+            type: "response.output_text.delta",
+            output_index: 0,
+            item_id: "msg_123",
+            content_index: 0,
+            delta: "hello",
+            sequence_number: 4
+          },
+          {
+            type: "response.reasoning_text.delta",
+            output_index: 0,
+            item_id: "rs_tmp_123",
+            content_index: 0,
+            delta: "thinking..."
+          },
+          {
+            type: "response.reasoning_text.done",
+            output_index: 0,
+            item_id: "rs_tmp_123",
+            content_index: 0,
+            text: "thinking..."
+          },
+          {
+            type: "response.content_part.done",
+            output_index: 0,
+            item_id: "rs_tmp_123",
+            content_index: 0,
+            part: { type: "reasoning_text", text: "thinking..." }
+          },
+          {
+            type: "response.completed",
+            response: makeResponseBody()
+          }
+        ]
+      }))))
+
     it.effect("maps HTTP error before stream starts", () =>
       Effect.gen(function*() {
         const client = yield* OpenAiClient.OpenAiClient
@@ -530,6 +773,9 @@ type MockResponse =
         readonly type?: string
         readonly code?: string | null
       }
+    } | {
+      readonly error: string
+      readonly code?: string
     }
     readonly status?: number | undefined
     readonly headers?: Record<string, string> | undefined
@@ -537,6 +783,7 @@ type MockResponse =
   | {
     readonly _tag: "Sse"
     readonly events: ReadonlyArray<typeof OpenAiSchema.ResponseStreamEvent.Encoded>
+    readonly keepOpen?: boolean | undefined
     readonly status?: number | undefined
     readonly headers?: Record<string, string> | undefined
   }
@@ -600,8 +847,8 @@ const makeGeneratedTestLayer = (
 
 const makeConfigTestLayer = (configProvider: ConfigProvider.ConfigProvider) =>
   OpenAiClient.layerConfig({
-    apiKey: Config.redacted("MY_API_KEY"),
-    apiUrl: Config.string("MY_API_URL")
+    apiKey: Config.Redacted("MY_API_KEY"),
+    apiUrl: Config.String("MY_API_URL")
   }).pipe(
     Layer.provideMerge(HttpClientLayer),
     Layer.provide(Layer.succeed(MockOpenAiResponse, { response: defaultResponse })),
@@ -657,7 +904,7 @@ const makeResponse = (
     ? JSON.stringify(response.body)
     : response.events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")
 
-  return HttpClientResponse.fromWeb(
+  const httpResponse = HttpClientResponse.fromWeb(
     request,
     new Response(body, {
       status: response.status ?? 200,
@@ -667,4 +914,29 @@ const makeResponse = (
       }
     })
   )
+  if (response._tag !== "Sse" || response.keepOpen !== true) return httpResponse
+
+  const stream = Stream.concat(
+    Stream.succeed(new TextEncoder().encode(body)),
+    Stream.never
+  )
+  // `fromWeb` stores the ReadableStream internally, so a proxy is needed to replace it with a non-terminating test stream.
+  return new Proxy(httpResponse, {
+    get(target, property) {
+      if (property === "stream") return stream
+      const value = Reflect.get(target, property, target)
+      return typeof value === "function" ? value.bind(target) : value
+    }
+  })
 }
+
+const makeHttpContext = (url: string, body: string) => ({
+  request: {
+    method: "POST" as const,
+    url,
+    urlParams: [],
+    hash: undefined,
+    headers: {}
+  },
+  body
+})

@@ -21,9 +21,8 @@ export interface DescribeFHIRImportJobRequest extends Omit<
  * until `COMPLETED` (or a failure status). Provide the implementation with
  * `Effect.provide(AWS.HealthLake.DescribeFHIRImportJobHttp)`.
  *
- * @binding
- * @section Importing FHIR Data
- * @example Poll an Import Job Until It Completes
+ * ### Importing FHIR Data
+ * **Example:** Poll an Import Job Until It Completes
  * ```typescript
  * const describeImport = yield* HealthLake.DescribeFHIRImportJob(datastore);
  *
@@ -36,6 +35,8 @@ export interface DescribeFHIRImportJobRequest extends Omit<
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface DescribeFHIRImportJob extends Binding.Service<
   DescribeFHIRImportJob,

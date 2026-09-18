@@ -1,4 +1,4 @@
-import type { CredentialsError } from "@distilled.cloud/aws/Credentials";
+import type { PresignError } from "@distilled.cloud/aws/Presign";
 import type * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import type { Bucket } from "./Bucket.ts";
@@ -28,15 +28,15 @@ export interface PresignGetObjectRequest {
  * inherits the signer's IAM permissions, the binding grants `s3:GetObject`
  * on the bucket's objects to the host Function.
  *
- * @section Presigning Download URLs
- * @example Mint a presigned GET URL
+ * ### Presigning Download URLs
+ * **Example:** Mint a presigned GET URL
  * ```typescript
  * const presignGetObject = yield* S3.PresignGetObject(bucket);
  * const url = yield* presignGetObject({ key: "reports/2026.pdf" });
  * // hand `url` to a browser — it can download the object without AWS credentials
  * ```
  *
- * @example Custom expiry and response Content-Type
+ * **Example:** Custom expiry and response Content-Type
  * ```typescript
  * const url = yield* presignGetObject({
  *   key: "reports/2026.pdf",
@@ -53,9 +53,7 @@ export interface PresignGetObject extends Binding.Service<
   (
     bucket: Bucket,
   ) => Effect.Effect<
-    (
-      request: PresignGetObjectRequest,
-    ) => Effect.Effect<string, CredentialsError>
+    (request: PresignGetObjectRequest) => Effect.Effect<string, PresignError>
   >
 > {}
 

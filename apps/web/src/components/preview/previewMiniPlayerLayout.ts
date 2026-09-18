@@ -1,4 +1,4 @@
-import type { PreviewViewportSetting } from "@t3tools/contracts";
+import type { DevicePlatform, PreviewViewportSetting } from "@t3tools/contracts";
 
 import type { BrowserSurfaceContentPresentation } from "~/browser/browserSurfaceStore";
 import {
@@ -7,7 +7,10 @@ import {
 } from "~/browser/browserViewportLayout";
 import type { PreviewMiniPlayerPosition, PreviewMiniPlayerSize } from "~/previewMiniPlayerStore";
 
+import type { DeviceScreenSize } from "../device/deviceStream";
+
 export const PREVIEW_MINI_PLAYER_EDGE_GAP = 12;
+export const PREVIEW_MINI_PLAYER_CORNER_RADIUS = 12;
 // The mini-player shell straddles this webview at 47 and 49; dialogs begin at 50.
 export const PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX = 48;
 // A fresh player is the largest box at the source aspect ratio that fits here.
@@ -34,12 +37,95 @@ export function resolvePreviewMiniPlayerSourceSize(
   };
 }
 
+/**
+ * The device screen as the user sees it, so a rotated phone floats as a
+ * landscape box. Before the stream reports its size the platform's usual phone
+ * shape stands in, matching the stream view's own placeholder aspect; the
+ * nominal width only keeps the source cap above any sensible player width.
+ */
+export function resolveDeviceMiniPlayerSourceSize(
+  platform: DevicePlatform,
+  screen: DeviceScreenSize | null,
+): PreviewMiniPlayerSize {
+  if (!screen) {
+    const width = 1_000;
+    return { width, height: width / (platform === "ios" ? 9 / 19.5 : 9 / 20) };
+  }
+  const landscape =
+    screen.orientation === "landscape_left" || screen.orientation === "landscape_right";
+  const long = Math.max(screen.width, screen.height);
+  const short = Math.min(screen.width, screen.height);
+  return landscape ? { width: long, height: short } : { width: short, height: long };
+}
+
+/**
+ * The Android emulator composites the skin's rounded corners into its
+ * framebuffer as black wedges (measured at ~13% of the short side on a
+ * Pixel 9), so its player clips at a matching phone-like radius; the sliver
+ * lost under the curve is status-bar padding. iOS simulators stream an
+ * edge-to-edge rectangle and keep the frame radius, which matters for iPads
+ * whose real corners are far tighter than a phone's.
+ */
+export function resolveDeviceMiniPlayerCornerRadius(
+  platform: DevicePlatform,
+  player: PreviewMiniPlayerSize,
+): number {
+  if (platform !== "android") return PREVIEW_MINI_PLAYER_CORNER_RADIUS;
+  return Math.max(
+    PREVIEW_MINI_PLAYER_CORNER_RADIUS,
+    Math.round(Math.min(player.width, player.height) * 0.14),
+  );
+}
+
+interface HorizontalSpan {
+  readonly left: number;
+  readonly right: number;
+}
+
+/**
+ * The composer stack docked to the bottom edge, in container coordinates. It
+ * only reserves the columns it covers, so the margins beside it stay open all
+ * the way down.
+ */
+export interface PreviewMiniPlayerObstacles {
+  readonly composer: (HorizontalSpan & { readonly height: number }) | null;
+}
+
+export const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = { composer: null };
+
+const spanOf = (x: number, width: number): HorizontalSpan => ({ left: x, right: x + width });
+
+const spansOverlap = (a: HorizontalSpan, b: HorizontalSpan) => a.left < b.right && a.right > b.left;
+
+/** The lowest row (before the edge gap) open to a player covering these columns. */
+function floorFor(
+  span: HorizontalSpan,
+  container: PreviewMiniPlayerSize,
+  obstacles: PreviewMiniPlayerObstacles,
+): number {
+  const { composer } = obstacles;
+  return composer && spansOverlap(span, composer)
+    ? container.height - Math.max(0, composer.height)
+    : container.height;
+}
+
+/**
+ * The box a stored size is fitted into. A player with a position keeps the
+ * rows its own columns have, so a tall frame parked beside the composer
+ * survives the next layout pass; without one it takes the rows above the
+ * composer, which every column has.
+ */
 const availableArea = (
   container: PreviewMiniPlayerSize,
-  bottomInset: number,
+  obstacles: PreviewMiniPlayerObstacles,
+  span: HorizontalSpan | null,
 ): PreviewMiniPlayerSize => ({
   width: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
-  height: container.height - Math.max(0, bottomInset) - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
+  height:
+    (span
+      ? floorFor(span, container, obstacles)
+      : container.height - Math.max(0, obstacles.composer?.height ?? 0)) -
+    PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
 });
 
 /**
@@ -74,25 +160,68 @@ function defaultPreviewMiniPlayerWidth(source: PreviewMiniPlayerSize): number {
   );
 }
 
+const clampToContainer = (
+  position: PreviewMiniPlayerPosition,
+  container: PreviewMiniPlayerSize,
+  player: PreviewMiniPlayerSize,
+  bottom = container.height,
+): PreviewMiniPlayerPosition => ({
+  x: Math.min(
+    Math.max(position.x, PREVIEW_MINI_PLAYER_EDGE_GAP),
+    Math.max(
+      PREVIEW_MINI_PLAYER_EDGE_GAP,
+      container.width - player.width - PREVIEW_MINI_PLAYER_EDGE_GAP,
+    ),
+  ),
+  y: Math.min(
+    Math.max(position.y, PREVIEW_MINI_PLAYER_EDGE_GAP),
+    Math.max(PREVIEW_MINI_PLAYER_EDGE_GAP, bottom - player.height - PREVIEW_MINI_PLAYER_EDGE_GAP),
+  ),
+});
+
+const overlapsObstacle = (
+  position: PreviewMiniPlayerPosition,
+  player: PreviewMiniPlayerSize,
+  container: PreviewMiniPlayerSize,
+  obstacles: PreviewMiniPlayerObstacles,
+): boolean =>
+  position.y + player.height > floorFor(spanOf(position.x, player.width), container, obstacles);
+
+/**
+ * Keeps the player inside the container and off the composer. An overlapping
+ * player is pushed out along whichever side needs the smaller move, so a drag
+ * slides along the composer into the margin beside it instead of stopping at
+ * its top edge; when no side leaves it fully clear it sits above the composer.
+ */
 export function clampPreviewMiniPlayerPosition(
   position: PreviewMiniPlayerPosition,
   container: PreviewMiniPlayerSize,
   player: PreviewMiniPlayerSize,
-  bottomInset = 0,
+  obstacles: PreviewMiniPlayerObstacles = NO_PREVIEW_MINI_PLAYER_OBSTACLES,
 ): PreviewMiniPlayerPosition {
-  const reservedBottomSpace = Math.max(0, bottomInset);
-  const maxX = Math.max(
-    PREVIEW_MINI_PLAYER_EDGE_GAP,
-    container.width - player.width - PREVIEW_MINI_PLAYER_EDGE_GAP,
-  );
-  const maxY = Math.max(
-    PREVIEW_MINI_PLAYER_EDGE_GAP,
-    container.height - reservedBottomSpace - player.height - PREVIEW_MINI_PLAYER_EDGE_GAP,
-  );
-  return {
-    x: Math.min(Math.max(position.x, PREVIEW_MINI_PLAYER_EDGE_GAP), maxX),
-    y: Math.min(Math.max(position.y, PREVIEW_MINI_PLAYER_EDGE_GAP), maxY),
-  };
+  const inside = clampToContainer(position, container, player);
+  const { composer } = obstacles;
+  if (!composer || !overlapsObstacle(inside, player, container, obstacles)) return inside;
+  const gap = PREVIEW_MINI_PLAYER_EDGE_GAP;
+  const above = { x: inside.x, y: container.height - composer.height - gap - player.height };
+  const beside = [
+    { x: composer.left - gap - player.width, y: inside.y },
+    { x: composer.right + gap, y: inside.y },
+  ];
+  let best = clampToContainer(above, container, player);
+  let bestDistance = Math.abs(best.y - inside.y);
+  for (const candidate of beside) {
+    const clamped = clampToContainer(candidate, container, player);
+    if (clamped.x !== candidate.x || overlapsObstacle(candidate, player, container, obstacles)) {
+      continue;
+    }
+    const distance = Math.abs(candidate.x - inside.x);
+    if (distance < bestDistance) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
 /**
@@ -106,19 +235,25 @@ export function resolvePreviewMiniPlayerFrame(input: {
   readonly position: PreviewMiniPlayerPosition | null;
   readonly source: PreviewMiniPlayerSize;
   readonly container: PreviewMiniPlayerSize;
-  readonly bottomInset?: number;
+  readonly obstacles?: PreviewMiniPlayerObstacles;
 }): PreviewMiniPlayerFrame {
-  const { width, position, source, container, bottomInset = 0 } = input;
+  const {
+    width,
+    position,
+    source,
+    container,
+    obstacles = NO_PREVIEW_MINI_PLAYER_OBSTACLES,
+  } = input;
   const size = fitPreviewMiniPlayerWidth(
     width ?? defaultPreviewMiniPlayerWidth(source),
     source,
-    availableArea(container, bottomInset),
+    availableArea(container, obstacles, position && width ? spanOf(position.x, width) : null),
   );
   const anchored = position ?? {
     x: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - size.width,
     y: PREVIEW_MINI_PLAYER_EDGE_GAP,
   };
-  return { ...clampPreviewMiniPlayerPosition(anchored, container, size, bottomInset), ...size };
+  return { ...clampPreviewMiniPlayerPosition(anchored, container, size, obstacles), ...size };
 }
 
 /**
@@ -134,27 +269,37 @@ export function resizePreviewMiniPlayer(input: {
   readonly delta: PreviewMiniPlayerPosition;
   readonly source: PreviewMiniPlayerSize;
   readonly container: PreviewMiniPlayerSize;
-  readonly bottomInset?: number;
+  readonly obstacles?: PreviewMiniPlayerObstacles;
 }): PreviewMiniPlayerFrame {
-  const { start, direction, delta, source, container, bottomInset = 0 } = input;
+  const {
+    start,
+    direction,
+    delta,
+    source,
+    container,
+    obstacles = NO_PREVIEW_MINI_PLAYER_OBSTACLES,
+  } = input;
   const east = direction.includes("east");
   const west = direction.includes("west");
   const north = direction.includes("north");
   const south = direction.includes("south");
-  const available = availableArea(container, bottomInset);
   const right = start.x + start.width;
   const bottom = start.y + start.height;
+  // Growth stops where the player's current columns meet the composer, and a
+  // plain edge drag lets the free axis use everything those columns have. A
+  // wider player may reach new columns; the clamp below slides it clear.
+  const floor = floorFor(spanOf(start.x, start.width), container, obstacles);
   const max = {
     width: west
       ? right - PREVIEW_MINI_PLAYER_EDGE_GAP
       : east
         ? container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - start.x
-        : available.width,
+        : container.width - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
     height: north
       ? bottom - PREVIEW_MINI_PLAYER_EDGE_GAP
       : south
-        ? container.height - Math.max(0, bottomInset) - PREVIEW_MINI_PLAYER_EDGE_GAP - start.y
-        : available.height,
+        ? floor - PREVIEW_MINI_PLAYER_EDGE_GAP - start.y
+        : floor - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
   };
   const desiredWidth = start.width + (east ? delta.x : west ? -delta.x : 0);
   const desiredHeight = start.height + (south ? delta.y : north ? -delta.y : 0);
@@ -176,7 +321,7 @@ export function resizePreviewMiniPlayer(input: {
     { x: west ? right - size.width : start.x, y: north ? bottom - size.height : start.y },
     container,
     size,
-    bottomInset,
+    obstacles,
   );
   return { ...position, ...size };
 }

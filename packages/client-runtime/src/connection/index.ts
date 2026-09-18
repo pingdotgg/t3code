@@ -3,6 +3,7 @@ export * as Connectivity from "./connectivity.ts";
 export * as CredentialStore from "./credentialStore.ts";
 export { type ConnectionDriverProgress, type EnvironmentConnectionLease } from "./driver.ts";
 export * from "./errors.ts";
+export * from "./githubRoutingPermissions.ts";
 export * as Connection from "./layer.ts";
 export * from "./model.ts";
 export {
@@ -20,3 +21,5 @@ export {
 } from "./registry.ts";
 export { EnvironmentSupervisor, type EnvironmentSupervisorOptions } from "./supervisor.ts";
 export * as Wakeups from "./wakeups.ts";
+
+export { orchestrationProtocolCompatibilityError } from "./compatibility.ts";

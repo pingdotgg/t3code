@@ -62,6 +62,33 @@ function makeActivity(overrides: {
 }
 
 describe("deriveActivePlanState", () => {
+  it("orders plan snapshots by sequence while ignoring unrelated activities", () => {
+    const activities = Object.freeze([
+      makeActivity({
+        id: "completed",
+        kind: "turn.plan.updated",
+        turnId: "turn-1",
+        sequence: 3,
+        createdAt: "2026-02-23T00:00:05.000Z",
+        payload: { plan: [{ step: "Check", status: "completed" }] },
+      }),
+      makeActivity({ sequence: 4, kind: "tool.completed" }),
+      makeActivity({
+        id: "started",
+        kind: "turn.plan.updated",
+        turnId: "turn-1",
+        sequence: 1,
+        payload: { plan: [{ step: "Check", status: "inProgress" }] },
+      }),
+      makeActivity({ sequence: 2, kind: "context-window.updated" }),
+    ]);
+    expect(deriveActivePlanState(activities, TurnId.make("turn-1"))?.steps).toEqual([
+      { step: "Check", status: "completed", durationMs: 5_000 },
+    ]);
+    expect(activities[0]?.id).toBe("completed");
+    expect(deriveActivePlanState([makeActivity({ kind: "tool.completed" })], undefined)).toBeNull();
+  });
+
   it("returns the latest plan update for the active turn", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
@@ -2098,10 +2125,43 @@ describe("deriveActiveWorkStartedAt", () => {
 });
 
 describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
-  it("N concurrent subagents produce exactly N lifecycle rows, zero attributed tool rows", () => {
+  it("concurrent subagents replace their launch tools with one lifecycle row", () => {
     const activities: OrchestrationThreadActivity[] = [];
     for (let agent = 0; agent < 5; agent += 1) {
+      activities.push(
+        makeActivity({
+          kind: "tool.updated",
+          summary: "Subagent task",
+          payload: {
+            toolCallId: `launch-${agent}`,
+            itemType: "collab_agent_tool_call",
+            status: "inProgress",
+            data: { toolName: agent % 2 === 0 ? "Agent" : "Task" },
+          },
+          turnId: "turn-batch",
+          sequence: agent - 10,
+        }),
+      );
+      expect(deriveWorkLogEntries(activities)).toHaveLength(0);
+    }
+    for (let agent = 0; agent < 5; agent += 1) {
       const taskId = `task-${agent}`;
+      const toolUseId = `launch-${agent}`;
+      expect(deriveWorkLogEntries(activities)).toHaveLength(agent === 0 ? 0 : 1);
+      activities.push(
+        makeActivity({
+          id: `started-${agent}`,
+          kind: "task.started",
+          summary: "Task started",
+          payload: { taskId, toolUseId, taskType: "local_agent" },
+          turnId: "turn-batch",
+          sequence: agent * 20 - 1,
+        }),
+      );
+      const runningEntries = deriveWorkLogEntries(activities);
+      expect(runningEntries).toHaveLength(1);
+      expect(runningEntries[0]!.id).toBe("started-0");
+      expect(runningEntries[0]!.agentSpawn?.agentTaskIds).toHaveLength(agent + 1);
       // Progress ticks (several per agent) + attributed tool rows.
       for (let tick = 0; tick < 4; tick += 1) {
         activities.push(
@@ -2109,7 +2169,7 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
             kind: "task.progress",
             summary: `agent ${agent} tick ${tick}`,
             tone: "info",
-            payload: { taskId, summary: `working ${tick}`, role: "explorer" },
+            payload: { taskId, toolUseId, summary: `working ${tick}`, role: "explorer" },
             turnId: "turn-batch",
             sequence: agent * 20 + tick,
           }),
@@ -2130,10 +2190,18 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
           tone: "info",
           payload: {
             taskId,
+            toolUseId,
             status: "completed",
             summary: `agent ${agent} done`,
             role: "explorer",
           },
+          turnId: "turn-batch",
+          sequence: agent * 20 + 19,
+        }),
+        makeActivity({
+          kind: "tool.completed",
+          summary: "Subagent task",
+          payload: { toolCallId: toolUseId, status: "completed" },
           turnId: "turn-batch",
           sequence: agent * 20 + 19,
         }),
@@ -2183,15 +2251,69 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     );
   });
 
-  it("keeps unattributed tool rows (over-hiding loses the only signal)", () => {
+  it("keeps unrelated tools and failed launches, including failures after a task starts", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({
         kind: "tool.completed",
         summary: "Bash",
         payload: { itemType: "command_execution", command: "ls" },
       }),
+      makeActivity({
+        id: "unlinked-failure",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        tone: "error",
+        payload: { toolCallId: "unlinked", status: "failed" },
+      }),
+      makeActivity({
+        id: "linked-task",
+        kind: "task.started",
+        summary: "Task started",
+        payload: { taskId: "agent", toolUseId: "linked", taskType: "local_agent" },
+      }),
+      makeActivity({
+        id: "linked-failure",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        payload: { toolCallId: "linked", status: "failed" },
+      }),
+      makeActivity({
+        id: "orphan-completion",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        payload: {
+          toolCallId: "orphan",
+          itemType: "collab_agent_tool_call",
+          status: "completed",
+          data: { toolName: "Agent" },
+        },
+      }),
+      makeActivity({
+        id: "send-input",
+        kind: "tool.updated",
+        payload: {
+          toolCallId: "send-input",
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          data: { toolName: "send_input" },
+        },
+      }),
+      makeActivity({
+        id: "active-launch-error",
+        kind: "tool.updated",
+        tone: "error",
+        payload: {
+          toolCallId: "active-launch-error",
+          itemType: "collab_agent_tool_call",
+          status: "inProgress",
+          data: { toolName: "Task" },
+        },
+      }),
     ]);
-    expect(entries).toHaveLength(1);
+    expect(entries).toHaveLength(7);
+    expect(entries.map((entry) => entry.id)).toEqual(
+      expect.arrayContaining(["unlinked-failure", "linked-task", "linked-failure"]),
+    );
   });
 
   it("folds timelineBypass agent rows into one CTA (Codex children, workflow members)", () => {

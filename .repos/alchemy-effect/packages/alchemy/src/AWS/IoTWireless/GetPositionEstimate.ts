@@ -9,14 +9,13 @@ import * as Binding from "../../Binding.ts";
  * using third-party solvers, from a deployed Lambda or Task. Account-level:
  * it is not tied to any registered device.
  *
- * @binding
- * @section Estimating a Position
+ * ### Estimating a Position
  * Provide the `GetPositionEstimateHttp` implementation layer on the
  * Function effect, bind the capability in the init phase, then call the
  * returned client at runtime. The `GeoJsonPayload` is a byte `Stream` —
  * decode it with `Stream.mkString(Stream.decodeText(...))`.
  *
- * @example Solve a Position from WiFi Scans
+ * **Example:** Solve a Position from WiFi Scans
  * ```typescript
  * // init
  * const estimate = yield* AWS.IoTWireless.GetPositionEstimate();
@@ -31,6 +30,8 @@ import * as Binding from "../../Binding.ts";
  * // on the Function effect:
  * // .pipe(Effect.provide(AWS.IoTWireless.GetPositionEstimateHttp))
  * ```
+ *
+ * @binding
  */
 export interface GetPositionEstimate extends Binding.Service<
   GetPositionEstimate,

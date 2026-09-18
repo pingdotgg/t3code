@@ -295,3 +295,32 @@ describe("promptStashStore", () => {
     expect(usePromptStashStore.getState().entries).toEqual([]);
   });
 });
+
+describe("prompt stash context records", () => {
+  it("keeps the records behind a stashed prompt's chips", () => {
+    const store = usePromptStashStore.getState();
+    const records = [
+      {
+        version: 1 as const,
+        contextId: "ctx-1" as never,
+        kind: "terminal" as const,
+        label: "Terminal 1 line 4",
+        terminalId: "default",
+        terminalLabel: "Terminal 1",
+        lineStart: 4,
+        lineEnd: 4,
+        text: "boom",
+      },
+    ];
+    store.stashEntry({
+      id: "entry-records",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      prompt: "see [Terminal 1 line 4](t3-context://v1/terminal/ctx-1)",
+      attachments: [],
+      droppedImageNames: [],
+      records,
+    });
+    const taken = usePromptStashStore.getState().takeEntry("entry-records");
+    expect(taken.entry?.records).toEqual(records);
+  });
+});

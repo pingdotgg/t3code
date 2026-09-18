@@ -238,9 +238,11 @@ export function invalidateCustomThemes() {
   notifyCustomThemeListeners();
 }
 
+const EMPTY_CUSTOM_THEMES: ReadonlyArray<ThemeDefinition> = [];
+
 export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
   const snapshot = getCustomThemeLibrarySnapshot();
-  return snapshot.status === "ready" ? snapshot.themes : [];
+  return snapshot.status === "ready" ? snapshot.themes : EMPTY_CUSTOM_THEMES;
 }
 
 export function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
@@ -1254,7 +1256,7 @@ export function themeIdFromName(name: string): string {
   return normalized || "custom-theme";
 }
 
-export class ThemeLibraryStorageError extends Schema.TaggedErrorClass<ThemeLibraryStorageError>()(
+export class ThemeLibraryStorageError extends Schema.TaggedError<ThemeLibraryStorageError>()(
   "ThemeLibraryStorageError",
   {
     storageKey: Schema.String,

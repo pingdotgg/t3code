@@ -50,7 +50,7 @@ everything else updates in place.
 
 ## Publish from a Lambda
 
-Bind `SNS.Publish(topic)` in the function's init phase and call
+Bind `SNS.Publish(topic)` in the function's Construction phase and call
 it from runtime handlers. The binding quietly attaches
 `sns:Publish` scoped to the topic ARN to the function's
 execution role:
@@ -65,7 +65,7 @@ import { Orders } from "./topic.ts";
 
 export default class Api extends AWS.Lambda.Function<Api>()(
   "Api",
-  { main: import.meta.url, url: true },
+  { main: import.meta.url, functionUrl: true },
   Effect.gen(function* () {
     const topic = yield* Orders;
     const publish = yield* SNS.Publish(topic);

@@ -9,7 +9,29 @@ const testCrypto = Crypto.make({
   digest: (algorithm, data) => Effect.succeed(Uint8Array.of(data.length, algorithm.length))
 })
 
+const makeCrypto = (value: bigint) =>
+  Crypto.make({
+    randomBytes: () =>
+      Uint8Array.of(
+        Number((value >> 48n) & 0x3fn),
+        Number((value >> 40n) & 0xffn),
+        Number((value >> 32n) & 0xffn),
+        Number((value >> 24n) & 0xffn),
+        Number((value >> 16n) & 0xffn),
+        Number((value >> 8n) & 0xffn),
+        Number(value & 0xffn)
+      ),
+    digest: (_algorithm, data) => Effect.succeed(data)
+  })
+
 describe("Crypto", () => {
+  it("uses the module path for its type ID", () => {
+    assert.strictEqual(
+      (testCrypto as unknown as Record<string, unknown>)["~effect/Crypto"],
+      "~effect/Crypto"
+    )
+  })
+
   it("supports string literal digest algorithms", () => {
     const algorithm: Crypto.DigestAlgorithm = "SHA-256"
     assert.strictEqual(algorithm, "SHA-256")
@@ -34,13 +56,29 @@ describe("Crypto", () => {
       const randomShuffle = yield* crypto.randomShuffle([1, 2, 3])
 
       assert.strictEqual(random, 0.75)
-      assert.strictEqual(randomInt, 4503599627370497)
+      assert.strictEqual(randomInt, -2251799813685247)
       assert.strictEqual(randomBoolean, true)
       assert.strictEqual(randomBetween, 17.5)
       assert.strictEqual(randomBetweenDecimalBounds, 18)
       assert.strictEqual(randomIntBetween, 5)
       assert.deepStrictEqual(randomShuffle, [1, 2, 3])
     }).pipe(Effect.provideService(Crypto.Crypto, testCrypto)))
+
+  it.effect("randomBetween excludes the upper bound when the result rounds up", () =>
+    Effect.gen(function*() {
+      const value = yield* makeCrypto((1n << 53n) - 2n).randomBetween(10, 20)
+
+      assert.isAtLeast(value, 10)
+      assert.isBelow(value, 20)
+      assert.strictEqual(value, 20 - 2 ** -48)
+    }))
+
+  it("maps adjacent random values to adjacent safe integers", () => {
+    assert.strictEqual(makeCrypto(0n).nextIntUnsafe(), Number.MIN_SAFE_INTEGER)
+    assert.strictEqual(makeCrypto(1n).nextIntUnsafe(), Number.MIN_SAFE_INTEGER + 1)
+    assert.strictEqual(makeCrypto(1n << 53n).nextIntUnsafe(), 1)
+    assert.strictEqual(makeCrypto((1n << 54n) - 2n).nextIntUnsafe(), Number.MAX_SAFE_INTEGER)
+  })
 
   it.effect("randomIntBetween excludes the upper bound in half-open ranges", () =>
     Effect.gen(function*() {

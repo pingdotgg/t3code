@@ -11,6 +11,7 @@
  * @since 2.0.0
  */
 import type { Kind, TypeLambda } from "./HKT.ts"
+import { getStackTraceLimit } from "./internal/stackTraceLimit.ts"
 import type * as Types from "./Types.ts"
 
 /**
@@ -31,18 +32,14 @@ import type * as Types from "./Types.ts"
  *
  * **Example** (Yielding a wrapped value in a generator)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Utils } from "effect"
  *
  * const gen = new Utils.SingleShotGen<string, number>("hello")
  *
- * // First call yields the wrapped value
- * console.log(gen.next(0))
- * // { value: "hello", done: false }
+ * gen.next(0) // => { value: "hello", done: false }
  *
- * // Second call signals completion with the provided value
- * console.log(gen.next(42))
- * // { value: 42, done: true }
+ * gen.next(42) // => { value: 42, done: true }
  * ```
  *
  * @see {@link Gen} for the type-level signature that relies on `SingleShotGen`
@@ -113,15 +110,21 @@ export class SingleShotGen<T, A> implements IterableIterator<T, A> {
  *
  * **Example** (Declaring variance for a TypeLambda)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import type { Option, Utils } from "effect"
  *
- * declare const variance: Utils.Variance<
+ * const variance: Utils.Variance<
  *   Option.OptionTypeLambda,
- *   never,
- *   never,
- *   never
- * >
+ *   unknown,
+ *   string,
+ *   string
+ * > = {
+ *   _F: (value) => value,
+ *   _R: () => {},
+ *   _O: () => "output",
+ *   _E: () => "error"
+ * }
+ * Array.of(variance._O(undefined as never), variance._E(undefined as never)) // => ["output", "error"]
  * ```
  *
  * @see {@link Gen} for the type-level signature that uses `Variance`
@@ -152,10 +155,15 @@ export interface Variance<in out F extends TypeLambda, in R, out O, out E> {
  *
  * **Example** (Typing a gen function for Option)
  *
- * ```ts
- * import type { Option, Utils } from "effect"
+ * ```ts import.meta.vitest
+ * import { Option } from "effect"
+ * import type { Utils } from "effect"
  *
- * declare const gen: Utils.Gen<Option.OptionTypeLambda>
+ * const gen: Utils.Gen<Option.OptionTypeLambda> = Option.gen
+ * const result = gen(function*() {
+ *   return yield* Option.some(1)
+ * })
+ * result // => Option.some(1)
  * ```
  *
  * @see {@link Variance} for encoding the variance used for inference
@@ -212,7 +220,8 @@ const pickInternalCall = (): <A>(body: () => A) => A => {
     }
   }
 
-  const isNotOptimizedAway = standard[InternalTypeId](() => new Error().stack)?.includes(InternalTypeId) === true
+  const isNotOptimizedAway = getStackTraceLimit() !== 0 &&
+    standard[InternalTypeId](() => new Error().stack)?.includes(InternalTypeId) === true
 
   return isNotOptimizedAway ? standard[InternalTypeId] : forced[InternalTypeId]
 }

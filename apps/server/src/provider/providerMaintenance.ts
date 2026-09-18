@@ -33,7 +33,7 @@ const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review p
  * move on their own, so this mostly bounds how stale a Homebrew "latest" can
  * get; the npm registry check keeps its own cache.
  */
-export const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
+const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
 
 const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
   Object.fromEntries(
@@ -46,10 +46,10 @@ const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.Proces
   );
 
 const CommandLookupEnvConfig = Config.all({
-  PATH: Config.string("PATH").pipe(Config.option),
-  Path: Config.string("Path").pipe(Config.option),
-  path: Config.string("path").pipe(Config.option),
-  PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+  PATH: Config.String("PATH").pipe(Config.option),
+  Path: Config.String("Path").pipe(Config.option),
+  path: Config.String("path").pipe(Config.option),
+  PATHEXT: Config.String("PATHEXT").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));

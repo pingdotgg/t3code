@@ -1,0 +1,19 @@
+---
+// Zero-config sessions under `output: "server"`: no session driver is
+// configured anywhere in this fixture — the integration defaults to the
+// Cloudflare KV driver (binding "SESSION"), auto-injects a local KV
+// namespace in dev, and the live preview provides a miniflare KV namespace.
+const count = ((await Astro.session?.get("count")) ?? 0) + 1;
+Astro.session?.set("count", count);
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Session</title>
+  </head>
+  <body>
+    <h1>Session</h1>
+    <p id="count">{count}</p>
+  </body>
+</html>

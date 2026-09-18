@@ -1,3 +1,8 @@
+import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
+import {
+  getQuestionAnswerPreview,
+  hasQuestionAnswer,
+} from "@t3tools/client-runtime/work-log/user-input";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
@@ -75,7 +80,7 @@ export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
 const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
-type WorkContentIcon = AppSymbolName | "browser" | "t3-code";
+type WorkContentIcon = AppSymbolName | "browser" | "device" | "t3-code" | "pull-request";
 
 function WorkLogIcon(props: {
   readonly icon: WorkContentIcon;
@@ -91,7 +96,15 @@ function WorkLogIcon(props: {
   }
   return (
     <SymbolView
-      name={props.icon === "browser" ? { ios: "globe", android: "public" } : props.icon}
+      name={
+        props.icon === "pull-request"
+          ? "arrow.triangle.pull"
+          : props.icon === "browser"
+            ? { ios: "globe", android: "public" }
+            : props.icon === "device"
+              ? { ios: "iphone", android: "smartphone" }
+              : props.icon
+      }
       size={14}
       weight="medium"
       {...(colorClassName ? { tintColorClassName: colorClassName } : { tintColor: props.color })}
@@ -736,6 +749,10 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
   const previewText = workEntryRowLabel(row.workEntry);
+  const answerPreview = row.workEntry.questionAnswer
+    ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
+    : null;
+  const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
   const displayText = workEntryRowLabel(row.workEntry, expanded);
   const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
   const failed = row.status === "failure";
@@ -750,7 +767,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
     >
       <Pressable
         accessibilityRole={canExpand ? "button" : undefined}
-        accessibilityLabel={failed ? `${previewText}, tool call failed` : previewText}
+        accessibilityLabel={failed ? `${accessiblePreview}, tool call failed` : accessiblePreview}
         accessibilityHint={
           canExpand
             ? `Double tap to ${expanded ? "hide" : "show"} full details. Long press to copy.`
@@ -811,6 +828,17 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                 numberOfLines={expanded ? undefined : 1}
               >
                 {displayText}
+                {answerPreview ? (
+                  <Text
+                    className={
+                      !expanded &&
+                      row.workEntry.questionAnswer &&
+                      hasQuestionAnswer(row.workEntry.questionAnswer)
+                        ? "text-foreground"
+                        : "text-foreground-subtle"
+                    }
+                  >{`  ${answerPreview}`}</Text>
+                ) : null}
               </Text>
             </>
           )}
@@ -849,13 +877,19 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
         </View>
       </Pressable>
 
-      {expanded && (fullDetail || viewedImagePath) ? (
+      {expanded && (fullDetail || viewedImagePath || row.workEntry.questionAnswer) ? (
         <Animated.View
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
           className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
         >
+          {row.workEntry.questionAnswer ? (
+            <QuestionAnswerHistory
+              environmentId={props.environmentId}
+              answer={row.workEntry.questionAnswer}
+            />
+          ) : null}
           {viewedImagePath ? (
             <View className="pb-1.5">
               {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
@@ -886,7 +920,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly summary: string;
   readonly summaryKind: ToolGroupSummaryKind;
-  readonly summaryToolIcon?: "browser" | "t3-code";
+  readonly summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request" | "brain";
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@t3tools/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
@@ -1116,6 +1150,85 @@ export function ThreadThinkingRow(props: {
   );
 }
 
+/**
+ * A provider's thinking trace. Collapsed by default: reasoning is context for
+ * the answer, not the answer. `expanded` lives on the feed so it survives row
+ * recycling; `children` is the trace body and only mounts while open.
+ */
+export function ThreadReasoningRow(props: {
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly iconSubtleColor: ColorValue;
+  readonly expanded: boolean;
+  readonly label: string;
+  readonly streaming: boolean;
+  readonly onToggle: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <View className={cn("-mx-1 px-1 py-0", props.expanded && "pb-1.5")}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: props.expanded }}
+        accessibilityLabel={props.label}
+        accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the thinking trace.`}
+        hitSlop={4}
+        onPress={() => {
+          void Haptics.selectionAsync();
+          props.onToggle();
+        }}
+        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
+        style={{ minHeight: props.rowSizing.estimatedRowHeight }}
+      >
+        {props.streaming ? (
+          <ShimmeringWorkContent
+            key={props.rowSizing.textSizeKey}
+            icon="brain"
+            iconSubtleColor={props.iconSubtleColor}
+            label={props.label}
+            showIcon
+          />
+        ) : (
+          <>
+            <View className="h-6 w-6 shrink-0 items-center justify-center">
+              <WorkLogIcon icon="brain" color={props.iconSubtleColor} />
+            </View>
+            <Text
+              key={props.rowSizing.textSizeKey}
+              className="min-w-0 flex-1 text-sm text-foreground-muted"
+              numberOfLines={1}
+            >
+              {props.label}
+            </Text>
+          </>
+        )}
+        <ThreadDisclosureChevron
+          expanded={props.expanded}
+          collapsedDirection="right"
+          size={11}
+          tintColor={props.iconSubtleColor}
+        />
+      </Pressable>
+      {props.expanded ? (
+        <Animated.View
+          entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
+          exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
+          layout={WORK_LOG_LAYOUT_TRANSITION}
+          className="ml-7 mt-1 rounded-xl bg-subtle px-3 py-2"
+        >
+          <ScrollView
+            nestedScrollEnabled
+            directionalLockEnabled
+            showsVerticalScrollIndicator
+            className="max-h-80"
+          >
+            {props.children}
+          </ScrollView>
+        </Animated.View>
+      ) : null}
+    </View>
+  );
+}
+
 function ToolActivityIconView(props: {
   readonly environmentId: EnvironmentId;
   readonly icon?: ToolActivityIcon;
@@ -1224,12 +1337,19 @@ function ToolActivityImage(props: {
 
 function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
   switch (kind) {
+    case "pull-request":
+    case "link-pr":
+    case "unlink-pr":
+    case "list-prs":
+      return "arrow.triangle.pull";
     case "read":
       return { ios: "eye", android: "visibility" };
     case "edit":
       return { ios: "square.and.pencil", android: "edit" };
     case "command":
       return { ios: "terminal", android: "terminal" };
+    case "device":
+      return { ios: "iphone", android: "smartphone" };
     case "browser":
     case "search":
       return { ios: "globe", android: "public" };

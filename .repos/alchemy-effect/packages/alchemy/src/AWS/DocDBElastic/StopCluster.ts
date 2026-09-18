@@ -12,15 +12,16 @@ import type { Cluster } from "./Cluster.ts";
  * from a scheduled Lambda to park non-production clusters outside working
  * hours. Provide the implementation with
  * `Effect.provide(AWS.DocDBElastic.StopClusterHttp)`.
- * @binding
- * @section Starting and Stopping a Cluster
- * @example Stop a Running Cluster
+ * ### Starting and Stopping a Cluster
+ * **Example:** Stop a Running Cluster
  * ```typescript
  * const stopCluster = yield* DocDBElastic.StopCluster(cluster);
  *
  * const result = yield* stopCluster();
  * // result.cluster.status → "STOPPING"
  * ```
+ *
+ * @binding
  */
 export interface StopCluster extends Binding.Service<
   StopCluster,

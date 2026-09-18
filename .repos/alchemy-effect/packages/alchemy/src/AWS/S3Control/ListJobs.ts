@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * summarizing in-flight bulk operations. The account id is resolved once
  * via `sts:GetCallerIdentity`. Provide the implementation with
  * `Effect.provide(AWS.S3Control.ListJobsHttp)`.
- * @binding
- * @section Running Batch Operations Jobs
- * @example List Active Jobs
+ * ### Running Batch Operations Jobs
+ * **Example:** List Active Jobs
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listJobs = yield* AWS.S3Control.ListJobs();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { Jobs } = yield* listJobs({ JobStatuses: ["Active"] });
  * ```
+ *
+ * @binding
  */
 export interface ListJobs extends Binding.Service<
   ListJobs,

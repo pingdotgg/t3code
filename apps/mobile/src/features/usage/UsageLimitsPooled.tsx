@@ -12,15 +12,14 @@ import {
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
 import { useId, useState } from "react";
-import { Platform, Pressable, ScrollView, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
 import { useProviderColors } from "./usageProviders";
@@ -116,30 +115,34 @@ function PoolWindowCard({
         </Text>
       ) : null}
       <View className="flex-row gap-1">
-        {pool.members.map(({ account, window }, index) => (
-          <Pressable
-            key={account.key}
-            accessibilityRole="button"
-            accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
-            accessibilityHint="Show account details"
-            onPress={() => openAccount(account)}
-            className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
-          >
-            <AccountSegment
-              remaining={remainingPercent(window)}
-              color={color}
-              pending={Boolean(window.resetsAt)}
-            />
-            <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-              <Text className="text-xs font-t3-medium tabular-nums text-foreground">
-                {index + 1}
-              </Text>
-            </View>
-          </Pressable>
-        ))}
+        {pool.columns.map(({ account, window }, index) => {
+          if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
+          return (
+            <Pressable
+              key={account.key}
+              accessibilityRole="button"
+              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
+              accessibilityHint="Show account details"
+              onPress={() => openAccount(account)}
+              className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
+            >
+              <AccountSegment
+                remaining={remainingPercent(window)}
+                color={color}
+                pending={Boolean(window.resetsAt)}
+              />
+              <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
+                <Text className="text-xs font-t3-medium tabular-nums text-foreground">
+                  {index + 1}
+                </Text>
+              </View>
+            </Pressable>
+          );
+        })}
       </View>
       <View>
-        {pool.members.map(({ account, window }, index) => {
+        {pool.columns.map(({ account, window }, index) => {
+          if (!window) return null;
           const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
           return (
@@ -208,12 +211,7 @@ export function UsageLimitsSection({
   const colors = useProviderColors();
   return (
     <View className="gap-6">
-      {failedLabels.length ? (
-        <Text className="text-sm text-foreground-muted">
-          {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
-        </Text>
-      ) : null}
-      {pools.length === 0 ? (
+      {pools.length === 0 && notices.length === 0 && failedLabels.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
             ? "Select an environment to see limits."
@@ -239,11 +237,32 @@ export function UsageLimitsSection({
           ))}
         </View>
       ))}
-      {notices.map((notice) => (
-        <Text key={notice} className="text-sm text-foreground-muted">
-          {notice}
-        </Text>
-      ))}
+      {notices.length > 0 || failedLabels.length > 0 ? (
+        <View
+          accessible
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          className="flex-row items-start gap-2 rounded-xl border border-warning-border bg-warning px-3.5 py-3"
+        >
+          <SymbolView
+            name="exclamationmark.triangle"
+            size={16}
+            tintColorClassName="accent-warning-foreground"
+          />
+          <View className="min-w-0 flex-1 gap-0.5">
+            {notices.map((notice) => (
+              <Text key={notice} className="text-sm font-t3-medium text-warning-foreground">
+                {notice}
+              </Text>
+            ))}
+            {failedLabels.length > 0 ? (
+              <Text className="text-sm font-t3-medium text-warning-foreground">
+                {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
+              </Text>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -258,7 +277,6 @@ type AccountScreenProps = StaticScreenProps<{
 
 /** Resolve the account again so live quota and credit updates reach the open detail screen. */
 export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
-  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const { accountKey, windowId, windowKind, environmentIds, now } = route.params;
@@ -277,13 +295,7 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const reset = pool?.resets.find((candidate) => candidate.member.account.key === accountKey);
   const [revealed, setRevealed] = useState(false);
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Account" onBack={() => navigation.goBack()} />
-        </>
-      ) : null}
+    <SettingsScreen title="Account">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-5 p-5"
@@ -369,6 +381,6 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
           </>
         )}
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }

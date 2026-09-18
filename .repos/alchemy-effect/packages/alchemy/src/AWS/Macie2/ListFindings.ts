@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.ListFindingsHttp)`.
- * @binding
- * @section Working with Findings
- * @example List Finding Ids
+ * ### Working with Findings
+ * **Example:** List Finding Ids
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listFindings = yield* AWS.Macie2.ListFindings();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { findingIds } = yield* listFindings();
  * ```
+ *
+ * @binding
  */
 export interface ListFindings extends Binding.Service<
   ListFindings,

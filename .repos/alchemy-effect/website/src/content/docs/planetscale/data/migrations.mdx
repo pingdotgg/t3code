@@ -5,7 +5,7 @@ description: Apply SQL migrations and seed data to PlanetScale databases and bra
 
 Every PlanetScale database and branch resource — `PostgresDatabase`,
 `PostgresBranch`, `MySQLDatabase`, `MySQLBranch` — accepts a
-`migrationsDir`: a folder of `.sql` files applied in order as part of
+a `migrations` prop: a folder of `.sql` files applied in order as part of
 every deploy. No separate migration step, no long-lived migration
 user — alchemy mints a short-lived credential for the run and deletes
 it afterwards.
@@ -17,7 +17,7 @@ On a database, migrations run against the default branch:
 ```typescript
 const db = yield* Planetscale.PostgresDatabase("MyDb", {
   clusterSize: "PS_10",
-  migrationsDir: "./migrations/postgres",
+  migrations: "./migrations/postgres",
 });
 ```
 
@@ -28,7 +28,7 @@ migrates it independently:
 ```typescript
 const branch = yield* Planetscale.PostgresBranch("app-branch", {
   database: db,
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 ```
 
@@ -45,13 +45,13 @@ const schema = yield* Drizzle.Schema("app-schema", {
 
 const branch = yield* Planetscale.PostgresBranch("app-branch", {
   database,
-  migrationsDir: schema.out,
+  migrations: schema,
 });
 ```
 
 ## Ordering and hashing
 
-Files are discovered recursively under `migrationsDir` and sorted by
+Files are discovered recursively under the migrations directory and sorted by
 their numeric prefix (`0001_init.sql`, `0002_users.sql`, … — Drizzle's
 timestamp prefixes work too), falling back to name order for files
 without one. Each file's contents are SHA-256 hashed and the hashes
@@ -62,26 +62,32 @@ migration step is skipped.
 
 ## The tracking table
 
-Applied migrations are recorded in an `__alchemy_migrations` table
-(created automatically), one row per file:
+Applied migrations are recorded in Alchemy's `__alchemy_migrations`
+table (created automatically), one row per file:
 
 ```sql
 CREATE TABLE IF NOT EXISTS "__alchemy_migrations" (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id SERIAL PRIMARY KEY,
+  hash text NOT NULL,
+  created_at bigint,
+  name text,
+  applied_at timestamp with time zone DEFAULT now()
 );
 ```
 
-(The MySQL flavor is the same shape with `varchar` columns.) On each
+(The MySQL flavor is the same shape with MySQL types.) On each
 deploy, files whose names already appear in the table are skipped.
-Use `migrationsTable` to point at a different table:
+
+A database previously migrated with drizzle-kit or Prisma is
+[adopted automatically](/sql/effect-sql/migrations#adopting-an-existing-database):
+its old tracking table's history is copied in once and the old table
+is frozen. Use `migrations: { dir, table }` to put the bookkeeping in
+a differently-named table:
 
 ```typescript
 const db = yield* Planetscale.PostgresDatabase("MyDb", {
   clusterSize: "PS_10",
-  migrationsDir: "./migrations/postgres",
-  migrationsTable: "my_migrations",
+  migrations: { dir: "./migrations/postgres", table: "my_migrations" },
 });
 ```
 
@@ -115,7 +121,7 @@ migrations. Paths are resolved relative to the working directory:
 ```typescript
 const db = yield* Planetscale.PostgresDatabase("MyDb", {
   clusterSize: "PS_10",
-  migrationsDir: "./migrations/postgres",
+  migrations: "./migrations/postgres",
   importFiles: ["./seed/postgres.sql"],
 });
 ```

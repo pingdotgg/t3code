@@ -75,7 +75,7 @@ export const layer = (config: {
  * @see {@link layer} for creating a `Resource` layer from explicit metadata
  * @see {@link layerFromEnv} for merging attributes with OpenTelemetry environment variables
  *
- * @category configuration
+ * @category converting
  * @since 4.0.0
  */
 export const configToAttributes = (options: {
@@ -111,8 +111,8 @@ export const layerFromEnv = (
   Layer.effect(
     Resource,
     Effect.gen(function*() {
-      const serviceName = yield* Config.option(Config.string("OTEL_SERVICE_NAME"))
-      const attributes = yield* Config.string("OTEL_RESOURCE_ATTRIBUTES").pipe(
+      const serviceName = yield* Config.option(Config.String("OTEL_SERVICE_NAME"))
+      const attributes = yield* Config.String("OTEL_RESOURCE_ATTRIBUTES").pipe(
         Config.withDefault(""),
         Config.map((s) => {
           const attrs = s.split(",")

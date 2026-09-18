@@ -24,9 +24,8 @@ export interface UpdateDomainNameserversRequest
  * Provide the implementation with
  * `Effect.provide(AWS.Route53Domains.UpdateDomainNameserversHttp)`.
  *
- * @binding
- * @section Updating Nameservers
- * @example Point a Domain at a Hosted Zone's Delegation Set
+ * ### Updating Nameservers
+ * **Example:** Point a Domain at a Hosted Zone's Delegation Set
  * ```typescript
  * // init
  * const updateDomainNameservers =
@@ -42,6 +41,8 @@ export interface UpdateDomainNameserversRequest
  * });
  * // poll result.OperationId with GetOperationDetail until SUCCESSFUL
  * ```
+ *
+ * @binding
  */
 export interface UpdateDomainNameservers extends Binding.Service<
   UpdateDomainNameservers,

@@ -27,12 +27,12 @@ export interface WorkerLoaderWorkerCode {
   streamingTails?: Fetcher[];
 }
 
-export type WorkerEntrypoint<Shape = unknown> = Fetcher & {
+export type DynamicWorkerEntrypoint<Shape = unknown> = Fetcher & {
   [K in keyof Shape]: Shape[K];
 };
 
 export interface WorkerStub extends Fetcher {
-  getEntrypoint<Shape = unknown>(name?: string): WorkerEntrypoint<Shape>;
+  getEntrypoint<Shape = unknown>(name?: string): DynamicWorkerEntrypoint<Shape>;
 }
 
 export type WorkerLoader = {
@@ -99,16 +99,13 @@ export interface WorkerLoaderClass extends Context.Service<
  * untrusted plugins, or dynamically generating Workers from
  * templates.
  *
- * @resource
- * @product Workers
- * @category Workers & Compute
  *
- * @section Creating a Loader
+ * ### Creating a Loader
  * Yield `Cloudflare.WorkerLoader(name)` in your Worker's init
  * phase to register the binding and get back a runtime handle. The
  * string argument becomes the binding name on the deployed Worker.
  *
- * @example Registering a loader (effect-native Worker)
+ * **Example:** Registering a loader (effect-native Worker)
  * ```typescript
  * import * as Cloudflare from "alchemy/Cloudflare";
  * import * as Effect from "effect/Effect";
@@ -130,7 +127,7 @@ export interface WorkerLoaderClass extends Context.Service<
  *
  *         // Spin up an isolated, sandboxed Worker from inline source.
  *         const worker = yield* loader.load({
- *           compatibilityDate: "2026-01-28",
+ *           compatibilityDate: "2026-08-31",
  *           mainModule: "worker.js",
  *           modules: {
  *             "worker.js": `export default {
@@ -156,7 +153,7 @@ export interface WorkerLoaderClass extends Context.Service<
  * ) {}
  * ```
  *
- * @example Declaring on env (async Worker)
+ * **Example:** Declaring on env (async Worker)
  * ```typescript
  * export const Worker = Cloudflare.Worker("Worker", {
  *   main: "./src/worker.ts",
@@ -169,7 +166,7 @@ export interface WorkerLoaderClass extends Context.Service<
  * export default {
  *   async fetch(req: Request, env: WorkerEnv) {
  *     const worker = env.LOADER.load({
- *       compatibilityDate: "2026-01-28",
+ *       compatibilityDate: "2026-08-31",
  *       mainModule: "worker.js",
  *       modules: { "worker.js": "export default { fetch: () => new Response('ok') }" },
  *     });
@@ -178,16 +175,16 @@ export interface WorkerLoaderClass extends Context.Service<
  * };
  * ```
  *
- * @section Loading a Worker
+ * ### Loading a Worker
  * Call `loader.load()` with a compatibility date, a main module
  * name, and a map of module names to source code strings. The
  * returned instance exposes `.fetch()` for HTTP and RPC methods
  * for named entrypoints.
  *
- * @example Loading and calling a dynamic Worker
+ * **Example:** Loading and calling a dynamic Worker
  * ```typescript
  * const worker = loader.load({
- *   compatibilityDate: "2026-01-28",
+ *   compatibilityDate: "2026-08-31",
  *   mainModule: "worker.js",
  *   modules: {
  *     "worker.js": `export default {
@@ -203,15 +200,41 @@ export interface WorkerLoaderClass extends Context.Service<
  * );
  * ```
  *
- * @section Sandboxing
+ * ### Caching a Worker
+ * Call `loader.get(id, getCode)` to address a dynamic Worker by
+ * name. If an isolate with that id is already warm it is reused;
+ * `getCode` runs only on a cold start. The returned stub is a
+ * `WorkerStub`: call `.fetch()` on it directly, or
+ * `.getEntrypoint()` for a named export.
+ *
+ * **Example:** Loading a cached dynamic Worker
+ * ```typescript
+ * const worker = yield* loader.get("eval", () => ({
+ *   compatibilityDate: "2026-08-31",
+ *   mainModule: "worker.js",
+ *   modules: {
+ *     "worker.js": `export default {
+ *       async fetch() {
+ *         return new Response("cached");
+ *       }
+ *     }`,
+ *   },
+ * }));
+ *
+ * const response = yield* worker.fetch(
+ *   HttpClientRequest.get("https://worker/"),
+ * );
+ * ```
+ *
+ * ### Sandboxing
  * Set `globalOutbound` to `null` to block all outbound network
  * access from the dynamic Worker, or pass an RPC stub to intercept
  * and proxy outbound requests.
  *
- * @example Blocking outbound access
+ * **Example:** Blocking outbound access
  * ```typescript
  * const worker = loader.load({
- *   compatibilityDate: "2026-01-28",
+ *   compatibilityDate: "2026-08-31",
  *   mainModule: "worker.js",
  *   modules: {
  *     "worker.js": `export default {
@@ -225,17 +248,21 @@ export interface WorkerLoaderClass extends Context.Service<
  * });
  * ```
  *
- * @section Named Entrypoints
+ * ### Named Entrypoints
  * If the dynamic Worker exports named entrypoints, use
  * `.getEntrypoint(name)` to get a typed stub for calling its
  * methods.
  *
- * @example Calling a named entrypoint
+ * **Example:** Calling a named entrypoint
  * ```typescript
  * const worker = loader.load({ ... });
  * const api = worker.getEntrypoint<{ greet: (name: string) => Effect.Effect<string> }>("api");
  * const greeting = yield* api.greet("world");
  * ```
+ *
+ * @resource
+ * @product Workers
+ * @category Workers & Compute
  */
 export const WorkerLoader: WorkerLoaderClass = Object.assign(
   taggedFunction(
@@ -272,13 +299,19 @@ export const WorkerLoader: WorkerLoaderClass = Object.assign(
               Effect.sync(() =>
                 wrapWorkerStub(loader.load(unwrapWorkerLoader(options))),
               ),
-            get: <Req = never, Err = never>(
-              name: string,
-              getCode: () => Effect.Effect<WorkerLoaderWorkerCode, Err, Req>,
+            get: <Err = never, Req = never>(
+              name: string | null,
+              getCode: () =>
+                | WorkerLoaderWorkerCode
+                | Effect.Effect<WorkerLoaderWorkerCode, Err, Req>,
             ) =>
               Effect.flatMap(Effect.context<Req>(), (context) =>
                 Effect.sync(() =>
-                  wrapWorkerEntrypoint(
+                  // Native get() returns a WorkerStub, not a Fetcher. The
+                  // stub's fetcher is getEntrypoint(); wrapping the stub
+                  // itself as a Fetcher makes worker.fetch throw
+                  // "fetcher.fetch is not a function" (#1382).
+                  wrapWorkerStub(
                     loader.get(name, () =>
                       asEffect(getCode()).pipe(
                         Effect.provide(context),
@@ -320,7 +353,9 @@ const unwrapWorkerLoader = (loader: WorkerLoaderWorkerCode) => ({
   streamingTails: loader.streamingTails?.map((t) => t.raw),
 });
 
-const wrapWorkerEntrypoint = <Shape>(raw: any): WorkerEntrypoint<Shape> =>
+const wrapDynamicWorkerEntrypoint = <Shape>(
+  raw: any,
+): DynamicWorkerEntrypoint<Shape> =>
   Object.assign(makeRpcStub<any>(raw), fromCloudflareFetcher(raw));
 
 const wrapWorkerStub = (raw: any): WorkerStub => {
@@ -328,7 +363,7 @@ const wrapWorkerStub = (raw: any): WorkerStub => {
   return {
     ...defaultEntrypoint,
     getEntrypoint: <Shape>(name?: string) =>
-      wrapWorkerEntrypoint<Shape>(
+      wrapDynamicWorkerEntrypoint<Shape>(
         name ? raw.getEntrypoint(name) : raw.getEntrypoint(),
       ),
   };

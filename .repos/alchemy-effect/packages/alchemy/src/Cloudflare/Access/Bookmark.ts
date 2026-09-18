@@ -64,23 +64,20 @@ export type Bookmark = Resource<
 /**
  * A Cloudflare Zero Trust Access bookmark application — an unprotected link
  * shown in the App Launcher.
- * @resource
- * @product Access
- * @category Cloudflare One (Zero Trust)
  * @deprecated **Legacy resource.** Cloudflare has deprecated the dedicated
  * bookmarks API in favor of Access applications with `type: "bookmark"` —
  * prefer {@link Application} for new configurations. This resource is
  * provided for managing pre-existing bookmark records.
  *
- * @section Creating a Bookmark
- * @example Basic bookmark
+ * ### Creating a Bookmark
+ * **Example:** Basic bookmark
  * ```typescript
  * const bookmark = yield* Cloudflare.Access.Bookmark("Wiki", {
  *   domain: "wiki.example.com",
  * });
  * ```
  *
- * @example Bookmark with a logo, hidden from the App Launcher
+ * **Example:** Bookmark with a logo, hidden from the App Launcher
  * ```typescript
  * const bookmark = yield* Cloudflare.Access.Bookmark("Wiki", {
  *   name: "internal-wiki",
@@ -90,14 +87,18 @@ export type Bookmark = Resource<
  * });
  * ```
  *
- * @section Preferred Alternative
- * @example Bookmark-type Access application (non-legacy)
+ * ### Preferred Alternative
+ * **Example:** Bookmark-type Access application (non-legacy)
  * ```typescript
  * const app = yield* Cloudflare.Access.Application("Wiki", {
  *   type: "bookmark",
  *   domain: "wiki.example.com",
  * });
  * ```
+ *
+ * @resource
+ * @product Access
+ * @category Cloudflare One (Zero Trust)
  */
 export const Bookmark = Resource<Bookmark>("Cloudflare.Access.Bookmark");
 
@@ -153,12 +154,10 @@ export const BookmarkProvider = () =>
           .createAccessBookmark({
             accountId: acct,
             bookmarkId,
-            body: {
-              name,
-              domain: news.domain,
-              logo_url: news.logoUrl,
-              app_launcher_visible: desiredVisible,
-            },
+            name,
+            domain: news.domain,
+            logoUrl: news.logoUrl,
+            appLauncherVisible: desiredVisible,
           })
           .pipe(
             Effect.catch((err) =>
@@ -187,12 +186,10 @@ export const BookmarkProvider = () =>
         const updated = yield* zeroTrust.updateAccessBookmark({
           accountId: acct,
           bookmarkId: observed.id,
-          body: {
-            name,
-            domain: news.domain,
-            logo_url: news.logoUrl,
-            app_launcher_visible: desiredVisible,
-          },
+          name,
+          domain: news.domain,
+          logoUrl: news.logoUrl,
+          appLauncherVisible: desiredVisible,
         });
         observed = {
           id: updated.id ?? observed.id,
@@ -274,7 +271,7 @@ const toAttrs = (observed: ObservedBookmark, accountId: string) => ({
 });
 
 type ObservedBookmark = {
-  id?: string | null;
+  id?: string;
   name?: string | null;
   domain?: string | null;
   logoUrl?: string | null;

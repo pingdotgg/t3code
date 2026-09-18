@@ -3,10 +3,18 @@ import * as Effect from "effect/Effect";
 import type * as Exit from "effect/Exit";
 import * as ExitRuntime from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Tracer from "effect/Tracer";
-import { OtlpResource, OtlpTracer } from "effect/unstable/observability";
+import { OtlpResource, OtlpTracer, OtlpSerialization } from "effect/unstable/observability";
 
 import { RotatingFileSink } from "./logging.ts";
+
+export const OtlpProtocol = Schema.Literals(["http/json", "http/protobuf"]);
+export type OtlpProtocol = typeof OtlpProtocol.Type;
+export const otlpSerializationLayer = (protocol: OtlpProtocol) =>
+  protocol === "http/protobuf" ? OtlpSerialization.layerProtobuf : OtlpSerialization.layerJson;
 
 const FLUSH_BUFFER_THRESHOLD = 256;
 const textEncoder = new TextEncoder();
@@ -683,3 +691,51 @@ function parseBigInt(input: string): bigint {
     return 0n;
   }
 }
+
+/**
+ * Parses the `OTEL_EXPORTER_OTLP_HEADERS` wire format used by
+ * `T3CODE_OTLP_HEADERS`: W3C Baggage `key=value` pairs joined by commas, with
+ * percent-encoded values. Each pair splits at its first `=` so an encoded or
+ * literal `=` inside a value survives, and whitespace around the separators is
+ * ignored.
+ */
+export const OtlpHeadersFromString = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.Record(Schema.String, Schema.String),
+    SchemaTransformation.transformEffect({
+      decode: (input) => {
+        const headers: Record<string, string> = {};
+        for (const pair of input.split(",")) {
+          if (pair.trim() === "") {
+            continue;
+          }
+          const separator = pair.indexOf("=");
+          const key = separator === -1 ? "" : pair.slice(0, separator).trim();
+          if (key === "") {
+            return Effect.fail(
+              new SchemaIssue.InvalidValue({
+                message: `Expected key=value but received ${JSON.stringify(pair.trim())}.`,
+              }),
+            );
+          }
+          try {
+            headers[key] = decodeURIComponent(pair.slice(separator + 1).trim());
+          } catch {
+            return Effect.fail(
+              new SchemaIssue.InvalidValue({
+                message: `Header ${JSON.stringify(key)} has a malformed percent-encoded value.`,
+              }),
+            );
+          }
+        }
+        return Effect.succeed(headers);
+      },
+      encode: (headers) =>
+        Effect.succeed(
+          Object.entries(headers)
+            .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+            .join(","),
+        ),
+    }),
+  ),
+);

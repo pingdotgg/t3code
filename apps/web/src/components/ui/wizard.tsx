@@ -1,19 +1,75 @@
 import { CheckIcon } from "lucide-react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { AnimatedHeight } from "../AnimatedHeight";
+import { DialogPopup, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./dialog";
+
+/** Compose a wizard from its header, panel, and footer; flow logic stays with the caller. */
+export function WizardPopup({
+  children,
+  ...props
+}: Omit<ComponentProps<typeof DialogPopup>, "className" | "style">) {
+  return (
+    <DialogPopup {...props} className="max-w-xl overflow-x-hidden overflow-y-auto">
+      <div className="flex min-h-0 flex-col">{children}</div>
+    </DialogPopup>
+  );
+}
+
+export function WizardHeader({
+  title,
+  description,
+  identity,
+  children,
+}: {
+  readonly title: ReactNode;
+  readonly description?: ReactNode;
+  /** Optional branding shown in place of the visible title. The title remains accessible. */
+  readonly identity?: ReactNode;
+  readonly children?: ReactNode;
+}) {
+  return (
+    <DialogHeader>
+      <DialogTitle className={identity ? "sr-only" : undefined}>{title}</DialogTitle>
+      {identity}
+      {description ? <DialogDescription>{description}</DialogDescription> : null}
+      {children}
+    </DialogHeader>
+  );
+}
+
+export function WizardFooter({
+  children,
+  leading,
+}: {
+  readonly children: ReactNode;
+  readonly leading?: ReactNode;
+}) {
+  return (
+    <DialogFooter variant="bare" className={leading ? "sm:justify-between" : undefined}>
+      {leading}
+      {leading ? (
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">{children}</div>
+      ) : (
+        children
+      )}
+    </DialogFooter>
+  );
+}
 
 export function WizardSteps({
   steps,
   currentStep,
   summaries,
+  showSummaries = false,
   onStepChange,
   isStepDisabled,
 }: {
   readonly steps: readonly string[];
   readonly currentStep: number;
   readonly summaries?: readonly (string | null)[];
+  readonly showSummaries?: boolean;
   readonly isStepDisabled?: (step: number) => boolean;
   readonly onStepChange?: (step: number) => void;
 }) {
@@ -61,6 +117,9 @@ export function WizardSteps({
               )}
             >
               {step}
+              {showSummaries && index < currentStep && summaries?.[index]
+                ? `: ${summaries[index]}`
+                : null}
             </span>
           </Step>
         </li>
@@ -70,19 +129,16 @@ export function WizardSteps({
 }
 
 export function WizardPanel({
-  className,
   children,
   holdHeight = false,
-  ...props
-}: ComponentProps<"div"> & { readonly holdHeight?: boolean }) {
+}: {
+  readonly children: ReactNode;
+  readonly holdHeight?: boolean;
+}) {
   return (
     <div
       data-slot="dialog-panel"
-      className={cn(
-        "space-y-4 bg-zinc-25/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5",
-        className,
-      )}
-      {...props}
+      className="min-w-0 space-y-4 bg-zinc-25/80 px-6 py-5 ring-1 ring-black/5 dark:bg-white/2 dark:ring-white/5"
     >
       <AnimatedHeight holdHeight={holdHeight}>{children}</AnimatedHeight>
     </div>

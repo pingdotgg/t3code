@@ -107,7 +107,12 @@ describe.skipIf(!!process.env.FAST)(
           // Both parent and metadata index are gone.
           const after = yield* listMetadataIndexes(accountId, index.indexName);
           expect(after.length).toBe(0);
-        }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+        }).pipe(
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
+          ),
+          logLevel,
+        ),
       // The single metadata-index materialization can take up to the ~240s
       // poll ceiling under concurrent load — give headroom above the cap so a
       // healthy-but-slow run never races the vitest timeout.
@@ -163,7 +168,9 @@ describe.skipIf(!!process.env.FAST)(
           // only, so a body that throws before the trailing `destroy()` would
           // otherwise leak the parent + metadata indexes with no next-run
           // cleanup.
-          Effect.ensuring(stack.destroy().pipe(Effect.ignore)),
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
+          ),
           logLevel,
         ),
       // TWO sequential metadata-index materializations on one parent, capped at
@@ -246,7 +253,12 @@ describe.skipIf(!!process.env.FAST)(
           });
 
           yield* stack.destroy();
-        }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+        }).pipe(
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
+          ),
+          logLevel,
+        ),
       // Two sequential metadata-index materializations plus a parent
       // replacement (delete old + create new) and a bounded gone-wait — give
       // this genuinely slow create+replace+poll lifecycle real headroom above
@@ -303,7 +315,12 @@ describe.skipIf(!!process.env.FAST)(
           expect(entry?.accountId).toBeDefined();
 
           yield* stack.destroy();
-        }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+        }).pipe(
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
+          ),
+          logLevel,
+        ),
       // The single metadata-index materialization can take up to the ~240s
       // poll ceiling under concurrent load — give headroom above the cap.
       { timeout: 300_000 },
@@ -354,7 +371,12 @@ describe.skipIf(!!process.env.FAST)(
           // The metadata index provider's delete tolerates 404/410 from the
           // missing parent, so `destroy` succeeds without erroring.
           yield* stack.destroy();
-        }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+        }).pipe(
+          Effect.ensuring(
+            stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore),
+          ),
+          logLevel,
+        ),
       // One metadata-index materialization (capped at ~240s under concurrent
       // load) plus an out-of-band delete + gone-wait — keep headroom above the
       // poll ceiling so a healthy-but-slow run never races the vitest timeout.

@@ -31,9 +31,8 @@ export interface AccountPasswordPolicy extends Resource<
  *
  * `AccountPasswordPolicy` manages the account-wide password requirements that
  * apply to IAM users with console passwords.
- * @resource
- * @section Managing Password Rules
- * @example Require Strong Passwords
+ * ### Managing Password Rules
+ * **Example:** Require Strong Passwords
  * ```typescript
  * const policy = yield* AccountPasswordPolicy("PasswordPolicy", {
  *   MinimumPasswordLength: 16,
@@ -44,6 +43,8 @@ export interface AccountPasswordPolicy extends Resource<
  *   AllowUsersToChangePassword: true,
  * });
  * ```
+ *
+ * @resource
  */
 export const AccountPasswordPolicy = Resource<AccountPasswordPolicy>(
   "AWS.IAM.AccountPasswordPolicy",

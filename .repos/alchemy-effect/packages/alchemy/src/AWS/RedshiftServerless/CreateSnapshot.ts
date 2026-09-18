@@ -12,9 +12,8 @@ import type { Namespace } from "./Namespace.ts";
  * pre-migration backup function or a scheduled snapshot-rotation job. The
  * namespace name is injected from the binding. Provide the implementation with
  * `Effect.provide(AWS.RedshiftServerless.CreateSnapshotHttp)`.
- * @binding
- * @section Managing Snapshots
- * @example Take a Manual Snapshot
+ * ### Managing Snapshots
+ * **Example:** Take a Manual Snapshot
  * ```typescript
  * // init — resolve the runtime client
  * const createSnapshot = yield* AWS.RedshiftServerless.CreateSnapshot(namespace);
@@ -25,6 +24,8 @@ import type { Namespace } from "./Namespace.ts";
  *   retentionPeriod: 7,
  * });
  * ```
+ *
+ * @binding
  */
 export interface CreateSnapshot extends Binding.Service<
   CreateSnapshot,

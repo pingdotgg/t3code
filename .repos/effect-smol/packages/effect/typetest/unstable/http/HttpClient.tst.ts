@@ -5,6 +5,9 @@ import { describe, expect, it } from "tstyche"
 
 declare const client: HttpClient.HttpClient
 declare const limiter: RateLimiter.RateLimiter
+declare const failingClient: HttpClient.HttpClient.With<"error">
+declare const recoverNumber: (error: "error") => Effect.Effect<number>
+declare const recoverResponse: (error: "error") => Effect.Effect<HttpClientResponse.HttpClientResponse>
 
 describe("HttpClient", () => {
   describe("urlParams", () => {
@@ -122,7 +125,12 @@ describe("HttpClient", () => {
         limiter,
         key: "test",
         limit: 1,
-        window: "1 minute"
+        window: "1 minute",
+        times: 2,
+        responseHeaders: {
+          limit: "x-vendor-limit",
+          retryAfter: "x-vendor-retry-after"
+        }
       } as const
 
       const dataLast = client.pipe(HttpClient.withRateLimiter(options))
@@ -138,6 +146,16 @@ describe("HttpClient", () => {
           HttpClientError.HttpClientError | RateLimiter.RateLimiterError
         >
       >()
+    })
+  })
+
+  describe("catch", () => {
+    it("should reject non-response data-first recoveries", () => {
+      expect(HttpClient.catch).type.not.toBeCallableWith(failingClient, recoverNumber)
+    })
+
+    it("should accept response data-first recoveries", () => {
+      expect(HttpClient.catch).type.toBeCallableWith(failingClient, recoverResponse)
     })
   })
 })

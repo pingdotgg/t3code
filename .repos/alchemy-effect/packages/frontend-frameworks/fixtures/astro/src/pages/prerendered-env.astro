@@ -1,0 +1,26 @@
+---
+// Prerendered at build time INSIDE workerd (`prerenderEnvironment:
+// "workerd"`, the default). The top-level `cloudflare:workers` import is
+// impossible under node prerendering — this page building at all proves the
+// prerender ran in the workerd prerenderer, and the rendered binding value
+// proves the worker bindings were attached to it.
+import { env } from "cloudflare:workers";
+
+export const prerender = true;
+
+const value = (env as Record<string, unknown>).FIXTURE_VALUE ?? null;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prerendered in workerd — Astro Fixture</title>
+  </head>
+  <body>
+    <h1>Prerendered in workerd</h1>
+    <p id="mode">prerendered-workerd</p>
+    <p id="binding">{value}</p>
+    <p><a href="/">home</a></p>
+  </body>
+</html>

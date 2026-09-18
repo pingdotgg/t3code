@@ -19,6 +19,26 @@ describe("Scheduler", () => {
     assert.deepStrictEqual(exit, Exit.succeed(1))
   })
 
+  it("runSyncExit does not schedule timers after yielding", () => {
+    const setImmediate = vi.spyOn(globalThis, "setImmediate").mockImplementation(() => {
+      throw new Error("setImmediate is not supported")
+    })
+    const setTimeout = vi.spyOn(globalThis, "setTimeout").mockImplementation(() => {
+      throw new Error("setTimeout is not supported")
+    })
+
+    try {
+      const exit = Effect.runSyncExit(Effect.as(Effect.yieldNow, 1))
+
+      assert.deepStrictEqual(exit, Exit.succeed(1))
+      assert.strictEqual(setImmediate.mock.calls.length, 0)
+      assert.strictEqual(setTimeout.mock.calls.length, 0)
+    } finally {
+      setImmediate.mockRestore()
+      setTimeout.mockRestore()
+    }
+  })
+
   it.effect("MixedScheduler orders by priority (sync)", () =>
     Effect.sync(() => {
       const scheduler = new Scheduler.MixedScheduler("sync").makeDispatcher()
@@ -83,4 +103,21 @@ describe("Scheduler", () => {
       )
       assert.strictEqual(calls, 0)
     }))
+
+  it("MixedScheduler falls back to a microtask when timers cannot be set", async () => {
+    // Cloudflare Workers throw for timers set in global scope
+    const setImmediate = vi.spyOn(globalThis, "setImmediate").mockImplementation(() => {
+      throw new Error("Disallowed operation called within global scope")
+    })
+    try {
+      const count = Scheduler.MaxOpsBeforeYield.defaultValue() * 3
+      const result = await Effect.runPromise(
+        Effect.forEach(Array.from({ length: count }, (_, i) => i), (i) => Effect.succeed(i))
+      )
+      assert.strictEqual(result.length, count)
+      assert.isAbove(setImmediate.mock.calls.length, 0)
+    } finally {
+      setImmediate.mockRestore()
+    }
+  })
 })

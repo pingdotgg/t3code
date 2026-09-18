@@ -1,0 +1,316 @@
+---
+title: TanStack Start
+description: Deploy TanStack Start (React or Solid) to AWS with AWS.Website.TanStackStart — SSR on a streaming Lambda Function URL, client assets on S3 + CloudFront, and TanStack Start's own Vite dev server under alchemy dev.
+sidebar:
+  order: 8
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`AWS.Website.TanStackStart` deploys a
+[TanStack Start](https://tanstack.com/start) app to AWS. TanStack Start
+is pure Vite, so Alchemy runs your project's own `vite build`: the SSR
+server runs on a Lambda Function URL with response streaming, and client
+assets are served from a private S3 bucket through CloudFront. A
+CloudFront Function routes each request at the edge — uploaded files go
+to S3, everything else streams from the Lambda.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its
+`/tanstack-start` and `/tanstack-start/aws` exports from your project at
+deploy time. It is only used at build time, so a dev dependency is
+enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Vite
+
+Your `vite.config.ts` stays exactly what TanStack Start's scaffold gives
+you — no adapter, no deployment preset:
+
+```typescript
+// vite.config.ts
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [tanstackStart(), viteReact()],
+});
+```
+
+Alchemy drives that config's `builder.buildApp()` and forces the SSR
+bundle to be self-contained, then wraps its fetch handler as a streaming
+Lambda handler.
+
+:::caution[Remove @cloudflare/vite-plugin if present]
+The TanStack CLI adds `@cloudflare/vite-plugin` when scaffolding a new
+app. It builds for workerd, not Node, so an AWS deploy needs it gone:
+
+```diff lang="typescript"
+// vite.config.ts
+-import { cloudflare } from "@cloudflare/vite-plugin";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+-  plugins: [
+-    cloudflare({ viteEnvironment: { name: "ssr" } }),
+-    tanstackStart(),
+-    viteReact(),
+-  ],
++  plugins: [tanstackStart(), viteReact()],
+});
+```
+
+:::
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as AWS from "alchemy/AWS";
+
+export const Website = AWS.Website.TanStackStart("Website");
+```
+
+`rootDir` is the project root — the directory holding `package.json`
+and `vite.config.*`. It defaults to `"."`, so set it only when the app
+does not sit next to `alchemy.run.ts`:
+
+```typescript
+export const Website = AWS.Website.TanStackStart("Website", {
+  rootDir: "./app",
+});
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyTanStackSite",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+Requests matching a built client asset are served straight from S3;
+everything else — SSR routes, server routes, server functions — falls
+through to the Lambda.
+
+## Add environment variables
+
+The server function's environment is configured under `env`:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.TanStackStart("Website", {
++  memorySize: 2048,
++  env: {
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+`env` values are set on the Lambda on deploy and injected into
+the dev server's process environment under `alchemy dev`, so server code
+reads the same values in both modes. Sibling props tune the
+Lambda itself (`memorySize`, `timeout`, `architecture`, `runtime`).
+
+An output from another resource only exists once that resource is
+yielded, so declare the site inside the Stack generator instead:
+
+```typescript
+// alchemy.run.ts
+Effect.gen(function* () {
+  const api = yield* Api;
+
+  const site = yield* AWS.Website.TanStackStart("Website", {
+    env: { API_BASE: api.url },
+  });
+
+  return { url: site.url };
+});
+```
+
+## Read the environment in a server function
+
+The TanStack Start server runs in a plain Node Lambda, so server
+functions read the environment from `process.env`:
+
+```typescript
+// src/routes/index.tsx
+import { createServerFn } from "@tanstack/react-start";
+
+const getApiBase = createServerFn({ method: "GET" }).handler(() => ({
+  apiBase: process.env.API_BASE ?? "unset",
+}));
+```
+
+Values prefixed `VITE_` are inlined into the client bundle at build time
+instead, as `import.meta.env.VITE_*` — set those in the shell that runs
+`alchemy deploy`, not in `env`.
+
+## Read the environment in a server route
+
+Server routes run on the same Lambda and read `process.env` the same
+way:
+
+```typescript
+// src/routes/api.hello.ts
+import { createFileRoute } from "@tanstack/react-router";
+
+export const Route = createFileRoute("/api/hello")({
+  server: {
+    handlers: {
+      GET: () => new Response(process.env.API_BASE ?? "unset"),
+    },
+  },
+});
+```
+
+## Call AWS services from server code
+
+The composite creates and owns the server Lambda's execution role, and
+exposes no prop to add permissions to it. Server code that needs to
+reach AWS goes behind its own Lambda, where capabilities are bound
+explicitly:
+
+```typescript
+// alchemy.run.ts
+Effect.gen(function* () {
+  const api = yield* Api;
+
+  const site = yield* AWS.Website.TanStackStart("Website", {
+    env: { API_BASE: api.url },
+  });
+
+  return { url: site.url };
+});
+```
+
+A server function then calls that API over HTTP with the URL it was
+handed:
+
+```typescript
+// src/routes/index.tsx
+import { createServerFn } from "@tanstack/react-start";
+
+const readObject = createServerFn({ method: "GET" }).handler(async () => {
+  const res = await fetch(`${process.env.API_BASE}/hello`);
+  return { body: await res.text() };
+});
+```
+
+See [Effect HTTP API](/aws/apis/effect-http-api) for building that
+Lambda and binding it to the resources it reads.
+
+## Build configuration
+
+The build runs through your project's own `vite.config.ts` — the
+`tanstackStart()` plugin and everything else in it apply as-is. Keep
+vite's default `build.outDir` (`dist`); the integration reads the
+server and client output from `dist/server` and `dist/client`.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs TanStack Start's own Vite dev server (native HMR)
+instead of deploying anything; `site.url` is the dev server's
+`http://localhost:<port>` address and no AWS resources are created. Wrap
+the site in `Alchemy.remote()` to deploy the real infrastructure even
+during dev.
+
+## Solid variant
+
+TanStack Start's Solid flavor works the same way — swap the plugins in
+`vite.config.ts` and keep the identical `alchemy.run.ts`:
+
+```typescript
+// vite.config.ts
+import { tanstackStart } from "@tanstack/solid-start/plugin/vite";
+import { defineConfig } from "vite";
+import viteSolid from "vite-plugin-solid";
+
+export default defineConfig({
+  plugins: [tanstackStart(), viteSolid({ ssr: true })],
+});
+```
+
+`@tanstack/solid-start` exposes the same `tanstackStart()` plugin entry
+point and the same `client`/`ssr` build environments, so the deploy is
+identical.
+
+## Custom domain
+
+```typescript
+// alchemy.run.ts
+export const Website = AWS.Website.TanStackStart("Website", {
+  domain: { name: "app.example.com" },
+});
+```
+
+The certificate is created in `us-east-1` (required by CloudFront), DNS
+validation records and the alias record are managed through Route 53.
+The hosted zone is inferred from the hostname — pass `hostedZoneId` to
+pin it when several zones could match.
+
+## Share a distribution with Router
+
+CloudFront distributions take minutes to create. To serve several sites
+(or a site plus an API) from one distribution, attach the site to an
+[`AWS.Website.Router`](/aws/frontend/static-site#compose-sites-with-a-router):
+
+The site takes the Router's outputs, so both are yielded inside the
+Stack generator:
+
+```typescript
+// alchemy.run.ts
+Effect.gen(function* () {
+  const router = yield* AWS.Website.Router("FrontDoor", {
+    domain: { name: "example.com" },
+  });
+
+  const site = yield* AWS.Website.TanStackStart("Website", {
+    domain: { router },
+  });
+
+  return { url: site.url };
+});
+```

@@ -15,9 +15,8 @@ export type GetSessionInput = Omit<emr.GetSessionRequest, "applicationId">;
  * Reads an interactive session's detail on the bound {@link Application} —
  * state, execution role, idle time, resource utilization. Provide the
  * implementation with `Effect.provide(AWS.EMRServerless.GetSessionHttp)`.
- * @binding
- * @section Interactive Sessions
- * @example Poll A Session
+ * ### Interactive Sessions
+ * **Example:** Poll A Session
  * ```typescript
  * // init
  * const getSession = yield* AWS.EMRServerless.GetSession(app);
@@ -26,6 +25,8 @@ export type GetSessionInput = Omit<emr.GetSessionRequest, "applicationId">;
  * const { session } = yield* getSession({ sessionId });
  * yield* Effect.log(`${session.sessionId} is ${session.state}`);
  * ```
+ *
+ * @binding
  */
 export interface GetSession extends Binding.Service<
   GetSession,

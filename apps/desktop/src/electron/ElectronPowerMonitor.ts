@@ -75,6 +75,7 @@ const onSpeedLimitChange: ElectronPowerMonitor["Service"]["onSpeedLimitChange"] 
   ).pipe(Effect.asVoid);
 };
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronPowerMonitor.of({
   isOnBatteryPower: Effect.sync(() => Electron.powerMonitor.isOnBatteryPower()),
   getSystemIdleTime: Effect.sync(() => Electron.powerMonitor.getSystemIdleTime()),

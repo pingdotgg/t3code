@@ -30,7 +30,7 @@ export class AthenaTestFunction extends Lambda.Function<Lambda.Function>()(
 export default AthenaTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // startQueryExecution → poll getQueryExecution → getQueryResults fans out
     // several SDK calls; AWS's 3s default would intermittently time out.
     timeout: Duration.seconds(60),
@@ -97,7 +97,16 @@ export default AthenaTestFunction.make(
 
     const putObject = yield* S3.PutObject(bucket);
     const getObject = yield* S3.GetObject(bucket);
-    const runQuery = yield* Athena.Query(workGroup, bucket);
+    const query = yield* Athena.Query(workGroup, bucket);
+    const runQuery = Effect.fn((request: Athena.RunQueryRequest) =>
+      query(request).pipe(
+        Effect.retry({
+          while: (error) => error._tag === "AccessDeniedException",
+          schedule: Schedule.spaced("3 seconds"),
+          times: 8,
+        }),
+      ),
+    );
 
     // --- workgroup-scoped query-execution bindings ---
     const getQueryExecution = yield* Athena.GetQueryExecution(workGroup);

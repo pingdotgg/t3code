@@ -21,6 +21,7 @@ import * as Exit from "./Exit.ts"
 import * as Fiber from "./Fiber.ts"
 import { constant, dual, flow } from "./Function.ts"
 import * as MutableHashMap from "./MutableHashMap.ts"
+import type * as Option from "./Option.ts"
 import type { Pipeable } from "./Pipeable.ts"
 import { pipeArguments } from "./Pipeable.ts"
 import * as Scope from "./Scope.ts"
@@ -39,17 +40,14 @@ const TypeId = "~effect/RcMap"
  *
  * **Example** (Inspecting a reference-counted map)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, RcMap } from "effect"
  *
- * Effect.gen(function*() {
+ * const program = Effect.gen(function*() {
  *   // Create an RcMap that manages database connections
  *   const dbConnectionMap = yield* RcMap.make({
  *     lookup: (dbName: string) =>
- *       Effect.acquireRelease(
- *         Effect.succeed(`Connection to ${dbName}`),
- *         (conn) => Effect.log(`Closing ${conn}`)
- *       ),
+ *       Effect.acquireRelease(Effect.succeed(`Connection to ${dbName}`), () => Effect.void),
  *     capacity: 10,
  *     idleTimeToLive: "5 minutes"
  *   })
@@ -60,8 +58,10 @@ const TypeId = "~effect/RcMap"
  *   // - idleTimeToLive: Time before idle resources are released
  *   // - state: Current state of the map
  *
- *   console.log(`Capacity: ${dbConnectionMap.capacity}`)
- * }).pipe(Effect.scoped)
+ *   return dbConnectionMap.capacity
+ * })
+ *
+ * await Effect.runPromise(Effect.scoped(program)) // => 10
  * ```
  *
  * @see {@link make} for creating an `RcMap`
@@ -205,15 +205,17 @@ const makeUnsafe = <K, A, E>(options: {
  *
  * **Example** (Creating a reference-counted map)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, RcMap } from "effect"
  *
- * Effect.gen(function*() {
+ * const events: Array<string> = []
+ *
+ * const program = Effect.gen(function*() {
  *   const map = yield* RcMap.make({
  *     lookup: (key: string) =>
  *       Effect.acquireRelease(
  *         Effect.succeed(`acquired ${key}`),
- *         () => Effect.log(`releasing ${key}`)
+ *         () => Effect.sync(() => events.push(`released ${key}`))
  *       )
  *   })
  *
@@ -224,12 +226,15 @@ const makeUnsafe = <K, A, E>(options: {
  *     Effect.scoped
  *   )
  * })
+ *
+ * await Effect.runPromise(Effect.scoped(program))
+ * events // => ["released foo"]
  * ```
  *
  * @see {@link get} for acquiring or retaining a resource by key
  * @see {@link invalidate} for removing a resource from the map
  *
- * @category models
+ * @category constructors
  * @since 3.5.0
  */
 export const make: {
@@ -269,7 +274,7 @@ export const make: {
         self.state = { _tag: "Closed" }
         return Effect.forEach(
           map,
-          ([, entry]) => Effect.exit(Scope.close(entry.scope, Exit.void))
+          ([, entry]) => Effect.exit(closeEntry(entry))
         ).pipe(
           Effect.tap(() =>
             Effect.sync(() => {
@@ -299,22 +304,26 @@ export const make: {
  *
  * **Example** (Acquiring a resource)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, RcMap } from "effect"
  *
- * Effect.gen(function*() {
+ * const events: Array<string> = []
+ *
+ * const program = Effect.gen(function*() {
  *   const map = yield* RcMap.make({
  *     lookup: (key: string) =>
  *       Effect.acquireRelease(
  *         Effect.succeed(`Resource: ${key}`),
- *         () => Effect.log(`Released ${key}`)
+ *         () => Effect.sync(() => events.push(`released ${key}`))
  *       )
  *   })
  *
  *   // Get a resource - it will be acquired on first access
  *   const resource = yield* RcMap.get(map, "database")
- *   console.log(resource) // "Resource: database"
- * }).pipe(Effect.scoped)
+ *   return [resource, events] as const
+ * })
+ *
+ * await Effect.runPromise(Effect.scoped(program)) // => ["Resource: database", ["released database"]]
  * ```
  *
  * @see {@link make} for creating the reference-counted map
@@ -361,7 +370,7 @@ export const get: {
           context.set(key, value)
         })
         context.set(Scope.Scope.key, entry.scope)
-        self.lookup(key).pipe(
+        Effect.suspend(() => self.lookup(key)).pipe(
           Effect.runForkWith(Context.makeUnsafe(context)),
           Fiber.runIn(entry.scope)
         ).addObserver((exit) => Deferred.doneUnsafe(entry.deferred, exit))
@@ -373,20 +382,93 @@ export const get: {
     })
 )
 
+/**
+ * Retains and returns an existing resource without invoking the map's lookup
+ * function when the key is missing.
+ *
+ * **When to use**
+ *
+ * Use when you only want to acquire a reference to a resource that is currently
+ * cached.
+ *
+ * **Details**
+ *
+ * Returns `Option.none` when the key is not currently stored or the map is
+ * closed. If an entry exists, its reference count is incremented for the current
+ * `Scope` before awaiting its result. A successful entry returns
+ * `Option.some(value)`, while an in-flight or cached failure fails with the same
+ * error as `get`.
+ *
+ * **Example** (Retaining only cached resources)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, Option, RcMap } from "effect"
+ *
+ * const program = Effect.gen(function*() {
+ *   const map = yield* RcMap.make({
+ *     lookup: (key: string) => Effect.succeed(`Resource: ${key}`),
+ *     idleTimeToLive: "1 minute"
+ *   })
+ *
+ *   const missing = yield* RcMap.getOption(map, "database")
+ *   yield* Effect.scoped(RcMap.get(map, "database"))
+ *   const cached = yield* Effect.scoped(RcMap.getOption("database")(map))
+ *
+ *   return [missing, cached] as const
+ * })
+ *
+ * await Effect.runPromise(Effect.scoped(program)) // => [Option.none(), Option.some("Resource: database")]
+ * ```
+ *
+ * @see {@link get} for acquiring a resource when the key is missing
+ * @see {@link has} for checking presence without retaining or awaiting the entry
+ *
+ * @category combinators
+ * @since 4.0.0
+ */
+export const getOption: {
+  <K>(key: K): <A, E>(self: RcMap<K, A, E>) => Effect.Effect<Option.Option<A>, E, Scope.Scope>
+  <K, A, E>(self: RcMap<K, A, E>, key: K): Effect.Effect<Option.Option<A>, E, Scope.Scope>
+} = dual(
+  2,
+  <K, A, E>(self: RcMap<K, A, E>, key: K): Effect.Effect<Option.Option<A>, E, Scope.Scope> =>
+    Effect.uninterruptibleMask((restore) => {
+      if (self.state._tag === "Closed") {
+        return Effect.succeedNone
+      }
+      const o = MutableHashMap.get(self.state.map, key)
+      if (o._tag === "None") {
+        return Effect.succeedNone
+      }
+      const entry = o.value
+      entry.refCount++
+      const scope = Context.getUnsafe(Fiber.getCurrent()!.context, Scope.Scope)
+      return Scope.addFinalizer(scope, entry.finalizer).pipe(
+        Effect.andThen(Effect.asSome(restore(Deferred.await(entry.deferred))))
+      )
+    })
+)
+
+const closeEntry = <A, E>(entry: State.Entry<A, E>) =>
+  entry.fiber
+    ? Fiber.interrupt(entry.fiber).pipe(Effect.andThen(Scope.close(entry.scope, Exit.void)))
+    : Scope.close(entry.scope, Exit.void)
+
 const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>) =>
   Effect.withFiber((fiber) => {
     entry.refCount--
     if (entry.refCount > 0) {
       return Effect.void
-    } else if (
-      self.state._tag === "Closed"
-      || !MutableHashMap.has(self.state.map, key)
-      || Duration.isZero(entry.idleTimeToLive)
-    ) {
-      if (self.state._tag === "Open") {
-        MutableHashMap.remove(self.state.map, key)
-      }
-      return Scope.close(entry.scope, Exit.void)
+    } else if (self.state._tag === "Closed") {
+      return closeEntry(entry)
+    }
+
+    const o = MutableHashMap.get(self.state.map, key)
+    if (o._tag === "None" || o.value !== entry) {
+      return closeEntry(entry)
+    } else if (Duration.isZero(entry.idleTimeToLive)) {
+      MutableHashMap.remove(self.state.map, key)
+      return closeEntry(entry)
     } else if (!Duration.isFinite(entry.idleTimeToLive)) {
       return Effect.void
     }
@@ -400,6 +482,8 @@ const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>
       const remaining = entry.expiresAt - now
       if (remaining <= 0) {
         if (self.state._tag === "Closed" || entry.refCount > 0) return Effect.void
+        const o = MutableHashMap.get(self.state.map, key)
+        if (o._tag === "None" || o.value !== entry) return Effect.void
         MutableHashMap.remove(self.state.map, key)
         return restore(Scope.close(entry.scope, Exit.void))
       }
@@ -427,10 +511,10 @@ const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>
  *
  * **Example** (Listing keys)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, RcMap } from "effect"
  *
- * Effect.gen(function*() {
+ * const program = Effect.gen(function*() {
  *   const map = yield* RcMap.make({
  *     lookup: (key: string) => Effect.succeed(`value-${key}`)
  *   })
@@ -442,8 +526,10 @@ const release = <K, A, E>(self: RcMap<K, A, E>, key: K, entry: State.Entry<A, E>
  *
  *   // Get all keys currently in the map
  *   const allKeys = yield* RcMap.keys(map)
- *   console.log(allKeys) // ["foo", "bar", "baz"]
- * }).pipe(Effect.scoped)
+ *   return Array.from(allKeys)
+ * })
+ *
+ * await Effect.runPromise(Effect.scoped(program)) // => ["foo", "bar", "baz"]
  * ```
  *
  * @see {@link has} for checking one key without enumerating all keys
@@ -467,15 +553,17 @@ export const keys = <K, A, E>(self: RcMap<K, A, E>): Effect.Effect<Iterable<K>> 
  *
  * **Example** (Invalidating a resource)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, RcMap } from "effect"
  *
- * Effect.gen(function*() {
+ * const events: Array<string> = []
+ *
+ * const program = Effect.gen(function*() {
  *   const map = yield* RcMap.make({
  *     lookup: (key: string) =>
  *       Effect.acquireRelease(
  *         Effect.succeed(`Resource: ${key}`),
- *         () => Effect.log(`Released ${key}`)
+ *         () => Effect.sync(() => events.push(`released ${key}`))
  *       )
  *   })
  *
@@ -488,7 +576,10 @@ export const keys = <K, A, E>(self: RcMap<K, A, E>): Effect.Effect<Iterable<K>> 
  *
  *   // Next access will create a new resource
  *   yield* RcMap.get(map, "cache")
- * }).pipe(Effect.scoped)
+ * })
+ *
+ * await Effect.runPromise(Effect.scoped(program))
+ * events // => ["released cache", "released cache"]
  * ```
  *
  * @see {@link get} for acquiring or retaining the resource for a key
@@ -509,8 +600,7 @@ export const invalidate: {
     const entry = o.value
     MutableHashMap.remove(self.state.map, key)
     if (entry.refCount > 0) return
-    if (entry.fiber) yield* Fiber.interrupt(entry.fiber)
-    yield* Scope.close(entry.scope, Exit.void)
+    yield* closeEntry(entry)
   }, Effect.uninterruptible)
 )
 
@@ -561,15 +651,17 @@ export const has: {
  *
  * **Example** (Extending resource idle time)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { Effect, RcMap } from "effect"
  *
- * Effect.gen(function*() {
+ * const events: Array<string> = []
+ *
+ * const program = Effect.gen(function*() {
  *   const map = yield* RcMap.make({
  *     lookup: (key: string) =>
  *       Effect.acquireRelease(
  *         Effect.succeed(`Resource: ${key}`),
- *         () => Effect.log(`Released ${key}`)
+ *         () => Effect.sync(() => events.push(`released ${key}`))
  *       ),
  *     idleTimeToLive: "10 seconds"
  *   })
@@ -583,7 +675,10 @@ export const has: {
  *
  *   // The resource will now live for another 10 seconds
  *   // from the time it was touched
- * }).pipe(Effect.scoped)
+ * })
+ *
+ * await Effect.runPromise(Effect.scoped(program))
+ * events // => ["released session"]
  * ```
  *
  * @see {@link invalidate} for removing the resource instead of extending it

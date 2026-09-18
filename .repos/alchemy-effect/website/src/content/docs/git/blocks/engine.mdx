@@ -1,0 +1,188 @@
+---
+title: Engine operations
+description: Build your own HTTP API over Git operations, with scoped preparation, application authorization, and explicit commit.
+---
+
+`Git.Engine` supplies repository operations. Your application defines its API,
+chooses middleware, and decides when an operation may commit.
+
+## Own the HTTP group
+
+```typescript
+import * as Git from "alchemy/Git";
+import * as GitHttp from "alchemy/Git/Http";
+import * as Effect from "effect/Effect";
+import * as HttpApi from "effect/unstable/httpapi/HttpApi";
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
+import { Authentication } from "./authentication.ts";
+import { receivePack } from "./receive-pack.ts";
+
+class AppApi extends HttpApi.make("app")
+  .add(GitHttp.Protocol)
+  .middleware(Authentication) {}
+
+const ProtocolLive = HttpApiBuilder.group(AppApi, "protocol", (h) =>
+  Effect.gen(function* () {
+    const defaults = yield* Git.Handlers;
+    const git = yield* Git.Engine;
+    return h
+      .handleRaw("infoRefs", defaults.protocol.infoRefs)
+      .handleRaw("uploadPack", defaults.protocol.uploadPack)
+      .handleRaw("receivePack", input => receivePack(git, input));
+  }),
+);
+```
+
+`Authentication` is a native `HttpApiMiddleware.Service`. It can provide your
+`CurrentUser` service to all three handlers. `handleRaw` preserves that middleware
+while leaving the binary body for Git's streaming decoder. The default read
+handlers rely on your middleware to authorize repository access.
+
+Capture long-lived services such as `Git.Engine` or a database while building
+the group, or explicitly provide them to an extracted handler. Read the request's
+user inside the handler. The [complete example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-git-service/src/api/protocol.ts)
+shows this with `Session` and native API middleware.
+
+## Prepare a push, then commit
+
+Inside your receive-pack handler:
+
+```typescript
+const push = yield* GitHttp.ReceivePack.decode(request);
+if (push._tag === "Probe") return GitHttp.ReceivePack.probeResponse();
+
+const repo = yield* git.repositories.get(params);
+yield* checkRefChanges(repo, push.updates);
+
+const prepared = yield* git.preparePush(repo, push.input);
+yield* validateContents(prepared);
+
+const result = yield* git.commitPush(prepared);
+return GitHttp.ReceivePack.response(push, result);
+```
+
+Run the whole operation inside `Effect.scoped`. These steps have different effects:
+
+| Step | What happens |
+| --- | --- |
+| `ReceivePack.decode(request)` | Decode bounded command pkt-lines. Keep the pack streaming and retain negotiated capabilities. |
+| Application policy | Check the caller, repository, proposed refs, or database permissions before ingesting the pack. |
+| `engine.preparePush(repo, input)` | Verify and stage objects; check connectivity. No refs move. |
+| Application validation | Inspect incoming objects and existing objects through the prepared view. |
+| `engine.commitPush(prepared)` | Recheck connectivity and apply ref CAS, respecting negotiated atomic behavior. |
+| `ReceivePack.response(push, result)` | Encode Git report-status and sideband framing. |
+
+The input and prepared push are scoped and single-use. Exiting without commit
+aborts staging. A second commit, use after scope closure, or a commit through a
+different engine instance fails. Cleanup checks durable commit state before
+deleting spilled bytes, because an interrupted RPC may already have committed.
+
+## Read incoming content
+
+```typescript
+const object = yield* prepared.readObject(update.newOid);
+if (object?.type === 1) {
+  const commit = yield* Git.parseCommit(object.content);
+  // Inspect the commit's tree with prepared.readObject(commit.tree).
+}
+```
+
+The view includes live objects and objects staged by this push, never another
+push's uncommitted objects. Reads default to a 1 MiB uncompressed size limit;
+pass a second argument to choose a different per-object limit. Nothing becomes
+visible to ordinary repository reads until commit.
+
+## Authorize with application data
+
+Policies are ordinary functions. For example, an application with `CurrentUser`
+and `Database` services can define:
+
+```typescript
+const checkRefChanges = (repo: Git.RepoMetaData, updates: ReadonlyArray<Git.RefUpdate>) =>
+  Effect.gen(function* () {
+    const user = yield* CurrentUser;
+    const database = yield* Database;
+    for (const update of updates) {
+      const allowed = yield* database.mayUpdateBranch(user.id, repo.repoId, update.ref);
+      if (!allowed) {
+        return yield* new Git.PushDenied({ ref: update.ref, reason: "branch is protected" });
+      }
+    }
+  });
+```
+
+`Database.mayUpdateBranch` is an application method, not a Git export. Its typed
+errors and service requirements remain part of the effect. Provide the database
+implementation when constructing the group; native API middleware supplies the user.
+You can split each policy into its own module and call several policies in order.
+
+Checking an external database and committing Git refs are separate transactions.
+Ref CAS prevents stale Git writes; a policy requiring atomic coordination with a
+database needs an application transaction or version protocol as well.
+
+## REST updates and merges
+
+The same policy can guard the other mutation paths:
+
+```typescript
+const prepared = yield* git.prepareRefUpdate(repo, {
+  ref: "refs/heads/main",
+  newOid,
+  expectedOid, // null means the ref must not exist
+});
+yield* checkRefChanges(repo, prepared.updates);
+const ref = yield* prepared.commit;
+```
+
+`prepareRefRemoval(repo, { ref, expectedOid })` prepares a deletion.
+`prepareMerge(repo, { number, message, expectedHeadOid })` prepares a pull merge.
+Each returns `updates` and a single-use `commit` effect; use `Effect.scoped`.
+Ref writes pin the inspected ref. Merges pin both inspected branch tips.
+
+A merge's `updates` describe the base-to-head proposal. The final merge commit
+is constructed during commit; this preview does not expose a staged merge tree.
+For rules about content, validate the inspected tips and their changes before
+committing. Push preparation, by contrast, exposes the uploaded objects directly.
+
+Call the shared application policy from **every exposed mutation path**, including
+GitHub-compatible merges. Default handlers perform operations without application
+authorization. The complete example routes both REST and GitHub merges through
+one application `mergePull` function.
+
+## Errors and responses
+
+Authenticate before reading the pack. HTTP `401` responses should include Git's
+Basic challenge. After commands are decoded, translate `PushDenied` with
+`ReceivePack.reject(push, reason)` so Git displays a per-ref rejection. On a JSON
+endpoint, `Git.PushDenied` has a `403` schema.
+
+`ReceivePack.failure(reason)` encodes malformed protocol input or unpack failures.
+Database failures remain failures; they should not be silently converted into
+permission denials. [Part 6](/git/tutorial/part-6) shows the complete response mapping.
+
+## Supply your own transport
+
+For a background operation or a protocol implementation of your own, construct
+input from decoded updates and a stream of raw pack bytes:
+
+```typescript
+const input = yield* Git.Push.fromStream(updates, packStream, { atomic: true });
+const prepared = yield* git.preparePush(repo, input);
+yield* validateContents(prepared);
+const result = yield* git.commitPush(prepared);
+```
+
+No `HttpServerRequest` is required. Run this in `Effect.scoped`. Use `Stream.empty`
+when there is no pack, such as a delete-only push. `fromStream` validates ref/OID
+shapes and ties the stream producer to the input's scope.
+
+## Supply the implementation
+
+`Git.EngineLive` needs `RepoStore`, `RegistryStore`, `BlobStore`, and `Hasher`.
+It does not need an HTTP request, identity service, or server. It exposes
+`repositories`, `refs`, `objects`, and `pulls` operations, plus preparation and
+commit methods. These can also be called from background work.
+
+`Git.ApiHandlersLive` supplies the engine and the optional default HTTP handlers.
+Use it when mixing custom handlers with defaults. Use `EngineLive` alone when
+your application implements all the HTTP handling it needs.

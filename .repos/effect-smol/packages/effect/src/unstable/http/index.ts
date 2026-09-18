@@ -117,7 +117,17 @@ export * as HttpStaticServer from "./HttpStaticServer.ts"
 /**
  * @since 4.0.0
  */
+export * as HttpStatus from "./HttpStatus.ts"
+
+/**
+ * @since 4.0.0
+ */
 export * as HttpTraceContext from "./HttpTraceContext.ts"
+
+/**
+ * @since 4.0.0
+ */
+export * as Mime from "./Mime.ts"
 
 /**
  * @since 4.0.0
@@ -127,7 +137,7 @@ export * as Multipart from "./Multipart.ts"
 /**
  * @since 4.0.0
  */
-export * as Multipasta from "./Multipasta.ts"
+export * as MultipartParser from "./MultipartParser.ts"
 
 /**
  * @since 4.0.0

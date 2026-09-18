@@ -10,6 +10,10 @@ export class User extends Schema.Class<User>("User")({
   name: Schema.String
 }) {}
 
+export class BoomError extends Schema.TaggedError<BoomError>()("BoomError", {
+  cause: Schema.Unknown
+}) {}
+
 export class StreamWithKey extends Rpc.make("StreamWithKey", {
   success: RpcSchema.Stream(Schema.Number, Schema.Never),
   payload: { key: Schema.String },
@@ -26,6 +30,7 @@ export const TestEntity = Entity.make("TestEntity", [
     payload: { id: Schema.Number }
   }).annotate(ClusterSchema.Persisted, false),
   Rpc.make("Never"),
+  Rpc.make("Fail", { error: BoomError }),
   Rpc.make("NeverFork"),
   Rpc.make("NeverVolatile").annotate(ClusterSchema.Persisted, false),
   Rpc.make("RequestWithKey", {
@@ -105,6 +110,7 @@ export const TestEntityNoState = TestEntity.toLayer(
           return new User({ id: envelope.payload.id, name: `User ${envelope.payload.id}` })
         }),
       Never: never,
+      Fail: () => Effect.fail(new BoomError({ cause: new Error("boom") })),
       NeverFork: (envelope) => Rpc.fork(never(envelope)),
       NeverVolatile: never,
       RequestWithKey: (envelope) => {

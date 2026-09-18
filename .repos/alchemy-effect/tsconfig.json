@@ -1,52 +1,62 @@
 {
   "files": [],
-  "exclude": [
-    "node_modules",
-    "dist"
-  ],
+  "exclude": ["node_modules", "dist"],
   "references": [
     // distilled (dependencies first so `tsc -b` emits their `lib/` before the
     // packages that consume them — otherwise a clean build races the not-yet-emitted
     // declarations and fails to resolve `@distilled.cloud/*`).
     {
-      "path": "./distilled/packages/core/tsconfig.json"
+      "path": "./submodules/distilled/packages/core/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/aws/tsconfig.json"
+      "path": "./submodules/distilled/packages/aws/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/cloudflare/tsconfig.json"
+      "path": "./submodules/distilled/packages/cloudflare/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/planetscale/tsconfig.json"
+      "path": "./submodules/distilled/packages/planetscale/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/neon/tsconfig.json"
+      "path": "./submodules/distilled/packages/axiom/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/axiom/tsconfig.json"
-    },
-    // cloudflare-tools (submodule) — reference the composite leaf configs
-    // directly; the per-package tsconfig.json files are non-composite
-    // solution configs that `tsc -b` cannot reference.
-    {
-      "path": "./cloudflare-tools/packages/cloudflare-rolldown-plugin/tsconfig.json"
+      "path": "./submodules/distilled/packages/neon/tsconfig.json"
     },
     {
-      "path": "./cloudflare-tools/packages/cloudflare-runtime/tsconfig.node.json"
+      "path": "./submodules/distilled/packages/hetzner/tsconfig.json"
     },
     {
-      "path": "./cloudflare-tools/packages/cloudflare-runtime/tsconfig.workers.json"
+      "path": "./submodules/distilled/packages/fly-io/tsconfig.json"
     },
     {
-      "path": "./cloudflare-tools/packages/cloudflare-vite-plugin/tsconfig.node.json"
+      "path": "./submodules/distilled/packages/stripe/tsconfig.json"
     },
     {
-      "path": "./cloudflare-tools/packages/cloudflare-vite-plugin/tsconfig.workers.json"
+      "path": "./submodules/distilled/packages/prisma/tsconfig.json"
     },
     {
-      "path": "./tsconfig.scripts.json"
+      "path": "./submodules/distilled/packages/github/tsconfig.json"
     },
+    // Consolidated Cloudflare runtime, framework, and test-tool projects.
+    {
+      "path": "./packages/node-utils/tsconfig.json"
+    },
+    {
+      "path": "./packages/cloudflare-runtime/tsconfig.json"
+    },
+    {
+      "path": "./packages/frontend-frameworks/tsconfig.json"
+    },
+    {
+      "path": "./packages/floci/tsconfig.json"
+    },
+    {
+      "path": "./packages/cloudflare-test-tools/tsconfig.json"
+    },
+    // {
+    //   "path": "./tsconfig.scripts.json"
+    // },
     {
       "path": "./packages/alchemy-test/tsconfig.json"
     },
@@ -63,12 +73,15 @@
       "path": "./packages/better-auth/tsconfig.json"
     },
     {
-      "path": "./packages/pr-package/tsconfig.json"
+      "path": "./packages/pkg/tsconfig.json"
     },
     // TODO(sam): fix by upgrading starlight to ^0.39.2
     // {
     //   "path": "./website/tsconfig.json"
     // },
+    {
+      "path": "./examples/cloudflare-git-service/tsconfig.json"
+    },
     {
       "path": "./examples/aws-ec2/tsconfig.json"
     },
@@ -77,6 +90,9 @@
     },
     {
       "path": "./examples/aws-eks/tsconfig.json"
+    },
+    {
+      "path": "./examples/aws-bedrock-ai/tsconfig.json"
     },
     {
       "path": "./examples/aws-lambda-httpapi/tsconfig.json"
@@ -88,6 +104,12 @@
       "path": "./examples/aws-lambda-rpc/tsconfig.json"
     },
     {
+      "path": "./examples/aws-dev/tsconfig.json"
+    },
+    {
+      "path": "./examples/dev-stress/tsconfig.json"
+    },
+    {
       "path": "./examples/aws-lambda/tsconfig.json"
     },
     {
@@ -97,7 +119,7 @@
       "path": "./examples/aws-static-site/tsconfig.json"
     },
     {
-      "path": "./examples/aws-vite/tsconfig.json"
+      "path": "./examples/aws-website-vite/tsconfig.json"
     },
     {
       "path": "./examples/cloudflare-agent/tsconfig.json"
@@ -106,13 +128,10 @@
       "path": "./examples/cloudflare-static-site/tsconfig.json"
     },
     {
-      "path": "./examples/cloudflare-tanstack/tsconfig.json"
+      "path": "./examples/cloudflare-website-tanstack-start/tsconfig.json"
     },
     {
       "path": "./examples/cloudflare-worker/tsconfig.json"
-    },
-    {
-      "path": "./examples/cloudflare-pr-package/tsconfig.json"
     },
     {
       "path": "./examples/cloudflare-email/tsconfig.json"
@@ -136,10 +155,166 @@
       "path": "./examples/cloudflare-secrets-store/tsconfig.json"
     },
     {
+      "path": "./examples/cloudflare-website-astro/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-website-nextjs/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-website-nuxt/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-website-sveltekit/tsconfig.json"
+    },
+    {
+      "path": "./examples/cloudflare-website-waku/tsconfig.json"
+    },
+    {
       "path": "./examples/cloudflare-worker-async/tsconfig.json"
     },
     {
+      "path": "./examples/prisma-compute-effect/tsconfig.json"
+    },
+    {
+      "path": "./examples/prisma-tanstack-start/tsconfig.json"
+    },
+    {
       "path": "./examples/docker-postgres/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-server/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-app/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-project/tsconfig.json"
+    },
+    {
+      "path": "./examples/stripe-billing/tsconfig.json"
+    },
+    {
+      "path": "./examples/stripe-connect/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-app/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-vite/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-service/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-vite/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-service/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-vite/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-astro/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-foldkit/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-nextjs/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-nuxt/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-react-router/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-solidstart/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-sveltekit/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-tanstack-start/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-waku/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-website-vocs/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-astro/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-foldkit/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-nextjs/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-nuxt/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-sveltekit/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-waku/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-vocs/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-react-router/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-solidstart/tsconfig.json"
+    },
+    {
+      "path": "./examples/hetzner-website-tanstack-start/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-astro/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-foldkit/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-nextjs/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-nuxt/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-sveltekit/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-waku/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-vocs/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-react-router/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-solidstart/tsconfig.json"
+    },
+    {
+      "path": "./examples/railway-website-tanstack-start/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-sprite/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-redis/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-bucket/tsconfig.json"
+    },
+    {
+      "path": "./examples/fly-postgres/tsconfig.json"
     },
     {
       "path": "./examples/monorepo-single-stack/tsconfig.json"

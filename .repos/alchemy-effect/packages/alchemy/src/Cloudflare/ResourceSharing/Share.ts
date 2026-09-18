@@ -150,11 +150,8 @@ export type Share = Resource<
  * are seeded inline. Post-create changes to those arrays are reconciled
  * through the recipient/resource sub-APIs; only `name` is mutable on the
  * share itself. Deletion is asynchronous (`active → deleting → deleted`).
- * @resource
- * @product Resource Sharing
- * @category Account & Identity
- * @section Creating a Share
- * @example Share a gateway policy with another account
+ * ### Creating a Share
+ * **Example:** Share a gateway policy with another account
  * ```typescript
  * const policy = yield* Cloudflare.Gateway.Rule("BlockPhishing", {
  *   action: "block",
@@ -170,8 +167,8 @@ export type Share = Resource<
  * });
  * ```
  *
- * @section Updating a Share
- * @example Rename in place
+ * ### Updating a Share
+ * **Example:** Rename in place
  * ```typescript
  * const share = yield* Cloudflare.ResourceSharing.Share("PolicyShare", {
  *   name: "security-baseline-v2",
@@ -183,6 +180,10 @@ export type Share = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/fundamentals/manage-account-resources/
+ *
+ * @resource
+ * @product Resource Sharing
+ * @category Account & Identity
  */
 export const Share = Resource<Share>(TypeId);
 
@@ -299,9 +300,9 @@ export const ShareProvider = () =>
         );
         if (!match) {
           yield* resourceSharing.createRecipient({
-            pathAccountId: acct,
+            accountId: acct,
             shareId: observed.id,
-            bodyAccountId: desired.accountId,
+            recipientAccountId: desired.accountId,
             organizationId: desired.organizationId,
           });
         }

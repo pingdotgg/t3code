@@ -7,6 +7,7 @@ import {
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -16,6 +17,8 @@ import { useCallback, useMemo, useRef } from "react";
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { terminalEnvironment } from "../state/terminal";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentServerConfigsAtom } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -41,7 +44,7 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
 
-export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
+export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
   {
     environmentId: EnvironmentId,
@@ -53,7 +56,7 @@ export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArc
   }
 }
 
-export class ThreadSettlementUnsupportedError extends Schema.TaggedErrorClass<ThreadSettlementUnsupportedError>()(
+export class ThreadSettlementUnsupportedError extends Schema.TaggedError<ThreadSettlementUnsupportedError>()(
   "ThreadSettlementUnsupportedError",
   {
     environmentId: EnvironmentId,
@@ -65,7 +68,7 @@ export class ThreadSettlementUnsupportedError extends Schema.TaggedErrorClass<Th
   }
 }
 
-export class ThreadSnoozeUnsupportedError extends Schema.TaggedErrorClass<ThreadSnoozeUnsupportedError>()(
+export class ThreadSnoozeUnsupportedError extends Schema.TaggedError<ThreadSnoozeUnsupportedError>()(
   "ThreadSnoozeUnsupportedError",
   {
     environmentId: EnvironmentId,
@@ -77,7 +80,7 @@ export class ThreadSnoozeUnsupportedError extends Schema.TaggedErrorClass<Thread
   }
 }
 
-export class ThreadSnoozeBlockedError extends Schema.TaggedErrorClass<ThreadSnoozeBlockedError>()(
+export class ThreadSnoozeBlockedError extends Schema.TaggedError<ThreadSnoozeBlockedError>()(
   "ThreadSnoozeBlockedError",
   {
     environmentId: EnvironmentId,
@@ -101,7 +104,7 @@ function topOfPinnedRunOrderKey(): string | undefined {
   return pinOrderKeyBetween(null, firstKey) ?? undefined;
 }
 
-export class ThreadPinningUnsupportedError extends Schema.TaggedErrorClass<ThreadPinningUnsupportedError>()(
+export class ThreadPinningUnsupportedError extends Schema.TaggedError<ThreadPinningUnsupportedError>()(
   "ThreadPinningUnsupportedError",
   {
     environmentId: EnvironmentId,
@@ -113,7 +116,7 @@ export class ThreadPinningUnsupportedError extends Schema.TaggedErrorClass<Threa
   }
 }
 
-export class ThreadPinReorderUnsupportedError extends Schema.TaggedErrorClass<ThreadPinReorderUnsupportedError>()(
+export class ThreadPinReorderUnsupportedError extends Schema.TaggedError<ThreadPinReorderUnsupportedError>()(
   "ThreadPinReorderUnsupportedError",
   {
     environmentId: EnvironmentId,
@@ -125,7 +128,7 @@ export class ThreadPinReorderUnsupportedError extends Schema.TaggedErrorClass<Th
   }
 }
 
-export class ThreadActiveReorderUnsupportedError extends Schema.TaggedErrorClass<ThreadActiveReorderUnsupportedError>()(
+export class ThreadActiveReorderUnsupportedError extends Schema.TaggedError<ThreadActiveReorderUnsupportedError>()(
   "ThreadActiveReorderUnsupportedError",
   {
     environmentId: EnvironmentId,
@@ -356,7 +359,13 @@ export function useThreadActions() {
       const canDeleteWorktree = orphanedWorktreePath !== null && threadProject !== null;
       const localApi = readLocalApi();
       let shouldDeleteWorktree = false;
-      if (canDeleteWorktree && localApi) {
+      const environmentSettings = appAtomRegistry
+        .get(environmentServerConfigsAtom)
+        .get(threadRef.environmentId)?.settings;
+      const automaticWorktreeCleanup = environmentSettings
+        ? resolveWorktreeCleanup(environmentSettings, thread.projectId).worktreeOnDelete
+        : false;
+      if (canDeleteWorktree && localApi && !automaticWorktreeCleanup) {
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
             [

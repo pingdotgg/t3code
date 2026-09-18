@@ -9,7 +9,6 @@
  * @since 4.0.0
  */
 import * as Arr from "../../Array.ts"
-import * as Effect from "../../Effect.ts"
 import * as Equal from "../../Equal.ts"
 import * as Equ from "../../Equivalence.ts"
 import { dual } from "../../Function.ts"
@@ -21,9 +20,6 @@ import * as Option from "../../Option.ts"
 import type { Pipeable } from "../../Pipeable.ts"
 import { hasProperty } from "../../Predicate.ts"
 import type { ReadonlyRecord } from "../../Record.ts"
-import * as Schema from "../../Schema.ts"
-import * as SchemaIssue from "../../SchemaIssue.ts"
-import * as SchemaTransformation from "../../SchemaTransformation.ts"
 import * as Tuple from "../../Tuple.ts"
 
 const TypeId = "~effect/http/UrlParams"
@@ -185,7 +181,7 @@ const fromInputNested = (input: Input): Array<[string | Array<string>, any]> => 
           out.push([key, String(value[i])])
         }
       }
-    } else if (typeof value === "object") {
+    } else if (value !== null && typeof value === "object") {
       const nested = fromInputNested(value as CoercibleRecord)
       for (const [k, v] of nested) {
         out.push([[key, ...(typeof k === "string" ? [k] : k)], v])
@@ -214,49 +210,6 @@ export const Equivalence: Equ.Equivalence<UrlParams> = Equ.make<UrlParams>((a, b
 
 const arrayEquivalence = Arr.makeEquivalence(
   Tuple.makeEquivalence([Equ.strictEqual<string>(), Equ.strictEqual<string>()])
-)
-
-/**
- * Schema type for `UrlParams`.
- *
- * @category schemas
- * @since 4.0.0
- */
-export interface UrlParamsSchema extends Schema.declare<UrlParams, ReadonlyArray<readonly [string, string]>> {}
-
-/**
- * Schema for `UrlParams`.
- *
- * **Details**
- *
- * The encoded representation is an array of string key-value tuples.
- *
- * @category schemas
- * @since 4.0.0
- */
-export const UrlParamsSchema: UrlParamsSchema = Schema.declare(
-  isUrlParams,
-  {
-    representation: {
-      id: "effect/http/UrlParams",
-      payload: null
-    },
-    toCode: () => ({
-      runtime: "UrlParams.UrlParamsSchema",
-      Type: "UrlParams.UrlParams",
-      importDeclarations: [`import * as UrlParams from "effect/unstable/http/UrlParams"`]
-    }),
-    expected: "UrlParams",
-    toEquivalence: () => Equivalence,
-    toCodec: () =>
-      Schema.link<UrlParams>()(
-        Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
-        SchemaTransformation.transform({
-          decode: make,
-          encode: (self) => self.params
-        })
-      )
-  }
 )
 
 /**
@@ -395,8 +348,7 @@ export const setAll: {
   (input: Input): (self: UrlParams) => UrlParams
   (self: UrlParams, input: Input): UrlParams
 } = dual(2, (self: UrlParams, input: Input): UrlParams => {
-  const out = fromInput(input)
-  const params = out.params as Array<readonly [string, string]>
+  const params = fromInput(input).params.slice()
   const keys = new Set()
   for (let i = 0; i < params.length; i++) {
     keys.add(params[i][0])
@@ -405,7 +357,7 @@ export const setAll: {
     if (keys.has(self.params[i][0])) continue
     params.push(self.params[i])
   }
-  return out
+  return make(params)
 })
 
 /**
@@ -464,9 +416,8 @@ export const toString = (input: Input): string => new URLSearchParams(fromInput(
  *
  * **Example** (Converting parameters to a record)
  *
- * ```ts
+ * ```ts import.meta.vitest
  * import { UrlParams } from "effect/unstable/http"
- * import * as assert from "node:assert"
  *
  * const urlParams = UrlParams.fromInput({
  *   a: 1,
@@ -474,12 +425,7 @@ export const toString = (input: Input): string => new URLSearchParams(fromInput(
  *   c: "string",
  *   e: [1, 2, 3]
  * })
- * const result = UrlParams.toRecord(urlParams)
- *
- * assert.deepStrictEqual(
- *   result,
- *   { "a": "1", "b": "true", "c": "string", "e": ["1", "2", "3"] }
- * )
+ * UrlParams.toRecord(urlParams) // => { a: "1", b: "true", c: "string", e: ["1", "2", "3"] }
  * ```
  *
  * @category converting
@@ -515,114 +461,3 @@ export const toRecord = (self: UrlParams): Record<string, string | Arr.NonEmptyA
  */
 export const toReadonlyRecord: (self: UrlParams) => ReadonlyRecord<string, string | Arr.NonEmptyReadonlyArray<string>> =
   toRecord as any
-
-/**
- * Schema type for decoding one URL parameter field as JSON.
- *
- * @category schemas
- * @since 4.0.0
- */
-export interface schemaJsonField extends Schema.decodeTo<Schema.UnknownFromJsonString, UrlParamsSchema> {}
-
-/**
- * Extracts a JSON value from the first occurrence of the given `field` in the
- * `UrlParams`.
- *
- * **Example** (Decoding JSON parameter fields)
- *
- * ```ts
- * import { Schema } from "effect"
- * import { UrlParams } from "effect/unstable/http"
- *
- * const extractFoo = UrlParams.schemaJsonField("foo").pipe(
- *   Schema.decodeTo(Schema.Struct({
- *     some: Schema.String,
- *     number: Schema.Number
- *   }))
- * )
- *
- * console.log(
- *   Schema.decodeSync(extractFoo)(UrlParams.fromInput({
- *     foo: JSON.stringify({ some: "bar", number: 42 }),
- *     baz: "qux"
- *   }))
- * )
- * ```
- *
- * @category schemas
- * @since 4.0.0
- */
-export const schemaJsonField = (field: string): schemaJsonField =>
-  UrlParamsSchema.pipe(
-    Schema.decodeTo(
-      Schema.UnknownFromJsonString,
-      SchemaTransformation.transformOrFail({
-        decode: (params) =>
-          Option.match(getFirst(params, field), {
-            onNone: () => Effect.fail(new SchemaIssue.Pointer([field], new SchemaIssue.MissingKey(undefined))),
-            onSome: Effect.succeed
-          }),
-        encode: (value) => Effect.succeed(make([[field, value]]))
-      })
-    )
-  )
-
-/**
- * Extract a record of key-value pairs from the `UrlParams`.
- *
- * @category schemas
- * @since 4.0.0
- */
-export interface schemaRecord extends
-  Schema.decodeTo<
-    Schema.$Record<Schema.String, Schema.Union<readonly [Schema.String, Schema.NonEmptyArray<Schema.String>]>>,
-    UrlParamsSchema,
-    never,
-    never
-  >
-{}
-
-/**
- * Schema that decodes `UrlParams` into a record of key-value pairs.
- *
- * **Details**
- *
- * Keys with one value decode to a string, and keys with multiple values decode to
- * a non-empty readonly array of strings.
- *
- * **Example** (Decoding URL parameters to a record)
- *
- * ```ts
- * import { Schema } from "effect"
- * import { UrlParams } from "effect/unstable/http"
- *
- * const toStruct = UrlParams.schemaRecord.pipe(
- *   Schema.decodeTo(Schema.Struct({
- *     some: Schema.String,
- *     number: Schema.FiniteFromString
- *   }))
- * )
- *
- * console.log(
- *   Schema.decodeSync(toStruct)(UrlParams.fromInput({
- *     some: "value",
- *     number: 42
- *   }))
- * )
- * ```
- *
- * @category schemas
- * @since 4.0.0
- */
-export const schemaRecord: schemaRecord = UrlParamsSchema.pipe(
-  Schema.decodeTo(
-    Schema.Record(
-      Schema.String,
-      Schema.Union([Schema.String, Schema.NonEmptyArray(Schema.String)])
-    ),
-    SchemaTransformation.transform({
-      decode: toReadonlyRecord,
-      encode: fromInput
-    })
-  )
-)
