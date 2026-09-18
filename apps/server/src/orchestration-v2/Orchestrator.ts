@@ -8605,20 +8605,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // below. Replaying the full event table on every server start delays live
   // queue promotion in proportion to the lifetime size of the database.
   const terminalEventsAfterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
-  yield* eventSink.stream({ afterSequence: terminalEventsAfterSequence }).pipe(
-    Stream.filter(
-      (stored) =>
-        stored.event.type === "run.updated" &&
-        !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
-        (stored.event.payload.status === "completed" ||
-          stored.event.payload.status === "interrupted" ||
-          stored.event.payload.status === "failed" ||
-          stored.event.payload.status === "cancelled" ||
-          stored.event.payload.status === "rolled_back"),
-    ),
-    Stream.runForEach(handleTerminalRun),
-    Effect.forkDetach,
-  );
+  // Queue promotion can wait on a provider or a thread lock. Subscribe to run
+  // updates before buffering so that wait never retains unrelated tool bodies.
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "run.updated" })
+    .pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "run.updated" &&
+          !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
+          (stored.event.payload.status === "completed" ||
+            stored.event.payload.status === "interrupted" ||
+            stored.event.payload.status === "failed" ||
+            stored.event.payload.status === "cancelled" ||
+            stored.event.payload.status === "rolled_back"),
+      ),
+      Stream.runForEach(handleTerminalRun),
+      Effect.forkDetach,
+    );
 
   // Recover child results from projections. Queue recovery instead holds
   // unstarted runs until an explicit queue.resume command arrives.
