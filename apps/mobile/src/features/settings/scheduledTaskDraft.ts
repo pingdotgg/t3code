@@ -1,4 +1,10 @@
-import type { ScheduledTask, ScheduledTaskUpsertSchedule } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  ProjectId,
+  RuntimeMode,
+  ScheduledTask,
+  ScheduledTaskUpsertSchedule,
+} from "@t3tools/contracts";
 
 export type ScheduleDraft = {
   readonly mode: "fixed_time" | "interval";
@@ -44,5 +50,94 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
     type: "fixed_time",
     timeOfDay: draft.timeOfDay,
     ...(draft.weekdays.length === 7 ? {} : { weekdays: [...draft.weekdays].sort((a, b) => a - b) }),
+  };
+}
+
+type Workspace = "worktree" | "root" | "existing_worktree";
+export type ScheduledTaskDraft = {
+  readonly task: ScheduledTask | null;
+  readonly title: string;
+  readonly prompt: string;
+  readonly projectId: ProjectId | null;
+  readonly modelSelection: ModelSelection | null;
+  readonly schedule: ScheduleDraft;
+  readonly workspace: Workspace;
+  readonly baseRef: string;
+  readonly checkoutPath: string;
+  readonly enabled: boolean;
+  readonly startFromOrigin: boolean;
+  readonly runtimeMode: RuntimeMode;
+};
+
+function draftSignature(draft: ScheduledTaskDraft): string {
+  return JSON.stringify([
+    draft.title,
+    draft.prompt,
+    draft.projectId,
+    draft.modelSelection?.instanceId,
+    draft.modelSelection?.model,
+    [...(draft.modelSelection?.options ?? [])]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((option) => [option.id, option.value]),
+    draft.schedule.mode,
+    draft.schedule.timeOfDay,
+    [...draft.schedule.weekdays].sort((a, b) => a - b),
+    draft.schedule.intervalMinutes,
+    draft.workspace,
+    draft.baseRef,
+    draft.checkoutPath,
+    draft.enabled,
+    draft.startFromOrigin,
+    draft.runtimeMode,
+  ]);
+}
+
+export function hasScheduledTaskDraftChanges(
+  initial: ScheduledTaskDraft,
+  current: ScheduledTaskDraft,
+): boolean {
+  return draftSignature(initial) !== draftSignature(current);
+}
+
+export function createDraft(
+  projectId: ProjectId | null,
+  modelSelection: ModelSelection | null,
+): ScheduledTaskDraft {
+  return {
+    task: null,
+    title: "",
+    prompt: "",
+    projectId,
+    modelSelection,
+    schedule: DEFAULT_SCHEDULE,
+    workspace: "worktree",
+    baseRef: "main",
+    checkoutPath: "",
+    enabled: true,
+    startFromOrigin: true,
+    runtimeMode: "full-access",
+  };
+}
+
+export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
+  return {
+    task,
+    title: task.title,
+    prompt: task.prompt,
+    projectId: task.projectId,
+    modelSelection: task.modelSelection,
+    schedule: scheduleDraftForTask(task),
+    workspace: task.workspaceStrategy.type,
+    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
+    checkoutPath:
+      task.workspaceStrategy.type === "existing_worktree"
+        ? task.workspaceStrategy.worktreePath
+        : "",
+    enabled: task.enabled,
+    startFromOrigin:
+      task.workspaceStrategy.type === "worktree"
+        ? (task.workspaceStrategy.startFromOrigin ?? true)
+        : true,
+    runtimeMode: task.runtimeMode,
   };
 }

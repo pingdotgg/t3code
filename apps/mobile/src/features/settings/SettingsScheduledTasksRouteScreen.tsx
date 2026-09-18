@@ -1,7 +1,5 @@
 import type {
   EnvironmentId,
-  EnvironmentMachineKind,
-  ModelSelection,
   ProjectId,
   ScheduledTask,
   ScheduledTaskUpsertInput,
@@ -14,32 +12,66 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { useMemo, useState } from "react";
-import { Alert, Platform, Pressable, TextInput as RNTextInput, View } from "react-native";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { Alert, AppState, Platform, Pressable, TextInput as RNTextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
+import {
+  EnvironmentMachineSymbol,
+  ENVIRONMENT_MACHINE_SYMBOLS,
+} from "../../components/EnvironmentMachineSymbol";
 import { ControlPillMenu } from "../../components/ControlPill";
-import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
+import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { buildModelOptions } from "../../lib/modelOptions";
-import { useProjects, useEnvironmentServerConfig, useServerConfigs } from "../../state/entities";
-import { usePaginatedBranches } from "../../state/queries";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { useProjects, useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
+import { resolveNewTaskBranchLabel } from "../threads/new-task-context-presentation";
+import { useVoiceInputController } from "../voice-input/useVoiceInputController";
+import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField";
+import {
+  AndroidSettingsEnvironmentFilter,
+  SettingsEnvironmentFilterHeader,
+} from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
-import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
-  DEFAULT_SCHEDULE,
-  scheduleDraftForTask,
+  editDraft,
   scheduleFromDraft,
-  type ScheduleDraft,
+  type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
+import { useScheduledTaskEditor } from "./scheduled-task-editor";
+import {
+  formatNextScheduledTaskRun,
+  formatScheduledTaskInterval,
+} from "./scheduledTaskPresentation";
+
+type ScheduledTaskRoutes = {
+  SettingsScheduledTaskNew: undefined;
+  SettingsScheduledTaskEdit: undefined;
+  SettingsScheduledTaskModel: undefined;
+  SettingsScheduledTaskBranch: undefined;
+};
 
 const DAYS = [
   { index: 1, label: "Mon" },
@@ -51,65 +83,8 @@ const DAYS = [
   { index: 0, label: "Sun" },
 ] as const;
 
-const MACHINE_ICON: Record<EnvironmentMachineKind, string> = {
-  server: "server.rack",
-  cloud: "cloud",
-  linux: "terminal",
-  desktop: "desktopcomputer",
-  laptop: "laptopcomputer",
-  "mac-mini": "macmini",
-  "mac-studio": "macstudio",
-};
-
-type Workspace = "worktree" | "root" | "existing_worktree";
-type Draft = {
-  readonly task: ScheduledTask | null;
-  readonly title: string;
-  readonly prompt: string;
-  readonly projectId: ProjectId | null;
-  readonly modelSelection: ModelSelection | null;
-  readonly schedule: ScheduleDraft;
-  readonly workspace: Workspace;
-  readonly baseRef: string;
-  readonly checkoutPath: string;
-  readonly enabled: boolean;
-};
-
-function createDraft(projectId: ProjectId | null, modelSelection: ModelSelection | null): Draft {
-  return {
-    task: null,
-    title: "",
-    prompt: "",
-    projectId,
-    modelSelection,
-    schedule: DEFAULT_SCHEDULE,
-    workspace: "worktree",
-    baseRef: "main",
-    checkoutPath: "",
-    enabled: true,
-  };
-}
-
-function editDraft(task: ScheduledTask): Draft {
-  return {
-    task,
-    title: task.title,
-    prompt: task.prompt,
-    projectId: task.projectId,
-    modelSelection: task.modelSelection,
-    schedule: scheduleDraftForTask(task),
-    workspace: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
-    checkoutPath:
-      task.workspaceStrategy.type === "existing_worktree"
-        ? task.workspaceStrategy.worktreePath
-        : "",
-    enabled: task.enabled,
-  };
-}
-
 function describeSchedule(task: ScheduledTask): string {
-  if (task.schedule.type === "interval") return `Every ${task.schedule.everyMs / 60_000} minutes`;
+  if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
   return `${days} at ${formatTime(task.schedule.timeOfDay)}`;
 }
@@ -149,7 +124,6 @@ function FormField(props: {
   readonly label: string;
   readonly value: string;
   readonly onChange: (value: string) => void;
-  readonly multiline?: boolean;
   readonly keyboardType?: "numeric";
   readonly placeholder?: string;
   readonly borderTop?: boolean;
@@ -165,16 +139,11 @@ function FormField(props: {
         accessibilityLabel={props.label}
         value={props.value}
         onChangeText={props.onChange}
-        multiline={props.multiline}
-        textAlignVertical={props.multiline ? "top" : "center"}
+        textAlignVertical="center"
         keyboardType={props.keyboardType}
         placeholder={props.placeholder}
-        placeholderTextColorClassName="text-foreground-muted"
-        className={
-          props.multiline
-            ? "min-h-24 font-sans text-base text-foreground"
-            : "min-h-8 font-sans text-base text-foreground"
-        }
+        placeholderTextColorClassName="accent-foreground-muted"
+        className="min-h-8 font-sans text-base text-foreground"
       />
     </View>
   );
@@ -183,10 +152,19 @@ function FormField(props: {
 function SelectRow(props: {
   readonly label: string;
   readonly value: string;
+  readonly valueIcon?: ReactNode;
   readonly actions: MenuAction[];
   readonly onSelect: (id: string) => void;
   readonly borderTop?: boolean;
 }) {
+  const value = (
+    <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
+      {props.valueIcon}
+      <Text className="shrink text-right text-base text-foreground-muted" numberOfLines={1}>
+        {props.value}
+      </Text>
+    </View>
+  );
   if (props.actions.length === 0) {
     return (
       <View
@@ -197,9 +175,7 @@ function SelectRow(props: {
         }
       >
         <Text className="text-lg text-foreground">{props.label}</Text>
-        <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted">
-          {props.value}
-        </Text>
+        {value}
       </View>
     );
   }
@@ -218,12 +194,7 @@ function SelectRow(props: {
         }
       >
         <Text className="text-lg text-foreground">{props.label}</Text>
-        <Text
-          className="min-w-0 flex-1 text-right text-base text-foreground-muted"
-          numberOfLines={1}
-        >
-          {props.value}
-        </Text>
+        {value}
         <SymbolView
           name="chevron.down"
           size={14}
@@ -235,78 +206,256 @@ function SelectRow(props: {
   );
 }
 
-function BranchRow(props: {
-  readonly environmentId: EnvironmentId;
-  readonly cwd: string | null;
+function PickerRow(props: {
+  readonly label: string;
   readonly value: string;
-  readonly onChange: (branch: string) => void;
+  readonly onPress: () => void;
+  readonly disabled?: boolean;
+  readonly borderTop?: boolean;
 }) {
-  const branches = usePaginatedBranches({
-    environmentId: props.environmentId,
-    cwd: props.cwd,
-  });
-  const names = [
-    ...new Set([
-      props.value,
-      ...branches.refs.filter((branch) => !branch.isRemote).map((branch) => branch.name),
-    ]),
-  ];
   return (
-    <>
-      <SelectRow
-        label="Base branch"
-        value={props.value}
-        borderTop
-        actions={[
-          ...names.filter(Boolean).map((name) => ({
-            id: name,
-            title: name,
-            state: name === props.value ? ("on" as const) : undefined,
-          })),
-          ...(branches.data?.nextCursor != null
-            ? [{ id: "__more__", title: "Load more branches" }]
-            : []),
-        ]}
-        onSelect={(name) => {
-          if (name === "__more__") branches.loadNext();
-          else props.onChange(name);
-        }}
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${props.label}, ${props.value}`}
+      accessibilityState={{ disabled: props.disabled }}
+      disabled={props.disabled}
+      onPress={props.onPress}
+      className={
+        props.borderTop
+          ? "min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70 disabled:opacity-50"
+          : "min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70 disabled:opacity-50"
+      }
+    >
+      <Text className="text-lg text-foreground">{props.label}</Text>
+      <Text className="min-w-0 flex-1 text-right text-base text-foreground-muted" numberOfLines={1}>
+        {props.value}
+      </Text>
+      <SymbolView
+        name="chevron.right"
+        size={14}
+        tintColorClassName="accent-chevron"
+        type="monochrome"
       />
-      {branches.error ? (
-        <Pressable accessibilityRole="button" onPress={branches.refresh} className="px-4 pb-3">
-          <Text className="text-sm text-danger-foreground">
-            Could not load branches. Tap to retry.
-          </Text>
-        </Pressable>
-      ) : null}
-    </>
+    </Pressable>
   );
 }
 
 export function SettingsScheduledTasksRouteScreen() {
-  const { selectedTargets, selectedProjectKey, projectGroups } = useSettingsEnvironmentFilter();
+  const [now, setNow] = useState(Date.now);
+  useFocusEffect(
+    useCallback(() => {
+      const updateNow = () => setNow(Date.now());
+      updateNow();
+      const timer = setInterval(updateNow, 60_000);
+      const subscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") updateNow();
+      });
+      return () => {
+        clearInterval(timer);
+        subscription.remove();
+      };
+    }, []),
+  );
+  const { availableTargets, selectedTargets, selectedProjectKey, projectGroups } =
+    useSettingsEnvironmentFilter();
   const selectedGroup = projectGroups.find((group) => group.key === selectedProjectKey);
-  const selectableEnvironments = selectedTargets.filter(
+  const visibleEnvironments = selectedTargets.filter(
     (environment) =>
       selectedProjectKey === null ||
       selectedGroup?.members.some(
         (member) => member.project.environmentId === environment.environmentId,
       ),
   );
-  const [chosenEnvironmentId, setChosenEnvironmentId] = useState<EnvironmentId | null>(null);
-  const environmentId =
-    chosenEnvironmentId &&
-    selectableEnvironments.some((e) => e.environmentId === chosenEnvironmentId)
-      ? chosenEnvironmentId
-      : (selectableEnvironments[0]?.environmentId ?? null);
-  const selectedEnvironment = selectableEnvironments.find((e) => e.environmentId === environmentId);
-  const selectedConfig = useEnvironmentServerConfig(environmentId);
-  const configs = useServerConfigs();
-  const projects = useProjects();
+  const { startEditor, resetEditor } = useScheduledTaskEditor();
+  const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const insets = useSafeAreaInsets();
+  const newTask = () => {
+    resetEditor();
+    navigation.navigate("SettingsScheduledTaskNew");
+  };
 
   return (
-    <SettingsScreen title="Scheduled Tasks">
+    <>
+      <SettingsEnvironmentFilterHeader
+        trailingItems={[
+          withNativeGlassHeaderItem({
+            type: "button",
+            label: "",
+            accessibilityLabel: "New task",
+            icon: { type: "sfSymbol", name: "plus" } as const,
+            disabled: availableTargets.length === 0,
+            onPress: newTask,
+          }),
+        ]}
+      />
+      <SettingsScreen
+        title="Scheduled Tasks"
+        trailing={
+          <View className="flex-row items-center">
+            <AndroidSettingsEnvironmentFilter />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="New task"
+              accessibilityState={{ disabled: availableTargets.length === 0 }}
+              disabled={availableTargets.length === 0}
+              onPress={newTask}
+              className="size-11 items-center justify-center rounded-full disabled:opacity-50"
+            >
+              <SymbolView name="plus" size={22} tintColorClassName="accent-icon" />
+            </Pressable>
+          </View>
+        }
+      >
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator={false}
+          className="flex-1"
+          contentContainerClassName="gap-5 px-5 pt-4"
+          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+        >
+          {visibleEnvironments.length > 0 ? (
+            visibleEnvironments.map((environment) => (
+              <EnvironmentTasks
+                key={environment.environmentId}
+                environment={environment}
+                now={now}
+                projectIds={
+                  selectedProjectKey === null
+                    ? null
+                    : (selectedGroup?.members
+                        .filter(
+                          (member) => member.project.environmentId === environment.environmentId,
+                        )
+                        .map((member) => member.project.id) ?? [])
+                }
+                onEdit={(task) => {
+                  startEditor({
+                    environmentId: environment.environmentId,
+                    environmentLabel: environment.label,
+                    draft: editDraft(task),
+                  });
+                  navigation.navigate("SettingsScheduledTaskEdit");
+                }}
+              />
+            ))
+          ) : (
+            <Text className="px-2 text-base text-foreground-muted">
+              {availableTargets.length === 0
+                ? "Connect an environment to view and create scheduled tasks."
+                : "No environments match these filters. Change the filter above."}
+            </Text>
+          )}
+        </ScrollView>
+      </SettingsScreen>
+    </>
+  );
+}
+
+export function SettingsScheduledTaskNewRouteScreen() {
+  const { resetEditor } = useScheduledTaskEditor();
+  const { availableTargets } = useSettingsEnvironmentFilter();
+  const initialized = useRef(false);
+  useLayoutEffect(() => {
+    if (initialized.current || availableTargets.length === 0) return;
+    initialized.current = true;
+    resetEditor();
+  }, [availableTargets.length, resetEditor]);
+  return <SettingsScheduledTaskEditorScreen title="New scheduled task" />;
+}
+
+export function SettingsScheduledTaskEditRouteScreen() {
+  return <SettingsScheduledTaskEditorScreen title="Edit scheduled task" />;
+}
+
+function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
+  const { editor, setEditor, hasChanges, draftForEnvironment } = useScheduledTaskEditor();
+  const { availableTargets } = useSettingsEnvironmentFilter();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const voiceOwnerId = useId();
+  const ownerKey = editor ? `${voiceOwnerId}:${editor.environmentId}` : null;
+  const prompt = editor?.draft.prompt ?? "";
+  const [selectionState, setSelectionState] = useState<{
+    readonly ownerKey: string | null;
+    readonly selection: ComposerEditorSelection;
+  } | null>(null);
+  const selection =
+    selectionState?.ownerKey === ownerKey
+      ? selectionState.selection
+      : { start: prompt.length, end: prompt.length };
+  const setSelection = (next: ComposerEditorSelection) =>
+    setSelectionState({ ownerKey, selection: next });
+  const setPrompt = (next: string) =>
+    setEditor((current) =>
+      current
+        ? {
+            ...current,
+            draft: { ...current.draft, prompt: next },
+          }
+        : current,
+    );
+  const voiceInput = useVoiceInputController({
+    ownerKey,
+    draftMessage: prompt,
+    selection,
+    onChangeSelection: setSelection,
+    onChangeDraftMessage: setPrompt,
+    disabled: saving,
+  });
+  const preventRemove = !saved && (hasChanges || saving || voiceInput.isBusy);
+  usePreventRemove(preventRemove, ({ data }) => {
+    if (saving) {
+      Alert.alert("Saving task", "Wait for the task to finish saving before leaving.");
+      return;
+    }
+    Alert.alert(
+      "Discard changes?",
+      voiceInput.isBusy
+        ? "Your dictation and unsaved changes will be lost."
+        : "Your unsaved changes will be lost.",
+      [
+        { text: "Keep editing", style: "cancel" },
+        {
+          text: "Discard changes",
+          style: "destructive",
+          onPress: () => navigation.dispatch(data.action),
+        },
+      ],
+    );
+  });
+  useEffect(() => {
+    if (!saved) return;
+    // Let the native removal guard turn off before popping the saved form.
+    const frame = requestAnimationFrame(() => {
+      if (navigation.isFocused()) navigation.goBack();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [navigation, saved]);
+  return (
+    <SettingsScreen title={title}>
+      {Platform.OS === "ios" ? (
+        <NativeStackScreenOptions
+          options={{
+            headerBackVisible: false,
+            gestureEnabled: !preventRemove,
+            // The system back button begins its native pop before the removal
+            // guard runs. Dispatch from a bar action so the guard runs first.
+            unstable_headerLeftItems: () => [
+              withNativeGlassHeaderItem({
+                type: "button",
+                label: "",
+                accessibilityLabel: "Back",
+                icon: { type: "sfSymbol", name: "chevron.backward" },
+                onPress: () => navigation.goBack(),
+              }),
+            ],
+          }}
+        />
+      ) : null}
       <ScrollView
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -316,70 +465,49 @@ export function SettingsScheduledTasksRouteScreen() {
         contentContainerClassName="gap-5 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        {selectedEnvironment ? (
-          <SettingsSection title="Runs on">
-            <ControlPillMenu
-              actions={selectableEnvironments.map((environment) => ({
-                id: environment.environmentId,
-                title: environment.label,
-                subtitle:
-                  environment.connection.phase === "connected"
-                    ? (projects.find(
-                        (project) => project.environmentId === environment.environmentId,
-                      )?.title ?? "Connected")
-                    : "Unavailable",
-                image:
-                  MACHINE_ICON[
-                    resolveEnvironmentMachineKind(configs.get(environment.environmentId) ?? null)
-                  ],
-                state: environment.environmentId === environmentId ? "on" : undefined,
-              }))}
-              onPressAction={({ nativeEvent }) => {
-                const environment = selectableEnvironments.find(
-                  (e) => e.environmentId === nativeEvent.event,
-                );
-                if (environment) setChosenEnvironmentId(environment.environmentId);
-              }}
-            >
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Environment, ${selectedEnvironment.label}`}
-                className="min-h-14 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
-              >
-                <EnvironmentMachineSymbol
-                  kind={resolveEnvironmentMachineKind(selectedConfig)}
-                  size={20}
-                  tintColorClassName="accent-icon"
-                />
-                <Text className="min-w-0 flex-1 text-base text-foreground" numberOfLines={1}>
-                  {selectedEnvironment.label}
-                </Text>
-                <SymbolView
-                  name="chevron.down"
-                  size={14}
-                  tintColorClassName="accent-chevron"
-                  type="monochrome"
-                />
-              </Pressable>
-            </ControlPillMenu>
-          </SettingsSection>
-        ) : null}
-        {environmentId ? (
-          <EnvironmentTasks
-            key={`${environmentId}:${selectedProjectKey ?? ""}`}
-            environmentId={environmentId}
-            projectIds={
-              selectedProjectKey === null
-                ? null
-                : (selectedGroup?.members
-                    .filter((member) => member.project.environmentId === environmentId)
-                    .map((member) => member.project.id) ?? [])
+        {editor ? (
+          <TaskForm
+            key={editor.environmentId}
+            environmentId={editor.environmentId}
+            environmentLabel={
+              availableTargets.find((target) => target.environmentId === editor.environmentId)
+                ?.label ?? editor.environmentLabel
             }
+            availableTargets={availableTargets}
+            draft={editor.draft}
+            saving={saving}
+            setSaving={setSaving}
+            dictationPending={voiceInput.blocksSubmission}
+            promptField={
+              <ScheduledTaskPromptField
+                value={prompt}
+                onChange={setPrompt}
+                selection={selection}
+                onChangeSelection={setSelection}
+                disabled={saving}
+                voiceInput={voiceInput}
+              />
+            }
+            setDraft={(draft) => setEditor({ ...editor, draft })}
+            onSaved={() => setSaved(true)}
+            onChangeEnvironment={(target) => {
+              if (target.environmentId === editor.environmentId) return;
+              setEditor({
+                environmentId: target.environmentId,
+                environmentLabel: target.label,
+                draft: {
+                  ...draftForEnvironment(target.environmentId),
+                  title: editor.draft.title,
+                  prompt: editor.draft.prompt,
+                  schedule: editor.draft.schedule,
+                  enabled: editor.draft.enabled,
+                },
+              });
+            }}
           />
         ) : (
           <Text className="px-2 text-base text-foreground-muted">
-            No connected environments in this settings scope. Go back to Settings to change the
-            scope.
+            Connect an environment to create a scheduled task.
           </Text>
         )}
       </ScrollView>
@@ -387,46 +515,50 @@ export function SettingsScheduledTasksRouteScreen() {
   );
 }
 
-function EnvironmentTasks({
+function TaskForm({
   environmentId,
-  projectIds,
+  environmentLabel,
+  availableTargets,
+  draft,
+  saving,
+  setSaving,
+  dictationPending,
+  promptField,
+  setDraft,
+  onSaved,
+  onChangeEnvironment,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly projectIds: readonly ProjectId[] | null;
+  readonly environmentLabel: string;
+  readonly availableTargets: readonly SettingsTarget[];
+  readonly draft: Draft;
+  readonly saving: boolean;
+  readonly setSaving: (saving: boolean) => void;
+  readonly dictationPending: boolean;
+  readonly promptField: ReactNode;
+  readonly setDraft: (draft: Draft) => void;
+  readonly onSaved: () => void;
+  readonly onChangeEnvironment: (target: SettingsTarget) => void;
 }) {
+  const navigation = useNavigation<NativeStackNavigationProp<ScheduledTaskRoutes>>();
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
-  const projects = useProjects().filter(
-    (project) =>
-      project.environmentId === environmentId &&
-      (projectIds === null || projectIds.includes(project.id)),
-  );
-  const visibleTasks = tasks.data?.tasks.filter(
-    (task) => projectIds === null || projectIds.includes(task.projectId),
-  );
+  const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = useMemo(() => buildModelOptions(config, null), [config]);
   const upsert = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
     reportFailure: false,
   });
-  const setEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
-    label: "scheduled task enabled",
-    reportFailure: false,
-  });
-  const runNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
-    label: "scheduled task run",
-    reportFailure: false,
-  });
-  const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
-    label: "scheduled task delete",
-    reportFailure: false,
-  });
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [saving, setSaving] = useState(false);
   const [timePickerOpen, setTimePickerOpen] = useState(false);
-  const taskMissing = draft?.task && !tasks.data?.tasks.some((task) => task.id === draft.task?.id);
+  const taskMissing =
+    draft.task !== null &&
+    tasks.data !== null &&
+    !tasks.data.tasks.some((task) => task.id === draft.task?.id);
+  const environmentUnavailable = !availableTargets.some(
+    (target) => target.environmentId === environmentId,
+  );
 
   const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -435,7 +567,7 @@ function EnvironmentTasks({
   };
 
   const save = async () => {
-    if (!draft || saving || taskMissing) return;
+    if (saving || dictationPending || taskMissing || environmentUnavailable) return;
     const schedule = scheduleFromDraft(draft.schedule);
     if (
       !draft.title.trim() ||
@@ -472,12 +604,9 @@ function EnvironmentTasks({
             : {
                 type: "worktree",
                 baseRef: draft.baseRef.trim() || "main",
-                startFromOrigin:
-                  draft.task?.workspaceStrategy.type === "worktree"
-                    ? draft.task.workspaceStrategy.startFromOrigin
-                    : true,
+                startFromOrigin: draft.startFromOrigin,
               },
-      runtimeMode: draft.task?.runtimeMode ?? "full-access",
+      runtimeMode: draft.runtimeMode,
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
     };
@@ -488,41 +617,48 @@ function EnvironmentTasks({
       failure("Could not save task", result);
       return;
     }
-    setDraft(null);
-    setTimePickerOpen(false);
+    onSaved();
   };
 
-  const act = async (task: ScheduledTask, action: "run" | "toggle" | "delete") => {
-    const result =
-      action === "run"
-        ? await runNow({ environmentId, input: { id: task.id } })
-        : action === "toggle"
-          ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
-          : await remove({ environmentId, input: { id: task.id } });
-    failure(`Could not ${action === "toggle" ? "update" : action} task`, result);
-  };
-
-  return draft ? (
+  return (
     <View className="gap-5">
-      <View className="flex-row items-center justify-between gap-3 px-1">
-        <Text accessibilityRole="header" className="text-2xl font-t3-semibold text-foreground">
-          {draft.task ? "Edit task" : "New task"}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            setDraft(null);
-            setTimePickerOpen(false);
-          }}
-          className="min-h-11 justify-center px-2"
-        >
-          <Text className="text-base text-primary">Cancel</Text>
-        </Pressable>
-      </View>
       {taskMissing ? (
         <Text className="px-1 text-base text-danger-foreground">This task no longer exists.</Text>
       ) : null}
 
+      {environmentUnavailable ? (
+        <Text className="px-1 text-base text-danger-foreground">
+          This environment is disconnected. Reconnect before saving.
+        </Text>
+      ) : null}
+      <SettingsSection>
+        <SelectRow
+          label="Runs on"
+          value={environmentLabel}
+          valueIcon={
+            <EnvironmentMachineSymbol
+              kind={resolveEnvironmentMachineKind(config)}
+              size={18}
+              tintColorClassName="accent-foreground-muted"
+            />
+          }
+          actions={
+            draft.task || saving || dictationPending
+              ? []
+              : availableTargets.map((target) => ({
+                  id: target.environmentId,
+                  title: target.label,
+                  image:
+                    ENVIRONMENT_MACHINE_SYMBOLS[resolveEnvironmentMachineKind(target.serverConfig)],
+                  state: target.environmentId === environmentId ? "on" : undefined,
+                }))
+          }
+          onSelect={(id) => {
+            const target = availableTargets.find((entry) => entry.environmentId === id);
+            if (target) onChangeEnvironment(target);
+          }}
+        />
+      </SettingsSection>
       <SettingsSection title="Task">
         <FormField
           label="Name"
@@ -530,14 +666,7 @@ function EnvironmentTasks({
           placeholder="Check for issues"
           onChange={(title) => setDraft({ ...draft, title })}
         />
-        <FormField
-          label="Prompt"
-          value={draft.prompt}
-          multiline
-          borderTop
-          placeholder="What should the agent do each time?"
-          onChange={(prompt) => setDraft({ ...draft, prompt })}
-        />
+        {promptField}
       </SettingsSection>
 
       <SettingsSection title="Context">
@@ -557,7 +686,7 @@ function EnvironmentTasks({
             if (project) setDraft({ ...draft, projectId: project.id });
           }}
         />
-        <SelectRow
+        <PickerRow
           label="Model"
           borderTop
           value={
@@ -569,19 +698,8 @@ function EnvironmentTasks({
             draft.modelSelection?.model ??
             (modelOptions.length ? "Choose model" : "No models available")
           }
-          actions={modelOptions.map((option) => ({
-            id: option.key,
-            title: `${option.providerLabel} · ${option.label}`,
-            state:
-              option.selection.instanceId === draft.modelSelection?.instanceId &&
-              option.selection.model === draft.modelSelection?.model
-                ? "on"
-                : undefined,
-          }))}
-          onSelect={(id) => {
-            const option = modelOptions.find((item) => item.key === id);
-            if (option) setDraft({ ...draft, modelSelection: option.selection });
-          }}
+          onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
+          disabled={saving || dictationPending || environmentUnavailable}
         />
       </SettingsSection>
 
@@ -618,11 +736,16 @@ function EnvironmentTasks({
           }}
         />
         {draft.workspace === "worktree" ? (
-          <BranchRow
-            environmentId={environmentId}
-            cwd={projects.find((project) => project.id === draft.projectId)?.workspaceRoot ?? null}
-            value={draft.baseRef}
-            onChange={(baseRef) => setDraft({ ...draft, baseRef })}
+          <PickerRow
+            label="Base branch"
+            value={resolveNewTaskBranchLabel({
+              branchName: draft.baseRef,
+              startFromOrigin: draft.startFromOrigin,
+              workspaceMode: "worktree",
+            })}
+            borderTop
+            disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
+            onPress={() => navigation.navigate("SettingsScheduledTaskBranch")}
           />
         ) : null}
         {draft.workspace === "existing_worktree" ? (
@@ -746,8 +869,10 @@ function EnvironmentTasks({
       ) : null}
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ disabled: saving || !!taskMissing }}
-        disabled={saving || !!taskMissing}
+        accessibilityState={{
+          disabled: saving || dictationPending || taskMissing || environmentUnavailable,
+        }}
+        disabled={saving || dictationPending || taskMissing || environmentUnavailable}
         onPress={() => void save()}
         className="min-h-12 items-center justify-center rounded-[14px] bg-primary px-4 disabled:opacity-50"
       >
@@ -756,15 +881,75 @@ function EnvironmentTasks({
         </Text>
       </Pressable>
     </View>
-  ) : (
-    <SettingsSection title="Tasks">
+  );
+}
+
+function EnvironmentTasks({
+  environment,
+  now,
+  projectIds,
+  onEdit,
+}: {
+  readonly environment: SettingsTarget;
+  readonly now: number;
+  readonly projectIds: readonly ProjectId[] | null;
+  readonly onEdit: (task: ScheduledTask) => void;
+}) {
+  const environmentId = environment.environmentId;
+  const tasks = useEnvironmentQuery(
+    serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
+  );
+  const visibleTasks = tasks.data?.tasks.filter(
+    (task) => projectIds === null || projectIds.includes(task.projectId),
+  );
+  const setEnabled = useAtomCommand(serverEnvironment.setScheduledTaskEnabled, {
+    label: "scheduled task enabled",
+    reportFailure: false,
+  });
+  const runNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
+    label: "scheduled task run",
+    reportFailure: false,
+  });
+  const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
+    label: "scheduled task delete",
+    reportFailure: false,
+  });
+  const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      Alert.alert(title, String(squashAtomCommandFailure(result)));
+    }
+  };
+
+  const act = async (task: ScheduledTask, action: "run" | "toggle" | "delete") => {
+    const result =
+      action === "run"
+        ? await runNow({ environmentId, input: { id: task.id } })
+        : action === "toggle"
+          ? await setEnabled({ environmentId, input: { id: task.id, enabled: !task.enabled } })
+          : await remove({ environmentId, input: { id: task.id } });
+    failure(`Could not ${action === "toggle" ? "update" : action} task`, result);
+  };
+
+  return (
+    <SettingsSection
+      title={environment.label}
+      titleIcon={
+        <EnvironmentMachineSymbol
+          kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+          size={16}
+          tintColorClassName={
+            Platform.OS === "android" ? "accent-primary" : "accent-foreground-muted"
+          }
+        />
+      }
+    >
       {tasks.error ? (
         <Text className="p-4 text-base text-danger-foreground">{tasks.error}</Text>
       ) : !tasks.data ? (
         <Text className="p-4 text-base text-foreground-muted">Loading tasks…</Text>
       ) : visibleTasks?.length === 0 ? (
         <Text className="p-4 text-base text-foreground-muted">
-          No scheduled tasks yet. Add one to run a prompt automatically.
+          {projectIds === null ? "No scheduled tasks yet." : "No tasks in this project."}
         </Text>
       ) : (
         visibleTasks?.map((task, index) => (
@@ -780,8 +965,7 @@ function EnvironmentTasks({
               accessibilityRole="button"
               accessibilityLabel={`Edit ${task.title}`}
               onPress={() => {
-                setDraft(editDraft(task));
-                setTimePickerOpen(false);
+                onEdit(task);
               }}
               className="min-w-0 flex-1 gap-1 active:opacity-70"
             >
@@ -790,13 +974,12 @@ function EnvironmentTasks({
               </Text>
               <Text className="text-sm text-foreground-muted" numberOfLines={2}>
                 {describeSchedule(task)}
-                {task.enabled ? "" : " · Paused"}
+                {!task.enabled
+                  ? " · Paused"
+                  : task.nextRunAt
+                    ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
+                    : ""}
               </Text>
-              {task.nextRunAt && task.enabled ? (
-                <Text className="text-sm text-foreground-muted">
-                  Next run {new Date(task.nextRunAt).toLocaleString()}
-                </Text>
-              ) : null}
               {task.lastRunError ? (
                 <Text className="text-sm text-danger-foreground" numberOfLines={2}>
                   Last run failed: {task.lastRunError}
@@ -813,8 +996,7 @@ function EnvironmentTasks({
               onPressAction={({ nativeEvent }) => {
                 const action = nativeEvent.event;
                 if (action === "edit") {
-                  setDraft(editDraft(task));
-                  setTimePickerOpen(false);
+                  onEdit(task);
                 } else if (action === "delete") {
                   Alert.alert("Delete task?", task.title, [
                     { text: "Cancel", style: "cancel" },
@@ -845,17 +1027,6 @@ function EnvironmentTasks({
           </View>
         ))
       )}
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => {
-          setDraft(createDraft(projects[0]?.id ?? null, modelOptions[0]?.selection ?? null));
-          setTimePickerOpen(false);
-        }}
-        className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
-      >
-        <SymbolView name="plus" size={18} tintColorClassName="accent-icon" type="monochrome" />
-        <Text className="text-lg text-foreground">New task</Text>
-      </Pressable>
     </SettingsSection>
   );
 }
