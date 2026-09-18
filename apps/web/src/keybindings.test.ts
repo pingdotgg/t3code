@@ -1395,7 +1395,7 @@ describe("Usage shortcuts", () => {
   });
 
   it.each(["Linux", "MacIntel"])(
-    "preserves numbered thread shortcuts on Usage on %s",
+    "preserves desktop numbered thread shortcuts on Usage on %s",
     (platform) => {
       const shortcut = event({
         key: "2",
@@ -1405,14 +1405,14 @@ describe("Usage shortcuts", () => {
       assert.strictEqual(
         resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
           platform,
-          context: { usagePageOpen: true },
+          context: { usagePageOpen: true, isDesktop: true },
         }),
         "thread.jump.2",
       );
       assert.isNotNull(
         shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "thread.jump.2", {
           platform,
-          context: { usagePageOpen: true },
+          context: { usagePageOpen: true, isDesktop: true },
         }),
       );
     },
