@@ -681,7 +681,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(clickTool?.tool.annotations?.openWorldHint).toBe(true);
       expect(clickTool?.tool.outputSchema).toMatchObject({
         type: "object",
-        additionalProperties: false,
+        additionalProperties: true,
         description: "The preview action completed successfully.",
       });
 

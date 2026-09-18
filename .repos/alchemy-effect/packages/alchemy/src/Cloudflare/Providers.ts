@@ -1,7 +1,6 @@
-import { Retry } from "@distilled.cloud/cloudflare";
 import * as Layer from "effect/Layer";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
-import { ProfileLive } from "../Auth/Profile.ts";
+import { ProfileStoreLive } from "../Auth/Profile.ts";
 import * as Command from "../Command/index.ts";
 import { DockerLive } from "../Docker/Docker.ts";
 import { KeyPair, KeyPairProvider } from "../KeyPair.ts";
@@ -12,8 +11,8 @@ import * as AccessApp from "./Access/Application.ts";
 import * as Bookmark from "./Access/Bookmark.ts";
 import * as AccessCert from "./Access/Certificate.ts";
 import * as CustomPage from "./Access/CustomPage.ts";
-import * as Group from "./Access/Group.ts";
 import { GetIdentityProviderHttp } from "./Access/GetIdentityProviderHttp.ts";
+import * as Group from "./Access/Group.ts";
 import * as AccessIdp from "./Access/IdentityProvider.ts";
 import * as AccessInfraTarget from "./Access/InfrastructureTarget.ts";
 import * as AccessKeyConfig from "./Access/KeyConfiguration.ts";
@@ -387,14 +386,11 @@ export const providers = () =>
     Layer.provide(
       Layer.mergeAll(
         AccessApp.ApplicationProvider(),
-        AccessApp.ApplicationProvider(),
         AccessCert.CertificateProvider(),
         AccessIdp.IdentityProviderProvider(),
         AccessInfraTarget.InfrastructureTargetProvider(),
         AccessKeyConfig.KeyConfigurationProvider(),
         AccessOrg.OrganizationProvider(),
-        AccessOrg.OrganizationProvider(),
-        AccessPol.PolicyProvider(),
         AccessPol.PolicyProvider(),
         AccessSvcToken.ServiceTokenProvider(),
         Account.AccountProvider(),
@@ -424,8 +420,6 @@ export const providers = () =>
         ApiShield.OperationProvider(),
         ApiShield.UserSchemaProvider(),
         ApiToken.AccountApiTokenProvider(),
-        ApiToken.AccountApiTokenProvider(),
-        ApiToken.UserApiTokenProvider(),
         ApiToken.UserApiTokenProvider(),
         Argo.SmartRoutingProvider(),
         Argo.TieredCachingProvider(),
@@ -446,7 +440,6 @@ export const providers = () =>
         Configuration.ConfigurationProvider(),
         Connectivity.DirectoryServiceProvider(),
         Containers.ContainerProvider(),
-        Containers.ContainerProvider(),
         ContentScanning.ContentScanningProvider(),
         ContentScanning.ExpressionProvider(),
         CustomCertificates.CustomCertificateProvider(),
@@ -455,14 +448,12 @@ export const providers = () =>
         CustomNameservers.CustomNameserverProvider(),
         CustomPage.CustomPageProvider(),
         D1.DatabaseProvider(),
-        D1.DatabaseProvider(),
         DdosProtection.DdosAllowlistEntryProvider(),
         DdosProtection.SynProtectionFilterProvider(),
         DdosProtection.SynProtectionRuleProvider(),
         DdosProtection.TcpFlowProtectionFilterProvider(),
         DdosProtection.TcpFlowProtectionRuleProvider(),
         Devices.DeviceCustomProfileProvider(),
-        Devices.DeviceDefaultProfileProvider(),
         Devices.DeviceDefaultProfileProvider(),
         Devices.DeviceDexTestProvider(),
         Devices.DeviceManagedNetworkProvider(),
@@ -481,7 +472,6 @@ export const providers = () =>
           Dns.DnssecProvider(),
           Dns.FirewallProvider(),
           Dns.RecordProvider(),
-          Dns.RecordProvider(),
           Dns.ViewProvider(),
           Dns.ZoneDnsSettingsProvider(),
           Dns.ZoneTransferAclProvider(),
@@ -490,15 +480,12 @@ export const providers = () =>
           Dns.ZoneTransferPeerProvider(),
           Dns.ZoneTransferTsigProvider(),
           Email.AddressProvider(),
-          Email.AddressProvider(),
           Email.AllowPolicyProvider(),
           Email.BlockSenderProvider(),
           Email.CatchAllProvider(),
           Email.DomainProvider(),
           Email.ImpersonationRegistryEntryProvider(),
           Email.RoutingProvider(),
-          Email.RoutingProvider(),
-          Email.RuleProvider(),
           Email.RuleProvider(),
           Email.SendingSubdomainProvider(),
           Email.TrustedDomainProvider(),
@@ -513,7 +500,6 @@ export const providers = () =>
           Healthcheck.HealthcheckProvider(),
           HostnameTlsSetting.HostnameTlsSettingProvider(),
           Hyperdrive.ConnectionProvider(),
-          Hyperdrive.ConnectionProvider(),
           Iam.ResourceGroupProvider(),
           Iam.UserGroupMembershipProvider(),
           Iam.UserGroupProvider(),
@@ -522,7 +508,6 @@ export const providers = () =>
           Intel.IndicatorFeedPermissionProvider(),
           Intel.IndicatorFeedProvider(),
           KeylessCertificate.KeylessCertificateProvider(),
-          KV.NamespaceProvider(),
           KV.NamespaceProvider(),
           LeakedCredentialCheck.LeakedCredentialCheckProvider(),
           LeakedCredentialCheck.LeakedCredentialDetectionProvider(),
@@ -570,12 +555,9 @@ export const providers = () =>
           Pipelines.StreamProvider(),
           ProxyEndpoint.ProxyEndpointProvider(),
           Queue.ConsumerProvider(),
-          Queue.ConsumerProvider(),
-          Queue.QueueProvider(),
           Queue.QueueProvider(),
           Queue.SubscriptionProvider(),
           R2.BucketEventNotificationProvider(),
-          R2.BucketProvider(),
           R2.BucketProvider(),
           R2.BucketSippyProvider(),
           R2.DataCatalogProvider(),
@@ -589,11 +571,9 @@ export const providers = () =>
           ResourceSharing.ShareResourceProvider(),
           RiskScoring.IntegrationProvider(),
           Rule.RuleProvider(),
-          Rule.RuleProvider(),
           Rules.ListProvider(),
           Ruleset.AccountEntrypointProvider(),
           Ruleset.CustomRulesetProvider(),
-          Ruleset.RulesetProvider(),
           Ruleset.RulesetProvider(),
           Rum.RuleProvider(),
           Rum.SiteProvider(),
@@ -601,8 +581,6 @@ export const providers = () =>
           SchemaValidation.SchemaProvider(),
           SchemaValidation.SettingsProvider(),
           SecretsStore.SecretsStoreProvider(),
-          SecretsStore.SecretsStoreProvider(),
-          SecretsStore.StoreSecretProvider(),
           SecretsStore.StoreSecretProvider(),
           SecurityTxt.SecurityTxtProvider(),
           Snippets.SnippetProvider(),
@@ -622,11 +600,8 @@ export const providers = () =>
           TokenValidation.RuleProvider(),
           TokenValidation.TokenConfigurationProvider(),
           Tunnel.ConfigurationProvider(),
-          Tunnel.ConfigurationProvider(),
           Tunnel.HostnameRouteProvider(),
           Tunnel.RouteProvider(),
-          Tunnel.RouteProvider(),
-          Tunnel.TunnelProvider(),
           Tunnel.TunnelProvider(),
           Tunnel.VirtualNetworkProvider(),
           Tunnel.WarpConnectorProvider(),
@@ -635,10 +610,7 @@ export const providers = () =>
           Turnstile.WidgetProvider(),
           UrlNorm.UrlNormalizationProvider(),
           Vectorize.IndexProvider(),
-          Vectorize.IndexProvider(),
           Vectorize.MetadataIndexProvider(),
-          Vectorize.MetadataIndexProvider(),
-          VpcService.VpcServiceProvider(),
           VpcService.VpcServiceProvider(),
           VulnScanner.VulnScannerCredentialProvider(),
           VulnScanner.VulnScannerCredentialSetProvider(),
@@ -651,17 +623,13 @@ export const providers = () =>
           Workers.ObservabilityDestinationProvider(),
           Workers.SubdomainProvider(),
           Workers.WorkerProvider(),
-          Workers.WorkerProvider(),
           Workers.WorkerRouteProvider(),
           WorkersForPlatforms.DispatchNamespaceProvider(),
           Workflows.WorkflowProvider(),
-          Workflows.WorkflowProvider(),
-          Zaraz.ConfigProvider(),
           Zaraz.ConfigProvider(),
           Zone.CustomNameserversProvider(),
           Zone.HoldProvider(),
           Zone.SettingProvider(),
-          Zone.ZoneProvider(),
           Zone.ZoneProvider(),
         ),
       ),
@@ -691,32 +659,26 @@ export const providers = () =>
 /**
  * The foundation every effect tree that talks to the Cloudflare API
  * shares — credentials resolved through the Alchemy auth provider,
- * account environment, Access, profile + credential store — plus a
- * blanket retry policy applied to every Cloudflare API call.
+ * account environment, Access, profile + credential store.
  *
  * Used by {@link providers} and the Cloudflare state store
  * ({@link ../Cloudflare/StateStore/State.ts state}) so that provider
- * lifecycle operations and state-store init/bootstrap probes retry
- * transient failures the same way; without it the state-store
- * subdomain/script/secrets probes run on the SDK's shorter default
- * policy and surface throttling ("Please wait and consider throttling
- * your request speed") to users.
+ * lifecycle operations and state-store init/bootstrap probes run under
+ * the same services.
  *
- * The policy is the SDK's `Retry.makeDefault` (throttling / 5xx /
- * network, server retry-after hints, bounded backoff). The
- * Cloudflare-specific misleadingly-tagged transient cases that used
- * to live here as a custom factory (10001 "internal error", 10001
- * "Unable to authenticate request", 10000 "Authentication error"
- * under load) are now tagged retryable at the source in the SDK's
- * global error map, so `makeDefault`'s transient detection covers
- * them.
+ * No retry policy is installed here: every Cloudflare API call already
+ * runs under the SDK's `makeDefault` (throttling / 5xx / network, server
+ * retry-after hints, bounded backoff) when no policy is in context, and
+ * the Cloudflare-specific misleadingly-tagged transient cases (10001
+ * "internal error", 10001 "Unable to authenticate request", 10000
+ * "Authentication error" under load) are tagged retryable at the source
+ * in the SDK's global error map, so that default covers them.
  */
 export const CloudflareApiLive = () =>
   Credentials.fromAuthProvider().pipe(
     Layer.provideMerge(CloudflareEnvironment.fromProfile()),
     Layer.provideMerge(CloudflareAuth),
     Layer.provideMerge(Access.AccessLive),
-    Layer.provideMerge(ProfileLive),
+    Layer.provideMerge(ProfileStoreLive),
     Layer.provideMerge(CredentialsStoreLive),
-    Layer.provideMerge(Layer.succeed(Retry.Retry, Retry.makeDefault)),
   );

@@ -12,14 +12,16 @@
   "dependencies": {
     "@alchemy.run/cloudflare-runtime": "workspace:*",
     "@alchemy.run/frontend-frameworks": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
-    "effect": "catalog:effect",
-    "miniflare": "catalog:cloudflare-runtime"
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:",
+    "miniflare": "catalog:"
   },
   "devDependencies": {
-    "@playwright/test": "catalog:testing",
-    "rolldown": "catalog:build",
-    "vite": "catalog:build"
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "rolldown": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   },
   "exports": {
     "./e2e/Framework": "./src/e2e/Framework.ts",

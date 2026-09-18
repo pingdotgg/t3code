@@ -32,7 +32,7 @@ Bundled servers also accept runtime overrides for operator-managed deployments.
 
 Copy `infra/relay/.env.example` to `infra/relay/.env` for relay deployment settings.
 Deploy `prod` before personal stages because it owns the retained database that their branches
-depend on. The deploy wrapper writes the resulting relay URL back to the root `.env`.
+depend on. The stack's `PublishClientConfig` action writes the resulting relay URL back to the root `.env`.
 
 ## CLI OAuth application
 

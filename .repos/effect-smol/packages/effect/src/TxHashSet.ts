@@ -25,7 +25,7 @@ import { hasProperty, type Predicate, type Refinement } from "./Predicate.ts"
 import * as TxRef from "./TxRef.ts"
 import type { NoInfer } from "./Types.ts"
 
-const TypeId = "~effect/transactions/TxHashSet"
+const TypeId = "~effect/TxHashSet"
 
 const TxHashSetProto = {
   [TypeId]: TypeId,

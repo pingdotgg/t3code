@@ -32,7 +32,7 @@ The mental model:
 1. **Define the schema and API outside the Function.** Both are pure
    descriptions and can be imported by clients.
 2. **Bind resources and construct handlers inside the Function's
-   Init phase.** The Init phase runs at deploy time *and* at cold
+   Construction phase.** The Construction phase runs at deploy time *and* at cold
    start, so we only do pure construction here — bindings, layers,
    never per-request work.
 3. **Return `{ fetch }`** where `fetch` is an `HttpEffect` produced
@@ -117,7 +117,7 @@ this guide.
 
 ## 3. Build the Function
 
-Now wire it up. Create `src/JobFunction.ts` with an empty Init
+Now wire it up. Create `src/JobFunction.ts` with an empty Construction
 phase and a public Function URL:
 
 ```typescript
@@ -134,7 +134,7 @@ export default class JobFunction extends AWS.Lambda.Function<JobFunction>()(
 ) {}
 ```
 
-The generator is the **Init phase**. It runs at *deploy time* (when
+The generator is the **Construction phase**. It runs at *deploy time* (when
 Alchemy plans the stack and collects bindings into IAM policies and
 environment variables) and again *inside the deployed Lambda* at
 cold start, where the same yields resolve to live clients. Anything
@@ -144,7 +144,7 @@ layer construction, never per-request work.
 ### 3a. Declare the table and bind operations
 
 Jobs need somewhere durable to live. Yield a DynamoDB `Table` inside
-Init to declare the resource, then bind the two operations the
+the constructor to declare the resource, then bind the two operations the
 handlers will need:
 
 ```diff lang="typescript"
@@ -170,7 +170,7 @@ automatically.
 ### 3b. Provide the binding implementations
 
 The bindings are contracts; their implementations are Layers that
-must be bundled into the function. Provide them on the Init Effect:
+must be bundled into the function. Provide them on the constructor Effect:
 
 ```diff lang="typescript"
   Effect.gen(function* () {
@@ -194,7 +194,7 @@ credentials to wire up.
 
 `HttpApiBuilder.group` *constructs* a `Layer` that wires handlers
 into the API spec. It's pure — it doesn't run them — so it's safe to
-build inside Init. The handlers close over the `getItem` / `putItem`
+build inside the constructor. The handlers close over the `getItem` / `putItem`
 bindings from step 3a:
 
 ```diff lang="typescript"
@@ -244,7 +244,7 @@ keeping the typed error channel reserved for `JobNotFound`.
 
 ### 3d. Return `{ fetch }`
 
-The return value of Init is the Function's runtime surface — for an
+The return value of the constructor is the Function's runtime surface — for an
 HTTP Lambda that means an object with a `fetch` field.
 `HttpApiBuilder.layer(JobApi)` assembles the API from the handler
 group, and `HttpRouter.toHttpEffect` converts that Layer into the
@@ -373,7 +373,7 @@ export default Alchemy.Stack(
 ```
 
 Yielding `JobFunction` deploys the function *and* everything it
-declared inside Init — the DynamoDB table, the generated IAM role
+declared inside the constructor — the DynamoDB table, the generated IAM role
 with the two table-scoped statements, and the Function URL.
 
 ## 5. Deploy

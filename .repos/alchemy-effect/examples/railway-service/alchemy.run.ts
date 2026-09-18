@@ -3,7 +3,7 @@
  *
  * - `Site` — parent Project (`src/shared.ts`)
  * - `Staging` — extra Environment (production is on the Project)
- * - `Marker` — shared Variable the Api reads via `Config.string`
+ * - `Marker` — shared Variable the Api reads via `Config.String`
  * - `Disk` — Volume the Worker mounts with `MountVolume`
  * - `Db` — Postgres + `ConnectPostgres` / Drizzle
  * - `Mysql` — MySQL (same shape as Postgres)

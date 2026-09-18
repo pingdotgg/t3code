@@ -8,7 +8,8 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import * as Http from "../../Http.ts";
 import { Request } from "./Request.ts";
-import { isWorkerEvent, type WorkerServices } from "./Worker.ts";
+import type { WorkerServices } from "./Worker.ts";
+import { isWorkerEvent } from "./WorkerRuntime.ts";
 
 export type HttpEffect = Http.HttpEffect<WorkerServices>;
 

@@ -11,6 +11,7 @@
  */
 import * as Effect from "../../Effect.ts"
 import * as Layer from "../../Layer.ts"
+import * as NetAddress from "../net/NetAddress.ts"
 import type * as RpcSerialization from "../rpc/RpcSerialization.ts"
 import * as RpcServer from "../rpc/RpcServer.ts"
 import { SocketServer } from "../socket/SocketServer.ts"
@@ -25,9 +26,9 @@ import type { ShardingConfig } from "./ShardingConfig.ts"
 const withLogAddress = <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, E, R | SocketServer> =>
   Layer.effectDiscard(Effect.gen(function*() {
     const server = yield* SocketServer
-    const address = server.address._tag === "UnixAddress"
+    const address = server.address._tag === "UnixPathAddress"
       ? server.address.path
-      : `${server.address.hostname}:${server.address.port}`
+      : NetAddress.formatInet(server.address)
     yield* Effect.annotateLogs(Effect.logInfo(`Listening on: ${address}`), {
       package: "@effect/cluster",
       service: "Runner"
@@ -46,8 +47,8 @@ const withLogAddress = <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, E,
  *
  * **Details**
  *
- * It logs the bound `SocketServer.address` when the layer starts, formatting TCP
- * addresses as `hostname:port` and Unix socket addresses as their filesystem
+ * It logs the bound `SocketServer.address` when the layer starts, formatting internet
+ * addresses as numeric socket addresses and Unix socket addresses as their filesystem
  * path.
  *
  * **Gotchas**

@@ -1,7 +1,7 @@
 import * as Cloudflare from "@/Cloudflare";
 import * as Alchemy from "@/index.ts";
 import * as Effect from "effect/Effect";
-import { EnvBucket } from "./object.ts";
+import { EnvBucket, RemoteContainer } from "./object.ts";
 import RemoteContainerWorker from "./worker.ts";
 
 export default Alchemy.Stack(
@@ -10,6 +10,7 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const bucket = yield* EnvBucket;
     const worker = yield* RemoteContainerWorker;
-    return { url: worker.url.as<string>(), bucketName: bucket.bucketName };
+    const app = yield* RemoteContainer.Application;
+    return { url: worker.url.as<string>(), bucketName: bucket.bucketName, app };
   }),
 );

@@ -13,6 +13,7 @@ const RegistryProxyWorker = {
 };
 import {
   defaultDurableObjectUniqueKey,
+  DEFAULT_COMPATIBILITY_DATE,
   SERVICE_USER_WORKER,
 } from "../internal/constants.ts";
 import { formatInternalWorkerModules } from "../internal/internal-modules.ts";
@@ -87,7 +88,7 @@ export const RegistryProxyLive = Layer.effect(
             const service: WorkerdConfig.Service = {
               name: SERVICE_REGISTRY_PROXY,
               worker: {
-                compatibilityDate: "2025-01-01",
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 compatibilityFlags: ["service_binding_extra_handlers"],
                 modules: yield* registry
                   .read(subscribed)

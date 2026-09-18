@@ -151,6 +151,8 @@ export interface Handlers<State, Output, Input = Terminal.UserInput> {
 /**
  * Defines the symbols used to render built-in prompts.
  *
+ * **Details**
+ *
  * Set a symbol to an empty string to omit both the symbol and its adjacent
  * spacing.
  *
@@ -335,7 +337,7 @@ export interface DateOptions extends ThemeOptions {
  * @category options
  * @since 4.0.0
  */
-export interface IntegerOptions extends ThemeOptions {
+export interface IntOptions extends ThemeOptions {
   /**
    * The message to display in the prompt.
    */
@@ -370,17 +372,12 @@ export interface IntegerOptions extends ThemeOptions {
 }
 
 /**
- * Options for a floating-point number prompt.
- *
- * **Details**
- *
- * In addition to the numeric bounds and step settings from `IntegerOptions`,
- * the prompt can be configured with a display precision.
+ * Options for `Number`, extending `IntOptions` with display precision.
  *
  * @category options
  * @since 4.0.0
  */
-export interface FloatOptions extends IntegerOptions {
+export interface NumberOptions extends IntOptions {
   /**
    * The precision to use for the floating point value (defaults to `2`).
    */
@@ -450,9 +447,9 @@ export interface FileOptions extends ThemeOptions {
  */
 export interface SelectOptions<A> extends ThemeOptions {
   /**
-   * The message to display in the prompt.
+   * The prompt message. Omit to display only the choices.
    */
-  readonly message: string
+  readonly message?: string | undefined
   /**
    * The choices to display to the user.
    */
@@ -471,6 +468,10 @@ export interface SelectOptions<A> extends ThemeOptions {
  * @since 4.0.0
  */
 export interface AutoCompleteOptions<A> extends SelectOptions<A> {
+  /**
+   * The required prompt message.
+   */
+  readonly message: string
   /**
    * The label used for the filter display (defaults to "filter").
    */
@@ -640,6 +641,8 @@ export const makeTheme = (options?: Partial<Theme>): Theme => ({
 
 /**
  * Context reference for the theme used by built-in prompts.
+ *
+ * **Details**
  *
  * Provide this reference once to theme every prompt in an application. A
  * prompt's `theme` option takes precedence over the context value.
@@ -828,12 +831,12 @@ const renderPagingPrefix = (theme: Theme, showArrowUp: boolean, showArrowDown: b
  * `initial` defaults to `false`. Enter submits the current default, yes-style
  * input submits `true`, no-style input submits `false`, and other input beeps.
  *
- * @see {@link toggle} for an interactive switch-before-submit boolean prompt
+ * @see {@link Toggle} for an interactive switch-before-submit boolean prompt
  *
  * @category constructors
  * @since 4.0.0
  */
-export const confirm = (options: ConfirmOptions): Prompt<boolean> => {
+export const Confirm = (options: ConfirmOptions): Prompt<boolean> => {
   const opts: ConfirmOptionsReq = {
     initial: false,
     ...options,
@@ -849,7 +852,7 @@ export const confirm = (options: ConfirmOptions): Prompt<boolean> => {
     }
   }
   const initialState: ConfirmState = { value: opts.initial }
-  return custom(initialState, {
+  return Custom(initialState, {
     render: handleConfirmRender(opts),
     process: (input) => handleConfirmProcess(input, opts.initial),
     clear: handleConfirmClear(opts)
@@ -878,7 +881,7 @@ export const confirm = (options: ConfirmOptions): Prompt<boolean> => {
  * @category constructors
  * @since 4.0.0
  */
-export const custom: {
+export const Custom: {
   <State, Output>(
     initialState: State | Effect.Effect<State, never, Environment>,
     handlers: Handlers<State, Output>
@@ -928,9 +931,9 @@ export const custom: {
  * @category constructors
  * @since 4.0.0
  */
-export const date = (options: DateOptions): Prompt<Date> => {
+export const Date = (options: DateOptions): Prompt<globalThis.Date> => {
   const opts: DateOptionsReq = {
-    initial: new Date(),
+    initial: new globalThis.Date(),
     dateMask: "YYYY-MM-DD HH:mm:ss",
     validate: Effect.succeed,
     ...options,
@@ -948,7 +951,7 @@ export const date = (options: DateOptions): Prompt<Date> => {
     value: opts.initial,
     error: Option.none()
   }
-  return custom(initialState, {
+  return Custom(initialState, {
     render: handleDateRender(opts),
     process: handleDateProcess(opts),
     clear: handleDateClear(opts)
@@ -971,7 +974,7 @@ export const date = (options: DateOptions): Prompt<Date> => {
  * @category constructors
  * @since 4.0.0
  */
-export const file = (options: FileOptions = {}): Prompt<string> => {
+export const File = (options: FileOptions = {}): Prompt<string> => {
   const opts: FileOptionsReq = {
     ...options,
     type: options.type ?? "file",
@@ -1001,10 +1004,10 @@ export const file = (options: FileOptions = {}): Prompt<string> => {
         return index === -1 ? 0 : index
       }
     })
-    const confirm = Confirm.Hide()
+    const confirm = FileConfirm.Hide()
     return { cursor, files, allFiles: files, query: "", path: Option.map(defaultPath, path.dirname), confirm }
   })
-  return custom(initialState, {
+  return Custom(initialState, {
     render: handleFileRender(opts),
     process: handleFileProcess(opts),
     clear: handleFileClear(opts)
@@ -1047,11 +1050,11 @@ export const flatMap: {
  * @category constructors
  * @since 4.0.0
  */
-export const float = (options: FloatOptions): Prompt<number> => {
-  const opts: FloatOptionsReq = {
+export const Number = (options: NumberOptions): Prompt<number> => {
+  const opts: NumberOptionsReq = {
     default: 0,
-    min: Number.NEGATIVE_INFINITY,
-    max: Number.POSITIVE_INFINITY,
+    min: globalThis.Number.NEGATIVE_INFINITY,
+    max: globalThis.Number.POSITIVE_INFINITY,
     incrementBy: 1,
     decrementBy: 1,
     precision: 2,
@@ -1072,7 +1075,7 @@ export const float = (options: FloatOptions): Prompt<number> => {
     value: initialValue,
     error: Option.none()
   }
-  return custom(initialState, {
+  return Custom(initialState, {
     render: handleRenderFloat(opts),
     process: handleProcessFloat(opts),
     clear: handleNumberClear(opts)
@@ -1085,7 +1088,7 @@ export const float = (options: FloatOptions): Prompt<number> => {
  * @category constructors
  * @since 4.0.0
  */
-export const hidden = (
+export const Hidden = (
   options: TextOptions
 ): Prompt<Redacted.Redacted> => basePrompt(options, "hidden").pipe(map(Redacted.make))
 
@@ -1100,11 +1103,11 @@ export const hidden = (
  * @category constructors
  * @since 4.0.0
  */
-export const integer = (options: IntegerOptions): Prompt<number> => {
-  const opts: IntegerOptionsReq = {
+export const Int = (options: IntOptions): Prompt<number> => {
+  const opts: IntOptionsReq = {
     default: 0,
-    min: Number.NEGATIVE_INFINITY,
-    max: Number.POSITIVE_INFINITY,
+    min: globalThis.Number.NEGATIVE_INFINITY,
+    max: globalThis.Number.POSITIVE_INFINITY,
     incrementBy: 1,
     decrementBy: 1,
     validate: (n) => {
@@ -1124,7 +1127,7 @@ export const integer = (options: IntegerOptions): Prompt<number> => {
     value: initialValue,
     error: Option.none()
   }
-  return custom(initialState, {
+  return Custom(initialState, {
     render: handleRenderInteger(opts),
     process: handleProcessInteger(opts),
     clear: handleNumberClear(opts)
@@ -1138,8 +1141,8 @@ export const integer = (options: IntegerOptions): Prompt<number> => {
  * @category constructors
  * @since 4.0.0
  */
-export const list = (options: ListOptions): Prompt<Array<string>> =>
-  text(options).pipe(
+export const List = (options: ListOptions): Prompt<Array<string>> =>
+  String(options).pipe(
     map((output) => output.split(options.delimiter || ","))
   )
 
@@ -1169,7 +1172,7 @@ export const map: {
  * @category constructors
  * @since 4.0.0
  */
-export const password = (
+export const Password = (
   options: TextOptions
 ): Prompt<Redacted.Redacted> => basePrompt(options, "password").pipe(map(Redacted.make))
 
@@ -1208,7 +1211,7 @@ const getSelectInitialIndex = <A>(choices: ReadonlyArray<SelectChoice<A>>): numb
     const choice = choices[i] as SelectChoice<A>
     if (choice.selected === true) {
       if (seenSelected !== -1) {
-        throw new Error("InvalidArgumentException: only a single choice can be selected by default for Prompt.select")
+        throw new Error("InvalidArgumentException: only a single choice can be selected by default for Prompt.Select")
       }
       seenSelected = i
     }
@@ -1230,13 +1233,13 @@ const getSelectInitialIndex = <A>(choices: ReadonlyArray<SelectChoice<A>>): numb
  * @category constructors
  * @since 4.0.0
  */
-export const select = <const A>(options: SelectOptions<A>): Prompt<A> => {
+export const Select = <const A>(options: SelectOptions<A>): Prompt<A> => {
   const opts: SelectOptionsReq<A> = {
     maxPerPage: 10,
     ...options
   }
   const initialIndex = getSelectInitialIndex(opts.choices)
-  return custom(initialIndex, {
+  return Custom(initialIndex, {
     render: handleSelectRender(opts),
     process: handleSelectProcess(opts),
     clear: handleSelectClear(opts)
@@ -1257,7 +1260,7 @@ export const select = <const A>(options: SelectOptions<A>): Prompt<A> => {
  * ```ts import.meta.vitest
  * import { Prompt } from "effect/unstable/cli"
  *
- * const language = Prompt.autoComplete({
+ * const language = Prompt.AutoComplete({
  *   message: "Choose a language",
  *   choices: [
  *     { title: "TypeScript", value: "ts" },
@@ -1272,7 +1275,7 @@ export const select = <const A>(options: SelectOptions<A>): Prompt<A> => {
  * @category constructors
  * @since 4.0.0
  */
-export const autoComplete = <const A>(options: AutoCompleteOptions<A>): Prompt<A> => {
+export const AutoComplete = <const A>(options: AutoCompleteOptions<A>): Prompt<A> => {
   const opts: AutoCompleteOptionsReq<A> = {
     maxPerPage: 10,
     filterLabel: "filter",
@@ -1292,7 +1295,7 @@ export const autoComplete = <const A>(options: AutoCompleteOptions<A>): Prompt<A
     index,
     filtered
   }
-  return custom(initialState, {
+  return Custom(initialState, {
     render: handleAutoCompleteRender(opts),
     process: handleAutoCompleteProcess(opts),
     clear: handleAutoCompleteClear(opts)
@@ -1311,7 +1314,7 @@ export const autoComplete = <const A>(options: AutoCompleteOptions<A>): Prompt<A
  * @category constructors
  * @since 4.0.0
  */
-export const multiSelect = <const A>(
+export const MultiSelect = <const A>(
   options: SelectOptions<A> & MultiSelectOptions
 ): Prompt<Array<A>> => {
   const opts: SelectOptionsReq<A> & MultiSelectOptionsReq = {
@@ -1327,7 +1330,7 @@ export const multiSelect = <const A>(
     }
   }
   const initialState: MultiSelectState = { index: 0, selectedIndices: initialSelected, error: Option.none() }
-  return custom(initialState, {
+  return Custom(initialState, {
     render: handleMultiSelectRender(opts),
     process: handleMultiSelectProcess(opts),
     clear: handleMultiSelectClear(opts)
@@ -1359,7 +1362,7 @@ export const succeed = <A>(value: A): Prompt<A> => {
  * @category constructors
  * @since 4.0.0
  */
-export const text = (
+export const String = (
   options: TextOptions
 ): Prompt<string> => basePrompt(options, "text")
 
@@ -1370,14 +1373,14 @@ export const text = (
  * @category constructors
  * @since 4.0.0
  */
-export const toggle = (options: ToggleOptions): Prompt<boolean> => {
+export const Toggle = (options: ToggleOptions): Prompt<boolean> => {
   const opts: ToggleOptionsReq = {
     initial: false,
     active: "on",
     inactive: "off",
     ...options
   }
-  return custom(opts.initial, {
+  return Custom(opts.initial, {
     render: handleToggleRender(opts),
     process: handleToggleProcess,
     clear: () => handleToggleClear(opts)
@@ -1479,9 +1482,11 @@ const runLoop = Effect.fnUntraced(
   ) {
     let state = Effect.isEffect(loop.initialState) ? yield* loop.initialState : loop.initialState
     let action: Action<unknown, unknown> = Action.NextFrame({ state })
+    let clear = ""
     while (true) {
       const msg = yield* loop.render(state, action)
-      yield* Effect.orDie(terminal.display(msg))
+      yield* Effect.orDie(terminal.display(clear + msg))
+      clear = ""
       if (loop.events) {
         const takeInput = Queue.take(input).pipe(
           Effect.map((input) => ({ _tag: "Input" as const, input }))
@@ -1499,14 +1504,14 @@ const runLoop = Effect.fnUntraced(
         case "Beep":
           continue
         case "NextFrame": {
-          yield* Effect.orDie(terminal.display(yield* loop.clear(state, action)))
+          clear = yield* loop.clear(state, action)
           state = action.state
           continue
         }
         case "Submit": {
-          yield* Effect.orDie(terminal.display(yield* loop.clear(state, action)))
+          clear = yield* loop.clear(state, action)
           const msg = yield* loop.render(state, action)
-          yield* Effect.orDie(terminal.display(msg))
+          yield* Effect.orDie(terminal.display(clear + msg))
           return action.value
         }
       }
@@ -1773,7 +1778,7 @@ const processDateNext = (state: DateState) => {
     onSome: (next) => state.dateParts.indexOf(next)
   })
   return Action.NextFrame({
-    state: { ...state, cursor }
+    state: { ...state, typed: "", cursor }
   })
 }
 
@@ -1920,7 +1925,7 @@ abstract class DatePart {
   constructor(params: DatePartParams) {
     this.token = params.token
     this.locales = params.locales
-    this.date = params.date || new Date()
+    this.date = params.date || new globalThis.Date()
     this.parts = params.parts || [this]
   }
 
@@ -1966,7 +1971,7 @@ abstract class DatePart {
   }
 
   toString() {
-    return String(this.date)
+    return globalThis.String(this.date)
   }
 }
 
@@ -1998,7 +2003,7 @@ class Milliseconds extends DatePart {
   }
 
   setValue(value: string): void {
-    this.date.setMilliseconds(Number.parseInt(value.slice(-this.token.length)))
+    this.date.setMilliseconds(globalThis.Number.parseInt(value.slice(-this.token.length)))
   }
 
   override toString() {
@@ -2017,7 +2022,7 @@ class Seconds extends DatePart {
   }
 
   setValue(value: string): void {
-    this.date.setSeconds(Number.parseInt(value.slice(-2)))
+    this.date.setSeconds(globalThis.Number.parseInt(value.slice(-2)))
   }
 
   override toString() {
@@ -2038,7 +2043,7 @@ class Minutes extends DatePart {
   }
 
   setValue(value: string): void {
-    this.date.setMinutes(Number.parseInt(value.slice(-2)))
+    this.date.setMinutes(globalThis.Number.parseInt(value.slice(-2)))
   }
 
   override toString() {
@@ -2059,7 +2064,7 @@ class Hours extends DatePart {
   }
 
   setValue(value: string): void {
-    this.date.setHours(Number.parseInt(value.slice(-2)))
+    this.date.setHours(globalThis.Number.parseInt(value.slice(-2)))
   }
 
   override toString() {
@@ -2082,7 +2087,7 @@ class Day extends DatePart {
   }
 
   setValue(value: string): void {
-    this.date.setDate(Number.parseInt(value.slice(-2)))
+    this.date.setDate(globalThis.Number.parseInt(value.slice(-2)))
   }
 
   override toString() {
@@ -2131,7 +2136,7 @@ class Month extends DatePart {
   }
 
   setValue(value: string): void {
-    const month = Number.parseInt(value.slice(-2)) - 1
+    const month = globalThis.Number.parseInt(value.slice(-2)) - 1
     this.date.setMonth(month < 0 ? 0 : month)
   }
 
@@ -2160,7 +2165,7 @@ class Year extends DatePart {
   }
 
   setValue(value: string): void {
-    this.date.setFullYear(Number.parseInt(value.slice(-4)))
+    this.date.setFullYear(globalThis.Number.parseInt(value.slice(-4)))
   }
 
   override toString() {
@@ -2201,20 +2206,20 @@ interface FileState {
   readonly allFiles: ReadonlyArray<string>
   readonly query: string
   readonly path: Option.Option<string>
-  readonly confirm: Confirm
+  readonly confirm: FileConfirm
 }
 
 const CONFIRM_MESSAGE = "The selected directory contains files. Would you like to traverse the selected directory?"
 const FILE_FILTER_LABEL = "filter"
 const FILE_FILTER_PLACEHOLDER = "type to filter"
 const FILE_EMPTY_MESSAGE = "No matches"
-type Confirm = Data.TaggedEnum<{
+type FileConfirm = Data.TaggedEnum<{
   readonly Show: {}
   readonly Hide: {}
 }>
-const Confirm = Data.taggedEnum<Confirm>()
+const FileConfirm = Data.taggedEnum<FileConfirm>()
 
-const showConfirmation = Confirm.$is("Show")
+const showConfirmation = FileConfirm.$is("Show")
 
 const resolveCurrentPath = (
   path: Option.Option<string>,
@@ -2539,7 +2544,7 @@ const processSelection = Effect.fnUntraced(function*(state: FileState, options: 
         ? Action.Submit({ value: resolvedPath })
         // Directory has contents - show confirmation to user
         : Action.NextFrame({
-          state: { ...state, confirm: Confirm.Show() }
+          state: { ...state, confirm: FileConfirm.Show() }
         })
     }
     return Action.NextFrame({
@@ -2549,7 +2554,7 @@ const processSelection = Effect.fnUntraced(function*(state: FileState, options: 
         allFiles: files,
         query: "",
         path: Option.some(resolvedPath),
-        confirm: Confirm.Hide()
+        confirm: FileConfirm.Hide()
       }
     })
   }
@@ -2613,7 +2618,7 @@ const handleFileProcess = (options: FileOptionsReq) => {
               allFiles: files,
               query: "",
               path: Option.some(resolvedPath),
-              confirm: Confirm.Hide()
+              confirm: FileConfirm.Hide()
             }
           })
         }
@@ -2640,7 +2645,9 @@ const handleFileProcess = (options: FileOptionsReq) => {
   })
 }
 
-interface SelectOptionsReq<A> extends OptionsReq<SelectOptions<A>> {}
+interface SelectOptionsReq<A> extends SelectOptions<A> {
+  readonly maxPerPage: number
+}
 interface MultiSelectOptionsReq extends MultiSelectOptions {}
 
 type MultiSelectState = {
@@ -2767,7 +2774,7 @@ const renderMultiSelectNextFrame = Effect.fnUntraced(
     const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
     const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options)
     const error = renderMultiSelectError(state, figures.pointer, figures)
-    return Ansi.cursorHide + promptMsg + "\n" + choices + error
+    return Ansi.cursorHide + withSelectHeader(promptMsg, choices) + error
   }
 )
 
@@ -2780,7 +2787,7 @@ const renderMultiSelectSubmission = Effect.fnUntraced(
     const selectedText = selectedChoices.join(", ")
     const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
     const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
-    const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options)
+    const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options) ?? leadingSymbol
     return promptMsg + " " + Ansi.annotate(selectedText, figures.submittedColor) + "\n"
   }
 )
@@ -2842,7 +2849,7 @@ const handleMultiSelectClear = <A>(options: SelectOptionsReq<A>) =>
     const promptText = renderSelectOutput(figures.prefix, figures.pointerSmall, options, { plain: true })
     const choicesText = renderMultiSelectChoices(state, options, figures, { plain: true })
     const errorText = renderMultiSelectError(state, figures.pointer, figures, { plain: true })
-    const clearOutput = clearOutputWithError(`${promptText}\n${choicesText}`, columns, errorText)
+    const clearOutput = clearOutputWithError(withSelectHeader(promptText, choicesText), columns, errorText)
     return clearOutput + clearPrompt
   })
 
@@ -2896,8 +2903,8 @@ const handleMultiSelectRender = <A>(options: SelectOptionsReq<A>) => {
   }
 }
 
-interface IntegerOptionsReq extends OptionsReq<IntegerOptions> {}
-interface FloatOptionsReq extends OptionsReq<FloatOptions> {}
+interface IntOptionsReq extends OptionsReq<IntOptions> {}
+interface NumberOptionsReq extends OptionsReq<NumberOptions> {}
 
 interface NumberState {
   readonly cursor: number
@@ -2905,7 +2912,7 @@ interface NumberState {
   readonly error: Option.Option<string>
 }
 
-const handleNumberClear = (options: IntegerOptionsReq) => {
+const handleNumberClear = (options: IntOptionsReq) => {
   return Effect.fnUntraced(function*(state: NumberState, _: Action<NumberState, number>) {
     const terminal = yield* Terminal.Terminal
     const columns = yield* terminal.columns
@@ -2962,7 +2969,7 @@ const renderNumberOutput = (
   state: NumberState,
   leadingSymbol: string,
   trailingSymbol: string,
-  options: IntegerOptionsReq,
+  options: IntOptionsReq,
   theme: Theme,
   renderOptions?: RenderOptions | undefined,
   submitted: boolean = false
@@ -2971,7 +2978,7 @@ const renderNumberOutput = (
   return renderPrompt(value, options.message, leadingSymbol, trailingSymbol, renderOptions)
 }
 
-const renderNumberNextFrame = Effect.fnUntraced(function*(state: NumberState, options: IntegerOptionsReq) {
+const renderNumberNextFrame = Effect.fnUntraced(function*(state: NumberState, options: IntOptionsReq) {
   const figures = yield* getTheme(options)
   const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
   const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
@@ -2980,7 +2987,7 @@ const renderNumberNextFrame = Effect.fnUntraced(function*(state: NumberState, op
   return promptMsg + errorMsg
 })
 
-const renderNumberSubmission = Effect.fnUntraced(function*(nextState: NumberState, options: IntegerOptionsReq) {
+const renderNumberSubmission = Effect.fnUntraced(function*(nextState: NumberState, options: IntOptionsReq) {
   const figures = yield* getTheme(options)
   const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
   const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
@@ -3010,8 +3017,8 @@ const defaultIntProcessor = (input: string, state: NumberState) => {
     }))
   }
 
-  const parsed = Number.parseInt(state.value + input)
-  if (Number.isNaN(parsed)) {
+  const parsed = globalThis.Number.parseInt(state.value + input)
+  if (globalThis.Number.isNaN(parsed)) {
     return Effect.succeed(Action.Beep())
   } else {
     return Effect.succeed(Action.NextFrame({
@@ -3030,8 +3037,8 @@ const defaultFloatProcessor = (input: string, state: NumberState) => {
     }))
   }
 
-  const parsed = Number.parseFloat(state.value + input)
-  if (Number.isNaN(parsed)) {
+  const parsed = globalThis.Number.parseFloat(state.value + input)
+  if (globalThis.Number.isNaN(parsed)) {
     return Effect.succeed(Action.Beep())
   } else {
     return Effect.succeed(Action.NextFrame({
@@ -3048,7 +3055,7 @@ const defaultFloatProcessor = (input: string, state: NumberState) => {
   }
 }
 
-const handleRenderInteger = (options: IntegerOptionsReq) => {
+const handleRenderInteger = (options: IntOptionsReq) => {
   return (state: NumberState, action: Action<NumberState, number>) => {
     return Action.$match(action, {
       Beep: () => Effect.succeed(renderBeep),
@@ -3058,7 +3065,7 @@ const handleRenderInteger = (options: IntegerOptionsReq) => {
   }
 }
 
-const handleProcessInteger = (options: IntegerOptionsReq) => {
+const handleProcessInteger = (options: IntOptionsReq) => {
   return (input: Terminal.UserInput, state: NumberState) => {
     if (input.key.ctrl && input.key.name === "u") {
       return processNumberClear(state)
@@ -3074,7 +3081,7 @@ const handleProcessInteger = (options: IntegerOptionsReq) => {
             ...state,
             value: state.value === "" || state.value === "-"
               ? `${options.incrementBy}`
-              : `${Number.parseInt(state.value) + options.incrementBy}`,
+              : `${globalThis.Number.parseInt(state.value) + options.incrementBy}`,
             error: Option.none()
           }
         }))
@@ -3086,15 +3093,15 @@ const handleProcessInteger = (options: IntegerOptionsReq) => {
             ...state,
             value: state.value === "" || state.value === "-"
               ? `-${options.decrementBy}`
-              : `${Number.parseInt(state.value) - options.decrementBy}`,
+              : `${globalThis.Number.parseInt(state.value) - options.decrementBy}`,
             error: Option.none()
           }
         }))
       }
       case "enter":
       case "return": {
-        const parsed = Number.parseInt(state.value)
-        if (Number.isNaN(parsed)) {
+        const parsed = globalThis.Number.parseInt(state.value)
+        if (globalThis.Number.isNaN(parsed)) {
           return Effect.succeed(Action.NextFrame({
             state: {
               ...state,
@@ -3121,7 +3128,7 @@ const handleProcessInteger = (options: IntegerOptionsReq) => {
   }
 }
 
-const handleRenderFloat = (options: FloatOptionsReq) => {
+const handleRenderFloat = (options: NumberOptionsReq) => {
   return (state: NumberState, action: Action<NumberState, number>) => {
     return Action.$match(action, {
       Beep: () => Effect.succeed(renderBeep),
@@ -3131,7 +3138,7 @@ const handleRenderFloat = (options: FloatOptionsReq) => {
   }
 }
 
-const handleProcessFloat = (options: FloatOptionsReq) => {
+const handleProcessFloat = (options: NumberOptionsReq) => {
   return (input: Terminal.UserInput, state: NumberState) => {
     if (input.key.ctrl && input.key.name === "u") {
       return processNumberClear(state)
@@ -3147,7 +3154,7 @@ const handleProcessFloat = (options: FloatOptionsReq) => {
             ...state,
             value: state.value === "" || state.value === "-"
               ? `${options.incrementBy}`
-              : `${Number.parseFloat(state.value) + options.incrementBy}`,
+              : `${globalThis.Number.parseFloat(state.value) + options.incrementBy}`,
             error: Option.none()
           }
         }))
@@ -3159,15 +3166,15 @@ const handleProcessFloat = (options: FloatOptionsReq) => {
             ...state,
             value: state.value === "" || state.value === "-"
               ? `-${options.decrementBy}`
-              : `${Number.parseFloat(state.value) - options.decrementBy}`,
+              : `${globalThis.Number.parseFloat(state.value) - options.decrementBy}`,
             error: Option.none()
           }
         }))
       }
       case "enter":
       case "return": {
-        const parsed = Number.parseFloat(state.value)
-        if (Number.isNaN(parsed)) {
+        const parsed = globalThis.Number.parseFloat(state.value)
+        if (globalThis.Number.isNaN(parsed)) {
           return Effect.succeed(Action.NextFrame({
             state: {
               ...state,
@@ -3206,7 +3213,6 @@ type AutoCompleteState = {
   readonly filtered: ReadonlyArray<number>
 }
 
-interface SelectOptionsReq<A> extends OptionsReq<SelectOptions<A>> {}
 interface AutoCompleteOptionsReq<A> extends OptionsReq<AutoCompleteOptions<A>> {}
 
 const filterAutoCompleteChoices = <A>(choices: ReadonlyArray<SelectChoice<A>>, query: string) => {
@@ -3243,7 +3249,13 @@ const renderSelectOutput = <A>(
   trailingSymbol: string,
   options: SelectOptionsReq<A>,
   renderOptions?: RenderOptions | undefined
-) => renderPrompt("", options.message, leadingSymbol, trailingSymbol, renderOptions)
+): string | undefined =>
+  options.message === undefined
+    ? undefined
+    : renderPrompt("", options.message, leadingSymbol, trailingSymbol, renderOptions)
+
+const withSelectHeader = (header: string | undefined, body: string): string =>
+  header === undefined ? body : header + "\n" + body
 
 const renderAutoCompleteFilter = <A>(
   state: AutoCompleteState,
@@ -3405,7 +3417,7 @@ const renderSelectNextFrame = Effect.fnUntraced(function*<A>(state: SelectState,
   const leadingSymbol = annotateSymbol(figures.prefix, figures.primaryColor)
   const trailingSymbol = annotateSymbol(figures.pointerSmall, figures.mutedColor)
   const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options)
-  return Ansi.cursorHide + promptMsg + "\n" + choices
+  return Ansi.cursorHide + withSelectHeader(promptMsg, choices)
 })
 
 const renderAutoCompleteNextFrame = Effect.fnUntraced(function*<A>(
@@ -3425,7 +3437,7 @@ const renderSelectSubmission = Effect.fnUntraced(function*<A>(state: SelectState
   const selected = options.choices[state].title
   const leadingSymbol = annotateSymbol(figures.tick, figures.successColor)
   const trailingSymbol = annotateSymbol(figures.ellipsis, figures.mutedColor)
-  const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options)
+  const promptMsg = renderSelectOutput(leadingSymbol, trailingSymbol, options) ?? leadingSymbol
   return promptMsg + " " + Ansi.annotate(selected, figures.submittedColor) + "\n"
 })
 
@@ -3526,7 +3538,7 @@ const handleSelectClear = <A>(options: SelectOptionsReq<A>) =>
     const clearPrompt = Ansi.eraseLine + Ansi.cursorLeft
     const promptText = renderSelectOutput(figures.prefix, figures.pointerSmall, options, { plain: true })
     const choicesText = renderSelectChoices(state, options, figures, { plain: true })
-    const clearOutput = eraseText(`${promptText}\n${choicesText}`, columns)
+    const clearOutput = eraseText(withSelectHeader(promptText, choicesText), columns)
     return clearOutput + clearPrompt
   })
 
@@ -3929,7 +3941,7 @@ const basePrompt = (
     value: opts.default,
     error: Option.none()
   }
-  return custom(initialState, {
+  return Custom(initialState, {
     render: handleTextRender(opts),
     process: handleTextProcess(opts),
     clear: handleTextClear(opts)

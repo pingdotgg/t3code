@@ -1,0 +1,394 @@
+---
+title: "Part 4: Give users their own credentials"
+description: Replace the shared credential with Better Auth accounts and individual Git API keys.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+One shared credential cannot distinguish one caller from another. Replace it
+with Better Auth accounts and API keys, then use the authenticated user's ID
+when checking access to a named repository.
+
+Keep the host and storage from [Part 3](/git/tutorial/part-3). Existing repositories
+remain in place. This part creates new repositories under user IDs; it does not
+transfer the existing `acme/web` repository to a user.
+
+## Install Better Auth
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add @alchemy.run/better-auth better-auth @better-auth/api-key`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install @alchemy.run/better-auth better-auth @better-auth/api-key`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add @alchemy.run/better-auth better-auth @better-auth/api-key`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add @alchemy.run/better-auth better-auth @better-auth/api-key`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+Better Auth will manage accounts and credentials. Git will continue to store
+repositories.
+
+## Store accounts in D1
+
+Create `src/auth.ts`:
+
+```typescript
+// src/auth.ts
+import { BetterAuth } from "@alchemy.run/better-auth";
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const AuthDb = Cloudflare.D1.Database("AuthDb");
+
+export const Auth = BetterAuth({
+  basePath: "/api/auth",
+  emailAndPassword: { enabled: true },
+});
+```
+
+This enables email/password accounts under `/api/auth`. The host will supply
+D1 as the database implementation later in this part.
+
+## Enable individual API keys
+
+```diff lang="typescript"
+// src/auth.ts
+import { BetterAuth } from "@alchemy.run/better-auth";
++import { apiKey } from "@better-auth/api-key";
+```
+
+Register the plugin:
+
+```diff lang="typescript"
+// src/auth.ts
+  emailAndPassword: { enabled: true },
++  plugins: [apiKey()],
+});
+```
+
+A signed-in user can now mint an API key for a Git client. That key replaces the
+shared credential in the HTTP Basic password field.
+
+## Set a request allowance for Git
+
+```diff lang="typescript"
+// src/auth.ts
+-  plugins: [apiKey()],
++  plugins: [apiKey({
++    rateLimit: { timeWindow: 60_000, maxRequests: 1_000 },
++  })],
+```
+
+A push or clone makes multiple authenticated HTTP requests. Set an explicit
+allowance of 1,000 requests per minute for the keys created in this tutorial;
+the plugin's default of ten requests per day is too small for these steps.
+
+## Represent the caller
+
+Create `src/session.ts`:
+
+```typescript
+// src/session.ts
+import * as Context from "effect/Context";
+
+export class Session extends Context.Service<
+  Session,
+  { readonly user: { readonly id: string } | null }
+>()("app/Session") {}
+```
+
+This service carries the caller through one request. A user has an ID;
+`null` represents an anonymous caller reading a public repository.
+
+## Resolve a session cookie
+
+Create `src/credentials.ts`:
+
+```typescript
+// src/credentials.ts
+import * as Effect from "effect/Effect";
+import { Auth } from "./auth.ts";
+
+export const ResolveUser = Effect.gen(function* () {
+  const auth = yield* Auth;
+  return Effect.gen(function* () {
+    const session = yield* auth.getSession().pipe(
+      Effect.catchTag("BetterAuthApiError", () => Effect.succeed(null)),
+    );
+    return session ? { id: session.user.id.toLowerCase() } : null;
+  });
+});
+```
+
+As with `PublicRead`, the outer effect acquires a dependency and returns a check
+that runs per request. Better Auth reads the request's session cookie. Lowercase
+the ID because Git repository owners are normalized to lowercase.
+
+## Accept an API key from Git
+
+Add the HTTP Basic decoder imports:
+
+```diff lang="typescript"
+// src/credentials.ts
+import * as Effect from "effect/Effect";
++import * as Redacted from "effect/Redacted";
++import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
++import * as HttpApiSecurity from "effect/unstable/httpapi/HttpApiSecurity";
+```
+
+Check for an API key before looking for a session cookie:
+
+```diff lang="typescript"
+// src/credentials.ts
+  const auth = yield* Auth;
+  return Effect.gen(function* () {
++    const { password } = yield* HttpApiBuilder.securityDecode(HttpApiSecurity.basic);
++    const key = Redacted.value(password);
++    if (key !== "") {
++      const verified = yield* auth.api.verifyApiKey({ body: { key } }).pipe(
++        Effect.catchTag("BetterAuthApiError", () =>
++          Effect.succeed({ valid: false as const, key: null }),
++        ),
++      );
++      return verified.valid && verified.key
++        ? { id: verified.key.referenceId.toLowerCase() }
++        : null;
++    }
+    const session = yield* auth.getSession().pipe(
+```
+
+The key identifies its owner. An invalid key produces an anonymous caller, so
+it cannot grant access to a private repository or a write operation.
+
+## Authorize the identified user
+
+Replace `src/middleware.ts` with:
+
+```typescript
+// src/middleware.ts
+import { RuntimeContext } from "alchemy";
+import * as Effect from "effect/Effect";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { ResolveUser } from "./credentials.ts";
+import { PublicRead } from "./public-read.ts";
+import { Session } from "./session.ts";
+
+export const Authentication = HttpRouter.middleware<{ provides: Session }>()(
+  Effect.gen(function* () {
+    const resolveUser = yield* ResolveUser;
+    const publicRead = yield* PublicRead;
+    return (httpEffect) =>
+      Effect.gen(function* () {
+        const user = yield* resolveUser;
+        const { owner } = yield* HttpRouter.params;
+        const own = owner === undefined || owner.toLowerCase() === user?.id;
+        if ((user !== null && own) || (yield* publicRead)) {
+          return yield* Effect.provideService(httpEffect, Session, { user });
+        }
+        return HttpServerResponse.jsonUnsafe(
+          { _tag: "Unauthorized" },
+          { status: 401, headers: { "www-authenticate": 'Basic realm="git"' } },
+        );
+      }).pipe(Effect.provide(RuntimeContext.phantom));
+  }),
+);
+```
+
+For routes naming an owner, the user's ID must match that owner unless the
+request is a public read. The middleware also provides `Session` for application
+handlers to use in Part 5. Routes without an owner parameter require a signed-in
+user; they do not acquire automatic tenant filtering. This tutorial creates
+repositories under the caller's ID explicitly.
+
+## Serve Better Auth's routes
+
+Add the auth imports to `src/host.ts`:
+
+```diff lang="typescript"
+// src/host.ts
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
++import { HttpServerRequest } from "effect/unstable/http/HttpServerRequest";
++import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
++import { Auth, AuthDb } from "./auth.ts";
+```
+
+Initialize Better Auth beside the Git router:
+
+```diff lang="typescript"
+// src/host.ts
+  Effect.gen(function* () {
++    const auth = yield* Auth;
+    const fetch = yield* HttpRouter.toHttpEffect(
+```
+
+Send `/api/auth` requests to Better Auth. They must be reachable before a user
+has signed in:
+
+```diff lang="typescript"
+// src/host.ts
+-    return { fetch };
++    return {
++      fetch: Effect.gen(function* () {
++        const request = yield* HttpServerRequest;
++        const path = request.url.split("?")[0];
++        if (path === "/api/auth" || path?.startsWith("/api/auth/")) {
++          return yield* auth.fetch;
++        }
++        return yield* fetch;
++      }),
++    };
+```
+
+Supply the D1 database on the Worker's initialization effect:
+
+```diff lang="typescript"
+// src/host.ts
+-  }),
++  }).pipe(Effect.provide(CloudflareD1(AuthDb))),
+) {}
+```
+
+The adapter binds D1 to the Worker and runs Better Auth's schema migrations at
+deploy time. Git's bucket and Durable Objects are unchanged.
+
+## Remove the shared credential
+
+Remove its imports from `alchemy.run.ts`:
+
+```diff lang="typescript"
+// alchemy.run.ts
+-import * as Output from "alchemy/Output";
+-import * as Redacted from "effect/Redacted";
+-import { GitSecret } from "./src/secret.ts";
+```
+
+Return only the URL again:
+
+```diff lang="typescript"
+// alchemy.run.ts
+    const host = yield* GitHost;
+-    const secret = yield* GitSecret;
+-    return {
+-      url: host.url.as<string>(),
+-      secret: Output.map(secret.text, Redacted.value),
+-    };
++    return { url: host.url.as<string>() };
+```
+
+`src/secret.ts` is now unused and can be deleted. The old credential will no
+longer authorize requests after the next deploy.
+
+## Deploy accounts and credentials
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npx alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm alchemy deploy`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn alchemy deploy`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+Install `jq` for the following shell checks if you do not already have it.
+Continue using the same `$HOST`.
+
+## Sign up
+
+```sh
+curl --fail-with-body -c dana.cookies \
+  -X POST "$HOST/api/auth/sign-up/email" \
+  -H "Origin: $HOST" -H "Content-Type: application/json" \
+  -d '{"name":"Dana","email":"dana@example.com","password":"tutorial-password-dana"}' \
+  > dana.json
+export OWNER=$(jq -r '.user.id | ascii_downcase' dana.json)
+```
+
+The response gives you Dana's ID and sets a session cookie. `curl -c` saves that
+cookie; `curl -b` will send it on later requests. `Origin` is included for Better
+Auth's checks on requests using cookies.
+
+If you repeat these steps after creating the account, use `/api/auth/sign-in/email`
+with the same email and password to obtain a new cookie.
+
+## Create a private repository for Dana
+
+```sh
+curl --fail-with-body -b dana.cookies -X POST "$HOST/api/v1/repos" \
+  -H "Origin: $HOST" -H "Content-Type: application/json" \
+  -d "{\"owner\":\"$OWNER\",\"name\":\"web\",\"public\":false}"
+```
+
+This is a new repository named `$OWNER/web`. The earlier `acme/web` remains
+public and readable, but neither Dana nor another new account owns its namespace.
+
+## Mint a Git credential
+
+```sh
+export KEY=$(curl --fail-with-body -b dana.cookies \
+  -X POST "$HOST/api/auth/api-key/create" \
+  -H "Origin: $HOST" -H "Content-Type: application/json" \
+  -d '{"name":"laptop"}' | jq -r .key)
+```
+
+The returned key is the Git password for Dana's account. Save it; Better Auth
+shows the complete key when it is created.
+
+## Push as Dana
+
+```sh
+git -C work remote set-url origin "$HOST/$OWNER/web.git"
+git -c credential.helper= -C work push -u origin main
+```
+
+Enter `x` as the username and `$KEY` as the password. Clone the private repository
+with the same key:
+
+```sh
+git -c credential.helper= clone "$HOST/$OWNER/web.git" dana-copy
+git -C dana-copy fsck --strict
+```
+
+## Check isolation between users
+
+Create a second account:
+
+```sh
+curl --fail-with-body -c alex.cookies \
+  -X POST "$HOST/api/auth/sign-up/email" \
+  -H "Origin: $HOST" -H "Content-Type: application/json" \
+  -d '{"name":"Alex","email":"alex@example.com","password":"tutorial-password-alex"}' \
+  > alex.json
+export ALEX=$(jq -r '.user.id | ascii_downcase' alex.json)
+```
+
+Alex can create a separate private repository:
+
+```sh
+curl --fail-with-body -b alex.cookies -X POST "$HOST/api/v1/repos" \
+  -H "Origin: $HOST" -H "Content-Type: application/json" \
+  -d "{\"owner\":\"$ALEX\",\"name\":\"web\",\"public\":false}"
+curl -i -b alex.cookies "$HOST/api/v1/repos/$ALEX/web"
+```
+
+Expect `200` for Alex's own repository. Reading Dana's private repository with
+Alex's cookie must fail:
+
+```sh
+curl -i -b alex.cookies "$HOST/api/v1/repos/$OWNER/web"
+```
+
+Expect `401`. With `dana.cookies` the same request returns `200`.
+
+[Part 5: Add your application's API](/git/tutorial/part-5) uses `Session` in a
+route you implement yourself.
