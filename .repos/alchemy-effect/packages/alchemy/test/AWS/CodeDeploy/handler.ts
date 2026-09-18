@@ -39,7 +39,9 @@ const errorTagged = <A, E extends { _tag: string }, R>(
 ): Effect.Effect<A | { errorTag: string }, never, R> =>
   effect.pipe(
     Effect.map((a): A | { errorTag: string } => a),
-    Effect.catch((e) => Effect.succeed({ errorTag: e._tag })),
+    Effect.catch((e) =>
+      Effect.logError(e).pipe(Effect.as({ errorTag: e._tag })),
+    ),
   );
 
 export default CodeDeployTestFunction.make(

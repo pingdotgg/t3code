@@ -31,11 +31,11 @@ const fixtureEntries = [
 ];
 
 const waitUntilGone = (serviceId: string) =>
-  railway.service({ id: serviceId }).pipe(
+  railway.service({ id: serviceId }, { deletedAt: true }).pipe(
     Effect.map((service) =>
       service.deletedAt != null ? ("gone" as const) : ("found" as const),
     ),
-    Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
+    railway.catchTags(["RailwayNotFound"], () =>
       Effect.succeed("gone" as const),
     ),
     Effect.repeat({
@@ -94,5 +94,5 @@ test.provider(
       const gone = yield* waitUntilGone(serviceId);
       expect(gone).toEqual("gone");
     }).pipe(logLevel),
-  { timeout: 3_600_000 },
+  { timeout: 120_000 },
 );

@@ -33,7 +33,11 @@ const logLevel = Effect.provideService(
 class WorkerNotReady extends Data.TaggedError("WorkerNotReady")<{
   status: number;
   body: string;
-}> {}
+}> {
+  override get message() {
+    return `worker answered ${this.status}: ${this.body.slice(0, 500)}`;
+  }
+}
 
 const getJsonReady = (url: string) =>
   Effect.gen(function* () {

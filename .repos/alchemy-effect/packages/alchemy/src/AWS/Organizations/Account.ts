@@ -12,6 +12,7 @@ import {
   collectPages,
   readResourceTags,
   retryOrganizations,
+  unredact,
   updateResourceTags,
 } from "./common.ts";
 
@@ -60,11 +61,11 @@ export interface Account extends Resource<
     /**
      * Friendly account name.
      */
-    name: organizations.Account["Name"] | undefined;
+    name: string | undefined;
     /**
      * Email address associated with the account.
      */
-    email: organizations.Account["Email"] | undefined;
+    email: string | undefined;
     /**
      * ID of the parent root or OU.
      */
@@ -192,12 +193,18 @@ export const AccountProvider = () =>
             if (requestId) {
               const status = yield* waitForCreateAccount(requestId);
               yield* session.note(status.AccountId ?? requestId);
+              state = status.AccountId
+                ? yield* readAccountById(status.AccountId)
+                : yield* readAccountByNameOrEmail({
+                    name: news.name,
+                    email: news.email,
+                  });
+            } else {
+              state = yield* readAccountByNameOrEmail({
+                name: news.name,
+                email: news.email,
+              });
             }
-
-            state = yield* readAccountByNameOrEmail({
-              name: news.name,
-              email: news.email,
-            });
             if (!state) {
               return yield* Effect.fail(
                 new Error(`account '${news.name}' not found after create`),
@@ -338,8 +345,8 @@ const readAccountById = Effect.fn(function* (accountId: string) {
   return {
     accountId: described.Id,
     accountArn: described.Arn,
-    name: described.Name,
-    email: described.Email,
+    name: unredact(described.Name),
+    email: unredact(described.Email),
     parentId,
     status: described.Status,
     state: described.State,
@@ -355,7 +362,8 @@ const readAccountByNameOrEmail = Effect.fn(function* ({
 }: Pick<AccountProps, "name" | "email">) {
   const accounts = yield* listAccounts();
   const match = accounts.find(
-    (candidate) => candidate.Name === name || candidate.Email === email,
+    (candidate) =>
+      unredact(candidate.Name) === name || unredact(candidate.Email) === email,
   );
   return match?.Id ? yield* readAccountById(match.Id) : undefined;
 });

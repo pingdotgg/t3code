@@ -15,7 +15,7 @@ import { Stack } from "../../Stack.ts";
 import { CloudflareEnvironment } from "../CloudflareEnvironment.ts";
 import {
   isLiveId,
-  LOCAL_ENTRY_URL,
+  LOCAL_PROVIDERS_URL,
   LocalRuntimeState,
   localRuntimeServices,
 } from "../LocalRuntime.ts";
@@ -689,7 +689,7 @@ const queueHandlerReadinessSchedule = Schedule.max([
 export const ConsumerProviderLocal = () =>
   RpcProvider.effect(
     Consumer,
-    LOCAL_ENTRY_URL,
+    LOCAL_PROVIDERS_URL,
     Effect.gen(function* () {
       const localRuntimeState = yield* LocalRuntimeState;
 

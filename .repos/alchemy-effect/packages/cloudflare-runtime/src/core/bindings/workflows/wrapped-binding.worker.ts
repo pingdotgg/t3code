@@ -34,7 +34,7 @@ class WorkflowImpl implements Workflow {
   }
 
   async deleteBatch(instanceIds: string[]): Promise<WorkflowBatchDeleteResult> {
-    return this.binding.deleteBatch(instanceIds);
+    return this.binding.deleteBatch({ instances: instanceIds });
   }
 
   async unsafeGetBindingName(): Promise<string> {
@@ -138,11 +138,7 @@ class InstanceImpl implements WorkflowInstance {
 
   public async delete(): Promise<void> {
     using instance = await this.getInstance();
-    // Structural call: whether the ambient WorkflowInstance type in this
-    // program carries `delete` depends on which workers-types copy wins
-    // (vitest-pool-workers bundles an older one), but the runtime handle
-    // (WorkflowHandle) always implements it.
-    await (instance as unknown as { delete(): Promise<void> }).delete();
+    await instance.delete();
   }
 }
 

@@ -10,6 +10,12 @@
 "@effect/experimental/RateLimiter#RateLimiterError":
   replacement: effect/unstable/persistence/RateLimiter#RateLimiterError
   note: The retained name is now a wrapper error class whose reason is RateLimitExceeded or RateLimitStoreError.
+"@effect/experimental/RateLimiter#ErrorTypeId":
+  replacement: effect/unstable/persistence/RateLimiter#ErrorTypeId
+  note: Retained as a string brand; the runtime marker now uses the persistence module path.
 "@effect/experimental/RateLimiter#TypeId":
   replacement: effect/unstable/persistence/RateLimiter#TypeId
   note: Import TypeId from the v4 unstable RateLimiter module; it is now a string brand.
+"@effect/experimental/RateLimiter#RateLimiterStore":
+  replacement: RateLimiter.RateLimiterStore
+  note: "Use the Context.Service class from effect/unstable/persistence/RateLimiter. Custom tokenBucket implementations must return [remaining, elapsedMillis] instead of a number, preserving fractional counts and elapsed refill time."
