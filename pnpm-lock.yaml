@@ -508,8 +508,8 @@ importers:
         specifier: ^0.3.276
         version: 0.3.276(@anthropic-ai/sdk@0.93.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.29.0(zod@4.6.5))(zod@4.6.5)
       '@cursor/sdk':
-        specifier: 1.0.22
-        version: 1.0.22
+        specifier: 1.0.31
+        version: 1.0.31
       '@effect/platform-node':
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115(bufferutil@4.1.0)(effect@4.0.0-rc.115(patch_hash=0dfc4bb8ebd80fb3e06b91ef61346f5259517ab0f2437644fe95ae531084b1f5))(redis@6.2.1)(utf-8-validate@6.0.6)
@@ -2038,38 +2038,38 @@ packages:
     resolution: {integrity: sha512-WTYHwlBhImGmmMt81crxaRvNdZXlBNemFyrP5GGHj2WeDTJMBrHgHTaladTypXHXrviFFBBGROl5moijRQ4ODA==}
     engines: {node: '>=18'}
 
-  '@cursor/sdk-darwin-arm64@1.0.22':
-    resolution: {integrity: sha512-BdGH+cd2VtxbfwYQ52a6mHlPoJkbjpjKfUrmhFQTN3a/A0h/n2Iv6ZCfnzT+IiLv99lYDaQfqzikM2EAzEx+Qw==}
+  '@cursor/sdk-darwin-arm64@1.0.31':
+    resolution: {integrity: sha512-i6INDIQhV7xDeFKfND0yr/SOwv4uJthPMfXXvNpZapO+IbJTx30aPzJVMBqdksvDHyn/cekJB/92Jkz+a5K8Ow==}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
 
-  '@cursor/sdk-darwin-x64@1.0.22':
-    resolution: {integrity: sha512-60rL0tYdJ8LYbOq/3cz5xlRyJsWn+LMkG8YQG6CckLsLyMFCzkK3POU0w7jIsRoC17cpSj2miJGtX2dEGSg8tg==}
+  '@cursor/sdk-darwin-x64@1.0.31':
+    resolution: {integrity: sha512-vCmrGykwflJNAAr4RVY4UlZ+F0fmUF+WCR8zFzP4Jl1Da2b8Oh1rxrVLbIbleS1/LKsX/OPbTQNRL0SEER95Sg==}
     cpu: [x64]
     os: [darwin]
     hasBin: true
 
-  '@cursor/sdk-linux-arm64@1.0.22':
-    resolution: {integrity: sha512-tpywB5MiBSvGUr9kErfcbG4bOmtHqOsiK+CNOVhjlUFMQ+iCRPfu0VCj+1VGAo258/V6a2GS/1d5CuR14Hq+Ow==}
+  '@cursor/sdk-linux-arm64@1.0.31':
+    resolution: {integrity: sha512-BHTwumfhWjTy0k41+KaaXfTm3MGu6WEYU76FmXqc/r1+ynuQroqfBKWyfH4XBcx3uzyaZJQLxNB9BBbs8yHUig==}
     cpu: [arm64]
     os: [linux]
     hasBin: true
 
-  '@cursor/sdk-linux-x64@1.0.22':
-    resolution: {integrity: sha512-tmX1kH/pyxhv0dQaJIcCQbdouLrPbKvv8iuALwMzh42piCI51q5pdRzUaWUUtH8VMdFjwZdVsDfumuSwqTlAIA==}
+  '@cursor/sdk-linux-x64@1.0.31':
+    resolution: {integrity: sha512-y+ahiKQvEISUn9y6z75jwKjLQkrJ/nY7ehL1Vi9X8zdbjz14fiEtMTICAHccTiTq5cf6dZjXC5QfPdJRat6dhg==}
     cpu: [x64]
     os: [linux]
     hasBin: true
 
-  '@cursor/sdk-win32-x64@1.0.22':
-    resolution: {integrity: sha512-Dy5aI6YN/9rWvGl78kG+UqqTCwdC/eT9SKf9NSPeLXriPaCRYs7JHH/93yuAUmO9IaX+mt/0tKl+CqsYaGimVg==}
+  '@cursor/sdk-win32-x64@1.0.31':
+    resolution: {integrity: sha512-5ti4AwUz8kh5ovM86K/fTiHmVGL6jk1faQkTCX08lcCxFSlUDwpeyhn90pWsbNFQ4Vy2PttqEjanV6895p13eA==}
     cpu: [x64]
     os: [win32]
     hasBin: true
 
-  '@cursor/sdk@1.0.22':
-    resolution: {integrity: sha512-xn99xoMvq/JwIXmWrpmEGMSY88zPr6dgxGSZYv3m9PytOBrawkwx9CHKosXs8m3ihVcQ+Wrt+TaEIUsgSNc5YA==}
+  '@cursor/sdk@1.0.31':
+    resolution: {integrity: sha512-0SdJQqp5oXn81oJqIVkLpgHih+CL6CAudK83pCsdJyA23AvInSWlMaGpLi+JlrK3efHoswiEhhASs9WpeEz3QQ==}
     engines: {node: '>=22.13'}
 
   '@date-fns/tz@1.5.0':
@@ -12134,22 +12134,22 @@ snapshots:
       '@crowecawcaw/xa11y-win32-arm64-msvc': 0.13.0
       '@crowecawcaw/xa11y-win32-x64-msvc': 0.13.0
 
-  '@cursor/sdk-darwin-arm64@1.0.22':
+  '@cursor/sdk-darwin-arm64@1.0.31':
     optional: true
 
-  '@cursor/sdk-darwin-x64@1.0.22':
+  '@cursor/sdk-darwin-x64@1.0.31':
     optional: true
 
-  '@cursor/sdk-linux-arm64@1.0.22':
+  '@cursor/sdk-linux-arm64@1.0.31':
     optional: true
 
-  '@cursor/sdk-linux-x64@1.0.22':
+  '@cursor/sdk-linux-x64@1.0.31':
     optional: true
 
-  '@cursor/sdk-win32-x64@1.0.22':
+  '@cursor/sdk-win32-x64@1.0.31':
     optional: true
 
-  '@cursor/sdk@1.0.22':
+  '@cursor/sdk@1.0.31':
     dependencies:
       '@bufbuild/protobuf': 1.10.0
       '@connectrpc/connect': 1.7.0(@bufbuild/protobuf@1.10.0)
@@ -12158,11 +12158,11 @@ snapshots:
       '@statsig/js-client': 3.31.0
       zod: 3.25.76
     optionalDependencies:
-      '@cursor/sdk-darwin-arm64': 1.0.22
-      '@cursor/sdk-darwin-x64': 1.0.22
-      '@cursor/sdk-linux-arm64': 1.0.22
-      '@cursor/sdk-linux-x64': 1.0.22
-      '@cursor/sdk-win32-x64': 1.0.22
+      '@cursor/sdk-darwin-arm64': 1.0.31
+      '@cursor/sdk-darwin-x64': 1.0.31
+      '@cursor/sdk-linux-arm64': 1.0.31
+      '@cursor/sdk-linux-x64': 1.0.31
+      '@cursor/sdk-win32-x64': 1.0.31
 
   '@date-fns/tz@1.5.0': {}
 

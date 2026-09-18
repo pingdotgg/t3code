@@ -941,9 +941,9 @@ interface StagePackageJson {
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
-  // Cursor finds helpers by walking up from argv[1]. Keep them outside asar so
-  // its spawn calls reach real paths under resources/node_modules/@cursor.
-  "!**/node_modules/@cursor/sdk-*/bin/**/*",
+  // Cursor finds platform assets by walking up from argv[1]. Keep them outside
+  // asar so spawning helpers and loading native addons both use real paths.
+  "!**/node_modules/@cursor/sdk-*/**/*",
   "!apps/desktop/prod-resources/cursor-sdk",
   "!apps/desktop/prod-resources/cursor-sdk/**/*",
   // T3 Code always passes the user's installed Claude executable to the SDK,
@@ -1010,8 +1010,8 @@ export const WINDOWS_NATIVE_ASAR_UNPACK_GLOB =
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
 // the asar extraction path deliberately does not support).
 export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
-  "**/node_modules/@cursor/sdk-*/bin",
-  "**/node_modules/@cursor/sdk-*/bin/**",
+  "**/node_modules/@cursor/sdk-*",
+  "**/node_modules/@cursor/sdk-*/**",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
   "**/node_modules/.bin",
@@ -1360,25 +1360,22 @@ export function resolveMergedStageDependencies(input: {
 }
 
 /** Cursor's helper lookup falls through the archive to this real resources tree. */
-export const stageCursorSdkHelpers = Effect.fn("stageCursorSdkHelpers")(function* (
-  nodeModulesDir: string,
-  destination: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  yield* fs.makeDirectory(destination, { recursive: true });
-  const sdkDirectory = path.join(nodeModulesDir, "@cursor/sdk");
-  if (!(yield* fs.exists(sdkDirectory))) return;
-  // pnpm's isolated layout puts optional packages beside the real SDK directory.
-  const cursorDirectory = path.dirname(yield* fs.realPath(sdkDirectory));
-  for (const name of yield* fs.readDirectory(cursorDirectory)) {
-    if (!name.startsWith("sdk-")) continue;
-    const binaries = path.join(cursorDirectory, name, "bin");
-    if (yield* fs.exists(binaries)) {
-      yield* fs.copy(binaries, path.join(destination, name, "bin"));
+export const stageCursorSdkPlatformPackages = Effect.fn("stageCursorSdkPlatformPackages")(
+  function* (nodeModulesDir: string, destination: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(destination, { recursive: true });
+    const sdkDirectory = path.join(nodeModulesDir, "@cursor/sdk");
+    if (!(yield* fs.exists(sdkDirectory))) return;
+    // pnpm's isolated layout puts optional packages beside the real SDK directory.
+    const cursorDirectory = path.dirname(yield* fs.realPath(sdkDirectory));
+    for (const name of yield* fs.readDirectory(cursorDirectory)) {
+      if (!name.startsWith("sdk-")) continue;
+      const source = yield* fs.realPath(path.join(cursorDirectory, name));
+      yield* fs.copy(source, path.join(destination, name));
     }
-  }
-});
+  },
+);
 
 export interface ClerkPasskeyNativeArtifact {
   readonly packageName: string;
@@ -3747,7 +3744,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       verbose: options.verbose,
     });
   }
-  yield* stageCursorSdkHelpers(
+  yield* stageCursorSdkPlatformPackages(
     path.join(
       options.platform === "win" ? path.join(stageRoot, "server") : stageAppDir,
       "node_modules",

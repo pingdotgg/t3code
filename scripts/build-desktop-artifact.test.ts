@@ -77,7 +77,7 @@ import {
   WindowsDesktopBuildPrerequisitesMissingError,
   WindowsPackagedPayloadValidationError,
   WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
-  stageCursorSdkHelpers,
+  stageCursorSdkPlatformPackages,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
   WINDOWS_SERVER_EXTRA_RESOURCES,
@@ -551,7 +551,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }
 
     assert.deepStrictEqual(DESKTOP_FILE_EXCLUSIONS, [
-      "!**/node_modules/@cursor/sdk-*/bin/**/*",
+      "!**/node_modules/@cursor/sdk-*/**/*",
       "!apps/desktop/prod-resources/cursor-sdk",
       "!apps/desktop/prod-resources/cursor-sdk/**/*",
       "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
@@ -649,8 +649,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(win.nsis, { differentialPackage: true });
       // The Claude SDK platform packages and .bin shims never ship.
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
-        "**/node_modules/@cursor/sdk-*/bin",
-        "**/node_modules/@cursor/sdk-*/bin/**",
+        "**/node_modules/@cursor/sdk-*",
+        "**/node_modules/@cursor/sdk-*/**",
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*",
         "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
         "**/node_modules/.bin",
@@ -771,7 +771,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
   });
 
-  it.effect("ships Cursor helpers outside asar where the SDK can spawn them", () =>
+  it.effect("ships Cursor platform assets outside asar for spawning and native loading", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -793,6 +793,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const helpers = [
           "sdk-darwin-arm64/bin/rg",
           "sdk-darwin-arm64/bin/cursorsandbox",
+          "sdk-darwin-arm64/vendor/tree-sitter/index.js",
+          "sdk-darwin-arm64/vendor/tree-sitter/binding.node",
+          "sdk-darwin-arm64/vendor/tree-sitter-bash/binding.node",
+          "sdk-darwin-arm64/package.json",
           "sdk-win32-x64/bin/rg.exe",
         ];
         for (const helper of helpers) {
@@ -800,7 +804,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           yield* fs.makeDirectory(path.dirname(source), { recursive: true });
           yield* fs.writeFileString(source, "fixture helper", { mode: 0o755 });
         }
-        yield* stageCursorSdkHelpers(nodeModules, destination);
+        yield* stageCursorSdkPlatformPackages(nodeModules, destination);
         for (const helper of helpers) {
           assert.equal(yield* fs.readFileString(path.join(destination, helper)), "fixture helper");
           const packagedPath = `node_modules/@cursor/${helper}`;
