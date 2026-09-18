@@ -914,9 +914,9 @@ export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 /**
  * Shortest allowed gap between provider health probes. Zero still disables
- * them. Matches the 90 second probe timeout of the slowest process-based
- * check (Antigravity spawns its full ACP server), so a short interval cannot
- * respawn that process back-to-back.
+ * them. The slowest process-based probe (Antigravity spawns its full ACP
+ * server) uses this same value as its timeout, so a tick can never start
+ * while the previous probe's process may still be alive.
  */
 export const MIN_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.seconds(90);
 
