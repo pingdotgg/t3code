@@ -298,6 +298,7 @@ const openRuntime = Effect.fnUntraced(function* (
   threadId = THREAD_ID,
   providerSessionId = SESSION_ID,
   forkFake?: FakePi,
+  initialNativeThreadId?: string,
 ) {
   const adapter = yield* makeAdapter(fake, "", forkFake);
   const runtime = yield* adapter.openSession({
@@ -305,6 +306,7 @@ const openRuntime = Effect.fnUntraced(function* (
     providerSessionId,
     modelSelection: modelSelection(model),
     runtimePolicy,
+    ...(initialNativeThreadId === undefined ? {} : { initialNativeThreadId }),
   });
   const emitted = yield* Queue.unbounded<ProviderAdapterV2Event>();
   yield* runtime.events.pipe(
@@ -319,6 +321,28 @@ const openRuntime = Effect.fnUntraced(function* (
       }
     });
   return { runtime, takeEvent };
+});
+
+/** A provider thread as persisted before a cold resume. */
+const makePersistedProviderThread = Effect.fnUntraced(function* (nativeId: string) {
+  const now = yield* DateTime.now;
+  return {
+    id: ProviderThreadId.make(`thread:provider:pi:native-thread:${nativeId}`),
+    driver: PI_PROVIDER,
+    providerInstanceId: PI_INSTANCE_ID,
+    providerSessionId: SESSION_ID,
+    appThreadId: THREAD_ID,
+    ownerNodeId: null,
+    nativeThreadRef: { driver: PI_PROVIDER, nativeId, strength: "strong" },
+    nativeConversationHeadRef: null,
+    status: "not_loaded",
+    firstRunOrdinal: 1,
+    lastRunOrdinal: 1,
+    handoffIds: [],
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+  } satisfies OrchestrationV2ProviderThread;
 });
 
 const makeAppThread = Effect.fnUntraced(function* (model: string, threadId = THREAD_ID) {
@@ -474,22 +498,34 @@ describe("PiAdapterV2", () => {
     ),
   );
 
-  it.effect("registers the thread from get_state and resumes via switch_session", () =>
+  it.effect("resumes a persisted thread at spawn without replacing the session", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
-      const { runtime } = yield* openRuntime(fake);
+      // Cold resume: the orchestrator knows the native session up front, so
+      // pi is spawned attached to it and no switch_session may follow. A
+      // switch would dispose the session and stale every extension context.
+      const { runtime } = yield* openRuntime(
+        fake,
+        "default",
+        THREAD_ID,
+        SESSION_ID,
+        undefined,
+        FAKE_SESSION_FILE,
+      );
+      const spawnArgs = fake.lastSpawn().args;
+      assert.equal(spawnArgs[spawnArgs.indexOf("--session") + 1], FAKE_SESSION_FILE);
+      assert.isFalse(spawnArgs.includes("--no-session"));
+      assert.isFalse(spawnArgs.includes("--no-extensions"));
+
       const providerThread = yield* runtime.ensureThread({
         threadId: THREAD_ID,
         modelSelection: modelSelection("default"),
         runtimePolicy,
+        existingProviderThread: yield* makePersistedProviderThread(FAKE_SESSION_FILE),
       });
       assert.equal(providerThread.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
       assert.equal(providerThread.driver, PI_PROVIDER);
-      assert.isFalse(fake.lastSpawn().args.includes("--no-extensions"));
-
-      yield* runtime.resumeThread({ providerThread });
-      const switchRequest = yield* fake.takeRequest("switch_session");
-      assert.equal(switchRequest["sessionPath"], FAKE_SESSION_FILE);
+      assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
 
       yield* startTurn(runtime, providerThread, "anthropic/claude-sonnet");
       const setModel = yield* fake.takeRequest("set_model");
@@ -499,6 +535,71 @@ describe("PiAdapterV2", () => {
       const error = yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
       assert.equal(error._tag, "ProviderAdapterResumeThreadError");
       assert.match(String(error.cause), /while a turn is active/);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("switches a live session when it holds a different session file", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "anthropic/claude-sonnet");
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      // Fork adoption: the process still holds the source session, so the
+      // adopted file has to be switched in.
+      const adoptedFile = "/fake/.pi/agent/sessions/--workspace--/0002_def.jsonl";
+      fake.queueState({ thinkingLevel: "medium", sessionFile: FAKE_SESSION_FILE });
+      fake.queueState({ thinkingLevel: "medium", sessionFile: adoptedFile });
+      const adopted = yield* runtime.resumeThread({
+        providerThread: {
+          ...providerThread,
+          nativeThreadRef: { driver: PI_PROVIDER, nativeId: adoptedFile, strength: "strong" },
+        },
+      });
+      const switchRequest = yield* fake.takeRequest("switch_session");
+      assert.equal(switchRequest["sessionPath"], adoptedFile);
+      assert.equal(adopted.nativeThreadRef?.nativeId, adoptedFile);
+
+      // The switch dropped the applied-selection cache, so the same model has
+      // to be re-applied to the replacement session.
+      yield* startTurn(runtime, adopted, "anthropic/claude-sonnet", [], "Again", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      assert.equal(fake.allRequests().filter((request) => request.type === "set_model").length, 2);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("fails the resume when an extension vetoes the session switch", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.vetoNextSwitch();
+      const error = yield* runtime
+        .resumeThread({
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: PI_PROVIDER,
+              nativeId: "/fake/.pi/agent/sessions/--workspace--/0003_ghi.jsonl",
+              strength: "strong",
+            },
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterResumeThreadError");
+      assert.match(String(error.cause), /cancelled the session switch/);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -908,6 +1009,9 @@ describe("PiAdapterV2", () => {
             completedAt: null,
           });
           forkFake.queueState({ sessionFile: forkFile });
+          // The live process is still on the source session when the fork is
+          // adopted, then reports the forked file once it has switched.
+          fake.queueState({ sessionFile: FAKE_SESSION_FILE });
           fake.queueState({ sessionFile: forkFile });
           const target = ThreadId.make("fork-target");
           const forked = yield* runtime.forkThread({
