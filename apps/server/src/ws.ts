@@ -31,7 +31,6 @@ import {
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
-  type EditorId,
   type FileManagerRevealKind,
   type OrchestrationClientOrigin,
   type OrchestrationCommand,
@@ -189,7 +188,7 @@ const resolveDiscoveryForConfig = <A, E, R>(
     Effect.map(Option.getOrElse(onTimeout)),
   );
 
-export const resolveAvailableEditorsForConfig = <A, E, R>(
+export const resolveRemoteOpenTargetsForConfig = <A, E, R>(
   discovery: Effect.Effect<ReadonlyArray<A>, E, R>,
 ) => resolveDiscoveryForConfig(discovery, () => []);
 
@@ -1774,13 +1773,18 @@ const makeWsRpcLayer = (
           );
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
-          const availableEditors: ReadonlyArray<EditorId> = yield* resolveAvailableEditorsForConfig(
-            externalLauncher.resolveAvailableEditors(),
+          // Keep optional discovery budgets concurrent: Windows editor discovery
+          // can take 10s, while clients allow 15s for connection establishment.
+          const [availableEditors, revealKind, availableRemoteOpenTargets] = yield* Effect.all(
+            [
+              externalLauncher.resolveAvailableEditors(),
+              resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
+              resolveRemoteOpenTargetsForConfig(remoteOpenTargets.resolveTargets()),
+            ],
+            { concurrency: "unbounded" },
           );
           const fileManagerRevealKind = availableEditors.includes("file-manager")
-            ? yield* resolveFileManagerRevealKindForConfig(
-                externalLauncher.resolveFileManagerRevealKind(),
-              )
+            ? revealKind
             : undefined;
 
           return {
@@ -1792,11 +1796,7 @@ const makeWsRpcLayer = (
             issues: keybindingsConfig.issues,
             providers,
             availableEditors,
-            // Same discovery-with-timeout treatment as editors: a slow probe
-            // must not stall server.getConfig, so it degrades to no targets.
-            remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
-              remoteOpenTargets.resolveTargets(),
-            ),
+            remoteOpenTargets: availableRemoteOpenTargets,
             observability: {
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,
