@@ -3,7 +3,7 @@ import { describe, expect, it } from "tstyche"
 
 describe("SchemaRepresentation revivers", () => {
   it("infers payload types from reviver constructors", () => {
-    const declaration = SchemaRepresentation.makeDeclarationReviver(
+    const declaration = SchemaRepresentation.makeReviverDeclaration(
       "acme/schema/Box",
       Schema.Struct({ label: Schema.String }),
       ({ payload }) => {
@@ -13,7 +13,7 @@ describe("SchemaRepresentation revivers", () => {
     )
     expect(declaration).type.toBe<SchemaRepresentation.DeclarationReviver<{ readonly label: string }>>()
 
-    const filter = SchemaRepresentation.makeFilterReviver(
+    const filter = SchemaRepresentation.makeReviverFilter(
       "acme/schema/minLength",
       Schema.Struct({ minimum: Schema.Number }),
       ({ annotations, payload }) => {
@@ -23,7 +23,7 @@ describe("SchemaRepresentation revivers", () => {
     )
     expect(filter).type.toBe<SchemaRepresentation.FilterReviver<{ readonly minimum: number }>>()
 
-    const filterGroup = SchemaRepresentation.makeFilterGroupReviver(
+    const filterGroup = SchemaRepresentation.makeReviverFilterGroup(
       "acme/schema/nonEmpty",
       Schema.Null,
       ({ annotations, payload }) => {
@@ -43,6 +43,57 @@ describe("SchemaRepresentation revivers", () => {
     const revivers: ReadonlyArray<SchemaRepresentation.AnyReviver> = [reviver]
 
     expect(revivers).type.toBe<ReadonlyArray<SchemaRepresentation.AnyReviver>>()
+  })
+
+  it("exposes the concrete payload types of built-in revivers", () => {
+    expect(SchemaRepresentation.isPatternReviver).type.toBe<
+      SchemaRepresentation.FilterReviver<{ readonly source: string; readonly flags: string }>
+    >()
+    expect(SchemaRepresentation.isBetweenReviver).type.toBe<
+      SchemaRepresentation.FilterReviver<{
+        readonly minimum: number
+        readonly maximum: number
+        readonly exclusiveMinimum?: true | undefined
+        readonly exclusiveMaximum?: true | undefined
+      }>
+    >()
+    expect(SchemaRepresentation.isBetweenDateReviver).type.toBe<
+      SchemaRepresentation.FilterReviver<{
+        readonly minimum: globalThis.Date
+        readonly maximum: globalThis.Date
+        readonly exclusiveMinimum?: true | undefined
+        readonly exclusiveMaximum?: true | undefined
+      }>
+    >()
+    expect(SchemaRepresentation.isBetweenBigIntReviver).type.toBe<
+      SchemaRepresentation.FilterReviver<{
+        readonly minimum: bigint
+        readonly maximum: bigint
+        readonly exclusiveMinimum?: true | undefined
+        readonly exclusiveMaximum?: true | undefined
+      }>
+    >()
+    expect(SchemaRepresentation.GraphReviver).type.toBe<
+      SchemaRepresentation.DeclarationReviver<"directed" | "undirected">
+    >()
+    expect(SchemaRepresentation.ErrorInstanceReviver).type.toBe<
+      SchemaRepresentation.DeclarationReviver<
+        | null
+        | {
+          readonly includeStack?: true | undefined
+          readonly excludeCause?: true | undefined
+        }
+      >
+    >()
+    expect(SchemaRepresentation.RedactedReviver).type.toBe<
+      SchemaRepresentation.DeclarationReviver<
+        | null
+        | {
+          readonly label?: string | undefined
+          readonly disallowJsonEncode?: true | undefined
+        }
+      >
+    >()
   })
 
   it("separates JSON decoding from schema revival", () => {

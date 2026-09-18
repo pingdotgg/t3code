@@ -2,6 +2,7 @@
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 import { loadInternalWorker } from "../../core/internal/internal-worker.ts";
 import * as Assets from "../../core/bindings/assets/Assets.ts";
+import { DEFAULT_COMPATIBILITY_DATE } from "../../core/internal/constants.ts";
 import * as Loopback from "../../core/globals/Loopback.ts";
 import { PluginContext } from "../../core/PluginContext.ts";
 import * as Effect from "effect/Effect";
@@ -51,7 +52,7 @@ export const ViteAssetsLive = (viteDevServer: vite.ViteDevServer) =>
         Effect.gen(function* () {
           const { worker } = yield* PluginContext;
           const { assetsConfig, routerConfig } =
-            Assets.buildAssetConfigs(worker);
+            yield* Assets.buildAssetConfigs(worker);
 
           const prefix = `vite-assets:${encodeURIComponent(worker.name)}`;
           const htmlExistsService = yield* loopback.api.route(
@@ -76,8 +77,9 @@ export const ViteAssetsLive = (viteDevServer: vite.ViteDevServer) =>
               {
                 name: "assets:worker",
                 worker: {
-                  compatibilityDate: "2024-07-31",
-                  compatibilityFlags: ["nodejs_compat", "enable_ctx_exports"],
+                  compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
+                  // Node.js compatibility is supplied by the 2026-08-31
+                  // internal compatibility date.
                   bindings: [
                     {
                       name: "CONFIG",
@@ -106,12 +108,10 @@ export const ViteAssetsLive = (viteDevServer: vite.ViteDevServer) =>
               {
                 name: "assets:router",
                 worker: {
-                  compatibilityDate: "2024-07-31",
-                  compatibilityFlags: [
-                    "nodejs_compat",
-                    "no_nodejs_compat_v2",
-                    "enable_ctx_exports",
-                  ],
+                  compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
+                  // The date supplies nodejs_compat; this worker deliberately
+                  // retains only its v2 opt-out.
+                  compatibilityFlags: ["no_nodejs_compat_v2"],
                   bindings: [
                     {
                       name: "ASSET_WORKER",

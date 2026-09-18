@@ -7,6 +7,7 @@
  *
  * @since 4.0.0
  */
+import type * as Duration from "effect/Duration"
 import * as Layer from "effect/Layer"
 import * as Socket from "effect/unstable/socket/Socket"
 
@@ -26,9 +27,8 @@ import * as Socket from "effect/unstable/socket/Socket"
  * **Gotchas**
  *
  * Browser WebSocket rules still control URL schemes, mixed-content blocking,
- * cookies, authentication, origin checks, subprotocols, and extensions. Close
- * events are errors unless `closeCodeIsError` classifies the close code as
- * clean.
+ * cookies, authentication, origin checks, subprotocols, and extensions. Every
+ * close, whatever the code, fails the socket's reader with a `SocketError`.
  *
  * @see {@link layerWebSocketConstructor} for providing only the browser constructor service
  *
@@ -36,7 +36,9 @@ import * as Socket from "effect/unstable/socket/Socket"
  * @since 4.0.0
  */
 export const layerWebSocket = (url: string, options?: {
-  readonly closeCodeIsError?: (code: number) => boolean
+  readonly openTimeout?: Duration.Input | undefined
+  readonly protocols?: string | Array<string> | undefined
+  readonly highWaterMark?: number | undefined
 }): Layer.Layer<Socket.Socket> =>
   Layer.effect(Socket.Socket, Socket.makeWebSocket(url, options)).pipe(
     Layer.provide(layerWebSocketConstructor)

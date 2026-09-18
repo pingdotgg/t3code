@@ -225,7 +225,10 @@ const remapClaudeForkTurnBoundaries = (
 };
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
-type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
+type ClaudeTextStreamKind = Extract<
+  RuntimeContentStreamKind,
+  "assistant_text" | "reasoning_text" | "reasoning_summary_text"
+>;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
   "command_output" | "file_change_output"
@@ -275,6 +278,8 @@ interface ClaudeTurnState {
   authenticationFailureMessage: string | undefined;
   rejectedRateLimitTypes: Set<string>;
   latestAssistantRateLimited: boolean;
+  emittedThinkingText: boolean;
+  readonly thinkingSnapshotIds: Set<string>;
 }
 
 interface AssistantTextBlockState {
@@ -1718,7 +1723,18 @@ function resultOutcome(
 }
 
 function streamKindFromDeltaType(deltaType: string): ClaudeTextStreamKind {
-  return deltaType.includes("thinking") ? "reasoning_text" : "assistant_text";
+  // Claude never returns the raw chain of thought. A thinking delta is the
+  // API-side summary (or a progress-update sentence) when display is
+  // summarized; map it onto the summary stream so it shares the Codex/Grok
+  // reasoning-summary path rather than looking like a raw trace we do not have.
+  return deltaType.includes("thinking") ? "reasoning_summary_text" : "assistant_text";
+}
+
+function shouldRequestClaudeThinkingSummaries(input: {
+  readonly thinking: boolean | undefined;
+  readonly thinkingDisplay: string | null | undefined;
+}): boolean {
+  return input.thinking !== false && input.thinkingDisplay !== "omitted";
 }
 
 function nativeProviderRefs(
@@ -1735,7 +1751,11 @@ function nativeProviderRefs(
   return {};
 }
 
-function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
+function extractAssistantContentBlocks(
+  message: SDKMessage,
+  blockType: "text" | "thinking",
+  field: "text" | "thinking",
+): Array<string> {
   if (message.type !== "assistant") {
     return [];
   }
@@ -1750,17 +1770,22 @@ function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
     if (!block || typeof block !== "object") {
       continue;
     }
-    const candidate = block as { type?: unknown; text?: unknown };
-    if (
-      candidate.type === "text" &&
-      typeof candidate.text === "string" &&
-      candidate.text.length > 0
-    ) {
-      fragments.push(candidate.text);
+    const candidate = block as { type?: unknown; text?: unknown; thinking?: unknown };
+    const value = field === "thinking" ? candidate.thinking : candidate.text;
+    if (candidate.type === blockType && typeof value === "string" && value.length > 0) {
+      fragments.push(value);
     }
   }
 
   return fragments;
+}
+
+function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
+  return extractAssistantContentBlocks(message, "text", "text");
+}
+
+function extractAssistantThinkingBlocks(message: SDKMessage): Array<string> {
+  return extractAssistantContentBlocks(message, "thinking", "thinking");
 }
 
 function extractContentBlockText(block: unknown): string {
@@ -2358,6 +2383,70 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  const emitReasoningSummaryDelta = Effect.fn("emitReasoningSummaryDelta")(function* (
+    context: ClaudeSessionContext,
+    input: {
+      readonly delta: string;
+      readonly contentIndex?: number;
+      readonly rawMethod: string;
+      readonly rawPayload: SDKMessage;
+    },
+  ) {
+    const turnState = context.turnState;
+    if (!turnState || input.delta.length === 0) {
+      return;
+    }
+    turnState.emittedThinkingText = true;
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "content.delta",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      turnId: turnState.turnId,
+      payload: {
+        streamKind: "reasoning_summary_text",
+        delta: input.delta,
+        ...(input.contentIndex !== undefined ? { contentIndex: input.contentIndex } : {}),
+      },
+      providerRefs: nativeProviderRefs(context),
+      raw: {
+        source: "claude.sdk.message",
+        method: input.rawMethod,
+        payload: input.rawPayload,
+      },
+    });
+  });
+
+  const backfillThinkingFromSnapshot = Effect.fn("backfillThinkingFromSnapshot")(function* (
+    context: ClaudeSessionContext,
+    message: SDKMessage,
+  ) {
+    const turnState = context.turnState;
+    if (!turnState || message.type !== "assistant") {
+      return;
+    }
+    const snapshotId = message.uuid;
+    const alreadyEmitted =
+      turnState.emittedThinkingText || turnState.thinkingSnapshotIds.has(snapshotId);
+    turnState.thinkingSnapshotIds.add(snapshotId);
+    turnState.emittedThinkingText = false;
+    if (alreadyEmitted) {
+      return;
+    }
+
+    for (const [index, delta] of extractAssistantThinkingBlocks(message).entries()) {
+      yield* emitReasoningSummaryDelta(context, {
+        delta,
+        contentIndex: index,
+        rawMethod: "claude/assistant/thinking",
+        rawPayload: message,
+      });
+    }
+    turnState.emittedThinkingText = false;
+  });
+
   const ensureThreadId = Effect.fn("ensureThreadId")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -2799,6 +2888,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
     }
 
+    if (event.type === "message_start" && context.turnState && !streamParentToolUseId) {
+      context.turnState.emittedThinkingText = false;
+    }
+
     if (event.type === "message_delta") {
       if (message.parent_tool_use_id !== null && message.parent_tool_use_id !== undefined) {
         return;
@@ -2831,18 +2924,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           return;
         }
         const streamKind = streamKindFromDeltaType(event.delta.type);
-        const assistantBlockEntry =
-          event.delta.type === "text_delta"
-            ? yield* ensureAssistantTextBlock(context, event.index)
-            : context.turnState.assistantTextBlocks.get(event.index)
-              ? {
-                  blockIndex: event.index,
-                  block: context.turnState.assistantTextBlocks.get(
-                    event.index,
-                  ) as AssistantTextBlockState,
-                }
-              : undefined;
-        if (assistantBlockEntry?.block && event.delta.type === "text_delta") {
+        if (streamKind === "reasoning_summary_text") {
+          yield* emitReasoningSummaryDelta(context, {
+            delta: deltaText,
+            contentIndex: event.index,
+            rawMethod: "claude/stream_event/content_block_delta",
+            rawPayload: message,
+          });
+          return;
+        }
+        const assistantBlockEntry = yield* ensureAssistantTextBlock(context, event.index);
+        if (assistantBlockEntry?.block) {
           assistantBlockEntry.block.emittedTextDelta = true;
         }
         const stamp = yield* makeEventStamp();
@@ -3297,6 +3389,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
         latestAssistantRateLimited: false,
+        emittedThinkingText: false,
+        thinkingSnapshotIds: new Set(),
       };
       context.session = {
         ...context.session,
@@ -3378,6 +3472,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         context.turnState.latestAssistantUsage = message.message.usage;
         context.turnState.compactedSinceLatestAssistantUsage = false;
       }
+      yield* backfillThinkingFromSnapshot(context, message);
       yield* backfillAssistantTextBlocksFromSnapshot(context, message);
     }
 
@@ -4770,6 +4865,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const thinking = thinkingSupported
         ? getModelSelectionBooleanOptionValue(modelSelection, "thinking")
         : undefined;
+      const thinkingDisplayArg = extraArgs["thinking-display"];
+      const requestThinkingSummaries = shouldRequestClaudeThinkingSummaries({
+        thinking,
+        thinkingDisplay: typeof thinkingDisplayArg === "string" ? thinkingDisplayArg : undefined,
+      });
       const ultracode = isClaudeCatalogUltracodeEffort(effort);
       const effectiveEffort = getEffectiveClaudeAgentEffort(
         modelCatalog,
@@ -4791,12 +4891,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           : runtimeModeToPermission[input.runtimeMode]);
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
+        ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
         ...(fastMode ? { fastMode: true } : {}),
         ...(ultracode ? { ultracode: true } : {}),
         ...(claudeSettings.autoCompactWindow
           ? { autoCompactWindow: Number(claudeSettings.autoCompactWindow) }
           : {}),
       };
+      if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
+        extraArgs["thinking-display"] = "summarized";
+      }
       const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
       // The attachments dir grant lets the agent Read/copy pasted images at
       // the paths ProviderService injects into the turn text, without an
@@ -4822,6 +4926,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(effectiveEffort
           ? {
               effort: effectiveEffort as unknown as NonNullable<ClaudeQueryOptions["effort"]>,
+            }
+          : {}),
+        ...(extraArgs["thinking-display"] === "summarized"
+          ? {
+              thinking: {
+                type: "adaptive" as const,
+                display: "summarized" as const,
+              },
             }
           : {}),
         ...(permissionMode ? { permissionMode } : {}),
@@ -5104,6 +5216,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
         latestAssistantRateLimited: false,
+        emittedThinkingText: false,
+        thinkingSnapshotIds: new Set(),
       };
 
       const updatedAt = yield* nowIso;

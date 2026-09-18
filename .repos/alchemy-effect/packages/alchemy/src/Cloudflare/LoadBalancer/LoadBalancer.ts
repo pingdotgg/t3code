@@ -385,11 +385,11 @@ const findByName = (zoneId: string, name: string) =>
 
 const resolvePools = (
   pools: Record<string, ReadonlyArray<Input<string>>> | undefined,
-): Record<string, unknown> | undefined =>
+): Record<string, string[]> | undefined =>
   pools === undefined
     ? undefined
     : Object.fromEntries(
-        Object.entries(pools).map(([k, v]) => [k, v as string[]]),
+        Object.entries(pools).map(([k, v]) => [k, Array.from(v as string[])]),
       );
 
 const buildBody = (news: Props) => ({

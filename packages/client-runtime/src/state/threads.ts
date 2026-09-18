@@ -258,6 +258,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // from the session config. Gates loadOlderTurns so a reconnect to a
   // pre-pagination server never sends unsupported window parameters.
   const paginationSupported = yield* Ref.make(false);
+  const reasoningMessagesSupported = yield* Ref.make(false);
   // An older page whose thread watermark is ahead of the live state, parked
   // until the subscription catches up (see mergeOlderPage's caller). At most
   // one can exist because loadOlderTurns no-ops while loadingOlder is true.
@@ -336,6 +337,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     // window parameters to a server that may not accept them (review
     // finding). makeSubscribeInput re-sets it from the next session's config.
     yield* Ref.set(paginationSupported, false);
+    yield* Ref.set(reasoningMessagesSupported, false);
     yield* SubscriptionRef.update(state, (current) => ({
       ...current,
       status: current.status === "deleted" ? current.status : statusWithoutLiveData(current.data),
@@ -655,7 +657,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       turnLimit: OLDER_THREAD_PAGE_USER_TURN_LIMIT,
       beforeCursor: page.beforeCursor,
     };
-    const response = yield* snapshotLoader.load(prepared, threadId, window);
+    const response = yield* snapshotLoader.load(
+      prepared,
+      threadId,
+      window,
+      yield* Ref.get(reasoningMessagesSupported),
+    );
     // Staleness check and merge run under the same lock as stream-item
     // application, so a revert/snapshot cannot land between them (TOCTOU
     // review finding) — anything that rewrites history bumps the epoch
@@ -747,6 +754,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               ({}) as {
                 threadResumeCompletionMarker?: boolean;
                 threadSnapshotPagination?: boolean;
+                reasoningMessages?: boolean;
               },
           ),
         );
@@ -755,6 +763,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         // servers reject unknown query params, and a windowed WS fallback to
         // such a server would silently hide history.
         const supportsPagination = config.threadSnapshotPagination === true;
+        const supportsReasoningMessages = config.reasoningMessages === true;
+        yield* Ref.set(reasoningMessagesSupported, supportsReasoningMessages);
         yield* Ref.set(paginationSupported, supportsPagination);
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* markSynchronizing;
@@ -801,6 +811,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             prepared,
             threadId,
             supportsPagination ? { turnLimit: INITIAL_THREAD_USER_TURN_LIMIT } : undefined,
+            supportsReasoningMessages,
           );
           if (Option.isSome(httpSnapshot)) {
             yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
@@ -822,6 +833,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           threadId,
           ...(canResume ? { afterSequence: sequence } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
+          ...(supportsReasoningMessages ? { reasoningMessages: true as const } : {}),
           // The WS fallback snapshot (sent when afterSequence is missing or
           // the gap is too large) should be windowed the same as the HTTP
           // path; without this a resume failure re-downloads the full thread.

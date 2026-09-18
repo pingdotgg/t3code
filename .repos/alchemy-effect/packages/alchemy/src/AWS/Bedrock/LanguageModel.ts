@@ -252,14 +252,14 @@ export const makeLanguageModelLayer = (
   Layer.effect(AiLanguageModel.LanguageModel, makeLanguageModel(options));
 
 /**
- * Build an {@link AiLanguageModel.Service} that proxies generateText /
+ * Build an {@link AiLanguageModel.LanguageModel} that proxies generateText /
  * streamText through the Bedrock Converse API.
  */
 export const makeLanguageModel = ({
   converse,
   converseStream,
   parameters,
-}: MakeLanguageModelOptions): Effect.Effect<AiLanguageModel.Service> =>
+}: MakeLanguageModelOptions): Effect.Effect<AiLanguageModel.LanguageModel> =>
   AiLanguageModel.make({
     generateText: (options) =>
       Effect.gen(function* () {

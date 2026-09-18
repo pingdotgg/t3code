@@ -5,6 +5,15 @@ also lists the command IDs and defaults available in your version.
 
 ## Composer controls
 
+In **Settings → General → Send shortcut**, choose whether Enter sends, requires
+`mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
+inserts a new line. This applies to the web and desktop composer at desktop widths.
+
+**Follow-up behavior** chooses Queue or Steer while the agent runs. Use
+`mod+Enter` to do the opposite for one message. When sending requires `mod+Enter`,
+use `mod+Shift+Enter` for the opposite action. In a new thread, `mod+Enter` keeps
+starting the thread in the background.
+
 Use `mod+shift+m` to choose a model and `mod+shift+h` to choose a host.
 Use `mod+shift+e` for effort, `mod+shift+a` for access mode, `mod+shift+x` for the
 workspace, and `mod+shift+g` for the Git branch. The workspace menu includes the
@@ -75,7 +84,14 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, and `modelPickerOpen`. Unknown keys evaluate to `false`.
+`previewOpen`, `modelPickerOpen`, `isWeb`, and `isDesktop`. `isWeb` is true in a
+browser tab. `isDesktop` is true in the desktop app. Unknown keys evaluate to
+`false`.
+
+`mod+1` through `mod+9` jump to the first nine threads, and to models while the
+model picker is open. Those defaults use `isDesktop` so they do not steal the
+browser's tab-switch shortcuts. Remove that condition in Settings if you want
+the same jumps in a browser.
 
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 

@@ -18,15 +18,15 @@
   },
   "dependencies": {
     "@distilled.cloud/fly-io": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
-    "@effect/sql-pg": "catalog:effect",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-pg": "catalog:",
     "alchemy": "workspace:*",
-    "drizzle-orm": "catalog:database",
-    "effect": "catalog:effect",
-    "pg": "catalog:database"
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "pg": "catalog:"
   },
   "devDependencies": {
-    "@types/pg": "catalog:database",
-    "drizzle-kit": "catalog:database"
+    "@types/pg": "catalog:",
+    "drizzle-kit": "catalog:"
   }
 }

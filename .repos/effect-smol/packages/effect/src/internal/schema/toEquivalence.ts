@@ -1,3 +1,4 @@
+import type * as Cause from "../../Cause.ts"
 import * as Equal from "../../Equal.ts"
 import * as Equivalence from "../../Equivalence.ts"
 import { memoize } from "../../Function.ts"
@@ -26,6 +27,7 @@ function recur(ast: SchemaAST.AST, path: ReadonlyArray<PropertyKey>): Equivalenc
     case "Never":
       return Equivalence.strictEqual()
     case "Declaration":
+      return declarationEquivalence(ast, path)
     case "Null":
     case "Undefined":
     case "Void":
@@ -151,8 +153,82 @@ function recur(ast: SchemaAST.AST, path: ReadonlyArray<PropertyKey>): Equivalenc
       })
     }
     case "Suspend": {
-      const get = SchemaAST.memoizeThunk(() => recur(ast.thunk(), path))
-      return Equivalence.make((a, b) => get()(a, b))
+      let equivalence: Equivalence.Equivalence<any>
+      return Equivalence.make((a, b) => (equivalence ??= recur(ast.thunk(), path))(a, b))
     }
   }
+}
+
+function declarationEquivalence(
+  ast: SchemaAST.Declaration,
+  path: ReadonlyArray<PropertyKey>
+): Equivalence.Equivalence<any> {
+  const representation = (ast.annotations as Schema.Annotations.Declaration<any> | undefined)?.representation
+  if (representation === undefined) return Equal.equals
+  switch (representation.id) {
+    case "effect/schema/Option": {
+      const [value] = declarationTypeParameters(ast, path)
+      return (a, b) => a._tag === b._tag && (a._tag === "None" || value(a.value, b.value))
+    }
+    case "effect/schema/Result": {
+      const [success, failure] = declarationTypeParameters(ast, path)
+      return (a, b) =>
+        a._tag === b._tag &&
+        (a._tag === "Success" ? success(a.success, b.success) : failure(a.failure, b.failure))
+    }
+    case "effect/schema/CauseReason": {
+      const [error, defect] = declarationTypeParameters(ast, path)
+      return causeReasonEquivalence(error, defect)
+    }
+    case "effect/schema/Cause": {
+      const [error, defect] = declarationTypeParameters(ast, path)
+      return causeEquivalence(error, defect)
+    }
+    case "effect/schema/Exit": {
+      const [value, error, defect] = declarationTypeParameters(ast, path)
+      const cause = causeEquivalence(error, defect)
+      return (a, b) => a._tag === b._tag && (a._tag === "Success" ? value(a.value, b.value) : cause(a.cause, b.cause))
+    }
+    case "effect/schema/ReadonlyMap": {
+      const [key, value] = declarationTypeParameters(ast, path)
+      return Equal.makeCompareMap(key, value)
+    }
+    case "effect/schema/ReadonlySet":
+      return Equal.makeCompareSet(declarationTypeParameters(ast, path)[0])
+    case "effect/schema/RegExp":
+      return (a: globalThis.RegExp, b: globalThis.RegExp) => a.source === b.source && a.flags === b.flags
+    case "effect/schema/URL":
+      return (a: globalThis.URL, b: globalThis.URL) => a.toString() === b.toString()
+    default:
+      return Equal.equals
+  }
+}
+
+function declarationTypeParameters(ast: SchemaAST.Declaration, path: ReadonlyArray<PropertyKey>) {
+  return ast.typeParameters.map((parameter) => recur(parameter, path))
+}
+
+function causeReasonEquivalence<E>(
+  error: Equivalence.Equivalence<E>,
+  defect: Equivalence.Equivalence<unknown>
+): Equivalence.Equivalence<Cause.Reason<E>> {
+  return (a, b) => {
+    if (a._tag !== b._tag) return false
+    switch (a._tag) {
+      case "Fail":
+        return error(a.error, (b as Cause.Fail<E>).error)
+      case "Die":
+        return defect(a.defect, (b as Cause.Die).defect)
+      case "Interrupt":
+        return a.fiberId === (b as Cause.Interrupt).fiberId
+    }
+  }
+}
+
+function causeEquivalence<E>(
+  error: Equivalence.Equivalence<E>,
+  defect: Equivalence.Equivalence<unknown>
+): Equivalence.Equivalence<Cause.Cause<E>> {
+  const reasons = Equivalence.Array(causeReasonEquivalence(error, defect))
+  return (a, b) => reasons(a.reasons, b.reasons)
 }

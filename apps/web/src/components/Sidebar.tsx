@@ -1278,6 +1278,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             addFiles: (files) => {
               onFileDropThreads(threadRef, files);
             },
+            addFolders: () => {},
           })
         : null,
     [onFileDropThreads, threadRef],
@@ -2057,6 +2058,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
         addFiles: (files) => {
           props.onFileDropThreads(threadRef, files);
         },
+        addFolders: () => {},
       }),
     [props.onFileDropThreads, threadRef],
   );
@@ -4040,10 +4042,24 @@ export default function Sidebar() {
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const threadProjectGroup =
+          projectGroupsRef.current.find((project) =>
+            project.memberProjectRefs.some(
+              (projectRef) =>
+                projectRef.environmentId === thread.environmentId &&
+                projectRef.projectId === thread.projectId,
+            ),
+          ) ?? null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
               branch: thread.branch ?? null,
+              projectFilter: threadProjectGroup
+                ? {
+                    label: threadProjectGroup.displayName,
+                    isActive: projectScopeKey === threadProjectGroup.projectKey,
+                  }
+                : null,
               isPinned,
               isSettled,
               isSnoozed,
@@ -4072,17 +4088,20 @@ export default function Sidebar() {
           return;
         }
         switch (clicked.value) {
-          case "project-settings": {
-            const projectGroup = projectGroupsRef.current.find((group) =>
-              group.memberProjectRefs.some(
-                (projectRef) =>
-                  projectRef.environmentId === thread.environmentId &&
-                  projectRef.projectId === thread.projectId,
-              ),
-            );
-            if (projectGroup) openProjectSettings(projectGroup);
+          case "filter-by-project":
+            // This item is the only scope control here, so picking the
+            // already-scoped project again is the way back to all projects.
+            if (threadProjectGroup) {
+              setProjectScopeKey(
+                projectScopeKey === threadProjectGroup.projectKey
+                  ? null
+                  : threadProjectGroup.projectKey,
+              );
+            }
             return;
-          }
+          case "project-settings":
+            if (threadProjectGroup) openProjectSettings(threadProjectGroup);
+            return;
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
@@ -4243,8 +4262,10 @@ export default function Sidebar() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       openProjectSettings,
+      projectScopeKey,
       projectByKey,
       serverConfigs,
+      setProjectScopeKey,
       startThreadRename,
       updateThreadMetadata,
       timestampFormat,
