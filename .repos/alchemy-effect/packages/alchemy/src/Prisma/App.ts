@@ -12,11 +12,15 @@ import {
 import * as ProviderLayer from "../Local/ProviderLayer.ts";
 import { Resource } from "../Resource.ts";
 import {
-  PrismaClient,
-  isConflict,
-  isNotFound,
-  type PrismaManagementClient,
-} from "./Client.ts";
+  type GetServicesResponse,
+  type GetProjectBranchesResponse,
+  getServices,
+  getService,
+  getProjectBranches,
+  updateService,
+  createService,
+} from "@distilled.cloud/prisma/management";
+import { Retry } from "@distilled.cloud/prisma";
 import { destroyApp } from "./ComputeLifecycle.ts";
 import { ensureAppImmutableIdentity } from "./Internal/AppIdentity.ts";
 import type { Project } from "./Project.ts";
@@ -28,7 +32,9 @@ import {
   resolveProjectId,
   unresolvedProjectIdOf,
 } from "./Refs.ts";
-import type { App as ApiApp, PrismaRegionId } from "./Types.ts";
+import type { ObservedApp } from "./Internal/Observed.ts";
+import type { PrismaRegionId } from "./Types.ts";
+import { PrismaPaginationError } from "./Internal/Pagination.ts";
 
 export interface AppProps {
   /**
@@ -125,8 +131,62 @@ export interface App extends Resource<
  */
 export const App = Resource<App>("Prisma.App");
 
+// Distilled emits the cursor-paginated list operations as plain ops, so
+// callers walk `pagination` themselves (see `src/Neon/Project.ts`).
+const listBranches = (projectId: string, gitName?: string) =>
+  Effect.gen(function* () {
+    const branches: GetProjectBranchesResponse["data"][number][] = [];
+    let cursor: string | undefined;
+    while (true) {
+      const page = yield* getProjectBranches({
+        projectId,
+        limit: 100,
+        ...(gitName === undefined ? {} : { gitName }),
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      branches.push(...page.data);
+      const nextCursor = page.pagination.nextCursor;
+      if (!page.pagination.hasMore) break;
+      if (nextCursor === null) {
+        return yield* Effect.fail(
+          new PrismaPaginationError({
+            message:
+              "Invalid Prisma Management API pagination response from getProjectBranches: hasMore was true without a non-empty nextCursor",
+          }),
+        );
+      }
+      cursor = nextCursor;
+    }
+    return branches;
+  });
+
+const listApps = (projectId?: string) =>
+  Effect.gen(function* () {
+    const apps: GetServicesResponse["data"][number][] = [];
+    let cursor: string | undefined;
+    while (true) {
+      const page = yield* getServices({
+        limit: 100,
+        ...(projectId === undefined ? {} : { projectId }),
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      apps.push(...page.data);
+      const nextCursor = page.pagination.nextCursor;
+      if (!page.pagination.hasMore) break;
+      if (nextCursor === null) {
+        return yield* Effect.fail(
+          new PrismaPaginationError({
+            message:
+              "Invalid Prisma Management API pagination response from getServices: hasMore was true without a non-empty nextCursor",
+          }),
+        );
+      }
+      cursor = nextCursor;
+    }
+    return apps;
+  });
+
 const desiredBranchId = Effect.fn(function* (
-  client: PrismaManagementClient,
   projectId: string,
   props: Pick<AppProps, "branchId" | "branchGitName">,
 ) {
@@ -134,10 +194,7 @@ const desiredBranchId = Effect.fn(function* (
     return { resolved: true as const, id: props.branchId };
   }
   if (props.branchGitName !== undefined) {
-    const branches = yield* client.listBranches(projectId, {
-      gitName: props.branchGitName,
-      limit: 100,
-    });
+    const branches = yield* listBranches(projectId, props.branchGitName);
     if (branches.length > 1) {
       return yield* Effect.fail(
         new Error(
@@ -149,7 +206,7 @@ const desiredBranchId = Effect.fn(function* (
       ? { resolved: true as const, id: branches[0].id }
       : { resolved: false as const };
   }
-  const branches = yield* client.listBranches(projectId, { limit: 100 });
+  const branches = yield* listBranches(projectId);
   const defaults = branches.filter((branch) => branch.isDefault);
   if (defaults.length > 1) {
     return yield* Effect.fail(
@@ -170,17 +227,15 @@ const createDisplayName = (id: string, displayName: string | undefined) =>
     : Effect.succeed(displayName);
 
 const findApp = Effect.fn(function* (
-  client: PrismaManagementClient,
   projectId: string,
   displayName: string,
   props: Pick<AppProps, "branchId" | "branchGitName">,
 ) {
-  const candidates = (yield* client.listApps({
-    projectId,
-    limit: 100,
-  })).filter((app) => app.name === displayName);
+  const candidates = (yield* listApps(projectId)).filter(
+    (app) => app.name === displayName,
+  );
   if (candidates.length === 0) return undefined;
-  const branch = yield* desiredBranchId(client, projectId, props);
+  const branch = yield* desiredBranchId(projectId, props);
   if (!branch.resolved) return undefined;
   const matches = candidates.filter((app) => app.branchId === branch.id);
   if (matches.length > 1) {
@@ -193,7 +248,7 @@ const findApp = Effect.fn(function* (
   return matches[0];
 });
 
-const attrsFrom = (app: ApiApp): App["Attributes"] => ({
+const attrsFrom = (app: ObservedApp): App["Attributes"] => ({
   appId: app.id,
   name: app.name,
   projectId: app.projectId,
@@ -205,19 +260,18 @@ const attrsFrom = (app: ApiApp): App["Attributes"] => ({
 });
 
 const branchNeedsSync = Effect.fn(function* (
-  client: PrismaManagementClient,
   projectId: string,
-  app: ApiApp,
+  app: ObservedApp,
   props: AppProps,
 ) {
   if (props.branchId !== undefined && !isPrismaDevId(props.branchId)) {
     return app.branchId !== props.branchId;
   }
   if (props.branchGitName === undefined) {
-    const branch = yield* desiredBranchId(client, projectId, props);
+    const branch = yield* desiredBranchId(projectId, props);
     return !branch.resolved || app.branchId !== branch.id;
   }
-  const branch = yield* desiredBranchId(client, projectId, props);
+  const branch = yield* desiredBranchId(projectId, props);
   return !branch.resolved || branch.id !== app.branchId;
 });
 
@@ -241,11 +295,9 @@ const ProviderLive = () =>
   Provider.effect(
     App,
     Effect.gen(function* () {
-      const client = yield* PrismaClient;
       return {
         stables: ["appId"],
-        list: () =>
-          client.listApps().pipe(Effect.map((apps) => apps.map(attrsFrom))),
+        list: () => listApps().pipe(Effect.map((apps) => apps.map(attrsFrom))),
         diff: Effect.fn(function* ({ id, olds, news, output }) {
           if (!isInputObject(news)) return undefined;
           if (isPrismaDevId(output?.appId)) {
@@ -301,7 +353,6 @@ const ProviderLive = () =>
             return { action: "update" } as const;
           }
           const branch = yield* desiredBranchId(
-            client,
             newProjectId ?? output.projectId,
             resolvedUpdateProps,
           );
@@ -314,16 +365,14 @@ const ProviderLive = () =>
             ? undefined
             : output?.appId;
           const app = appId
-            ? yield* client
-                .getApp(appId)
-                .pipe(
-                  Effect.catchIf(isNotFound, () => Effect.succeed(undefined)),
-                )
+            ? yield* getService({ serviceId: appId }).pipe(
+                Effect.map((response) => response.data),
+                Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+              )
             : yield* Effect.gen(function* () {
                 const projectId = unresolvedProjectIdOf(olds.project);
                 return projectId
                   ? yield* findApp(
-                      client,
                       projectId,
                       yield* createDisplayName(id, olds.displayName),
                       olds,
@@ -338,7 +387,7 @@ const ProviderLive = () =>
           yield* validateAppProps(news);
           const projectId = yield* resolveProjectId(news.project);
           const displayName = yield* createDisplayName(id, news.displayName);
-          const branch = yield* desiredBranchId(client, projectId, news);
+          const branch = yield* desiredBranchId(projectId, news);
           if (!branch.resolved) {
             return yield* Effect.fail(
               new Error(
@@ -351,44 +400,45 @@ const ProviderLive = () =>
           const appId = isPrismaDevId(output?.appId)
             ? undefined
             : output?.appId;
-          let app = appId
-            ? yield* client
-                .getApp(appId)
-                .pipe(
-                  Effect.catchIf(isNotFound, () => Effect.succeed(undefined)),
-                )
+          let app: ObservedApp | undefined = appId
+            ? yield* getService({ serviceId: appId }).pipe(
+                Effect.map((response) => response.data),
+                Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+              )
             : undefined;
           if (!app) {
-            const result = yield* client
-              .createApp({
-                projectId,
-                displayName,
-                regionId: news.regionId,
-                branchId: branch.id,
-                branchGitName: undefined,
-              })
-              .pipe(
-                Effect.map((app: ApiApp) => ({
-                  app,
-                  created: true,
-                })),
-                Effect.catchIf(isConflict, (conflict) =>
-                  findApp(client, projectId, displayName, news).pipe(
-                    Effect.flatMap((app) =>
-                      app &&
-                      output?.appId !== undefined &&
-                      app.id === output.appId
-                        ? Effect.succeed({ app, created: false })
-                        : Effect.fail(
-                            new Error(
-                              `Prisma app '${displayName}' already exists on the requested branch but is not owned by this App resource. Import it with explicit adoption or choose a different display name.`,
-                              { cause: conflict },
-                            ),
+            const result = yield* createService({
+              projectId,
+              displayName,
+              branchId: branch.id,
+              ...(news.regionId === undefined
+                ? {}
+                : { regionId: news.regionId }),
+            }).pipe(
+              // A replayed create would make a second App; the retry policy
+              // cannot see the request, so opt out explicitly.
+              Retry.none,
+              Effect.map((response) => ({
+                app: response.data,
+                created: true,
+              })),
+              Effect.catchTag("Conflict", (conflict) =>
+                findApp(projectId, displayName, news).pipe(
+                  Effect.flatMap((app) =>
+                    app &&
+                    output?.appId !== undefined &&
+                    app.id === output.appId
+                      ? Effect.succeed({ app, created: false })
+                      : Effect.fail(
+                          new Error(
+                            `Prisma app '${displayName}' already exists on the requested branch but is not owned by this App resource. Import it with explicit adoption or choose a different display name.`,
+                            { cause: conflict },
                           ),
-                    ),
+                        ),
                   ),
                 ),
-              );
+              ),
+            );
             app = result.app;
           }
           yield* ensureAppImmutableIdentity(
@@ -396,18 +446,13 @@ const ProviderLive = () =>
             projectId,
             news.regionId ?? output?.regionId ?? app.region.id,
           );
-          const needsBranchSync = yield* branchNeedsSync(
-            client,
-            projectId,
-            app,
-            news,
-          );
+          const needsBranchSync = yield* branchNeedsSync(projectId, app, news);
           if (app.name !== displayName || needsBranchSync) {
-            app = yield* client.updateApp(app.id, {
+            app = yield* updateService({
+              serviceId: app.id,
               displayName,
               branchId: branch.id,
-              branchGitName: undefined,
-            });
+            }).pipe(Effect.map((response) => response.data));
           }
           if (app.name !== displayName || app.branchId !== branch.id) {
             return yield* Effect.fail(
@@ -420,9 +465,10 @@ const ProviderLive = () =>
         }),
         delete: Effect.fn(function* ({ output }) {
           if (isPrismaDevId(output.appId)) return;
-          const app = yield* client
-            .getApp(output.appId)
-            .pipe(Effect.catchIf(isNotFound, () => Effect.succeed(undefined)));
+          const app = yield* getService({ serviceId: output.appId }).pipe(
+            Effect.map((response) => response.data),
+            Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+          );
           if (!app) return;
           if (
             app.projectId !== output.projectId ||
@@ -434,7 +480,7 @@ const ProviderLive = () =>
               ),
             );
           }
-          yield* destroyApp(client, output.appId);
+          yield* destroyApp(output.appId);
         }),
       };
     }),

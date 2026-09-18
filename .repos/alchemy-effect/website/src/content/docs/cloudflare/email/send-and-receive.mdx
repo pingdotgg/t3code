@@ -174,7 +174,7 @@ attempt.
 
 ## Send from the Worker
 
-Bind the descriptor with `Email.Send` in the Worker's init phase and
+Bind the descriptor with `Email.Send` in the Worker's Construction phase and
 provide `Email.SendBinding` as the implementation layer. The client's
 `send` method takes the familiar `{ from, to, subject, text }` shape
 (plus `html`, `cc`, `bcc`, `replyTo`, `headers`, and `attachments`):

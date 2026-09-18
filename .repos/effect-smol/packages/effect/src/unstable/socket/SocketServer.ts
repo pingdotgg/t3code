@@ -3,15 +3,16 @@
  *
  * `SocketServer` exposes the bound server `address` and a long-running `run`
  * loop that hands each accepted connection to a handler as a `Socket.Socket`.
- * The module also defines TCP and Unix socket address models plus the
- * server-level errors reported while opening or running a server. Platform
- * layers provide concrete implementations of this service.
+ * Bound addresses use the shared `NetAddress.SocketAddress` model. This module also
+ * defines server-level errors reported while opening or running a server.
+ * Platform layers provide concrete implementations of this service.
  *
  * @since 4.0.0
  */
 import * as Context from "../../Context.ts"
 import * as Data from "../../Data.ts"
 import type * as Effect from "../../Effect.ts"
+import type * as NetAddress from "../net/NetAddress.ts"
 import type * as Socket from "./Socket.ts"
 
 /**
@@ -22,7 +23,7 @@ import type * as Socket from "./Socket.ts"
  * @since 4.0.0
  */
 export class SocketServer extends Context.Service<SocketServer, {
-  readonly address: Address
+  readonly address: NetAddress.SocketAddress
   readonly run: <R, E, _>(
     handler: (socket: Socket.Socket) => Effect.Effect<_, E, R>
   ) => Effect.Effect<never, SocketServerError, R>
@@ -113,35 +114,4 @@ export class SocketServerError extends Data.TaggedError("SocketServerError")<{
   override get message(): string {
     return this.reason.message
   }
-}
-
-/**
- * Socket server address, either a TCP host and port or a Unix socket path.
- *
- * @category models
- * @since 4.0.0
- */
-export type Address = UnixAddress | TcpAddress
-
-/**
- * TCP socket server address with hostname and port.
- *
- * @category models
- * @since 4.0.0
- */
-export interface TcpAddress {
-  readonly _tag: "TcpAddress"
-  readonly hostname: string
-  readonly port: number
-}
-
-/**
- * Unix socket server address identified by a filesystem path.
- *
- * @category models
- * @since 4.0.0
- */
-export interface UnixAddress {
-  readonly _tag: "UnixAddress"
-  readonly path: string
 }

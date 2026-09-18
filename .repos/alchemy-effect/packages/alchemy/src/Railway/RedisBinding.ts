@@ -16,7 +16,7 @@ export const REDIS_URL_ENV = "REDIS_URL";
  * Each `{Op}Http.ts` is a thin `Layer.effect` over {@link makeRedisBinding}.
  * Deploy-time writes `REDIS_URL` onto the host Service as a Railway
  * reference (`${{RedisName.REDIS_URL}}`). Runtime commands use that URL
- * internally — callers never read `Config.redacted`.
+ * internally — callers never read `Config.Redacted`.
  *
  * The RESP client lives in `alchemy/Redis`. This file only wires the
  * Railway host binding.
@@ -45,7 +45,7 @@ const resolveName = (redis: Redis) =>
     return redis.LogicalId;
   });
 
-const redisUrlFromEnv = Config.redacted(REDIS_URL_ENV).pipe(
+const redisUrlFromEnv = Config.Redacted(REDIS_URL_ENV).pipe(
   Effect.map((value) => Redacted.value(value)),
 );
 

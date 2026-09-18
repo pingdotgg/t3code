@@ -210,6 +210,7 @@ const setPreviewServerGlobal = (
   adapterPath: string,
   configPath: string | undefined,
   project: VocsProjectModules,
+  port: number,
 ): void => {
   (globalThis as Record<string, unknown>)[PREVIEW_SERVER_GLOBAL] =
     async (): Promise<WakuPreviewServer> => {
@@ -222,6 +223,8 @@ const setPreviewServerGlobal = (
           workerdConfigBridge(configPath),
           project.vite.vocs({ unstable_adapter: adapterPath }),
         ],
+        // localhost can resolve to another build's listener on the other IP family.
+        preview: { host: "127.0.0.1", port },
       });
       const baseUrl = server.resolvedUrls?.local[0];
       if (!baseUrl) {
@@ -371,6 +374,9 @@ export const make = (
             entryEnvironment: "rsc",
             selectEntry: (chunk) => chunk.name === WAKU_SERVER_ENTRY_MODULE,
           }).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+          const previewPort = yield* FrameworkCore.resolveViteDevPort(
+            vite.version,
+          );
           yield* Effect.tryPromise({
             try: async () => {
               const builder = await vite.createBuilder(
@@ -388,7 +394,13 @@ export const make = (
                 },
                 null,
               );
-              setPreviewServerGlobal(root, adapterPath, configPath, project);
+              setPreviewServerGlobal(
+                root,
+                adapterPath,
+                configPath,
+                project,
+                previewPort,
+              );
               try {
                 await builder.buildApp();
               } finally {

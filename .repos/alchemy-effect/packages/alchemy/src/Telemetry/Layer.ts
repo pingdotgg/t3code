@@ -37,15 +37,20 @@ const buildOtlpLayer = (
     resource,
     exportInterval: "1 second",
   });
-  // Replace (don't merge with) the default stdout logger here; downstream
-  // commands re-add their own `fileLogger`/`consolePretty` via
-  // `Logger.layer([...], { mergeWithExisting: true })`, which stacks on top
-  // of this OtlpLogger without resurrecting Effect's default stdout logger.
+  // Stack on top of whatever loggers are already installed. Entrypoints
+  // provide this layer *over* their terminal/file logger layer
+  // (`Layer.provideMerge(TelemetryLive, ConsoleLogLive)`), so the terminal
+  // logger has already replaced Effect's default stdout logger by the time
+  // this runs and the OTLP logger is simply added alongside it.
+  //
+  // `mergeWithExisting: false` here would make telemetry *replace* the
+  // terminal logger whenever this layer happened to be merged after it —
+  // exactly what silenced `alchemy dev`'s console output in the exec child.
   const logger = OtlpLogger.layer({
     url: LOGS_URL,
     resource,
     exportInterval: "1 second",
-    mergeWithExisting: false,
+    mergeWithExisting: true,
   });
 
   return Layer.mergeAll(tracer, metrics, logger).pipe(
@@ -59,6 +64,12 @@ const buildOtlpLayer = (
  * to {@link TRACES_URL} and metrics to {@link METRICS_URL}, attaching
  * {@link collectAttributes} as resource-level attributes so every signal
  * carries user/project/runtime context.
+ *
+ * The OTLP logger merges with the loggers already installed, so provide this
+ * layer on top of the entrypoint's terminal/file logger layer — e.g.
+ * `Layer.provideMerge(TelemetryLive, ConsoleLogLive)` — never as a sibling in
+ * a `Layer.mergeAll` (the last `CurrentLoggers` in a merge wins, silently
+ * dropping either the terminal output or the telemetry).
  *
  * If the user has opted out (via `DO_NOT_TRACK`, `NO_TRACK`,
  * `ALCHEMY_TELEMETRY_DISABLED`, or `~/.alchemy/telemetry-disabled`), this
