@@ -81,6 +81,10 @@ Grok reports the remaining subscription allowance and reset time for its current
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
 
+Antigravity reports Gemini session and weekly allowances from the Google login stored for that
+instance. Claude and GPT quotas from the same login are omitted. API-key and Vertex connections
+do not report subscription limits.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 

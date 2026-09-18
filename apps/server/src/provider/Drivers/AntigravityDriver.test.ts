@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -33,6 +34,7 @@ import {
   ANTIGRAVITY_AUTH_STDOUT_PREFIX,
   resolveAntigravityProfileDirectory,
   resolveAntigravityRuntimeTempDirectory,
+  resolveAntigravityTokenPath,
 } from "../antigravityAuthSupport.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -258,6 +260,36 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   ),
   Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        if (!request.url.includes("retrieveUserQuotaSummary")) {
+          return Effect.die("Antigravity health check must not make this HTTP request");
+        }
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              groups: [
+                {
+                  displayName: "Gemini Models",
+                  buckets: [
+                    {
+                      bucketId: "gemini-5h",
+                      window: "5h",
+                      remainingFraction: 0.5,
+                      resetTime: "2026-09-18T17:00:00.000Z",
+                    },
+                  ],
+                },
+              ],
+            }),
+          ),
+        );
+      }),
+    ),
+  ),
 );
 
 it.layer(testLayer)("AntigravityDriver", (it) => {
@@ -529,8 +561,27 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       const snapshot = yield* h.instance.snapshot.refresh;
       expect(snapshot.installed).toBe(true);
       expect(snapshot.version).toBe(h.first.version);
+      expect(snapshot.usageLimits?.unavailable?.reason).toBe("unsupported");
       expect(h.launches).toEqual([]);
       expect(h.acquisitions).toEqual([]);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "reads Cloud Code usage limits from the instance token without launching a process",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({ enabled: true });
+        const tokenPath = resolveAntigravityTokenPath(h.profileDirectory);
+        yield* h.fs.makeDirectory(h.path.dirname(tokenPath), { recursive: true });
+        yield* h.fs.writeFileString(tokenPath, '{"token":{"access_token":"ya29.test"}}');
+        const snapshot = yield* h.instance.snapshot.refresh;
+        expect(snapshot.installed).toBe(true);
+        expect(h.launches).toEqual([]);
+        expect(snapshot.usageLimits?.windows.map((window) => window.id)).toEqual([
+          "gemini_five_hour",
+        ]);
+        expect(snapshot.usageLimits?.windows[0]?.usedPercent).toBe(50);
+      }).pipe(Effect.scoped),
   );
 });

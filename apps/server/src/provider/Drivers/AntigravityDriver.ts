@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type { AcpError } from "effect-acp/errors";
 
@@ -35,6 +36,7 @@ import {
   prepareAntigravityProfile,
   resolveAntigravityProfileDirectory,
   resolveAntigravityRuntimeTempDirectory,
+  resolveAntigravityTokenPath,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
@@ -50,6 +52,7 @@ import {
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
+import { readAntigravityUsageLimits } from "../Layers/antigravityUsageLimits.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import {
@@ -71,6 +74,7 @@ export type AntigravityDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | HttpClient.HttpClient
   | ModelManifest.ModelManifest
   | Path.Path
   | ProviderEventLoggers
@@ -91,6 +95,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
       const installation = yield* AntigravityInstallation;
+      const httpClient = yield* HttpClient.HttpClient;
       const loggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const settings = { ...config, enabled } satisfies AntigravitySettings;
@@ -361,6 +366,15 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
           Effect.orElseSucceed(() => false),
+        ),
+        usageLimits: readAntigravityUsageLimits({
+          enabled: settings.enabled,
+          authMethod: auth.authMethod,
+          tokenPath: resolveAntigravityTokenPath(profileDirectory),
+          ...(auth.gcpProject.trim() ? { gcpProject: auth.gcpProject } : {}),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
         ),
       }).pipe(
         Effect.mapError(

@@ -199,6 +199,11 @@ export function resolveAntigravityRuntimeTempDirectory(profileDirectory: string)
   return NodePath.join(profileDirectory, "antigravity-acp", "tmp");
 }
 
+/** Google OAuth token the ACP agent writes after sign-in. */
+export function resolveAntigravityTokenPath(profileDirectory: string): string {
+  return NodePath.join(profileDirectory, "antigravity-acp", "acp_token.json");
+}
+
 function quoteBrowserArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
@@ -342,7 +347,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     platform,
     geminiHome,
     acpDirectory,
-    tokenPath: path.join(acpDirectory, "acp_token.json"),
+    tokenPath: resolveAntigravityTokenPath(geminiHome),
     tempDirectory,
     browserCommand,
   };
