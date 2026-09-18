@@ -2949,6 +2949,52 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("sends identical AGENTS.md and CLAUDE.md content to a Claude writer once", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* runGit(repoDir, ["init", "--initial-branch=main"]);
+      yield* runGit(repoDir, ["config", "user.email", "test@example.com"]);
+      yield* runGit(repoDir, ["config", "user.name", "Test User"]);
+      const instructions = "Use lowercase source control text.";
+      // A byte-identical copy stands in for the common `CLAUDE.md -> AGENTS.md`
+      // symlink: both read to the same string, which is what the dedup compares.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "AGENTS.md"), instructions);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "CLAUDE.md"), instructions);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      let generatedPolicy: TextGeneration.CommitMessageGenerationInput["policy"] = undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          textGenerationModelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-6",
+          },
+          sourceControlWritingStyle: {
+            mode: "repo_conventions" as const,
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            generatedPolicy = input.policy;
+            return Effect.succeed({ subject: "Create initial commit", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      expect(generatedPolicy).toEqual({
+        kind: "repo_conventions",
+        commitInstructions: `Follow the repository's established commit message style when examples are available.\n\nInstructions from this repository's AGENTS.md (take precedence over the examples below):\n${instructions}`,
+        changeRequestInstructions: `Follow the repository's established change request title and body style when examples are available.\n\nInstructions from this repository's AGENTS.md (take precedence over the examples below):\n${instructions}`,
+        inferRepositoryConventions: true,
+      });
+    }),
+  );
+
   it.effect("lists AGENTS.md conventions before recent commit subjects", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

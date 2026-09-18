@@ -765,9 +765,14 @@ export const make = Effect.gen(function* () {
                 provider.instanceId === settings.modelSelection.instanceId &&
                 provider.driver === "claudeAgent",
             );
-          const claudeInstructions = isClaudeWriter
+          const claudeInstructionsRead = isClaudeWriter
             ? yield* readRepositoryInstructions(cwd, "CLAUDE.md")
             : "";
+          // CLAUDE.md is commonly a symlink to, or a copy of, AGENTS.md. Both
+          // reads then return the same text, and the writer would be sent it
+          // twice. Comparing content covers symlinks, hardlinks and copies.
+          const claudeInstructions =
+            claudeInstructionsRead === agentInstructions ? "" : claudeInstructionsRead;
           // Written conventions come first and outrank history: a repository
           // whose recent subjects drift from its documented style should get
           // the documented style back, not more drift.
