@@ -1,4 +1,5 @@
-import { Agent, type InteractionUpdate, type RunResult } from "@cursor/sdk";
+import type { InteractionUpdate, RunResult } from "@cursor/sdk";
+import { Agent } from "../../provider/cursorSdk.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderReplayEntry,
