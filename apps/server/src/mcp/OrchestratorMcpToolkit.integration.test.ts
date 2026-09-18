@@ -11,7 +11,6 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ThreadProjection,
   OrchestratorMcpCreateThreadsResult,
-  OrchestratorMcpCreatedThread,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpThreadInterruptResult,
@@ -92,7 +91,6 @@ const queuedFollowupPrompt = "Complete the queued follow-up and return the final
 const queuedFollowupResult = "Queued delegated follow-up completed.";
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
-const decodeCreatedThread = Schema.decodeUnknownEffect(OrchestratorMcpCreatedThread);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeTaskCancelResult = Schema.decodeUnknownEffect(OrchestratorMcpTaskCancelResult);
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
@@ -2076,14 +2074,13 @@ describe("orchestrator MCP toolkit", () => {
               (yield* orchestrator.getThreadProjection(emptyThread.threadId)).runs,
             ).toHaveLength(1);
 
-            const activeThreadCall = yield* invoke("t3_thread_start", {
-              prompt: cancellationPrompt,
-              title: "Managed active thread",
+            const activeThreadCall = yield* invoke("create_threads", {
+              threads: [{ prompt: cancellationPrompt, title: "Managed active thread" }],
               clientRequestId: "managed-active-thread-1",
             });
-            const activeThread = yield* decodeCreatedThread(
+            const activeThread = (yield* decodeCreateThreadsResult(
               activeThreadCall.structuredContent,
-            ).pipe(Effect.orDie);
+            ).pipe(Effect.orDie)).threads[0]!;
             const activeThreadItem = (yield* orchestrator.getThreadProjection(
               parentThreadId,
             )).visibleTurnItems

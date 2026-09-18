@@ -61,6 +61,7 @@ import {
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
 import { EffectOutboxV2, layer as effectOutboxLayer } from "./EffectOutbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
+import { ProviderRuntimeRecoveryService } from "./ProviderRuntimeRecoveryService.ts";
 import { ProjectionMaintenanceV2 } from "./ProjectionMaintenance.ts";
 import type { ProviderAdapterV2SessionRuntime, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
@@ -2398,6 +2399,113 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
           assert.equal(
             afterSecondPromotion.runs.find((run) => run.id === secondQueuedRun.id)?.status,
             "starting",
+          );
+        }),
+    );
+  }
+
+  for (const trigger of ["startup", "shutdown"] as const) {
+    it.effect(
+      `preserves and holds queued messages across ${trigger} until explicitly resumed`,
+      () =>
+        Effect.gen(function* () {
+          const orchestrator = yield* OrchestratorV2;
+          const recovery = yield* ProviderRuntimeRecoveryService;
+          const threadId = ThreadId.make(`queue-hold-${trigger}`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${threadId}:create`),
+            threadId,
+            projectId: ProjectId.make(`${threadId}:project`),
+            title: "Recover queue",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: process.cwd(),
+          });
+          for (const [index, text] of ["Active", "First queued", "Second queued"].entries()) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`${threadId}:message:${index}`),
+              threadId,
+              messageId: MessageId.make(`${threadId}:message:${index}`),
+              text,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+            });
+          }
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const queued = before.runs.filter((run) => run.status === "queued");
+          assert.equal(queued.length, 2);
+          yield* recovery.reconcile(trigger);
+          // A second boot must preserve the hold, even when only queued work remains.
+          yield* recovery.reconcile("startup");
+          const maintenance = yield* ProjectionMaintenanceV2;
+          assert.isTrue((yield* maintenance.rebuild).valid);
+          assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+          const held = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            held.runs.map((run) => run.status),
+            ["cancelled", "queued", "queued"],
+          );
+          for (const run of queued) {
+            assert.deepEqual(
+              held.runs.find((row) => row.id === run.id),
+              { ...run, queueHeld: true },
+            );
+            assert.deepEqual(
+              held.messages.find((row) => row.id === run.userMessageId),
+              before.messages.find((row) => row.id === run.userMessageId),
+            );
+            assert.equal(
+              held.attempts.find((row) => row.id === run.activeAttemptId)?.status,
+              "pending",
+            );
+            assert.equal(held.nodes.find((row) => row.id === run.rootNodeId)?.status, "pending");
+          }
+          // Editing and reordering are allowed without releasing the hold.
+          const first = queued[0]!;
+          const second = queued[1]!;
+          yield* orchestrator.dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make(`${threadId}:edit`),
+            threadId,
+            runId: second.id,
+            text: "Edited second message",
+          });
+          yield* orchestrator.dispatch({
+            type: "queued-run.reorder",
+            commandId: CommandId.make(`${threadId}:reorder`),
+            threadId,
+            runId: second.id,
+            beforeRunId: first.id,
+          });
+          assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+          const resume = {
+            type: "queue.resume" as const,
+            commandId: CommandId.make(`${threadId}:resume`),
+            threadId,
+          };
+          yield* orchestrator.dispatch(resume);
+          yield* orchestrator.dispatch(resume);
+          const resumed = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(resumed.runs.find((run) => run.id === second.id)?.status, "starting");
+          assert.equal(resumed.runs.find((run) => run.id === first.id)?.status, "queued");
+          assert.isFalse(resumed.runs.some((run) => run.status === "queued" && run.queueHeld));
+          assert.equal(
+            resumed.messages.find((row) => row.id === second.userMessageId)?.text,
+            "Edited second message",
+          );
+          assert.equal(
+            resumed.runs.length,
+            3,
+            "resume retries must not duplicate messages or runs",
           );
         }),
     );
