@@ -1,5 +1,7 @@
 import {
   MessageId,
+  ContextHandoffId,
+  ProviderThreadId,
   NodeId,
   EventId,
   ProjectId,
@@ -43,6 +45,32 @@ const base = {
 };
 
 describe("orchestration V2 wire projection", () => {
+  it("keeps copied handoff transcripts out of activity items and live events", () => {
+    const item = {
+      ...base,
+      type: "handoff" as const,
+      contextHandoffId: ContextHandoffId.make("handoff:wire"),
+      fromProviderThreadIds: [],
+      toProviderThreadId: ProviderThreadId.make("target"),
+      fromProviderInstanceIds: [],
+      toProviderInstanceId: ProviderInstanceId.make("codex"),
+      strategy: "full_thread_summary" as const,
+      summary: "PRIVATE_HANDOFF_TRANSCRIPT",
+    };
+    const projected = projectTurnItemForWire(item);
+    expect(projected).not.toHaveProperty("summary");
+    expect(decodeTurnItem(projected)).toMatchObject({ contextHandoffId: item.contextHandoffId });
+    const event = {
+      id: EventId.make("handoff:wire"),
+      type: "turn-item.updated" as const,
+      threadId: base.threadId,
+      occurredAt: base.updatedAt,
+      payload: item,
+    };
+    expect(JSON.stringify(projectDomainEventForWire(event))).not.toContain(item.summary);
+    expect(item.summary).toBe("PRIVATE_HANDOFF_TRANSCRIPT");
+  });
+
   it("preserves image metadata through wire and JSON contracts while redacting output", () => {
     const item = {
       ...base,

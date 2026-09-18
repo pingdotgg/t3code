@@ -1,10 +1,4 @@
-import {
-  AuthenticationError,
-  Cursor,
-  CursorSdkError,
-  type SDKModel,
-  type SDKUser,
-} from "@cursor/sdk";
+import type { SDKModel, SDKUser } from "@cursor/sdk";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -12,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+
+import { AuthenticationError, Cursor, CursorSdkError } from "../cursorSdk.ts";
 
 export interface CursorSdkCatalogSnapshot {
   readonly user: SDKUser;
