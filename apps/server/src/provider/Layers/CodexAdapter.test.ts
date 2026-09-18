@@ -63,7 +63,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
   private readonly now = "2026-01-01T00:00:00.000Z";
 
-  public readonly startImpl = vi.fn(() =>
+  public readonly startImpl = vi.fn<() => Promise<ProviderSession>>(() =>
     Promise.resolve({
       provider: ProviderDriverKind.make("codex"),
       status: "ready" as const,
@@ -118,7 +118,9 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
       Promise.resolve(undefined),
   );
 
-  public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
+  public readonly closeImpl = vi.fn<() => Promise<void>>(() => Promise.resolve(undefined));
+
+  public beforeStart: Effect.Effect<void> = Effect.void;
 
   readonly options: CodexSessionRuntimeOptions;
 
@@ -127,7 +129,7 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   start() {
-    return Effect.promise(() => this.startImpl());
+    return this.beforeStart.pipe(Effect.andThen(Effect.promise(() => this.startImpl())));
   }
 
   getSession = Effect.promise(() => this.startImpl());
@@ -187,7 +189,10 @@ function makeRuntimeFactory() {
   };
 }
 
-function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolean }) {
+function makeScopedRuntimeFactory(options?: {
+  readonly failConstruction?: boolean;
+  readonly configureRuntime?: (runtime: FakeCodexRuntime) => void;
+}) {
   const runtimes: Array<FakeCodexRuntime> = [];
   const releasedThreadIds: Array<ThreadId> = [];
 
@@ -208,6 +213,7 @@ function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolea
       }
 
       const runtime = new FakeCodexRuntime(runtimeOptions);
+      options?.configureRuntime?.(runtime);
       runtimes.push(runtime);
       return runtime;
     }),
@@ -2719,6 +2725,118 @@ scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
       NodeAssert.equal(runtime.closeImpl.mock.calls.length, 1);
       NodeAssert.deepStrictEqual(scopedLifecycleRuntimeFactory.releasedThreadIds, [threadId]);
       NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
+});
+
+const liveStartupErrorThreadId = asThreadId("thread-live-startup-error");
+const startupExitRuntimeFactory = makeScopedRuntimeFactory({
+  configureRuntime: (runtime) => {
+    if (runtime.options.threadId === liveStartupErrorThreadId) {
+      runtime.startImpl.mockImplementation(() =>
+        Promise.resolve({
+          provider: ProviderDriverKind.make("codex"),
+          status: "error" as const,
+          runtimeMode: runtime.options.runtimeMode,
+          threadId: runtime.options.threadId,
+          cwd: runtime.options.cwd,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          lastError: "The queued turn failed.",
+        } satisfies ProviderSession),
+      );
+      return;
+    }
+
+    const exitHandled = Promise.withResolvers<void>();
+    runtime.closeImpl.mockImplementation(() => {
+      exitHandled.resolve();
+      return Promise.resolve();
+    });
+    runtime.beforeStart = runtime.emit({
+      id: asEventId("evt-exit-during-startup"),
+      kind: "session",
+      provider: ProviderDriverKind.make("codex"),
+      threadId: runtime.options.threadId,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      method: "session/exited",
+      message: "Codex App Server exited during startup.",
+    } satisfies ProviderEvent);
+    runtime.startImpl.mockImplementation(async () => {
+      await exitHandled.promise;
+
+      return {
+        provider: ProviderDriverKind.make("codex"),
+        status: "error" as const,
+        runtimeMode: runtime.options.runtimeMode,
+        threadId: runtime.options.threadId,
+        cwd: runtime.options.cwd,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        lastError: "Codex App Server exited during startup.",
+      } satisfies ProviderSession;
+    });
+  },
+});
+const startupExitLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: startupExitRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+startupExitLayer("CodexAdapterLive startup exit", (it) => {
+  it.effect("does not retain a process that exits before startup completes", () =>
+    Effect.gen(function* () {
+      startupExitRuntimeFactory.releasedThreadIds.length = 0;
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-startup-exit");
+
+      const result = yield* adapter
+        .startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      const runtime = startupExitRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.equal(result._tag, "Failure");
+      NodeAssert.equal(result.failure._tag, "ProviderAdapterProcessError");
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 1);
+      NodeAssert.deepStrictEqual(startupExitRuntimeFactory.releasedThreadIds, [threadId]);
+      NodeAssert.equal(yield* adapter.hasSession(threadId), false);
+    }),
+  );
+
+  it.effect("keeps a live process after a queued turn fails during startup", () =>
+    Effect.gen(function* () {
+      startupExitRuntimeFactory.releasedThreadIds.length = 0;
+      const adapter = yield* CodexAdapter;
+
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: liveStartupErrorThreadId,
+        runtimeMode: "full-access",
+      });
+
+      const runtime = startupExitRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      NodeAssert.equal(session.status, "error");
+      NodeAssert.equal(runtime.closeImpl.mock.calls.length, 0);
+      NodeAssert.deepStrictEqual(startupExitRuntimeFactory.releasedThreadIds, []);
+      NodeAssert.equal(yield* adapter.hasSession(liveStartupErrorThreadId), true);
     }),
   );
 });

@@ -2318,6 +2318,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ),
         );
 
+        let exitedDuringStartup = false;
         // Fork into the adapter scope, not the calling fiber. This keeps the
         // consumer alive after startSession returns and lets an exit event
         // close the runtime's narrower session scope without self-interrupting.
@@ -2442,12 +2443,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
             if (event.method === "session/exited" || event.method === "session/closed") {
               const exitedSession = sessions.get(event.threadId);
-              if (exitedSession) {
-                exitedSession.stopped = true;
-                sessions.delete(event.threadId);
-                yield* exitedSession.runtime.close.pipe(Effect.ignore);
-                yield* Scope.close(exitedSession.scope, Exit.void).pipe(Effect.ignore);
+              if (!exitedSession) {
+                exitedDuringStartup = true;
+                yield* runtime.close.pipe(Effect.ignore);
+                yield* Scope.close(sessionScope, Exit.void).pipe(Effect.ignore);
+                return;
               }
+
+              exitedSession.stopped = true;
+              sessions.delete(event.threadId);
+              yield* exitedSession.runtime.close.pipe(Effect.ignore);
+              yield* Scope.close(exitedSession.scope, Exit.void).pipe(Effect.ignore);
             }
           }),
         ).pipe(Effect.forkIn(adapterScope));
@@ -2470,6 +2476,20 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ),
           ),
         );
+
+        if (exitedDuringStartup || started.status === "closed") {
+          if (!exitedDuringStartup) {
+            yield* runtime.close.pipe(Effect.ignore);
+            yield* Scope.close(sessionScope, Exit.void).pipe(Effect.ignore);
+          }
+          yield* Fiber.interrupt(eventFiber).pipe(Effect.ignore);
+
+          return yield* new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId: input.threadId,
+            detail: started.lastError ?? "Codex App Server exited during session startup.",
+          });
+        }
 
         sessions.set(input.threadId, {
           threadId: input.threadId,
