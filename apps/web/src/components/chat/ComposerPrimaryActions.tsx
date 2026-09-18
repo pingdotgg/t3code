@@ -33,7 +33,7 @@ interface ComposerPrimaryActionsProps {
   pendingAction: PendingActionState | null;
   isRunning: boolean;
   followUpBehavior?: "queue" | "steer";
-  requiresSendModifier?: boolean;
+  alternateShortcutLabel?: string | null;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -77,7 +77,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   pendingAction,
   isRunning,
   followUpBehavior = "steer",
-  requiresSendModifier = false,
+  alternateShortcutLabel = null,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -273,7 +273,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const submitTooltip =
     submitStatus ??
     (isRunning && !isEditingQueuedMessage
-      ? `${requiresSendModifier ? "Mod+Enter" : "Enter"} to ${followUpBehavior}, ${requiresSendModifier ? "Mod+Shift+Enter" : "Mod+Enter"} to ${alternateAction}`
+      ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
       : submitLabel);
 
   const sendButton = (

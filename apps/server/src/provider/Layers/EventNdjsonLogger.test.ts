@@ -513,6 +513,37 @@ describe("EventNdjsonLogger", () => {
     }),
   );
 
+  it.effect("bounds canonical diff snapshots before serializing their duplicate payloads", () =>
+    Effect.gen(function* () {
+      const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+      const basePath = NodePath.join(tempDir, "events.log");
+      const threadId = ThreadId.make("large-diff");
+      const diff = "diff-payload".repeat(128 * 1_024);
+      try {
+        const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+        yield* store.logger("canonical").write(
+          {
+            type: "turn.diff.updated",
+            threadId,
+            turnId: "native-turn",
+            raw: { method: "turn/diff/updated", payload: { diff } },
+            payload: { unifiedDiff: diff },
+          },
+          threadId,
+        );
+        yield* store.close();
+        const contents = NodeFS.readFileSync(ownedLogPath(basePath, "large-diff"), "utf8");
+        assert.isBelow(Buffer.byteLength(contents), 2_048);
+        const record = decodeUnknownJson(parseLogLine(contents.trim()).payload);
+        assert.propertyVal(record, "type", "turn.diff.updated");
+        assert.propertyVal(record, "threadId", threadId);
+        assert.propertyVal(record, "turnId", "native-turn");
+      } finally {
+        NodeFS.rmSync(tempDir, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.effect("keeps OpenCode tool input, final output, and errors in native logs", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));

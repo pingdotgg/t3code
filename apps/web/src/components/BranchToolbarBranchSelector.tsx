@@ -802,8 +802,8 @@ export function BranchToolbarBranchSelector({
             url={prUrl}
             status={displayedPrStatus}
             onOpenStack={() => useRightPanelStore.getState().open(threadRef, "pull-requests")}
-            onOpenPullRequest={(event) => {
-              if (prUrl) openPrLink(event, prUrl);
+            onOpenPullRequest={(event, targetUrl = prUrl) => {
+              if (targetUrl) openPrLink(event, targetUrl);
             }}
           />
         ) : null}
