@@ -34,9 +34,9 @@ export function PullRequestLinkPreview({
 }) {
   const [open, setOpen] = useState(false);
   const [resolvingClick, setResolvingClick] = useState(false);
-  const previewQuery = useEnvironmentQuery(
+  const detailQuery = useEnvironmentQuery(
     open
-      ? pullRequestEnvironment.preview({
+      ? pullRequestEnvironment.detail({
           environmentId: target.environmentId,
           input: target.input,
         })
@@ -68,7 +68,7 @@ export function PullRequestLinkPreview({
         },
       })
     : link;
-  const detail = previewQuery.data;
+  const detail = detailQuery.data;
   const state =
     detail === null
       ? null
@@ -83,7 +83,7 @@ export function PullRequestLinkPreview({
   return (
     <PreviewCard open={open} onOpenChange={setOpen}>
       <PreviewCardTrigger render={trigger} delay={350} closeDelay={120} />
-      {detail !== null || previewQuery.error !== null ? (
+      {detail !== null || detailQuery.error !== null ? (
         <PreviewCardPopup align="center" className="w-80 max-w-[calc(100vw-2rem)] p-3">
           {detail === null ? (
             <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">

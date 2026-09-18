@@ -597,6 +597,62 @@ const RawRepositoryAccessSchema = Schema.Struct({
   viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+const RawCoreSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      ...RawRepositoryAccessSchema.fields,
+      pullRequest: Schema.Struct({
+        ...RawDetailSchema.fields,
+        ...RawViewerFieldsSchema.fields,
+        viewerCanUpdateBranch: Schema.Boolean,
+        baseRef: Schema.NullOr(
+          Schema.Struct({
+            compare: Schema.NullOr(Schema.Struct({ behindBy: Schema.Int })),
+          }),
+        ),
+        reviewRequests: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({ requestedReviewer: Schema.NullOr(RawReviewRequestSchema) }),
+          ),
+        }),
+        labels: Schema.Struct({ nodes: Schema.Array(RawLabelSchema) }),
+        commits: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({
+              commit: Schema.Struct({
+                statusCheckRollup: Schema.NullOr(
+                  Schema.Struct({
+                    contexts: Schema.Struct({
+                      nodes: Schema.Array(
+                        Schema.Struct({
+                          ...RawCheckSchema.fields,
+                          checkSuite: Schema.optional(
+                            Schema.NullOr(
+                              Schema.Struct({
+                                workflowRun: Schema.NullOr(
+                                  Schema.Struct({
+                                    workflow: Schema.NullOr(Schema.Struct({ name: Schema.String })),
+                                  }),
+                                ),
+                              }),
+                            ),
+                          ),
+                        }),
+                      ),
+                      pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
+                    }),
+                  }),
+                ),
+              }),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
+const decodeCore = decodeJsonResult(RawCoreSchema);
+
 const RawPullRequestFileSchema = Schema.Struct({
   filename: Schema.String,
   status: Schema.optional(Schema.NullOr(Schema.String)),
@@ -645,6 +701,40 @@ export const PULL_REQUEST_LIST_JSON_FIELDS =
   "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup";
 
 export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
+
+/** Pull refs let the comparison share the detail read without first resolving a fork branch. */
+export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
+  repository(owner: $owner, name: $name) {
+    mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
+    pullRequest(number: $number) {
+      number title url body state isDraft mergeable reviewDecision
+      additions deletions changedFiles createdAt updatedAt mergedAt closedAt
+      headRefName baseRefName headRefOid isCrossRepository
+      headRepositoryOwner { login }
+      author { login avatarUrl ... on User { id name } }
+      autoMergeRequest { mergeMethod }
+      viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
+      baseRef { compare(headRef: $headRef) { behindBy } }
+      reviewRequests(first: 100) {
+        nodes { requestedReviewer { ... on User { login name } ... on Bot { login } ... on Team { slug name } } }
+      }
+      labels(first: 100) { nodes { name color } }
+      commits(last: 1) {
+        nodes { commit { statusCheckRollup { contexts(first: 100) {
+          nodes {
+            __typename
+            ... on StatusContext { context state targetUrl createdAt description }
+            ... on CheckRun {
+              name status conclusion startedAt completedAt detailsUrl
+              checkSuite { workflowRun { workflow { name } } }
+            }
+          }
+          pageInfo { hasNextPage }
+        } } } }
+      }
+    }
+  }
+}`;
 
 export const PULL_REQUEST_PREVIEW_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -1717,6 +1807,54 @@ export function decodePullRequestStatsJson(
     });
   }
   return Result.succeed(stats);
+}
+
+export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
+  readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
+  readonly comparison: GitHubBaseComparison | null;
+  readonly checksTruncated: boolean;
+}
+
+export function decodePullRequestCoreJson(
+  raw: string,
+): Result.Result<GitHubPullRequestCore, DecodeFailure> {
+  const decoded = decodeCore(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const repository = decoded.success.data.repository;
+  const pr = repository.pullRequest;
+  const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
+  return Result.succeed({
+    ...toDetail({
+      ...pr,
+      reviewRequests: pr.reviewRequests.nodes.flatMap(({ requestedReviewer }) =>
+        requestedReviewer === null ? [] : [requestedReviewer],
+      ),
+      labels: pr.labels.nodes,
+      statusCheckRollup:
+        contexts?.nodes.map((check) => ({
+          ...check,
+          workflowName: check.checkSuite?.workflowRun?.workflow?.name ?? null,
+        })) ?? [],
+    }),
+    viewerAccess: {
+      canWrite: toCanWrite(repository.viewerPermission),
+      canTriage: toCanTriage(repository.viewerPermission),
+      ...toPullRequestViewerFields(pr),
+      mergeCapabilities: {
+        merge: repository.mergeCommitAllowed,
+        squash: repository.squashMergeAllowed,
+        rebase: repository.rebaseMergeAllowed,
+      },
+    },
+    comparison:
+      pr.state !== "OPEN" || pr.baseRef?.compare == null
+        ? null
+        : {
+            behindBy: pr.baseRef.compare.behindBy,
+            viewerCanUpdate: pr.viewerCanUpdateBranch,
+          },
+    checksTruncated: contexts?.pageInfo.hasNextPage === true,
+  });
 }
 
 export function decodePullRequestDetailJson(

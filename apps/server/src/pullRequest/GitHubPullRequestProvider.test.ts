@@ -1,5 +1,4 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -9,6 +8,18 @@ import * as GitHubCli from "../sourceControl/GitHubCli.ts";
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
+
+const coreFields = {
+  checksTruncated: false,
+  comparison: { behindBy: 0, viewerCanUpdate: true },
+  viewerAccess: {
+    canWrite: true,
+    canTriage: true,
+    canUpdate: true,
+    didAuthor: false,
+    mergeCapabilities: { merge: true, squash: true, rebase: true },
+  },
+};
 
 it.effect("maps credential verification failures without relabeling operation failures", () =>
   Effect.gen(function* () {
@@ -230,7 +241,7 @@ describe("gitHubViewerPermissions", () => {
     });
   });
 
-  it.effect("uses the small viewer-access read for core permissions", () =>
+  it.effect("uses the permissions carried by the core read without a second request", () =>
     Effect.gen(function* () {
       const provider = yield* make;
       const detail = yield* provider.getChangeRequest({
@@ -277,6 +288,9 @@ describe("gitHubViewerPermissions", () => {
         Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
           getPullRequestDetail: () =>
             Effect.succeed({
+              ...coreFields,
+              comparison: null,
+              viewerAccess: { ...coreFields.viewerAccess, canWrite: false, canTriage: false },
               authorId: null,
               number: 7,
               title: "Pull request 7",
@@ -286,9 +300,9 @@ describe("gitHubViewerPermissions", () => {
               headRepositoryOwner: null,
               headBranch: "feat/page",
               baseBranch: "main",
-              state: "open",
+              state: "open" as const,
               isDraft: false,
-              mergeability: "mergeable",
+              mergeability: "mergeable" as const,
               reviewDecision: null,
               additions: 1,
               deletions: 1,
@@ -305,20 +319,21 @@ describe("gitHubViewerPermissions", () => {
               checks: [],
               comments: [],
               commits: [],
-            }),
-          getViewerAccess: () =>
-            GitHubCli.PinnedGitHubCredential.pipe(
-              Effect.map((credential) => ({
-                canWrite: false,
-                canTriage: false,
-                canUpdate: true,
-                didAuthor: false,
-                mergeCapabilities: {
-                  merge: true,
-                  squash: credential?.credentialFingerprint !== "restricted",
-                  rebase: true,
-                },
-              })),
+            }).pipe(
+              Effect.flatMap((detail) =>
+                GitHubCli.PinnedGitHubCredential.pipe(
+                  Effect.map((credential) => ({
+                    ...detail,
+                    viewerAccess: {
+                      ...detail.viewerAccess,
+                      mergeCapabilities: {
+                        ...detail.viewerAccess.mergeCapabilities,
+                        squash: credential?.credentialFingerprint !== "restricted",
+                      },
+                    },
+                  })),
+                ),
+              ),
             ),
         }),
       ),
@@ -361,6 +376,7 @@ describe("gitHubViewerPermissions", () => {
         Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
           getPullRequestDetail: () =>
             Effect.succeed({
+              ...coreFields,
               authorId: null,
               number: 7,
               title: "Pull request 7",
@@ -424,6 +440,7 @@ describe("gitHubViewerPermissions", () => {
 });
 
 const openDetail = {
+  ...coreFields,
   authorId: null,
   number: 7,
   title: "Pull request 7",
@@ -455,52 +472,37 @@ const openDetail = {
   commits: [],
 };
 
-it.effect("reads branch comparison and workflow approvals concurrently", () =>
-  Effect.gen(function* () {
-    const comparisonStarted = yield* Deferred.make<void>();
-    const approvalsStarted = yield* Deferred.make<void>();
-    const provider = yield* make.pipe(
-      Effect.provide(
-        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
-          getPullRequestDetail: () => Effect.succeed(openDetail),
-          getPullRequestBaseComparison: () =>
-            Deferred.succeed(comparisonStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(approvalsStarted)),
-              Effect.as({ behindBy: 2, viewerCanUpdate: true }),
-            ),
-          listWorkflowRunsRequiringApproval: () =>
-            Deferred.succeed(approvalsStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(comparisonStarted)),
-              Effect.as([{ id: 123, name: "tests", url: "https://example.com/runs/123" }]),
-            ),
-          getViewerAccess: () =>
-            Effect.succeed({
-              canWrite: true,
-              canTriage: true,
-              canUpdate: true,
-              didAuthor: false,
-              mergeCapabilities: { merge: true, squash: true, rebase: true },
-            }),
-        }),
-      ),
-    );
+it.effect(
+  "uses the core comparison and permissions while preserving workflow approval checks",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+            getPullRequestDetail: () =>
+              Effect.succeed({ ...openDetail, comparison: { behindBy: 2, viewerCanUpdate: true } }),
+            listWorkflowRunsRequiringApproval: () =>
+              Effect.succeed([{ id: 123, name: "tests", url: "https://example.com/runs/123" }]),
+          }),
+        ),
+      );
 
-    const detail = yield* provider.getChangeRequest({
-      cwd: "/w",
-      repository: "acme/web",
-      host: "github.com",
-      number: 7,
-    });
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
 
-    expect(detail.behindBy).toBe(2);
-    expect(detail.workflowApprovalsRequired).toBe(1);
-    expect(detail.checks).toContainEqual({
-      name: "tests",
-      status: "action-required",
-      description: "A maintainer must approve this workflow before it can run.",
-      url: "https://example.com/runs/123",
-    });
-  }),
+      expect(detail.behindBy).toBe(2);
+      expect(detail.workflowApprovalsRequired).toBe(1);
+      expect(detail.checks).toContainEqual({
+        name: "tests",
+        status: "action-required",
+        description: "A maintainer must approve this workflow before it can run.",
+        url: "https://example.com/runs/123",
+      });
+    }),
 );
 
 it.effect("does not classify same-repository gates as fork workflow approvals", () =>

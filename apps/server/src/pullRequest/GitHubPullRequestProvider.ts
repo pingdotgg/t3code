@@ -311,98 +311,76 @@ export const make = Effect.gen(function* () {
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
     getChangeRequest: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestDetail(input).pipe(
-            Effect.flatMap((pullRequest) =>
-              Effect.all(
-                {
-                  // Only an open pull request can be behind anything worth saying so about, and
-                  // only one whose head repository is known can be compared at all.
-                  comparison:
-                    pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                      ? Effect.succeed(null)
-                      : cli
-                          .getPullRequestBaseComparison({
-                            ...input,
-                            headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                          })
-                          .pipe(Effect.orElseSucceed(() => null)),
-                  // GitHub omits a fork workflow that has not been approved from the normal check
-                  // rollup. Read the action-required runs by head revision so "all passed" cannot
-                  // be shown while a whole workflow is still waiting to start.
-                  workflowApprovals:
-                    pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
-                      ? Effect.succeed({
-                          runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                          unavailable: false,
-                        })
-                      : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
-                        ? Effect.succeed({
-                            runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                            unavailable: true,
-                          })
-                        : cli
-                            .listWorkflowRunsRequiringApproval({
-                              ...input,
-                              headSha: pullRequest.headSha,
-                              headBranch: pullRequest.headBranch,
-                              headRepositoryOwner: pullRequest.headRepositoryOwner,
-                              isCrossRepository: true,
-                            })
-                            .pipe(
-                              Effect.matchEffect({
-                                onFailure: (error) =>
-                                  error._tag === "GitHubCliRateLimitError" ||
-                                  error._tag === "SourceControlRateLimitPausedError"
-                                    ? Effect.fail(error)
-                                    : Effect.succeed({
-                                        runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                                        unavailable: true,
-                                      }),
-                                onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
+      cli.getPullRequestDetail(input).pipe(
+        Effect.flatMap((pullRequest) => {
+          // Fork workflows awaiting approval are absent from the normal check rollup.
+          const approvals =
+            pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
+              ? Effect.succeed({
+                  runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                  unavailable: false,
+                })
+              : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
+                ? Effect.succeed({
+                    runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                    unavailable: true,
+                  })
+                : cli
+                    .listWorkflowRunsRequiringApproval({
+                      ...input,
+                      headSha: pullRequest.headSha,
+                      headBranch: pullRequest.headBranch,
+                      headRepositoryOwner: pullRequest.headRepositoryOwner,
+                      isCrossRepository: true,
+                    })
+                    .pipe(
+                      Effect.matchEffect({
+                        onFailure: (error) =>
+                          error._tag === "GitHubCliRateLimitError" ||
+                          error._tag === "SourceControlRateLimitPausedError"
+                            ? Effect.fail(error)
+                            : Effect.succeed({
+                                runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                                unavailable: true,
                               }),
-                            ),
-                },
-                { concurrency: 2 },
-              ).pipe(Effect.map((extra) => ({ pullRequest, ...extra }))),
-            ),
-          ),
-          // Repository merge settings travel with the viewer permissions.
-          cli.getViewerAccess(input),
-        ],
-        { concurrency: 2 },
-      ).pipe(
+                        onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
+                      }),
+                    );
+          return approvals.pipe(
+            Effect.map((workflowApprovals): ProviderChangeRequestDetail => ({
+              ...pullRequest,
+              author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
+              checks: withWorkflowApprovals(
+                pullRequest.checks,
+                workflowApprovals.runs,
+                workflowApprovals.unavailable,
+              ),
+              ...(workflowApprovals.unavailable
+                ? {}
+                : { workflowApprovalsRequired: workflowApprovals.runs.length }),
+              reviewers: pullRequest.reviewRequestLogins.map((login) => ({
+                login,
+                name: null,
+                avatarUrl: null,
+              })),
+              mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
+              viewerPermissions: gitHubViewerPermissions({
+                ...pullRequest.viewerAccess,
+                canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+              }),
+              baseComparison:
+                pullRequest.comparison === null || pullRequest.comparison.behindBy === null
+                  ? "unknown"
+                  : pullRequest.comparison.behindBy > 0
+                    ? "behind"
+                    : "up-to-date",
+              ...(pullRequest.comparison?.behindBy == null
+                ? {}
+                : { behindBy: pullRequest.comparison.behindBy }),
+            })),
+          );
+        }),
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map(([detail, viewerAccess]): ProviderChangeRequestDetail => ({
-          ...detail.pullRequest,
-          author: withAvatar(detail.pullRequest.author, new Map<string, string>(), input.host),
-          checks: withWorkflowApprovals(
-            detail.pullRequest.checks,
-            detail.workflowApprovals.runs,
-            detail.workflowApprovals.unavailable,
-          ),
-          ...(detail.workflowApprovals.unavailable
-            ? {}
-            : { workflowApprovalsRequired: detail.workflowApprovals.runs.length }),
-          reviewers: detail.pullRequest.reviewRequestLogins.map((login) => ({
-            login,
-            name: null,
-            avatarUrl: null,
-          })),
-          mergeCapabilities: viewerAccess.mergeCapabilities,
-          viewerPermissions: gitHubViewerPermissions({
-            ...viewerAccess,
-            canUpdateBranch: detail.comparison?.viewerCanUpdate === true,
-          }),
-          baseComparison:
-            detail.comparison === null || detail.comparison.behindBy === null
-              ? "unknown"
-              : detail.comparison.behindBy > 0
-                ? "behind"
-                : "up-to-date",
-          ...(detail.comparison?.behindBy == null ? {} : { behindBy: detail.comparison.behindBy }),
-        })),
       ),
 
     getChangeRequestActivity: (input) =>

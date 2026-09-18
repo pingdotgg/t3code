@@ -45,6 +45,9 @@ import {
   decodeActorAvatarsJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
+  decodePullRequestCoreJson,
+  PULL_REQUEST_CORE_GRAPHQL_QUERY,
+  type GitHubPullRequestCore,
   decodePullRequestPreviewJson,
   PULL_REQUEST_PREVIEW_GRAPHQL_QUERY,
   decodePullRequestFilesJson,
@@ -95,7 +98,6 @@ import {
   decodeViewerPermissionsJson,
   decodeWorkflowRunApprovalsJson,
   type GitHubBaseComparison,
-  type GitHubPullRequestDetail,
   type GitHubPullRequestActivity,
   type GitHubPullRequestHead,
   type GitHubPullRequestListItem,
@@ -520,7 +522,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly host: string;
       readonly number: number;
-    }) => Effect.Effect<GitHubPullRequestDetail, GitHubPullRequestCliError>;
+    }) => Effect.Effect<GitHubPullRequestCore, GitHubPullRequestCliError>;
 
     readonly getPullRequestPreview: (input: {
       readonly cwd: string;
@@ -1518,7 +1520,9 @@ export const make = Effect.gen(function* () {
         return { oldContents, newContents };
       });
 
-  const getPullRequestDetail: GitHubPullRequestCli["Service"]["getPullRequestDetail"] = (input) =>
+  const readLegacyDetail = (
+    input: Parameters<GitHubPullRequestCli["Service"]["getPullRequestDetail"]>[0],
+  ) =>
     github
       .execute({
         cwd: input.cwd,
@@ -1546,6 +1550,53 @@ export const make = Effect.gen(function* () {
               );
         }),
       );
+
+  const getPullRequestDetail: GitHubPullRequestCli["Service"]["getPullRequestDetail"] = (input) => {
+    const { owner, name } = parseRepositorySelector(input.repository);
+    return GitHubCli.AllowGitHubReserve.pipe(
+      Effect.flatMap((allowReserve) =>
+        graphqlRead({
+          allowReserve,
+          cwd: input.cwd,
+          host: input.host,
+          operation: "getPullRequestDetail",
+          variables: [
+            ["-f", `owner=${owner}`],
+            ["-f", `name=${name}`],
+            ["-F", `number=${input.number}`],
+            ["-f", `headRef=refs/pull/${input.number}/head`],
+          ],
+          query: PULL_REQUEST_CORE_GRAPHQL_QUERY,
+          decode: decodePullRequestCoreJson,
+        }),
+      ),
+    ).pipe(
+      Effect.flatMap((core) => {
+        if (!core.checksTruncated) return Effect.succeed(core);
+        // gh already pages check contexts. Keep its complete, deduplicated result for
+        // large check suites instead of letting the first 100 checks imply success.
+        return readLegacyDetail(input).pipe(
+          Effect.flatMap((detail) =>
+            detail.headSha !== core.headSha
+              ? Effect.fail(
+                  new GitHubPullRequestReadError({
+                    command: "gh",
+                    cwd: input.cwd,
+                    operation: "getPullRequestDetail",
+                    cause: new Error("Pull request head changed while reading checks."),
+                  }),
+                )
+              : Effect.succeed({
+                  ...core,
+                  checks: detail.checks,
+                  checksState: detail.checksState,
+                  checksTruncated: false,
+                }),
+          ),
+        );
+      }),
+    );
+  };
 
   const workflowApprovalLimit = 1_000;
   const workflowApprovalProbeLimit = String(workflowApprovalLimit + 1);
