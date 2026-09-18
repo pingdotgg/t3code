@@ -51,6 +51,13 @@ const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme
 
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
+/**
+ * The user message a fired auto-continue sends. Deliberately a plain
+ * "Continue": the provider session already holds the stopped turn's context,
+ * and the visible message tells the user exactly what the server did.
+ */
+export const AUTO_CONTINUE_MESSAGE_TEXT = "Continue";
+
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
@@ -433,26 +440,48 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.archive": {
-      yield* requireThreadNotArchived({
+      const thread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      return {
+      const archivedEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
           occurredAt,
           commandId: command.commandId,
         })),
-        type: "thread.archived",
+        type: "thread.archived" as const,
         payload: {
           threadId: command.threadId,
           archivedAt: occurredAt,
           updatedAt: occurredAt,
         },
       };
+      // Archiving parks the thread: a pending limit-reset continuation must
+      // not fire into it — or surprise the user weeks later on unarchive.
+      if (thread.autoContinueAt == null) {
+        return archivedEvent;
+      }
+      return [
+        archivedEvent,
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.auto-continue-cleared" as const,
+          payload: {
+            threadId: command.threadId,
+            reason: "user" as const,
+            updatedAt: occurredAt,
+          },
+        },
+      ];
     }
 
     case "thread.unarchive": {
@@ -598,6 +627,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
+      // A settled thread is done: a pending limit-reset continuation would
+      // restart work the user just called finished.
+      if (thread.autoContinueAt != null) {
+        companionEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.auto-continue-cleared",
+          payload: {
+            threadId: command.threadId,
+            reason: "user",
+            updatedAt: occurredAt,
+          },
+        });
+      }
       return companionEvents.length > 0 ? [settledEvent, ...companionEvents] : settledEvent;
     }
 
@@ -723,6 +770,118 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: alreadyAwake ? thread.updatedAt : occurredAt,
         },
       };
+    }
+
+    case "thread.auto-continue.set": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // Mirrors thread.snooze: a resume time that already passed would fire
+      // on the next sweep as a surprise turn, and the negated comparison also
+      // rejects unparseable timestamps (NaN fails every comparison).
+      if (!(Date.parse(command.autoContinueAt) > Date.parse(occurredAt))) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} auto-continue time ${command.autoContinueAt} is not in the future`,
+          }),
+        );
+      }
+      // Re-scheduling to the SAME instant is a duplicate (double-click,
+      // raced clients): re-emit with the original updatedAt so the
+      // projection is a no-op. A different instant is a real change.
+      const alreadyScheduled = thread.autoContinueAt === command.autoContinueAt;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.auto-continue-scheduled",
+        payload: {
+          threadId: command.threadId,
+          autoContinueAt: command.autoContinueAt,
+          updatedAt: alreadyScheduled ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.auto-continue.clear": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Idempotent by re-emission (see thread.unsnooze): clearing an
+      // unscheduled thread lands on the same null state without churning
+      // updatedAt.
+      const alreadyClear = thread.autoContinueAt == null;
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.auto-continue-cleared",
+        payload: {
+          threadId: command.threadId,
+          reason: command.reason,
+          updatedAt: alreadyClear ? thread.updatedAt : occurredAt,
+        },
+      };
+    }
+
+    case "thread.auto-continue.fire": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      // Compare-and-set: the sweep read a schedule; if a cancel or a
+      // reschedule landed since, that decision wins over the stale trigger.
+      if (thread.autoContinueAt == null || thread.autoContinueAt !== command.autoContinueAt) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} auto-continue schedule changed before firing`,
+          }),
+        );
+      }
+      const occurredAt = yield* nowIso;
+      if (Date.parse(command.autoContinueAt) > Date.parse(occurredAt)) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} auto-continue at ${command.autoContinueAt} is not due yet`,
+          }),
+        );
+      }
+      // The continuation is an ordinary turn start; its lifecycle resets
+      // spend the schedule the same way a manual send would, so no separate
+      // cleared event is needed here.
+      return yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          message: {
+            messageId: command.messageId,
+            role: "user",
+            text: AUTO_CONTINUE_MESSAGE_TEXT,
+            attachments: [],
+          },
+          runtimeMode: thread.runtimeMode,
+          interactionMode: thread.interactionMode,
+          createdAt: command.createdAt,
+        },
+        readModel,
+      });
     }
 
     case "thread.pin": {
@@ -1487,6 +1646,24 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             commandId: command.commandId,
           })),
           type: "thread.unsnoozed",
+          payload: {
+            threadId: command.threadId,
+            reason: "activity",
+            updatedAt: command.createdAt,
+          },
+        });
+      }
+      // Any turn start spends a pending limit-reset continuation: the work
+      // is moving again, so firing another turn later would double-send.
+      if (targetThread.autoContinueAt != null) {
+        lifecycleResetEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.auto-continue-cleared",
           payload: {
             threadId: command.threadId,
             reason: "activity",

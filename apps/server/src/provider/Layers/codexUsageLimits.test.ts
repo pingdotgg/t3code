@@ -7,6 +7,7 @@ import {
   codexRateLimitsToUpdate,
   codexResetCreditsToContract,
   codexUsageLimitMessage,
+  codexUsageLimitResetsAt,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 
@@ -262,6 +263,50 @@ describe("codexUsageLimitMessage", () => {
     expect(codexUsageLimitMessage(undefined, at)).toBe(
       "Codex usage limit reached. Send the message again once the limit resets.",
     );
+  });
+});
+
+describe("codexUsageLimitResetsAt", () => {
+  const at = "2026-01-01T00:00:00.000Z";
+  const atSeconds = Date.parse(at) / 1000;
+
+  it("returns the exhausted window's reset instant the message names", () => {
+    expect(
+      codexUsageLimitResetsAt(
+        {
+          limitId: "codex",
+          primary: { usedPercent: 40, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
+          secondary: { usedPercent: 100, resetsAt: atSeconds + 86_400, windowDurationMins: 10_080 },
+        },
+        at,
+      ),
+    ).toBe("2026-01-02T00:00:00.000Z");
+  });
+
+  it("returns the latest reset when several windows are exhausted", () => {
+    expect(
+      codexUsageLimitResetsAt(
+        {
+          limitId: "codex",
+          primary: { usedPercent: 100, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
+          secondary: { usedPercent: 100, resetsAt: atSeconds + 86_400, windowDurationMins: 10_080 },
+        },
+        at,
+      ),
+    ).toBe("2026-01-02T00:00:00.000Z");
+  });
+
+  it("returns undefined when no exhausted window reports a future reset", () => {
+    expect(
+      codexUsageLimitResetsAt(
+        {
+          limitId: "codex",
+          primary: { usedPercent: 100, resetsAt: atSeconds - 60, windowDurationMins: 300 },
+        },
+        at,
+      ),
+    ).toBeUndefined();
+    expect(codexUsageLimitResetsAt(undefined, at)).toBeUndefined();
   });
 });
 

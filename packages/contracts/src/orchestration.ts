@@ -603,6 +603,10 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  // Set beside lastError when the failure was a provider usage-limit stop
+  // that reported when its window resets. Clients use it to offer "continue
+  // when the limit resets". Optional so pre-limit-reset payloads decode.
+  lastErrorLimitResetsAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
@@ -805,6 +809,10 @@ export const OrchestrationThread = Schema.Struct({
   // Optional so payloads from pre-snooze servers still decode.
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // A scheduled hands-off continuation: once this instant passes, the server
+  // starts a turn that resumes the work a usage limit stopped. Any manually
+  // started turn clears it. Optional so pre-auto-continue payloads decode.
+  autoContinueAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Active pinned threads render in the pinned block. Settled and snoozed
   // threads remain in their respective shelves even when pinned.
   // Optional so payloads from pre-pinning servers still decode.
@@ -884,6 +892,8 @@ export const OrchestrationThreadShell = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // See OrchestrationThread.autoContinueAt: pending limit-reset continuation.
+  autoContinueAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1170,6 +1180,40 @@ const ThreadUnsnoozeCommand = Schema.Struct({
   reason: Schema.Literal("user"),
 });
 
+/** Schedules a hands-off continuation turn for when a usage limit resets. */
+const ThreadAutoContinueSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.auto-continue.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  // When to start the continuation — the provider limit's reset instant.
+  autoContinueAt: IsoDateTime,
+});
+
+const ThreadAutoContinueClearCommand = Schema.Struct({
+  type: Schema.Literal("thread.auto-continue.clear"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  // Commands only carry "user": activity clears are decided server-side (any
+  // turn start spends the schedule with reason "activity").
+  reason: Schema.Literal("user"),
+});
+
+/**
+ * Server-only trigger the auto-continue reactor dispatches when a scheduled
+ * continuation comes due. Carries the schedule it read as a compare-and-set
+ * guard, so a reschedule or cancel that raced the sweep wins.
+ */
+const ThreadAutoContinueFireCommand = Schema.Struct({
+  type: Schema.Literal("thread.auto-continue.fire"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  autoContinueAt: IsoDateTime,
+  // Identity of the continuation's user message, minted by the reactor so
+  // the decider stays deterministic per command.
+  messageId: MessageId,
+  createdAt: IsoDateTime,
+});
+
 const ThreadPinCommand = Schema.Struct({
   type: Schema.Literal("thread.pin"),
   commandId: CommandId,
@@ -1402,6 +1446,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
   ThreadUnsnoozeCommand,
+  ThreadAutoContinueSetCommand,
+  ThreadAutoContinueClearCommand,
   ThreadPinCommand,
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
@@ -1435,6 +1481,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUnsettleCommand,
   ThreadSnoozeCommand,
   ThreadUnsnoozeCommand,
+  ThreadAutoContinueSetCommand,
+  ThreadAutoContinueClearCommand,
   ThreadPinCommand,
   ThreadUnpinCommand,
   ThreadPinReorderCommand,
@@ -1624,6 +1672,7 @@ const ThreadPullRequestLinkSyncCommand = Schema.Struct({
 
 const InternalOrchestrationCommand = Schema.Union([
   ThreadAutoSettleCommand,
+  ThreadAutoContinueFireCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
   ThreadSessionSetCommand,
@@ -1663,6 +1712,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unsettled",
   "thread.snoozed",
   "thread.unsnoozed",
+  "thread.auto-continue-scheduled",
+  "thread.auto-continue-cleared",
   "thread.pinned",
   "thread.unpinned",
   "thread.pin-reordered",
@@ -1780,6 +1831,21 @@ export const ThreadUnsnoozedPayload = Schema.Struct({
   // session coming alive) and the decider cleared the snooze — mirrors
   // thread.unsettled's activity resets. Timer wakes emit no event: clients
   // derive them from snoozedUntil passing.
+  reason: Schema.Literals(["user", "activity"]),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadAutoContinueScheduledPayload = Schema.Struct({
+  threadId: ThreadId,
+  autoContinueAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadAutoContinueClearedPayload = Schema.Struct({
+  threadId: ThreadId,
+  // user: the cancel button. activity: a turn start spent the schedule (a
+  // manual send or the scheduled continuation itself), or a settle/archive
+  // parked the thread — mirrors thread.unsnoozed's activity resets.
   reason: Schema.Literals(["user", "activity"]),
   updatedAt: IsoDateTime,
 });
@@ -2051,6 +2117,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unsnoozed"),
     payload: ThreadUnsnoozedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.auto-continue-scheduled"),
+    payload: ThreadAutoContinueScheduledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.auto-continue-cleared"),
+    payload: ThreadAutoContinueClearedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

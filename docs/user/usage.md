@@ -69,6 +69,13 @@ current model's limits without leaving the conversation. The result opens above 
 closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
 anything. The command is offered only for providers that appear under **Usage → Limits**.
 
+When a turn stops on a usage limit that reports its reset time, the failure banner offers
+**Continue when limit resets**. The environment then sends "Continue" to the agent by itself once
+the limit resets — the schedule lives on the server, so it fires even with every client closed,
+and survives server restarts. Cancel it from the same banner, or just keep working: sending any
+message, settling, or archiving the thread clears the scheduled continuation. Codex and Claude
+report reset times when a limit stops a turn; other providers do not offer this.
+
 OpenCode Go reports its session, weekly, and monthly allowance when OpenCode runs locally in
 the environment. T3 cannot report limits for external OpenCode servers because their credentials
 belong to the remote server. Cursor reports

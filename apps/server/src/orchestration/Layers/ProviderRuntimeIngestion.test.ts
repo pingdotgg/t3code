@@ -482,6 +482,67 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("carries a usage-limit reset instant onto the session error and clears it on recovery", async () => {
+    const harness = await createHarness();
+    const resetsAt = "2026-01-01T05:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-limit-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      turnId: asTurnId("turn-limit"),
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-limit-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      turnId: asTurnId("turn-limit"),
+      payload: {
+        state: "failed",
+        errorMessage: "Codex usage limit reached. The session limit resets in 5h.",
+        usageLimitResetsAt: resetsAt,
+      },
+    });
+
+    const failed = await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "error" && entry.session?.lastErrorLimitResetsAt === resetsAt,
+    );
+    expect(failed.session?.lastErrorLimitResetsAt).toBe(resetsAt);
+
+    // A later successful turn clears the offer along with the error.
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-limit-turn-retry"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T06:00:00.000Z",
+      turnId: asTurnId("turn-retry"),
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-limit-turn-retry-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-01-01T06:00:01.000Z",
+      turnId: asTurnId("turn-retry"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    const recovered = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "ready" && entry.session?.lastError === null,
+    );
+    expect(recovered.session?.lastErrorLimitResetsAt ?? null).toBeNull();
+  });
+
   it.each([
     { delivery: "buffered", responseStreamingMode: "paragraph" as const },
     { delivery: "streamed", responseStreamingMode: "token" as const },

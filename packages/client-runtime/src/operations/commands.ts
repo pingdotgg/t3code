@@ -39,6 +39,8 @@ export type SettleThreadInput = CommandInput<"thread.settle">;
 export type UnsettleThreadInput = CommandInput<"thread.unsettle">;
 export type SnoozeThreadInput = CommandInput<"thread.snooze">;
 export type UnsnoozeThreadInput = CommandInput<"thread.unsnooze">;
+export type SetThreadAutoContinueInput = CommandInput<"thread.auto-continue.set">;
+export type ClearThreadAutoContinueInput = CommandInput<"thread.auto-continue.clear">;
 export type PinThreadInput = CommandInput<"thread.pin">;
 export type UnpinThreadInput = CommandInput<"thread.unpin">;
 export type ReorderPinnedThreadInput = CommandInput<"thread.pin.reorder">;
@@ -205,6 +207,24 @@ export const unsnoozeThread: (input: UnsnoozeThreadInput) => CommandEffect = Eff
     commandId: yield* commandId(input),
   });
 });
+
+export const setThreadAutoContinue: (input: SetThreadAutoContinueInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.setThreadAutoContinue")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.auto-continue.set",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const clearThreadAutoContinue: (input: ClearThreadAutoContinueInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.clearThreadAutoContinue")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.auto-continue.clear",
+      commandId: yield* commandId(input),
+    });
+  });
 
 export const pinThread: (input: PinThreadInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.pinThread",

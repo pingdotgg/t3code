@@ -50,6 +50,8 @@ import {
   ThreadUnarchivedPayload,
   ThreadUnsettledPayload,
   ThreadUnsnoozedPayload,
+  ThreadAutoContinueScheduledPayload,
+  ThreadAutoContinueClearedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -442,6 +444,7 @@ export function projectEvent(
             activeOrderKey: null,
             snoozedUntil: null,
             snoozedAt: null,
+            autoContinueAt: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -549,6 +552,38 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             snoozedUntil: null,
             snoozedAt: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.auto-continue-scheduled":
+      return decodeForEvent(
+        ThreadAutoContinueScheduledPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            autoContinueAt: payload.autoContinueAt,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.auto-continue-cleared":
+      return decodeForEvent(
+        ThreadAutoContinueClearedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            autoContinueAt: null,
             updatedAt: payload.updatedAt,
           }),
         })),

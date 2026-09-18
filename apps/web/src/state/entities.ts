@@ -202,6 +202,15 @@ export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boo
   );
 }
 
+/** Whether the environment's server understands thread.auto-continue.set/.clear
+    and fires the continuation itself. Same version-skew contract as snooze. */
+export function readEnvironmentSupportsAutoContinue(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadAutoContinue === true
+  );
+}
+
 /** Whether the environment's server understands thread.pin/unpin.
     Same version-skew contract as settlement. */
 export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): boolean {

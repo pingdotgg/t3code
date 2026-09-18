@@ -215,6 +215,26 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.auto-continue-scheduled":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          autoContinueAt: event.payload.autoContinueAt,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.auto-continue-cleared":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          autoContinueAt: null,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
     case "thread.pinned":
       return {
         kind: "updated",

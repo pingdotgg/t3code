@@ -26,6 +26,7 @@ import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsStat
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
+  readEnvironmentSupportsAutoContinue,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsActiveReorder,
@@ -89,6 +90,18 @@ export class ThreadSnoozeBlockedError extends Schema.TaggedError<ThreadSnoozeBlo
 ) {
   override get message(): string {
     return "This thread is waiting on you. Respond to the pending request before snoozing it.";
+  }
+}
+
+export class ThreadAutoContinueUnsupportedError extends Schema.TaggedError<ThreadAutoContinueUnsupportedError>()(
+  "ThreadAutoContinueUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support continuing when a limit resets yet. Update the server to use it.";
   }
 }
 
@@ -208,6 +221,12 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const unsnoozeThreadMutation = useAtomCommand(threadEnvironment.unsnooze, {
+    reportFailure: false,
+  });
+  const setAutoContinueMutation = useAtomCommand(threadEnvironment.setAutoContinue, {
+    reportFailure: false,
+  });
+  const clearAutoContinueMutation = useAtomCommand(threadEnvironment.clearAutoContinue, {
     reportFailure: false,
   });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession);
@@ -731,6 +750,47 @@ export function useThreadActions() {
     [unsnoozeThreadMutation],
   );
 
+  const setThreadAutoContinue = useCallback(
+    async (target: ScopedThreadRef, autoContinueAt: string) => {
+      // Version skew: never send the command to a server that predates it.
+      if (!readEnvironmentSupportsAutoContinue(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadAutoContinueUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return setAutoContinueMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, autoContinueAt },
+      });
+    },
+    [setAutoContinueMutation],
+  );
+
+  const clearThreadAutoContinue = useCallback(
+    async (target: ScopedThreadRef) => {
+      if (!readEnvironmentSupportsAutoContinue(target.environmentId)) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new ThreadAutoContinueUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
+        );
+      }
+      return clearAutoContinueMutation({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, reason: "user" },
+      });
+    },
+    [clearAutoContinueMutation],
+  );
+
   const confirmAndDeleteThread = useCallback(
     async (target: ScopedThreadRef) => {
       const localApi = readLocalApi();
@@ -770,6 +830,8 @@ export function useThreadActions() {
       unsettleThread,
       snoozeThread,
       unsnoozeThread,
+      setThreadAutoContinue,
+      clearThreadAutoContinue,
       pinThread,
       unpinThread,
       confirmAndUnpinThread,
@@ -778,12 +840,14 @@ export function useThreadActions() {
     }),
     [
       archiveThread,
+      clearThreadAutoContinue,
       confirmAndDeleteThread,
       confirmAndUnpinThread,
       deleteThread,
       pinThread,
       reorderPinnedThread,
       reorderActiveThread,
+      setThreadAutoContinue,
       settleThread,
       snoozeThread,
       unarchiveThread,

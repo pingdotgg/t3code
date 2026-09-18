@@ -1474,7 +1474,13 @@ export default function ChatView(props: ChatViewProps) {
   const threadSyncPhase = routeKind === "server" ? (props.threadSyncPhase ?? null) : null;
   const threadDetailLoading = threadSyncPhase === "loading";
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const {
+    settleThread,
+    pinThread,
+    confirmAndUnpinThread,
+    setThreadAutoContinue,
+    clearThreadAutoContinue,
+  } = useThreadActions();
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
@@ -6036,6 +6042,52 @@ export default function ChatView(props: ChatViewProps) {
     if (activeThreadRef === null || activeThreadWokeAt === null) return;
     markThreadVisited(scopedThreadKey(activeThreadRef), activeThreadWokeAt);
   }, [activeThreadRef, activeThreadWokeAt, markThreadVisited]);
+  // "Continue when the limit resets": offered beside a usage-limit failure
+  // whose reset instant the provider reported, and shown as a cancellable
+  // pending state once scheduled. nowMinute drives the future check without
+  // a repaint loop; the decider re-validates at fire time regardless.
+  const supportsAutoContinue = serverConfig?.environment.capabilities.threadAutoContinue === true;
+  const autoContinueResetsAt = activeServerThread?.session?.lastErrorLimitResetsAt ?? null;
+  const autoContinueScheduledFor = activeServerThread?.autoContinueAt ?? null;
+  const scheduleAutoContinue = useCallback(() => {
+    if (activeThreadRef === null || autoContinueResetsAt === null) return;
+    void setThreadAutoContinue(activeThreadRef, autoContinueResetsAt);
+  }, [activeThreadRef, autoContinueResetsAt, setThreadAutoContinue]);
+  const cancelAutoContinue = useCallback(() => {
+    if (activeThreadRef === null) return;
+    void clearThreadAutoContinue(activeThreadRef);
+  }, [activeThreadRef, clearThreadAutoContinue]);
+  const threadErrorAutoContinue = useMemo(() => {
+    if (!supportsAutoContinue || activeThreadRef === null) return null;
+    if (autoContinueScheduledFor !== null) {
+      return {
+        resetsAt: autoContinueResetsAt ?? autoContinueScheduledFor,
+        scheduledFor: autoContinueScheduledFor,
+        onSchedule: scheduleAutoContinue,
+        onCancel: cancelAutoContinue,
+      };
+    }
+    if (
+      autoContinueResetsAt === null ||
+      !(Date.parse(autoContinueResetsAt) > Date.parse(nowMinute))
+    ) {
+      return null;
+    }
+    return {
+      resetsAt: autoContinueResetsAt,
+      scheduledFor: null,
+      onSchedule: scheduleAutoContinue,
+      onCancel: cancelAutoContinue,
+    };
+  }, [
+    activeThreadRef,
+    autoContinueResetsAt,
+    autoContinueScheduledFor,
+    cancelAutoContinue,
+    nowMinute,
+    scheduleAutoContinue,
+    supportsAutoContinue,
+  ]);
   // Mirror of the sidebar's Woke pill for the open thread.
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
     activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
@@ -9851,6 +9903,7 @@ export default function ChatView(props: ChatViewProps) {
               />
               <ThreadErrorBanner
                 error={visibleThreadError}
+                autoContinue={threadErrorAutoContinue}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

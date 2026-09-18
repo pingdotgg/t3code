@@ -30,6 +30,8 @@ import {
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
   type SettleThreadInput,
+  type SetThreadAutoContinueInput,
+  type ClearThreadAutoContinueInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
   type StopThreadSessionInput,
@@ -40,6 +42,7 @@ import {
   type UnsnoozeThreadInput,
   type UpdateThreadMetadataInput,
   archiveThread,
+  clearThreadAutoContinue,
   createThread,
   deleteThread,
   interruptThreadTurn,
@@ -48,6 +51,7 @@ import {
   respondToThreadUserInput,
   dismissThreadUserInput,
   revertThreadCheckpoint,
+  setThreadAutoContinue,
   setThreadInteractionMode,
   setThreadRuntimeMode,
   pinThread,
@@ -68,6 +72,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
   ArchiveThreadInput,
+  ClearThreadAutoContinueInput,
   CreateThreadInput,
   DeleteThreadInput,
   InterruptThreadTurnInput,
@@ -82,6 +87,7 @@ export type {
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
   SettleThreadInput,
+  SetThreadAutoContinueInput,
   SnoozeThreadInput,
   StartThreadTurnInput,
   StopThreadSessionInput,
@@ -149,6 +155,18 @@ export function createThreadEnvironmentAtoms<R, E>(
     unsnooze: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:unsnooze",
       execute: (input: UnsnoozeThreadInput) => unsnoozeThread(input),
+      scheduler,
+      concurrency,
+    }),
+    setAutoContinue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-auto-continue",
+      execute: (input: SetThreadAutoContinueInput) => setThreadAutoContinue(input),
+      scheduler,
+      concurrency,
+    }),
+    clearAutoContinue: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:clear-auto-continue",
+      execute: (input: ClearThreadAutoContinueInput) => clearThreadAutoContinue(input),
       scheduler,
       concurrency,
     }),
@@ -301,6 +319,20 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       snoozedUntil: null,
       snoozedAt: null,
+    })),
+    setAutoContinue: optimistic.wrap(commands.setAutoContinue, (thread, input, now) =>
+      // Mirrors the decider's future-time invariant so a rejected command
+      // never leaves an optimistic schedule behind.
+      !(Date.parse(input.autoContinueAt) > Date.parse(now))
+        ? thread
+        : {
+            ...thread,
+            autoContinueAt: input.autoContinueAt,
+          },
+    ),
+    clearAutoContinue: optimistic.wrap(commands.clearAutoContinue, (thread) => ({
+      ...thread,
+      autoContinueAt: null,
     })),
     pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
       ...thread,

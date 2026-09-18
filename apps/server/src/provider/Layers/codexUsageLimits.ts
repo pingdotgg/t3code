@@ -209,6 +209,25 @@ function codexUsageLimitNextStep(rateLimitReachedType: string | null | undefined
   }
 }
 
+/** The exhausted window that has yet to reset, latest reset first. */
+function latestExhaustedWindow(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atIso: string,
+): { readonly kind: string; readonly resetsAt: string; readonly resetMs: number } | undefined {
+  const atMs = Date.parse(atIso);
+  const windows = snapshot && Number.isFinite(atMs) ? codexRateLimitsToWindows(snapshot) : [];
+  let latest: { kind: string; resetsAt: string; resetMs: number } | undefined;
+  for (const window of windows) {
+    if (window.usedPercent < 100 || !window.resetsAt) continue;
+    const resetMs = Date.parse(window.resetsAt);
+    if (!Number.isFinite(resetMs) || resetMs <= atMs || (latest && resetMs <= latest.resetMs)) {
+      continue;
+    }
+    latest = { kind: window.kind, resetsAt: window.resetsAt, resetMs };
+  }
+  return latest;
+}
+
 /**
  * The message a usage-limit stop shows instead of the provider sentence, which
  * on a Business workspace blames credits for a window that simply ran out. The
@@ -220,15 +239,21 @@ export function codexUsageLimitMessage(
   atIso: string,
 ): string {
   const atMs = Date.parse(atIso);
-  const windows = snapshot && Number.isFinite(atMs) ? codexRateLimitsToWindows(snapshot) : [];
-  let reset = "";
-  let latestResetMs = Number.NEGATIVE_INFINITY;
-  for (const window of windows) {
-    if (window.usedPercent < 100 || !window.resetsAt) continue;
-    const resetMs = Date.parse(window.resetsAt);
-    if (!Number.isFinite(resetMs) || resetMs <= atMs || resetMs <= latestResetMs) continue;
-    latestResetMs = resetMs;
-    reset = ` The ${window.kind} limit resets in ${formatCodexUsageLimitWait(resetMs - atMs)}.`;
-  }
+  const window = latestExhaustedWindow(snapshot, atIso);
+  const reset = window
+    ? ` The ${window.kind} limit resets in ${formatCodexUsageLimitWait(window.resetMs - atMs)}.`
+    : "";
   return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
+}
+
+/**
+ * The structured reset instant behind codexUsageLimitMessage's sentence, for
+ * the failed turn's `usageLimitResetsAt`. Undefined when no exhausted window
+ * reports a future reset — then there is nothing to schedule against.
+ */
+export function codexUsageLimitResetsAt(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atIso: string,
+): string | undefined {
+  return latestExhaustedWindow(snapshot, atIso)?.resetsAt;
 }

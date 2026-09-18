@@ -1886,6 +1886,16 @@ const make = Effect.gen(function* () {
               : status === "ready" || status === "interrupted"
                 ? null
                 : (thread.session?.lastError ?? null);
+        // Travels with lastError: set from a usage-limit failure that named
+        // its reset instant, cleared whenever lastError clears, and kept
+        // through unrelated status writes so the offer survives reconnects.
+        const lastErrorLimitResetsAt =
+          event.type === "turn.completed" &&
+          normalizeRuntimeTurnState(event.payload.state) === "failed"
+            ? (event.payload.usageLimitResetsAt ?? null)
+            : status === "ready" || status === "interrupted"
+              ? null
+              : (thread.session?.lastErrorLimitResetsAt ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1922,6 +1932,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              lastErrorLimitResetsAt,
               updatedAt: now,
             },
             createdAt: now,
@@ -2422,6 +2433,9 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,
+              // Adapters that know the reset instant emit it on the failed
+              // turn.completed, which follows this event and wins the session.
+              lastErrorLimitResetsAt: null,
               updatedAt: now,
             },
             createdAt: now,

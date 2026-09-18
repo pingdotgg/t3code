@@ -80,6 +80,7 @@ import type {
   PendingUserInputDraftAnswer,
   ThreadFeedEntry,
 } from "../../lib/threadActivity";
+import { AutoContinueBanner } from "./AutoContinueBanner";
 import { PendingApprovalCard } from "./PendingApprovalCard";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
@@ -1016,6 +1017,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 ) : null}
               </View>
 
+              <AutoContinueBanner
+                environmentId={props.environmentId}
+                thread={props.selectedThread}
+              />
               {/* Hidden (not unmounted) while a user-input request owns the
                 composer slot, so composer drafts and editor state survive.
                 A rejected creation has no thread to send to; the failure card

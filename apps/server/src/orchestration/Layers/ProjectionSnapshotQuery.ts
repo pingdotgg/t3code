@@ -382,6 +382,7 @@ function mapSessionRow(
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
+    lastErrorLimitResetsAt: row.lastErrorLimitResetsAt ?? null,
     updatedAt: row.updatedAt,
   };
 }
@@ -579,6 +580,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          auto_continue_at AS "autoContinueAt",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -620,6 +622,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          auto_continue_at AS "autoContinueAt",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -693,6 +696,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          auto_continue_at AS "autoContinueAt",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -857,6 +861,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          last_error_limit_resets_at AS "lastErrorLimitResetsAt",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         ORDER BY thread_id ASC
@@ -878,6 +883,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_limit_resets_at AS "lastErrorLimitResetsAt",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -903,6 +909,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_limit_resets_at AS "lastErrorLimitResetsAt",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -1258,6 +1265,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           unsettled_at AS "unsettledAt",
           snoozed_until AS "snoozedUntil",
           snoozed_at AS "snoozedAt",
+          auto_continue_at AS "autoContinueAt",
           pinned_at AS "pinnedAt",
           pin_order_key AS "pinOrderKey",
           active_order_key AS "activeOrderKey",
@@ -1293,6 +1301,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_limit_resets_at AS "lastErrorLimitResetsAt",
           sessions.updated_at AS "updatedAt"
         FROM projection_threads AS threads
         LEFT JOIN projection_thread_sessions AS sessions
@@ -1611,6 +1620,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          last_error_limit_resets_at AS "lastErrorLimitResetsAt",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         WHERE thread_id = ${threadId}
@@ -2284,6 +2294,7 @@ pending_approval_requests AS (
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
+                  lastErrorLimitResetsAt: row.lastErrorLimitResetsAt ?? null,
                   updatedAt: row.updatedAt,
                 });
               }
@@ -2333,6 +2344,7 @@ pending_approval_requests AS (
                 unsettledAt: row.unsettledAt,
                 snoozedUntil: row.snoozedUntil,
                 snoozedAt: row.snoozedAt,
+                autoContinueAt: row.autoContinueAt ?? null,
                 pinnedAt: row.pinnedAt,
                 pinOrderKey: row.pinOrderKey ?? null,
                 activeOrderKey: row.activeOrderKey ?? null,
@@ -2578,6 +2590,7 @@ pending_approval_requests AS (
                   unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
+                  autoContinueAt: row.autoContinueAt ?? null,
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
@@ -2734,6 +2747,7 @@ pending_approval_requests AS (
                         unsettledAt: row.unsettledAt,
                         snoozedUntil: row.snoozedUntil,
                         snoozedAt: row.snoozedAt,
+                        autoContinueAt: row.autoContinueAt ?? null,
                         pinnedAt: row.pinnedAt,
                         pinOrderKey: row.pinOrderKey ?? null,
                         activeOrderKey: row.activeOrderKey ?? null,
@@ -2897,6 +2911,7 @@ pending_approval_requests AS (
                   unsettledAt: row.unsettledAt,
                   snoozedUntil: row.snoozedUntil,
                   snoozedAt: row.snoozedAt,
+                  autoContinueAt: row.autoContinueAt ?? null,
                   pinnedAt: row.pinnedAt,
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
@@ -3253,6 +3268,7 @@ pending_approval_requests AS (
         unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
+        autoContinueAt: threadRow.value.autoContinueAt ?? null,
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
@@ -3554,6 +3570,7 @@ pending_approval_requests AS (
         unsettledAt: threadRow.value.unsettledAt,
         snoozedUntil: threadRow.value.snoozedUntil,
         snoozedAt: threadRow.value.snoozedAt,
+        autoContinueAt: threadRow.value.autoContinueAt ?? null,
         pinnedAt: threadRow.value.pinnedAt,
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,

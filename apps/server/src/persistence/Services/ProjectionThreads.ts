@@ -47,6 +47,9 @@ export const ProjectionThread = Schema.Struct({
   unsettledAt: Schema.NullOr(IsoDateTime),
   snoozedUntil: Schema.NullOr(IsoDateTime),
   snoozedAt: Schema.NullOr(IsoDateTime),
+  // Pending limit-reset continuation; see OrchestrationThread.autoContinueAt.
+  // Optional so rows written before the column existed still decode.
+  autoContinueAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.NullOr(IsoDateTime),
   pinOrderKey: Schema.optional(Schema.NullOr(Schema.String)),
   activeOrderKey: Schema.optional(Schema.NullOr(Schema.String)),

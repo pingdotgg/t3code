@@ -100,7 +100,8 @@ function readModelScoped(rateLimits: object): ReadonlyArray<ModelScopedWindow> {
   );
 }
 
-function isoFromEpochSeconds(value: number | undefined): string | undefined {
+/** Claude reports reset instants as epoch seconds; windows store ISO strings. */
+export function isoFromEpochSeconds(value: number | undefined): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
   const dt = DateTime.make(value * 1000);
   return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;

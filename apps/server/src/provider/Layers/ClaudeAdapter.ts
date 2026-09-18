@@ -27,7 +27,11 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-import { type ClaudeScopedLimitNames, claudeRateLimitEventToUpdate } from "./claudeUsageLimits.ts";
+import {
+  type ClaudeScopedLimitNames,
+  claudeRateLimitEventToUpdate,
+  isoFromEpochSeconds,
+} from "./claudeUsageLimits.ts";
 import {
   ApprovalRequestId,
   classifyTaskAgentKind,
@@ -277,6 +281,9 @@ interface ClaudeTurnState {
   nextSyntheticAssistantBlockIndex: number;
   authenticationFailureMessage: string | undefined;
   rejectedRateLimitTypes: Set<string>;
+  // Reset instants (ISO) of the windows in rejectedRateLimitTypes, so a
+  // limit-stopped turn can name when a continuation becomes possible.
+  readonly rejectedRateLimitResetsAt: Map<string, string>;
   latestAssistantRateLimited: boolean;
   emittedThinkingText: boolean;
   readonly thinkingSnapshotIds: Set<string>;
@@ -2662,6 +2669,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     status: ProviderRuntimeTurnStatus,
     errorMessage?: string,
     result?: SDKResultMessage,
+    usageLimitResetsAt?: string,
   ) {
     const resultContextWindow = maxClaudeContextWindowFromModelUsage(result?.modelUsage);
     if (resultContextWindow !== undefined) {
@@ -2835,6 +2843,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ? { totalCostUsd: result.total_cost_usd }
           : {}),
         ...(errorMessage ? { errorMessage } : {}),
+        ...(status === "failed" && usageLimitResetsAt ? { usageLimitResetsAt } : {}),
         tokenUsage: normalizeClaudeTurnTokenUsage(result, turnState.hasSubagents, status),
       },
       providerRefs: nativeProviderRefs(context),
@@ -3388,6 +3397,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         nextSyntheticAssistantBlockIndex: -1,
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
+        rejectedRateLimitResetsAt: new Map(),
         latestAssistantRateLimited: false,
         emittedThinkingText: false,
         thinkingSnapshotIds: new Set(),
@@ -3500,7 +3510,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
     }
 
-    yield* completeTurn(context, status, errorMessage, message);
+    // The latest reset among the windows that blocked this turn: continuing
+    // earlier would stop on the still-parked window again. Only a limit stop
+    // names one — an auth failure with a stale window entry must not.
+    const usageLimitResetsAt =
+      status === "failed" &&
+      turn !== undefined &&
+      turn.authenticationFailureMessage === undefined &&
+      (turn.rejectedRateLimitTypes.size > 0 || turn.latestAssistantRateLimited)
+        ? [...turn.rejectedRateLimitResetsAt.values()].sort(
+            (left, right) => Date.parse(right) - Date.parse(left),
+          )[0]
+        : undefined;
+
+    yield* completeTurn(context, status, errorMessage, message, usageLimitResetsAt);
   });
 
   /**
@@ -4109,13 +4132,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // Current blocking evidence is independent of whether its warning has
         // already been shown. A recovery can omit or advance the reset time;
         // its window type remains stable without clearing another window.
-        if (blocked) context.turnState.rejectedRateLimitTypes.add(limitType);
-        else if (
+        if (blocked) {
+          context.turnState.rejectedRateLimitTypes.add(limitType);
+          const resetsAtIso = isoFromEpochSeconds(rateLimitInfo.resetsAt);
+          if (resetsAtIso !== undefined) {
+            context.turnState.rejectedRateLimitResetsAt.set(limitType, resetsAtIso);
+          }
+        } else if (
           rateLimitInfo.status === "allowed" ||
           rateLimitInfo.status === "allowed_warning" ||
           overageAllowed
         ) {
           context.turnState.rejectedRateLimitTypes.delete(limitType);
+          context.turnState.rejectedRateLimitResetsAt.delete(limitType);
         }
       }
       if (blocked && context.turnState !== undefined) {
@@ -5215,6 +5244,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         nextSyntheticAssistantBlockIndex: -1,
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
+        rejectedRateLimitResetsAt: new Map(),
         latestAssistantRateLimited: false,
         emittedThinkingText: false,
         thinkingSnapshotIds: new Set(),

@@ -404,6 +404,10 @@ const TurnCompletedPayload = Schema.Struct({
   modelUsage: Schema.optional(UnknownRecordSchema),
   totalCostUsd: Schema.optional(Schema.Number),
   errorMessage: Schema.optional(TrimmedNonEmptyStringSchema),
+  // Present on failed turns stopped by a usage limit whose reset instant the
+  // provider reported. Lets clients schedule a continuation for that moment;
+  // errorMessage still carries the human sentence.
+  usageLimitResetsAt: Schema.optional(IsoDateTime),
   tokenUsage: Schema.optional(TurnTokenUsage),
 });
 export type TurnCompletedPayload = typeof TurnCompletedPayload.Type;
