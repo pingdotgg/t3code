@@ -23,9 +23,6 @@ export function TerminalHeader(props: TerminalHeaderProps) {
     onOpenNewTerminal,
     onSelectTerminal,
   } = props;
-  // Android mirror of the iOS NativeHeaderToolbar terminal menu below: text
-  // size, session switching, and "Open new terminal", rendered through the
-  // token-styled anchored menu (the native header items are iOS-only).
   const androidTerminalMenuActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -44,7 +41,7 @@ export function TerminalHeader(props: TerminalHeaderProps) {
           },
         ],
       },
-      ...terminalMenuSessions.map((session): MenuAction => ({
+      ...sessions.map((session): MenuAction => ({
         id: `terminal-session:${session.terminalId}`,
         title: session.displayLabel,
         subtitle: [getTerminalStatusLabel({ status: session.status }), basename(session.cwd)]
