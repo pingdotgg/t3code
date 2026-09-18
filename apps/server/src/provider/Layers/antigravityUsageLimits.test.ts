@@ -206,6 +206,52 @@ it.effect("exchanges the stored refresh token before reading Cloud Code quota", 
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("refreshes an expired stored access token after Cloud Code returns 401", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const tokenPath = path.join(directory, "acp_token.json");
+    yield* fs.writeFileString(
+      tokenPath,
+      '{"token":{"access_token":"ya29.expired"},"client_id":"client.apps.googleusercontent.com","client_secret":"client-secret","refresh_token":"refresh-token","token_uri":"https://oauth2.googleapis.com/token"}',
+    );
+    const authorizations: string[] = [];
+    const limits = yield* readAntigravityUsageLimits({
+      enabled: true,
+      authMethod: "oauth-personal",
+      tokenPath,
+    }).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          if (request.url === "https://oauth2.googleapis.com/token") {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({ access_token: "ya29.refreshed", expires_in: 3600 }),
+              ),
+            );
+          }
+          authorizations.push(request.headers.authorization ?? "");
+          if (request.headers.authorization === "Bearer ya29.expired") {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, Response.json({}, { status: 401 })),
+            );
+          }
+          NodeAssert.equal(request.headers.authorization, "Bearer ya29.refreshed");
+          return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(liveSummary)));
+        }),
+      ),
+    );
+    NodeAssert.deepEqual(authorizations, ["Bearer ya29.expired", "Bearer ya29.refreshed"]);
+    NodeAssert.deepEqual(
+      limits.windows.map((window) => window.id),
+      ["gemini_five_hour", "gemini_seven_day"],
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("does not send refresh credentials to a non-Google token URI", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

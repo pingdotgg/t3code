@@ -21,7 +21,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
-import { makeUsageLimits } from "../providerUsageLimits.ts";
+import { makeUnavailableUsageLimits, makeUsageLimits } from "../providerUsageLimits.ts";
 import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
@@ -336,9 +336,49 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
         expect(yield* Ref.get(usageCalls)).toBe(1);
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
         yield* harness.provider.onSessionStarted(started);
+        expect(yield* Ref.get(usageCalls)).toBe(2);
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
         yield* harness.provider.onSignedOut;
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("replaces an unsupported probe with live limits when a session starts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const limits = makeUsageLimits({
+          checkedAt: "2026-09-18T12:00:00.000Z",
+          windows: [
+            {
+              id: "gemini_five_hour",
+              kind: "session",
+              label: "Gemini · Session",
+              usedPercent: 40,
+              windowDurationMins: 5 * 60,
+            },
+          ],
+        });
+        const usageCalls = yield* Ref.make(0);
+        const harness = yield* makeHarness({
+          usageLimits: Ref.update(usageCalls, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 1
+                ? Effect.succeed(
+                    makeUnavailableUsageLimits({
+                      checkedAt: "2026-09-18T11:00:00.000Z",
+                      reason: "unsupported",
+                    }),
+                  )
+                : Effect.succeed(limits),
+            ),
+          ),
+        });
+        yield* harness.initialize;
+        expect(yield* Ref.get(usageCalls)).toBe(1);
+        yield* harness.provider.onSessionStarted(started);
+        expect(yield* Ref.get(usageCalls)).toBe(2);
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
       }),
     ),
   );

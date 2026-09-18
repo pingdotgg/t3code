@@ -21,6 +21,18 @@ import {
 
 /** `cloudcode-pa` answers the same RPC with remainingFraction 1 on every bucket. */
 const QUOTA_URL = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
+
+function quotaRequest(token: string, project: string | undefined) {
+  return HttpClientRequest.post(QUOTA_URL).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.setHeaders({
+      "user-agent": "antigravity",
+      "content-type": "application/json",
+    }),
+    HttpClientRequest.bodyJsonUnsafe(project ? { project } : {}),
+  );
+}
+
 const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
 
@@ -243,21 +255,22 @@ export const readAntigravityUsageLimits = Effect.fn("readAntigravityUsageLimits"
       );
       if (!contents.trim()) return unsupported;
       const file = yield* decodeTokenFile(contents);
-      const token = accessTokenFromFile(file) ?? (yield* refreshAccessToken(file));
+      const stored = accessTokenFromFile(file);
+      const token = stored ?? (yield* refreshAccessToken(file));
       if (!token) return unsupported;
 
       const client = yield* HttpClient.HttpClient;
       const project = input.gcpProject?.trim();
-      const response = yield* client.execute(
-        HttpClientRequest.post(QUOTA_URL).pipe(
-          HttpClientRequest.bearerToken(token),
-          HttpClientRequest.setHeaders({
-            "user-agent": "antigravity",
-            "content-type": "application/json",
-          }),
-          HttpClientRequest.bodyJsonUnsafe(project ? { project } : {}),
-        ),
-      );
+      const firstResponse = yield* client.execute(quotaRequest(token, project));
+      const response =
+        firstResponse.status === 401 && stored
+          ? yield* Effect.gen(function* () {
+              const refreshed = yield* refreshAccessToken(file);
+              return refreshed
+                ? yield* client.execute(quotaRequest(refreshed, project))
+                : firstResponse;
+            })
+          : firstResponse;
       if (response.status === 403) return unsupported;
       const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
         Effect.flatMap(HttpClientResponse.schemaBodyJson(QuotaSummary)),

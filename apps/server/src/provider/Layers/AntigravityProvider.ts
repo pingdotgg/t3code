@@ -271,6 +271,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   ) {
     const before = yield* SubscriptionRef.get(metadata);
     const supportsTextGeneration = yield* options.supportsTextGeneration;
+    const usageLimits = yield* options.usageLimits ?? Effect.succeed(undefined);
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* SubscriptionRef.update(metadata, (state) => {
       if (
@@ -310,6 +311,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
                 ].slice(-MAX_WORKSPACE_SNAPSHOTS),
               }
             : {}),
+          ...(usageLimits ? { usageLimits } : {}),
         },
       } satisfies AntigravityProviderState;
     });
