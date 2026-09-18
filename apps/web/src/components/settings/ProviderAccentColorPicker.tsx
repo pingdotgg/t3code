@@ -36,7 +36,7 @@ function ProviderCustomColorPanel(props: {
         label="Accent color saturation and brightness"
         value={hsv}
         onChange={commitHsv}
-        className="h-36 rounded-none"
+        variant="edge"
       />
       <div className="grid gap-3 p-3">
         <ColorHueSlider
@@ -56,7 +56,7 @@ function ProviderCustomColorPanel(props: {
             props.onCommit(nextColor);
           }}
           onBlur={() => setHexDraft(null)}
-          className="rounded-md font-mono text-xs"
+          className="font-mono text-xs"
           aria-label="Custom hex accent color"
           spellCheck={false}
         />
