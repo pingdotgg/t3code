@@ -46,7 +46,7 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
     "Rules:",
     ...(infersConventions
       ? [
-          "- follow the repository's commit conventions given under Additional instructions; they take precedence over the defaults below",
+          "- follow the repository's commit conventions given under Additional instructions; for the message format only, they take precedence over the defaults below",
           "- by default, subject is imperative, <= 72 chars, and has no trailing period",
           "- by default, body is empty or short bullet points",
         ]
