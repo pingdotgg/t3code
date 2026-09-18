@@ -117,6 +117,10 @@ overrides:
   "@alchemy.run/sigil>react": "-"
   "@alchemy.run/sigil>react-reconciler": "-"
   "@alchemy.run/sigil>scheduler": "-"
+  # Alchemy only reaches @prisma/dev through a lazy import inside the Prisma
+  # database provider, which the relay never deploys. Its exact hono/valibot
+  # pins are also the bulk of our open dependency advisories.
+  "alchemy>@prisma/dev": "-"
   "@clerk/backend": "catalog:"
   "@clerk/clerk-js": "catalog:"
   "@clerk/clerk-js>@base-org/account": "-"
