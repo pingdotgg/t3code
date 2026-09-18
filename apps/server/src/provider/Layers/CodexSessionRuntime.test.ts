@@ -868,6 +868,22 @@ describe("shouldSuppressUnownedCodexNotification", () => {
       ),
       false,
     );
+    NodeAssert.equal(
+      shouldSuppressUnownedCodexNotification(
+        { method: "warning", params: { message: "foreign warning", threadId: "foreign-thread" } },
+        "root-thread",
+        false,
+      ),
+      true,
+    );
+    NodeAssert.equal(
+      shouldSuppressUnownedCodexNotification(
+        { method: "warning", params: { message: "root warning", threadId: "root-thread" } },
+        "root-thread",
+        false,
+      ),
+      false,
+    );
   });
 
   it("keeps foreign request resolution on the parent correlation path", () => {
@@ -884,15 +900,20 @@ describe("shouldSuppressUnownedCodexNotification", () => {
     );
   });
 
-  it("waits for root ownership before suppressing foreign thread startup", () => {
+  it("suppresses thread-addressed startup traffic until the root response establishes ownership", () => {
     const threadStarted = makeThreadStartedNotification("foreign-thread", "appServer");
-    NodeAssert.equal(
-      shouldSuppressUnownedCodexNotification(threadStarted, undefined, false),
-      false,
-    );
+    NodeAssert.equal(shouldSuppressUnownedCodexNotification(threadStarted, undefined, false), true);
     NodeAssert.equal(
       shouldSuppressUnownedCodexNotification(threadStarted, "root-thread", false),
       true,
+    );
+    NodeAssert.equal(
+      shouldSuppressUnownedCodexNotification(
+        { method: "warning", params: { message: "global warning" } },
+        undefined,
+        false,
+      ),
+      false,
     );
   });
 });
