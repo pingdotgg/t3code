@@ -7969,8 +7969,12 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       Effect.gen(function* () {
         const adapter = yield* OpenCodeAdapter;
         const threadId = asThreadId("thread-prompt-timeout-abort-without-message");
+        const promptStarted = promiseWithResolvers<void>();
         runtimeMock.state.autoPromptEcho = false;
-        runtimeMock.state.promptAsyncImplementation = () => new Promise<void>(() => {});
+        runtimeMock.state.promptAsyncImplementation = () => {
+          promptStarted.resolve(undefined);
+          return new Promise<void>(() => {});
+        };
         runtimeMock.state.abortImplementation = async () => {
           // Effect's TimeoutError can be constructed without a message; older
           // builds of this adapter crashed while formatting such an error.
@@ -7998,9 +8002,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
             ),
           })
           .pipe(Effect.exit, Effect.forkChild);
-        while (runtimeMock.state.promptCalls.length === 0) {
-          yield* Effect.yieldNow;
-        }
+        yield* Effect.promise(() => promptStarted.promise);
 
         yield* advanceTestClock(10_000);
 
