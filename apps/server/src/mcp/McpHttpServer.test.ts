@@ -4,12 +4,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
 
@@ -763,6 +765,71 @@ it.effect("registers annotated tools and preserves authenticated request context
         const text = result.content[0];
         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
       }
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("keeps the host when the optional page metadata lookup times out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const clientId = "mcp-slow-metadata-client";
+      const statusResult = {
+        available: true,
+        visible: true,
+        tabId,
+        url: "http://example.test/",
+        title: "Example",
+        loading: false,
+      };
+      const stalled = yield* Deferred.make<{
+        readonly connectionId: string;
+        readonly requestId: string;
+      }>();
+      let stalledOnce = false;
+      const events = yield* broker.connect({ clientId, environmentId });
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Effect.void;
+        // The click's follow-up status read never answers within its budget.
+        if (event.request.operation === "status" && !stalledOnce) {
+          stalledOnce = true;
+          return Deferred.succeed(stalled, {
+            connectionId: event.connectionId,
+            requestId: event.request.requestId,
+          });
+        }
+        return broker.respond({
+          clientId,
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result: event.request.operation === "click" ? undefined : statusResult,
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const callTool = (name: string, args: Record<string, unknown>) =>
+        server
+          .callTool({ name, arguments: args })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+
+      const click = yield* callTool("preview_click", { x: 10, y: 10 }).pipe(Effect.forkScoped);
+      const late = yield* Deferred.await(stalled);
+      yield* TestClock.adjust(500);
+      const clicked = yield* Fiber.join(click);
+      expect(clicked.isError).toBe(false);
+      expect(clicked.structuredContent).toEqual({});
+
+      // The metadata reply landing after its deadline is dropped, not applied.
+      yield* broker.respond({ clientId, ...late, ok: true, result: statusResult });
+
+      const status = yield* callTool("preview_status", {});
+      expect(status.isError).toBe(false);
+      expect(status.structuredContent).toMatchObject({ available: true, tabId });
     }),
   ).pipe(Effect.provide(TestLayer)),
 );
