@@ -34,6 +34,7 @@ import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
+import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
 
 const LIFECYCLE_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
@@ -170,37 +171,32 @@ export function V2LifecycleRow(props: {
           <span className="min-w-0 flex-1 truncate text-sm font-medium">
             {item.title ?? "Created thread"}
           </span>
-          <button
-            type="button"
+          <Button
+            size="xs"
+            variant="outline"
             aria-label={`Open ${item.title ?? "created thread"}`}
             onClick={() => props.onOpenThread(item.targetThreadId)}
-            className="shrink-0 rounded-md border border-border px-2.5 py-1 text-sm hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Open chat
-          </button>
+          </Button>
         </div>
       );
     }
     return (
-      <div
-        className="flex min-w-0 items-center gap-1.5 px-0.5 py-0.5 text-sm leading-relaxed text-secondary-label"
+      <WorkLogRow
         data-v2-item-type={item.type}
-      >
-        <span className="flex size-6 shrink-0 items-center justify-center">
-          <T3Wordmark className="size-4 text-icon-muted" aria-hidden />
-        </span>
-        <span className="min-w-0 flex-1 truncate">
-          Created thread{item.title ? ` · ${item.title}` : ""}
-        </span>
-        <button
-          type="button"
-          aria-label={`Open ${item.title ?? "created thread"}`}
-          onClick={() => props.onOpenThread(item.targetThreadId)}
-          className="shrink-0 rounded-sm text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Open chat
-        </button>
-      </div>
+        icon={<T3Wordmark className="size-4 text-icon-muted" aria-hidden />}
+        label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
+        trailing={
+          <InlineButton
+            aria-label={`Open ${item.title ?? "created thread"}`}
+            onClick={() => props.onOpenThread(item.targetThreadId)}
+            className="rounded-sm text-primary hover:underline"
+          >
+            Open chat
+          </InlineButton>
+        }
+      />
     );
   }
   if (item.type === "subagent") {
