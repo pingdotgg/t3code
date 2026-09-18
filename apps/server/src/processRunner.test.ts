@@ -409,14 +409,21 @@ describe("runProcess", () => {
         ].join("\n"),
       });
       const started = yield* Deferred.make<number>();
+      const decoder = new TextDecoder();
+      let reported = "";
       const runner = yield* ProcessRunner.ProcessRunner;
       const fiber = yield* runner
         .run({
           command: helper,
           args: [],
           timeout: "50 millis",
+          // A chunk is not guaranteed to carry the whole line, so wait for it.
           onStdoutChunk: (chunk) => {
-            Deferred.doneUnsafe(started, Effect.succeed(Number(new TextDecoder().decode(chunk))));
+            reported += decoder.decode(chunk, { stream: true });
+            const lineEnd = reported.indexOf("\n");
+            if (lineEnd !== -1) {
+              Deferred.doneUnsafe(started, Effect.succeed(Number(reported.slice(0, lineEnd))));
+            }
           },
         })
         .pipe(Effect.flip, Effect.forkScoped);
