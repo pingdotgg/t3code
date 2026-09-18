@@ -1830,27 +1830,37 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
-            threadManagement
-              .getThreadSnapshotWindow(input.threadId, {
-                rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
-                userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
-              })
-              .pipe(
-                Effect.map((snapshot) =>
-                  buildGetThreadProjectionResult({
-                    projection: projectThreadProjectionForWire(snapshot.projection),
-                    snapshotSequence: snapshot.snapshotSequence,
+            (shouldUseBoundedThreadSnapshot(input)
+              ? threadManagement
+                  .getThreadSnapshotWindow(input.threadId, {
+                    rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+                    userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+                  })
+                  .pipe(
+                    Effect.map((snapshot) =>
+                      buildGetThreadProjectionResult({
+                        projection: projectThreadProjectionForWire(snapshot.projection),
+                        snapshotSequence: snapshot.snapshotSequence,
+                        hasOlderHistory: snapshot.hasOlderHistory,
+                      }),
+                    ),
+                  )
+              : // Callers without the bounded opt-in keep the full projection so
+                // legacy clients retain complete history and out-of-window
+                // checkpoint rewind.
+                threadManagement
+                  .getThreadProjection(input.threadId)
+                  .pipe(Effect.map(projectThreadProjectionForWire))
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: `Failed to load orchestration V2 thread ${input.threadId}`,
+                    cause,
                   }),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationV2GetThreadProjectionError({
-                      threadId: input.threadId,
-                      message: `Failed to load orchestration V2 thread ${input.threadId}`,
-                      cause,
-                    }),
-                ),
               ),
+            ),
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.thread_id": input.threadId,
@@ -1881,8 +1891,19 @@ const makeWsRpcLayer = (
                 .getThreadSnapshotWindow(input.threadId, {
                   rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
                   userTurnLimit: OLDER_THREAD_USER_TURN_LIMIT,
-                  anchorItemId: TurnItemId.make(decodedCursor.si),
-                  anchorThreadId: ThreadId.make(decodedCursor.st),
+                  // v2 anchors by ordinal plus a fixed-length digest of the
+                  // source thread id — stored ids can be any length without
+                  // overflowing the cursor cap. v1 resolves verbatim ids.
+                  ...(decodedCursor.v === 2
+                    ? {
+                        anchorOrdinal: decodedCursor.so,
+                        anchorThreadDigest: decodedCursor.sth,
+                        anchorItemDigest: decodedCursor.sih,
+                      }
+                    : {
+                        anchorItemId: TurnItemId.make(decodedCursor.si),
+                        anchorThreadId: ThreadId.make(decodedCursor.st),
+                      }),
                 })
                 .pipe(
                   Effect.mapError(
@@ -1898,6 +1919,7 @@ const makeWsRpcLayer = (
                 items: projectThreadProjectionForWire(snapshot.projection).visibleTurnItems,
                 cursor: input.historyCursor,
                 snapshotSequence: snapshot.snapshotSequence,
+                hasOlderHistory: snapshot.hasOlderHistory,
               });
               if (pageOrError._tag === "invalid_cursor") {
                 return yield* new OrchestrationV2InvalidHistoryCursorError({
