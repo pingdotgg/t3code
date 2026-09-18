@@ -64,6 +64,16 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "does not exist",
   "no rollout found",
 ];
+// `thread/resume` fans out to `list_turns` inside the Codex app-server
+// (openai/codex#37754). Version-skewed daemons answer `-32601` with
+// "list_turns is not supported yet", which mentions no thread id, so it must
+// be matched before the missing-thread gate below. Cross-device resume
+// (e.g. desktop thread continued on mobile) hits the same path.
+const RECOVERABLE_THREAD_RESUME_CAPABILITY_SNIPPETS = [
+  "list_turns",
+  "not supported",
+  "method not found",
+];
 
 export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | undefined): boolean {
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
@@ -689,6 +699,17 @@ function classifyCodexStderrLine(rawLine: string): { readonly message: string } 
 
 export function isRecoverableThreadResumeError(error: unknown): boolean {
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (
+    RECOVERABLE_THREAD_RESUME_CAPABILITY_SNIPPETS.some((snippet) => message.includes(snippet))
+  ) {
+    return true;
+  }
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === -32601) {
+      return true;
+    }
+  }
   if (!message.includes("thread")) {
     return false;
   }
