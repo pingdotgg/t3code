@@ -13,20 +13,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { environmentThreadDetails } from "../../state/threads";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
-import { resolveSubagentRowPresentation, type SubagentRowTone } from "./threadAgentsPresentation";
+import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
+
+import { SubagentStatusDot } from "./SubagentStatusDot";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
-
-const TONE_DOT_CLASS = {
-  working: "bg-adaptive-sky-600-400",
-  completed: "bg-adaptive-emerald-600-400",
-  failed: "bg-adaptive-rose-600-400",
-  stopped: "bg-foreground-muted",
-} as const satisfies Record<SubagentRowTone, string>;
 
 type AgentsTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
@@ -133,7 +127,7 @@ function AgentRow(props: {
 
   const row = (
     <View className="min-h-14 flex-row items-center gap-3 border-b border-border py-3">
-      <View className={cn("h-2 w-2 shrink-0 rounded-full", TONE_DOT_CLASS[presentation.tone])} />
+      <SubagentStatusDot tone={presentation.tone} placement="sheet" />
       <View className="min-w-0 flex-1 gap-0.5">
         <Text className="font-t3-medium text-sm text-foreground" numberOfLines={1}>
           {presentation.title}
