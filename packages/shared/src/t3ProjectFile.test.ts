@@ -35,11 +35,15 @@ describe("buildT3ProjectFileJsonSchema", () => {
       "$schema",
       "defaultThreadEnvMode",
       "iconPath",
+      "initSubmodulesOnWorktreeCreate",
       "scripts",
     ]);
     expect(schema.required).toBeUndefined();
     expect(schema.properties.iconPath?.description).toContain("Workspace-relative path");
     expect(schema.properties.defaultThreadEnvMode?.description).toContain("new threads start");
+    expect(schema.properties.initSubmodulesOnWorktreeCreate?.description).toContain(
+      "submodule update",
+    );
 
     const script = schema.properties.scripts?.items;
     expect(script?.required).toEqual(["name", "command"]);
@@ -83,6 +87,9 @@ describe("parseT3ProjectFile", () => {
   it("returns the decoded file for valid contents", () => {
     expect(parseT3ProjectFile('{ "defaultThreadEnvMode": "worktree" }')).toEqual({
       defaultThreadEnvMode: "worktree",
+    });
+    expect(parseT3ProjectFile('{ "initSubmodulesOnWorktreeCreate": false }')).toEqual({
+      initSubmodulesOnWorktreeCreate: false,
     });
   });
 

@@ -49,6 +49,11 @@ checkouts and removal. Actions belong to a project: editing them creates the pro
 on each selected environment, and reset returns to the environment's shared list. A project's
 `t3.json` actions can be imported there.
 
+New worktrees run `git submodule update --init --recursive` when the checkout has a `.gitmodules`
+file. Set `initSubmodulesOnWorktreeCreate` to `false` in `t3.json` to skip that step and initialize
+the submodules you need from a `runOnWorktreeCreate` action instead. Set that action's `async` field
+to `false` if the agent should wait until those submodules exist.
+
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
