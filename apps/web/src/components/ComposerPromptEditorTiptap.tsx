@@ -914,6 +914,18 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           return handled;
         },
         handleTextInput: (view, from, to, text) => {
+          // Dead keys can replace a composition range without a user selection.
+          // Only surround explicitly selected text; let native composition finish.
+          const selection = view.state.selection;
+          if (
+            view.composing ||
+            !(selection instanceof TextSelection) ||
+            selection.empty ||
+            selection.from !== from ||
+            selection.to !== to
+          ) {
+            return false;
+          }
           if (text.length !== 1) return false;
           const closer = SURROUND_CLOSE[text];
           if (!closer || from === to) return false;
