@@ -551,14 +551,50 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         : {}),
     });
 
-  // Whether a .git entry (directory or worktree pointer file) exists at the
-  // workspace root or any ancestor — filesystem evidence that repository
-  // metadata is present even when git cannot read it.
+  // Detection must not honor the server's ambient Git bindings: GIT_DIR and
+  // friends can point discovery at a foreign repository or mask a real one.
+  // LC_ALL pins the diagnostic locale since the classification below matches
+  // English fatal text that localized Git builds would translate.
+  const detectionEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    LC_ALL: "C",
+    GIT_DIR: undefined,
+    GIT_WORK_TREE: undefined,
+    GIT_COMMON_DIR: undefined,
+    GIT_INDEX_FILE: undefined,
+    GIT_OBJECT_DIRECTORY: undefined,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+    GIT_CEILING_DIRECTORIES: undefined,
+  };
+
+  // Whether the path itself exists, including as a symlink — exists()
+  // resolves the target, so a dangling .git link would look absent even
+  // though the entry is repository metadata.
+  const entryExists = (entry: string) =>
+    fileSystem.exists(entry).pipe(
+      Effect.flatMap((present) =>
+        present
+          ? Effect.succeed(true)
+          : fileSystem.readLink(entry).pipe(
+              Effect.as(true),
+              Effect.catchTag("PlatformError", (error) =>
+                error.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(error),
+              ),
+            ),
+      ),
+    );
+
+  // Whether a .git entry exists along the workspace's physical ancestry —
+  // filesystem evidence that repository metadata is present even when git
+  // cannot read it. Git resolves discovery from the real working directory,
+  // so a symlinked cwd must walk its resolved path, not the lexical one.
   const hasGitMetadataEntry = (cwd: string) =>
     Effect.gen(function* () {
-      let directory = cwd;
+      let directory = yield* fileSystem
+        .realPath(cwd)
+        .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(cwd)));
       while (true) {
-        if (yield* fileSystem.exists(path.join(directory, ".git"))) {
+        if (yield* entryExists(path.join(directory, ".git"))) {
           return true;
         }
         const parent = path.dirname(directory);
@@ -570,8 +606,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
   )(function* (cwd) {
-    // LC_ALL pins the diagnostic locale: git translates fatal messages on
-    // some installations, and the classification below matches English text.
     const insideWorkTreeResult = yield* gitCommand(
       vcsProcess,
       "GitVcsDriver.detectRepository.insideWorkTree",
@@ -581,7 +615,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         allowNonZeroExit: true,
         timeoutMs: 5_000,
         maxOutputBytes: 4_096,
-        env: { LC_ALL: "C" },
+        env: detectionEnv,
       },
     );
     if (insideWorkTreeResult.exitCode !== 0) {
@@ -610,15 +644,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return null;
     }
 
-    const root = yield* gitCommand(vcsProcess, "GitVcsDriver.detectRepository.root", cwd, [
-      "rev-parse",
-      "--show-toplevel",
-    ]);
+    const root = yield* gitCommand(
+      vcsProcess,
+      "GitVcsDriver.detectRepository.root",
+      cwd,
+      ["rev-parse", "--show-toplevel"],
+      { env: detectionEnv },
+    );
     const gitCommonDir = yield* gitCommand(
       vcsProcess,
       "GitVcsDriver.detectRepository.commonDir",
       cwd,
       ["rev-parse", "--git-common-dir"],
+      { env: detectionEnv },
     ).pipe(Effect.orElseSucceed(() => null));
 
     return {
