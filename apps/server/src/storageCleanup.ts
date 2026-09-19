@@ -226,9 +226,13 @@ export const make = Effect.gen(function* () {
       (thread) => path.resolve(thread.worktreePath!),
     );
     const candidates = [
-      ...[...groups.values()].flatMap((group) =>
-        preview || group.length === 1 ? [group[0]!] : [],
-      ),
+      ...[...groups.values()].flatMap((group) => {
+        if (!preview) return group.length === 1 ? [group[0]!] : [];
+        const candidate = preview.input.projectId
+          ? group.find((thread) => thread.projectId === preview.input.projectId)
+          : group[0];
+        return candidate ? [candidate] : [];
+      }),
       ...deletedThreads.filter((thread) => !groups.has(path.resolve(thread.worktreePath))),
     ];
     const seen = new Set<string>();

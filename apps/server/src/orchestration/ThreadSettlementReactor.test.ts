@@ -1805,6 +1805,8 @@ describe("storage cleanup", () => {
                               ? []
                               : [makeProject(PROJECT_ID, config.baseDir)];
                           const threads = tombstoned ? [] : [thread];
+                          if (protection === "shared")
+                            projects.push(makeProject(LINKED_PROJECT_ID, config.baseDir));
                           if (protection === "deleted-shared")
                             threads.push({ ...thread, id: ThreadId.make("surviving-thread") });
                           if (protection === "deleted-project")
@@ -1854,6 +1856,7 @@ describe("storage cleanup", () => {
                               {
                                 ...thread,
                                 id: ThreadId.make("archived-sharing-thread"),
+                                projectId: LINKED_PROJECT_ID,
                                 archivedAt: NOW,
                               },
                             ]
@@ -2103,6 +2106,17 @@ describe("storage cleanup", () => {
             const reads = snapshotReads;
             assert.deepStrictEqual(yield* cleanup.preview(input), preview);
             assert.strictEqual(snapshotReads, reads);
+            if (protection === "shared") {
+              for (const projectId of [PROJECT_ID, LINKED_PROJECT_ID]) {
+                const scoped = yield* cleanup.preview({ projectId });
+                assert.deepStrictEqual(scoped.total, preview.total);
+                assert.strictEqual(
+                  scoped.categories.find((entry) => entry.kind === "kept")?.folders,
+                  1,
+                );
+              }
+              assert.deepStrictEqual(removals, []);
+            }
             if (protection === "none") {
               assert.ok(preview.total.bytes > 0);
               assert.strictEqual(
