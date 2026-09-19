@@ -15,7 +15,9 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
-import { resolveServerBackedAppDisplayName } from "../branding.logic";
+import { resolveServerBackedAppDisplayName, resolveWindowTitle } from "../branding.logic";
+import { isElectron } from "../env";
+import { useWindowTitleContextStore } from "../windowTitleStore";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
@@ -319,11 +321,17 @@ function FontAppearanceSync() {
 function DocumentTitleSync() {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
-  const title = resolveServerBackedAppDisplayName({
-    baseName: APP_BASE_NAME,
-    fallbackDisplayName: APP_DISPLAY_NAME,
-    fallbackStageLabel: APP_STAGE_LABEL,
-    primaryServerVersion,
+  const { projectTitle, threadTitle } = useWindowTitleContextStore();
+  const title = resolveWindowTitle({
+    appDisplayName: resolveServerBackedAppDisplayName({
+      baseName: APP_BASE_NAME,
+      fallbackDisplayName: APP_DISPLAY_NAME,
+      fallbackStageLabel: APP_STAGE_LABEL,
+      primaryServerVersion,
+    }),
+    projectTitle,
+    threadTitle,
+    desktop: isElectron,
   });
 
   useEffect(() => {
@@ -370,6 +378,7 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
 
   return (
     <StandalonePage tone="error">
+      <DocumentTitleSync />
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
         title="Something went wrong."
