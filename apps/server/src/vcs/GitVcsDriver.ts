@@ -554,7 +554,30 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
   )(function* (cwd) {
-    if (!(yield* isInsideWorkTree(cwd))) {
+    const insideWorkTreeResult = yield* gitCommand(
+      vcsProcess,
+      "GitVcsDriver.detectRepository.insideWorkTree",
+      cwd,
+      ["rev-parse", "--is-inside-work-tree"],
+      { allowNonZeroExit: true, timeoutMs: 5_000, maxOutputBytes: 4_096 },
+    );
+    if (insideWorkTreeResult.exitCode !== 0) {
+      // "not a git repository" confirms no usable repo. Any other nonzero
+      // exit (unreadable config, permission denied, I/O) means detection
+      // itself failed — propagate it instead of reporting the workspace as
+      // non-Git, which callers rely on to decide that no repo state exists.
+      if (!insideWorkTreeResult.stderr.includes("not a git repository")) {
+        return yield* new VcsProcessExitError({
+          operation: "GitVcsDriver.detectRepository.insideWorkTree",
+          command: "git rev-parse",
+          cwd,
+          exitCode: insideWorkTreeResult.exitCode,
+          detail: insideWorkTreeResult.stderr.trim() || "Repository detection failed.",
+        });
+      }
+      return null;
+    }
+    if (insideWorkTreeResult.stdout.trim() !== "true") {
       return null;
     }
 
@@ -1199,6 +1222,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     deleteCheckpointRefs: Effect.fn("GitVcsDriver.checkpoints.deleteCheckpointRefs")(
       function* (input) {
+        // update-ref -d exits 0 for refs that do not exist, so nonzero exits
+        // are real failures (locks, permissions) and must propagate.
         yield* Effect.forEach(
           input.checkpointRefs,
           (checkpointRef) =>
@@ -1206,7 +1231,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
               cwd: input.cwd,
               args: ["update-ref", "-d", checkpointRef],
-              allowNonZeroExit: true,
             }),
           { discard: true },
         );
