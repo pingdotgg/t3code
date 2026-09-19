@@ -31,7 +31,7 @@ export function CustomSnoozeSheet(props: {
   return (
     <Modal visible transparent animationType="fade" onRequestClose={props.onClose}>
       <KeyboardAvoidingView
-        className="flex-1 items-center justify-center bg-black/40 px-6"
+        className="flex-1 items-center justify-center bg-backdrop px-6"
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView

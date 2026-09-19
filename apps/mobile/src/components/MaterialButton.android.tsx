@@ -35,7 +35,7 @@ export function MaterialButton(props: MaterialButtonProps) {
       : tone === "danger"
         ? colors["--color-danger-foreground"]
         : tone === "text"
-          ? colors["--color-primary"]
+          ? colors["--color-primary-text"]
           : colors["--color-secondary-foreground"];
   return (
     <View
