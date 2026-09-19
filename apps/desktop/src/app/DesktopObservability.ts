@@ -24,7 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Tracer from "effect/Tracer";
-import { OtlpExporter, OtlpLogger, OtlpMetrics, OtlpTracer } from "effect/unstable/observability";
+import { OtlpExporter, OtlpLogger, OtlpTracer } from "effect/unstable/observability";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -349,7 +349,7 @@ const readPersistedObservabilitySettings: Effect.Effect<
 });
 
 /**
- * Settings is read once for all three signals, so the main process cannot
+ * Settings is read once for every signal, so the main process cannot
  * resolve traces against one revision of the file and logs against another.
  */
 const resolveOtlpEndpoints = Effect.gen(function* () {
@@ -580,9 +580,9 @@ const backendOutputLogFactoryLayer = Layer.effect(
 );
 
 /**
- * Logs, traces, and metrics for the main process, assembled together because
- * they share one read of the environment and Settings, and because a process
- * gets exactly one logger set.
+ * Logs and traces for the main process, assembled together because they share
+ * one read of the environment and Settings, and because a process gets exactly
+ * one logger set.
  */
 const telemetryLayer = Layer.unwrap(
   Effect.gen(function* () {
@@ -655,17 +655,23 @@ const telemetryLayer = Layer.unwrap(
       }),
     ).pipe(Layer.provide(OtlpExporter.layerFlusher));
 
-    const metricsLayer =
-      endpoints.metrics === undefined
-        ? Layer.empty
-        : OtlpMetrics.layer({
-            url: endpoints.metrics,
-            exportInterval: `${environment.otlpExportIntervalMs} millis`,
-            headers,
-            resource,
-          }).pipe(Layer.provide(serializationLayer));
+    // Metrics stay off until the main process records one. `OtlpMetrics`
+    // exports on every interval even when the registry is empty, so wiring
+    // it up today would post an empty payload every ten seconds to any
+    // collector configured for the backend. Restore this when a desktop
+    // metric exists, and add it to the `Layer.mergeAll` below.
+    //
+    // const metricsLayer =
+    //   endpoints.metrics === undefined
+    //     ? Layer.empty
+    //     : OtlpMetrics.layer({
+    //         url: endpoints.metrics,
+    //         exportInterval: `${environment.otlpExportIntervalMs} millis`,
+    //         headers,
+    //         resource,
+    //       }).pipe(Layer.provide(serializationLayer));
 
-    return Layer.mergeAll(loggerLayer, tracerLayer, metricsLayer);
+    return Layer.mergeAll(loggerLayer, tracerLayer);
   }),
 );
 

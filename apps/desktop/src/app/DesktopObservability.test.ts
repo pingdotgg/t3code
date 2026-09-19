@@ -4,7 +4,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Metric from "effect/Metric";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -428,32 +427,6 @@ describe("DesktopObservability", () => {
     );
   });
 
-  it.effect("exports main process metrics to the configured metrics endpoint", () => {
-    const requests: Array<ExportedRequest> = [];
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-observability-test-",
-      });
-      const environmentLayer = makeEnvironmentLayer(baseDir, true, {
-        T3CODE_OTLP_METRICS_URL: "https://collector.example.com/v1/metrics",
-      });
-
-      yield* Effect.scoped(
-        Metric.update(Metric.counter("desktop_metrics_export_test_total"), 1).pipe(
-          Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
-        ),
-      );
-
-      assert.lengthOf(requests, 1);
-      assert.strictEqual(requests[0]?.url, "https://collector.example.com/v1/metrics");
-      assert.include(requests[0]?.body ?? "", "desktop_metrics_export_test_total");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, collectorLayer(requests))),
-    );
-  });
-
   it.effect("reads every signal endpoint from Settings when the environment names none", () => {
     const requests: Array<ExportedRequest> = [];
     return Effect.gen(function* () {
@@ -463,30 +436,31 @@ describe("DesktopObservability", () => {
       });
       const environmentLayer = makeEnvironmentLayer(baseDir);
       yield* writeObservabilitySettings(environmentLayer, {
+        otlpTracesUrl: "https://settings.example.com/v1/traces",
         otlpLogsUrl: "https://settings.example.com/v1/logs",
+        // The main process records no metrics yet, so this endpoint must
+        // not produce a request.
         otlpMetricsUrl: "https://settings.example.com/v1/metrics",
       });
 
       yield* Effect.scoped(
-        Effect.gen(function* () {
-          yield* Effect.logInfo("desktop log export from settings");
-          yield* Metric.update(Metric.counter("desktop_settings_export_test_total"), 1);
-        }).pipe(
+        Effect.logInfo("desktop log export from settings").pipe(
+          Effect.withSpan("desktop-settings-export-test"),
           Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
         ),
       );
 
       assert.deepEqual(requests.map((request) => request.url).toSorted(), [
         "https://settings.example.com/v1/logs",
-        "https://settings.example.com/v1/metrics",
+        "https://settings.example.com/v1/traces",
       ]);
       assert.include(
         requests.find((request) => request.url.endsWith("/v1/logs"))?.body ?? "",
         "desktop log export from settings",
       );
       assert.include(
-        requests.find((request) => request.url.endsWith("/v1/metrics"))?.body ?? "",
-        "desktop_settings_export_test_total",
+        requests.find((request) => request.url.endsWith("/v1/traces"))?.body ?? "",
+        "desktop-settings-export-test",
       );
     }).pipe(
       Effect.scoped,

@@ -527,7 +527,8 @@ The desktop main process is a second producer, assembled in
 Settings entries as the backend it supervises, and covers work the backend cannot see: app startup,
 window and menu handling, backend supervision, and updates. It reports as service `desktop`
 regardless of `T3CODE_OTLP_SERVICE_NAME`, so a collector shows it alongside the backend rather than
-mixed into it.
+mixed into it. It exports traces and logs only; the main process records no metrics, so the metrics
+endpoint applies to the backend alone.
 
 ### Env Vars
 
