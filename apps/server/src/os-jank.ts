@@ -2,7 +2,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   listLoginShellCandidates,
   mergePathEntries,
-  readPathFromLoginShell,
+  readFullEnvironmentFromLoginShell,
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
 } from "@t3tools/shared/shell";
@@ -17,18 +17,40 @@ function logPathHydrationWarning(message: string, error?: unknown): void {
   );
 }
 
-function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): void {
-  let shellPath: string | undefined;
+const RUNTIME_OWNED_ENVIRONMENT_NAMES = new Set(["HOME", "OLDPWD", "PATH", "PWD", "SHLVL", "_"]);
+
+function isRuntimeOwnedEnvironmentName(name: string): boolean {
+  return (
+    RUNTIME_OWNED_ENVIRONMENT_NAMES.has(name) ||
+    name.startsWith("T3_") ||
+    name.startsWith("T3CODE_")
+  );
+}
+
+export function hydratePosixEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  readEnvironment = readFullEnvironmentFromLoginShell,
+): void {
+  let shellEnvironment: Partial<Record<string, string>> | undefined;
   for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
     try {
-      shellPath = readPathFromLoginShell(shell);
+      shellEnvironment = readEnvironment(shell);
     } catch (error) {
-      logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
+      logPathHydrationWarning(`Failed to read the environment from login shell ${shell}.`, error);
     }
 
-    if (shellPath) break;
+    if (shellEnvironment && Object.keys(shellEnvironment).length > 0) break;
   }
 
+  for (const [name, value] of Object.entries(shellEnvironment ?? {})) {
+    if (isRuntimeOwnedEnvironmentName(name)) continue;
+    if (!env[name] && value) {
+      env[name] = value;
+    }
+  }
+
+  const shellPath = shellEnvironment?.PATH;
   const launchctlPath = platform === "darwin" && !shellPath ? readPathFromLaunchctl() : undefined;
   const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
   if (mergedPath) {
@@ -82,10 +104,10 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
       }),
     ),
   );
-  yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
+  yield* Effect.sync(() => hydratePosixEnvironment(env, platform)).pipe(
     Effect.catchDefect((defect) =>
       Effect.sync(() => {
-        logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
+        logPathHydrationWarning("Failed to hydrate the user environment.", defect);
       }),
     ),
   );

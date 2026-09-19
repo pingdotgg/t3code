@@ -12,14 +12,18 @@ import * as Path from "effect/Path";
 import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
 import * as Context from "effect/Context";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
+const POSIX_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const FULL_ENV_CAPTURE_START = "__T3CODE_ENV_ALL_START__";
+const FULL_ENV_CAPTURE_END = "__T3CODE_ENV_ALL_END__";
+const FULL_ENV_MAX_BUFFER = 4 * 1024 * 1024;
 
 type ExecFileSyncLike = (
   file: string,
   args: ReadonlyArray<string>,
-  options: { encoding: "utf8"; timeout: number },
+  options: { encoding: "utf8"; timeout: number; maxBuffer?: number },
 ) => string;
 
 function canExecuteFile(filePath: string): boolean {
@@ -176,13 +180,6 @@ export function listLoginShellCandidates(
   return candidates;
 }
 
-export function readPathFromLoginShell(
-  shell: string,
-  execFile: ExecFileSyncLike = NodeChildProcess.execFileSync,
-): string | undefined {
-  return readEnvironmentFromLoginShell(shell, ["PATH"], execFile).PATH;
-}
-
 export function readPathFromLaunchctl(
   execFile: ExecFileSyncLike = NodeChildProcess.execFileSync,
 ): string | undefined {
@@ -312,6 +309,56 @@ export const readEnvironmentFromLoginShell: ShellEnvironmentReader = (
 
   return environment;
 };
+
+function buildFullEnvironmentCaptureCommand(): string {
+  return [
+    `printf '%s\\n' '${FULL_ENV_CAPTURE_START}'`,
+    "env -0",
+    `printf '%s\\n' '${FULL_ENV_CAPTURE_END}'`,
+  ].join("; ");
+}
+
+function parseFullEnvironmentOutput(output: string): Partial<Record<string, string>> {
+  const startIndex = output.indexOf(FULL_ENV_CAPTURE_START);
+  if (startIndex === -1) return {};
+
+  const bodyStartIndex = startIndex + FULL_ENV_CAPTURE_START.length;
+  const endIndex = output.indexOf(`\0${FULL_ENV_CAPTURE_END}`, bodyStartIndex);
+  if (endIndex === -1) return {};
+
+  const environment: Partial<Record<string, string>> = {};
+  for (const entry of output
+    .slice(bodyStartIndex, endIndex)
+    .replace(/^\r?\n/, "")
+    .split("\0")) {
+    const separatorIndex = entry.indexOf("=");
+    if (separatorIndex <= 0) continue;
+
+    const name = entry.slice(0, separatorIndex);
+    if (!POSIX_ENV_NAME_PATTERN.test(name)) continue;
+
+    environment[name] = entry.slice(separatorIndex + 1);
+  }
+
+  return environment;
+}
+
+export type FullShellEnvironmentReader = (
+  shell: string,
+  execFile?: ExecFileSyncLike,
+) => Partial<Record<string, string>>;
+
+export const readFullEnvironmentFromLoginShell: FullShellEnvironmentReader = (
+  shell,
+  execFile = NodeChildProcess.execFileSync,
+) =>
+  parseFullEnvironmentOutput(
+    execFile(shell, ["-ilc", buildFullEnvironmentCaptureCommand()], {
+      encoding: "utf8",
+      timeout: 5000,
+      maxBuffer: FULL_ENV_MAX_BUFFER,
+    }),
+  );
 
 export type WindowsShellEnvironmentReader = (
   names: ReadonlyArray<string>,
