@@ -13,6 +13,7 @@ import {
   formatDuration,
   formatResetsIn,
   type LimitPace,
+  PACE_LABEL,
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
@@ -39,9 +40,9 @@ import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
-  ahead: { label: "Ahead of pace: spending faster than the window elapses", icon: TrendingUpIcon },
+  ahead: { label: "Above pace: spending faster than the window elapses", icon: TrendingUpIcon },
   on: { label: "On pace with the window", icon: GaugeIcon },
-  under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
+  under: { label: "Below pace: headroom left for the rest of the window", icon: TrendingDownIcon },
 };
 
 /** The series colour the cost chart uses for this driver, so the two views read as one. */
@@ -51,23 +52,30 @@ export function barColor(driver: ServerProvider["driver"]): string {
   return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
 }
 
-/** Pace as a glyph with the words on hover. */
-export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
-  const Icon = PACE[pace].icon;
+/** Pace as a glyph, optionally with its two words, and the full sentence on hover. */
+export function PaceIcon({
+  pace,
+  words = false,
+}: {
+  readonly pace: LimitPace;
+  readonly words?: boolean;
+}) {
+  const { icon: Icon, label } = PACE[pace];
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span
-            role="img"
-            aria-label={PACE[pace].label}
-            className="inline-flex text-muted-foreground"
+            tabIndex={0}
+            aria-label={words ? undefined : PACE_LABEL[pace]}
+            className="inline-flex cursor-default items-center gap-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         }
       >
         <Icon className="size-3.5" aria-hidden />
+        {words ? PACE_LABEL[pace] : null}
       </TooltipTrigger>
-      <TooltipPopup side="top">{PACE[pace].label}</TooltipPopup>
+      <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
   );
 }
