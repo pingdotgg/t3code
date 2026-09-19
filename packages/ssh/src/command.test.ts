@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   baseSshArgs,
+  buildSshHostSpecEffect,
   getLastNonEmptyOutputLine,
   parseSshResolveOutput,
   runSshCommand,
@@ -78,6 +79,22 @@ describe("ssh command", () => {
           port: 2222,
         },
       );
+    }),
+  );
+
+  it.effect("keeps a discovered SSH URI valid after resolving its user", () =>
+    Effect.gen(function* () {
+      for (const [alias, hostname, expected] of [
+        ["ssh://host.example:2222", "host.example", "ssh://alice@host.example:2222"],
+        ["ssh://[::1]:2222", "::1", "ssh://alice@[::1]:2222"],
+      ]) {
+        const resolved = parseSshResolveOutput(
+          alias!,
+          `hostname ${hostname}\nuser alice\nport 2222\n`,
+        );
+        assert.equal(yield* buildSshHostSpecEffect(resolved), expected);
+        assert.include(baseSshArgs(resolved), "2222");
+      }
     }),
   );
 
