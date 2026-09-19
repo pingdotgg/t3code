@@ -43,16 +43,18 @@ function pointer(clientX = 100) {
 
 function Panel({
   edge = "left",
+  defaultWidth = 400,
   maxWidth = 800,
   storageKey = "test-panel-width",
 }: {
   edge?: "left" | "right";
+  defaultWidth?: number;
   maxWidth?: number;
   storageKey?: string;
 }) {
   const resize = useResizableWidth({
     storageKey,
-    defaultWidth: 400,
+    defaultWidth,
     minWidth: 200,
     maxWidth,
     edge,
@@ -74,7 +76,11 @@ beforeEach(async () => {
   vi.stubGlobal("window", {
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
-    localStorage: { getItem: (key: string) => savedWidths.get(key) ?? null, setItem },
+    localStorage: {
+      getItem: (key: string) => savedWidths.get(key) ?? null,
+      setItem,
+      removeItem: (key: string) => savedWidths.delete(key),
+    },
   });
   vi.stubGlobal("document", { body: { style } });
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -194,6 +200,59 @@ describe("panel resize cleanup", () => {
 });
 
 describe("panel width storage changes", () => {
+  it("resets to the latest clamped default without freezing the next mount's default", async () => {
+    await act(() => renderer.update(<Panel defaultWidth={600} maxWidth={500} />));
+    await act(() => result.handlers.onDoubleClick());
+    expect(result.width).toBe(500);
+    expect(savedWidths.has("test-panel-width")).toBe(false);
+    await act(() => renderer.unmount());
+    await act(() => {
+      renderer = create(<Panel defaultWidth={700} />);
+    });
+    expect(result.width).toBe(700);
+  });
+
+  it("still resets the visible width when storage removal fails", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const remove = vi.spyOn(window.localStorage, "removeItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+    try {
+      await act(() => {
+        result.handlers.onPointerDown(pointer());
+        result.handlers.onPointerUp(pointer(0));
+      });
+      expect(result.width).toBe(500);
+      await act(() => result.handlers.onDoubleClick());
+      expect(result.width).toBe(400);
+      expect(error).toHaveBeenCalledOnce();
+    } finally {
+      remove.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("double-click resets only the current thread width and survives remount", async () => {
+    savedWidths.set("thread-b", "650");
+    await act(() => renderer.update(<Panel storageKey="thread-b" />));
+    for (let click = 0; click < 2; click++) {
+      await act(() => {
+        result.handlers.onPointerDown(pointer());
+        result.handlers.onPointerUp(pointer());
+      });
+    }
+    savedWidths.set("test-panel-width", "500");
+    await act(() => result.handlers.onDoubleClick());
+    expect(result.width).toBe(400);
+    expect(savedWidths.has("thread-b")).toBe(false);
+    expect(savedWidths.get("test-panel-width")).toBe("500");
+    await act(() => renderer.unmount());
+    await act(() => {
+      renderer = create(<Panel storageKey="thread-b" />);
+    });
+    expect(result.width).toBe(400);
+  });
+
   it("restores separate thread widths without remounting and retains them after reload", async () => {
     await act(() => {
       result.handlers.onPointerDown(pointer());
