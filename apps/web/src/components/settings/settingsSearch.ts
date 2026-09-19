@@ -215,6 +215,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "sidebar-hover-peek",
+    title: "Reveal sidebar on hover",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar hover peek edge reveal overlay collapsed threads slide"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",

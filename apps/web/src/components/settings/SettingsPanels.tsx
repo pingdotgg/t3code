@@ -1288,6 +1288,20 @@ export function AppearanceSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          {...searchableSetting("sidebar-hover-peek")}
+          description="Reveal the collapsed sidebar as an overlay while the pointer rests on the left edge."
+          control={
+            <Switch
+              checked={settings.sidebarHoverPeekEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarHoverPeekEnabled: Boolean(checked) })
+              }
+              aria-label="Reveal sidebar on hover"
+            />
+          }
+        />
+
         {showEnvironmentIdentification ? (
           <SettingsRow
             {...searchableSetting("environment-identification")}

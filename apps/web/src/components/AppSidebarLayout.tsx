@@ -18,7 +18,11 @@ import {
 } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import {
+  useEnvironmentIdentificationMode,
+  useLegacySidebarEnabled,
+  useSidebarHoverPeekEnabled,
+} from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -157,6 +161,7 @@ function ProjectProjectionRetention() {
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const legacySidebarEnabled = useLegacySidebarEnabled();
+  const sidebarHoverPeekEnabled = useSidebarHoverPeekEnabled();
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   // Settings routes show the settings nav in place of whichever thread
@@ -243,6 +248,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <Sidebar
           side="left"
           collapsible="offcanvas"
+          hoverPeek={sidebarHoverPeekEnabled}
           data-app-sidebar=""
           className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
           resizable={{

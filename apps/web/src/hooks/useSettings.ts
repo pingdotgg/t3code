@@ -379,6 +379,13 @@ export function useLegacySidebarEnabled(): boolean {
   return settingsHydrated && legacySidebarEnabled;
 }
 
+/** Whether the collapsed sidebar reveals itself on left-edge hover. */
+export function useSidebarHoverPeekEnabled(): boolean {
+  const settingsHydrated = useClientSettingsHydrated();
+  const sidebarHoverPeekEnabled = useClientSettingsValue().sidebarHoverPeekEnabled;
+  return settingsHydrated && sidebarHoverPeekEnabled;
+}
+
 /** Read current settings for one environment, merged with client-local preferences. */
 export function useEnvironmentSettings<T = UnifiedSettings>(
   environmentId: EnvironmentId,

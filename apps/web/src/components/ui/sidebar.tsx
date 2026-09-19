@@ -17,7 +17,15 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
+import { isContextMenuOpen } from "~/contextMenuFallback";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
+import {
+  isHoverPeekPointerType,
+  shouldClosePeekForPointer,
+  SIDEBAR_HOVER_PEEK_CLOSE_DELAY_MS,
+  SIDEBAR_HOVER_PEEK_HOLD_OPEN_SELECTOR,
+  SIDEBAR_HOVER_PEEK_OPEN_DELAY_MS,
+} from "./sidebarHoverPeek";
 import * as Schema from "effect/Schema";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
@@ -175,10 +183,125 @@ function SidebarProvider({
   );
 }
 
+/**
+ * Floats a collapsed offcanvas sidebar back over the content while the pointer
+ * rests on the window edge it hides behind. Returns handlers for the edge strip
+ * and a ref for the panel.
+ *
+ * Closing follows the pointer's position rather than the panel's pointerleave,
+ * because a row's menu portals outside the panel and hovering it must not
+ * collapse the panel underneath. The panel stays open while one of its own
+ * menus or popovers is expanded, or while a web right-click menu opened on it
+ * is showing. Menus elsewhere in the app never hold it. Dismissing a menu with
+ * the keyboard, or leaving the window, produces no pointer move, so those
+ * re-run the same check against the last known position.
+ */
+function useSidebarHoverPeek(enabled: boolean) {
+  const [peeking, setPeeking] = React.useState(false);
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
+  const openTimeoutRef = React.useRef(0);
+  const closeTimeoutRef = React.useRef(0);
+
+  // Adjusted during render so opening the sidebar for real drops the peek before
+  // the next paint; collapsing again then needs a fresh dwell on the edge.
+  if (peeking && !enabled) {
+    setPeeking(false);
+  }
+
+  const onEdgePointerEnter = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!enabled || !isHoverPeekPointerType(event.pointerType)) return;
+      window.clearTimeout(openTimeoutRef.current);
+      openTimeoutRef.current = window.setTimeout(
+        () => setPeeking(true),
+        SIDEBAR_HOVER_PEEK_OPEN_DELAY_MS,
+      );
+    },
+    [enabled],
+  );
+
+  const onEdgePointerLeave = React.useCallback(() => {
+    window.clearTimeout(openTimeoutRef.current);
+  }, []);
+
+  React.useEffect(() => {
+    if (!peeking) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const panelWidth = panel.offsetWidth;
+    let pointerX = 0;
+    let contextMenuFromPanel = false;
+
+    const cancelClose = () => {
+      window.clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = 0;
+    };
+
+    const evaluate = () => {
+      const shouldClose = shouldClosePeekForPointer({
+        holdOpen:
+          panel.querySelector(SIDEBAR_HOVER_PEEK_HOLD_OPEN_SELECTOR) !== null ||
+          (contextMenuFromPanel && isContextMenuOpen()),
+        panelWidth,
+        pointerX,
+      });
+      if (!shouldClose) {
+        cancelClose();
+        return;
+      }
+      if (closeTimeoutRef.current) return;
+      closeTimeoutRef.current = window.setTimeout(() => {
+        closeTimeoutRef.current = 0;
+        setPeeking(false);
+      }, SIDEBAR_HOVER_PEEK_CLOSE_DELAY_MS);
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      pointerX = event.clientX;
+      evaluate();
+    };
+    const onContextMenu = (event: MouseEvent) => {
+      contextMenuFromPanel = event.target instanceof Node && panel.contains(event.target);
+    };
+    const onViewportLeave = () => {
+      pointerX = Number.POSITIVE_INFINITY;
+      evaluate();
+    };
+    const menuObserver = new MutationObserver(evaluate);
+    const contextMenuObserver = new MutationObserver(evaluate);
+
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    // Capture phase: row handlers may stop the event before it bubbles.
+    document.addEventListener("contextmenu", onContextMenu, true);
+    document.documentElement.addEventListener("mouseleave", onViewportLeave);
+    menuObserver.observe(panel, { attributeFilter: ["aria-expanded"], subtree: true });
+    contextMenuObserver.observe(document.body, { childList: true });
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("contextmenu", onContextMenu, true);
+      document.documentElement.removeEventListener("mouseleave", onViewportLeave);
+      menuObserver.disconnect();
+      contextMenuObserver.disconnect();
+      cancelClose();
+    };
+  }, [peeking]);
+
+  React.useEffect(
+    () => () => {
+      window.clearTimeout(openTimeoutRef.current);
+      window.clearTimeout(closeTimeoutRef.current);
+    },
+    [],
+  );
+
+  return { onEdgePointerEnter, onEdgePointerLeave, panelRef, peeking };
+}
+
 function Sidebar({
   side = "left",
   variant = "sidebar",
   collapsible = "offcanvas",
+  hoverPeek = false,
   resizable = false,
   className,
   children,
@@ -187,6 +310,8 @@ function Sidebar({
   side?: "left" | "right";
   variant?: "sidebar" | "floating" | "inset";
   collapsible?: "offcanvas" | "icon" | "none";
+  /** Reveal the collapsed panel while the pointer rests on the window edge. */
+  hoverPeek?: boolean;
   resizable?: boolean | SidebarResizableOptions;
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
@@ -207,6 +332,11 @@ function Sidebar({
   const instanceContextValue = React.useMemo<SidebarInstanceContextProps>(
     () => ({ side, resizable: resolvedResizable }),
     [resolvedResizable, side],
+  );
+  // Left side only: the peek region is measured from the window's left edge.
+  const hoverPeekAvailable = hoverPeek && side === "left" && collapsible === "offcanvas";
+  const { onEdgePointerEnter, onEdgePointerLeave, panelRef, peeking } = useSidebarHoverPeek(
+    hoverPeekAvailable && !isMobile && state === "collapsed",
   );
 
   if (collapsible === "none") {
@@ -269,11 +399,21 @@ function Sidebar({
       <div
         className="group peer hidden text-sidebar-foreground md:block"
         data-collapsible={state === "collapsed" ? collapsible : ""}
+        data-peek={peeking ? "true" : ""}
         data-side={side}
         data-slot="sidebar"
         data-state={state}
         data-variant={variant}
       >
+        {hoverPeekAvailable && state === "collapsed" ? (
+          <div
+            aria-hidden="true"
+            className="fixed inset-y-0 left-0 z-45 w-2"
+            data-slot="sidebar-peek-edge"
+            onPointerEnter={onEdgePointerEnter}
+            onPointerLeave={onEdgePointerLeave}
+          />
+        ) : null}
         {/* This is what handles the sidebar gap on desktop */}
         <div
           className={cn(
@@ -298,9 +438,13 @@ function Sidebar({
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+            // The gap above stays at zero width, so peeking never reflows content.
+            "group-data-[peek=true]:left-0! group-data-[peek=true]:z-45",
+            "group-data-[peek=true]:shadow-[0_0_32px_-8px_rgb(0_0_0/45%)] dark:group-data-[peek=true]:shadow-[0_0_36px_-8px_rgb(0_0_0/70%)]",
             className,
           )}
           data-slot="sidebar-container"
+          ref={panelRef}
           {...props}
         >
           <div
