@@ -7,7 +7,7 @@ import {
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as Devices from "../agentActivity/Devices.ts";
-import * as NodeCryptoBuiltin from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import { createClerkClient, verifyToken } from "@clerk/backend";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -371,7 +371,7 @@ const linkedEnvironmentRecord = {
 describe("relay managed tunnel recovery", () => {
   it.effect("binds recovery requests to the host, cloud user, and T3 service origin", () =>
     Effect.gen(function* () {
-      const keyPair = NodeCryptoBuiltin.generateKeyPairSync("ed25519", {
+      const keyPair = NodeCrypto.generateKeyPairSync("ed25519", {
         privateKeyEncoding: { format: "pem", type: "pkcs8" },
         publicKeyEncoding: { format: "pem", type: "spki" },
       });
@@ -1204,7 +1204,19 @@ describe("relay routing fallback", () => {
       const routes = HttpApiBuilder.layer(
         HttpApi.make("RelayApi").add(RelayApi.groups.server),
       ).pipe(
-        Layer.provide(serverApi.pipe(Layer.provide([publisher, signatures]))),
+        Layer.provide(
+          serverApi.pipe(
+            HttpRouter.provideRequest(
+              Layer.mergeAll(
+                Layer.succeed(RelayConfiguration.RelayConfiguration, relaySettings),
+                Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
+                Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {}),
+                Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
+              ),
+            ),
+            Layer.provide([publisher, signatures]),
+          ),
+        ),
         Layer.provide(auth),
         Layer.provide([NodeServices.layer, NodeHttpPlatform.layer, Etag.layerWeak]),
       );

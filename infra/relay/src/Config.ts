@@ -12,10 +12,10 @@ export const ManagedEndpointCleanupMode = Schema.Literals(["off", "dry-run", "en
 export type ManagedEndpointCleanupMode = typeof ManagedEndpointCleanupMode.Type;
 const decodeManagedEndpointCleanupMode = Schema.decodeUnknownEffect(ManagedEndpointCleanupMode);
 
-export const managedEndpointCleanupModeConfig = Config.string("RELAY_TUNNEL_CLEANUP_MODE").pipe(
+export const managedEndpointCleanupModeConfig = Config.String("RELAY_TUNNEL_CLEANUP_MODE").pipe(
   Config.withDefault("off"),
   Config.map((value) => value.trim() || "off"),
-  Config.mapOrFail((value) =>
+  Config.mapEffect((value) =>
     decodeManagedEndpointCleanupMode(value).pipe(
       Effect.mapError((error) => new Config.ConfigError(error)),
     ),
