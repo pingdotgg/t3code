@@ -4,10 +4,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { resolveEarlyLinuxElectronOptions } from "../app/DesktopEarlyElectronStartup.ts";
 import * as DesktopAppSettings from "./DesktopAppSettings.ts";
 
 const DesktopSettingsPatch = Schema.Struct({
@@ -91,6 +93,35 @@ function writeSettingsPatch(patch: typeof DesktopSettingsPatch.Type) {
 }
 
 describe("DesktopSettings", () => {
+  it.effect("persists explicit device scaling through later settings writes and startup", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* settings.load;
+        yield* settings.setLinuxDeviceScaleFactor(2);
+        yield* settings.setWslBackendEnabled(true);
+        assert.equal((yield* settings.load).linuxDeviceScaleFactor, 2);
+        assert.isFalse((yield* settings.setLinuxDeviceScaleFactor(2)).changed);
+
+        for (const factor of [0, -1, NaN, Infinity]) {
+          assert.isFalse((yield* settings.setLinuxDeviceScaleFactor(factor)).changed);
+        }
+        yield* settings.setLinuxDeviceScaleFactor(1.5);
+        const raw = yield* fileSystem.readFileString(environment.desktopSettingsPath);
+        const restored = resolveEarlyLinuxElectronOptions({
+          env: { T3CODE_HOME: environment.baseDir },
+          homeDirectory: environment.baseDir,
+          joinPath: path.join,
+          readFileString: () => raw,
+        });
+        assert.equal(restored.deviceScaleFactor, 1.5);
+        assert.isTrue((yield* settings.load).wslBackendEnabled);
+      }),
+    ),
+  );
   it.effect(
     "persists disabling and re-enabling local execution without clearing backend settings",
     () =>
@@ -124,6 +155,7 @@ describe("DesktopSettings", () => {
       DesktopAppSettings.resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1"),
       {
         linuxPasswordStore: "auto",
+        linuxDeviceScaleFactor: null,
         localEnvironmentEnabled: true,
         mainWindowBounds: null,
         mainWindowMaximized: false,
@@ -154,6 +186,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "gnome-libsecret",
+          linuxDeviceScaleFactor: null,
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -262,6 +295,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
+          linuxDeviceScaleFactor: null,
           localEnvironmentEnabled: true,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
           mainWindowMaximized: false,
@@ -319,6 +353,7 @@ describe("DesktopSettings", () => {
 
           assert.deepEqual(yield* settings.load, {
             linuxPasswordStore: "auto",
+            linuxDeviceScaleFactor: null,
             localEnvironmentEnabled: true,
             mainWindowBounds: null,
             mainWindowMaximized: false,
@@ -368,6 +403,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
+          linuxDeviceScaleFactor: null,
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -397,6 +433,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
+          linuxDeviceScaleFactor: null,
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,
@@ -425,6 +462,7 @@ describe("DesktopSettings", () => {
 
         assert.deepEqual(yield* settings.load, {
           linuxPasswordStore: "auto",
+          linuxDeviceScaleFactor: null,
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
           mainWindowMaximized: false,

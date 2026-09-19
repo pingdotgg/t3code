@@ -297,6 +297,14 @@ const startup = Effect.gen(function* () {
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
   yield* desktopSettings.load;
 
+  if (preReadyElectronOptions.linuxDeviceScaleFactorCommandLine !== null) {
+    yield* desktopSettings
+      .setLinuxDeviceScaleFactor(preReadyElectronOptions.linuxDeviceScaleFactorCommandLine)
+      .pipe(
+        Effect.catch((error) => logStartupError("could not save Linux device scale", { error })),
+      );
+  }
+
   if (linuxElectronOptions !== null) {
     yield* logStartupInfo("linux password store configured", {
       passwordStore: hasCommandLinePasswordStore

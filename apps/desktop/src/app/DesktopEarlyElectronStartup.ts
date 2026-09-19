@@ -2,8 +2,9 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { normalizeLinuxDeviceScaleFactor } from "../linuxDeviceScaleFactor.ts";
+
 import {
-  DEFAULT_LINUX_PASSWORD_STORE,
   normalizeLinuxPasswordStorePreference,
   resolveLinuxPasswordStoreSwitch,
   type LinuxPasswordStoreSwitch,
@@ -29,6 +30,7 @@ export interface EarlyLinuxElectronOptions {
   readonly linuxWmClass: string;
   readonly linuxDesktopEntryName: string;
   readonly passwordStore: LinuxPasswordStoreSwitch | null;
+  readonly deviceScaleFactor: number | null;
 }
 
 export const resolveLinuxDesktopEntryName = (isDevelopment: boolean): string =>
@@ -42,6 +44,7 @@ const trimNonEmpty = (value: string | undefined): string | null => {
 const EarlyDesktopSettingsJson = fromLenientJson(
   Schema.Struct({
     linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
+    linuxDeviceScaleFactor: Schema.optionalKey(Schema.Unknown),
   }),
 );
 const decodeEarlyDesktopSettingsJson = Schema.decodeSync(EarlyDesktopSettingsJson);
@@ -69,22 +72,28 @@ function resolveEarlyDesktopSettingsPath(input: {
   return input.joinPath(stateDir, "desktop-settings.json");
 }
 
+function readEarlyDesktopSettings(
+  input: EarlyDesktopSettingsInput,
+): typeof EarlyDesktopSettingsJson.Type {
+  const settingsPath = resolveEarlyDesktopSettingsPath(input);
+  try {
+    return decodeEarlyDesktopSettingsJson(input.readFileString(settingsPath));
+  } catch {
+    return {};
+  }
+}
+
 export function resolveEarlyLinuxPasswordStorePreference(
   input: EarlyDesktopSettingsInput,
 ): LinuxPasswordStorePreference {
-  const settingsPath = resolveEarlyDesktopSettingsPath(input);
-  try {
-    const parsed = decodeEarlyDesktopSettingsJson(input.readFileString(settingsPath));
-    return normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore);
-  } catch {
-    return DEFAULT_LINUX_PASSWORD_STORE;
-  }
+  return normalizeLinuxPasswordStorePreference(readEarlyDesktopSettings(input).linuxPasswordStore);
 }
 
 export function resolveEarlyLinuxElectronOptions(
   input: EarlyLinuxElectronOptionsInput,
 ): EarlyLinuxElectronOptions {
-  const preference = resolveEarlyLinuxPasswordStorePreference(input);
+  const settings = readEarlyDesktopSettings(input);
+  const preference = normalizeLinuxPasswordStorePreference(settings.linuxPasswordStore);
   const isDevelopment = isDevelopmentEnvironment(input.env);
   return {
     isDevelopment,
@@ -94,5 +103,6 @@ export function resolveEarlyLinuxElectronOptions(
       preference,
       env: input.env,
     }),
+    deviceScaleFactor: normalizeLinuxDeviceScaleFactor(settings.linuxDeviceScaleFactor),
   };
 }

@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { normalizeLinuxDeviceScaleFactor } from "../linuxDeviceScaleFactor.ts";
 import {
   DEFAULT_LINUX_PASSWORD_STORE,
   normalizeLinuxPasswordStorePreference,
@@ -27,6 +28,7 @@ import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 export interface DesktopSettings {
   readonly localEnvironmentEnabled: boolean;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
+  readonly linuxDeviceScaleFactor: number | null;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
   readonly serverExposureMode: DesktopServerExposureMode;
@@ -76,6 +78,7 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   localEnvironmentEnabled: true,
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
+  linuxDeviceScaleFactor: null,
   mainWindowBounds: null,
   mainWindowMaximized: false,
   serverExposureMode: "local-only",
@@ -98,6 +101,7 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 const DesktopSettingsDocument = Schema.Struct({
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
+  linuxDeviceScaleFactor: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
@@ -158,6 +162,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly setLocalEnvironmentEnabled: (
       enabled: boolean,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setLinuxDeviceScaleFactor: (
+      factor: number,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
@@ -210,6 +217,13 @@ export function normalizeMainWindowBounds(value: unknown): DesktopWindowBounds |
   return Option.getOrNull(decodeDesktopWindowBounds(value));
 }
 
+function setLinuxDeviceScaleFactor(settings: DesktopSettings, value: number): DesktopSettings {
+  const factor = normalizeLinuxDeviceScaleFactor(value);
+  return factor === null || factor === settings.linuxDeviceScaleFactor
+    ? settings
+    : { ...settings, linuxDeviceScaleFactor: factor };
+}
+
 function normalizeDesktopSettingsDocument(
   parsed: DesktopSettingsDocument,
   appVersion: string,
@@ -232,6 +246,7 @@ function normalizeDesktopSettingsDocument(
   return {
     localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
+    linuxDeviceScaleFactor: normalizeLinuxDeviceScaleFactor(parsed.linuxDeviceScaleFactor),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
     serverExposureMode:
@@ -260,6 +275,9 @@ function toDesktopSettingsDocument(
 
   if (settings.linuxPasswordStore !== defaults.linuxPasswordStore) {
     document.linuxPasswordStore = settings.linuxPasswordStore;
+  }
+  if (settings.linuxDeviceScaleFactor !== null) {
+    document.linuxDeviceScaleFactor = settings.linuxDeviceScaleFactor;
   }
   if (settings.mainWindowBounds !== null) {
     document.mainWindowBounds = settings.mainWindowBounds;
@@ -524,6 +542,10 @@ export const make = Effect.gen(function* () {
       );
       return yield* SynchronizedRef.setAndGet(settingsRef, settings);
     }).pipe(Effect.withSpan("desktop.settings.load")),
+    setLinuxDeviceScaleFactor: (factor) =>
+      persist((settings) => setLinuxDeviceScaleFactor(settings, factor)).pipe(
+        Effect.withSpan("desktop.settings.setLinuxDeviceScaleFactor", { attributes: { factor } }),
+      ),
     setMainWindowBounds: (bounds, isMaximized) =>
       persist((settings) => setMainWindowBounds(settings, bounds, isMaximized)).pipe(
         Effect.withSpan("desktop.settings.setMainWindowBounds", {
@@ -597,6 +619,8 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
       return DesktopAppSettings.of({
         get: SynchronizedRef.get(settingsRef),
         load: SynchronizedRef.get(settingsRef),
+        setLinuxDeviceScaleFactor: (factor) =>
+          update((settings) => setLinuxDeviceScaleFactor(settings, factor)),
         setMainWindowBounds: (bounds, isMaximized) =>
           update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
         setServerExposureMode: (mode) =>

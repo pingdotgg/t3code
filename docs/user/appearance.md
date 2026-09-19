@@ -21,6 +21,16 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Linux display scaling
+
+If you launch the desktop app with `--force-device-scale-factor=2` (or another positive
+scale factor), T3 remembers it for later launches, including restarts after an update.
+A valid explicit flag takes precedence over the saved value. Invalid flags fall back to
+the saved value, or automatic scaling when no value is saved.
+
+To return to automatic display scaling, quit T3 and remove `linuxDeviceScaleFactor` from
+`~/.t3/userdata/desktop-settings.json`, or the corresponding file under your custom T3 home.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the

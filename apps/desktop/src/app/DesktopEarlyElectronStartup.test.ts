@@ -10,6 +10,20 @@ import {
 describe("DesktopEarlyElectronStartup", () => {
   const joinPath = NodePath.posix.join;
 
+  for (const value of [0, -1, "2", null, {}]) {
+    it(`ignores invalid saved device scaling ${JSON.stringify(value)} without losing other settings`, () => {
+      const options = resolveEarlyLinuxElectronOptions({
+        env: {},
+        homeDirectory: "/home/user",
+        joinPath,
+        readFileString: () =>
+          JSON.stringify({ linuxDeviceScaleFactor: value, linuxPasswordStore: "kwallet6" }),
+      });
+      assert.equal(options.deviceScaleFactor, null);
+      assert.equal(options.passwordStore, "kwallet6");
+    });
+  }
+
   it("reads the persisted linux password-store preference before Electron is ready", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
       env: { T3CODE_HOME: "/home/user/.t3-test" },
@@ -85,6 +99,7 @@ describe("DesktopEarlyElectronStartup", () => {
       linuxWmClass: "t3code-dev",
       linuxDesktopEntryName: "com.t3tools.T3Code.Development.desktop",
       passwordStore: "gnome-libsecret",
+      deviceScaleFactor: null,
     });
   });
 
