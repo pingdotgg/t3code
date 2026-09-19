@@ -779,6 +779,7 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "thread/started":
       return notification.params.thread.id;
     case "error":
+    case "warning":
     case "thread/status/changed":
     case "thread/archived":
     case "thread/unarchived":
@@ -818,10 +819,32 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "thread/realtime/sdp":
     case "thread/realtime/error":
     case "thread/realtime/closed":
-      return notification.params.threadId;
+      return notification.params.threadId ?? undefined;
     default:
       return undefined;
   }
+}
+
+export function shouldSuppressUnownedCodexNotification(
+  notification: CodexServerNotification,
+  rootProviderThreadId: string | undefined,
+  isRegisteredChild: boolean,
+): boolean {
+  const providerThreadId = readNotificationThreadId(notification);
+  if (providerThreadId !== undefined && rootProviderThreadId === undefined) {
+    return true;
+  }
+  if (
+    providerThreadId === undefined ||
+    providerThreadId === rootProviderThreadId ||
+    isRegisteredChild
+  ) {
+    return false;
+  }
+
+  // Resolution notifications complete requests owned by the parent runtime,
+  // even when Codex addresses them to a child provider thread.
+  return notification.method !== "serverRequest/resolved";
 }
 
 export function makeMemoryConsolidationNotificationFilter(): (
@@ -936,12 +959,10 @@ function readRouteFields(notification: CodexServerNotification): {
  * synthetic `collabAgent/*` provider events the adapter turns into task.*
  * runtime events (timelineBypass keeps them out of the parent chat).
  *
- * WIP, probe-gated: registration is deliberately explicit-signals-only. The
- * spec's "provisionally treat unknown foreign thread ids as v2 children" rule
- * needs a live wire capture of the packaged binary before it lands — blind
- * capture risks eating unrelated traffic. Until then a child whose first
- * notification precedes registration passes through as today (no regression
- * vs main, which passes everything through).
+ * Registration is deliberately explicit-signals-only. Notifications from an
+ * unknown foreign thread stay unregistered and are suppressed at the parent
+ * boundary until one of those signals arrives, preventing unrelated provider
+ * sessions from leaking into this conversation.
  */
 interface CollabChildAgentState {
   readonly agentThreadId: string;
@@ -1024,8 +1045,9 @@ function rememberCollabReceiverTurns(
   collabReceiverTurns: Map<string, TurnId>,
   notification: CodexServerNotification,
   parentTurnId: TurnId | undefined,
+  sourceOwnedBySession: boolean,
 ): void {
-  if (!parentTurnId) {
+  if (!parentTurnId || !sourceOwnedBySession) {
     return;
   }
 
@@ -1040,6 +1062,21 @@ function rememberCollabReceiverTurns(
   for (const receiverThreadId of notification.params.item.receiverThreadIds) {
     collabReceiverTurns.set(receiverThreadId, parentTurnId);
   }
+}
+
+function isOwnedCollabThreadId(
+  providerThreadId: string | undefined,
+  rootProviderThreadId: string | undefined,
+  collabReceiverTurns: ReadonlyMap<string, TurnId>,
+  collabChildAgents: ReadonlyMap<string, CollabChildAgentState>,
+): boolean {
+  return (
+    providerThreadId !== undefined &&
+    rootProviderThreadId !== undefined &&
+    (providerThreadId === rootProviderThreadId ||
+      collabReceiverTurns.has(providerThreadId) ||
+      collabChildAgents.has(providerThreadId))
+  );
 }
 
 function shouldSuppressChildConversationNotification(
@@ -1557,7 +1594,10 @@ export const makeCodexSessionRuntime = (
      * Returns true when the notification was fully handled (must not reach
      * parent-timeline mapping).
      */
-    const interceptCollabChildNotification = (notification: CodexServerNotification) =>
+    const interceptCollabChildNotification = (
+      notification: CodexServerNotification,
+      sourceOwnedBySession: boolean,
+    ) =>
       Effect.gen(function* () {
         // Registration path 1: child thread announces itself with a
         // subAgent thread_spawn source.
@@ -1569,6 +1609,14 @@ export const makeCodexSessionRuntime = (
           }
           const rootProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
           if (thread.id === rootProviderThreadId) {
+            return false;
+          }
+          const parentThreadId = spawn.parentThreadId ?? thread.parentThreadId ?? undefined;
+          const receiverTurns = yield* Ref.get(collabReceiverTurnsRef);
+          const childAgents = yield* Ref.get(collabChildAgentsRef);
+          if (
+            !isOwnedCollabThreadId(parentThreadId, rootProviderThreadId, receiverTurns, childAgents)
+          ) {
             return false;
           }
           // Merge with any subAgentActivity registration that got here
@@ -1619,6 +1667,9 @@ export const makeCodexSessionRuntime = (
           (notification.method === "item/started" || notification.method === "item/completed") &&
           notification.params.item.type === "subAgentActivity"
         ) {
+          if (!sourceOwnedBySession) {
+            return false;
+          }
           const item = notification.params.item;
           // Never register the session's ROOT thread as its own child. The
           // wire emits subAgentActivity {agentPath: "/root", interacted}
@@ -1868,20 +1919,33 @@ export const makeCodexSessionRuntime = (
         const payload = notification.params;
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
+        const suppressRootId = currentProviderThreadId(yield* Ref.get(sessionRef));
+        const providerConversationId = readNotificationThreadId(notification);
+        const collabChildAgents = yield* Ref.get(collabChildAgentsRef);
+        const sourceOwnedBySession = isOwnedCollabThreadId(
+          providerConversationId,
+          suppressRootId,
+          collabReceiverTurns,
+          collabChildAgents,
+        );
         const childParentTurnId = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
           return providerConversationId
             ? collabReceiverTurns.get(providerConversationId)
             : undefined;
         })();
 
-        rememberCollabReceiverTurns(collabReceiverTurns, notification, route.turnId);
+        rememberCollabReceiverTurns(
+          collabReceiverTurns,
+          notification,
+          route.turnId,
+          sourceOwnedBySession,
+        );
         // Interception FIRST: a registered v2 child is usually also in the
         // receiver-turn map (collabAgentToolCall.receiverThreadIds), and the
         // legacy suppressor below would drop its lifecycle before it could
         // become synthetic collabAgent events (review finding). The
         // suppressor still covers UNREGISTERED children.
-        if (yield* interceptCollabChildNotification(notification)) {
+        if (yield* interceptCollabChildNotification(notification, sourceOwnedBySession)) {
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
           return;
         }
@@ -1891,11 +1955,9 @@ export const makeCodexSessionRuntime = (
         // (codexMultiAgentWire.json) shows a child's thread/status/changed
         // arriving BEFORE anything registers the child — pre-registration
         // lifecycle must not reach the parent path, where the adapter maps
-        // thread/* onto parent session state. Root-id-known guard keeps the
-        // root's own early notifications flowing during session open.
-        const suppressRootId = currentProviderThreadId(yield* Ref.get(sessionRef));
+        // thread/* onto parent session state. The unowned guard below enforces
+        // the authoritative root boundary for every other thread method.
         const foreignConversation = (() => {
-          const providerConversationId = readNotificationThreadId(notification);
           return (
             providerConversationId !== undefined &&
             suppressRootId !== undefined &&
@@ -1939,6 +2001,20 @@ export const makeCodexSessionRuntime = (
             }
           }
           yield* Ref.set(collabReceiverTurnsRef, collabReceiverTurns);
+          return;
+        }
+
+        // Codex app-server can emit another session's thread traffic without a
+        // preceding thread/started notification. Registered collaboration
+        // children were handled above; all other foreign thread traffic must
+        // stay out of this canonical T3 conversation.
+        if (
+          shouldSuppressUnownedCodexNotification(
+            notification,
+            suppressRootId,
+            childParentTurnId !== undefined,
+          )
+        ) {
           return;
         }
 
@@ -1993,7 +2069,10 @@ export const makeCodexSessionRuntime = (
     yield* client.handleServerNotification("thread/started", (payload) =>
       currentSessionProviderThreadId.pipe(
         Effect.flatMap((providerThreadId) => {
-          if (providerThreadId && payload.thread.id !== providerThreadId) {
+          // thread/start and thread/resume responses authoritatively establish
+          // ownership. An unsolicited startup notification must not claim an
+          // uninitialized runtime for another provider thread.
+          if (!providerThreadId || payload.thread.id !== providerThreadId) {
             return Effect.void;
           }
           return updateSession(sessionRef, {

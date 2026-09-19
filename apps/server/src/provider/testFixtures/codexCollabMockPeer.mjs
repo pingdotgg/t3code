@@ -92,7 +92,17 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "thread/start") {
-    write({ id, result: fixture.responses.threadStart });
+    for (const notification of script.startupNotifications ?? []) {
+      write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
+    }
+    if (script.startupResponseDelayMs) {
+      setTimeout(
+        () => write({ id, result: fixture.responses.threadStart }),
+        script.startupResponseDelayMs,
+      );
+    } else {
+      write({ id, result: fixture.responses.threadStart });
+    }
     return;
   }
   if (method === "thread/resume") {
