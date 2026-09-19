@@ -101,6 +101,7 @@ const WSL_FORWARDED_ENV_NAMES = [
 ] as const;
 
 const WSL_SERVER_SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const DESKTOP_LIFETIME_FD = 6;
 
 const nodeBinDirOf = (nodePath: string): string => {
   const lastSlash = nodePath.lastIndexOf("/");
@@ -538,6 +539,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       tailscaleServePort: backendExposure.tailscaleServePort,
       desktopTelemetryFd: 4,
       desktopTelemetryControlFd: 5,
+      ...(environment.platform === "linux" ? { desktopLifetimeFd: DESKTOP_LIFETIME_FD } : {}),
       ...Option.match(input.resourceMonitorPath, {
         onNone: () => ({}),
         onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),

@@ -19,6 +19,9 @@ export const DesktopBackendBootstrap = Schema.Struct({
   otlpLogsUrl: Schema.optional(Schema.String),
   desktopTelemetryFd: Schema.optionalKey(PositiveInt),
   desktopTelemetryControlFd: Schema.optionalKey(PositiveInt),
+  // Linux desktop backends watch this pipe for EOF so they also stop when
+  // Electron exits before its normal shutdown handlers can run.
+  desktopLifetimeFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
 });
 
