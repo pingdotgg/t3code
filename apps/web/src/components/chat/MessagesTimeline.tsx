@@ -47,7 +47,6 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
-const NOOP_OPEN_AGENTS = () => {};
 const EMPTY_QUEUED_MESSAGES: ReadonlyArray<QueuedComposerMessage> = [];
 const NOOP_QUEUED_MESSAGE_ACTION = (_id: string) => {};
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
@@ -295,7 +294,6 @@ interface TimelineRowSharedState {
   workGroupViewState: WorkGroupViewState;
   agentPanelModel: AgentPanelModel;
   expandedSpawnEntryIds: ReadonlySet<string>;
-  onOpenAgents: () => void;
   onCancelWorktreeSetup: (() => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
@@ -403,7 +401,6 @@ interface MessagesTimelineProps {
     sourceAnchor: AssistantCitationSourceAnchor,
   ) => boolean;
   agentPanelModel?: AgentPanelModel;
-  onOpenAgents?: () => void;
   isWorking: boolean;
   isPreparingWorktree?: boolean;
   isCompacting?: boolean;
@@ -486,7 +483,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   isCompacting = false,
   activeTurnStartedAt,
   agentPanelModel,
-  onOpenAgents = NOOP_OPEN_AGENTS,
   listRef,
   timelineEntries,
   latestTurn,
@@ -1156,7 +1152,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
       agentPanelModel: agentPanelModel ?? EMPTY_AGENT_PANEL_MODEL,
       expandedSpawnEntryIds: paintedExpandedSpawnEntryIds,
-      onOpenAgents,
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
@@ -1191,7 +1186,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workGroupViewState,
       agentPanelModel,
       paintedExpandedSpawnEntryIds,
-      onOpenAgents,
       onCancelWorktreeSetup,
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
@@ -4567,8 +4561,7 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const { workEntry } = props;
-  const { agentPanelModel, expandedSpawnEntryIds, onToggleSpawnRow, onOpenAgents } =
-    use(TimelineRowCtx);
+  const { agentPanelModel, expandedSpawnEntryIds, onToggleSpawnRow } = use(TimelineRowCtx);
   const spawn = workEntry.agentSpawn;
   if (!spawn) {
     return null;
@@ -4620,13 +4613,6 @@ const AgentSpawnRow = memo(function AgentSpawnRow(props: {
           {agents.map((agent) => (
             <AgentSpawnMemberRow key={agent.id} agent={agent} onToggleEntry={props.onToggleEntry} />
           ))}
-          <button
-            type="button"
-            onClick={onOpenAgents}
-            className="mt-1 self-start rounded-sm px-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            Open Agents panel ›
-          </button>
         </div>
       ) : null}
     </div>
