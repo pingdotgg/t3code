@@ -50,11 +50,13 @@ export function PullRequestReviewBar({
   environmentId,
   reference,
   verdicts,
+  requestChangesSummaryRequired,
   onSubmitted,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
+  requestChangesSummaryRequired: boolean;
   onSubmitted: () => void;
 }) {
   const [pending, setPending] = useState(false);
@@ -106,9 +108,11 @@ export function PullRequestReviewBar({
     onSubmitted();
   };
 
-  // An approval needs no words; anything else does, unless it carries line comments instead.
+  // Forgejo requires a summary when requesting changes, even with inline comments.
   const canSubmit = (verdict: PullRequestReviewVerdict) =>
-    verdict === "approve" || body.trim().length > 0 || comments.length > 0;
+    verdict === "request-changes" && requestChangesSummaryRequired
+      ? body.trim().length > 0
+      : verdict === "approve" || body.trim().length > 0 || comments.length > 0;
 
   return (
     <div className="px-4 py-3">
@@ -128,7 +132,11 @@ export function PullRequestReviewBar({
         size="sm"
         className="mt-2"
         value={body}
-        placeholder="Summarize your review (optional)"
+        placeholder={
+          requestChangesSummaryRequired && verdicts.includes("request-changes")
+            ? "Summarize your review (required to request changes)"
+            : "Summarize your review (optional)"
+        }
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
       />

@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { CommandId, ProjectId, ThreadId } from "./baseSchemas.ts";
 
 import {
+  ProjectIconOverride,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type ChatImageAttachment,
@@ -18,6 +19,7 @@ import {
   OrchestrationLatestTurn,
   ProjectCreatedPayload,
   ProjectMetaUpdatedPayload,
+  OrchestrationProjectShell,
   OrchestrationProposedPlan,
   OrchestrationSession,
   OrchestrationThread,
@@ -26,6 +28,7 @@ import {
   OrchestrationMessage,
   ThreadMessageSentPayload,
   ThreadMetaUpdatedPayload,
+  ThreadLinkedPullRequest,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -78,6 +81,18 @@ it.effect("decodes a dispatch error after its bootstrap thread was deleted", () 
     });
 
     assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
+  }),
+);
+
+it.effect("decodes a dispatch error before its bootstrap thread was created", () =>
+  Effect.gen(function* () {
+    const error = yield* decodeDispatchCommandError({
+      _tag: "OrchestrationDispatchCommandError",
+      message: "A separate worktree requires a base commit.",
+      bootstrapThreadDisposition: "not-created",
+    });
+
+    assert.strictEqual(error.bootstrapThreadDisposition, "not-created");
   }),
 );
 
@@ -542,6 +557,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
           baseBranch: "main",
           branch: "t3code/example",
           startFromOrigin: true,
+          requireWorktree: true,
         },
         runSetupScript: true,
       },
@@ -550,6 +566,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
     assert.strictEqual(parsed.bootstrap?.createThread?.projectId, "project-1");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.baseBranch, "main");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.startFromOrigin, true);
+    assert.strictEqual(parsed.bootstrap?.prepareWorktree?.requireWorktree, true);
     assert.strictEqual(parsed.bootstrap?.runSetupScript, true);
   }),
 );
@@ -682,6 +699,116 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
     assert.strictEqual(thread.settledAt, null);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    // Pre-link servers omit the array entirely.
+    assert.deepStrictEqual(thread.pullRequests, []);
+    assert.deepStrictEqual(shell.pullRequests, []);
+
+    const legacyLink = {
+      projectId: ProjectId.make("project-1"),
+      repository: "acme/web",
+      number: 42,
+      url: "https://github.com/acme/web/pull/42",
+    };
+    const oldServerShell = yield* decodeOrchestrationThreadShell({
+      ...common,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+      linkedPullRequest: legacyLink,
+    });
+    assert.deepStrictEqual(oldServerShell.pullRequests, []);
+    assert.deepStrictEqual(oldServerShell.linkedPullRequest, legacyLink);
+
+    // A decoder from before the array must still read its single-link field
+    // after a new server encodes the expanded snapshot.
+    const oldLinkFields = Schema.Struct({
+      linkedPullRequest: Schema.optional(ThreadLinkedPullRequest),
+    });
+    const newServerWire = yield* Schema.encodeEffect(OrchestrationThreadShell)({
+      ...oldServerShell,
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: legacyLink.repository,
+          number: legacyLink.number,
+          url: legacyLink.url,
+          source: "agent",
+          linkedAt: common.createdAt,
+          snapshot: null,
+          stack: null,
+        },
+      ],
+    });
+    const oldClientFields = yield* Schema.decodeUnknownEffect(oldLinkFields)(newServerWire);
+    assert.deepStrictEqual(oldClientFields.linkedPullRequest, legacyLink);
+  }),
+);
+
+it.effect("decodes thread pull request links with snapshot and stack", () =>
+  Effect.gen(function* () {
+    const shell = yield* decodeOrchestrationThreadShell({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      modelSelection: { provider: "codex", model: "gpt-5-codex" },
+      runtimeMode: "full-access",
+      branch: "feature/stack-2",
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      session: null,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+      pullRequests: [
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 42,
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+          source: "agent",
+          linkedAt: "2026-01-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+        {
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 43,
+          url: "https://github.com/pingdotgg/t3code/pull/43",
+          source: "stack",
+          linkedAt: "2026-01-01T00:01:00.000Z",
+          snapshot: {
+            state: "open",
+            title: "Layer two",
+            headBranch: "feature/stack-2",
+            baseBranch: "feature/stack-1",
+            isDraft: false,
+            updatedAt: "2026-01-01T00:02:00.000Z",
+            syncedAt: "2026-01-01T00:03:00.000Z",
+          },
+          stack: {
+            kind: "native",
+            id: "7",
+            number: 3,
+            url: "https://github.com/pingdotgg/t3code/stacks/3",
+            base: "main",
+            layers: [
+              { number: 42, headBranch: "feature/stack-1", state: "open" },
+              { number: 43, headBranch: "feature/stack-2", state: "open" },
+            ],
+          },
+        },
+      ],
+    });
+
+    assert.strictEqual(shell.pullRequests.length, 2);
+    assert.strictEqual(shell.pullRequests[1]?.stack?.layers.length, 2);
+    assert.strictEqual(shell.pullRequests[1]?.snapshot?.state, "open");
   }),
 );
 
@@ -966,25 +1093,64 @@ it.effect("accepts a title regeneration intent in thread.meta.update", () =>
   }),
 );
 
-it.effect("accepts a linked pull request in thread.meta.update", () =>
+it.effect("accepts thread.pull-request.link and .unlink commands", () =>
   Effect.gen(function* () {
-    const linkedPullRequest = {
-      projectId: "project-1",
+    const link = yield* decodeOrchestrationCommand({
+      type: "thread.pull-request.link",
+      commandId: "cmd-link-pull-request",
+      threadId: "thread-1",
+      host: "github.com",
       repository: "pingdotgg/t3code",
       number: 42,
       url: "https://github.com/pingdotgg/t3code/pull/42",
-    };
-    const parsed = yield* decodeOrchestrationCommand({
-      type: "thread.meta.update",
-      commandId: "cmd-link-pull-request",
-      threadId: "thread-1",
-      linkedPullRequest,
+      source: "manual",
     });
-
-    assert.strictEqual(parsed.type, "thread.meta.update");
-    if (parsed.type === "thread.meta.update") {
-      assert.deepStrictEqual(parsed.linkedPullRequest, linkedPullRequest);
+    assert.strictEqual(link.type, "thread.pull-request.link");
+    if (link.type === "thread.pull-request.link") {
+      assert.strictEqual(link.source, "manual");
+      assert.strictEqual(link.number, 42);
     }
+
+    const unlink = yield* decodeOrchestrationCommand({
+      type: "thread.pull-request.unlink",
+      commandId: "cmd-unlink-pull-request",
+      threadId: "thread-1",
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 42,
+    });
+    assert.strictEqual(unlink.type, "thread.pull-request.unlink");
+  }),
+);
+
+it.effect("still decodes a persisted thread.meta-updated event carrying linkedPullRequest", () =>
+  Effect.gen(function* () {
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-legacy-link",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.meta-updated",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-legacy-link",
+      causationEventId: null,
+      correlationId: "cmd-legacy-link",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        linkedPullRequest: {
+          projectId: "project-1",
+          repository: "pingdotgg/t3code",
+          number: 42,
+          url: "https://github.com/pingdotgg/t3code/pull/42",
+        },
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    if (event.type !== "thread.meta-updated") {
+      assert.fail(`Expected thread.meta-updated event, received ${event.type}.`);
+    }
+    assert.strictEqual(event.payload.linkedPullRequest?.number, 42);
   }),
 );
 
@@ -1344,6 +1510,44 @@ it.effect("project icon overrides accept Lucide icons, colors, and emoji", () =>
   }),
 );
 
+it.effect("project monograms validate text and palette colors", () =>
+  Effect.gen(function* () {
+    for (const text of ["A", "T3", "É", "文書", "कि", "किखि", "e\u0301"]) {
+      const projectIcon = {
+        kind: "monogram",
+        color: "violet",
+        text,
+      } as const;
+      const command = yield* decodeOrchestrationCommand({
+        type: "project.meta.update",
+        commandId: "cmd-monogram",
+        projectId: "project-1",
+        projectIcon,
+      });
+      assert.strictEqual(command.type, "project.meta.update");
+      if (command.type === "project.meta.update")
+        assert.deepEqual(command.projectIcon, { kind: "monogram", text, color: "violet" });
+    }
+    for (const projectIcon of [
+      { kind: "monogram", text: "", color: "blue" },
+      { kind: "monogram", text: "\u0301", color: "blue" },
+      { kind: "monogram", text: "A B", color: "blue" },
+      { kind: "monogram", text: "🚀", color: "blue" },
+      { kind: "monogram", text: "T3", color: "ultraviolet" },
+    ]) {
+      const result = yield* Effect.exit(
+        decodeOrchestrationCommand({
+          type: "project.meta.update",
+          commandId: "cmd-monogram-invalid",
+          projectId: "project-1",
+          projectIcon,
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+    }
+  }),
+);
+
 it.effect("rejects thread history imports without messages", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(
@@ -1364,3 +1568,92 @@ it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects 
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/svg+xml"), false);
 });
+
+const decodeProjectIcon = Schema.decodeUnknownEffect(ProjectIconOverride);
+const encodeProjectIcon = Schema.encodeEffect(ProjectIconOverride);
+
+// Pre-monogram clients reject unknown variants; nightly clients additionally validate monogram.
+const decodeOldIcon = Schema.decodeUnknownEffect(
+  Schema.Union([
+    Schema.Struct({ kind: Schema.Literal("lucide"), name: Schema.String, color: Schema.String }),
+    Schema.Struct({ kind: Schema.Literal("emoji"), emoji: Schema.String }),
+  ]),
+);
+const decodeNightlyIcon = Schema.decodeUnknownEffect(
+  Schema.Union([
+    Schema.Struct({
+      kind: Schema.Literal("lucide"),
+      name: Schema.String,
+      color: Schema.String,
+      // Fail if this field is ever sent; old validators must never see the new text.
+      monogram: Schema.optional(Schema.Never),
+    }),
+    Schema.Struct({ kind: Schema.Literal("emoji"), emoji: Schema.String }),
+  ]),
+);
+
+it.effect("sends monograms as fallback icons that old and nightly clients can decode", () =>
+  Effect.gen(function* () {
+    const fallback = { kind: "lucide", name: "folder-code", color: "violet" } as const;
+    for (const text of ["T3", "क्ष्म", "e\u0301"]) {
+      const monogram = { kind: "monogram", text, color: "violet" } as const;
+      const wire = yield* encodeProjectIcon(monogram);
+      assert.deepEqual(wire, { ...fallback, monogramText: text });
+      assert.deepEqual(yield* decodeOldIcon(wire), fallback);
+      assert.deepEqual(yield* decodeNightlyIcon(wire), fallback);
+      assert.deepEqual(yield* decodeProjectIcon(wire), monogram);
+      assert.deepEqual(yield* decodeProjectIcon(monogram), monogram);
+      assert.deepEqual(yield* decodeProjectIcon({ ...fallback, monogram: text }), monogram);
+    }
+    for (const icon of [
+      { kind: "lucide", name: "alarm-clock", color: "blue" },
+      { kind: "emoji", emoji: "🚀" },
+    ] as const) {
+      assert.deepEqual(yield* decodeProjectIcon(icon), icon);
+      assert.deepEqual(yield* encodeProjectIcon(icon), icon);
+    }
+  }),
+);
+
+const encodeProjectShell = Schema.encodeEffect(OrchestrationProjectShell);
+const encodeClientCommand = Schema.encodeEffect(ClientOrchestrationCommand);
+const decodeLegacyShell = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    ...OrchestrationProjectShell.fields,
+    projectIcon: Schema.optional(
+      Schema.NullOr(
+        Schema.Struct({
+          kind: Schema.Literal("lucide"),
+          name: Schema.String,
+          color: Schema.String,
+        }),
+      ),
+    ),
+  }),
+);
+
+it.effect("encodes compatible icons inside snapshots and client commands", () =>
+  Effect.gen(function* () {
+    const projectIcon = { kind: "monogram", text: "क्ष्म", color: "violet" } as const;
+    const shell = yield* encodeProjectShell({
+      id: ProjectId.make("monogram"),
+      title: "Monogram",
+      workspaceRoot: "/tmp/monogram",
+      defaultModelSelection: null,
+      scripts: [],
+      projectIcon,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const fallback = { kind: "lucide", name: "folder-code", color: "violet" } as const;
+    assert.deepEqual((yield* decodeLegacyShell(shell)).projectIcon, fallback);
+    const command = yield* encodeClientCommand({
+      type: "project.meta.update",
+      projectId: ProjectId.make("monogram"),
+      commandId: CommandId.make("monogram"),
+      projectIcon,
+    });
+    if (command.type !== "project.meta.update") throw new Error("Unexpected command");
+    assert.deepEqual(yield* decodeNightlyIcon(command.projectIcon), fallback);
+  }),
+);

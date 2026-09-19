@@ -589,7 +589,7 @@ export const groupCompaction = <Events extends Event.Any, R>(
         effect: Effect.fnUntraced(function*({ entries, write }): Effect.fn.Return<void> {
           const isEventTag = (tag: string): tag is Event.Tag<Events> => Object.hasOwn(group.events, tag)
           const decodePayload = <Tag extends Event.Tag<Events>>(tag: Tag, payload: Uint8Array) =>
-            Schema.decodeUnknownEffect(group.events[tag].payloadMsgPack)(payload).pipe(
+            Schema.decodeUnknownEffect(group.events[tag].payloadSchemaBinary)(payload).pipe(
               Effect.updateContext((input) => Context.merge(services, input)),
               Effect.orDie
             ) as unknown as Effect.Effect<Event.PayloadWithTag<Events, Tag>>
@@ -602,7 +602,7 @@ export const groupCompaction = <Events extends Event.Any, R>(
             const entry = new Entry({
               id: makeEntryIdUnsafe({ msecs: timestamp }),
               event: tag,
-              payload: yield* Schema.encodeUnknownEffect(event.payloadMsgPack)(payload).pipe(
+              payload: yield* Schema.encodeUnknownEffect(event.payloadSchemaBinary)(payload).pipe(
                 Effect.orDie
               ) as any,
               primaryKey: event.primaryKey(payload)
@@ -702,7 +702,7 @@ export const makeReplayFromRemote = (options: {
   readonly handlers: ReadonlyMap<string, Handlers.Item<any>>
   readonly storeId: StoreId
   readonly identity: Identity["Service"]
-  readonly reactivity: Reactivity["Service"]
+  readonly reactivity: Reactivity
   readonly reactivityKeys: Record<string, ReadonlyArray<string>>
   readonly logAnnotations: {
     readonly service: string
@@ -719,7 +719,7 @@ export const makeReplayFromRemote = (options: {
         return yield* Effect.logDebug(`Event handler not found for: "${entry.event}"`)
       }
 
-      const decodePayload = Schema.decodeUnknownEffect(handler.event.payloadMsgPack)
+      const decodePayload = Schema.decodeUnknownEffect(handler.event.payloadSchemaBinary)
       const decodedConflicts: Array<{ entry: Entry; payload: unknown }> = new Array(conflicts.length)
       for (let i = 0; i < conflicts.length; i++) {
         decodedConflicts[i] = {
@@ -903,7 +903,7 @@ const make = Effect.gen(function*() {
     readonly event: string
     readonly payload: unknown
   }) {
-    const payload = yield* Schema.encodeUnknownEffect(handler.event.payloadMsgPack)(options.payload).pipe(
+    const payload = yield* Schema.encodeUnknownEffect(handler.event.payloadSchemaBinary)(options.payload).pipe(
       Effect.orDie
     )
     return yield* journal.withLock(storeId)(journal.write({

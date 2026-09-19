@@ -1,3 +1,4 @@
+import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { createThreadMovePlanner } from "../threads/threadOrder";
 import {
   LegendList,
@@ -22,18 +23,20 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, FlatList, Platform, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
+import { cn } from "../../lib/cn";
 import { EmptyState } from "../../components/EmptyState";
+import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
+import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -49,6 +52,7 @@ import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
+  ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
 } from "../threads/thread-list-v2-items";
 import { resolveThreadProviderInstance } from "../threads/thread-provider-instance";
@@ -79,6 +83,7 @@ import {
   type HomeProjectSortOrder,
 } from "./homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
+import { useMaterialFabScroll } from "./MaterialFabScrollContext";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
 
@@ -120,8 +125,9 @@ interface HomeScreenProps {
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onMoveThread: (
     thread: EnvironmentThreadShell,
-    direction: "up" | "down",
+    direction: ThreadMoveDestination,
   ) => Promise<boolean>;
+  readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
@@ -135,7 +141,7 @@ const ESTIMATED_THREAD_ROW_HEIGHT = 72;
 const PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT = 44;
 /**
  * Top spacing between the list and the Android custom header. The Android
- * header (AndroidHomeHeader) is rendered in-flow above this screen and
+ * header is rendered in-flow above this screen and
  * already consumes the top safe-area inset, so the list only needs breathing
  * room here.
  */
@@ -164,11 +170,15 @@ function deriveEmptyState(props: {
   if (
     (catalogState.connectionState === "available" ||
       catalogState.connectionState === "offline" ||
-      catalogState.connectionState === "error") &&
+      catalogState.connectionState === "error" ||
+      catalogState.connectionState === "unsupported") &&
     !catalogState.hasLoadedShellSnapshot
   ) {
     return {
-      title: "Environment unavailable",
+      title:
+        catalogState.connectionState === "unsupported"
+          ? "Client not supported"
+          : "Environment unavailable",
       detail:
         catalogState.connectionError ??
         "The saved environment is offline. Check the URL or start the environment, then retry.",
@@ -305,7 +315,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const handleScrollBeginDrag = useCallback(() => {
     openSwipeableRef.current?.close();
   }, []);
+  const onMaterialFabScroll = useMaterialFabScroll();
   const { swipeEnabled, scrollGateHandlers } = useSwipeableScrollGate({
+    onScroll: onMaterialFabScroll,
     onScrollBeginDrag: handleScrollBeginDrag,
   });
 
@@ -516,7 +528,7 @@ export function HomeScreen(props: HomeScreenProps) {
     [props.onPinThread],
   );
   const handleMoveThread = useCallback(
-    (thread: EnvironmentThreadShell, direction: "up" | "down") => {
+    (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
       void props.onMoveThread(thread, direction);
     },
     [props.onMoveThread],
@@ -532,6 +544,10 @@ export function HomeScreen(props: HomeScreenProps) {
       void props.onRegenerateThreadTitle(thread);
     },
     [props.onRegenerateThreadTitle],
+  );
+  const handleRenameThread = useCallback(
+    (thread: EnvironmentThreadShell) => props.onRenameThread(thread),
+    [props.onRenameThread],
   );
   const handleDeleteThread = props.onDeleteThread;
   const handleUnsettleThread = props.onUnsettleThread;
@@ -771,6 +787,11 @@ export function HomeScreen(props: HomeScreenProps) {
     [settledShelfExpanded, snoozedShelfExpanded, threadListV2Layout, v2PendingTasks],
   );
 
+  useThreadJumpShortcuts(
+    threadListV2Enabled ? threadListV2Items : listLayout.items,
+    props.onSelectThread,
+  );
+
   const renderV2Item = useCallback(
     ({ item, index }: { readonly item: ThreadListV2ListItem; readonly index: number }) => {
       const nextItem = threadListV2Items[index + 1];
@@ -858,6 +879,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onSelectThread={props.onSelectThread}
           onDeleteThread={handleDeleteThread}
           onArchiveThread={props.onArchiveThread}
+          onRenameThread={handleRenameThread}
           onRegenerateThreadTitle={handleRegenerateThreadTitle}
           titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
@@ -891,6 +913,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleMoveThread,
       handlePinThread,
       handleRegenerateThreadTitle,
+      handleRenameThread,
       handleSettleThread,
       handleSnoozeThread,
       handleUnpinThread,
@@ -1015,6 +1038,7 @@ export function HomeScreen(props: HomeScreenProps) {
               searchQuery={props.searchQuery}
               onArchiveThread={props.onArchiveThread}
               onDeleteThread={props.onDeleteThread}
+              onRenameThread={handleRenameThread}
               onRegenerateThreadTitle={handleRegenerateThreadTitle}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
               onSelectThread={props.onSelectThread}
@@ -1039,6 +1063,7 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableClose,
       handleSwipeableWillOpen,
       handleRegenerateThreadTitle,
+      handleRenameThread,
       machineByEnvironmentId,
       queuedThreadKeys,
       props.onArchiveThread,
@@ -1081,26 +1106,42 @@ export function HomeScreen(props: HomeScreenProps) {
 
   if (!hasAnyThreads) {
     return (
-      <View
-        className="flex-1 items-center justify-center bg-screen px-8"
-        style={{
-          paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
-          paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
-        }}
-      >
-        <View className="w-full max-w-[430px]">
-          <EmptyState
-            title={emptyState.title}
-            detail={emptyState.detail}
-            actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
-            onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
-            variant="plain"
-          />
-          {emptyState.loading ? (
-            <View className="mt-4 items-center">
-              <ActivityIndicator colorClassName={"accent-icon-muted"} />
-            </View>
-          ) : null}
+      <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+        <View
+          className={cn(
+            "flex-1 items-center justify-center bg-screen px-8",
+            Platform.OS === "android" && "overflow-hidden rounded-t-[28px]",
+          )}
+          style={{
+            paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
+            paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
+          }}
+        >
+          <View className="w-full max-w-[430px]">
+            <EmptyState
+              title={emptyState.title}
+              detail={emptyState.detail}
+              actionLabel={!props.catalogState.hasReadyEnvironment ? "Add environment" : undefined}
+              onAction={!props.catalogState.hasReadyEnvironment ? props.onAddConnection : undefined}
+              action={
+                Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
+                  <MaterialFloatingActionButton
+                    label="Add environment"
+                    icon="plus"
+                    variant="extended"
+                    tone="primary"
+                    onPress={props.onAddConnection}
+                  />
+                ) : undefined
+              }
+              variant="plain"
+            />
+            {emptyState.loading ? (
+              <View className="mt-4 items-center">
+                <ActivityIndicator colorClassName="accent-icon-muted" />
+              </View>
+            ) : null}
+          </View>
         </View>
       </View>
     );
@@ -1114,131 +1155,171 @@ export function HomeScreen(props: HomeScreenProps) {
 
   const listEmpty = !hasResults ? (
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
-      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+      <EmptyState
+        title="No results"
+        detail={`No threads matching "${props.searchQuery}".`}
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
     ) : selectedProjectScope !== null ? (
       <EmptyState
         title={`No threads in ${selectedProjectScope.title}`}
         detail="Choose another project or create a new task."
+        variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : selectedEnvironmentLabel ? (
       <EmptyState
         title={`No threads in ${selectedEnvironmentLabel}`}
         detail="Choose another environment or create a new task."
+        variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : (
-      <EmptyState title="No threads yet" detail="Create a task to start a new coding session." />
+      <EmptyState
+        title="No threads yet"
+        detail="Create a task to start a new coding session."
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
     )
   ) : null;
   // Use the v2 project scope for its empty state. Snoozed threads need no
   // special empty state: their shelf header is a list row even while collapsed.
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
-      <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
+      <EmptyState
+        title="No results"
+        detail={`No threads matching "${props.searchQuery}".`}
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
         title={`No threads in ${v2ScopedProjectGroup.title}`}
         detail="Choose another project or create a new task."
+        variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : (
       listEmpty
     );
 
+  if (
+    Platform.OS === "android" &&
+    (threadListV2Enabled ? threadListV2Items.length === 0 : listLayout.items.length === 0)
+  ) {
+    return (
+      <View className="flex-1 bg-header">
+        <View
+          className="flex-1 items-center justify-center overflow-hidden rounded-t-[28px] bg-screen px-4"
+          style={{ paddingBottom: insets.bottom }}
+        >
+          {threadListV2Enabled ? v2ListEmpty : listEmpty}
+        </View>
+      </View>
+    );
+  }
+
   if (threadListV2Enabled) {
     return (
-      <View className="flex-1 bg-screen">
-        <SwipeableScrollGateProvider enabled={swipeEnabled}>
-          <FlatList
-            data={threadListV2Items}
-            renderItem={renderV2Item}
-            keyExtractor={v2KeyExtractor}
-            extraData={v2ExtraData}
-            ListHeaderComponent={v2ListHeader}
-            ListFooterComponent={
-              settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Show ${Math.min(threadListV2Layout.hiddenSettledCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
-                  onPress={showMoreSettled}
-                  className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
-                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-                >
-                  <Text className="text-xs font-t3-medium text-foreground-muted">
-                    Show more ({threadListV2Layout.hiddenSettledCount} settled hidden)
-                  </Text>
-                </Pressable>
-              ) : null
-            }
-            ListEmptyComponent={v2ListEmpty}
-            style={{ flex: 1 }}
-            automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
-            contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
-            showsVerticalScrollIndicator={false}
-            keyboardDismissMode="on-drag"
-            keyboardShouldPersistTaps="handled"
-            {...scrollGateHandlers}
-            scrollEventThrottle={16}
-            contentContainerStyle={{
-              paddingBottom:
-                Platform.OS === "ios"
-                  ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
-                  : Math.max(insets.bottom, 16) + 88,
-            }}
-          />
-        </SwipeableScrollGateProvider>
+      <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+        <View
+          className={
+            Platform.OS === "android"
+              ? "flex-1 overflow-hidden rounded-t-[28px] bg-screen"
+              : "flex-1 bg-screen"
+          }
+        >
+          <SwipeableScrollGateProvider enabled={swipeEnabled}>
+            <FlatList
+              data={threadListV2Items}
+              renderItem={renderV2Item}
+              keyExtractor={v2KeyExtractor}
+              extraData={v2ExtraData}
+              ListHeaderComponent={v2ListHeader}
+              ListFooterComponent={
+                settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                  <ThreadListV2ShowMoreRow
+                    hiddenCount={threadListV2Layout.hiddenSettledCount}
+                    onPress={showMoreSettled}
+                  />
+                ) : null
+              }
+              ListEmptyComponent={v2ListEmpty}
+              style={{ flex: 1 }}
+              automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+              contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
+              showsVerticalScrollIndicator={false}
+              keyboardDismissMode="on-drag"
+              keyboardShouldPersistTaps="handled"
+              {...scrollGateHandlers}
+              scrollEventThrottle={16}
+              contentContainerStyle={{
+                paddingBottom:
+                  Platform.OS === "ios"
+                    ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
+                    : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? 148 : 88),
+              }}
+            />
+          </SwipeableScrollGateProvider>
+        </View>
       </View>
     );
   }
 
   return (
-    <View className="flex-1 bg-screen">
-      {/* Sticky headers are deliberately not wired up: LegendList's JS sticky
+    <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
+      <View
+        className={
+          Platform.OS === "android"
+            ? "flex-1 overflow-hidden rounded-t-[28px] bg-screen"
+            : "flex-1 bg-screen"
+        }
+      >
+        {/* Sticky headers are deliberately not wired up: LegendList's JS sticky
           implementation mispositions pinned headers at mount under iOS
           automatic content insets (headers render one nav-inset too low until
           the first scroll event) and blanks non-pinned headers after
           collapse/expand data changes. The flattened layout still exposes
           `stickyHeaderIndices` if this gets revisited. */}
-      <SwipeableScrollGateProvider enabled={swipeEnabled}>
-        <LegendList
-          ref={listRef}
-          data={listLayout.items}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          itemsAreEqual={homeListItemsAreEqual}
-          drawDistance={500}
-          estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
-          extraData={extraData}
-          ListHeaderComponent={listHeader}
-          ListEmptyComponent={listEmpty}
-          style={{ flex: 1 }}
-          automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}
-          contentInsetAdjustmentBehavior={NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"}
-          showsVerticalScrollIndicator={false}
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-          {...scrollGateHandlers}
-          recycleItems
-          scrollEventThrottle={16}
-          contentContainerStyle={{
-            // Android reserves room for the floating new-task FAB
-            // (56 button + 16 gap + bottom inset). Pre-glass iOS shows a
-            // standard 44pt bottom toolbar that overlays the list and is not
-            // reflected in insets while contentInsetAdjustmentBehavior is
-            // "never".
-            paddingBottom:
+        <SwipeableScrollGateProvider enabled={swipeEnabled}>
+          <LegendList
+            ref={listRef}
+            data={listLayout.items}
+            renderItem={renderItem}
+            keyExtractor={keyExtractor}
+            itemsAreEqual={homeListItemsAreEqual}
+            drawDistance={500}
+            estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
+            extraData={extraData}
+            ListHeaderComponent={listHeader}
+            ListEmptyComponent={listEmpty}
+            style={{ flex: 1 }}
+            automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}
+            contentInsetAdjustmentBehavior={NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"}
+            showsVerticalScrollIndicator={false}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            {...scrollGateHandlers}
+            recycleItems
+            scrollEventThrottle={16}
+            contentContainerStyle={{
+              // Android reserves room for the floating new-task FAB
+              // (56 button + 16 gap + bottom inset). Pre-glass iOS shows a
+              // standard 44pt bottom toolbar that overlays the list and is not
+              // reflected in insets while contentInsetAdjustmentBehavior is
+              // "never".
+              paddingBottom:
+                Platform.OS === "ios"
+                  ? Math.max(insets.bottom, 24) + 24 + iosBottomToolbarClearance
+                  : Math.max(insets.bottom, 16) + (Platform.OS === "android" ? 148 : 88),
+            }}
+            scrollIndicatorInsets={
               Platform.OS === "ios"
-                ? Math.max(insets.bottom, 24) + 24 + iosBottomToolbarClearance
-                : Math.max(insets.bottom, 16) + 88,
-          }}
-          scrollIndicatorInsets={
-            Platform.OS === "ios"
-              ? {
-                  bottom: Math.max(insets.bottom, 16) + 24 + iosBottomToolbarClearance,
-                  top: 0,
-                }
-              : undefined
-          }
-        />
-      </SwipeableScrollGateProvider>
+                ? {
+                    bottom: Math.max(insets.bottom, 16) + 24 + iosBottomToolbarClearance,
+                    top: 0,
+                  }
+                : undefined
+            }
+          />
+        </SwipeableScrollGateProvider>
+      </View>
     </View>
   );
 }

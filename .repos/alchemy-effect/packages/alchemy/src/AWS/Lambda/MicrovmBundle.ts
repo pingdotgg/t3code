@@ -167,22 +167,7 @@ export interface ArtifactFile {
  * package the MicroVM code artifact (Dockerfile + bundled program, or a build
  * context) before uploading it to S3.
  */
-export const zipFiles = Effect.fn(function* (
-  files: ReadonlyArray<ArtifactFile>,
-) {
-  const zip = new (yield* Effect.promise(() => import("jszip"))).default();
-  const date = new Date("1980-01-01T00:00:00.000Z");
-  for (const file of files) {
-    zip.file(file.path, file.content, { date });
-  }
-  return yield* Effect.promise(() =>
-    zip.generateAsync({
-      type: "nodebuffer",
-      compression: "DEFLATE",
-      platform: "UNIX",
-    }),
-  );
-});
+export { zipFiles } from "../../Util/zip.ts";
 
 /**
  * Recursively read a build-context directory into a flat list of files

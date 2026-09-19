@@ -57,6 +57,34 @@ const send = (request: HttpClientRequest.HttpClientRequest) =>
     }),
   );
 
+class TransformationEventNotObserved extends Data.TaggedError(
+  "TransformationEventNotObserved",
+)<{ readonly transformerJobId: string }> {
+  override get message() {
+    return `No B2BI transformation event was observed for job ${this.transformerJobId}`;
+  }
+}
+
+const runTransformerJob = Effect.fn(function* () {
+  const response = (yield* send(
+    HttpClientRequest.post(`${baseUrl}/transformer-job`),
+  ).pipe(Effect.flatMap((r) => r.json))) as {
+    transformerJobId: string;
+    status: string;
+    message: string | null;
+    outputFiles: { bucketName?: string; key?: string }[];
+    error?: string;
+  };
+  expect(response.error).toBeUndefined();
+  expect(response.transformerJobId).toBeTruthy();
+  expect(response.status).toBe("succeeded");
+  expect(response.outputFiles.length).toBeGreaterThan(0);
+  yield* Effect.logInfo(
+    `B2BI job ${response.transformerJobId}: ${response.status}; ${response.message ?? "no message"}`,
+  );
+  return response;
+});
+
 describe.sequential("B2BI Bindings", () => {
   beforeAll(
     Effect.gen(function* () {
@@ -218,26 +246,18 @@ describe.sequential("B2BI Bindings", () => {
 
   describe("StartTransformerJob + GetTransformerJob", () => {
     test.provider(
-      "runs a transformer job to completion and observes the EventBridge event",
-      (_stack) =>
-        Effect.gen(function* () {
-          const response = (yield* send(
-            HttpClientRequest.post(`${baseUrl}/transformer-job`),
-          ).pipe(Effect.flatMap((r) => r.json))) as {
-            transformerJobId: string;
-            status: string;
-            message: string | null;
-            outputFiles: { bucketName?: string; key?: string }[];
-            error?: string;
-          };
-          expect(response.error).toBeUndefined();
-          expect(response.transformerJobId).toBeTruthy();
-          expect(response.status).toBe("succeeded");
-          expect(response.outputFiles.length).toBeGreaterThan(0);
+      "runs a transformer job to completion",
+      () => runTransformerJob(),
+      { timeout: 120_000 },
+    );
+  });
 
-          // Event source: the fixture's consumeTransformationEvents loop
-          // forwards B2BI's `Transformation Completed` event to the sink
-          // queue; observe it out-of-band.
+  describe("consumeTransformationEvents", () => {
+    test.provider(
+      "delivers the completed job's EventBridge event to the sink queue",
+      () =>
+        Effect.gen(function* () {
+          const response = yield* runTransformerJob();
           const { QueueUrl } = yield* sqs.getQueueUrl({
             QueueName: EVENTS_QUEUE,
           });
@@ -248,8 +268,8 @@ describe.sequential("B2BI Bindings", () => {
               MaxNumberOfMessages: 10,
             })
             .pipe(
-              Effect.map((result) =>
-                (result.Messages ?? [])
+              Effect.flatMap((result) => {
+                const event = (result.Messages ?? [])
                   .map(
                     (message) =>
                       JSON.parse(message.Body ?? "{}") as {
@@ -260,16 +280,24 @@ describe.sequential("B2BI Bindings", () => {
                   .find(
                     (body) =>
                       body.transformerJobId === response.transformerJobId,
-                  ),
-              ),
-              Effect.repeat({
-                schedule: Schedule.spaced("5 seconds"),
-                until: (found): boolean => found !== undefined,
-                times: 24,
+                  );
+                return event
+                  ? Effect.succeed(event)
+                  : Effect.fail(
+                      new TransformationEventNotObserved({
+                        transformerJobId: response.transformerJobId,
+                      }),
+                    );
+              }),
+              Effect.retry({
+                while: (error) =>
+                  error._tag === "TransformationEventNotObserved",
+                // Ten five-second long polls plus nine one-second delays.
+                schedule: Schedule.spaced("1 second"),
+                times: 9,
               }),
             );
-          expect(event).toBeDefined();
-          expect(event!.detailType).toBe("Transformation Completed");
+          expect(event.detailType).toBe("Transformation Completed");
         }),
       { timeout: 240_000 },
     );

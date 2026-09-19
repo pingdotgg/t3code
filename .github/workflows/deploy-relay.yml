@@ -54,34 +54,29 @@ jobs:
               - --filter=t3code-relay...
 
       - name: Deploy production relay stage
-        id: deploy
-        run: vp run --filter t3code-relay deploy --stage prod --yes --github-output
+        run: vp run --filter t3code-relay deploy --stage prod --yes --no-input
         env:
+          # The PublishClientConfig action writes the client env here instead
+          # of the repo-root .env; nothing on the runner reads it.
+          T3CODE_RELAY_CLIENT_CONFIG_ENV: ${{ runner.temp }}/relay-client-config.env
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}
           PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
           AXIOM_TOKEN: ${{ secrets.AXIOM_TOKEN }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
+          FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
 
       - name: Publish relay deploy commit status
         uses: actions/github-script@v8
         with:
           script: |
-            const result = "${{ steps.deploy.outputs.result }}";
-            const changed = "${{ steps.deploy.outputs.changed }}" === "true";
-            const description = changed
-              ? "Relay production deploy applied infrastructure changes."
-              : result === "noop"
-                ? "Relay production deploy was a no-op."
-                : `Relay production deploy completed with result: ${result}.`;
-
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               sha: context.sha,
               state: "success",
               context: "Relay deploy / production",
-              description,
+              description: "Relay production deploy completed.",
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });

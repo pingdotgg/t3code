@@ -21,15 +21,14 @@ import {
   ChevronDownIcon,
   ClockIcon,
   EyeIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  GitPullRequestIcon,
   LayersIcon,
   ListChecksIcon,
   PenLineIcon,
+  Plug2Icon,
   Maximize2Icon,
   Minimize2Icon,
   SearchIcon,
+  UserLockIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -99,7 +98,10 @@ import {
 } from "../components/pullRequest/PullRequestListFilters";
 import { PullRequestListEmptyState } from "../components/pullRequest/PullRequestListEmptyState";
 import { PullRequestListGhost } from "../components/pullRequest/PullRequestGhosts";
-import { PullRequestRow } from "../components/pullRequest/PullRequestRow";
+import {
+  PullRequestRow,
+  type PullRequestRowTarget,
+} from "../components/pullRequest/PullRequestRow";
 import { PullRequestsUnavailableState } from "../components/pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatusSeed } from "../components/RightPanelTabs";
 import {
@@ -111,7 +113,7 @@ import { WorkspacePageContainer } from "../components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
-import { resolveShortcutCommand } from "../keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { PanelLayoutControls } from "../components/chat/PanelLayoutControls";
 import { Button } from "../components/ui/button";
@@ -146,6 +148,19 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+
+function getShortcutContext() {
+  return {
+    terminalFocus: isTerminalFocused(),
+    terminalOpen: false,
+    previewFocus: false,
+    previewOpen: false,
+    modelPickerOpen: false,
+    isWeb: !isElectron,
+    isDesktop: isElectron,
+  };
+}
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
   /**
@@ -163,6 +178,8 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly repository?: string;
   readonly number?: number;
   readonly selectedProjectId?: ProjectId;
+  /** Host of the open review; changing tabs must not narrow the list host filter. */
+  readonly selectedHost?: string;
   /**
    * Which server the selected pull request was read from. A project id only names a project on
    * its own server, so this is what tells two servers holding one project apart. Optional: a
@@ -180,13 +197,14 @@ const INVOLVEMENT_TABS = [
 
 const STATE_TABS = [
   { value: "all", label: "All", Icon: LayersIcon },
-  { value: "open", label: "Open", Icon: GitPullRequestIcon },
-  { value: "closed", label: "Closed", Icon: GitPullRequestClosedIcon },
-  { value: "merged", label: "Merged", Icon: GitMergeIcon },
+  { value: "open", label: "Open", Icon: PullRequestGlyph.pullRequest },
+  { value: "closed", label: "Closed", Icon: PullRequestGlyph.closed },
+  { value: "merged", label: "Merged", Icon: PullRequestGlyph.merged },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
 
 const SORT_OPTIONS = [
   { value: "ready", label: "Merge readiness", Icon: ListChecksIcon },
+  { value: "blocked", label: "Blocked on me", Icon: UserLockIcon },
   { value: "updated", label: "Recently updated", Icon: ClockIcon },
   { value: "newest", label: "Newest shown", Icon: CalendarArrowDownIcon },
   { value: "oldest", label: "Oldest shown", Icon: CalendarArrowUpIcon },
@@ -262,6 +280,9 @@ export const Route = createFileRoute("/_chat/pull-requests")({
     ...(typeof raw.host === "string" && raw.host ? { host: raw.host.slice(0, 200) } : {}),
     ...(typeof raw.selectedProjectId === "string" && raw.selectedProjectId
       ? { selectedProjectId: raw.selectedProjectId as ProjectId }
+      : {}),
+    ...(typeof raw.selectedHost === "string" && raw.selectedHost
+      ? { selectedHost: raw.selectedHost.slice(0, 200) }
       : {}),
     ...(typeof raw.selectedEnvironmentId === "string" && raw.selectedEnvironmentId
       ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
@@ -367,6 +388,7 @@ function PullRequestsRouteView() {
 
   // A link from a thread or the sidebar only knows the repository, so the owning project is
   // resolved here; an explicit `projectId` in the URL still wins.
+  const selectedHost = search.selectedHost ?? search.host;
   const projectIdForRepository = useMemo(() => {
     const repository = search.repository?.toLowerCase();
     if (repository === undefined) return undefined;
@@ -378,14 +400,14 @@ function PullRequestsRouteView() {
           repository &&
         // The same `owner/name` can exist on two hosts. Without this the first match wins, and
         // a link that named its host opens the pull request from the other one.
-        (search.host === undefined ||
+        (selectedHost === undefined ||
           pullRequestHostOf(
             project.repositoryIdentity,
             project.repositoryIdentity.provider as SourceControlProviderKind,
-          ) === search.host.toLowerCase()),
+          ) === selectedHost.toLowerCase()),
     );
     return identity?.id;
-  }, [projects, search.host, search.repository]);
+  }, [projects, selectedHost, search.repository]);
 
   // The selection is resolved the same way the scope is: an id no connected environment has can
   // never be read here, and one that arrived before the projects did is not yet wrong.
@@ -472,6 +494,7 @@ function PullRequestsRouteView() {
             ...(next.projectId ? { projectId: next.projectId } : {}),
             ...(next.environmentId ? { environmentId: next.environmentId } : {}),
             ...(next.host ? { host: next.host } : {}),
+            ...(next.selectedHost ? { selectedHost: next.selectedHost } : {}),
             ...(next.selectedProjectId ? { selectedProjectId: next.selectedProjectId } : {}),
             ...(next.selectedEnvironmentId
               ? { selectedEnvironmentId: next.selectedEnvironmentId }
@@ -494,6 +517,7 @@ function PullRequestsRouteView() {
     number: undefined,
     selectedProjectId: undefined,
     selectedEnvironmentId: undefined,
+    selectedHost: undefined,
   };
   // List controls change the rows behind the detail, not the independent selected surface. The
   // reader can keep working in that panel while narrowing, sorting, or switching projects.
@@ -799,7 +823,31 @@ function PullRequestsRouteView() {
   // from the first moment rather than the second: a button that stays live through the slow half
   // of its own work is a button that gets pressed again, and buys the whole cascade twice.
   const [invalidating, setInvalidating] = useState(false);
-  const refreshFromHost = async (includeDetail = true) => {
+  const refreshListAndStats = (
+    requestedStatsScope = statsScopeRef.current,
+    actedEnvironmentId?: EnvironmentId,
+  ) => {
+    refreshList(true, actedEnvironmentId);
+    const visible = visibleStatsKeys.current;
+    const batches = pullRequestStatsRefreshBatches({
+      requestedScope: requestedStatsScope,
+      currentScope: statsScopeRef.current,
+      entriesByKey: entriesByStatsKey.current,
+      candidateKeys: visible.key === requestedStatsScope.key ? visible.values : new Set(),
+      statsByRow: statsByRowRef.current,
+    });
+    if (batches !== null) {
+      setStatsTargetState({ key: requestedStatsScope.key, batches });
+      statsQuery.refresh(
+        batches
+          .filter(({ environmentId }) =>
+            actedEnvironmentId === undefined ? true : environmentId === actedEnvironmentId,
+          )
+          .map(({ environmentId, input }) => ({ environmentId, input })),
+      );
+    }
+  };
+  const refreshFromHost = async () => {
     const requestedStatsScope = statsScopeRef.current;
     setInvalidating(true);
     try {
@@ -811,20 +859,8 @@ function PullRequestsRouteView() {
     } finally {
       setInvalidating(false);
     }
-    refreshList(true);
-    const visible = visibleStatsKeys.current;
-    const batches = pullRequestStatsRefreshBatches({
-      requestedScope: requestedStatsScope,
-      currentScope: statsScopeRef.current,
-      entriesByKey: entriesByStatsKey.current,
-      candidateKeys: visible.key === requestedStatsScope.key ? visible.values : new Set(),
-      statsByRow: statsByRowRef.current,
-    });
-    if (batches !== null) {
-      setStatsTargetState({ key: requestedStatsScope.key, batches });
-      statsQuery.refresh(batches.map(({ environmentId, input }) => ({ environmentId, input })));
-    }
-    if (includeDetail) setDetailRefreshToken((token) => token + 1);
+    refreshListAndStats(requestedStatsScope);
+    setDetailRefreshToken((token) => token + 1);
   };
   const refreshing = invalidating || listQuery.isPending;
 
@@ -1058,17 +1094,28 @@ function PullRequestsRouteView() {
   // re-reads only its own slice, so the rows loaded before it would never see a merge, a close,
   // or a retitle. Going back to a single page long enough to cover everything on screen lets the
   // merge above bring every row up to date in place.
-  const refreshList = (includeRelated = false) => {
-    const related = includeRelated
-      ? [
-          ...baselineTargets,
-          ...facetTargets,
-          ...partitionTargets.authored,
-          ...partitionTargets.reviewing,
-        ]
-      : [];
+  const refreshList = (includeRelated = false, actedEnvironmentId?: EnvironmentId) => {
+    const related = (
+      includeRelated
+        ? [
+            ...baselineTargets,
+            ...facetTargets,
+            ...partitionTargets.authored,
+            ...partitionTargets.reviewing,
+          ]
+        : []
+    ).filter(
+      ({ environmentId }) =>
+        actedEnvironmentId === undefined || environmentId === actedEnvironmentId,
+    );
     if (sentCursors === null) {
-      listQuery.refresh([...listTargets, ...related]);
+      listQuery.refresh([
+        ...listTargets.filter(
+          ({ environmentId }) =>
+            actedEnvironmentId === undefined || environmentId === actedEnvironmentId,
+        ),
+        ...related,
+      ]);
       return;
     }
     if (related.length > 0) listQuery.refresh(related);
@@ -1392,8 +1439,9 @@ function PullRequestsRouteView() {
       typedParsed.text,
       (entry) =>
         entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry)),
+      search.involvement,
     );
-  }, [groups, sort, statsByRow, typedParsed.text]);
+  }, [groups, search.involvement, sort, statsByRow, typedParsed.text]);
   const listedPullRequestsBySurface = useMemo(
     () =>
       new Map(
@@ -1412,9 +1460,10 @@ function PullRequestsRouteView() {
             repository: search.repository,
             number: search.number,
             projectId: selectedProject.id,
+            ...(selectedHost ? { host: selectedHost } : {}),
           }
         : null,
-    [search.number, search.repository, selectedProject],
+    [search.number, search.repository, selectedProject, selectedHost],
   );
   const rightPanelAvailable = selectedPullRequestSurface !== null;
   useEffect(() => {
@@ -1429,6 +1478,14 @@ function PullRequestsRouteView() {
           repository: activePullRequestSurface.repository,
           number: activePullRequestSurface.number,
           projectId: activePullRequestSurface.projectId as ProjectId,
+          host:
+            activePullRequestSurface.host ??
+            (selectedProject?.repositoryIdentity
+              ? pullRequestHostOf(
+                  selectedProject.repositoryIdentity,
+                  selectedProject.repositoryIdentity.provider as SourceControlProviderKind,
+                )
+              : undefined),
         }
       : null;
 
@@ -1440,6 +1497,7 @@ function PullRequestsRouteView() {
             repository: surface.repository,
             number: surface.number,
             selectedProjectId: surface.projectId as ProjectId,
+            selectedHost: surface.host,
             ...(surface.environmentId === undefined
               ? {}
               : { selectedEnvironmentId: surface.environmentId as EnvironmentId }),
@@ -1503,7 +1561,7 @@ function PullRequestsRouteView() {
 
   // Stable so the memoized rows can skip re-rendering when the list around them changes.
   const selectEntry = useCallback(
-    (entry: EnvironmentPullRequestEntry) => {
+    (entry: PullRequestRowTarget) => {
       // The surface carries the row's own server, which is what its detail reads and acts on.
       if (rightPanelRef === null) return;
       useRightPanelStore.getState().openPullRequest(rightPanelRef, entry);
@@ -1512,6 +1570,7 @@ function PullRequestsRouteView() {
         number: entry.number,
         selectedProjectId: entry.projectId,
         selectedEnvironmentId: entry.environmentId,
+        selectedHost: entry.host,
       });
     },
     [rightPanelRef, updateSearch],
@@ -1532,7 +1591,7 @@ function PullRequestsRouteView() {
       terminalShortcutLabel={null}
       rightPanelAvailable={rightPanelAvailable}
       rightPanelOpen={rightPanelState.isOpen}
-      rightPanelShortcutLabel={null}
+      rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       rightPanelUnavailableLabel="Select a pull request first"
       liveAgentCount={0}
       onToggleTerminal={() => undefined}
@@ -1628,6 +1687,7 @@ function PullRequestsRouteView() {
                     selected={
                       selected?.environmentId === entry.environmentId &&
                       selected.repository === entry.repository &&
+                      selected.host?.toLowerCase() === entry.host.toLowerCase() &&
                       selected.number === entry.number
                     }
                     onSelect={selectEntry}
@@ -1675,7 +1735,7 @@ function PullRequestsRouteView() {
   // kind force the hostname to tell them apart.
   const hostEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All hosts", Icon: LayersIcon },
+    { value: "", label: "All", Icon: Plug2Icon },
     ...hostEntries.map((entry) => {
       // `expectedHosts` stands in before the server has answered, and nothing is known to be
       // unreadable yet; once the summaries arrive they carry whether each one could be read.
@@ -1868,13 +1928,20 @@ function PullRequestsRouteView() {
     event.stopPropagation();
     if (!event.repeat) closeSurface(activePullRequestSurface);
   });
+  const toggleRightPanelFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!rightPanelAvailable) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) toggleRightPanel();
+  });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
-        context: { terminalFocus: isTerminalFocused() },
+        context: getShortcutContext(),
       });
       if (command === "rightPanel.close") closeActiveSurfaceFromShortcut(event);
+      if (command === "rightPanel.toggle") toggleRightPanelFromShortcut(event);
       if (command === "thread.copyReference") copyPullRequestFromShortcut(event);
     };
     window.addEventListener("keydown", onKeyDown);
@@ -1923,23 +1990,49 @@ function PullRequestsRouteView() {
             onAddDiff={() => undefined}
             onAddFiles={() => undefined}
             onAddPullRequest={() => undefined}
+            onAddPullRequests={() => undefined}
             onAddAgents={() => undefined}
+            onAddDevice={() => undefined}
             browserAvailable={false}
             terminalAvailable={false}
             diffAvailable={false}
             filesAvailable={false}
             pullRequestAvailable={false}
+            pullRequestsAvailable={false}
             agentsAvailable={false}
+            deviceAvailable={false}
             liveAgentCount={0}
             pullRequestStatusSeeds={listedPullRequestTabStatuses}
           >
             <PullRequestDetailPanel
+              getShortcutContext={getShortcutContext}
+              shortcutsEnabled={activePullRequestSurface?.id === renderedPullRequestSurface.id}
               key={renderedPullRequestSurface.id}
               environmentId={panelEnvironmentId}
+              onSelectPullRequest={(reference) => {
+                if (rightPanelRef === null) return;
+                useRightPanelStore.getState().openPullRequest(rightPanelRef, {
+                  projectId: reference.projectId,
+                  repository: reference.repository,
+                  number: reference.number,
+                  ...(reference.host ? { host: reference.host } : {}),
+                  environmentId: panelEnvironmentId,
+                });
+                updateSearch({
+                  repository: reference.repository,
+                  number: reference.number,
+                  selectedHost: reference.host,
+                  selectedProjectId: reference.projectId,
+                  selectedEnvironmentId: panelEnvironmentId,
+                });
+              }}
               reference={{
                 projectId: renderedPullRequestSurface.projectId as ProjectId,
                 repository: renderedPullRequestSurface.repository,
                 number: renderedPullRequestSurface.number,
+                ...(renderedPullRequestSurface.host
+                  ? { host: renderedPullRequestSurface.host }
+                  : {}),
               }}
               listEntry={
                 listedPullRequestsBySurface.get(
@@ -1950,7 +2043,8 @@ function PullRequestsRouteView() {
               // Host actions can change both readiness and diff size, so refresh the counts
               // alongside the list. The panel already refreshes itself after each action.
               onActed={() => {
-                void refreshFromHost(false);
+                // Mutations already invalidate the host's affected caches.
+                refreshListAndStats(undefined, panelEnvironmentId);
               }}
             />
           </RightPanelTabs>
@@ -1966,6 +2060,7 @@ function CompactFilterMenu<Value extends string>({
   triggerIcon,
   triggerLabel,
   outlined = false,
+  iconOnly = false,
   value,
   options,
   onChange,
@@ -1975,6 +2070,7 @@ function CompactFilterMenu<Value extends string>({
   triggerIcon?: ReactNode;
   triggerLabel?: string;
   outlined?: boolean;
+  iconOnly?: boolean;
   value: Value;
   options: ReadonlyArray<PullRequestFilterOption<Value>>;
   onChange: (value: Value) => void;
@@ -1985,8 +2081,11 @@ function CompactFilterMenu<Value extends string>({
   return (
     <Menu>
       <MenuTrigger
-        aria-label={triggerLabel ? `${label}: ${current.label}` : label}
-        render={outlined ? <Button variant="outline" /> : undefined}
+        aria-label={triggerLabel || iconOnly ? `${label}: ${current.label}` : label}
+        title={iconOnly ? `${label}: ${current.label}` : undefined}
+        render={
+          outlined ? <Button variant="outline" size={iconOnly ? "icon" : "default"} /> : undefined
+        }
         className={
           outlined
             ? className
@@ -1996,7 +2095,9 @@ function CompactFilterMenu<Value extends string>({
               )
         }
       >
-        {triggerLabel ? (
+        {iconOnly ? (
+          <current.Icon aria-hidden className="size-4" />
+        ) : triggerLabel ? (
           <>
             {triggerIcon}
             <span>{triggerLabel}</span>
@@ -2291,7 +2392,7 @@ function PullRequestsColumn({
         {/* The top padding is the shared fade band's height, the same pairing the
             settings page makes: at rest the controls sit fully below the mask, and only
             content actually passing under the chrome fades. */}
-        <WorkspacePageContainer width="expanded" className="gap-4">
+        <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
           <div className="flex flex-col gap-3">
             <div ref={inFlowSearchRef} className="flex flex-wrap items-center gap-2">
               <div className="min-w-0 basis-full @lg/pr-list:basis-0 @lg/pr-list:flex-1">
@@ -2299,6 +2400,16 @@ function PullRequestsColumn({
               </div>
               {sortMenu}
               {filtersMenu}
+              <CompactFilterMenu
+                label="Filter by provider"
+                outlined
+                iconOnly={host !== undefined}
+                triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
+                triggerLabel="All"
+                value={host ?? ""}
+                options={hostMenuOptions}
+                onChange={(next) => onHost(next === "" ? undefined : next)}
+              />
               {!condensed ? (
                 <PullRequestRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
               ) : null}

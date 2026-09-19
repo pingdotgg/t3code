@@ -9,17 +9,16 @@ It's important to understand the architecture of the Effect MCP server.
 Here is an example of a MCP server implementation:
 
 ```typescript
-import { NodeRuntime, NodeSink, NodeStream } from "@effect/platform-node"
-import { Effect, Layer, Logger } from "effect"
-import { Schema } from "effect/schema"
+import { NodeRuntime, NodeStdio } from "@effect/platform-node"
+import { Effect, Layer, Logger, Schema } from "effect"
 import { McpProtocol, McpServer, Tool, Toolkit } from "effect/unstable/ai"
 
 // Define a simple tool
 const DemoTool = Tool.make("DemoTool", {
   description: "A demo tool that echoes back the input",
-  parameters: {
+  parameters: Schema.Struct({
     message: Schema.String
-  },
+  }),
   success: Schema.String
 })
 
@@ -58,12 +57,12 @@ const ServerLayer = Layer.mergeAll(
     McpServer.layerStdio({
       name: "Demo MCP Server",
       version: "1.0.0",
-      protocols: [McpProtocol.v2025_06_18],
-      stdin: NodeStream.stdin,
-      stdout: NodeSink.stdout
+      protocols: [McpProtocol.v2025_06_18]
     })
   ),
-  Layer.provide(Logger.layer([Logger.consolePretty({ stderr: true })]))
+  Layer.provide(NodeStdio.layer),
+  Layer.provide(Logger.layer([Logger.consolePretty()])),
+  Layer.provideMerge(Layer.succeed(Logger.LogToStderr, true))
 )
 
 Layer.launch(ServerLayer).pipe(NodeRuntime.runMain)
@@ -99,8 +98,7 @@ resource is defined as a template that specifies its location, behavior, and met
 parameters, completions, and content generation.
 
 ```typescript
-import { Effect } from "effect"
-import { Schema } from "effect/schema"
+import { Effect, Schema } from "effect"
 import { McpSchema, McpServer } from "effect/unstable/ai"
 
 const SimpleResource = McpServer.resource({
@@ -141,8 +139,7 @@ structured, parameterized instructions or messages that the client can send to t
 generation logic in a declarative way.
 
 ```typescript
-import { Effect } from "effect"
-import { Schema } from "effect/schema"
+import { Effect, Schema } from "effect"
 import { McpServer } from "effect/unstable/ai"
 
 const DemoPrompt = McpServer.prompt({
@@ -169,24 +166,23 @@ contract while the actual logic is provided separately through an implementation
 grouped into toolkits, which can be combined and converted into layers.
 
 ```typescript
-import { Effect, Layer } from "effect"
-import { Schema } from "effect/schema"
+import { Effect, Layer, Schema } from "effect"
 import { McpServer, Tool, Toolkit } from "effect/unstable/ai"
 
 const DemoTool = Tool.make("DemoTool", {
   description: "This is a demo tool for the documentation",
-  parameters: {
+  parameters: Schema.Struct({
     demoId: Schema.Number,
     demoName: Schema.String
-  },
+  }),
   success: Schema.String
 })
 
 const OtherDemoTool = Tool.make("OtherDemoTool", {
   description: "Another demo tool",
-  parameters: {
+  parameters: Schema.Struct({
     value: Schema.Number
-  },
+  }),
   success: Schema.String
 })
 
@@ -217,8 +213,7 @@ defines both the message shown to the user and the expected response schema, ens
 validated user input.
 
 ```typescript
-import { Effect } from "effect"
-import { Schema } from "effect/schema"
+import { Effect, Schema } from "effect"
 import { McpServer } from "effect/unstable/ai"
 
 const DemoElicitation = McpServer.elicit({
@@ -369,7 +364,7 @@ const ServerLayer = Layer.mergeAll(
     })
   ),
   Layer.provide(NodeStdio.layer),
-  Layer.provide(Layer.succeed(Logger.LogToStderr)(true))
+  Layer.provideMerge(Layer.succeed(Logger.LogToStderr, true))
 )
 
 // Run the server

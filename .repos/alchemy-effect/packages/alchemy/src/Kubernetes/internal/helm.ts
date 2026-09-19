@@ -26,7 +26,7 @@ export class HelmError extends Data.TaggedError("HelmError")<{
   readonly cause?: unknown;
 }> {}
 
-const HelmBin = Config.string("HELM_BIN").pipe(
+const HelmBin = Config.String("HELM_BIN").pipe(
   Effect.orElseSucceed(() => "helm"),
 );
 

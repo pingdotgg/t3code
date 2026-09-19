@@ -29,7 +29,7 @@ describe("Tool representation v2", () => {
         }
       },
       required: ["value"],
-      additionalProperties: false
+      additionalProperties: true
     })
   })
 })

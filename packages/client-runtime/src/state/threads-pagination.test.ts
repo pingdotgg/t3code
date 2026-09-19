@@ -104,6 +104,7 @@ const BASE_THREAD: OrchestrationThread = {
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
+  pullRequests: [],
   deletedAt: null,
   messages: [RECENT_MESSAGE],
   proposedPlans: [],
@@ -132,6 +133,7 @@ type LoaderResponse = Option.Option<OrchestrationThreadDetailSnapshot>;
 
 const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (options?: {
   readonly paginationCapability?: boolean;
+  readonly reasoningCapability?: boolean;
   readonly initialResponse?: LoaderResponse;
   /** Cached snapshot returned by the cache store (simulates a warm cache). */
   readonly cached?: OrchestrationThreadDetailSnapshot;
@@ -139,6 +141,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
   const inputs = yield* Queue.unbounded<OrchestrationThreadStreamItem>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
   const loaderWindows = yield* Ref.make<ReadonlyArray<ThreadSnapshotWindow | undefined>>([]);
+  const loaderReasoning = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const lastSubscribeInput = yield* Ref.make<Record<string, unknown> | undefined>(undefined);
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationThreadDetailSnapshot>>([]);
   // Older-page responses resolve through deferreds so tests can interleave
@@ -155,6 +158,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     client,
     initialConfig: Effect.succeed({
       threadSnapshotPagination: options?.paginationCapability !== false,
+      reasoningMessages: options?.reasoningCapability === true,
     } as never),
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
@@ -168,8 +172,9 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     Option.some(PREPARED),
   );
   const snapshotLoader = ThreadSnapshotLoader.of({
-    load: (_prepared, _threadId, window) =>
+    load: (_prepared, _threadId, window, reasoningMessages) =>
       Ref.update(loaderWindows, (current) => [...current, window]).pipe(
+        Effect.andThen(Ref.update(loaderReasoning, (current) => [...current, reasoningMessages])),
         Effect.andThen(
           window?.beforeCursor === undefined
             ? Effect.succeed(
@@ -230,6 +235,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     awaitState,
     resolveNextPage,
     loaderWindows,
+    loaderReasoning,
     lastSubscribeInput,
     savedThreads,
     threadState,
@@ -286,6 +292,32 @@ const revertEvent = (sequence: number): OrchestrationThreadStreamItem => ({
 });
 
 describe("thread pagination state", () => {
+  for (const reasoningCapability of [false, true]) {
+    it.effect(
+      `negotiates reasoning for initial, older and socket reads: ${reasoningCapability}`,
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({
+            reasoningCapability,
+            initialResponse: Option.some(WINDOWED_SNAPSHOT),
+          });
+          yield* harness.awaitState((value) => Option.isSome(value.page));
+          const input = yield* Ref.get(harness.lastSubscribeInput);
+          expect(input?.reasoningMessages).toBe(reasoningCapability ? true : undefined);
+          expect(yield* Ref.get(harness.loaderReasoning)).toEqual([reasoningCapability]);
+          expect(requestOlderThreadTurns(TARGET.environmentId, THREAD_ID)).toBe(true);
+          yield* harness.resolveNextPage(Option.some(OLDER_PAGE));
+          yield* harness.awaitState((value) =>
+            Option.match(value.page, { onNone: () => false, onSome: (page) => !page.hasMore }),
+          );
+          expect(yield* Ref.get(harness.loaderReasoning)).toEqual([
+            reasoningCapability,
+            reasoningCapability,
+          ]);
+        }),
+    );
+  }
+
   it.effect("windows the initial load when the server advertises pagination", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
@@ -397,6 +429,65 @@ describe("thread pagination state", () => {
     }),
   );
 
+  it.effect("keeps a new page loading when a snapshot replaced a parked older page", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
+      yield* harness.awaitState((value) => Option.isSome(value.page));
+      requestOlderThreadTurns(TARGET.environmentId, THREAD_ID);
+      yield* harness.resolveNextPage(
+        Option.some({
+          ...OLDER_PAGE,
+          snapshotSequence: 30,
+          page: { beforeCursor: null, hasMore: false, snapshotSequence: 30, threadSequence: 30 },
+        }),
+      );
+      yield* Queue.offer(harness.inputs, titleEvent("Waiting for old watermark", 11));
+      yield* harness.awaitState((value) =>
+        Option.exists(value.data, (thread) => thread.title === "Waiting for old watermark"),
+      );
+      expect(
+        Option.getOrThrow((yield* SubscriptionRef.get(harness.threadState)).page).loadingOlder,
+      ).toBe(true);
+
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshot: {
+          snapshotSequence: 20,
+          thread: { ...BASE_THREAD, title: "Replacement snapshot" },
+          page: { beforeCursor: "cursor-2", hasMore: true, snapshotSequence: 20 },
+        },
+      });
+      yield* harness.awaitState((value) =>
+        Option.exists(value.data, (thread) => thread.title === "Replacement snapshot"),
+      );
+      requestOlderThreadTurns(TARGET.environmentId, THREAD_ID);
+      yield* harness.awaitState((value) =>
+        Option.exists(value.page, (page) => page.loadingOlder && page.beforeCursor === "cursor-2"),
+      );
+      yield* Queue.offer(harness.inputs, titleEvent("New request still loading", 21));
+      yield* harness.awaitState((value) =>
+        Option.exists(value.data, (thread) => thread.title === "New request still loading"),
+      );
+      const loading = yield* SubscriptionRef.get(harness.threadState);
+      expect(Option.getOrThrow(loading.page).loadingOlder).toBe(true);
+      expect(hasMessage(loading, "message-old")).toBe(false);
+      expect((yield* Ref.get(harness.loaderWindows)).map((window) => window?.beforeCursor)).toEqual(
+        [undefined, "cursor-1", "cursor-2"],
+      );
+
+      yield* harness.resolveNextPage(
+        Option.some({
+          ...OLDER_PAGE,
+          snapshotSequence: 21,
+          page: { beforeCursor: null, hasMore: false, snapshotSequence: 21, threadSequence: 21 },
+        }),
+      );
+      const completed = yield* harness.awaitState((value) => hasMessage(value, "message-old"));
+      expect(Option.getOrThrow(completed.page).loadingOlder).toBe(false);
+      expect(Option.getOrThrow(completed.page).beforeCursor).toBeNull();
+    }),
+  );
+
   it.effect("discards an older page read from a projection behind the loaded state", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
@@ -472,8 +563,37 @@ describe("thread pagination state", () => {
       );
 
       // A live event at sequence 11 arrives; only then does the page merge.
-      yield* Queue.offer(harness.inputs, titleEvent("Advanced past watermark", 11));
-      const state = yield* harness.awaitState((value) => hasMessage(value, "message-old"));
+      yield* Queue.offerAll(harness.inputs, [
+        titleEvent("Advanced past watermark", 11),
+        {
+          kind: "event",
+          event: {
+            eventId: EventId.make("event-after-page"),
+            sequence: 12,
+            aggregateKind: "thread",
+            aggregateId: THREAD_ID,
+            occurredAt: BASE_THREAD.createdAt,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "thread.message-sent",
+            payload: {
+              ...OLDER_MESSAGE,
+              threadId: THREAD_ID,
+              messageId: OLDER_MESSAGE.id,
+              text: " continued",
+              streaming: true,
+            },
+          },
+        },
+      ]);
+      const state = yield* harness.awaitState(
+        (value) => Option.getOrNull(value.data)?.messages[0]?.text.endsWith(" continued") === true,
+      );
+      expect(Option.getOrThrow(state.data).messages[0]?.text).toBe(
+        `${OLDER_MESSAGE.text} continued`,
+      );
       expect(hasMessage(state, "message-recent")).toBe(true);
       expect(Option.getOrThrow(state.page).loadingOlder).toBe(false);
     }),

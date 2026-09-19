@@ -25,7 +25,7 @@ afterEach(() => {
 
 describe("Usage page preferences", () => {
   it("uses defaults when no preference has been saved", () => {
-    expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: 30 });
+    expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 30 });
   });
 
   it.each([1, 7, 30, 90] as const)("round-trips every metric with a %i-day range", (windowDays) => {
@@ -41,7 +41,7 @@ describe("Usage page preferences", () => {
     '{"metric":"cost","windowDays":365}',
   ])("replaces invalid preferences on the next save: %s", (value) => {
     values.set(key, value);
-    expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: 30 });
+    expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 30 });
     saveUsagePagePreferences({ metric: "tokens", windowDays: 7 });
     expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 7 });
   });
@@ -64,7 +64,7 @@ describe("Usage page preferences", () => {
         throw new Error("SecurityError");
       },
     });
-    expect(readUsagePagePreferences()).toEqual({ metric: "cost", windowDays: 30 });
+    expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 30 });
     expect(() => saveUsagePagePreferences({ metric: "tokens", windowDays: 7 })).not.toThrow();
   });
 });

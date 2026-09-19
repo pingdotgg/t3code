@@ -729,7 +729,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
     listDevices: Effect.fnUntraced(
       function* (input) {
         return yield* client.client
-          .listDevices({
+          .listDevicesV2({
             headers: bearerHeaders(input.clerkToken),
           })
           .pipe(
