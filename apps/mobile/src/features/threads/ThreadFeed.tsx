@@ -38,7 +38,9 @@ import {
 } from "@t3tools/client-runtime/markdown-images";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
-  renderCodexFileCitationsAsMarkdown,
+  codexFollowupPromptFromHref,
+  renderCodexDirectivesForCopy,
+  renderCodexInlineDirectivesAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/client-runtime/codex-markdown-directives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
@@ -272,6 +274,7 @@ export interface ThreadFeedProps {
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
+  readonly onUseCodexFollowup?: (prompt: string) => void;
   /** Non-null when older turns exist beyond the loaded window. */
   readonly loadEarlier?: {
     readonly loading: boolean;
@@ -804,7 +807,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     }
     if (segment.markdown.trim().length === 0) return null;
 
-    const markdown = renderCodexFileCitationsAsMarkdown(segment.markdown);
+    const markdown = renderCodexInlineDirectivesAsMarkdown(segment.markdown);
     return hasNativeSelectableMarkdownText() ? (
       <SelectableMarkdownText
         key={`markdown:${segment.sourceOffset}`}
@@ -1083,6 +1086,17 @@ function useMarkdownStyles(
       highlightCode: boolean,
     ): CustomRenderers => ({
       link: ({ children, href = "" }) => {
+        if (codexFollowupPromptFromHref(href) !== null) {
+          return (
+            <NativeText
+              className="font-t3-bold underline"
+              onPress={() => onLinkPress(href)}
+              style={{ color: markdownLinkColor }}
+            >
+              {children}
+            </NativeText>
+          );
+        }
         const presentation = resolveMarkdownLinkPresentation(href);
         if (presentation.kind === "file") {
           return (
@@ -1734,7 +1748,7 @@ function renderFeedEntry(
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
               accessibilityLabel="Copy message"
-              text={renderedText}
+              text={renderCodexDirectivesForCopy(renderedText)}
               tintColor={iconSubtleColor}
               buttonSize={28}
               iconSize={13}
@@ -2076,6 +2090,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const userBubbleColor = theme["--color-user-bubble"];
   const onMarkdownLinkPress = useCallback(
     (href: string) => {
+      const followupPrompt = codexFollowupPromptFromHref(href);
+      if (followupPrompt !== null) {
+        void Haptics.selectionAsync();
+        props.onUseCodexFollowup?.(followupPrompt);
+        return;
+      }
       const presentation = resolveMarkdownLinkPresentation(href);
       if (presentation.kind === "file") {
         const relativePath = resolveWorkspaceRelativeFilePath(
@@ -2164,7 +2184,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         void tryOpenExternalUrl(presentation.href, "markdown-link");
       }
     },
-    [props.environmentId, props.threadId, props.workspaceRoot, navigation],
+    [
+      props.environmentId,
+      props.onUseCodexFollowup,
+      props.threadId,
+      props.workspaceRoot,
+      navigation,
+    ],
   );
   const markdownLinkHandlers = useMemo<MarkdownLinkHandlers>(
     () => ({
