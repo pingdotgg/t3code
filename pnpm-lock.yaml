@@ -298,7 +298,7 @@ importers:
         version: link:../../packages/contracts
       '@t3tools/mobile-markdown-text':
         specifier: file:./modules/t3-markdown-text
-        version: file:apps/mobile/modules/t3-markdown-text(6f0a94b6f541bbd4be3f343e27991996)
+        version: file:apps/mobile/modules/t3-markdown-text(256096ce352d49b505b37fd603b0db8d)
       '@t3tools/mobile-review-diff-native':
         specifier: file:./modules/t3-review-diff
         version: file:apps/mobile/modules/t3-review-diff
@@ -4702,6 +4702,7 @@ packages:
     peerDependencies:
       '@t3tools/client-runtime': '*'
       '@t3tools/shared': '*'
+      '@tabler/icons-react-native': '*'
       expo: '*'
       expo-asset: '*'
       expo-clipboard: '*'
@@ -14804,10 +14805,11 @@ snapshots:
     dependencies:
       defer-to-connect: 2.0.1
 
-  '@t3tools/mobile-markdown-text@file:apps/mobile/modules/t3-markdown-text(6f0a94b6f541bbd4be3f343e27991996)':
+  '@t3tools/mobile-markdown-text@file:apps/mobile/modules/t3-markdown-text(256096ce352d49b505b37fd603b0db8d)':
     dependencies:
       '@t3tools/client-runtime': link:packages/client-runtime
       '@t3tools/shared': link:packages/shared
+      '@tabler/icons-react-native': 3.44.0(react-native-svg@15.15.4(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3))(react@19.2.3)
       expo: 57.0.18(41fd11498a34454c91128cdad32f22f8)
       expo-asset: 57.0.15(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)(typescript@7.0.2)
       expo-clipboard: 57.0.1(expo@57.0.18)(react-native@0.86.3(@babel/core@7.29.7)(@react-native/metro-config@0.86.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
