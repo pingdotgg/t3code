@@ -312,14 +312,15 @@ jobs:
               - --filter=t3code-relay...
 
       # The deployed stack's outputs, read from Alchemy's state store without
-      # planning or applying. Redacted values are persisted as
+      # planning or applying. Select the backend explicitly to avoid loading
+      # the stack's unrelated provider credentials. Redacted values are persisted as
       # {"__redacted__": "<value>"}; the token is masked before it is written.
       - name: Read production relay tracing config
         shell: bash
         working-directory: infra/relay
         run: |
           set -euo pipefail
-          output="$(npx alchemy state read T3CodeRelay/prod/output --no-input)"
+          output="$(npx alchemy state read T3CodeRelay/prod/output --backend cloudflare --no-input)"
           field() {
             jq -er --arg key "$1" '.[$key] | if type == "object" then .__redacted__ else . end | select(. != null and . != "")' <<<"$output" \
               || { echo "Relay stack output is missing $1" >&2; exit 1; }
