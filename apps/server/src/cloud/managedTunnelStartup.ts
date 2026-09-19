@@ -34,26 +34,37 @@ export function managedTunnelStartupAction(input: {
   return { action: "none" };
 }
 
-// Registration retries stop here. After that the host falls back to its
-// stored connector config rather than staying offline while the relay is down.
+// After this window the host can start its stored connector config while
+// registration keeps retrying to reconcile the origin when the relay returns.
 const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
 
 export const retryManagedTunnelRegistration = <A, E, R>(
   registration: Effect.Effect<A, E, R>,
   isRetryable: (error: E) => boolean,
-) =>
-  registration.pipe(
+  onRetryWindowExhausted?: Effect.Effect<void, never, R>,
+) => {
+  const schedule = Schedule.exponential("1 second").pipe(
+    Schedule.modifyDelay(({ duration }) =>
+      Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+    ),
+    Schedule.jittered,
+  );
+  return registration.pipe(
     Effect.retry({
       while: isRetryable,
-      schedule: Schedule.exponential("1 second").pipe(
-        Schedule.modifyDelay(({ duration }) =>
-          Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-        ),
-        Schedule.jittered,
+      schedule: schedule.pipe(
         Schedule.upTo({ duration: MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW }),
       ),
     }),
+    Effect.catch((error) =>
+      onRetryWindowExhausted !== undefined && isRetryable(error)
+        ? onRetryWindowExhausted.pipe(
+            Effect.andThen(registration.pipe(Effect.retry({ while: isRetryable, schedule }))),
+          )
+        : Effect.fail(error),
+    ),
   );
+};
 
 // A host asks the relay for a replacement tunnel at most this often. Every
 // managed host shares one relay, so a host stuck in a bad loop must not turn

@@ -95,10 +95,10 @@ existing allocation on the first registration after the upgrade because the
 stored origin is empty. First registrations are jittered so an auto-update wave
 does not hit the relay at once. The host stores a confirmed-origin marker with
 the connector config, and a later boot starts the connector before registration
-only when that marker matches the current config and port. Registration retries
-for ten minutes. If the relay stays unreachable past that, the host starts its
-stored config anyway and reconciles the origin on the next successful
-registration. If the connector exits, or `cloudflared` reports repeated tunnel
+only when that marker matches the current config and port. If registration
+cannot reach the relay for ten minutes, the host starts its stored config anyway
+and keeps registering in the background until it can reconcile the origin.
+If the connector exits, or `cloudflared` reports repeated tunnel
 rejections, the host asks the relay for a replacement, at most once every two
 minutes. The relay
 provisions under the same allocation, so the hostname and DNS record survive

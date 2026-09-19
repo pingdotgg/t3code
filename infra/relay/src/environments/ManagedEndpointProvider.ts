@@ -968,16 +968,13 @@ export const make = Effect.gen(function* () {
         );
       const { hostname, tunnelName } = allocation;
 
-      const selectedTunnel = yield* tunnels.list({ name: tunnelName, isDeleted: false }).pipe(
+      const tunnelResponse = yield* tunnels.list({ name: tunnelName, isDeleted: false }).pipe(
         Effect.map((tunnels) => tunnels.result),
         Effect.map(Arr.findFirst((tunnel) => tunnel.name === tunnelName)),
         Effect.flatMap(
           Option.match({
-            onSome: (tunnel) => Effect.succeed({ tunnel, created: false }),
-            onNone: () =>
-              tunnels
-                .create({ name: tunnelName, configSrc: "cloudflare" })
-                .pipe(Effect.map((tunnel) => ({ tunnel, created: true }))),
+            onSome: (tunnel) => Effect.succeed(tunnel),
+            onNone: () => tunnels.create({ name: tunnelName, configSrc: "cloudflare" }),
           }),
         ),
         Effect.mapError(
@@ -992,7 +989,6 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-      const tunnelResponse = selectedTunnel.tunnel;
       if (!tunnelResponse.id || tunnelResponse.name !== tunnelName) {
         return yield* new ManagedEndpointProvisioningFailed({
           userId: input.userId,
@@ -1027,33 +1023,8 @@ export const make = Effect.gen(function* () {
           ),
         );
       if (tunnelGeneration === null) {
-        if (selectedTunnel.created) {
-          const current = yield* allocations.get(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ManagedEndpointProvisioningFailed({
-                  userId: input.userId,
-                  environmentId: input.environmentId,
-                  stage: "record-tunnel",
-                  hostname,
-                  tunnelName,
-                  tunnelId: tunnel.id,
-                  cause,
-                }),
-            ),
-          );
-          if (current?.tunnelId !== tunnel.id) {
-            yield* ignoreNotFound(tunnels.delete(tunnel.id)).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to remove a tunnel that lost its allocation", {
-                  tunnelId: tunnel.id,
-                  tunnelName,
-                  cause,
-                }),
-              ),
-            );
-          }
-        }
+        // A newer provision can adopt this tunnel by name at any point after
+        // our claim fails. Leave it available for that provision or a retry.
         return yield* new ManagedEndpointProvisioningFailed({
           userId: input.userId,
           environmentId: input.environmentId,

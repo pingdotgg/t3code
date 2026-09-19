@@ -1246,32 +1246,49 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects a tunnel recorded after its allocation generation changed", () => {
-    const tunnelCalls: TunnelCall[] = [];
-    const allocations = makeAllocations();
-    const changed = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
-      ...allocations,
-      recordTunnel: () => Effect.succeed(null),
-    });
-    const layer = providerLayer(makePersistentTunnelClient(tunnelCalls), makeDnsClient(), changed);
+  it.effect(
+    "keeps a newly created tunnel available for retry after losing its allocation claim",
+    () => {
+      const tunnelCalls: TunnelCall[] = [];
+      const allocations = makeAllocations();
+      let changeGeneration = true;
+      const changed = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
+        ...allocations,
+        recordTunnel: (input) =>
+          Effect.gen(function* () {
+            if (changeGeneration) {
+              changeGeneration = false;
+              yield* allocations.claimDeprovision(input);
+            }
+            return yield* allocations.recordTunnel(input);
+          }),
+      });
+      const layer = providerLayer(
+        makePersistentTunnelClient(tunnelCalls),
+        makeDnsClient(),
+        changed,
+      );
 
-    return Effect.gen(function* () {
-      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-      const error = yield* Effect.flip(
-        provider.provision({
+      return Effect.gen(function* () {
+        const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+        const input = {
           userId: "user_ABC",
           environmentId: "env_ABC",
           origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
-        }),
-      );
+        };
+        const error = yield* Effect.flip(provider.provision(input));
 
-      expect(error).toMatchObject({
-        _tag: "ManagedEndpointProvisioningFailed",
-        stage: "record-tunnel",
-      });
-      expect(tunnelCalls.map((call) => call.operation)).toEqual(["list", "create", "delete"]);
-    }).pipe(Effect.provide(layer));
-  });
+        expect(error).toMatchObject({
+          _tag: "ManagedEndpointProvisioningFailed",
+          stage: "record-tunnel",
+        });
+        expect(tunnelCalls.map((call) => call.operation)).toEqual(["list", "create"]);
+        expect((yield* provider.provision(input)).runtime.tunnelId).toBe("tunnel-id");
+        expect(tunnelCalls.filter((call) => call.operation === "create")).toHaveLength(1);
+        expect(tunnelCalls.filter((call) => call.operation === "delete")).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("does not overwrite DNS when tunnel ownership changes during provisioning", () => {
     const allocations = makeAllocations();

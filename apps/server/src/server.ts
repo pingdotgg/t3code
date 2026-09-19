@@ -823,6 +823,33 @@ const makeServerLayer = Layer.unwrap(
                   ),
                 )
               : null;
+            // A publish-only link must not expose the host, even if a managed
+            // config from an earlier link is still stored.
+            const startedConfirmed =
+              desiredCliLinkMode === "publish_only"
+                ? false
+                : yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin).pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
+                        cause,
+                      }).pipe(Effect.as(false)),
+                    ),
+                  );
+            const startStoredManagedTunnel = startManagedCloudTunnelIfOriginConfirmed(localOrigin, {
+              requireConfirmedOrigin: false,
+            }).pipe(
+              Effect.tap((started) =>
+                started
+                  ? Effect.logWarning(
+                      "T3 Connect started the stored tunnel without relay confirmation",
+                    )
+                  : Effect.void,
+              ),
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to start the stored T3 Connect tunnel", { cause }),
+              ),
+              Effect.asVoid,
+            );
             const registerManagedTunnel = retryManagedTunnelRegistration(
               registerManagedCloudTunnelRecovery(localOrigin, {
                 retryRuntimeFailures: true,
@@ -830,6 +857,7 @@ const makeServerLayer = Layer.unwrap(
               (error) =>
                 shouldRetryCloudLink(error) &&
                 error._tag !== "EnvironmentCloudEndpointUnavailableError",
+              startedConfirmed ? Effect.void : startStoredManagedTunnel,
             ).pipe(
               Effect.tap((result) =>
                 result.status === "ready"
@@ -844,18 +872,6 @@ const makeServerLayer = Layer.unwrap(
                     }).pipe(Effect.as({ status: "unavailable" as const })),
               ),
             );
-            // A publish-only link must not expose the host, even if a managed
-            // config from an earlier link is still stored.
-            const startedConfirmed =
-              desiredCliLinkMode === "publish_only"
-                ? false
-                : yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin).pipe(
-                    Effect.catch((cause) =>
-                      Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
-                        cause,
-                      }).pipe(Effect.as(false)),
-                    ),
-                  );
             // A host without a confirmed marker is on its first boot after the
             // upgrade. Spread those registrations so an auto-update wave does
             // not hit the relay all at once.
@@ -870,24 +886,11 @@ const makeServerLayer = Layer.unwrap(
               desiredCliLinkMode === "publish_only"
                 ? { status: "not_linked" as const }
                 : yield* registerManagedTunnel;
-            // Registration gave up after its retry window. Start the stored
-            // config anyway so a relay outage does not keep the host offline;
-            // the next successful registration reconciles the origin.
+            // A terminal registration failure also allows the stored config
+            // to start. Transient outages use the fallback above and keep
+            // registration retrying in this scoped startup fiber.
             if (registration.status === "unavailable" && !startedConfirmed) {
-              yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin, {
-                requireConfirmedOrigin: false,
-              }).pipe(
-                Effect.tap((started) =>
-                  started
-                    ? Effect.logWarning(
-                        "T3 Connect started the stored tunnel without relay confirmation",
-                      )
-                    : Effect.void,
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to start the stored T3 Connect tunnel", { cause }),
-                ),
-              );
+              yield* startStoredManagedTunnel;
             }
             const startupAction = managedTunnelStartupAction({ wantsCliLink, registration });
             if (startupAction.action === "request_recovery") {

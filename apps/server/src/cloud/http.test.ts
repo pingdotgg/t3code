@@ -43,6 +43,7 @@ import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
+  decodeConfirmedOrigin,
   decodeRuntimeConfig,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_URL_SECRET,
@@ -60,7 +61,11 @@ import {
   releaseManagedTunnelOnShutdown,
   startManagedCloudTunnelIfOriginConfirmed,
 } from "./http.ts";
-import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
+import {
+  managedTunnelStartupAction,
+  retryManagedTunnelRegistration,
+} from "./managedTunnelStartup.ts";
+import { shouldRetryCloudLink } from "./relayResponse.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "./traceRelayRequest.ts";
 
@@ -763,6 +768,91 @@ describe("releaseManagedTunnelOnShutdown", () => {
         applyConfigCalls,
         requests,
         respond: () => Response.json({ status: "ready" }),
+      }),
+    );
+  });
+
+  it.effect("reconciles a changed port after a relay outage outlasts the startup fallback", () => {
+    const config = {
+      providerKind: "cloudflare_tunnel" as const,
+      connectorToken: "existing-token",
+      tunnelId: "existing-tunnel",
+    };
+    const { store } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(config)],
+      [
+        CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
+        JSON.stringify({
+          config,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        }),
+      ],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    let relayAvailable = false;
+    const localOrigin = "http://127.0.0.1:4884";
+
+    return Effect.gen(function* () {
+      const fallbackStarted = yield* Deferred.make<void>();
+      const firstFailure = yield* Deferred.make<void>();
+      expect(yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin)).toBe(false);
+      const registration = yield* Effect.forkChild(
+        retryManagedTunnelRegistration(
+          registerManagedCloudTunnelRecovery(localOrigin).pipe(
+            Effect.tapError(() => Deferred.succeed(firstFailure, undefined)),
+          ),
+          shouldRetryCloudLink,
+          startManagedCloudTunnelIfOriginConfirmed(localOrigin, {
+            requireConfirmedOrigin: false,
+          }).pipe(
+            Effect.orDie,
+            Effect.tap((started) => {
+              expect(started).toBe(true);
+              return Deferred.succeed(fallbackStarted, undefined);
+            }),
+            Effect.asVoid,
+          ),
+        ),
+        { startImmediately: true },
+      );
+      yield* Deferred.await(firstFailure);
+      yield* TestClock.adjust("15 minutes");
+      yield* Effect.raceFirst(
+        Deferred.await(fallbackStarted),
+        Fiber.join(registration).pipe(
+          Effect.andThen(Effect.die("Registration ended before starting the fallback")),
+        ),
+      );
+      expect(applyConfigCalls).toEqual([config]);
+      const attemptsBeforeRecovery = requests.length;
+
+      relayAvailable = true;
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Fiber.join(registration)).toMatchObject({ status: "ready" });
+      expect(requests.length).toBeGreaterThan(attemptsBeforeRecovery);
+      const marker = yield* store.get(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
+      expect(Option.isSome(marker)).toBe(true);
+      if (Option.isSome(marker)) {
+        expect(
+          Option.getOrThrow(decodeConfirmedOrigin(new TextDecoder().decode(marker.value))),
+        ).toEqual({
+          config,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 4884 },
+        });
+      }
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        respond: () =>
+          relayAvailable
+            ? Response.json({ status: "ready" })
+            : Response.json({ message: "relay unavailable" }, { status: 503 }),
       }),
     );
   });

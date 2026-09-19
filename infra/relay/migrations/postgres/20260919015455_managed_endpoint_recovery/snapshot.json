@@ -1,8 +1,8 @@
 {
-  "version": "8",
   "dialect": "postgres",
-  "id": "1bf86e6d-8ae5-4a2f-8f88-6b3ca69c26ac",
-  "prevIds": ["1109ed23-036c-4c39-a459-52422a7ffd99"],
+  "id": "3809c51e-3821-4a08-818d-e5d28dd3e9b4",
+  "prevIds": ["4b6d0d21-8d78-4499-9dde-b42bcf633d05"],
+  "version": "8",
   "ddl": [
     {
       "isRlsEnabled": false,
@@ -85,7 +85,7 @@
       "table": "relay_agent_activity_rows"
     },
     {
-      "type": "varchar(191)",
+      "type": "varchar(512)",
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
@@ -189,7 +189,7 @@
       "table": "relay_delivery_attempts"
     },
     {
-      "type": "varchar(191)",
+      "type": "varchar(512)",
       "typeSchema": null,
       "notNull": false,
       "dimensions": 0,
