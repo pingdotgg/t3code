@@ -1037,11 +1037,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     [cancelContentOverflowFrame, cancelVerifyEndFrame],
   );
   const scheduleSettledEndVerification = useCallback(() => {
-    if (verifyEndFrameRef.current !== null) return;
     // The list stays mounted across thread switches; listIdentityRef flips
     // during render, so a frame scheduled for one thread must never verify
-    // the next. Guard at fire time instead of cancelling in an effect: the
-    // stale frame self-drops and a fresh schedule in the same commit survives.
+    // the next. Cancel-then-schedule (rather than dedupe-on-pending) so a
+    // stale thread-A frame cannot swallow thread B's post-restore schedule
+    // within the same frame window: the reschedule lands in the same rAF
+    // phase, bursts still share one frame, and the key guard below covers a
+    // stale frame with no fresh schedule behind it.
+    cancelVerifyEndFrame();
     const scheduledKey = listIdentityRef.current;
     verifyEndFrameRef.current = requestAnimationFrame(() => {
       verifyEndFrameRef.current = null;
@@ -1051,7 +1054,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
       verifyLatestRef.current();
     });
-  }, []);
+  }, [cancelVerifyEndFrame]);
   const verifySettledEndPosition = useCallback(() => {
     const list = listRef.current;
     const state = list?.getState?.();

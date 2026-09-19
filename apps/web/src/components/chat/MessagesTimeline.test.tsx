@@ -1328,6 +1328,41 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("hands a pending frame to the next thread instead of dropping its verification", async () => {
+    const { renderer, atEndCalls, manualNavigationCalls, flushFrames, props } =
+      mountTimelineForEndVerification({
+        threadKey: "env-verify:thread-7",
+      });
+    try {
+      // Thread A arms a verification frame that never fires before the switch.
+      act(() => {
+        legendListMock.itemSizeChanged?.();
+      });
+      // Switch threads inside the same frame window: thread B renders while
+      // thread A's frame is still pending.
+      act(() => {
+        renderer.update(<MessagesTimeline {...props} routeThreadKey="env-verify:thread-8" />);
+      });
+      // Let the restore microtask land thread B's positioning so its
+      // post-restore schedule runs (and must survive thread A's pending frame).
+      await act(async () => {});
+      // The restore pin itself may scroll; verification afterwards must not.
+      legendListMock.scrollToEndCalls = 0;
+      flushFrames();
+      flushFrames();
+
+      // Thread B confirmed the stranded viewport over two frames through the
+      // same leave-end path a scroll gesture takes. A key-blind dedupe would
+      // let thread A's pending frame swallow B's schedule and strand B with
+      // no verification at all.
+      expect(manualNavigationCalls).toHaveLength(1);
+      expect(atEndCalls).toContain(false);
+      expect(legendListMock.scrollToEndCalls).toBe(0);
+    } finally {
+      unmountVerifyRenderer(renderer);
+    }
+  });
+
   it("keeps reserved end space when tool work starts while reading history", () => {
     const turnId = TurnId.make("turn-with-active-tool");
     const firstEntry = buildUserTimelineEntry("Run the command.");
