@@ -99,6 +99,8 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
 
   const readinessClient = client.pipe(
     HttpClient.filterStatusOk,
+    // Include body consumption in the probe deadline, not just the response headers.
+    HttpClient.tap((response) => response.text.pipe(Effect.ignore)),
     HttpClient.transform((effect) =>
       Effect.gen(function* () {
         attempt += 1;
@@ -127,7 +129,6 @@ export const waitForHttpReady = Effect.fn("shared.httpReadiness.waitForHttpReady
         ),
       ),
     ),
-    HttpClient.tap((response) => response.text.pipe(Effect.ignore)),
     HttpClient.retry(retryPolicy),
   );
 
