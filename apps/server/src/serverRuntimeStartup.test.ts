@@ -10,6 +10,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import { TestClock } from "effect/testing";
 
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
@@ -60,6 +62,38 @@ it.effect("interrupts the effect worker when awareness relay startup fails", () 
       assert.isTrue(Exit.isFailure(exit));
       assert.isTrue(yield* Ref.get(workerInterrupted));
       assert.isNull(yield* Ref.get(workerFiberRef));
+    }),
+  ),
+);
+
+it.effect("bounds the worker stop wait when a stalled worker cannot honour the interrupt", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const workerFiberRef = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+
+      // The worker sits in an uninterruptible region forever, like a stalled
+      // adapter acquisition, so its interrupt signal can never be honoured.
+      // The stop wait must still resolve so teardown can continue. The worker
+      // is scoped: hand the call a scope that is never closed so the
+      // uninterruptible fiber cannot pin test teardown.
+      const leakedScope = yield* Scope.make();
+      const call = yield* ServerRuntimeStartup.startEffectWorkerWithRelay({
+        runWorker: Effect.never.pipe(Effect.uninterruptible),
+        startRelay: Effect.yieldNow.pipe(
+          Effect.andThen(Effect.die("awareness relay startup failed")),
+        ),
+        workerFiberRef,
+      }).pipe(Effect.exit, Effect.provideService(Scope.Scope, leakedScope), Effect.forkDetach);
+
+      // Drive the clock until the bounded stop wait fires and the call exits;
+      // an unbounded wait on the stalled worker never would.
+      while (call.pollUnsafe() === undefined) {
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("31 seconds");
+      }
+
+      const exit = yield* Fiber.join(call);
+      assert.isTrue(Exit.isFailure(exit));
     }),
   ),
 );

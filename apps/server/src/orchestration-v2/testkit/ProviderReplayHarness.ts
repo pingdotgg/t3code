@@ -213,26 +213,38 @@ export function runOrchestratorV2ProviderReplayScenario<
         : [],
     ) ?? [],
   );
-  const layer = makeOrchestratorV2ProviderReplayLayer(scenario, harness, {
-    ...options,
-    replayGate,
-  });
   const run = runOrchestratorV2Scenario(scenario, { replayGate });
 
   if (scenario.runtimeRestart !== true) {
+    const layer = makeOrchestratorV2ProviderReplayLayer(scenario, harness, {
+      ...options,
+      replayGate,
+    });
     return run.pipe(Effect.provide(layer));
   }
-  return Effect.gen(function* () {
-    yield* Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) =>
-      outbox.reconcileAfterProcessLoss.pipe(Effect.orDie),
-    );
-    const result = yield* run;
-    yield* Effect.flatMap(
-      ProviderSessionManager.ProviderSessionManagerV2,
-      (sessions) => sessions.shutdown,
-    );
-    return result;
-  }).pipe(Effect.provide(layer));
+  // Production recovers the outbox before starting the effect worker, so the
+  // restart path builds the layer without the daemon: reconcile first, then
+  // fork the worker — a daemon already claiming work during reconcile could
+  // have a freshly-claimed effect reset to pending and run twice.
+  const restartLayer = makeOrchestratorV2ProviderReplayLayer(scenario, harness, {
+    ...options,
+    replayGate,
+    runEffectWorker: false,
+  });
+  return Effect.scoped(
+    Effect.gen(function* () {
+      yield* Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) =>
+        outbox.reconcileAfterProcessLoss.pipe(Effect.orDie),
+      );
+      yield* runEffectWorkerDaemon.pipe(Effect.forkScoped);
+      const result = yield* run;
+      yield* Effect.flatMap(
+        ProviderSessionManager.ProviderSessionManagerV2,
+        (sessions) => sessions.shutdown,
+      );
+      return result;
+    }),
+  ).pipe(Effect.provide(restartLayer));
 }
 
 export function makeOrchestratorV2ProviderReplayLayer<
