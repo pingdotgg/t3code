@@ -9,17 +9,23 @@ export class ServerActivation extends Context.Reference<Effect.Effect<void> | un
   { defaultValue: () => undefined },
 ) {}
 
-/** Forks a long-running root before commit, returning it after it reaches the activation boundary. */
+/**
+ * Forks a long-running root before commit, returning it after it reaches the activation boundary.
+ * `detached` leaves the fiber unbound from the scope — the caller owns its shutdown —
+ * for workers whose scope-finalizer interrupt wait must stay bounded.
+ */
 export const forkParkedFiber = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
+  options?: { readonly detached?: boolean },
 ): Effect.Effect<Fiber.Fiber<A, E>, never, Scope.Scope | R> =>
   Effect.gen(function* () {
     const activation = yield* ServerActivation;
+    const fork = options?.detached === true ? Effect.forkDetach : Effect.forkScoped;
     if (activation === undefined) {
-      return yield* Effect.forkScoped(effect);
+      return yield* fork(effect);
     }
     const parked = yield* Deferred.make<void>();
-    const fiber = yield* Effect.forkScoped(
+    const fiber = yield* fork(
       Deferred.succeed(parked, undefined).pipe(Effect.andThen(activation), Effect.andThen(effect)),
     );
     yield* Deferred.await(parked);

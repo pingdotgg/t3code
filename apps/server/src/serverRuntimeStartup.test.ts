@@ -98,6 +98,35 @@ it.effect("bounds the worker stop wait when a stalled worker cannot honour the i
   ),
 );
 
+it.effect("scope close reaches teardown past a stalled uninterruptible worker", () =>
+  Effect.gen(function* () {
+    const scope = yield* Scope.make();
+    const workerFiberRef = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+    // Stands in for providerSessions.shutdown: registered before the worker is
+    // forked, so it runs after the worker's own scope finalizer on close.
+    const teardownRan = yield* Ref.make(false);
+    yield* Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => Ref.set(teardownRan, true));
+      yield* ServerRuntimeStartup.startEffectWorkerWithRelay({
+        runWorker: Effect.never.pipe(Effect.uninterruptible),
+        startRelay: Effect.void,
+        workerFiberRef,
+      });
+    }).pipe(Effect.provideService(Scope.Scope, scope));
+
+    // A scope-bound forkScoped worker would wait on the stalled worker's exit
+    // forever here; the detached worker's bounded-interrupt finalizer lets the
+    // close reach the teardown finalizer.
+    const closing = yield* Scope.close(scope, Exit.void).pipe(Effect.forkDetach);
+    while (closing.pollUnsafe() === undefined) {
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("31 seconds");
+    }
+    yield* Fiber.join(closing);
+    assert.isTrue(yield* Ref.get(teardownRan));
+  }),
+);
+
 it.effect("queues commands until startup signals readiness", () =>
   Effect.scoped(
     Effect.gen(function* () {
