@@ -1786,7 +1786,7 @@ it.effect(
         id: EventId.make("event:memory-pending-dep:request"),
         type: "runtime-request.updated",
         threadId,
-        runId: null,
+        runId: undefined,
         nodeId: NodeId.make("node:memory-pending-dep"),
         driver,
         occurredAt: now,
