@@ -59,6 +59,16 @@ export function HomeHeader(props: HomeHeaderProps) {
                   title: project.label,
                   state: checkedMenuState(props.selectedProjectKey === project.key),
                 })),
+                ...(props.selectedProjectKey !== null && props.onRemoveSelectedProject
+                  ? [
+                      {
+                        id: "project-remove",
+                        title: "Remove project…",
+                        image: "trash",
+                        attributes: { destructive: true },
+                      },
+                    ]
+                  : []),
               ],
             },
           ] satisfies MenuAction[])),
@@ -87,6 +97,7 @@ export function HomeHeader(props: HomeHeaderProps) {
     ],
     [
       props.environments,
+      props.onRemoveSelectedProject,
       props.projectSortOrder,
       props.projects,
       props.selectedEnvironmentId,
@@ -116,6 +127,11 @@ export function HomeHeader(props: HomeHeaderProps) {
 
       if (id === "project:all") {
         props.onProjectChange(null);
+        return;
+      }
+
+      if (id === "project-remove") {
+        props.onRemoveSelectedProject?.();
         return;
       }
 

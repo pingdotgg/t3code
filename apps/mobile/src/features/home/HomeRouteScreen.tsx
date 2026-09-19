@@ -86,18 +86,32 @@ export function HomeRouteScreen() {
   } = useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  const projectFilterOptions = useMemo(
+  const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
         projects,
         environmentId: selectedEnvironmentId,
         projectGroupingMode: listOptions.projectGroupingMode,
-      }).map((scope) => ({
-        key: scope.key,
-        label: scope.title,
-      })),
+      }),
     [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
   );
+  const projectFilterOptions = useMemo(
+    () => projectScopes.map((scope) => ({ key: scope.key, label: scope.title })),
+    [projectScopes],
+  );
+  const selectedProjectScope =
+    selectedProjectKey === null
+      ? null
+      : (projectScopes.find((scope) => scope.key === selectedProjectKey) ?? null);
+  const removeSelectedProject =
+    selectedProjectScope === null
+      ? null
+      : () => {
+          void confirmRemoveProjects(selectedProjectScope.projects, {
+            groupTitle: selectedProjectScope.title,
+            isWholeGroup: true,
+          });
+        };
   useEffect(() => {
     if (
       selectedProjectKey !== null &&
@@ -181,6 +195,7 @@ export function HomeRouteScreen() {
           threadSortOrder={listOptions.threadSortOrder}
           onEnvironmentChange={setSelectedEnvironmentId}
           onProjectChange={setSelectedProjectKey}
+          onRemoveSelectedProject={removeSelectedProject}
           onOpenEnvironments={() =>
             navigation.navigate("SettingsSheet", {
               screen: "SettingsContent",

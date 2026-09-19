@@ -18,6 +18,7 @@ type HomeListFilterMenuAction = {
   readonly title: string;
   readonly subtitle?: string;
   readonly state?: "on" | "off";
+  readonly destructive?: boolean;
   readonly onPress: () => void;
 };
 
@@ -43,6 +44,8 @@ export function buildHomeListFilterMenu(props: {
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
+  /** Removes the scoped project. Null (or no scope) hides the action. */
+  readonly onRemoveSelectedProject?: (() => void) | null;
   /** False hides the sort/group submenus. Thread List v2 uses a fixed
       creation-order layout, so offering those controls while it silently
       ignores them would be a lie; the environment filter still applies. */
@@ -91,6 +94,18 @@ export function buildHomeListFilterMenu(props: {
           state: props.selectedProjectKey === project.key ? ("on" as const) : ("off" as const),
           onPress: () => props.onProjectChange(project.key),
         })),
+        // Thread List v2 has no project rows to act on, so the scoped
+        // project's removal lives next to the scope that selected it.
+        ...(props.selectedProjectKey !== null && props.onRemoveSelectedProject
+          ? [
+              {
+                type: "action" as const,
+                title: "Remove project…",
+                destructive: true,
+                onPress: props.onRemoveSelectedProject,
+              },
+            ]
+          : []),
       ],
     });
   }

@@ -273,6 +273,15 @@ function ThreadNavigationSidebarPane(
         : (projectScopes.find((scope) => scope.key === selectedProjectKey) ?? null),
     [projectScopes, selectedProjectKey],
   );
+  // Thread List v2 has no project rows, so the scoped project is removed
+  // from the same filter menu that scoped it.
+  const removeSelectedProject = useMemo(
+    () =>
+      selectedProjectScope === null
+        ? null
+        : () => handleRemoveProject(selectedProjectScope.projects, selectedProjectScope.title),
+    [handleRemoveProject, selectedProjectScope],
+  );
   useEffect(() => {
     if (
       selectedProjectKey !== null &&
@@ -676,6 +685,16 @@ function ThreadNavigationSidebarPane(
                   title: project.label,
                   state: selectedProjectKey === project.key ? ("on" as const) : ("off" as const),
                 })),
+                ...(removeSelectedProject
+                  ? [
+                      {
+                        id: "project-remove",
+                        title: "Remove project…",
+                        image: "trash",
+                        attributes: { destructive: true },
+                      },
+                    ]
+                  : []),
               ],
             },
           ] satisfies MenuAction[])),
@@ -705,11 +724,22 @@ function ThreadNavigationSidebarPane(
             },
           ] satisfies MenuAction[])),
     ],
-    [environments, options, projectFilterOptions, selectedProjectKey, threadListV2Enabled],
+    [
+      environments,
+      options,
+      projectFilterOptions,
+      removeSelectedProject,
+      selectedProjectKey,
+      threadListV2Enabled,
+    ],
   );
   const handleListMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       const event = nativeEvent.event;
+      if (event === "project-remove") {
+        removeSelectedProject?.();
+        return;
+      }
       if (event === "environment:all") {
         setSelectedEnvironmentId(null);
         return;
@@ -750,6 +780,7 @@ function ThreadNavigationSidebarPane(
     [
       environments,
       projectFilterOptions,
+      removeSelectedProject,
       setProjectSortOrder,
       setSelectedEnvironmentId,
       setThreadSortOrder,
@@ -1155,12 +1186,14 @@ function ThreadNavigationSidebarPane(
         onProjectChange: setSelectedProjectKey,
         onProjectSortOrderChange: setProjectSortOrder,
         onThreadSortOrderChange: setThreadSortOrder,
+        onRemoveSelectedProject: removeSelectedProject,
         listOrganization: !threadListV2Enabled,
       }),
     [
       environments,
       options,
       projectFilterOptions,
+      removeSelectedProject,
       selectedProjectKey,
       setProjectSortOrder,
       setSelectedEnvironmentId,

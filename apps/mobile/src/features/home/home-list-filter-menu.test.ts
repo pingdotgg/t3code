@@ -38,6 +38,36 @@ describe("buildHomeListFilterMenu", () => {
     projectMenu.items[0]?.onPress();
     projectMenu.items[2]?.onPress();
     expect(onProjectChange).toHaveBeenNthCalledWith(1, null);
+    expect(projectMenu.items.some((item) => item.title === "Remove project…")).toBe(false);
     expect(onProjectChange).toHaveBeenNthCalledWith(2, "environment-1:project-2");
+  });
+
+  it("offers a destructive remove action only while a project is scoped", () => {
+    const onRemoveSelectedProject = vi.fn();
+    const build = (selectedProjectKey: string | null) =>
+      buildHomeListFilterMenu({
+        environments: [],
+        projects: [{ key: "environment-1:project-1", label: "Codething" }],
+        selectedEnvironmentId: null,
+        selectedProjectKey,
+        projectSortOrder: "updated_at",
+        threadSortOrder: "updated_at",
+        onEnvironmentChange: vi.fn(),
+        onProjectChange: vi.fn(),
+        onProjectSortOrderChange: vi.fn(),
+        onThreadSortOrderChange: vi.fn(),
+        onRemoveSelectedProject: selectedProjectKey === null ? null : onRemoveSelectedProject,
+      }).items.find((item) => item.type === "submenu" && item.title === "Project");
+
+    const unscoped = build(null);
+    if (unscoped?.type !== "submenu") throw new Error("Expected project submenu");
+    expect(unscoped.items.some((item) => item.title === "Remove project…")).toBe(false);
+
+    const scoped = build("environment-1:project-1");
+    if (scoped?.type !== "submenu") throw new Error("Expected project submenu");
+    const remove = scoped.items.at(-1);
+    expect(remove).toMatchObject({ title: "Remove project…", destructive: true });
+    remove?.onPress();
+    expect(onRemoveSelectedProject).toHaveBeenCalledTimes(1);
   });
 });
