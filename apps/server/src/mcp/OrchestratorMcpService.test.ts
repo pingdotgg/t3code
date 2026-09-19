@@ -798,6 +798,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       Effect.gen(function* () {
         const codexAltInstanceId = ProviderInstanceId.make("codex-alt");
         const driver = ProviderDriverKind.make("codex");
+        const claudeDriver = ProviderDriverKind.make("claudeAgent");
         const parentModelSelection = {
           instanceId: codexInstanceId,
           model: "gpt-5.4",
@@ -830,6 +831,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             peerEnabled: true,
             explicit: false,
             selectedInstanceId: codexInstanceId,
+            candidateDriver: driver,
           },
           {
             name: "unavailable-inherited-falls-back-to-healthy-peer",
@@ -837,6 +839,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             peerEnabled: true,
             explicit: false,
             selectedInstanceId: codexAltInstanceId,
+            candidateDriver: driver,
           },
           {
             name: "no-available-peer",
@@ -844,6 +847,15 @@ describe("OrchestratorMcpService provider resolution", () => {
             peerEnabled: false,
             explicit: false,
             selectedInstanceId: null,
+            candidateDriver: driver,
+          },
+          {
+            name: "cross-driver-no-available-candidate",
+            inheritedEnabled: false,
+            peerEnabled: false,
+            explicit: false,
+            selectedInstanceId: null,
+            candidateDriver: claudeDriver,
           },
           {
             name: "explicit-unavailable",
@@ -851,6 +863,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             peerEnabled: true,
             explicit: true,
             selectedInstanceId: null,
+            candidateDriver: driver,
           },
           {
             name: "explicit-healthy",
@@ -858,6 +871,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             peerEnabled: true,
             explicit: true,
             selectedInstanceId: codexAltInstanceId,
+            candidateDriver: driver,
           },
         ] as const;
 
@@ -896,13 +910,13 @@ describe("OrchestratorMcpService provider resolution", () => {
               getProviders: Effect.succeed([
                 providerSnapshot({
                   instanceId: codexInstanceId,
-                  driver,
+                  driver: testCase.candidateDriver,
                   model: "gpt-5.4",
                   enabled: testCase.inheritedEnabled,
                 }),
                 providerSnapshot({
                   instanceId: codexAltInstanceId,
-                  driver,
+                  driver: testCase.candidateDriver,
                   model: "codex-alt-model",
                   enabled: testCase.peerEnabled,
                 }),
@@ -921,7 +935,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                       ? codexInstanceId
                       : testCase.selectedInstanceId,
                 } as const)
-              : ({ driverKind: driver } as const);
+              : ({ driverKind: testCase.candidateDriver } as const);
             if (testCase.selectedInstanceId === null) {
               const error = yield* service
                 .delegateTask(scope, {
@@ -932,6 +946,9 @@ describe("OrchestratorMcpService provider resolution", () => {
                 })
                 .pipe(Effect.flip);
               assert.equal(error.code, "provider_unavailable", testCase.name);
+              if (testCase.name === "cross-driver-no-available-candidate") {
+                assert.isTrue(error.message.includes("driver claudeAgent"), testCase.name);
+              }
               assert.deepEqual(yield* Ref.get(dispatched), [], testCase.name);
               return;
             }
