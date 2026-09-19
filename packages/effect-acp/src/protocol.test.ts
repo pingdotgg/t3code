@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Ref from "effect/Ref";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import type * as RpcMessage from "effect/unstable/rpc/RpcMessage";
 
 import { it, assert } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -422,6 +423,44 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         requestId: 1,
         operation: "receive-response",
       });
+    }),
+  );
+
+  it.effect("repairs a standards-compliant JSON-RPC error into a typed failure", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+
+      const firstMessage = yield* Deferred.make<RpcMessage.FromServerEncoded>();
+      yield* transport.clientProtocol
+        .run(0, (message) => Deferred.succeed(firstMessage, message).pipe(Effect.asVoid))
+        .pipe(Effect.forkScoped);
+
+      // A plain `{code, message}` error, as a standards-compliant (non-Effect) ACP
+      // agent sends it: no `_tag: "Cause"` marker, so effect/rpc's codec boxes it as
+      // a `Die` unless `repairJsonRpcErrorExit` rewrites it back into a `Fail`.
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          `${encodeUnknownJsonString({
+            jsonrpc: "2.0",
+            id: 5,
+            error: { code: -32601, message: "Method not found" },
+          })}\n`,
+        ),
+      );
+
+      const message = yield* Deferred.await(firstMessage);
+      assert.equal(message._tag, "Exit");
+      const exit = (message as { readonly exit: { readonly _tag: string; readonly cause: any } })
+        .exit;
+      assert.equal(exit._tag, "Failure");
+      assert.deepEqual(exit.cause, [
+        { _tag: "Fail", error: { code: -32601, message: "Method not found" } },
+      ]);
     }),
   );
 
