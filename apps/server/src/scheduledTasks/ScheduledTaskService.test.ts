@@ -2,11 +2,17 @@ import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
-import { ScheduledTaskError } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  ScheduledTaskError,
+  ScheduledTaskId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as Deferred from "effect/Deferred";
@@ -17,7 +23,11 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { layer as scheduledTaskServiceLayer, listDueTasks } from "./ScheduledTaskService.ts";
+import {
+  ScheduledTaskService,
+  layer as scheduledTaskServiceLayer,
+  listDueTasks,
+} from "./ScheduledTaskService.ts";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
@@ -344,4 +354,248 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+const updateProjectId = ProjectId.make("project:atomic-update");
+const otherProjectId = ProjectId.make("project:atomic-update-other");
+const updateTaskId = ScheduledTaskId.make("scheduled-task:atomic-update");
+
+const updateTestDeps = Layer.mergeAll(
+  SqlitePersistenceMemory,
+  NodeCrypto.layer,
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+);
+
+const updateTestLayer = scheduledTaskServiceLayer.pipe(Layer.provide(updateTestDeps));
+
+// Same service plus direct SQL access to its in-memory database, for tests
+// that must plant row state the public API cannot express.
+const updateTestLayerWithSql = scheduledTaskServiceLayer.pipe(Layer.provideMerge(updateTestDeps));
+
+const seedTask = Effect.gen(function* () {
+  const tasks = yield* ScheduledTaskService;
+  const { task } = yield* tasks.upsert({
+    id: updateTaskId,
+    title: "title original",
+    prompt: "prompt original",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 60_000 },
+    projectId: updateProjectId,
+    threadId: null,
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.1-codex" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "agent",
+    creationSource: "mcp",
+  });
+  return task;
+});
+
+const findSeeded = Effect.gen(function* () {
+  const tasks = yield* ScheduledTaskService;
+  const { tasks: all } = yield* tasks.list();
+  return all.find((candidate) => candidate.id === updateTaskId);
+});
+
+it.effect("update keeps disjoint concurrent edits and untouched fields", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const seeded = yield* seedTask;
+    const [first, second] = yield* Effect.all(
+      [
+        tasks.update({ id: updateTaskId, projectId: updateProjectId, title: "title A" }),
+        tasks.update({ id: updateTaskId, projectId: updateProjectId, prompt: "prompt B" }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    assert.isTrue(Option.isSome(first));
+    assert.isTrue(Option.isSome(second));
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    // Both disjoint edits survive — neither overwrote the other's column.
+    assert.equal(after!.title, "title A");
+    assert.equal(after!.prompt, "prompt B");
+    // Unset fields keep their seeded values.
+    assert.equal(after!.enabled, true);
+    assert.deepEqual(after!.schedule, { type: "interval", everyMs: 60_000 });
+    assert.equal(after!.projectId, updateProjectId);
+    assert.equal(after!.createdAt, seeded.createdAt);
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("concurrent schedule and enabled patches merge inside the transaction", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* seedTask;
+    // Each update reads the scoped row inside its own transaction, so the
+    // second writer sees the first writer's committed columns: whichever
+    // commits last must still observe enabled=false and produce a null due
+    // time — never a next_run_at computed from the pre-pause snapshot.
+    yield* Effect.all(
+      [
+        tasks.update({
+          id: updateTaskId,
+          projectId: updateProjectId,
+          schedule: { type: "interval", everyMs: 3_600_000 },
+        }),
+        tasks.update({ id: updateTaskId, projectId: updateProjectId, enabled: false }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    assert.equal(after!.enabled, false);
+    assert.deepEqual(after!.schedule, { type: "interval", everyMs: 3_600_000 });
+    assert.isNull(after!.nextRunAt);
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update loses to a racing delete and never recreates the task", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* seedTask;
+    yield* Effect.all(
+      [
+        tasks.update({ id: updateTaskId, projectId: updateProjectId, title: "racing edit" }),
+        tasks.delete({ id: updateTaskId }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    // Whichever statement committed first, the row must stay deleted — the
+    // update is a targeted UPDATE that can never insert.
+    assert.isUndefined(yield* findSeeded);
+
+    // Deterministic stale update after the delete: typed `none`, still absent.
+    yield* seedTask;
+    yield* tasks.delete({ id: updateTaskId });
+    const stale = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      title: "stale edit",
+    });
+    assert.isTrue(Option.isNone(stale));
+    assert.isUndefined(yield* findSeeded);
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update enforces project scope and reports missing tasks as none", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* seedTask;
+    const wrongProject = yield* tasks.update({
+      id: updateTaskId,
+      projectId: otherProjectId,
+      title: "cross-project edit",
+    });
+    assert.isTrue(Option.isNone(wrongProject));
+    const after = yield* findSeeded;
+    assert.equal(after?.title, "title original");
+
+    const missing = yield* tasks.update({
+      id: ScheduledTaskId.make("scheduled-task:missing"),
+      projectId: updateProjectId,
+      title: "no row",
+    });
+    assert.isTrue(Option.isNone(missing));
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update retains the pending due time unless the schedule changes", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const seeded = yield* seedTask;
+    assert.isNotNull(seeded.nextRunAt);
+
+    // Move the clock forward inside the pending window: an update that
+    // recomputed next_run_at unconditionally would now emit a different
+    // timestamp, so the exact-equality checks below discriminate between
+    // "retained" and "recomputed". (+30s stays inside the 60s interval, so
+    // the task is still not due and the poller cannot fire it.)
+    yield* TestClock.adjust("30 seconds");
+
+    // Non-schedule edits keep the pending due time exactly.
+    const renamed = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      title: "renamed",
+      prompt: "new prompt",
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+    });
+    assert.isTrue(Option.isSome(renamed));
+    assert.equal(Option.getOrThrow(renamed).task.nextRunAt, seeded.nextRunAt);
+
+    // Explicitly resubmitting the current enabled flag or an equal schedule
+    // also retains the pending due time.
+    const sameEnabled = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      enabled: true,
+    });
+    assert.equal(Option.getOrThrow(sameEnabled).task.nextRunAt, seeded.nextRunAt);
+    const sameSchedule = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      schedule: { type: "interval", everyMs: 60_000 },
+    });
+    assert.equal(Option.getOrThrow(sameSchedule).task.nextRunAt, seeded.nextRunAt);
+
+    // A semantically equivalent fixed-time schedule (an explicit all-weekdays
+    // mask means the same as an omitted one) retains it too. The due time is
+    // planted as a sentinel no recompute from the current clock could
+    // produce — exact equality discriminates here, unlike a timestamp
+    // reachable from `now`, which recomputes to the same value.
+    const sql = yield* SqlClient.SqlClient;
+    const fixedTimeId = ScheduledTaskId.make("scheduled-task:fixed-time");
+    yield* tasks.upsert({
+      id: fixedTimeId,
+      title: "fixed",
+      prompt: "fixed prompt",
+      enabled: true,
+      schedule: { type: "fixed_time", timeOfDay: "09:30", weekdays: [0, 1, 2, 3, 4, 5, 6] },
+      projectId: updateProjectId,
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.1-codex" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const overdue = "2001-01-02T09:30:00.000Z";
+    yield* sql`UPDATE scheduled_tasks SET next_run_at = ${overdue} WHERE task_id = ${fixedTimeId}`;
+    const sameFixed = yield* tasks.update({
+      id: fixedTimeId,
+      projectId: updateProjectId,
+      schedule: { type: "fixed_time", timeOfDay: "09:30" },
+    });
+    assert.equal(Option.getOrThrow(sameFixed).task.nextRunAt, overdue);
+
+    // A schedule change restarts the run clock.
+    const rescheduled = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      schedule: { type: "interval", everyMs: 3_600_000 },
+    });
+    const rescheduledTask = Option.getOrThrow(rescheduled).task;
+    assert.isNotNull(rescheduledTask.nextRunAt);
+    assert.notEqual(rescheduledTask.nextRunAt, seeded.nextRunAt);
+
+    // Disabling clears the due time; editing another field while disabled
+    // does not resurrect one.
+    const paused = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      enabled: false,
+    });
+    assert.isNull(Option.getOrThrow(paused).task.nextRunAt);
+    const editedWhilePaused = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      title: "still paused",
+    });
+    assert.isNull(Option.getOrThrow(editedWhilePaused).task.nextRunAt);
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
 );
