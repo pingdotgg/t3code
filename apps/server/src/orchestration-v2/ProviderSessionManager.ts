@@ -2073,30 +2073,43 @@ export const layerWithOptions = (
       const markBusy = (
         providerSessionId: ProviderSessionId,
         expectedRuntime?: ProviderAdapterV2SessionRuntime,
+        acquired?: Ref.Ref<boolean>,
       ) =>
         withActivityError(
           providerSessionId,
           Effect.gen(function* () {
             const key = sessionKey(providerSessionId);
             const now = yield* Clock.currentTimeMillis;
-            const idleFiber = yield* Ref.modify(sessions, (current) => {
-              const entry = current.get(key);
-              if (
-                entry === undefined ||
-                (expectedRuntime !== undefined && entry.runtime !== expectedRuntime)
-              ) {
-                return [null, current] as const;
-              }
-              const updated = new Map(current);
-              updated.set(key, {
-                ...entry,
-                busyCount: entry.busyCount + 1,
-                idleFiber: null,
-                lastActivityAtMs: now,
-                pinnedSinceMs: null,
-              });
-              return [entry.idleFiber, updated] as const;
-            });
+            const [idleFiber] = yield* Effect.uninterruptible(
+              Effect.gen(function* () {
+                const outcome = yield* Ref.modify(sessions, (current) => {
+                  const entry = current.get(key);
+                  if (
+                    entry === undefined ||
+                    (expectedRuntime !== undefined && entry.runtime !== expectedRuntime)
+                  ) {
+                    return [[null, false] as const, current] as const;
+                  }
+                  const updated = new Map(current);
+                  updated.set(key, {
+                    ...entry,
+                    busyCount: entry.busyCount + 1,
+                    idleFiber: null,
+                    lastActivityAtMs: now,
+                    pinnedSinceMs: null,
+                  });
+                  return [[entry.idleFiber, true] as const, updated] as const;
+                });
+                // The acquisition flag is set in the same uninterruptible
+                // region as the increment so an onExit unwind can tell
+                // exactly whether this call took a mark — decrementing
+                // without it would steal another holder's busy count.
+                if (acquired !== undefined && outcome[1]) {
+                  yield* Ref.set(acquired, true);
+                }
+                return outcome;
+              }),
+            );
             yield* cancelIdleFiber(idleFiber);
           }),
         );
@@ -2541,43 +2554,63 @@ export const layerWithOptions = (
             // holding threadLifecycle would deadlock on it). The attach's own
             // gates re-check ownership after the suspend. The unwind covers
             // every non-success exit — interruption while queued on the attach
-            // lock must not leave the session pinned busy forever.
-            Effect.onExit(
-              observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
-                Effect.andThen(
-                  attachThreadOrReject(
-                    {
-                      providerSessionId,
-                      threadId: input.threadId,
-                      providerInstanceId: runtime.instanceId,
-                      driver: runtime.driver,
-                      expectedRuntime: runtime,
-                    },
-                    // The adapter call returns once the turn is started — most
-                    // adapters fork the turn's lifetime into the session scope —
-                    // so the admission record spans only the acquisition window
-                    // (Cursor's openAgent/runner.open, ACP session activate+prompt
-                    // submit). Only in-band turn calls get the bounded drain —
-                    // abandoning an acquire-then-return call could strand a
-                    // resource the scope close already finished checking for.
-                    () =>
-                      runResourceCreatingAdapterOp({
-                        providerSessionId,
-                        expectedRuntime: runtime,
-                        driver: runtime.driver,
-                        operation: runtime.startTurn(input),
-                        drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
-                          ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
-                          : undefined,
-                        requiredThreadId: input.threadId,
-                      }),
+            // lock must not leave the session pinned busy forever — but only
+            // when this call actually took the mark: decrementing without it
+            // would steal another holder's busy count and idle a live turn.
+            Ref.make(false).pipe(
+              Effect.flatMap((busyMarked) =>
+                Effect.onExit(
+                  observeActivity(
+                    providerSessionId,
+                    markBusy(providerSessionId, runtime, busyMarked),
+                  ).pipe(
+                    Effect.andThen(
+                      attachThreadOrReject(
+                        {
+                          providerSessionId,
+                          threadId: input.threadId,
+                          providerInstanceId: runtime.instanceId,
+                          driver: runtime.driver,
+                          expectedRuntime: runtime,
+                        },
+                        // The adapter call returns once the turn is started —
+                        // most adapters fork the turn's lifetime into the
+                        // session scope — so the admission record spans only
+                        // the acquisition window (Cursor's openAgent/
+                        // runner.open, ACP session activate+prompt submit).
+                        // Only in-band turn calls get the bounded drain —
+                        // abandoning an acquire-then-return call could strand
+                        // a resource the scope close already finished
+                        // checking for.
+                        () =>
+                          runResourceCreatingAdapterOp({
+                            providerSessionId,
+                            expectedRuntime: runtime,
+                            driver: runtime.driver,
+                            operation: runtime.startTurn(input),
+                            drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
+                              ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
+                              : undefined,
+                            requiredThreadId: input.threadId,
+                          }),
+                      ),
+                    ),
                   ),
+                  (exit) =>
+                    Exit.isSuccess(exit)
+                      ? Effect.void
+                      : Ref.get(busyMarked).pipe(
+                          Effect.flatMap((marked) =>
+                            marked
+                              ? observeActivity(
+                                  providerSessionId,
+                                  markIdle(providerSessionId, runtime),
+                                )
+                              : Effect.void,
+                          ),
+                        ),
                 ),
               ),
-              (exit) =>
-                Exit.isSuccess(exit)
-                  ? Effect.void
-                  : observeActivity(providerSessionId, markIdle(providerSessionId, runtime)),
             ),
           steerTurn: (input) =>
             requireLiveRuntime({
@@ -2646,39 +2679,58 @@ export const layerWithOptions = (
                 compactThread: (input: Parameters<NonNullable<typeof runtime.compactThread>>[0]) =>
                   // Same markBusy-before-attach ordering as startTurn: the
                   // wait on the idle fiber must not run under the attach lock,
-                  // and the unwind covers interruption the same way.
-                  Effect.onExit(
-                    observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
-                      Effect.andThen(
-                        attachThreadOrReject(
-                          {
-                            providerSessionId,
-                            threadId: input.threadId,
-                            providerInstanceId: runtime.instanceId,
-                            driver: runtime.driver,
-                            expectedRuntime: runtime,
-                          },
-                          // Compaction delegates to the same acquire-then-start
-                          // path as startTurn, so it shares the admission record
-                          // and the same driver-keyed drain policy.
-                          () =>
-                            runResourceCreatingAdapterOp({
-                              providerSessionId,
-                              expectedRuntime: runtime,
-                              driver: runtime.driver,
-                              operation: runtime.compactThread!(input),
-                              drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
-                                ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
-                                : undefined,
-                              requiredThreadId: input.threadId,
-                            }),
+                  // and the unwind covers interruption the same way — gated on
+                  // this call's own acquisition flag so a pre-increment
+                  // interrupt cannot steal another holder's busy count.
+                  Ref.make(false).pipe(
+                    Effect.flatMap((busyMarked) =>
+                      Effect.onExit(
+                        observeActivity(
+                          providerSessionId,
+                          markBusy(providerSessionId, runtime, busyMarked),
+                        ).pipe(
+                          Effect.andThen(
+                            attachThreadOrReject(
+                              {
+                                providerSessionId,
+                                threadId: input.threadId,
+                                providerInstanceId: runtime.instanceId,
+                                driver: runtime.driver,
+                                expectedRuntime: runtime,
+                              },
+                              // Compaction delegates to the same
+                              // acquire-then-start path as startTurn, so it
+                              // shares the admission record and the same
+                              // driver-keyed drain policy.
+                              () =>
+                                runResourceCreatingAdapterOp({
+                                  providerSessionId,
+                                  expectedRuntime: runtime,
+                                  driver: runtime.driver,
+                                  operation: runtime.compactThread!(input),
+                                  drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
+                                    ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
+                                    : undefined,
+                                  requiredThreadId: input.threadId,
+                                }),
+                            ),
+                          ),
                         ),
+                        (exit) =>
+                          Exit.isSuccess(exit)
+                            ? Effect.void
+                            : Ref.get(busyMarked).pipe(
+                                Effect.flatMap((marked) =>
+                                  marked
+                                    ? observeActivity(
+                                        providerSessionId,
+                                        markIdle(providerSessionId, runtime),
+                                      )
+                                    : Effect.void,
+                                ),
+                              ),
                       ),
                     ),
-                    (exit) =>
-                      Exit.isSuccess(exit)
-                        ? Effect.void
-                        : observeActivity(providerSessionId, markIdle(providerSessionId, runtime)),
                   ),
               }),
           readThreadSnapshot: (input) =>
