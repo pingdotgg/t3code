@@ -504,11 +504,7 @@ export function PullRequestDetailPanel({
   onActed?: () => void;
   /** Page-owned detail columns use this to clear the selected pull request. */
   onClose?: () => void;
-  /**
-   * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
-   * own pull request, so the branch is already under the reader's feet — and checking it out
-   * again is at best a no-op and at worst git refusing a branch two checkouts.
-   */
+  /** Whether task hand-offs land in this thread or open a new one. */
   context?: "page" | "thread";
   /** The open thread's composer. */
   composerDraftTarget?: ScopedThreadRef | DraftId;
@@ -915,23 +911,24 @@ export function PullRequestDetailPanel({
     projects,
     reference.projectId,
   ]);
-  // Beside a thread there is nothing to pick: the hand-offs land in that thread's composer, and
-  // the thread is already on one server's copy of the branch.
-  const pickableEnvironments = useMemo(
+  // Checkout remains useful beside the pull request's own thread because it can target another
+  // connected machine. A shell command can only act on the machine where it is pasted.
+  const checkoutEnvironments = useMemo(
     () =>
-      context === "page"
-        ? resolvePickableEnvironments(
-            { environmentId, projectId: reference.projectId },
-            projects,
-            environments.map((environment) => ({
-              environmentId: environment.environmentId,
-              label: environment.label,
-              machine: resolveEnvironmentMachineKind(environment.serverConfig),
-            })),
-          )
-        : [],
-    [context, environmentId, environments, projects, reference.projectId],
+      resolvePickableEnvironments(
+        { environmentId, projectId: reference.projectId },
+        projects,
+        environments.map((environment) => ({
+          environmentId: environment.environmentId,
+          label: environment.label,
+          machine: resolveEnvironmentMachineKind(environment.serverConfig),
+        })),
+      ),
+    [environmentId, environments, projects, reference.projectId],
   );
+  // Task hand-offs beside the pull request's own thread still land in its composer, so an
+  // environment choice there would claim to do something that those actions ignore.
+  const handoffEnvironments = context === "page" ? checkoutEnvironments : [];
   // Which server the reader chose, and only for the pull request they chose it on: this one panel
   // shows a different pull request every time it is opened, and the choice does not follow.
   const [actingScope, setActingScope] = useState<{
@@ -943,8 +940,12 @@ export function PullRequestDetailPanel({
   // Null wherever there is no choice on offer — one server, or a chosen one that has since gone —
   // and then the panel's own server and its own checkout are the answer, as they always were.
   const acting =
-    pickableEnvironments.find((entry) => entry.environmentId === chosenEnvironmentId) ?? null;
+    checkoutEnvironments.find((entry) => entry.environmentId === chosenEnvironmentId) ?? null;
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
+  // The thread's own repository is already on this pull request. In-place checkout matters again
+  // when the reader picks another machine, or when the panel is showing a different pull request.
+  const checkoutInRepositoryDisabled =
+    context === "thread" && actingEnvironmentId === environmentId;
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId: actingEnvironmentId,
     cwd: acting?.workspaceRoot ?? detail?.workspaceRoot ?? null,
@@ -1720,71 +1721,71 @@ export function PullRequestDetailPanel({
                   threadRef={null}
                 />
               ) : null}
-              {/* Checking a pull request out is the reason to open one here at all, so it is a
-                  button of its own rather than a side effect of asking an agent for something.
-                  It asks where, because the two answers are not interchangeable: one leaves your
-                  work where it is, the other moves the repository you are standing in. Only on
-                  the page: beside a thread the branch is already checked out right there. */}
-              {context === "page" ? (
-                <Menu>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <MenuTrigger
-                          disabled={handoff !== null}
-                          render={
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              aria-label={
-                                handoff?.startsWith("checkout") ? "Checking out..." : "Check out"
-                              }
-                            >
-                              <GitBranchIcon aria-hidden className="size-3.5" />
-                              <span className="@max-[35rem]/pr-header:hidden">
-                                {handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
-                              </span>
-                              <ChevronDownIcon
-                                aria-hidden
-                                className="size-3.5 text-muted-foreground"
-                              />
-                            </Button>
-                          }
-                        />
-                      }
-                    />
-                    <TooltipPopup>Check out this pull request</TooltipPopup>
-                  </Tooltip>
-                  <MenuPopup align="end" side="bottom" className="min-w-72">
-                    <MenuItem onClick={() => startCheckout("worktree")}>
-                      <GitBranchIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
-                      <span className="flex min-w-0 flex-col">
-                        <span>In a separate worktree</span>
-                        <span className="text-xs text-muted-foreground">
-                          Its own folder and thread. Nothing you have open moves.
-                        </span>
-                      </span>
-                    </MenuItem>
-                    <MenuItem onClick={() => startCheckout("local")}>
-                      <FolderGit2Icon className="mt-0.5 size-3.5 shrink-0 self-start" />
-                      <span className="flex min-w-0 flex-col">
-                        <span>In this repository</span>
-                        <span className="text-xs text-muted-foreground">
-                          Switches the branch you are working in, like `gh pr checkout`.
-                        </span>
-                      </span>
-                    </MenuItem>
-                    {pickableEnvironments.length > 0 ? (
-                      <ActOnEnvironmentPicker
-                        environments={pickableEnvironments}
-                        value={actingEnvironmentId}
-                        onChange={(next) => setActingScope({ pullRequestKey, environmentId: next })}
+              {/* Checkout stays available in every pull request view. Even when this thread is
+                  already on the branch, the reader may want to prepare it on another machine. */}
+              <Menu>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <MenuTrigger
                         disabled={handoff !== null}
+                        render={
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            aria-label={
+                              handoff?.startsWith("checkout") ? "Checking out..." : "Check out"
+                            }
+                          >
+                            <GitBranchIcon aria-hidden className="size-3.5" />
+                            <span className="@max-[35rem]/pr-header:hidden">
+                              {handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
+                            </span>
+                            <ChevronDownIcon
+                              aria-hidden
+                              className="size-3.5 text-muted-foreground"
+                            />
+                          </Button>
+                        }
                       />
-                    ) : null}
-                  </MenuPopup>
-                </Menu>
-              ) : null}
+                    }
+                  />
+                  <TooltipPopup>Check out this pull request</TooltipPopup>
+                </Tooltip>
+                <MenuPopup align="end" side="bottom" className="min-w-72">
+                  <MenuItem onClick={() => startCheckout("worktree")}>
+                    <GitBranchIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
+                    <span className="flex min-w-0 flex-col">
+                      <span>In a separate worktree</span>
+                      <span className="text-xs text-muted-foreground">
+                        Its own folder and thread. Nothing you have open moves.
+                      </span>
+                    </span>
+                  </MenuItem>
+                  <MenuItem
+                    disabled={checkoutInRepositoryDisabled}
+                    onClick={() => startCheckout("local")}
+                  >
+                    <FolderGit2Icon className="mt-0.5 size-3.5 shrink-0 self-start" />
+                    <span className="flex min-w-0 flex-col">
+                      <span>In this repository</span>
+                      <span className="text-xs text-muted-foreground">
+                        {checkoutInRepositoryDisabled
+                          ? "This pull request is already checked out here."
+                          : "Switches the branch you are working in, like `gh pr checkout`."}
+                      </span>
+                    </span>
+                  </MenuItem>
+                  {checkoutEnvironments.length > 0 ? (
+                    <ActOnEnvironmentPicker
+                      environments={checkoutEnvironments}
+                      value={actingEnvironmentId}
+                      onChange={(next) => setActingScope({ pullRequestKey, environmentId: next })}
+                      disabled={handoff !== null}
+                    />
+                  ) : null}
+                </MenuPopup>
+              </Menu>
               {/* Said where the Merge button is, because it is the answer to why nobody has
                   pressed it: the merge is already asked for, and the host is holding it. */}
               {autoMergeArmed && primaryAction !== "auto-merge-armed" ? (
@@ -2005,9 +2006,9 @@ export function PullRequestDetailPanel({
                     <HammerIcon className="size-3.5" />
                     {handoff === "findings" ? "Preparing..." : handoffLabels.fixFindings}
                   </MenuItem>
-                  {pickableEnvironments.length > 0 ? (
+                  {handoffEnvironments.length > 0 ? (
                     <ActOnEnvironmentPicker
-                      environments={pickableEnvironments}
+                      environments={handoffEnvironments}
                       value={actingEnvironmentId}
                       onChange={(next) => setActingScope({ pullRequestKey, environmentId: next })}
                       disabled={handoff !== null}
