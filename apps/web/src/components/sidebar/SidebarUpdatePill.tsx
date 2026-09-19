@@ -4,6 +4,7 @@ import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } 
 import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useTranslate } from "../../i18n/translate";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -113,6 +114,7 @@ export function SidebarUpdatePill() {
 }
 
 function SidebarUpdateControl() {
+  const t = useTranslate();
   const state = useDesktopUpdateState();
   const [isActionPending, setIsActionPending] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
@@ -143,13 +145,14 @@ function SidebarUpdateControl() {
     isDownloading,
     showCheckIcon,
   });
-  const tooltip = showUpdateDetails
+  const tooltipSource = showUpdateDetails
     ? state
       ? getDesktopUpdateButtonTooltip(state)
       : "Update available"
     : showCheckIcon
       ? "Checking for updates…"
       : "Check for updates";
+  const tooltip = t(tooltipSource);
   const disabled = showCheckIcon
     ? true
     : showUpdateDetails

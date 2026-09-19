@@ -2,6 +2,7 @@ import { InfoIcon } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
+import { useTranslate } from "../../i18n/translate";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerBanner, type ComposerBannerVariant } from "./ComposerBanner";
@@ -46,6 +47,7 @@ interface ComposerBannerStackProps {
 }
 
 export function ComposerBannerStack({ className, items }: ComposerBannerStackProps) {
+  const t = useTranslate();
   const [stackExpanded, setStackExpanded] = useState(false);
   const noticesRef = useRef<HTMLDivElement>(null);
   const peekRef = useRef<HTMLButtonElement>(null);
@@ -180,7 +182,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
               <ComposerBanner.Peek
                 ref={peekRef}
                 variant={firstStackedItem.variant}
-                aria-label="Show other notices"
+                aria-label={t("Show other notices")}
                 aria-expanded={stackExpanded}
                 aria-controls={expandedItemsId}
                 aria-hidden={stackExpanded || undefined}
@@ -197,7 +199,7 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
               id={expandedItemsId}
               ref={expandedItemsRef}
               role="group"
-              aria-label="Other notices"
+              aria-label={t("Other notices")}
               tabIndex={-1}
               data-composer-banner-stack-expanded-items="true"
               className={cn(
@@ -253,6 +255,7 @@ function ComposerBannerStackAlert({
   readonly exiting: boolean;
   readonly onDismissRequest: () => void;
 }) {
+  const t = useTranslate();
   if ("content" in item) {
     return (
       <ComposerBanner.Root
@@ -294,7 +297,7 @@ function ComposerBannerStackAlert({
                     <Button
                       size="icon-xs"
                       variant="ghost"
-                      aria-label="Show notice details"
+                      aria-label={t("Show notice details")}
                       className={cn(
                         "flex-none text-muted-foreground hover:text-foreground",
                         item.compact && "hidden @max-[400px]:inline-flex",
@@ -305,7 +308,7 @@ function ComposerBannerStackAlert({
                   <InfoIcon className="size-3.5" />
                 </PopoverTrigger>
                 <PopoverPopup
-                  aria-label="Notice details"
+                  aria-label={t("Notice details")}
                   tooltipStyle
                   side="top"
                   className="max-w-80 whitespace-normal text-pretty wrap-anywhere"
@@ -323,7 +326,7 @@ function ComposerBannerStackAlert({
             {item.actions}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss
-                aria-label={item.dismissLabel ?? "Dismiss warning"}
+                aria-label={t(item.dismissLabel ?? "Dismiss warning")}
                 disabled={exiting}
                 onClick={onDismissRequest}
               />

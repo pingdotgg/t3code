@@ -45,6 +45,7 @@ import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
+import { markInterfaceLanguageConfigured, setInterfaceLanguage } from "../i18n/translate";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -133,9 +134,12 @@ async function hydrateClientSettings(): Promise<void> {
       if (hydrationGeneration !== clientSettingsHydrationGeneration) {
         return;
       }
-      if (persistedSettings) {
-        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
-      }
+      const nextSettings = persistedSettings
+        ? { ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings }
+        : DEFAULT_CLIENT_SETTINGS;
+      replaceClientSettingsSnapshot(nextSettings);
+      setInterfaceLanguage(nextSettings.interfaceLanguage);
+      markInterfaceLanguageConfigured();
       setClientSettingsHydrationStatus("ready");
     } catch (error) {
       if (hydrationGeneration === clientSettingsHydrationGeneration) {

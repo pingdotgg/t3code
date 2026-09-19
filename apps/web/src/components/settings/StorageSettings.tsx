@@ -20,6 +20,7 @@ import {
   useScopedSettings,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { translate as t } from "../../i18n/translate";
 
 function RetentionControl({
   label,
@@ -58,20 +59,20 @@ function RetentionControl({
           }}
         >
           <NumberFieldGroup>
-            <NumberFieldDecrement aria-label={`Decrease ${label}`} />
+            <NumberFieldDecrement aria-label={`${t("Decrease")} ${t(label)}`} />
             <NumberFieldInput
-              aria-label={`${label} in days`}
+              aria-label={`${t(label)}（天）`}
               size={new Intl.NumberFormat().format(draft ?? value).length}
               className="field-sizing-content w-auto min-w-[1ch] grow-0 text-right in-data-[size=sm]:px-1"
             />
             <span aria-hidden="true" className="self-center pr-2 text-xs">
-              days
+              天
             </span>
-            <NumberFieldIncrement aria-label={`Increase ${label}`} />
+            <NumberFieldIncrement aria-label={`${t("Increase")} ${t(label)}`} />
           </NumberFieldGroup>
         </NumberField>
       ) : (
-        <span className="text-xs text-muted-foreground">Off</span>
+        <span className="text-xs text-muted-foreground">{t("Off")}</span>
       )}
       <Switch
         aria-label={label}
@@ -123,7 +124,7 @@ export function StorageSettingsPanel() {
   ) {
     return (
       <SettingsScopeNotice target="all">
-        Update the selected machines to configure project worktree cleanup.
+        {t("Update the selected machines to configure project worktree cleanup.")}
       </SettingsScopeNotice>
     );
   }
@@ -143,8 +144,9 @@ export function StorageSettingsPanel() {
           )
           .map((environment) => environment.environmentId)}
       >
-        Update the selected environments to use storage cleanup, or choose a machine that supports
-        it.
+        {t(
+          "Update the selected environments to use storage cleanup, or choose a machine that supports it.",
+        )}
       </SettingsScopeNotice>
     );
   }
@@ -178,18 +180,18 @@ export function StorageSettingsPanel() {
                 <SelectTrigger size="sm" aria-label="Automatic worktree cleanup">
                   <SelectValue>
                     {mixedModes
-                      ? "Mixed"
+                      ? t("Mixed")
                       : mode === "inherit"
-                        ? "Inherit"
+                        ? t("Inherit")
                         : mode === "off"
-                          ? "Off"
-                          : "Custom"}
+                          ? t("Off")
+                          : t("Custom")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">Inherit</SelectItem>
-                  <SelectItem value="off">Off</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
+                  <SelectItem value="inherit">{t("Inherit")}</SelectItem>
+                  <SelectItem value="off">{t("Off")}</SelectItem>
+                  <SelectItem value="custom">{t("Custom")}</SelectItem>
                 </SelectPopup>
               </Select>
             }

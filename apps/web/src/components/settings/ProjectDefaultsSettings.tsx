@@ -8,6 +8,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
 
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
+import { useTranslate } from "../../i18n/translate";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -47,6 +48,7 @@ import {
  * project or checkout scope; the scoped hooks route the write.
  */
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
+  const t = useTranslate();
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -92,7 +94,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     workspaceSource === "project"
       ? null
       : repositoryEnvMode
-        ? `${resolveEnvModeLabel(repositoryEnvMode)} (t3.json)`
+        ? `${t(resolveEnvModeLabel(repositoryEnvMode))} (t3.json)`
         : null;
 
   function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
@@ -185,7 +187,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     modelOptionsByInstance={modelOptions}
                     triggerVariant="outline"
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    {...(mixedModel ? { triggerLabel: "Mixed" } : {})}
+                    {...(mixedModel ? { triggerLabel: t("Mixed") } : {})}
                     getModelDisabledReason={modelDisabledReason}
                     onOpenProviderSetup={(instanceId) => {
                       if (representative)
@@ -219,7 +221,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   ) : null}
                 </div>
               ) : (
-                <span className="text-sm text-muted-foreground">No providers available</span>
+                <span className="text-sm text-muted-foreground">{t("No providers available")}</span>
               )
             }
           />
@@ -258,8 +260,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   )}
                   <SelectValue>
                     {mixedPermissions
-                      ? "Mixed"
-                      : runtimeModeConfig[settings.defaultRuntimeMode].label}
+                      ? t("Mixed")
+                      : t(runtimeModeConfig[settings.defaultRuntimeMode].label)}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -271,10 +273,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                         <div className="grid gap-0.5">
                           <span className="inline-flex items-center gap-1.5 font-medium">
                             <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-                            {option.label}
+                            {t(option.label)}
                           </span>
                           <span className="text-xs leading-4 text-muted-foreground">
-                            {option.description}
+                            {t(option.description)}
                           </span>
                         </div>
                       </SelectItem>
@@ -322,16 +324,16 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                   <SelectValue>
                     {(value: string | null) =>
                       value === "local" || value === "worktree"
-                        ? resolveEnvModeLabel(value)
+                        ? t(resolveEnvModeLabel(value))
                         : unavailable
-                          ? "Unavailable"
-                          : "Mixed"
+                          ? t("Unavailable")
+                          : t("Mixed")
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>
-                  <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
+                  <SelectItem value="local">{t(resolveEnvModeLabel("local"))}</SelectItem>
+                  <SelectItem value="worktree">{t(resolveEnvModeLabel("worktree"))}</SelectItem>
                 </SelectPopup>
               </Select>
             }
@@ -402,13 +404,13 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                       value === "merge" || value === "squash" || value === "rebase"
                         ? PULL_REQUEST_MERGE_METHOD_LABELS[value]
                         : value === "last"
-                          ? "Last selected"
+                          ? t("Last selected")
                           : "Mixed"
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="last">Last selected</SelectItem>
+                  <SelectItem value="last">{t("Last selected")}</SelectItem>
                   <SelectItem value="merge">{PULL_REQUEST_MERGE_METHOD_LABELS.merge}</SelectItem>
                   <SelectItem value="squash">{PULL_REQUEST_MERGE_METHOD_LABELS.squash}</SelectItem>
                   <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>

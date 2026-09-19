@@ -69,6 +69,7 @@ import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChipPopover } from "./contextChipParts";
 import { Button } from "./ui/button";
+import { useTranslate } from "../i18n/translate";
 import {
   ComposerContextActionsContext,
   ComposerContextReferenceChip,
@@ -272,6 +273,7 @@ const ComposerSkillExtension = Node.create({
 });
 
 function ComposerSkillNodeView({ node }: NodeViewProps) {
+  const t = useTranslate();
   const actions = use(ComposerContextActionsContext);
   const skills = use(RichComposerSkillsContext);
   const skillName = (node.attrs.skillName as string) ?? "";
@@ -281,7 +283,7 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   return (
     <NodeViewWrapper as="span" className={COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME}>
       <ContextChipPopover
-        accessibleLabel={`Skill ${skillLabel}`}
+        accessibleLabel={t("Skill") + " " + skillLabel}
         triggerClassName={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}
         chip={
           <>
@@ -299,11 +301,11 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
           <p>
             {skill?.description ??
               skillDescription ??
-              "No description is available for this skill."}
+              t("No description is available for this skill.")}
           </p>
           {skill?.path ? (
             <Button variant="outline" size="sm" onClick={() => actions.openMention(skill.path)}>
-              View instructions
+              {t("View instructions")}
             </Button>
           ) : null}
         </div>

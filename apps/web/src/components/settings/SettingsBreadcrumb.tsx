@@ -3,6 +3,7 @@ import { LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
+import { useTranslate } from "../../i18n/translate";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -65,18 +66,19 @@ export function SettingsBreadcrumb({
   pathname: string;
   scope?: SettingsScopeBreadcrumbProps | undefined;
 }) {
+  const t = useTranslate();
   const sectionLabel = settingsBreadcrumbLabel(pathname);
 
   return (
-    <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
+    <WorkspaceBreadcrumb ariaLabel={t("Settings breadcrumb")}>
       {sectionLabel ? (
         <>
-          <WorkspaceBreadcrumbItem>Settings</WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbItem>{t("Settings")}</WorkspaceBreadcrumbItem>
           <WorkspaceBreadcrumbSeparator />
         </>
       ) : null}
       <WorkspaceBreadcrumbItem current className="truncate">
-        {sectionLabel ?? "Settings"}
+        {t(sectionLabel ?? "Settings")}
       </WorkspaceBreadcrumbItem>
       {scope ? (
         <>
@@ -132,6 +134,7 @@ function EnvironmentScopeMenu({
   environments,
   onChange,
 }: SettingsScopeBreadcrumbProps) {
+  const t = useTranslate();
   const resolved = resolveSettingsScope(value, groups, environments);
   const environmentValue = environmentAxisValue(
     value,
@@ -142,7 +145,7 @@ function EnvironmentScopeMenu({
   );
   return (
     <ScopeMenu
-      ariaLabel="Environment scope"
+      ariaLabel={t("Environment scope")}
       narrowed={environmentValue !== ALL_ENVIRONMENTS_VALUE}
       icon={
         selected ? (
@@ -157,8 +160,8 @@ function EnvironmentScopeMenu({
         selected
           ? settingsScopeEnvironmentLabel(selected, environments)
           : environmentValue !== ALL_ENVIRONMENTS_VALUE
-            ? "Unavailable environment"
-            : "All environments"
+            ? t("Unavailable environment")
+            : t("All environments")
       }
     >
       <MenuRadioGroup
@@ -170,7 +173,7 @@ function EnvironmentScopeMenu({
         <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
           <span className="flex min-w-0 items-center gap-2">
             <LayersIcon aria-hidden className="size-3.5" />
-            <span className="min-w-0 flex-1 truncate">All environments</span>
+            <span className="min-w-0 flex-1 truncate">{t("All environments")}</span>
             <MenuRadioItemIndicator />
           </span>
         </MenuRadioItem>
@@ -187,7 +190,7 @@ function EnvironmentScopeMenu({
                 {settingsScopeEnvironmentLabel(environment, environments)}
               </span>
               {environment.connection.phase === "connected" ? null : (
-                <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{t("Offline")}</span>
               )}
               <MenuRadioItemIndicator />
             </span>
@@ -199,13 +202,16 @@ function EnvironmentScopeMenu({
 }
 
 function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeBreadcrumbProps) {
+  const t = useTranslate();
   const selected = groups.find((group) => group.projectKey === value.project);
   return (
     <ScopeMenu
-      ariaLabel="Project scope"
+      ariaLabel={t("Project scope")}
       narrowed={value.project !== undefined}
       icon={selected ? <ProjectFavicon project={selected} className="size-3.5 shrink-0" /> : null}
-      label={selected?.displayName ?? (value.project ? "Unavailable project" : "All projects")}
+      label={
+        selected?.displayName ?? (value.project ? t("Unavailable project") : t("All projects"))
+      }
     >
       <MenuRadioGroup
         value={projectAxisValue(value)}
@@ -215,7 +221,7 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeBreadcrumbPr
       >
         <MenuRadioItem value={ALL_PROJECTS_VALUE}>
           <span className="flex min-w-0 items-center gap-2">
-            <span className="min-w-0 flex-1 truncate">All projects</span>
+            <span className="min-w-0 flex-1 truncate">{t("All projects")}</span>
             <MenuRadioItemIndicator />
           </span>
         </MenuRadioItem>

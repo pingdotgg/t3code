@@ -48,6 +48,11 @@ export function isInterfaceLanguageConfigured(): boolean {
   return languageConfigured;
 }
 
+/** Read the active language from non-React formatting and state modules. */
+export function getInterfaceLanguage(): InterfaceLanguage {
+  return currentLanguage;
+}
+
 /** React hook returning the active interface language. */
 export function useInterfaceLanguage(): InterfaceLanguage {
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -60,7 +65,34 @@ export function useInterfaceLanguage(): InterfaceLanguage {
  */
 export function translate(source: string, language: InterfaceLanguage = currentLanguage): string {
   if (language !== "zh-CN") return source;
-  return ZH_CN_DICTIONARY[source] ?? source;
+  const direct = ZH_CN_DICTIONARY[source];
+  if (direct !== undefined) return direct;
+  const settledCount = /^Settled \((\d+)\)$/.exec(source)?.[1];
+  if (settledCount !== undefined) return `已收档 (${settledCount})`;
+  const snoozedCount = /^Snoozed \((\d+)\)$/.exec(source)?.[1];
+  if (snoozedCount !== undefined) return `已搁置 (${snoozedCount})`;
+  const unpinCount = /^Unpin \((\d+)\)$/.exec(source)?.[1];
+  if (unpinCount !== undefined) return `取消置顶 (${unpinCount})`;
+  const settleCount = /^Settle \((\d+)\)$/.exec(source)?.[1];
+  if (settleCount !== undefined) return `收档 (${settleCount})`;
+  const snoozeCount = /^Snooze \((\d+)\)$/.exec(source)?.[1];
+  if (snoozeCount !== undefined) return `搁置 (${snoozeCount})`;
+  const markUnreadCount = /^Mark unread \((\d+)\)$/.exec(source)?.[1];
+  if (markUnreadCount !== undefined) return `标记为未读 (${markUnreadCount})`;
+  const deleteCount = /^Delete \((\d+)\)$/.exec(source)?.[1];
+  if (deleteCount !== undefined) return `删除 (${deleteCount})`;
+  const regenerateTitlesCount = /^Regenerate titles \((\d+)\)$/.exec(source)?.[1];
+  if (regenerateTitlesCount !== undefined) return `重新生成标题 (${regenerateTitlesCount})`;
+  const regeneratingCount = /^Regenerating… \((\d+)\)$/.exec(source)?.[1];
+  if (regeneratingCount !== undefined) return `正在重新生成… (${regeneratingCount})`;
+  const workedDuration = /^Worked for (.+)$/.exec(source)?.[1];
+  if (workedDuration !== undefined) return `运行了 ${workedDuration}`;
+  if (source === "Worked") return "运行中";
+  const modelPickerJump = /^Model Picker: Jump: (\d+)$/.exec(source)?.[1];
+  if (modelPickerJump !== undefined) return `模型选择器：跳转：${modelPickerJump}`;
+  const threadJump = /^Thread: Jump: (\d+)$/.exec(source)?.[1];
+  if (threadJump !== undefined) return `线程：跳转：${threadJump}`;
+  return source;
 }
 
 /** React hook translating an English source string. */

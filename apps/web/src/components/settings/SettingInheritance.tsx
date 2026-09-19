@@ -14,6 +14,7 @@ import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDeta
 import { Button, InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useTranslate } from "../../i18n/translate";
 import type { ProjectOverrideEntry, ScopedSettingsTarget } from "./scopedSettings";
 import { isProjectScopedSettingKey } from "./scopedSettings";
 
@@ -148,12 +149,16 @@ export function SettingInheritance({
   overridingProjects?: readonly SettingOverridingProject[];
   onClearOverrides?: (entries: readonly ProjectOverrideEntry[]) => void;
 }) {
+  const t = useTranslate();
   const key = keys[0];
   if (!key || targets.length === 0) return null;
+  const localizedSummary = t(summary);
   const overrideSummary =
     overridingProjects.length > 0
-      ? `${summary} · ${overridingProjects.length} project ${overridingProjects.length === 1 ? "override" : "overrides"}`
-      : summary;
+      ? `${localizedSummary} · ${overridingProjects.length} ${t(
+          overridingProjects.length === 1 ? "project override" : "project overrides",
+        )}`
+      : localizedSummary;
   const chains = targets.flatMap((target) => {
     const environment = environments.find(
       (candidate) => candidate.environmentId === target.environmentId,
@@ -178,7 +183,7 @@ export function SettingInheritance({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`${overrideSummary}. Show where this value comes from`}
+                  aria-label={`${overrideSummary}. ${t("Show where this value comes from")}`}
                   className={cn(
                     "[--control-icon-color:currentColor]",
                     state === "overridden"
@@ -228,7 +233,7 @@ export function SettingInheritance({
                         layer.effective ? "font-medium text-foreground" : "text-muted-foreground",
                       )}
                     >
-                      {layer.key === "environment" ? "Environment" : layer.label}
+                      {layer.key === "environment" ? t("Environment") : t(layer.label)}
                     </span>
                     <span
                       className={cn(
@@ -240,7 +245,7 @@ export function SettingInheritance({
                             : "text-muted-foreground/60",
                       )}
                     >
-                      <span className="max-w-32 truncate">{layer.value}</span>
+                      <span className="max-w-32 truncate">{t(layer.value)}</span>
                       {layer.effective ? (
                         <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
                       ) : (
@@ -259,13 +264,13 @@ export function SettingInheritance({
                 return (
                   <div className="mt-2 border-t border-border/60 pt-2">
                     <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
-                      <span>Overridden by</span>
+                      <span>{t("Overridden by")}</span>
                       {onClearOverrides ? (
                         <InlineButton
                           className="font-medium text-foreground underline-offset-2 hover:underline"
                           onClick={() => onClearOverrides(overriding)}
                         >
-                          Reset {overriding.length === 1 ? "it" : "all"}
+                          {t("Reset")} {t(overriding.length === 1 ? "it" : "all")}
                         </InlineButton>
                       ) : null}
                     </div>

@@ -147,18 +147,23 @@ export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
 
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
+  const t = useTranslate();
   return (
     <Tooltip>
       <TooltipTrigger
         delay={200}
         render={
-          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={t("Background policy details")}
+          >
             <InfoIcon className="size-3.5" />
           </Button>
         }
       />
       <TooltipPopup side="top" className="max-w-72">
-        {children}
+        {t(children)}
       </TooltipPopup>
     </Tooltip>
   );
@@ -376,7 +381,7 @@ export function SettingsRow({
         </div>
       </TooltipTrigger>
       <TooltipPopup side="top" className="max-w-72">
-        {message}
+        {t(message)}
       </TooltipPopup>
     </Tooltip>
   );
@@ -427,7 +432,7 @@ export function SettingsRow({
         onClearOverrides={(entries) => clearProjectOverrides(entries, scopedKeys)}
       />
     ) : null;
-  const renderedStatus = status;
+  const renderedStatus = typeof status === "string" ? t(status) : status;
 
   return (
     <div
@@ -493,6 +498,7 @@ export function SettingResetButton({
   disabled?: boolean;
   onClick: () => void;
 }) {
+  const t = useTranslate();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -500,7 +506,7 @@ export function SettingResetButton({
           <Button
             size="icon-micro"
             variant="ghost-muted"
-            aria-label={`Reset ${label} to default`}
+            aria-label={`${t("Reset")} ${t(label)} ${t("to default")}`}
             disabled={disabled}
             onClick={(event) => {
               event.stopPropagation();
@@ -511,7 +517,7 @@ export function SettingResetButton({
           </Button>
         }
       />
-      <TooltipPopup side="top">{tooltip}</TooltipPopup>
+      <TooltipPopup side="top">{t(tooltip)}</TooltipPopup>
     </Tooltip>
   );
 }

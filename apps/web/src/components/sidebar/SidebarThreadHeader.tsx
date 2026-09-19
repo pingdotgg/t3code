@@ -96,7 +96,7 @@ export function SidebarThreadHeader({
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
           onKeyDown={onSearchKeyDown}
           placeholder={t("Search")}
-          aria-label="Search threads"
+          aria-label={t("Search threads")}
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={resultsVisible}
@@ -114,7 +114,7 @@ export function SidebarThreadHeader({
             size="icon-micro"
             variant="ghost"
             className="shrink-0 text-sidebar-muted-foreground hover:bg-sidebar-control-surface hover:text-sidebar-foreground"
-            aria-label="Clear thread search"
+            aria-label={t("Clear thread search")}
             onClick={() => {
               onClearSearch();
               searchInputRef.current?.focus();
