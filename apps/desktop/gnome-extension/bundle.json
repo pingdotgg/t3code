@@ -4,6 +4,7 @@
     "metadata.json",
     "extension.js",
     "captureService.js",
+    "shortcutService.js",
     "captureFeedback.js",
     "feedbackGeometry.js"
   ]
