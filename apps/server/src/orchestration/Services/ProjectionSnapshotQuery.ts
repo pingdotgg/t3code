@@ -95,11 +95,11 @@ export interface ProjectionSnapshotQueryShape {
   /**
    * Read the lightweight command snapshot used to bootstrap the in-memory
    * orchestration engine without hydrating message/activity/checkpoint bodies.
+   * Pass a thread id to read only that thread, including archived rows.
    */
-  readonly getCommandReadModel: () => Effect.Effect<
-    OrchestrationReadModel,
-    ProjectionRepositoryError
-  >;
+  readonly getCommandReadModel: (query?: {
+    readonly threadId?: ThreadId;
+  }) => Effect.Effect<OrchestrationReadModel, ProjectionRepositoryError>;
 
   /**
    * Read the latest orchestration projection snapshot.
