@@ -212,6 +212,14 @@ export function AnnotatableCodeView({
     [addReviewComment, composerDraftTarget, draft, filesByKey, sectionId, sectionTitle],
   );
 
+  const saveEdit = useCallback(
+    (entryId: string, text: string) => {
+      const comment = reviewComments.find((entry) => entry.id === entryId);
+      if (comment) addReviewComment(composerDraftTarget, { ...comment, text });
+    },
+    [addReviewComment, composerDraftTarget, reviewComments],
+  );
+
   const beginComment = useCallback(
     (range: SelectedLineRange | null, context: DiffSelectionContext) => {
       if (!range) return;
@@ -292,6 +300,7 @@ export function AnnotatableCodeView({
                 onCancel={() => removeEntry(entry.id)}
                 onComment={(text) => submitEntry(entry.id, text)}
                 onDelete={() => removeEntry(entry.id)}
+                onEdit={(text) => saveEdit(entry.id, text)}
               />
             ))}
           </div>
