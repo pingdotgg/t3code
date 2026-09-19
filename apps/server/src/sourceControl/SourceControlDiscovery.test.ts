@@ -6,10 +6,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { VcsProcessSpawnError } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -22,6 +23,7 @@ import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 import * as ForgejoPullRequestProvider from "../pullRequest/ForgejoPullRequestProvider.ts";
 import * as SourceControlDiscovery from "./SourceControlDiscovery.ts";
+import { probeSourceControlProvider } from "./SourceControlProviderDiscovery.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import { firstNonEmptyLine } from "./SourceControlProviderDiscovery.ts";
 
@@ -402,7 +404,12 @@ it.effect("reports implemented tools separately from locally available executabl
           operation: input.operation,
           command: input.command,
           cwd: input.cwd,
-          cause: new Error(`${input.command} not found`),
+          cause: PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: `${input.command} not found`,
+          }),
         }),
       );
     },
@@ -553,7 +560,12 @@ Logged in to gitlab.com as gitlab-user
           operation: input.operation,
           command: input.command,
           cwd: input.cwd,
-          cause: new Error(`${input.command} not found`),
+          cause: PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: `${input.command} not found`,
+          }),
         }),
       );
     },
@@ -628,6 +640,64 @@ Logged in to gitlab.com as gitlab-user
   }).pipe(Effect.provide(testLayer));
 });
 
+it.effect.each(["gh", "glab", "az"])(
+  "reports a timed-out %s version probe without claiming the executable is missing",
+  (command) =>
+    Effect.gen(function* () {
+      const calls: VcsProcess.VcsProcessInput[] = [];
+      const probe = (timedOut: boolean) =>
+        probeSourceControlProvider({
+          cwd: "/workspace",
+          spec: {
+            type: "cli",
+            kind: "github",
+            label: "Hosting CLI",
+            executable: command,
+            versionArgs: ["--version"],
+            authArgs: ["auth", "status"],
+            installHint: "Install the CLI",
+            parseAuth: () => ({
+              status: "authenticated",
+              account: Option.some("account"),
+              host: Option.none(),
+              detail: Option.none(),
+            }),
+          },
+          process: {
+            run: (input) => {
+              calls.push(input);
+              return timedOut
+                ? Effect.fail(
+                    new VcsProcessTimeoutError({
+                      operation: input.operation,
+                      command,
+                      cwd: input.cwd,
+                      timeoutMs: input.timeoutMs!,
+                    }),
+                  )
+                : Effect.succeed(processOutput("CLI 1.0"));
+            },
+          },
+        });
+      const failed = yield* probe(true);
+      assert.strictEqual(failed.status, "available");
+      assert.strictEqual(failed.auth.status, "unknown");
+      assert.strictEqual(Option.isNone(failed.version), true);
+      assert.match(Option.getOrThrow(failed.auth.detail), /timed out.*5000ms/);
+      assert.deepStrictEqual(failed.detail, failed.auth.detail);
+      assert.strictEqual(calls.length, 1);
+
+      const recovered = yield* probe(false);
+      assert.strictEqual(recovered.status, "available");
+      assert.strictEqual(recovered.auth.status, "authenticated");
+      assert.strictEqual(Option.getOrThrow(recovered.version), "CLI 1.0");
+      assert.strictEqual(Option.isNone(recovered.detail), true);
+      assert.deepStrictEqual(
+        calls.slice(1).map((call) => call.args),
+        [["--version"], ["auth", "status"]],
+      );
+    }),
+);
 it.effect("discovers Forgejo accounts and retains the server port", () =>
   Effect.gen(function* () {
     const auth = ForgejoSourceControlProvider.discovery.parseAuth(
@@ -1213,7 +1283,12 @@ it.effect("falls back to tea when fj is missing or has no account for this serve
                     operation: input.operation,
                     command: input.command,
                     cwd: input.cwd,
-                    cause: new Error("fj not found"),
+                    cause: PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "ChildProcess",
+                      method: "spawn",
+                      description: "fj not found",
+                    }),
                   }),
                 );
               assert.strictEqual(input.command, "tea");
@@ -1397,7 +1472,12 @@ it.effect(
                           operation: input.operation,
                           command: input.command,
                           cwd: input.cwd,
-                          cause: new Error("fj not found"),
+                          cause: PlatformError.systemError({
+                            _tag: "NotFound",
+                            module: "ChildProcess",
+                            method: "spawn",
+                            description: "fj not found",
+                          }),
                         }),
                       );
                     if (input.args[0] === "version")
@@ -1625,4 +1705,65 @@ it.effect(
       Effect.scoped,
       Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     ),
+);
+
+it.effect.each([
+  [
+    PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
+    "missing",
+  ],
+  [
+    PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "ChildProcess",
+      method: "spawn",
+    }),
+    "available",
+  ],
+  [
+    PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "readFile" }),
+    "available",
+  ],
+  [new Error("unclassified spawn failure"), "available"],
+] as const)(
+  "classifies a failed CLI probe without guessing from its error text: %s",
+  ([cause, status]) =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const result = yield* probeSourceControlProvider({
+        cwd: "/workspace",
+        spec: {
+          type: "cli",
+          kind: "github",
+          label: "GitHub CLI",
+          executable: "gh",
+          versionArgs: ["--version"],
+          authArgs: ["auth", "status"],
+          installHint: "Install gh",
+          parseAuth: () => ({
+            status: "authenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+        process: {
+          run: (input) => {
+            calls.push(input.args.join(" "));
+            return Effect.fail(
+              new VcsProcessSpawnError({
+                operation: input.operation,
+                command: input.command,
+                cwd: input.cwd,
+                cause,
+              }),
+            );
+          },
+        },
+      });
+      assert.strictEqual(result.status, status);
+      assert.strictEqual(result.auth.status, "unknown");
+      assert.isTrue(Option.isSome(result.detail));
+      assert.deepStrictEqual(calls, ["--version"]);
+    }),
 );
