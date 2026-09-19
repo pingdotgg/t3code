@@ -9,66 +9,48 @@ const annotation: PreviewAnnotationPayload = {
   pageTitle: "Example",
   comment: "Make these cards feel related.",
   elements: [],
-  regions: [{ id: "region_1", rect: { x: 10, y: 20, width: 100, height: 80 } }],
-  strokes: [
-    {
-      id: "stroke_1",
-      color: "#7c3aed",
-      width: 4,
-      points: [
-        { x: 10, y: 10 },
-        { x: 20, y: 20 },
-      ],
-      bounds: { x: 6, y: 6, width: 18, height: 18 },
-    },
-  ],
-  styleChanges: [
-    {
-      targetId: "element_1",
-      selector: ".card",
-      property: "border-radius",
-      previousValue: "4px",
-      value: "16px",
-    },
-  ],
+  regions: [],
+  strokes: [],
+  styleChanges: [],
   screenshot: {
-    dataUrl: "data:image/png;base64,AA==",
-    width: 100,
-    height: 80,
-    cropRect: { x: 10, y: 20, width: 100, height: 80 },
+    dataUrl:
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=",
+    width: 1,
+    height: 1,
+    cropRect: { x: 0, y: 0, width: 1, height: 1 },
   },
   createdAt: "2026-06-11T00:00:00.000Z",
 };
 
 describe("preview annotation capture", () => {
   afterEach(() => {
-    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it("returns the crop when the fetch resolves", async () => {
-    vi.stubGlobal("fetch", async () => new Response(new Blob(["png"], { type: "image/png" })));
-    const capture = await capturePreviewAnnotationScreenshot(annotation);
+  it("preserves the PNG bytes, MIME type, and filename without fetching", async () => {
+    const fetch = vi.fn().mockRejectedValue(new TypeError("Blocked by connect-src"));
+    vi.stubGlobal("fetch", fetch);
+    const capture = capturePreviewAnnotationScreenshot(annotation);
     expect(capture.status).toBe("captured");
+    if (capture.status !== "captured") throw new Error("Expected a screenshot file");
+    expect(capture.file.name).toBe("preview-annotation-annotation_1.png");
+    expect(capture.file.type).toBe("image/png");
+    expect(Buffer.from(await capture.file.arrayBuffer()).toString("hex")).toBe(
+      "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c020000000b4944415478da63fcff1f0003030200efa2a75b0000000049454e44ae426082",
+    );
+    expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("reports none when the annotation carries no crop", async () => {
-    const capture = await capturePreviewAnnotationScreenshot({ ...annotation, screenshot: null });
+  it("reports none when the annotation carries no crop", () => {
+    const capture = capturePreviewAnnotationScreenshot({ ...annotation, screenshot: null });
     expect(capture).toEqual({ status: "none" });
   });
 
-  it("fails instead of hanging when the crop never arrives", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
-    const capturePromise = capturePreviewAnnotationScreenshot(annotation, 1_000);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(await capturePromise).toEqual({ status: "failed" });
-  });
-
-  it("fails when the crop fetch throws", async () => {
-    vi.stubGlobal("fetch", async () => {
-      throw new Error("data url unreadable");
-    });
-    expect(await capturePreviewAnnotationScreenshot(annotation)).toEqual({ status: "failed" });
-  });
+  it.each(["data:image/jpeg;base64,AA==", "data:image/png;base64,", "data:image/png;base64,%%%"])(
+    "reports a malformed screenshot as failed: %s",
+    (dataUrl) => {
+      const picked = { ...annotation, screenshot: { ...annotation.screenshot!, dataUrl } };
+      expect(capturePreviewAnnotationScreenshot(picked)).toEqual({ status: "failed" });
+    },
+  );
 });
