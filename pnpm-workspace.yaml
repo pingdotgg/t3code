@@ -15,7 +15,6 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
-  msgpackr-extract: set this to true or false
   msw: false
   node-pty: true
   sharp: true
