@@ -328,6 +328,8 @@ import {
   useQueuedMessages,
   useQueuedMessageStore,
 } from "../queuedMessageStore";
+import { WHIP_COOLDOWN_MS, buildWhipQueuedMessage } from "./chat/composerWhip";
+import { playWhipCrack } from "../lib/whipSound";
 import { type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
@@ -8643,15 +8645,48 @@ export default function ChatView(props: ChatViewProps) {
 
   // The row handlers are read from refs at call-time so their identity stays
   // stable and does not bust TimelineRowCtx on every ChatView render.
+  // Keyed by thread: this ChatView instance is reused across server threads,
+  // and one thread's cooldown must not swallow another's first whip.
+  const whipStateByThreadRef = useRef(new Map<string, { lastAt: number; count: number }>());
+  const canWhip =
+    activeThreadKey !== null &&
+    phase === "running" &&
+    !queueBlockedByPendingRequest &&
+    !queueSendGate;
   const queuedMessageActionsRef = useRef({
     steer: (_id: string) => {},
     remove: (_id: string) => {},
+    whip: (): boolean => false,
   });
   queuedMessageActionsRef.current = {
     steer: (id) => {
       const message = queuedMessages.find((entry) => entry.id === id);
       if (!message || sendInFlightRef.current || queueBlockedByPendingRequest) return;
       void onSend(undefined, message.submissionIntent, undefined, message);
+    },
+    // A crack sounds whenever whipping is possible at all: a running turn
+    // with nothing blocking sends. The order itself goes out at most once per
+    // WHIP_COOLDOWN_MS per thread and rides the same take/hold/restore path
+    // as any queued message. Returns whether the order went out.
+    whip: () => {
+      if (!canWhip || !activeThreadKey) return false;
+      playWhipCrack();
+      const now = performance.now();
+      const state = whipStateByThreadRef.current.get(activeThreadKey) ?? {
+        lastAt: -Infinity,
+        count: 0,
+      };
+      if (sendInFlightRef.current || now - state.lastAt < WHIP_COOLDOWN_MS) return false;
+      whipStateByThreadRef.current.set(activeThreadKey, { lastAt: now, count: state.count + 1 });
+      const message = useQueuedMessageStore.getState().enqueue(
+        activeThreadKey,
+        buildWhipQueuedMessage({
+          queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
+          crack: state.count,
+        }),
+      );
+      void onSend(undefined, message.submissionIntent, undefined, message);
+      return true;
     },
     remove: (id) => {
       if (!activeThreadKey) return;
@@ -8665,6 +8700,7 @@ export default function ChatView(props: ChatViewProps) {
   const onRemoveQueuedMessage = useCallback((id: string) => {
     queuedMessageActionsRef.current.remove(id);
   }, []);
+  const onWhip = useCallback(() => queuedMessageActionsRef.current.whip(), []);
   // Stop also cancels the queue: the messages return to the composer instead
   // of starting a new turn the moment the interrupted one settles.
   restoreQueuedMessagesRef.current = restoreQueuedMessagesToComposer;
@@ -10129,6 +10165,7 @@ export default function ChatView(props: ChatViewProps) {
                             onCompactContext={onCompactContext}
                             onSend={onSend}
                             onInterrupt={onInterrupt}
+                            onWhip={queueBlockedByPendingRequest ? undefined : onWhip}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             onRespondToApproval={onRespondToApproval}
                             onSelectActivePendingUserInputOption={

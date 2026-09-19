@@ -46,6 +46,21 @@ the oldest queued message now. Change `thread.steerQueuedMessage` in
 **Settings → Keybindings** to use another shortcut. It leaves the current draft
 in the composer and waits if the agent needs an approval or an answer.
 
+## Whip a stuck agent
+
+While a turn runs, a whip sits next to Stop. Press and drag to pick it up:
+the lash trails your pointer, and every fast flick cracks it with a
+whip-crack sound and a spark at the tip. Let go and it drops off the screen.
+Crack it as often as you like. The
+order to the agent goes out at most once every eight seconds: an orange spark
+means it went out, a grey one means the crack was just for you. Picking the
+whip up or clicking it sends nothing. Each order is a short message telling
+the agent it looks stuck, to say in one line what is blocking it, to decide
+for itself, and to keep going; the wording rotates so repeated whips do not
+read the same. It goes out right away as a steer, so on providers that
+restart the turn on a steer it behaves like any other immediate follow-up.
+The whip stays holstered while the agent waits for an approval or an answer.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue

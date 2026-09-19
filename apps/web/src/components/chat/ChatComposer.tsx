@@ -1176,6 +1176,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onWhip?: (() => boolean) | undefined;
   onImplementPlanInNewThread: () => void;
   onCompactContext?: (() => void) | undefined;
   compactDisabled: boolean;
@@ -1209,6 +1210,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        onWhip={props.onWhip}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
     </>
@@ -1411,6 +1413,8 @@ export interface ChatComposerProps {
   onCompactContext: () => void;
   onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
   onInterrupt: () => void;
+  /** Absent while the agent waits on an approval or an answer: the whip is holstered. */
+  onWhip?: (() => boolean) | undefined;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
@@ -1527,6 +1531,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onCompactContext,
     onSend,
     onInterrupt,
+    onWhip,
     onImplementPlanInNewThread,
     onRespondToApproval,
     onSelectActivePendingUserInputOption,
@@ -6993,6 +6998,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
+                    onWhip={onWhip}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                     compactDisabled={
                       compactDisabled || noProviderAvailable || isSendBusy || isConnecting

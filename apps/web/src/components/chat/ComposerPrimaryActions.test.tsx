@@ -44,7 +44,10 @@ function renderPendingActions(isRunning: boolean) {
   );
 }
 
-function renderRunningActions(hasSendableContent: boolean) {
+function renderRunningActions(
+  hasSendableContent: boolean,
+  options: { onWhip?: () => boolean; isSendBusy?: boolean } = {},
+) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
@@ -52,7 +55,8 @@ function renderRunningActions(hasSendableContent: boolean) {
       isRunning: true,
       showPlanFollowUpPrompt: false,
       promptHasText: hasSendableContent,
-      isSendBusy: false,
+      isSendBusy: options.isSendBusy ?? false,
+      ...(options.onWhip ? { onWhip: options.onWhip } : {}),
       sendDisabledReason: null,
       isConnecting: false,
       isEnvironmentUnavailable: false,
@@ -137,5 +141,24 @@ describe("ComposerPrimaryActions", () => {
 
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).not.toContain('aria-label="Queue message"');
+    expect(markup).not.toContain('aria-label="Whip"');
+  });
+
+  it("offers the whip next to stop while running when a whip handler is given", () => {
+    const markup = renderRunningActions(false, { onWhip: () => true });
+
+    expect(markup).toContain('aria-label="Stop generation"');
+    expect(markup).toContain('aria-label="Whip"');
+    expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*aria-label="Whip"/);
+  });
+
+  it("disables the whip while a send is in flight", () => {
+    const markup = renderRunningActions(false, { onWhip: () => true, isSendBusy: true });
+
+    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*aria-label="Whip"/);
+  });
+
+  it("never offers the whip while the agent waits for user input", () => {
+    expect(renderPendingActions(true)).not.toContain('aria-label="Whip"');
   });
 });

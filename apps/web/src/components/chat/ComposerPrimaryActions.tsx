@@ -7,6 +7,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { WhipButton } from "./WhipButton";
 
 interface PendingActionState {
   questionIndex: number;
@@ -31,6 +32,11 @@ interface ComposerPrimaryActionsProps {
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  /**
+   * Steers the running turn with the whip prompt and reports whether it went
+   * out. Absent where a whip makes no sense.
+   */
+  onWhip?: (() => boolean) | undefined;
   onImplementPlanInNewThread: () => void;
 }
 
@@ -71,6 +77,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
+  onWhip,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
@@ -278,6 +285,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   return (
     <>
       {renderStopGenerationButton(false)}
+      {onWhip ? (
+        <WhipButton
+          disabled={isSendBusy || isSendDisabled || isEnvironmentUnavailable}
+          onWhip={onWhip}
+          onPointerDown={pointerFocusProps?.onPointerDown}
+        />
+      ) : null}
       {hasSendableContent ? sendButton : null}
     </>
   );
