@@ -285,6 +285,64 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders queued image attachments and their context references", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[]}
+            queuedMessages={[
+              {
+                id: "queued-1",
+                prompt:
+                  "Review ![screenshot.png](t3-context://v1/image/image_image-1) before continuing.",
+                images: [
+                  {
+                    type: "image",
+                    id: "image-1",
+                    name: "screenshot.png",
+                    mimeType: "image/png",
+                    sizeBytes: 42,
+                    previewUrl: "data:image/png;base64,aW1hZ2U=",
+                    file: {} as File,
+                  },
+                ],
+                files: [],
+                terminalContexts: [],
+                previewAnnotations: [],
+                reviewComments: [],
+                submissionIntent: "foreground",
+                queuedAfterToolActivityId: null,
+                createdAt: MESSAGE_CREATED_AT,
+              },
+            ]}
+          />,
+        );
+      });
+
+      const visibleText = renderer!.root
+        .findAll((node) => node.children.some((child) => typeof child === "string"))
+        .flatMap((node) =>
+          node.children.filter((child): child is string => typeof child === "string"),
+        )
+        .join(" ");
+      expect(renderer!.root.findAllByType("img")).not.toHaveLength(0);
+      expect(visibleText).toContain("screenshot.png");
+      expect(visibleText).not.toContain("t3-context://");
+      expect(visibleText).not.toContain("1 attachment");
+      expect(
+        renderer!.root.findAll((node) => typeof node.props.onCopyCapture === "function"),
+      ).toHaveLength(0);
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
   it("renders previous and next controls with the minimap", () => {
     const first = buildUserTimelineEntry("First turn");
     const secondBase = buildUserTimelineEntry("Second turn");

@@ -15,7 +15,7 @@ import {
   COMPOSER_CONTEXT_KINDS,
   type AssistantCitation,
   type EnvironmentId,
-  type MessageId,
+  MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ToolActivityIcon,
@@ -219,6 +219,7 @@ import {
 } from "../contextChipParts";
 import {
   asKnownContextRecord,
+  buildMessageContext,
   isPullRequestSummaryContext,
   pullRequestContextDisplayState,
   pullRequestContextKindLabel,
@@ -1713,7 +1714,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
+      {row.kind === "message" && row.message.role === "user" ? (
+        <UserTimelineRow message={row.message} revertTurnCount={row.revertTurnCount} />
+      ) : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
       ) : null}
@@ -1763,96 +1766,115 @@ function QueuedMessageTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   const { queuedMessage } = row;
-  const attachmentCount = queuedMessage.images.length + queuedMessage.files.length;
-  const contextCount =
-    queuedMessage.terminalContexts.length +
-    queuedMessage.previewAnnotations.length +
-    queuedMessage.reviewComments.length;
-  const text = queuedMessage.prompt.trim();
+  const attachments = [
+    ...queuedMessage.images.map((image) => ({
+      type: image.type,
+      id: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      previewUrl: image.previewUrl,
+      ...(image.source ? { source: image.source } : {}),
+    })),
+    ...queuedMessage.files.map((file) => ({
+      type: file.type,
+      id: file.id,
+      name: file.name,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      downloadable: false,
+      ...(file.source ? { source: file.source } : {}),
+    })),
+  ];
+  const message: ChatMessage = {
+    id: MessageId.make(queuedMessage.id),
+    role: "user",
+    text: queuedMessage.prompt.trim(),
+    attachments,
+    context: buildMessageContext({
+      terminalContexts: queuedMessage.terminalContexts,
+      previewAnnotations: queuedMessage.previewAnnotations,
+      reviewComments: queuedMessage.reviewComments,
+      attachments: [...queuedMessage.images, ...queuedMessage.files].map((attachment) => ({
+        attachment,
+        attachmentId: attachment.id,
+      })),
+    }),
+    turnId: null,
+    streaming: false,
+    createdAt: queuedMessage.createdAt,
+    updatedAt: queuedMessage.createdAt,
+  };
   const statusLabel = queuedMessage.holdUntilUserAction
     ? "Waits for Send now"
     : row.isNext
       ? "Sends after the next tool call or when the turn ends"
       : "Sends after the messages above it";
   return (
-    <div className="flex flex-col items-end" data-queued-message-id={queuedMessage.id}>
-      <div className="max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80">
-        {text.length > 0 ? (
-          <div className="whitespace-pre-wrap break-words text-sm">{text}</div>
-        ) : null}
-        {attachmentCount > 0 || contextCount > 0 ? (
-          <div className={cn("text-secondary-label text-xs", text.length > 0 && "mt-1.5")}>
-            {[
-              attachmentCount > 0
-                ? `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`
-                : null,
-              contextCount > 0
-                ? `${contextCount} context item${contextCount === 1 ? "" : "s"}`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(", ")}
-          </div>
-        ) : null}
-        <div
-          className="mt-2 flex items-center gap-4 text-secondary-label text-xs"
-          data-scroll-anchor-ignore
-        >
-          <Tooltip>
-            <TooltipTrigger
-              render={<span className="inline-flex h-6 items-center gap-1" />}
-              aria-label={`Queued. ${statusLabel}.`}
-            >
-              <ClockIcon className="size-3.5" aria-hidden />
-              Queued
-            </TooltipTrigger>
-            <TooltipPopup side="bottom">{statusLabel}</TooltipPopup>
-          </Tooltip>
-          <div className="ml-auto flex items-center gap-0.5">
+    <div data-queued-message-id={queuedMessage.id}>
+      <UserTimelineRow
+        message={message}
+        queuedFooter={
+          <div
+            className="mt-2 flex items-center gap-4 text-secondary-label text-xs"
+            data-scroll-anchor-ignore
+          >
             <Tooltip>
               <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-micro"
-                    variant="ghost-muted"
-                    className="size-6"
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
-                    aria-label="Send now"
-                  />
-                }
+                render={<span className="inline-flex h-6 items-center gap-1" />}
+                aria-label={`Queued. ${statusLabel}.`}
               >
-                <ArrowUpIcon className="size-3.5" aria-hidden />
+                <ClockIcon className="size-3.5" aria-hidden />
+                Queued
               </TooltipTrigger>
-              <TooltipPopup side="bottom">
-                Send now
-                {row.isNext && ctx.steerQueuedMessageShortcutLabel
-                  ? ` (${ctx.steerQueuedMessageShortcutLabel})`
-                  : null}
-              </TooltipPopup>
+              <TooltipPopup side="bottom">{statusLabel}</TooltipPopup>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    size="icon-micro"
-                    variant="ghost-muted"
-                    className="size-6"
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
-                    aria-label="Cancel and return to the composer"
-                  />
-                }
-              >
-                <XIcon className="size-3.5" aria-hidden />
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">Cancel and return to the composer</TooltipPopup>
-            </Tooltip>
+            <div className="ml-auto flex items-center gap-0.5">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-micro"
+                      variant="ghost-muted"
+                      className="size-6"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
+                      aria-label="Send now"
+                    />
+                  }
+                >
+                  <ArrowUpIcon className="size-3.5" aria-hidden />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  Send now
+                  {row.isNext && ctx.steerQueuedMessageShortcutLabel
+                    ? ` (${ctx.steerQueuedMessageShortcutLabel})`
+                    : null}
+                </TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      size="icon-micro"
+                      variant="ghost-muted"
+                      className="size-6"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
+                      aria-label="Cancel and return to the composer"
+                    />
+                  }
+                >
+                  <XIcon className="size-3.5" aria-hidden />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">Cancel and return to the composer</TooltipPopup>
+              </Tooltip>
+            </div>
           </div>
-        </div>
-      </div>
+        }
+      />
     </div>
   );
 }
@@ -1931,12 +1953,21 @@ function MessageAuthorHeading({ children }: { children: string }) {
   return <h3 className="sr-only select-none">{children}</h3>;
 }
 
-function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function UserTimelineRow({
+  message,
+  revertTurnCount,
+  queuedFooter,
+}: {
+  message: ChatMessage;
+  revertTurnCount?: number | undefined;
+  queuedFooter?: ReactNode;
+}) {
   const ctx = use(TimelineRowCtx);
+  const isQueued = queuedFooter !== undefined;
   const { onImageExpand, onFileOpen } = ctx;
   const resources = useMemo(
-    () => selectMessageImageResources(row.message.attachments),
-    [row.message.attachments],
+    () => selectMessageImageResources(message.attachments),
+    [message.attachments],
   );
   const previewUrls = useAssetUrls(ctx.activeThreadEnvironmentId, resources);
   const [projectPreviews] = useState(createMessageAttachmentPreviewProjector);
@@ -1947,8 +1978,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         return url ? [[resource.attachmentId, url] as const] : [];
       }),
     );
-    return projectPreviews(row.message, (attachment) => urlsById.get(attachment.id));
-  }, [previewUrls, projectPreviews, resources, row.message]);
+    return projectPreviews(message, (attachment) => urlsById.get(attachment.id));
+  }, [previewUrls, projectPreviews, resources, message]);
   // The attachment union has an open member, so guards (not literal type
   // comparisons) split it. Unknown types render as inert rows below the files.
   const userImages = useMemo(
@@ -1956,20 +1987,19 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     [messageWithPreviews.attachments],
   );
   const userFiles = useMemo(
-    () => (row.message.attachments ?? []).filter(isFileAttachment),
-    [row.message.attachments],
+    () => (message.attachments ?? []).filter(isFileAttachment),
+    [message.attachments],
   );
   const userVideos = userFiles.filter(isVideoAttachment);
   const otherUserFiles = userFiles.filter((file) => !isVideoAttachment(file));
-  const unknownAttachments = (row.message.attachments ?? []).filter(
+  const unknownAttachments = (message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
-  const resolvedContext = useMemo(() => resolveUserMessageContext(row.message), [row.message]);
+  const resolvedContext = useMemo(() => resolveUserMessageContext(message), [message]);
   const previewImages = useMemo(
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
     [userImages],
   );
-  const revertTurnCount = row.revertTurnCount;
   // A file with a chip in the prose needs no standalone row. Media is the exception: the
   // thumbnail is the only way to actually see it, so it shows whether or not it has a chip.
   const chippedAttachmentIds = new Set(
@@ -1988,14 +2018,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     [resolvedContext.records],
   );
   const contextClipboardFragment =
-    resolvedContext.records.length === 0
+    isQueued || resolvedContext.records.length === 0
       ? null
       : encodeComposerContextFragment({
           version: 1,
           source: {
             environmentId: ctx.activeThreadEnvironmentId,
             ...(ctx.threadRef ? { threadId: ctx.threadRef.threadId } : {}),
-            messageId: row.message.id,
+            messageId: message.id,
           },
           records: resolvedContext.records,
         });
@@ -2020,7 +2050,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       records: resolvedContext.records,
       environmentId: ctx.activeThreadEnvironmentId,
       ...(ctx.threadRef ? { threadId: ctx.threadRef.threadId } : {}),
-      messageId: row.message.id,
+      messageId: message.id,
     });
     if (!fragment) return;
     // Claim the copy: without preventDefault the browser default overwrites the
@@ -2089,7 +2119,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+      <div
+        className={cn(
+          "relative max-w-[80%] rounded-2xl",
+          isQueued ? "border border-dashed border-border text-message-foreground/80" : "bg-message",
+          "p-3 text-message-foreground",
+        )}
+      >
         <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
@@ -2193,7 +2229,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         ) : null}
-        <div onCopyCapture={onBodyCopyCapture}>
+        <div onCopyCapture={isQueued ? undefined : onBodyCopyCapture}>
           <CollapsibleUserMessageBody
             text={resolvedContext.text}
             renderContextReference={renderContextReference}
@@ -2201,43 +2237,48 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             markdownCwd={ctx.markdownCwd}
           />
         </div>
+        {queuedFooter}
       </div>
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
-        <div className="flex shrink-0 items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipPopup>
-          </Tooltip>
-          <div className="flex items-center gap-0.5">
-            {typeof revertTurnCount === "number" && (
-              <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-            )}
-            {resolvedContext.text && (
-              <MessageCopyButton
-                // Structured paste needs the canonical links to retain their positions.
-                text={
-                  contextClipboardFragment
-                    ? resolvedContext.text
-                    : replaceComposerContextReferences(
-                        resolvedContext.text,
-                        (reference) => reference.label,
-                      )
-                }
-                {...(contextClipboardFragment
-                  ? {
-                      extraFlavors: { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment },
-                    }
-                  : {})}
-                variant="ghost"
-              />
-            )}
+      {isQueued ? null : (
+        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+          <div className="flex shrink-0 items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+                {formatDayAwareTimestamp(message.createdAt, ctx.timestampFormat)}
+              </TooltipTrigger>
+              <TooltipPopup>
+                {formatChatTimestampTooltip(message.createdAt, ctx.timestampFormat)}
+              </TooltipPopup>
+            </Tooltip>
+            <div className="flex items-center gap-0.5">
+              {typeof revertTurnCount === "number" && (
+                <RevertUserMessageButton turnCount={revertTurnCount} messageId={message.id} />
+              )}
+              {resolvedContext.text && (
+                <MessageCopyButton
+                  // Structured paste needs the canonical links to retain their positions.
+                  text={
+                    contextClipboardFragment
+                      ? resolvedContext.text
+                      : replaceComposerContextReferences(
+                          resolvedContext.text,
+                          (reference) => reference.label,
+                        )
+                  }
+                  {...(contextClipboardFragment
+                    ? {
+                        extraFlavors: {
+                          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment,
+                        },
+                      }
+                    : {})}
+                  variant="ghost"
+                />
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
