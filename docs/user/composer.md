@@ -131,6 +131,10 @@ On supported iPhones with iOS 26 or later, use the composer's microphone to reco
 then confirm to transcribe. Text is inserted where your selection was when
 recording started, ready for you to review and edit before sending.
 
+When Apple Intelligence is available, T3 Code uses it on-device to remove
+hesitation sounds such as “uh” and “um” before inserting the text. If cleanup is
+unavailable or changes other wording, the original transcript is kept.
+
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five
 minutes long. Canceling, leaving the screen, or an audio interruption discards the
