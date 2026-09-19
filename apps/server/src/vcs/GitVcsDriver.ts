@@ -742,6 +742,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           allowNonZeroExit: true,
           timeoutMs: 5_000,
           maxOutputBytes: 64 * 1024,
+          env: repositoryEnv,
         },
       );
 
@@ -799,6 +800,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           timeoutMs: 20_000,
           maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
           appendTruncationMarker: true,
+          env: repositoryEnv,
         },
       );
 
@@ -828,6 +830,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     gitCommand(vcsProcess, "GitVcsDriver.initRepository", input.cwd, ["init"], {
       timeoutMs: 10_000,
       maxOutputBytes: 64 * 1024,
+      env: repositoryEnv,
     }).pipe(Effect.asVoid);
 
   const resolveHeadCommit = (cwd: string) =>
