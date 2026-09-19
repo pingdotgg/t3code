@@ -44,7 +44,7 @@ function clone(sources: string[], destination: string) {
   );
 }
 
-describe.skipIf(HostProcessPlatform.defaultValue() !== "win32")(
+describe.skipIf(HostProcessPlatform.defaultValue() !== "win32" || !process.env.T3_TEST_NTFS_ROOT)(
   "Windows block clone fallback",
   () => {
     it.effect(
