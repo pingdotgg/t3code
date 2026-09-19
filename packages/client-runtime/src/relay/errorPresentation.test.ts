@@ -1,4 +1,7 @@
-import { RelayAuthInvalidError } from "@t3tools/contracts/relay";
+import {
+  RelayAuthInvalidError,
+  RelayEnvironmentConnectNotAuthorizedError,
+} from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -9,6 +12,18 @@ import {
 } from "./errorPresentation.ts";
 
 describe("relayProtectedErrorMessage", () => {
+  it("provides desktop and command-line recovery for publish-only connection failures", () => {
+    const error = new RelayEnvironmentConnectNotAuthorizedError({
+      code: "environment_connect_not_authorized",
+      reason: "endpoint_provider_not_managed",
+      traceId: "trace-1",
+    });
+
+    expect(relayProtectedErrorMessage(error)).toBe(
+      "This environment is linked for activity publishing only. In the host desktop app, open Settings > Connections and enable or repair T3 Connect. For a command-line host, run t3 connect again.",
+    );
+  });
+
   it("presents clock skew as one possible cause when the relay omits the reason", () => {
     const error = new RelayAuthInvalidError({
       code: "auth_invalid",

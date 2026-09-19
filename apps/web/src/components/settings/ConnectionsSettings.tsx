@@ -1689,7 +1689,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   const {
     isSignedIn,
     linkState: primaryCloudLinkState,
+    linked,
     managedTunnelActive,
+    managedTunnelOutOfSync,
     publishAgentActivity,
     operationError,
     reconcileCloudState,
@@ -1703,10 +1705,14 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       ? "Your session does not have permission to manage T3 Connect access."
       : null;
   const isBusy = isUpdating || isUpdatingPreference;
+  const isDisabled = !canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy;
 
-  const updateManagedTunnel = async (enabled: boolean) => {
+  const updateManagedTunnel = async (enabled: boolean, forceRelink = false) => {
     setIsUpdating(true);
-    const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
+    const ok = await reconcileCloudState(
+      { managedTunnel: enabled, publish: publishAgentActivity },
+      { forceRelink },
+    );
     if (ok) {
       // Turning the tunnel off while publishing stays on downgrades the link
       // rather than removing it — say so instead of claiming an unlink.
@@ -1720,7 +1726,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
         description: enabled
           ? "This environment is available through T3 Connect."
           : publishAgentActivity
-            ? "The managed tunnel was removed. Agent activity publishing stays on."
+            ? "This link now publishes activity only. Turn off Publish agent activity to fully unlink it."
             : "This environment is no longer available through T3 Connect.",
       });
     }
@@ -1748,18 +1754,35 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
         <SettingsRow
           title={searchableSetting("t3-connect").title}
           description={
-            managedTunnelActive
-              ? "This environment is available to your other devices through T3 Connect."
-              : "Make this environment available to your other devices through T3 Connect."
+            managedTunnelOutOfSync
+              ? "T3 Connect is out of sync. Repair the link to reconnect your devices."
+              : managedTunnelActive
+                ? "This environment is available to your other devices through T3 Connect."
+                : publishAgentActivity
+                  ? "Activity publishing only. Turn off Publish agent activity to fully unlink this environment."
+                  : "Make this environment available to your other devices through T3 Connect."
           }
           status={operationError ?? primaryCloudLinkState.error}
           control={
-            <CloudLinkSwitch
-              checked={managedTunnelActive}
-              disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
-              disabledReason={disabledReason}
-              onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
-            />
+            <div className="flex items-center gap-3">
+              {linked ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label="Repair T3 Connect"
+                  disabled={isDisabled}
+                  onClick={() => void updateManagedTunnel(true, true)}
+                >
+                  Repair
+                </Button>
+              ) : null}
+              <CloudLinkSwitch
+                checked={managedTunnelActive}
+                disabled={isDisabled}
+                disabledReason={disabledReason}
+                onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
+              />
+            </div>
           }
         />
       ) : null}
@@ -1770,7 +1793,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
           <CloudLinkSwitch
             ariaLabel="Publish agent activity to mobile clients"
             checked={publishAgentActivity}
-            disabled={!canManageRelay || !isSignedIn || primaryCloudLinkState.isPending || isBusy}
+            disabled={isDisabled}
             disabledReason={disabledReason}
             onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
           />
