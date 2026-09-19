@@ -17,6 +17,31 @@ const summary = (overrides: Partial<StorageCleanupPreview> = {}): StorageCleanup
 });
 
 describe("storage usage across machines", () => {
+  it("weights scan progress by work rather than averaging environment percentages", () => {
+    const combined = combineStorageUsage([
+      summary({ scanning: false, progress: { completed: 2, total: 2 } }),
+      summary({ scanning: true, progress: { completed: 8, total: 18 } }),
+    ])!;
+    expect(combined.progress).toEqual({ completed: 10, total: 20 });
+    expect(combined.scanning).toBe(true);
+  });
+
+  it("waits for discovery on every environment before reporting a percentage", () => {
+    expect(
+      combineStorageUsage([
+        summary({ scanning: true, progress: { completed: 1, total: 2 } }),
+        summary({ scanning: true }),
+      ])?.progress,
+    ).toBeUndefined();
+  });
+
+  it("keeps scanning visible until every selected environment finishes", () => {
+    const running = summary({ scanning: true, total: { folders: 2, measured: 1, bytes: 500 } });
+    const combined = combineStorageUsage([summary({ scanning: false }), running])!;
+    expect(combined.scanning).toBe(true);
+    expect(combined.total).toEqual({ folders: 4, measured: 3, bytes: 1500 });
+    expect(combineStorageUsage([summary({ scanning: false })])?.scanning).toBe(false);
+  });
   it("adds physical storage while keeping categories consistent", () => {
     const first = summary();
     const second = summary({ checkedAt: "2026-09-19T11:59:00.000Z" });

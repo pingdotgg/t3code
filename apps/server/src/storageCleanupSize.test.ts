@@ -1,81 +1,160 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem lacks lstat and explicit directory-symlink types for Windows fixtures.
-import * as NodeFSP from "node:fs/promises";
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import { expect } from "vite-plus/test";
-import { measureWorktreeBytes } from "./storageCleanupSize.ts";
+import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import {
+  ResourceMonitorBinary,
+  ResourceMonitorBinaryNotFound,
+} from "./resourceTelemetry/ResourceMonitorBinary.ts";
+import { make } from "./storageCleanupSize.ts";
 
-it.effect("measures nested files without following symlinks or counting shared hardlinks", () =>
+const fixture = Effect.fn(function* (
+  options: {
+    responses?: readonly string[];
+    output?: Stream.Stream<Uint8Array>;
+    exitCode?: number;
+  } = {},
+) {
+  const queue = yield* Queue.unbounded<string>();
+  const commands: string[] = [];
+  let killed = 0;
+  let spawned = 0;
+  const responses = options.responses ?? [
+    '{"version":1,"bytes":4096,"done":false}\n',
+    '{"version":1,"bytes":8192,"done":true}\n',
+  ];
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      spawned++;
+      assert.isTrue(ChildProcess.isStandardCommand(command));
+      if (ChildProcess.isStandardCommand(command)) {
+        assert.strictEqual(command.command, "/native/helper");
+        assert.deepStrictEqual(command.args, ["--storage-scan", "/worktree with spaces"]);
+      }
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(options.exitCode ?? 0)),
+        isRunning: Effect.succeed(true),
+        kill: () =>
+          Effect.sync(() => {
+            killed++;
+          }),
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.forEach((bytes: Uint8Array) => {
+          commands.push(new TextDecoder().decode(bytes));
+          const response = responses[commands.length - 1];
+          return response === undefined
+            ? Effect.void
+            : Queue.offer(queue, response).pipe(Effect.asVoid);
+        }),
+        stdout: options.output ?? Stream.fromQueue(queue).pipe(Stream.encodeText),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+  const scanner = yield* make.pipe(
+    Effect.provideService(ResourceMonitorBinary, { resolve: Effect.succeed("/native/helper") }),
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+  );
+  return { scanner, commands, killed: () => killed, spawned: () => spawned, spawner };
+});
+
+it.effect("requests native batches only as the consumer resumes", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cleanup-size-" });
-    const worktree = path.join(root, "worktree");
-    yield* fs.makeDirectory(path.join(worktree, "nested"), { recursive: true });
-    const local = path.join(worktree, "nested", "local");
-    const outside = path.join(root, "shared");
-    const pointer = path.join(worktree, "linked-directory");
-    yield* fs.writeFileString(local, "local bytes");
-    yield* fs.writeFile(outside, new Uint8Array(64 * 1024));
-    yield* fs.link(outside, path.join(worktree, "hardlink"));
-    // Following this link would count outside data and loop back into the worktree.
-    yield* Effect.promise(() => NodeFSP.symlink(root, pointer, "dir"));
-    const expected = yield* Effect.promise(
-      async () =>
-        ((await NodeFSP.lstat(local)).blocks +
-          (await NodeFSP.lstat(pointer)).blocks +
-          (await NodeFSP.lstat(worktree)).blocks +
-          (await NodeFSP.lstat(path.join(worktree, "nested"))).blocks) *
-        512,
+    const f = yield* fixture();
+    const paused = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    const batches: number[] = [];
+    const scan = yield* f.scanner.measure("/worktree with spaces").pipe(
+      Stream.runForEach((progress) =>
+        Effect.gen(function* () {
+          batches.push(progress.bytes);
+          if (!progress.done) {
+            yield* Deferred.succeed(paused, undefined);
+            yield* Deferred.await(resume);
+          }
+        }),
+      ),
+      Effect.forkScoped,
     );
-    expect(yield* measureWorktreeBytes(worktree)).toBe(expected);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    yield* Deferred.await(paused);
+    assert.deepStrictEqual(f.commands, ["next\n"]);
+    assert.strictEqual(f.killed(), 0);
+    yield* Deferred.succeed(resume, undefined);
+    yield* Fiber.join(scan);
+    assert.deepStrictEqual(batches, [4096, 8192]);
+    assert.deepStrictEqual(f.commands, ["next\n", "next\n"]);
+    assert.strictEqual(f.killed(), 1);
+    assert.strictEqual(f.spawned(), 1);
+  }).pipe(Effect.scoped),
 );
 
-it.effect("reports unavailable size instead of zero when a folder disappears", () =>
+it.effect("cancels the native process when the consumer stops early", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cleanup-size-" });
-    expect(yield* measureWorktreeBytes(path.join(root, "missing"))).toBeNull();
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    const f = yield* fixture();
+    const batches = yield* f.scanner
+      .measure("/worktree with spaces")
+      .pipe(Stream.take(1), Stream.runCollect);
+    assert.deepStrictEqual(batches, [{ bytes: 4096, done: false }]);
+    assert.deepStrictEqual(f.commands, ["next\n"]);
+    assert.strictEqual(f.killed(), 1);
+  }),
 );
 
-it.effect("includes root and nested directory allocations even without files", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cleanup-size-" });
-    const nested = path.join(root, "nested");
-    yield* fs.makeDirectory(nested);
-    const expected = yield* Effect.promise(
-      async () => ((await NodeFSP.lstat(root)).blocks + (await NodeFSP.lstat(nested)).blocks) * 512,
-    );
-    expect(yield* measureWorktreeBytes(root)).toBe(expected);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
+for (const [name, options] of [
+  ["native filesystem error", { responses: ['{"version":1,"error":"permission denied"}\n'] }],
+  ["incompatible protocol", { responses: ['{"version":2,"bytes":1,"done":true}\n'] }],
+  ["malformed output", { responses: ["invalid json\n"] }],
+  ["invalid byte count", { responses: ['{"version":1,"bytes":-1,"done":true}\n'] }],
+  ["premature EOF", { output: Stream.empty }],
+  [
+    "EOF after partial progress",
+    { output: Stream.encodeText(Stream.make('{"version":1,"bytes":10,"done":false}\n')) },
+  ],
+  ["nonzero exit", { responses: ['{"version":1,"bytes":1,"done":true}\n'], exitCode: 2 }],
+] as const) {
+  it.effect(`reports ${name} as unavailable instead of a completed measurement`, () =>
+    Effect.gen(function* () {
+      const f = yield* fixture(options);
+      const result = yield* f.scanner
+        .measure("/worktree with spaces")
+        .pipe(Stream.runCollect, Effect.result);
+      assert.isTrue(Result.isFailure(result));
+      if (name === "native filesystem error" && Result.isFailure(result)) {
+        assert.strictEqual(result.failure.cause, "permission denied");
+      }
+      assert.strictEqual(f.killed(), 1);
+    }),
+  );
+}
 
-it.effect("counts internally linked files once while excluding files with outside links", () =>
+it.effect("does not fall back when the native binary is missing", () =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cleanup-size-" });
-    const worktree = path.join(root, "worktree");
-    yield* fs.makeDirectory(worktree);
-    const local = path.join(worktree, "local");
-    const shared = path.join(worktree, "shared");
-    yield* fs.writeFile(local, new Uint8Array(8192));
-    yield* fs.link(local, path.join(worktree, "local-link"));
-    yield* fs.writeFile(shared, new Uint8Array(16384));
-    yield* fs.link(shared, path.join(worktree, "shared-link"));
-    yield* fs.link(shared, path.join(root, "outside-link"));
-    const expected = yield* Effect.promise(
-      async () =>
-        ((await NodeFSP.lstat(worktree)).blocks + (await NodeFSP.lstat(local)).blocks) * 512,
+    const f = yield* fixture();
+    const scanner = yield* make.pipe(
+      Effect.provideService(ResourceMonitorBinary, {
+        resolve: Effect.fail(
+          new ResourceMonitorBinaryNotFound({
+            platform: "linux",
+            architecture: "x64",
+            candidates: [],
+          }),
+        ),
+      }),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, f.spawner),
     );
-    expect(yield* measureWorktreeBytes(worktree)).toBe(expected);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    const result = yield* scanner
+      .measure("/worktree with spaces")
+      .pipe(Stream.runCollect, Effect.result);
+    assert.isTrue(Result.isFailure(result));
+    assert.strictEqual(f.spawned(), 0);
+  }),
 );

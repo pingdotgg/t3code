@@ -13,6 +13,7 @@ export type StorageCleanupCategory = typeof StorageCleanupCategory.Type;
 
 export const StorageCleanupPreviewInput = Schema.Struct({
   projectId: Schema.NullOr(ProjectId),
+  refreshKey: Schema.optionalKey(Schema.String),
   inactiveAfterDays: Schema.optionalKey(
     Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 }))),
   ),
@@ -28,6 +29,8 @@ export type StorageUsageTotals = typeof StorageUsageTotals.Type;
 
 export const StorageCleanupPreview = Schema.Struct({
   checkedAt: Schema.String,
+  scanning: Schema.optionalKey(Schema.Boolean),
+  progress: Schema.optionalKey(Schema.Struct({ completed: NonNegativeInt, total: NonNegativeInt })),
   unchecked: NonNegativeInt,
   unavailable: NonNegativeInt,
   total: StorageUsageTotals,

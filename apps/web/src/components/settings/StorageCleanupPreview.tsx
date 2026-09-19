@@ -77,7 +77,7 @@ function formatBytes(bytes: number) {
 
 function space(totals: StorageUsageTotals | undefined, partial = false) {
   if (!totals) return "—";
-  if (totals.folders > 0 && totals.measured === 0) return "—";
+  if (totals.folders > 0 && totals.measured === 0 && totals.bytes === 0) return "—";
   return `${partial || totals.measured < totals.folders ? "≥ " : ""}${formatBytes(totals.bytes)}`;
 }
 
@@ -103,17 +103,30 @@ export function StorageCleanupPreviewPanel({
     refresh,
   } = useStorageUsage(inactiveAfterDays);
   const initialLoading = isPending && data === null;
+  const scanning = data?.scanning === true;
+  const loading = isPending || scanning;
+  const progress = scanning ? data.progress : undefined;
+  const scanPercent =
+    progress && progress.total > 0
+      ? Math.min(99, Math.floor((progress.completed / progress.total) * 100))
+      : undefined;
   const chartCategories =
     data?.categories.toSorted(
-      (left, right) => Number(right.kind === "kept") - Number(left.kind === "kept"),
+      (left, right) =>
+        Number(right.kind === "kept") - Number(left.kind === "kept") ||
+        Number(right.kind === "unchecked") - Number(left.kind === "unchecked"),
     ) ?? [];
-  const partialScan = partial || (!!data && (data.unchecked > 0 || data.unavailable > 0));
+  const partialScan =
+    scanning || partial || (!!data && (data.unchecked > 0 || data.unavailable > 0));
   const incomplete =
     data &&
     (data.unchecked > 0 || data.unavailable > 0 || data.total.measured < data.total.folders);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border/60" aria-busy={isPending}>
+    <div
+      className="overflow-hidden rounded-lg border border-border/60"
+      aria-busy={isPending || scanning}
+    >
       <div className="space-y-4 border-b border-border/50 px-4 py-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
@@ -151,23 +164,25 @@ export function StorageCleanupPreviewPanel({
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    disabled={!canRefresh || isPending}
+                    disabled={!canRefresh || isPending || scanning}
                     onClick={refresh}
                     aria-label="Refresh storage usage"
                   >
-                    <RefreshCwIcon className="size-3.5" />
+                    <RefreshCwIcon
+                      className={`size-3.5 ${loading ? "animate-spin motion-reduce:animate-none" : ""}`}
+                    />
                   </Button>
                 }
               />
               <TooltipPopup>
                 {data
-                  ? `Checked ${new Date(data.checkedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}. Cached for one minute.`
+                  ? `Checked ${new Date(data.checkedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}. Measurements cached for five minutes.`
                   : "Refresh storage usage"}
               </TooltipPopup>
             </Tooltip>
           </div>
         </div>
-        {isPending ? (
+        {initialLoading ? (
           <Skeleton className="h-6 w-full rounded-md" />
         ) : (
           <div
@@ -179,10 +194,30 @@ export function StorageCleanupPreviewPanel({
               chartCategories.map((category) => (
                 <div
                   key={category.kind}
-                  className={`${CATEGORIES[category.kind].bar} h-full shrink-0`}
+                  className={`${scanning && category.kind === "unchecked" ? CATEGORIES.kept.bar : CATEGORIES[category.kind].bar} h-full shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none`}
                   style={{ width: `${(category.bytes / data.total.bytes) * 100}%` }}
                 />
               ))}
+          </div>
+        )}
+        {loading && (
+          <div className="space-y-1.5">
+            <div
+              role="progressbar"
+              aria-label="Storage scan progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={scanPercent}
+              className="h-1 overflow-hidden rounded-full bg-muted"
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-300 ease-in-out motion-reduce:transition-none"
+                style={{ width: `${scanPercent ?? 0}%` }}
+              />
+            </div>
+            <p className="text-right text-xs tabular-nums text-muted-foreground">
+              {scanPercent === undefined ? "Preparing scan…" : `${scanPercent}% scanned`}
+            </p>
           </div>
         )}
         {!data && isPending && (
@@ -204,7 +239,9 @@ export function StorageCleanupPreviewPanel({
             aria-label="Storage categories"
           >
             {chartCategories
-              .filter((category) => category.folders > 0)
+              .filter(
+                (category) => category.folders > 0 && (!scanning || category.kind !== "unchecked"),
+              )
               .map((category) => (
                 <div key={category.kind} className="flex shrink-0 items-start gap-2">
                   <span
@@ -240,7 +277,7 @@ export function StorageCleanupPreviewPanel({
         )}
         {(Object.keys(CATEGORIES) as StorageCleanupCategory[]).map((kind) => {
           const category = data?.categories.find((entry) => entry.kind === kind);
-          if (kind === "unchecked" && !category?.folders) return null;
+          if (kind === "unchecked" && (scanning || !category?.folders)) return null;
           const { icon: Icon, label, color, detail } = CATEGORIES[kind];
           return (
             <SettingsRow
@@ -283,7 +320,7 @@ export function StorageCleanupPreviewPanel({
           {failed.length > 0 && <p>Usage unavailable: {failed.join(", ")}. Try refreshing.</p>}
         </div>
       )}
-      {!isPending && incomplete && (
+      {!isPending && !scanning && incomplete && (
         <p className="px-4 pb-3 text-xs text-muted-foreground">
           Partial scan. Some storage could not be measured or classified.
         </p>
