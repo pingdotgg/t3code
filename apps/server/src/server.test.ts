@@ -1746,7 +1746,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("previews storage cleanup through the scoped WebSocket API", () =>
+  it.effect("lets read-only clients preview storage without changing cleanup rules", () =>
     Effect.gen(function* () {
       const input = {
         projectId: ProjectId.make("storage-project"),
@@ -1773,15 +1773,34 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           },
         },
       });
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* withWsRpcClient(wsUrl, (client) =>
-        client[WS_METHODS.serverPreviewStorageCleanup](input),
+      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      assert.equal(token.response.status, 200);
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+      });
+      const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+      yield* withWsRpcClient(wsUrl, (client) =>
+        Effect.gen(function* () {
+          assert.deepStrictEqual(
+            yield* client[WS_METHODS.serverPreviewStorageCleanup](input),
+            preview,
+          );
+          const revisions = yield* client[WS_METHODS.subscribeStorageCleanup]({}).pipe(
+            Stream.runCollect,
+          );
+          assert.deepStrictEqual(Array.from(revisions), [0, 1]);
+          const error = yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: { storageCleanup: { worktreeOnDelete: true } },
+          }).pipe(Effect.flip);
+          assert.equal(error._tag, "EnvironmentAuthorizationError");
+          if (error._tag === "EnvironmentAuthorizationError") {
+            assert.equal(error.requiredScope, "orchestration:operate");
+          }
+        }),
       );
-      assert.deepStrictEqual(result, preview);
-      const revisions = yield* withWsRpcClient(wsUrl, (client) =>
-        client[WS_METHODS.subscribeStorageCleanup]({}).pipe(Stream.runCollect),
-      );
-      assert.deepStrictEqual(Array.from(revisions), [0, 1]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
