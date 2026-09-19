@@ -89,6 +89,7 @@ const modelTotals = Object.freeze([
     records: 1,
     unpricedRecords: 0,
     costShare: 10 / 16,
+    tokenShare: 100 / 2_600,
   },
   {
     model: "token-heavy-model",
@@ -98,6 +99,7 @@ const modelTotals = Object.freeze([
     records: 1,
     unpricedRecords: 0,
     costShare: 5 / 16,
+    tokenShare: 1_000 / 2_600,
   },
   {
     model: "token-heavy-cheaper-model",
@@ -107,6 +109,7 @@ const modelTotals = Object.freeze([
     records: 1,
     unpricedRecords: 0,
     costShare: 1 / 16,
+    tokenShare: 1_000 / 2_600,
   },
   {
     model: "unpriced-model",
@@ -116,6 +119,7 @@ const modelTotals = Object.freeze([
     records: 2,
     unpricedRecords: 2,
     costShare: 0,
+    tokenShare: 500 / 2_600,
   },
 ]);
 
@@ -211,6 +215,33 @@ describe("UsagePage model breakdown", () => {
 
     expect(unpricedRow).toContain("Unpriced");
     expect(unpricedRow).not.toContain("$0.00");
+  });
+
+  it("labels cost shares and leaves unpriced models without a cost share", () => {
+    testState.breakdown = "model";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const rows = body.split("<tr");
+
+    expect(markup).toContain("Cost share");
+    expect(rows.find((row) => row.includes("expensive-model"))).toContain("62.5%");
+    expect(rows.find((row) => row.includes("unpriced-model"))).toContain("—");
+  });
+
+  it("labels token shares and includes unpriced models in token shares", () => {
+    testState.metric = "tokens";
+    testState.breakdown = "model";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const rows = body.split("<tr");
+
+    expect(markup).toContain("Token share");
+    expect(rows.find((row) => row.includes("token-heavy-model"))).toContain("38.5%");
+    // Unpriced models still have a real token share to report.
+    expect(rows.find((row) => row.includes("unpriced-model"))).toContain("19.2%");
+    expect(body).not.toContain("—");
   });
 
   it("sorts models by token usage when the token metric is selected", () => {
