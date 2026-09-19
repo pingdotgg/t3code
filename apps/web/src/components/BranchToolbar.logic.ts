@@ -99,27 +99,44 @@ export interface PreviousWorktreeSeed {
   worktreePath: string;
 }
 
-// The most recently touched worktree in the project that the composer isn't
-// already pointing at. Backs the "Previous worktree" entry in the workspace
-// selector so a follow-up thread can hop back into the worktree you just
-// worked in without hunting for its branch. Archived threads don't compete —
-// the rest of the UI hides them, so their worktrees shouldn't resurface here.
+interface PreviousWorktreeCandidate {
+  branch: string | null;
+  worktreePath: string | null;
+  archivedAt?: string | null;
+}
+
+function isPreviousWorktreeCandidate(
+  thread: PreviousWorktreeCandidate,
+  currentWorktreePath: string | null,
+): thread is PreviousWorktreeCandidate & { worktreePath: string } {
+  return (
+    thread.worktreePath !== null &&
+    thread.worktreePath !== currentWorktreePath &&
+    (thread.archivedAt ?? null) === null
+  );
+}
+
+// The worktree the user just left, for the "Previous worktree" entry in the
+// workspace selector: a follow-up thread can hop back into it without
+// hunting for its branch. "Previous" means the thread the user was looking
+// at before this draft (originThread) whenever it has a worktree. Only when
+// there is no such thread — fresh session, or the origin lives on the local
+// checkout — does the project's most recently touched worktree stand in;
+// that one is usually whichever agent finished last, not where the user was.
+// Archived threads don't compete — the rest of the UI hides them, so their
+// worktrees shouldn't resurface here.
 export function resolvePreviousWorktreeSeed(input: {
-  threads: ReadonlyArray<{
-    branch: string | null;
-    worktreePath: string | null;
-    updatedAt: string;
-    archivedAt?: string | null;
-  }>;
+  originThread?: PreviousWorktreeCandidate | null;
+  threads: ReadonlyArray<PreviousWorktreeCandidate & { updatedAt: string }>;
   currentWorktreePath: string | null;
 }): PreviousWorktreeSeed | null {
+  const origin = input.originThread ?? null;
+  if (origin && isPreviousWorktreeCandidate(origin, input.currentWorktreePath)) {
+    return { branch: origin.branch, worktreePath: origin.worktreePath };
+  }
   let latest: { branch: string | null; worktreePath: string; updatedAt: number } | null = null;
   for (const thread of input.threads) {
-    if (
-      !thread.worktreePath ||
-      thread.worktreePath === input.currentWorktreePath ||
-      (thread.archivedAt ?? null) !== null
-    ) {
+    if (!isPreviousWorktreeCandidate(thread, input.currentWorktreePath)) {
       continue;
     }
     const updatedAt = toSortableTimestamp(thread.updatedAt);
