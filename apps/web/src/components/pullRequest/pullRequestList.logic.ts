@@ -631,6 +631,74 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
     .map((group) => ({ ...group, label: GROUP_LABELS[group.key] }));
 }
 
+/**
+ * One environment the priority groups can be asked of, with the project split the feed uses.
+ * Kept structural (rather than reusing the state's query-target type) so the page's gating
+ * stays a pure function of its inputs and unit-testable without the query layer.
+ */
+export interface PullRequestPartitionEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly projectIds?: ReadonlyArray<ProjectId>;
+}
+
+export interface PullRequestPartitionListTarget {
+  readonly environmentId: EnvironmentId;
+  readonly input: {
+    readonly state: PullRequestListState;
+    readonly involvement: PullRequestInvolvement;
+    readonly limit: number;
+    readonly projectId?: ProjectId;
+    readonly projectIds?: ReadonlyArray<ProjectId>;
+    readonly host?: string;
+    readonly filters?: PullRequestListFilters;
+  };
+}
+
+/**
+ * Which server-filtered reads the priority groups need. Unarmed (before engagement or idle),
+ * unwanted (a search re-ranks the whole list), or with no baseline rows, both stay unread and
+ * the groups fall back to local grouping. Built in the feed input's field order so the atoms
+ * stay keyed alike and the Authored/Reviewing tabs answer from this same read.
+ *
+ * The main list goes first: besides putting the visible rows on screen sooner, it proves which
+ * repositories the host search indexes, so an empty partition does not trigger the expensive
+ * per-repository fallback. With no baseline rows at all both partitions are already empty.
+ */
+export function buildPullRequestPartitionTargets(args: {
+  readonly wanted: boolean;
+  readonly armed: boolean;
+  readonly hasBaselineRows: boolean;
+  readonly environments: ReadonlyArray<PullRequestPartitionEnvironment>;
+  readonly state: PullRequestListState;
+  readonly limit: number;
+  readonly scopedProjectId?: ProjectId;
+  readonly host?: string;
+  readonly filters?: PullRequestListFilters;
+}): {
+  readonly authored: ReadonlyArray<PullRequestPartitionListTarget>;
+  readonly reviewing: ReadonlyArray<PullRequestPartitionListTarget>;
+} {
+  if (!args.wanted || !args.armed || !args.hasBaselineRows) {
+    return { authored: [], reviewing: [] };
+  }
+  const targetsFor = (
+    involvement: PullRequestInvolvement,
+  ): ReadonlyArray<PullRequestPartitionListTarget> =>
+    args.environments.map(({ environmentId, projectIds }) => ({
+      environmentId,
+      input: {
+        state: args.state,
+        involvement,
+        limit: args.limit,
+        ...(args.scopedProjectId ? { projectId: args.scopedProjectId } : {}),
+        ...(projectIds ? { projectIds } : {}),
+        ...(args.host ? { host: args.host } : {}),
+        ...(args.filters ? { filters: args.filters } : {}),
+      },
+    }));
+  return { authored: targetsFor("authored"), reviewing: targetsFor("reviewing") };
+}
+
 export type PullRequestDiffStats = ReadonlyMap<
   string,
   { readonly additions: number; readonly deletions: number }
