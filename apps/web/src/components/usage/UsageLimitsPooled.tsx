@@ -29,6 +29,7 @@ import {
   resetCreditsSummary,
   useResetCredit,
 } from "./UsageLimits";
+import { usageLimitBarColor } from "./usageLimitColors";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 function accountInitials(email: string): string {
@@ -235,6 +236,7 @@ function PoolSegment({
 }) {
   const [open, setOpen] = useState(false);
   const remaining = remainingPercent(window);
+  const barColor = usageLimitBarColor(color, remaining);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
@@ -254,7 +256,7 @@ function PoolSegment({
         <div
           aria-hidden
           className="absolute inset-y-0 left-0 rounded-md opacity-35"
-          style={{ width: `${remaining}%`, backgroundColor: color }}
+          style={{ width: `${remaining}%`, backgroundColor: barColor }}
         />
         {/* The spent share is hatched, not blank: it is what the countdown restores. */}
         {remaining < 100 && reset ? (
@@ -263,7 +265,7 @@ function PoolSegment({
             className="absolute inset-y-0 right-0 opacity-20"
             style={{
               width: `${100 - remaining}%`,
-              backgroundImage: `repeating-linear-gradient(135deg, ${color} 0 1px, transparent 1px 5px)`,
+              backgroundImage: `repeating-linear-gradient(135deg, ${barColor} 0 1px, transparent 1px 5px)`,
             }}
           />
         ) : null}
@@ -295,7 +297,7 @@ function PoolSegment({
           </span>
         </div>
       </PopoverTrigger>
-      <LegendRow account={account} window={window} color={color} now={now} index={index} />
+      <LegendRow account={account} window={window} color={barColor} now={now} index={index} />
       {account.redeem ? (
         <RedeemableSegmentPopup
           account={account}
