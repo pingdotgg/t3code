@@ -2942,10 +2942,132 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       expect(generatedPolicy).toEqual({
         kind: "repo_conventions",
-        commitInstructions: `Follow the repository's established commit message style when examples are available.\n\nLocal AGENTS.md:\n${agentInstructions}\n\nLocal CLAUDE.md:\n${claudeInstructions}`,
-        changeRequestInstructions: `Follow the repository's established change request title and body style when examples are available.\n\nLocal AGENTS.md:\n${agentInstructions}\n\nLocal CLAUDE.md:\n${claudeInstructions}`,
+        commitInstructions: `Follow the repository's established commit message style when examples are available.\n\nInstructions from this repository's AGENTS.md (take precedence over the examples below):\n${agentInstructions}\n\nInstructions from this repository's CLAUDE.md (same precedence):\n${claudeInstructions}`,
+        changeRequestInstructions: `Follow the repository's established change request title and body style when examples are available.\n\nInstructions from this repository's AGENTS.md (take precedence over the examples below):\n${agentInstructions}\n\nInstructions from this repository's CLAUDE.md (same precedence):\n${claudeInstructions}`,
         inferRepositoryConventions: true,
       });
+    }),
+  );
+
+  it.effect("sends identical AGENTS.md and CLAUDE.md content to a Claude writer once", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* runGit(repoDir, ["init", "--initial-branch=main"]);
+      yield* runGit(repoDir, ["config", "user.email", "test@example.com"]);
+      yield* runGit(repoDir, ["config", "user.name", "Test User"]);
+      const instructions = "Use lowercase source control text.";
+      // A byte-identical copy stands in for the common `CLAUDE.md -> AGENTS.md`
+      // symlink: both read to the same string, which is what the dedup compares.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "AGENTS.md"), instructions);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "CLAUDE.md"), instructions);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      let generatedPolicy: TextGeneration.CommitMessageGenerationInput["policy"] = undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          textGenerationModelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-6",
+          },
+          sourceControlWritingStyle: {
+            mode: "repo_conventions" as const,
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            generatedPolicy = input.policy;
+            return Effect.succeed({ subject: "Create initial commit", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      expect(generatedPolicy).toEqual({
+        kind: "repo_conventions",
+        commitInstructions: `Follow the repository's established commit message style when examples are available.\n\nInstructions from this repository's AGENTS.md (take precedence over the examples below):\n${instructions}`,
+        changeRequestInstructions: `Follow the repository's established change request title and body style when examples are available.\n\nInstructions from this repository's AGENTS.md (take precedence over the examples below):\n${instructions}`,
+        inferRepositoryConventions: true,
+      });
+    }),
+  );
+
+  it.effect("lists AGENTS.md conventions before recent commit subjects", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "history.txt"), "one\n");
+      yield* runGit(repoDir, ["add", "history.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "added history file"]);
+      const agentInstructions = "Commit subjects are sentence case and end with a period.";
+      NodeFS.writeFileSync(NodePath.join(repoDir, "AGENTS.md"), agentInstructions);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      let commitInstructions: string | undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWritingStyle: {
+            mode: "repo_conventions" as const,
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            commitInstructions = input.policy?.commitInstructions;
+            return Effect.succeed({ subject: "Add a readme.", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      expect(commitInstructions).toBeDefined();
+      const conventionsAt = commitInstructions!.indexOf(agentInstructions);
+      const historyAt = commitInstructions!.indexOf("added history file");
+      expect(conventionsAt).toBeGreaterThan(-1);
+      expect(historyAt).toBeGreaterThan(-1);
+      expect(conventionsAt).toBeLessThan(historyAt);
+      expect(commitInstructions).toContain("take precedence over the examples below");
+    }),
+  );
+
+  it.effect("keeps a repository-style subject that breaks the house format", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nconventions\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      const subject =
+        "[docs] Added the project readme so that new contributors can find the setup steps quickly.";
+      expect(subject.length).toBeGreaterThan(72);
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWritingStyle: {
+            mode: "repo_conventions" as const,
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: () => Effect.succeed({ subject, body: "" }),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
+
+      expect(result.commit.status).toBe("created");
+      expect(result.commit.subject).toBe(subject);
+      expect(
+        yield* runGit(repoDir, ["log", "-1", "--pretty=%s"]).pipe(
+          Effect.map((result) => result.stdout.trim()),
+        ),
+      ).toBe(subject);
     }),
   );
 

@@ -519,18 +519,28 @@ function summarizeGitActionResult(
   return { title: "Done" };
 }
 
-function sanitizeCommitMessage(generated: {
-  subject: string;
-  body: string;
-  branch?: string | undefined;
-}): {
+/**
+ * Keeps the subject to one line. The 72 character cap and trailing period
+ * strip are house style, so they are skipped when the repository's own
+ * conventions were inferred; those may legitimately differ.
+ */
+function sanitizeCommitMessage(
+  generated: {
+    subject: string;
+    body: string;
+    branch?: string | undefined;
+  },
+  options: { readonly keepRepositoryStyle: boolean },
+): {
   subject: string;
   body: string;
   branch?: string | undefined;
 } {
   const rawSubject = generated.subject.trim().split(/\r?\n/g)[0]?.trim() ?? "";
-  const subject = rawSubject.replace(/[.]+$/g, "").trim();
-  const safeSubject = subject.length > 0 ? subject.slice(0, 72).trimEnd() : "Update project files";
+  const subject = options.keepRepositoryStyle
+    ? rawSubject
+    : rawSubject.replace(/[.]+$/g, "").trim().slice(0, 72).trimEnd();
+  const safeSubject = subject.length > 0 ? subject : "Update project files";
   return {
     subject: safeSubject,
     body: generated.body.trim(),
@@ -755,15 +765,36 @@ export const make = Effect.gen(function* () {
                 provider.instanceId === settings.modelSelection.instanceId &&
                 provider.driver === "claudeAgent",
             );
-          const claudeInstructions = isClaudeWriter
+          const claudeInstructionsRead = isClaudeWriter
             ? yield* readRepositoryInstructions(cwd, "CLAUDE.md")
             : "";
+          // CLAUDE.md is commonly a symlink to, or a copy of, AGENTS.md. Both
+          // reads then return the same text, and the writer would be sent it
+          // twice. Comparing content covers symlinks, hardlinks and copies.
+          const claudeInstructions =
+            claudeInstructionsRead === agentInstructions ? "" : claudeInstructionsRead;
+          // Written conventions come first and outrank history: a repository
+          // whose recent subjects drift from its documented style should get
+          // the documented style back, not more drift.
           const examples = [
-            ...(subjects.length > 0
-              ? [["Recent commit subjects from this repository:", ...subjects].join("\n")]
+            ...(agentInstructions
+              ? [
+                  `Instructions from this repository's AGENTS.md (take precedence over the examples below):\n${agentInstructions}`,
+                ]
               : []),
-            ...(agentInstructions ? [`Local AGENTS.md:\n${agentInstructions}`] : []),
-            ...(claudeInstructions ? [`Local CLAUDE.md:\n${claudeInstructions}`] : []),
+            ...(claudeInstructions
+              ? [
+                  `Instructions from this repository's CLAUDE.md (same precedence):\n${claudeInstructions}`,
+                ]
+              : []),
+            ...(subjects.length > 0
+              ? [
+                  [
+                    "Recent commit subjects from this repository (examples of the existing style):",
+                    ...subjects,
+                  ].join("\n"),
+                ]
+              : []),
           ].join("\n\n");
           if (!examples) {
             return repositoryConventionsTextGenerationPolicy;
@@ -1845,7 +1876,13 @@ export const make = Effect.gen(function* () {
           ...(policy ? { policy } : {}),
           modelSelection: input.settings.modelSelection,
         })
-        .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+        .pipe(
+          Effect.map((result) =>
+            sanitizeCommitMessage(result, {
+              keepRepositoryStyle: policy.inferRepositoryConventions,
+            }),
+          ),
+        );
 
       return {
         subject: generated.subject,
