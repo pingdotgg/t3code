@@ -2610,10 +2610,175 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ).toEqual(["recent-session"]);
       }),
     );
+
+    it.effect("uses the canonical Codex title from the session index", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        const sessionId = "01a0a0b4-3958-7382-82b2-b22b8bb830ba";
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-index-title-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-index-title-codex-");
+        const workspaceRoot = yield* makeTempDir("t3code-index-title-workspace-");
+
+        yield* writeTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "24",
+            `rollout-2026-08-24T12-00-00-${sessionId}.jsonl`,
+          ),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: sessionId, cwd: workspaceRoot },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              payload: {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: "<recommended_plugins>" }],
+              },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(codexHomePath, "session_index.jsonl"),
+          [
+            "not json",
+            encodeTranscriptRecord({
+              id: sessionId,
+              thread_name: "Prototype MetaApi trade replication",
+            }),
+          ].join("\n"),
+        );
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot,
+        });
+
+        expect(threads[0]?.title).toBe("Prototype MetaApi trade replication");
+      }),
+    );
+
+    it.effect("bounds index growth after the opened-handle stat", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        const sessionId = "01a0a0b4-3958-7382-82b2-b22b8bb830ba";
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-index-race-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-index-race-codex-");
+        const workspaceRoot = yield* makeTempDir("t3code-index-race-workspace-");
+        const transcriptPath = path.join(
+          codexHomePath,
+          "sessions",
+          "2026",
+          "08",
+          "24",
+          `rollout-2026-08-24T12-00-00-${sessionId}.jsonl`,
+        );
+        const indexPath = path.join(codexHomePath, "session_index.jsonl");
+
+        yield* writeTranscript({
+          filePath: transcriptPath,
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: sessionId, cwd: workspaceRoot },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Use the transcript title" },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+        yield* fileSystem.writeFileString(
+          indexPath,
+          `${encodeTranscriptRecord({ id: sessionId, thread_name: "Unsafe index title" })}\n${"x".repeat(16 * 1024 * 1024)}`,
+        );
+        let indexReads = 0;
+        let indexBytesRequested = 0;
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (target) => fileSystem.stat(target === indexPath ? transcriptPath : target),
+          open: (target, options) =>
+            fileSystem.open(target, options).pipe(
+              Effect.map((file) =>
+                target === indexPath
+                  ? new Proxy(file, {
+                      get(inner, key) {
+                        if (key === "stat") return fileSystem.stat(transcriptPath);
+                        if (key === "readAlloc") {
+                          return (size: FileSystem.SizeInput) => {
+                            indexReads += 1;
+                            indexBytesRequested += Number(size);
+                            return inner.readAlloc(size);
+                          };
+                        }
+                        return Reflect.get(inner, key, inner);
+                      },
+                    })
+                  : file,
+              ),
+            ),
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
+
+        expect(threads[0]?.title).toBe("Use the transcript title");
+        expect(indexReads).toBeGreaterThan(0);
+        expect(indexBytesRequested).toBeLessThanOrEqual(16 * 1024 * 1024 + 1);
+      }),
+    );
   });
 });
 
 describe("parseAgentSessionTranscript", () => {
+  it("parses valid, named Codex session index entries", () => {
+    expect(
+      AgentSessionScanner.parseCodexSessionIndex(
+        [
+          "not json",
+          JSON.stringify({ id: "session-1", thread_name: "  Fix imported titles  " }),
+          JSON.stringify({ id: "session-2", thread_name: "" }),
+          JSON.stringify({ id: "session-3", thread_name: `  ${"x".repeat(150)}  ` }),
+          JSON.stringify({ id: "session-1", thread_name: "Latest imported title" }),
+        ].join("\r\n") + "\r\n",
+      ),
+    ).toEqual(
+      new Map([
+        ["session-1", "Latest imported title"],
+        ["session-3", "x".repeat(100)],
+      ]),
+    );
+  });
+
+  it("bounds the session index map while retaining its newest entries", () => {
+    const titles = AgentSessionScanner.parseCodexSessionIndex(
+      Array.from({ length: 5_001 }, (_, index) =>
+        encodeTranscriptRecord({ id: `session-${index}`, thread_name: `Title ${index}` }),
+      ).join("\n"),
+    );
+
+    expect(titles.size).toBe(5_000);
+    expect(titles.has("session-0")).toBe(false);
+    expect(titles.get("session-5000")).toBe("Title 5000");
+  });
+
   it.each([false, true])(
     "handles the exact record limit and an interior blank overflow=%s",
     (overflow) => {
@@ -3103,11 +3268,101 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Initialize Git and add a README.");
     expect(thread?.messages.map((message) => message.text)).toEqual([
       context,
       "Initialize Git and add a README.",
     ]);
+  });
+
+  it("skips recommended plugin context when deriving a Codex title", () => {
+    const plugins =
+      "<recommended_plugins>\n- GitHub (github@openai-curated-remote)\n</recommended_plugins>";
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: plugins }],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Build MetaApi trade replication" }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Build MetaApi trade replication");
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      plugins,
+      "Build MetaApi trade replication",
+    ]);
+  });
+
+  it.each([
+    "<recommended_plugins>",
+    "<recommended_plugins>\n- GitHub",
+    "<environment_context>\n<cwd>/tmp/project</cwd>",
+    "<user_instructions>\nInternal setup instructions",
+    "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nInternal rules",
+  ])("ignores a bare or unclosed Codex context message: %s", (context) => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: context }],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: "Build the actual project" },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Build the actual project");
+  });
+
+  it("strips stacked Codex context in one pass", () => {
+    const text = [
+      "<recommended_plugins>\n- GitHub\n</recommended_plugins>",
+      "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>",
+      "# AGENTS.md instructions for /tmp/project\n<INSTRUCTIONS>\nRules\n</INSTRUCTIONS>",
+      "Build the actual project",
+    ].join("\n\n");
+
+    expect(AgentSessionScanner.deriveImportedThreadTitle(text, "codex")).toBe(
+      "Build the actual project",
+    );
+  });
+
+  it("does not strip context-like text from Claude titles", () => {
+    expect(
+      AgentSessionScanner.deriveImportedThreadTitle(
+        "<recommended_plugins>\nThis is a literal Claude request",
+        "claudeAgent",
+      ),
+    ).toBe("<recommended_plugins>");
   });
 
   it("preserves a canonical Codex event that starts with context markup", () => {
@@ -3130,7 +3385,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Create a useful project.");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
