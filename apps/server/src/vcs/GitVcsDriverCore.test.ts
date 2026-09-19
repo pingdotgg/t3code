@@ -2640,7 +2640,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
-    for (const failure of ["offline", "auth", "timeout"] as const) {
+    for (const failure of ["offline", "auth"] as const) {
       it.effect(`does not retry a scoped fetch after ${failure}`, () =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
@@ -2656,10 +2656,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
               yield* Deferred.succeed(started, undefined);
               return ChildProcessSpawner.makeHandle({
                 ...makeNonRepositoryHandle(),
-                exitCode:
-                  failure === "timeout"
-                    ? Effect.never
-                    : Effect.succeed(ChildProcessSpawner.ExitCode(128)),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
                 stderr: Stream.encodeText(
                   Stream.make(
                     failure === "auth"
@@ -2678,26 +2675,55 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
             .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(started);
-          if (failure === "timeout") {
-            yield* TestClock.adjust("31 seconds");
-            yield* TestClock.adjust("31 seconds");
-          }
           const result = yield* Fiber.join(fetching);
           assert.isTrue(Result.isFailure(result));
           assert.equal(attempts.length, 1);
           if (Result.isFailure(result)) {
             assert.equal(
               result.failure.detail,
-              failure === "timeout"
-                ? "Git command timed out."
-                : failure === "offline"
-                  ? "Git could not reach the remote. Check the server's network connection and remote host, then retry."
-                  : "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.",
+              failure === "offline"
+                ? "Git could not reach the remote. Check the server's network connection and remote host, then retry."
+                : "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.",
             );
           }
         }),
       );
     }
+
+    it.effect("keeps a slow scoped fetch running past the default git deadline", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const started = yield* Deferred.make<void>();
+        const attempts: Array<ReadonlyArray<string>> = [];
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command))
+              return yield* Effect.die("unexpected command");
+            if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
+            attempts.push(command.args);
+            yield* Deferred.succeed(started, undefined);
+            return ChildProcessSpawner.makeHandle({
+              ...makeNonRepositoryHandle(),
+              exitCode: Effect.never,
+            });
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const fetching = yield* driver
+          .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+          .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("31 seconds");
+        yield* TestClock.adjust("31 seconds");
+        assert.isUndefined(fetching.pollUnsafe());
+        assert.equal(attempts.length, 1);
+        yield* Fiber.interrupt(fetching);
+      }),
+    );
 
     it.effect("creates a worktree from the latest fetched remote commit", () =>
       Effect.gen(function* () {
@@ -2835,6 +2861,53 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           status: "skipped_up_to_date",
           branch: "feature/push",
         });
+      }),
+    );
+
+    it.effect("allows remote fetches to run longer than the default command timeout", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fetchStarted = yield* Deferred.make<void>();
+        const delayedFetchSpawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (ChildProcess.isStandardCommand(command) && command.args[0] === "fetch") {
+              yield* Deferred.succeed(fetchStarted, undefined);
+              yield* Effect.sleep("31 seconds");
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, delayedFetchSpawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const peer = yield* makeTmpDir("git-peer-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(peer, ["clone", remote, "."]);
+        yield* git(peer, ["config", "user.email", "test@test.com"]);
+        yield* git(peer, ["config", "user.name", "Test"]);
+        yield* writeTextFile(peer, "remote-change.txt", "remote\n");
+        yield* git(peer, ["add", "remote-change.txt"]);
+        yield* git(peer, ["commit", "-m", "remote change"]);
+        yield* git(peer, ["push", "origin", initialBranch]);
+        const remoteHead = yield* git(peer, ["rev-parse", "HEAD"]);
+
+        const fetching = yield* driver
+          .fetchRemote({ cwd, remoteName: "origin" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(fetchStarted);
+        yield* TestClock.adjust("31 seconds");
+        yield* Fiber.join(fetching);
+
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+          remoteHead,
+        );
       }),
     );
 
