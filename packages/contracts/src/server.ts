@@ -286,6 +286,10 @@ export const ServerObservability = Schema.Struct({
   otlpTracesEnabled: Schema.Boolean,
   otlpMetricsUrl: Schema.optional(TrimmedNonEmptyString),
   otlpMetricsEnabled: Schema.Boolean,
+  otlpLogsUrl: Schema.optional(TrimmedNonEmptyString),
+  // Absent on servers from before the log signal shipped, so a newer client
+  // reads those as having no log export rather than rejecting the whole config.
+  otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ServerObservability = typeof ServerObservability.Type;
 

@@ -72,6 +72,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly configuredBackendPort: Option.Option<number>;
     readonly commitHashOverride: Option.Option<string>;
     readonly otlpTracesUrl: Option.Option<string>;
+    readonly otlpMetricsUrl: Option.Option<string>;
+    readonly otlpLogsUrl: Option.Option<string>;
     readonly otlpExportIntervalMs: number;
     readonly otlpHeaders: Option.Option<Record<string, string>>;
     readonly otlpProtocol: OtlpProtocol;
@@ -223,6 +225,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
     configuredBackendPort: config.configuredBackendPort,
     commitHashOverride: config.commitHashOverride,
     otlpTracesUrl: config.otlpTracesUrl,
+    otlpMetricsUrl: config.otlpMetricsUrl,
+    otlpLogsUrl: config.otlpLogsUrl,
     otlpExportIntervalMs: config.otlpExportIntervalMs,
     otlpHeaders: config.otlpHeaders,
     otlpProtocol: config.otlpProtocol,

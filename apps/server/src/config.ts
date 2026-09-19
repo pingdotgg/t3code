@@ -72,6 +72,7 @@ export class ServerConfig extends Context.Service<
     readonly traceMaxFiles: number;
     readonly otlpTracesUrl: string | undefined;
     readonly otlpMetricsUrl: string | undefined;
+    readonly otlpLogsUrl: string | undefined;
     readonly otlpExportIntervalMs: number;
     readonly otlpServiceName: string;
     readonly otlpHeaders: Readonly<Record<string, string>> | undefined;
@@ -105,6 +106,18 @@ export class ServerConfig extends Context.Service<
 }
 
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
+
+/**
+ * Resource attributes shared by every OTLP exporter, so traces, metrics, and
+ * logs report the same service identity to the collector.
+ */
+export const otlpResource = (config: ServerConfig["Service"]) => ({
+  serviceName: config.otlpServiceName,
+  attributes: {
+    "service.runtime": "t3-server",
+    "service.mode": config.mode,
+  },
+});
 
 export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerConfig, make(config));
 
@@ -198,6 +211,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     traceMaxFiles: 10,
     otlpTracesUrl: undefined,
     otlpMetricsUrl: undefined,
+    otlpLogsUrl: undefined,
     otlpExportIntervalMs: 10_000,
     otlpServiceName: "t3-server",
     otlpHeaders: undefined,
