@@ -1,16 +1,12 @@
-import {
-  FILL_PREVIEW_VIEWPORT,
-  type PreviewAutomationOperation,
-  type PreviewAutomationOpenInput,
-  type PreviewSessionSnapshot,
-  type PreviewViewportSetting,
+import type {
+  PreviewAutomationOperation,
+  PreviewAutomationOpenInput,
+  PreviewSessionSnapshot,
+  PreviewViewportSetting,
 } from "@t3tools/contracts";
 
 /**
- * Viewport an agent-opened tab falls back to when the user has no configured
- * browser default. Agents screenshot and assert against what they open, so a
- * brand-new tab left in fill mode would be sized by whatever the panel happens
- * to be — deterministic beats incidental here.
+ * Fallback for a new automation session whose snapshot omits its viewport.
  */
 export const DEFAULT_PREVIEW_AUTOMATION_VIEWPORT = {
   _tag: "freeform",
@@ -55,15 +51,14 @@ export function previewAutomationOpenNeedsOverlay(
  * Whether a freshly opened automation tab still needs a viewport applied.
  *
  * A configured browser default is sent with `preview.open`, so the snapshot
- * already carries it and nothing is needed here. Fill means the user has no
- * stated preference, which is where the agent fallback applies.
+ * already carries it and nothing is needed here. An explicit fill viewport is
+ * a configured default too; only a missing viewport needs the fallback.
  */
 export function previewAutomationDefaultViewport(
   reusedExistingTab: boolean,
   snapshot: PreviewSessionSnapshot,
 ): PreviewViewportSetting | null {
-  const viewport = snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
-  return !reusedExistingTab && viewport._tag === "fill"
+  return !reusedExistingTab && snapshot.viewport === undefined
     ? DEFAULT_PREVIEW_AUTOMATION_VIEWPORT
     : null;
 }
