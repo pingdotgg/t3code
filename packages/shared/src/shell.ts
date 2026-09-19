@@ -511,6 +511,18 @@ export const CommandResolutionCache = Context.Reference<Map<string, CommandResol
   },
 );
 
+// An injected resolver may answer differently for the same search, so its
+// entries are kept apart from every other resolver's.
+let spawnResolverCacheIdCount = 0;
+const spawnResolverCacheIds = new WeakMap<SpawnExecutableResolver, number>();
+function spawnResolverCacheId(resolver: SpawnExecutableResolver): number {
+  const known = spawnResolverCacheIds.get(resolver);
+  if (known !== undefined) return known;
+  const id = spawnResolverCacheIdCount++;
+  spawnResolverCacheIds.set(resolver, id);
+  return id;
+}
+
 function cacheCommandResolution(
   cache: Map<string, CommandResolutionCacheEntry>,
   cacheKey: string,
@@ -643,7 +655,32 @@ export const resolveSpawnCommand = Effect.fn("shell.resolveSpawnCommand")(functi
         ? { ...hostEnvironment, ...options.env }
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
-  const resolvedCommand = resolveExecutable(command, platform, env) ?? command;
+  // The scan is synchronous and runs before every child process, so it shares
+  // the PATH scan cache above. Explicit paths stay uncached for the same reason,
+  // and so do misses: a failed spawn is how providers report "not installed",
+  // and that has to clear the moment the binary appears.
+  const explicitPath = command.includes("/") || command.includes("\\");
+  const cache = yield* CommandResolutionCache;
+  const cacheKey = [
+    "spawn",
+    String(spawnResolverCacheId(resolveExecutable)),
+    platform,
+    resolvePathEnvironmentVariable(env),
+    resolveWindowsPathExtensions(env).join(";"),
+    command,
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
+  const nowNanos = yield* Clock.currentTimeNanos;
+  const cached = explicitPath ? undefined : cache.get(cacheKey);
+  let resolvedExecutable: string | null;
+  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+    resolvedExecutable = cached.resolvedPath;
+  } else {
+    resolvedExecutable = resolveExecutable(command, platform, env) ?? null;
+    if (!explicitPath && resolvedExecutable !== null) {
+      cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);
+    }
+  }
+  const resolvedCommand = resolvedExecutable ?? command;
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };
