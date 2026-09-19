@@ -78,6 +78,8 @@ function ambiguousHubAccountKeys(sources: UsageLimitSourceSnapshots): ReadonlySe
  * One subscription account as the pooled views see it, whichever way it was
  * reported. Email links native and hub reads only when the hubs report one
  * subscription for that address. Distinct hub identities must remain separate.
+ * Without a subscription ID, an ambiguous native login stays separate too;
+ * this may count it twice, but must not route credits to an arbitrary hub account.
  */
 export interface LimitAccount {
   readonly key: string;
