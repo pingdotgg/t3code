@@ -149,7 +149,34 @@ describe("tailscale", () => {
       assert.deepEqual(status, {
         magicDnsName: "desktop.tail.ts.net",
         tailnetIpv4Addresses: ["100.100.100.100"],
+        httpsServeEnabled: null,
       });
+    }),
+  );
+
+  it.effect("reads the HTTPS serve capability from the status capability map", () =>
+    Effect.gen(function* () {
+      const enabled = yield* parseTailscaleStatus(
+        `{"Self":{"CapMap":{"https":null,"funnel":null}}}`,
+      );
+      assert.equal(enabled.httpsServeEnabled, true);
+
+      const disabled = yield* parseTailscaleStatus(`{"Self":{"CapMap":{"funnel":null}}}`);
+      assert.equal(disabled.httpsServeEnabled, false);
+    }),
+  );
+
+  // A missing or malformed capability map must not read as "disabled": callers
+  // refuse to run `tailscale serve` on false, so guessing would break a tailnet
+  // that is actually fine.
+  it.effect("reports an unknown HTTPS serve capability rather than guessing", () =>
+    Effect.gen(function* () {
+      assert.equal((yield* parseTailscaleStatus(`{"Self":{}}`)).httpsServeEnabled, null);
+      assert.equal((yield* parseTailscaleStatus("{}")).httpsServeEnabled, null);
+      assert.equal(
+        (yield* parseTailscaleStatus(`{"Self":{"CapMap":["https"]}}`)).httpsServeEnabled,
+        null,
+      );
     }),
   );
 
@@ -191,6 +218,7 @@ describe("tailscale", () => {
       assert.deepEqual(status, {
         magicDnsName: "desktop.tail.ts.net",
         tailnetIpv4Addresses: ["100.90.1.2"],
+        httpsServeEnabled: null,
       });
     });
   });
