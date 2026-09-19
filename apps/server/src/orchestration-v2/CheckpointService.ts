@@ -288,9 +288,10 @@ export const layer: Layer.Layer<
       Effect.flatMap(getWorkspaceSemaphore(cwd), (semaphore) => semaphore.withPermits(1)(effect));
 
     // A false here must mean a confirmed non-Git workspace. Detection failures
-    // (process errors, timeouts) propagate so callers retry instead of treating
-    // them as "no repository", which could strand a previously captured
-    // baseline ref with no cleanup path.
+    // propagate as typed errors: outbox-driven callers retry them within the
+    // worker's attempt budget and mark the effect failed if they persist,
+    // instead of recording a false "no repository" that could strand a
+    // previously captured baseline ref.
     const isGitCheckpointable = (cwd: string) => checkpointStore.isGitRepository(cwd);
 
     const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
@@ -617,8 +618,8 @@ export const layer: Layer.Layer<
           Effect.gen(function* () {
             // A confirmed non-Git workspace never stored a start ref, so skip
             // without resolving a driver for one. Detection failures still
-            // propagate: an earlier baseline may exist, and the outbox retries
-            // until it is deleted.
+            // propagate: an earlier baseline may exist, and the effect retries
+            // within its attempt budget rather than falsely skipping.
             if (!(yield* isGitCheckpointable(input.scope.cwd))) {
               return;
             }

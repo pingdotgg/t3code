@@ -127,18 +127,19 @@ it.effect("propagates repository detection failures after a captured baseline", 
     cwd: "/repo",
     createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
   };
-  let detections = 0;
+  let detectionFails = false;
+  const deletedRefs: string[] = [];
   const isGitRepository = vi.fn((_cwd: string) =>
-    ++detections === 1
-      ? Effect.succeed(true)
-      : Effect.fail(
+    detectionFails
+      ? Effect.fail(
           new VcsProcessTimeoutError({
             operation: "test.detect",
             command: "git",
             cwd: "/repo",
             timeoutMs: 5000,
           }),
-        ),
+        )
+      : Effect.succeed(true),
   );
   const testLayer = checkpointServiceLayer.pipe(
     Layer.provide(
@@ -148,7 +149,10 @@ it.effect("propagates repository detection failures after a captured baseline", 
           isGitRepository,
           hasCheckpointRef: () => Effect.succeed(true),
           captureCheckpoint: () => Effect.void,
-          deleteCheckpointRefs: () => Effect.void,
+          deleteCheckpointRefs: (input) =>
+            Effect.sync(() => {
+              deletedRefs.push(...input.checkpointRefs);
+            }),
         }),
       ),
     ),
@@ -161,6 +165,7 @@ it.effect("propagates repository detection failures after a captured baseline", 
     // A transient detection failure must not masquerade as a confirmed
     // non-Git workspace: recording "missing" would leak the captured start
     // ref, and silently skipping cleanup would strand it forever.
+    detectionFails = true;
     const captureError = yield* checkpoints
       .capture({
         scope,
@@ -176,10 +181,24 @@ it.effect("propagates repository detection failures after a captured baseline", 
       .captureBaseline({ scope, ordinalWithinScope: 1 })
       .pipe(Effect.flip);
     assert.equal(baselineError._tag, "CheckpointBaselineCaptureError");
+    const materializeError = yield* checkpoints
+      .materializeBaselineCheckpoint({ scope, ordinalWithinScope: 1 })
+      .pipe(Effect.flip);
+    assert.equal(materializeError._tag, "CheckpointCaptureError");
     const cleanupError = yield* checkpoints
       .discardBaseline({ scope, ordinalWithinScope: 1 })
       .pipe(Effect.flip);
     assert.equal(cleanupError._tag, "CheckpointBaselineCleanupError");
+    assert.deepEqual(deletedRefs, []);
+    // Once detection recovers, cleanup eligibility is preserved: the same
+    // call deletes the start ref captured before the failure.
+    detectionFails = false;
+    yield* checkpoints.discardBaseline({ scope, ordinalWithinScope: 1 });
+    assert.deepEqual(deletedRefs, [
+      checkpointStartRef(
+        checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 1 }),
+      ),
+    ]);
   }).pipe(Effect.provide(testLayer));
 });
 

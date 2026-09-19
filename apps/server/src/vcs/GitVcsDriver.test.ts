@@ -1226,3 +1226,102 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
     ),
   );
 });
+
+it.effect(
+  "detectRepository distinguishes a confirmed absent repository from detection failures",
+  () => {
+    let revParseResult = { exitCode: 0, stdout: "", stderr: "" };
+    return Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      // Git's "not a git repository" fatal is the nonzero signature that
+      // confirms the workspace has no usable repository.
+      revParseResult = {
+        exitCode: 128,
+        stdout: "",
+        stderr: "fatal: not a git repository (or any of the parent directories): .git\n",
+      };
+      assert.isNull(yield* driver.detectRepository("/repo"));
+      // Other fatals (unreadable config, permission denied, I/O) mean detection
+      // itself failed — they must propagate rather than report the workspace as
+      // non-Git, which callers rely on to decide that no repo state exists.
+      revParseResult = {
+        exitCode: 128,
+        stdout: "",
+        stderr: "fatal: unable to access '.git/config': Permission denied\n",
+      };
+      const error = yield* driver.detectRepository("/repo").pipe(Effect.flip);
+      assert.equal(error._tag, "VcsProcessExitError");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) =>
+              // Mirror the real VcsProcess contract: a nonzero exit fails the
+              // effect unless the caller opted into allowNonZeroExit.
+              input.allowNonZeroExit === true || revParseResult.exitCode === 0
+                ? Effect.succeed({
+                    exitCode: ChildProcessSpawner.ExitCode(revParseResult.exitCode),
+                    stdout: revParseResult.stdout,
+                    stderr: revParseResult.stderr,
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                  })
+                : Effect.fail(
+                    new VcsProcessExitError({
+                      operation: input.operation,
+                      command: "git",
+                      cwd: input.cwd,
+                      exitCode: revParseResult.exitCode,
+                      detail: revParseResult.stderr.trim(),
+                    }),
+                  ),
+          }),
+        ),
+      ),
+    );
+  },
+);
+
+it.effect("deleteCheckpointRefs propagates update-ref failures instead of swallowing them", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const error = yield* driver.checkpoints
+      .deleteCheckpointRefs({
+        cwd: "/repo",
+        checkpointRefs: [CheckpointRef.make("refs/t3/checkpoints/test/1-start")],
+      })
+      .pipe(Effect.flip);
+    assert.equal(error._tag, "VcsProcessExitError");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: (input) =>
+            // Mirror the real VcsProcess contract: a nonzero exit fails the
+            // effect unless the caller opted into allowNonZeroExit.
+            input.allowNonZeroExit === true
+              ? Effect.succeed({
+                  exitCode: ChildProcessSpawner.ExitCode(1),
+                  stdout: "",
+                  stderr:
+                    "fatal: cannot lock ref 'refs/t3/checkpoints/test/1-start': unable to lock",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                })
+              : Effect.fail(
+                  new VcsProcessExitError({
+                    operation: input.operation,
+                    command: "git",
+                    cwd: input.cwd,
+                    exitCode: 1,
+                    detail:
+                      "fatal: cannot lock ref 'refs/t3/checkpoints/test/1-start': unable to lock",
+                  }),
+                ),
+        }),
+      ),
+    ),
+  ),
+);
