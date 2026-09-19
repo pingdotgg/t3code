@@ -83,6 +83,14 @@ function normalizeEventKey(key: string): string {
   return normalized;
 }
 
+function isAltGraphShortcutEvent(
+  event: Pick<ShortcutEventLike, "getModifierState">,
+  platform: string,
+): boolean {
+  // Firefox reports ordinary Option presses as AltGraph on macOS.
+  return !isMacPlatform(platform) && event.getModifierState?.("AltGraph") === true;
+}
+
 export function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "code">): string {
   const layoutKey = normalizeEventKey(event.key);
   if (/^[a-z]$/.test(layoutKey)) return layoutKey;
@@ -90,9 +98,12 @@ export function shortcutKeyFromEvent(event: Pick<ShortcutEventLike, "key" | "cod
   return physicalKey ?? layoutKey;
 }
 
-function resolveEventKeys(event: ShortcutEventLike): Set<string> {
+function resolveEventKeys(event: ShortcutEventLike, platform: string): Set<string> {
   const layoutKey = normalizeEventKey(event.key);
   const keys = new Set([layoutKey]);
+  // AltGraph can surface as Ctrl+Alt, so retain its layout key while avoiding
+  // physical aliases that would turn typed punctuation into a shortcut.
+  if (isAltGraphShortcutEvent(event, platform)) return keys;
   // The physical-position fallback exists for layouts that type non-Latin
   // letters (Cyrillic, Greek) and for Option-modified symbols on macOS.
   // When the layout already produces a Latin letter, match on it alone;
@@ -127,14 +138,8 @@ function matchesShortcut(
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): boolean {
-  if (
-    !isMacPlatform(platform) &&
-    event.getModifierState?.("AltGraph") &&
-    !/^[a-z0-9]$/i.test(event.key)
-  )
-    return false;
   if (!matchesShortcutModifiers(event, shortcut, platform)) return false;
-  return resolveEventKeys(event).has(shortcut.key);
+  return resolveEventKeys(event, platform).has(shortcut.key);
 }
 
 function resolvePlatform(options: ShortcutMatchOptions | undefined): string {
@@ -311,6 +316,14 @@ export function threadTraversalDirectionFromCommand(
 ): "previous" | "next" | null {
   if (command === "thread.previous") return "previous";
   if (command === "thread.next") return "next";
+  return null;
+}
+
+export function reasoningCycleDirectionFromCommand(
+  command: string | null,
+): "decrease" | "increase" | null {
+  if (command === "reasoning.decrease") return "decrease";
+  if (command === "reasoning.increase") return "increase";
   return null;
 }
 
