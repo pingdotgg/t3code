@@ -11,13 +11,57 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 
 import type { IdAllocatorV2Shape } from "./IdAllocator.ts";
+import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
+
+/** Translate known categories without exposing arbitrary provider defect text. */
+function causeMessage(cause: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  let message: string | undefined;
+  for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
+    seen.add(cause);
+    try {
+      if (Cause.isCause(cause)) {
+        cause = Cause.squash(cause);
+        continue;
+      }
+      if (typeof cause !== "object") break;
+      switch ((cause as Record<string, unknown>)._tag) {
+        case "ContextHandoffBudgetError":
+          return new ContextHandoffBudgetError().message;
+        case "ContextHandoffDeliveryUncertainError":
+          return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
+        case "ProviderAdapterTurnStartError":
+          message =
+            "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
+          break;
+        case "ProviderAdapterEventStreamError":
+          message =
+            "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.";
+          break;
+        case "ProviderAdapterOpenSessionError":
+          message =
+            "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.";
+          break;
+        case "ProviderAdapterResumeThreadError":
+          message =
+            "The provider conversation could not be resumed. Retry the turn; if it keeps failing, check the provider and server logs.";
+          break;
+      }
+      cause = (cause as Record<string, unknown>).cause;
+    } catch {
+      break;
+    }
+  }
+  return message;
+}
 
 function stringField(value: unknown, key: "message" | "code"): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
@@ -95,7 +139,7 @@ export function makeProviderFailure(input: {
   readonly class?: OrchestrationV2ProviderFailureClass;
   readonly retryable?: boolean | null;
 }): OrchestrationV2ProviderFailure {
-  const rawMessage = input.message ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
+  const rawMessage = input.message ?? causeMessage(input.cause) ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
   const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
   const code =

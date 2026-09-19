@@ -2940,14 +2940,14 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
       ["error"],
     );
     const error = written.find((item) => item.type === "error");
-    assert.equal(error?.failure.message, "Provider turn failed.");
+    assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
   }),
 );
 
 it.effect("refreshes pull requests only once when startup failure closes its event stream", () =>
   Effect.gen(function* () {
     const ingestionStarted = yield* Deferred.make<void>();
-    const { observed } = yield* captureRootRunTermination({
+    const { observed, written } = yield* captureRootRunTermination({
       key: "pull-request-refresh:startup-error",
       shouldFinalizeRun: () => Effect.succeed(true),
       events: () =>
@@ -2969,6 +2969,8 @@ it.effect("refreshes pull requests only once when startup failure closes its eve
     });
     assert.equal(observed.filter((item) => item === "pull-requests-refreshed").length, 1);
     assert.equal(observed[0], "run:failed");
+    const error = written.find((item) => item.type === "error");
+    assert.include(error?.failure.message ?? "", "provider could not start this turn");
   }),
 );
 
