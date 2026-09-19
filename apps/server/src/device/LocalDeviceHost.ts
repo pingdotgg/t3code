@@ -17,7 +17,11 @@ import {
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  HostProcessUserId,
+} from "@t3tools/shared/hostProcess";
 import {
   resolveNodeExecutable,
   type NodeRuntimeUnavailableError,
@@ -30,6 +34,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -193,6 +198,28 @@ const deviceHostEnvironment = (
     : environment;
 };
 
+const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
+  environment: NodeJS.ProcessEnv,
+) {
+  const env: NodeJS.ProcessEnv = { ...environment, FORCE_COLOR: "0", NO_COLOR: "1" };
+  const platform = yield* HostProcessPlatform;
+  const uid = yield* HostProcessUserId;
+  if (platform === "linux" && env.XDG_RUNTIME_DIR === undefined && uid !== undefined) {
+    // SSH sessions may omit the directory where the emulator publishes its gRPC token.
+    const runtimeDir = `/run/user/${uid}`;
+    const fs = yield* FileSystem.FileSystem;
+    const stat = yield* fs.stat(runtimeDir).pipe(Effect.option);
+    if (
+      stat._tag === "Some" &&
+      stat.value.type === "Directory" &&
+      Option.contains(stat.value.uid, uid)
+    ) {
+      env.XDG_RUNTIME_DIR = runtimeDir;
+    }
+  }
+  return env;
+});
+
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
@@ -240,12 +267,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       hubInstalled,
       agentDeviceInstalled,
     };
-  });
-
-  const hubEnvironment = (): NodeJS.ProcessEnv => ({
-    ...hostEnvironment,
-    FORCE_COLOR: "0",
-    NO_COLOR: "1",
   });
 
   const stopHub = (hub: HubProcess | undefined) =>
@@ -351,7 +372,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             shell: false,
             stdout: "pipe",
             stderr: "pipe",
-            env: hubEnvironment(),
+            env: yield* hubEnvironment(hostEnvironment).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(HostProcessPlatform, hostPlatform),
+            ),
           },
         ),
       )
@@ -722,4 +746,5 @@ export const __testing = {
   androidSdk,
   platformReason,
   deviceHostEnvironment,
+  hubEnvironment,
 };
