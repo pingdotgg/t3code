@@ -100,13 +100,9 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   /** Project a quick new thread should target; null hides the button. */
   readonly newThreadTarget?: EnvironmentProject | null;
   readonly onNewThread?: (project: EnvironmentProject) => void;
-  /** Project entries a long-press "Remove project" removes; null hides the menu. */
-  readonly removableProjects?: ReadonlyArray<EnvironmentProject> | null;
-  readonly onRemoveProject?: (projects: ReadonlyArray<EnvironmentProject>, title: string) => void;
 }) {
-  const { groupKey, onGroupAction, onNewThread, onRemoveProject, title } = props;
+  const { groupKey, onGroupAction, onNewThread } = props;
   const newThreadTarget = props.newThreadTarget ?? null;
-  const removableProjects = props.removableProjects ?? null;
   const compact = props.variant === "compact";
   const handleToggle = useCallback(
     () => onGroupAction(groupKey, "toggle-collapsed"),
@@ -118,16 +114,6 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
     }
   }, [newThreadTarget, onNewThread]);
   const showNewThreadButton = onNewThread !== undefined && newThreadTarget !== null;
-  const handleMenuAction = useCallback(
-    ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
-      if (nativeEvent.event === "remove-project" && removableProjects && onRemoveProject) {
-        onRemoveProject(removableProjects, title);
-      }
-    },
-    [onRemoveProject, removableProjects, title],
-  );
-  const showRemoveMenu =
-    onRemoveProject !== undefined && removableProjects !== null && removableProjects.length > 0;
 
   // The new-thread button is a SIBLING of the collapse toggle, not a child:
   // nested touchables are unreachable to VoiceOver/TalkBack (the parent
@@ -135,47 +121,6 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
   // dynamic padding classes on Pressable did not apply reliably) so both
   // children share one centerline; hitSlop restores the padded tap area.
   const verticalHitSlop = { top: props.isFirst ? 8 : 24, bottom: 12 };
-  const toggle = (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ expanded: !props.collapsed }}
-      accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
-      accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
-      className={
-        compact ? "flex-1 flex-row items-center gap-2.5" : "flex-1 flex-row items-center gap-2"
-      }
-      hitSlop={{ ...verticalHitSlop, left: compact ? 20 : 12 }}
-      onPress={handleToggle}
-    >
-      <ProjectFavicon
-        environmentId={props.project.environmentId}
-        faviconPath={props.project.faviconPath}
-        open={!props.collapsed}
-        size={compact ? 22 : 18}
-        projectTitle={props.project.title}
-        workspaceRoot={props.project.workspaceRoot}
-      />
-      <Text
-        className={
-          compact
-            ? "flex-shrink text-base font-t3-bold tracking-[0.2px] text-foreground-muted"
-            : "flex-shrink text-sm font-t3-bold tracking-[0.2px] text-drawer-foreground-muted"
-        }
-        numberOfLines={1}
-      >
-        {props.title}
-      </Text>
-      <Text
-        className={
-          compact
-            ? "flex-1 text-sm font-t3-medium text-foreground-tertiary"
-            : "flex-1 text-xs font-t3-medium text-drawer-foreground-muted"
-        }
-      >
-        {props.threadCount}
-      </Text>
-    </Pressable>
-  );
   return (
     <View
       className={compact ? "flex-row items-center bg-screen" : "flex-row items-center"}
@@ -189,21 +134,45 @@ export const ThreadListGroupHeader = memo(function ThreadListGroupHeader(props: 
         paddingTop: props.isFirst ? (compact ? 8 : 4) : compact ? 24 : 20,
       }}
     >
-      {showRemoveMenu ? (
-        // Long-press on the project title reveals project-level actions, the
-        // same way thread rows do. ControlPillMenu's press gating keeps a
-        // plain tap collapsing/expanding the group.
-        <ControlPillMenu
-          actions={PROJECT_HEADER_MENU_ACTIONS}
-          onPressAction={handleMenuAction}
-          shouldOpenOnLongPress
-          style={{ flex: 1 }}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: !props.collapsed }}
+        accessibilityLabel={`${props.title}, ${props.threadCount} threads`}
+        accessibilityHint={props.collapsed ? "Expands the project" : "Collapses the project"}
+        className={
+          compact ? "flex-1 flex-row items-center gap-2.5" : "flex-1 flex-row items-center gap-2"
+        }
+        hitSlop={{ ...verticalHitSlop, left: compact ? 20 : 12 }}
+        onPress={handleToggle}
+      >
+        <ProjectFavicon
+          environmentId={props.project.environmentId}
+          faviconPath={props.project.faviconPath}
+          open={!props.collapsed}
+          size={compact ? 22 : 18}
+          projectTitle={props.project.title}
+          workspaceRoot={props.project.workspaceRoot}
+        />
+        <Text
+          className={
+            compact
+              ? "flex-shrink text-base font-t3-bold tracking-[0.2px] text-foreground-muted"
+              : "flex-shrink text-sm font-t3-bold tracking-[0.2px] text-drawer-foreground-muted"
+          }
+          numberOfLines={1}
         >
-          {toggle}
-        </ControlPillMenu>
-      ) : (
-        toggle
-      )}
+          {props.title}
+        </Text>
+        <Text
+          className={
+            compact
+              ? "flex-1 text-sm font-t3-medium text-foreground-tertiary"
+              : "flex-1 text-xs font-t3-medium text-drawer-foreground-muted"
+          }
+        >
+          {props.threadCount}
+        </Text>
+      </Pressable>
       {showNewThreadButton ? (
         <Pressable
           accessibilityLabel={`Create new thread in ${props.title}`}
@@ -299,15 +268,6 @@ export const ThreadListShowMoreRow = memo(function ThreadListShowMoreRow(props: 
 });
 
 /* ─── Pending task row ───────────────────────────────────────────────── */
-
-const PROJECT_HEADER_MENU_ACTIONS: MenuAction[] = [
-  {
-    id: "remove-project",
-    title: "Remove project",
-    image: "trash",
-    attributes: { destructive: true },
-  },
-];
 
 const PENDING_TASK_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
