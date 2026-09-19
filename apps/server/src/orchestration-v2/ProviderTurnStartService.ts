@@ -37,9 +37,10 @@ import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2HistoricalContext,
+  type ProviderAdapterV2SessionRuntime,
 } from "./ProviderAdapter.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
-import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import { ProjectionStoreV2, type ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import {
@@ -99,6 +100,111 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicyV2;
+
+    // These callbacks outlive startup while a run drains background work. Build
+    // them outside start's scope so they cannot retain its full thread history.
+    const makeRunControls = (input: {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly attemptId: OrchestrationV2RunAttempt["id"];
+      readonly providerThreadId: OrchestrationV2ProviderThread["id"];
+      readonly runOrdinal: number;
+      readonly inheritedBackgroundTurnItems: ReturnType<typeof selectInheritedBackgroundTurnItems>;
+    }) => {
+      // Guards and background routing need live execution state, not a fresh
+      // allocation of every completed message and tool output in the thread.
+      const isCurrentAttemptInStatus = (expectedStatus: OrchestrationV2Run["status"]) =>
+        projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
+          Effect.map((current) => {
+            const run = current.runs.find((candidate) => candidate.id === input.runId);
+            return run?.activeAttemptId === input.attemptId && run.status === expectedStatus;
+          }),
+          Effect.catchCause(() => Effect.succeed(false)),
+        );
+      return {
+        isCurrentAttemptInStatus,
+        loadInheritedBackgroundTurnItems: () =>
+          projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
+            Effect.map((current) =>
+              selectInheritedBackgroundTurnItems({
+                threadId: input.threadId,
+                currentProviderThreadId: input.providerThreadId,
+                currentRunOrdinal: input.runOrdinal,
+                runs: current.runs,
+                turnItems: current.turnItems,
+              }),
+            ),
+            Effect.catchCause(() => Effect.succeed(input.inheritedBackgroundTurnItems)),
+          ),
+        shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
+        shouldFinalizeRun: () =>
+          projectionStore.getRuntimeRecoveryProjection(input.threadId).pipe(
+            Effect.map((current) => {
+              const run = current.runs.find((candidate) => candidate.id === input.runId);
+              return (
+                run?.activeAttemptId === input.attemptId &&
+                (run.status === "starting" || run.status === "running")
+              );
+            }),
+            Effect.catchCause(() => Effect.succeed(false)),
+          ),
+        hasUnpairedRunInterruptRequest: () =>
+          projectionStore.getThreadProjection(input.threadId).pipe(
+            Effect.map((current) => {
+              const requestId = idAllocator.derive.runSignalTurnItem({
+                runId: input.runId,
+                signal: "interrupt-request",
+              });
+              const resultId = idAllocator.derive.runSignalTurnItem({
+                runId: input.runId,
+                signal: "interrupt-result",
+              });
+              return (
+                current.turnItems.some((item) => item.id === requestId) &&
+                !current.turnItems.some((item) => item.id === resultId)
+              );
+            }),
+            Effect.catchCause(() => Effect.succeed(false)),
+          ),
+      };
+    };
+
+    const makeDeliverySession = (
+      session: ProviderAdapterV2SessionRuntime,
+      startWithHandoffs: (
+        input: Parameters<ProviderAdapterV2SessionRuntime["startTurn"]>[0],
+        compact?: boolean,
+      ) => ReturnType<ProviderAdapterV2SessionRuntime["startTurn"]>,
+    ) => {
+      let deliver: typeof startWithHandoffs | undefined = startWithHandoffs;
+      const start = (
+        input: Parameters<ProviderAdapterV2SessionRuntime["startTurn"]>[0],
+        compact = false,
+      ) =>
+        Effect.suspend(() => {
+          if (deliver !== undefined) return deliver(input, compact);
+          return compact && session.compactThread !== undefined
+            ? session.compactThread(input)
+            : session.startTurn(input);
+        }).pipe(
+          // Only startup needs the handoff history. The event worker keeps this
+          // session alive afterward, including when background work remains.
+          Effect.ensuring(
+            Effect.sync(() => {
+              deliver = undefined;
+            }),
+          ),
+        );
+      return {
+        ...session,
+        startTurn: (input: Parameters<typeof session.startTurn>[0]) => start(input),
+        ...(session.compactThread === undefined
+          ? {}
+          : {
+              compactThread: (input: Parameters<typeof session.startTurn>[0]) => start(input, true),
+            }),
+      };
+    };
 
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
       readonly threadId: ThreadId;
@@ -347,7 +453,7 @@ export const layer: Layer.Layer<
         }
       }
       const selectInheritedBackgroundItems = (
-        current: typeof projection,
+        current: ProjectionRuntimeRecoveryState,
       ): ReturnType<typeof selectInheritedBackgroundTurnItems> =>
         selectInheritedBackgroundTurnItems({
           threadId: current.thread.id,
@@ -357,21 +463,18 @@ export const layer: Layer.Layer<
           turnItems: current.turnItems,
         });
       const inheritedBackgroundTurnItems = yield* projectionStore
-        .getThreadProjection(projection.thread.id)
+        .getRuntimeRecoveryProjection(projection.thread.id)
         .pipe(Effect.map(selectInheritedBackgroundItems));
       const providerSessionId = providerThread.providerSessionId;
-      const isCurrentAttemptInStatus = (
-        expectedStatus: OrchestrationV2Run["status"],
-      ): Effect.Effect<boolean, never> =>
-        projectionStore.getThreadProjection(projection.thread.id).pipe(
-          Effect.map((current) => {
-            const currentRun = current.runs.find((candidate) => candidate.id === run.id);
-            return (
-              currentRun?.activeAttemptId === attempt.id && currentRun.status === expectedStatus
-            );
-          }),
-          Effect.catchCause(() => Effect.succeed(false)),
-        );
+      const runControls = makeRunControls({
+        threadId: projection.thread.id,
+        runId: run.id,
+        attemptId: attempt.id,
+        providerThreadId: providerThread.id,
+        runOrdinal: run.ordinal,
+        inheritedBackgroundTurnItems,
+      });
+      const { isCurrentAttemptInStatus } = runControls;
 
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
         thread: projection.thread,
@@ -946,16 +1049,7 @@ export const layer: Layer.Layer<
       const deliverySession =
         effectiveHandoffs.length === 0 && missedItems.length === 0
           ? session
-          : {
-              ...session,
-              startTurn: startWithHandoffs,
-              ...(session.compactThread === undefined
-                ? {}
-                : {
-                    compactThread: (turnInput: Parameters<typeof session.startTurn>[0]) =>
-                      startWithHandoffs(turnInput, true),
-                  }),
-            };
+          : makeDeliverySession(session, startWithHandoffs);
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -967,11 +1061,7 @@ export const layer: Layer.Layer<
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
-        loadInheritedBackgroundTurnItems: () =>
-          projectionStore.getThreadProjection(projection.thread.id).pipe(
-            Effect.map(selectInheritedBackgroundItems),
-            Effect.catchCause(() => Effect.succeed(inheritedBackgroundTurnItems)),
-          ),
+        loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
         relatedThreadIds: routableSubagents.flatMap((subagent) =>
           subagent.childThreadId === null ? [] : [subagent.childThreadId],
         ),
@@ -985,35 +1075,9 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
-        shouldStartProviderTurn: () => isCurrentAttemptInStatus("running"),
-        shouldFinalizeRun: () =>
-          projectionStore.getThreadProjection(projection.thread.id).pipe(
-            Effect.map((current) => {
-              const currentRun = current.runs.find((candidate) => candidate.id === run.id);
-              return (
-                currentRun?.activeAttemptId === attempt.id &&
-                (currentRun.status === "starting" || currentRun.status === "running")
-              );
-            }),
-            Effect.catchCause(() => Effect.succeed(false)),
-          ),
-        hasUnpairedRunInterruptRequest: () =>
-          projectionStore.getThreadProjection(projection.thread.id).pipe(
-            Effect.map((current) => {
-              const requestId = idAllocator.derive.runSignalTurnItem({
-                runId: run.id,
-                signal: "interrupt-request",
-              });
-              const resultId = idAllocator.derive.runSignalTurnItem({
-                runId: run.id,
-                signal: "interrupt-result",
-              });
-              const hasRequest = current.turnItems.some((item) => item.id === requestId);
-              const hasResult = current.turnItems.some((item) => item.id === resultId);
-              return hasRequest && !hasResult;
-            }),
-            Effect.catchCause(() => Effect.succeed(false)),
-          ),
+        shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+        shouldFinalizeRun: runControls.shouldFinalizeRun,
+        hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         message: {
           messageId: message.id,
           text: userText,

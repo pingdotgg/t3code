@@ -18,6 +18,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import { rpcInitialItems } from "./rpcInitialItems.ts";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   AcpRegistryOperationError,
@@ -748,7 +749,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             projection: projectThreadProjectionForWire(snapshot.projection),
           };
       return Stream.concat(
-        Stream.concat(Stream.make(snapshotItem), completionMarker),
+        Stream.concat(rpcInitialItems([snapshotItem]), completionMarker),
         eventStreamFrom(snapshotSequence),
       );
     });
@@ -825,7 +826,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         return yield* snapshotThenLive();
       }
       return Stream.concat(
-        Stream.concat(Stream.fromIterable(replay), completionMarker),
+        Stream.concat(rpcInitialItems(replay), completionMarker),
         eventStreamFrom(highWater),
       );
     }
@@ -983,7 +984,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       readonly snapshot: OrchestrationV2ShellSnapshot;
       readonly resolvedRepositoryIdentityRoots: ReadonlyArray<string>;
     }) =>
-      Stream.fromIterable(
+      rpcInitialItems(
         shellStreamItemsFromInitialSnapshot({
           snapshot: loaded.snapshot,
           resolvedRepositoryIdentityRoots: loaded.resolvedRepositoryIdentityRoots,
@@ -993,7 +994,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       readonly snapshot: OrchestrationV2ShellSnapshot;
       readonly resolvedRepositoryIdentityRoots: ReadonlyArray<string>;
     }) =>
-      Stream.fromIterable(
+      rpcInitialItems(
         shellStreamItemsFromResumeSnapshot({
           snapshot: loaded.snapshot,
           resolvedRepositoryIdentityRoots: loaded.resolvedRepositoryIdentityRoots,
@@ -1709,7 +1710,7 @@ const makeWsRpcLayer = (
                 }),
             ),
           );
-        return Stream.concat(Stream.make({ kind: "snapshot" as const, snapshot }), live);
+        return Stream.concat(rpcInitialItems([{ kind: "snapshot" as const, snapshot }]), live);
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
@@ -3387,7 +3388,7 @@ const makeWsRpcLayer = (
                 // repeats the snapshot the client already holds. Compare against that
                 // snapshot rather than dropping blindly: a refresh that landed between
                 // the snapshot and the subscription still goes out.
-                (updates) => Stream.concat(Stream.make(config.providers), updates),
+                (updates) => Stream.concat(rpcInitialItems([config.providers]), updates),
                 Stream.changesWith(
                   (previous, next) => JSON.stringify(previous) === JSON.stringify(next),
                 ),
@@ -3447,7 +3448,7 @@ const makeWsRpcLayer = (
               );
 
               return Stream.concat(
-                Stream.make({ version: 1 as const, type: "snapshot" as const, config }),
+                rpcInitialItems([{ version: 1 as const, type: "snapshot" as const, config }]),
                 liveUpdates,
               );
             }),
@@ -3471,7 +3472,7 @@ const makeWsRpcLayer = (
               const liveEvents = Stream.fromQueue(liveBuffer).pipe(
                 Stream.filter((event) => event.sequence > snapshot.sequence),
               );
-              return Stream.concat(Stream.fromIterable(snapshotEvents), liveEvents);
+              return Stream.concat(rpcInitialItems(snapshotEvents), liveEvents);
             }),
             { "rpc.aggregate": "server" },
           ),
@@ -3496,12 +3497,14 @@ const makeWsRpcLayer = (
               );
 
               return Stream.concat(
-                Stream.make({
-                  version: 1 as const,
-                  revision: 1,
-                  type: "snapshot" as const,
-                  payload: initialSnapshot,
-                }),
+                rpcInitialItems([
+                  {
+                    version: 1 as const,
+                    revision: 1,
+                    type: "snapshot" as const,
+                    payload: initialSnapshot,
+                  },
+                ]),
                 liveEvents,
               );
             }),
