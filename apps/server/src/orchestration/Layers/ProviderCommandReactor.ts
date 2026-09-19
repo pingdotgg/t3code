@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FiberSet from "effect/FiberSet";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -110,6 +111,23 @@ function mapProviderSessionStatusToOrchestrationStatus(
     default:
       return "ready";
   }
+}
+
+/**
+ * Whether a thread's session row was replaced after `before` was read. The row
+ * has no identity of its own, and lifecycle events rewrite it in place with a
+ * new `updatedAt`, so a replacement shows up as a different provider instance,
+ * a different active turn, or a restart: a session only returns to `starting`
+ * through a new turn start.
+ */
+function sessionWasReplaced(before: OrchestrationSession, after: OrchestrationSession): boolean {
+  return (
+    after.providerInstanceId !== before.providerInstanceId ||
+    (before.activeTurnId !== null &&
+      after.activeTurnId !== null &&
+      after.activeTurnId !== before.activeTurnId) ||
+    (before.status !== "starting" && after.status === "starting")
+  );
 }
 
 const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
@@ -1191,6 +1209,10 @@ const make = Effect.gen(function* () {
         }),
       ),
   );
+  // Provider interrupts run off the command worker: a provider's cancel can
+  // hang, and the worker is shared by every thread and provider. The set lets
+  // `drain` still wait for them.
+  const interruptFibers = yield* FiberSet.make();
   const threadTitleRegenerationWorker = yield* makeDrainableWorker(
     processThreadTitleRegenerationSafely,
   );
@@ -1538,6 +1560,10 @@ const make = Effect.gen(function* () {
           !latestSession ||
           latestSession.status === "stopped" ||
           latestSession.status === "ready" ||
+          // The interrupt runs off the command worker, so the thread may have
+          // moved on to a newer session or turn by the time it fails. Only the
+          // session this interrupt was asked about may be forced to stop.
+          sessionWasReplaced(session, latestSession) ||
           (event.payload.turnId !== undefined &&
             latestSession.activeTurnId !== null &&
             latestSession.activeTurnId !== event.payload.turnId)
@@ -1596,9 +1622,12 @@ const make = Effect.gen(function* () {
     };
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService
-      .interruptTurn({ threadId: event.payload.threadId })
-      .pipe(Effect.catchCause(recoverInterruptFailure));
+    yield* FiberSet.run(
+      interruptFibers,
+      providerService
+        .interruptTurn({ threadId: event.payload.threadId })
+        .pipe(Effect.catchCause(recoverInterruptFailure)),
+    );
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -1929,6 +1958,7 @@ const make = Effect.gen(function* () {
     start,
     drain: Effect.gen(function* () {
       yield* worker.drain;
+      yield* FiberSet.awaitEmpty(interruptFibers);
       yield* threadTitleRegenerationWorker.drain;
     }),
   } satisfies ProviderCommandReactorShape;
