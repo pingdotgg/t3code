@@ -909,7 +909,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       const { threads } = yield* api.listComments({ repository: "acme/web", number: 7 });
 
-      assert.strictEqual(threads.length, 1);
+      assert.strictEqual(threads.length, 2);
       expect(threads[0]).toMatchObject({
         id: "10",
         path: "src/a.ts",
@@ -918,6 +918,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         isResolved: true,
       });
       expect(threads[0]?.comments.map((comment) => comment.id)).toEqual(["10", "11", "12"]);
+      expect(threads[1]).toMatchObject({ id: "13", path: null, line: null });
     }),
   );
 
@@ -1138,6 +1139,39 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(callAt(1).body ?? "")).toEqual({ reviewers: [{ uuid: "{octocat}" }] });
+    }),
+  );
+});
+
+layer("attachments", (it) => {
+  it.effect("uploads attachments as unique files in the current repository Downloads", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(Effect.succeed(response("")));
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const input = {
+        cwd: "/repo",
+        repository: "owner/repo",
+        host: "bitbucket.org",
+        number: 7,
+        name: "log.txt",
+        mimeType: "text/plain",
+        data: new Uint8Array([0, 255, 128]),
+        filePath: "/tmp/log.txt",
+      };
+      const first = yield* api.uploadAttachment(input);
+      const second = yield* api.uploadAttachment(input);
+      expect(first.url).not.toBe(second.url);
+      expect(first.url).toMatch(
+        /^https:\/\/bitbucket\.org\/owner\/repo\/downloads\/pending-[a-f0-9-]+-log\.txt$/,
+      );
+      const request = mockedRequest.mock.calls.at(-1)?.[0];
+      expect(request?.url).toBe("/repositories/owner/repo/downloads");
+      expect(request?.method).toBe("POST");
+      const file = request?.formData?.get("files");
+      expect(file).toBeInstanceOf(File);
+      if (!(file instanceof File)) throw new Error("Expected attachment file");
+      expect(file.name).toBe(new URL(second.url).pathname.split("/").at(-1));
+      expect(new Uint8Array(yield* Effect.promise(() => file.arrayBuffer()))).toEqual(input.data);
     }),
   );
 });

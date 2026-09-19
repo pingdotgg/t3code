@@ -2,7 +2,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeFSP from "node:fs/promises";
-import { AssetAccessError, AssetPreviewTypeValidationError, ThreadId } from "@t3tools/contracts";
+import {
+  AssetAccessError,
+  AssetPreviewTypeValidationError,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -1169,3 +1174,37 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 });
+
+it.effect("signs private media with its PR scope and rejects other hosts", () =>
+  Effect.gen(function* () {
+    const reference = {
+      projectId: "p1" as ProjectId,
+      host: "gitlab.example",
+      repository: "owner/repo",
+      number: 7,
+      expectedAccountId: "selected-account",
+    };
+    const resource = {
+      _tag: "pull-request-media" as const,
+      reference,
+      provider: "gitlab" as const,
+      url: `/uploads/${"a".repeat(32)}/shot.png`,
+    };
+    const issued = yield* issueAssetUrl({ resource });
+    const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+    const separator = suffix.indexOf("/");
+    expect(
+      yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+    ).toMatchObject({
+      kind: "pull-request-media",
+      reference,
+      provider: "gitlab",
+      url: `https://gitlab.example/owner/repo${resource.url}`,
+      expiresAt: issued.expiresAt,
+    });
+    const invalid = yield* issueAssetUrl({
+      resource: { ...resource, url: `https://other.example${resource.url}` },
+    }).pipe(Effect.flip);
+    expect(invalid._tag).toBe("AssetPullRequestMediaUrlValidationError");
+  }).pipe(Effect.provide(testLayer)),
+);

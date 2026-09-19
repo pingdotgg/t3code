@@ -324,6 +324,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
+    uploadAttachment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:upload-attachment",
+      tag: WS_METHODS.pullRequestsUploadAttachment,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsUploadAttachment, input),
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
     updateComment: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:update-comment",
       tag: WS_METHODS.pullRequestsUpdateComment,

@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestActor,
   PullRequestComment,
+  PullRequestReviewThread,
   PullRequestMergeMethod,
   PullRequestMergeability,
   PullRequestState,
@@ -61,10 +62,16 @@ const RawPullRequestSchema = Schema.Struct({
   repository: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
+        id: Schema.optional(Schema.NullOr(Schema.String)),
         name: Schema.optional(Schema.NullOr(Schema.String)),
         webUrl: Schema.optional(Schema.NullOr(Schema.String)),
         project: Schema.optional(
-          Schema.NullOr(Schema.Struct({ name: Schema.optional(Schema.NullOr(Schema.String)) })),
+          Schema.NullOr(
+            Schema.Struct({
+              id: Schema.optional(Schema.NullOr(Schema.String)),
+              name: Schema.optional(Schema.NullOr(Schema.String)),
+            }),
+          ),
         ),
       }),
     ),
@@ -84,8 +91,15 @@ const RawPullRequestSchema = Schema.Struct({
 const RawThreadSchema = Schema.Struct({
   id: Schema.Int,
   isDeleted: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  status: Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Int]))),
   threadContext: Schema.optional(
-    Schema.NullOr(Schema.Struct({ filePath: Schema.optional(Schema.NullOr(Schema.String)) })),
+    Schema.NullOr(
+      Schema.Struct({
+        filePath: Schema.optional(Schema.NullOr(Schema.String)),
+        leftFileStart: Schema.optional(Schema.NullOr(Schema.Struct({ line: Schema.Int }))),
+        rightFileStart: Schema.optional(Schema.NullOr(Schema.Struct({ line: Schema.Int }))),
+      }),
+    ),
   ),
   comments: Schema.optional(
     Schema.NullOr(
@@ -122,6 +136,8 @@ const RawViewerSchema = Schema.Struct({
 export interface AzureDevOpsRepositoryLocation {
   readonly project: string;
   readonly repository: string;
+  readonly repositoryId?: string;
+  readonly projectId?: string;
 }
 
 export interface AzureDevOpsPullRequest {
@@ -204,7 +220,14 @@ function toLocation(
   const project = trimmed(raw.repository?.project?.name);
   const repository = trimmed(raw.repository?.name);
   if (project === null || repository === null) return null;
-  return { project, repository };
+  const repositoryId = trimmed(raw.repository?.id);
+  const projectId = trimmed(raw.repository?.project?.id);
+  return {
+    project,
+    repository,
+    ...(repositoryId === null ? {} : { repositoryId }),
+    ...(projectId === null ? {} : { projectId }),
+  };
 }
 
 function toAutoMergeMethod(
@@ -340,18 +363,29 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
  */
 export function decodeThreadsJson(
   raw: string,
-): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
+  pullRequestUrl?: string,
+): Result.Result<
+  {
+    comments: ReadonlyArray<PullRequestComment>;
+    reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+  },
+  DecodeFailure
+> {
   const decoded = decodeThreadPage(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
   const comments: PullRequestComment[] = [];
+  const reviewThreads: PullRequestReviewThread[] = [];
   for (const entry of decoded.success.value) {
     const decodedThread = decodeThreadEntry(entry);
     if (Exit.isFailure(decodedThread)) continue;
     const thread = decodedThread.value;
     if (thread.isDeleted === true) continue;
-    const path = trimmed(thread.threadContext?.filePath);
+    const path = trimmed(thread.threadContext?.filePath)?.replace(/^\/+/, "") || null;
+    const threadComments: PullRequestComment[] = [];
+    const url = pullRequestUrl && URL.canParse(pullRequestUrl) ? new URL(pullRequestUrl) : null;
+    url?.searchParams.set("discussionId", String(thread.id));
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
       if (
@@ -362,21 +396,39 @@ export function decodeThreadsJson(
       ) {
         continue;
       }
-      comments.push({
+      threadComments.push({
         id: `${thread.id}:${comment.id ?? 0}`,
         kind: path === null ? "issue-comment" : "review-comment",
         author: toActor(comment.author),
         body: comment.content ?? "",
         createdAt: publishedDate,
-        url: null,
+        url: url?.href ?? null,
         path,
         reviewState: null,
       });
     }
+    if (threadComments.length === 0) continue;
+    threadComments.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    comments.push(...threadComments);
+    const rightLine = thread.threadContext?.rightFileStart?.line;
+    const leftLine = thread.threadContext?.leftFileStart?.line;
+    const line = rightLine ?? leftLine;
+    reviewThreads.push({
+      id: String(thread.id),
+      path,
+      line: line !== undefined && line > 0 ? line : null,
+      side: rightLine === undefined && leftLine !== undefined ? "left" : "right",
+      isResolved: ["fixed", "wontFix", "closed", "byDesign", 2, 3, 4, 5].includes(
+        thread.status ?? "",
+      ),
+      isOutdated: false,
+      comments: threadComments,
+    });
   }
-  return Result.succeed(
-    comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
-  );
+  return Result.succeed({
+    comments: comments.toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    reviewThreads,
+  });
 }
 
 /**
@@ -397,6 +449,7 @@ const RawIterationSchema = Schema.Struct({
 const RawIterationPageSchema = Schema.Struct({ value: Schema.Array(Schema.Unknown) });
 
 const RawChangeEntrySchema = Schema.Struct({
+  changeTrackingId: Schema.optional(Schema.NullOr(Schema.Int)),
   changeType: Schema.optional(Schema.NullOr(Schema.String)),
   sourceServerItem: Schema.optional(Schema.NullOr(Schema.String)),
   /** Where a renamed file came from. Azure states it here on an iteration's changes. */
@@ -441,6 +494,7 @@ export interface AzureDevOpsIteration {
  * Azure reports by naming the file's previous home rather than as a delete and an add.
  */
 export interface AzureDevOpsChangeEntry {
+  readonly changeTrackingId?: number;
   readonly path: string;
   readonly oldPath: string;
   readonly changeKind: "new" | "deleted" | "change" | "rename-pure" | "rename-changed";
@@ -543,6 +597,7 @@ export function decodeIterationChangesJson(
     const oldPath =
       toRepositoryPath(change.sourceServerItem) ?? toRepositoryPath(change.originalPath) ?? path;
     changes.push({
+      ...(change.changeTrackingId == null ? {} : { changeTrackingId: change.changeTrackingId }),
       path,
       oldPath,
       changeKind: toChangeKind(change.changeType, oldPath !== path),

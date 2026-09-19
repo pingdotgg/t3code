@@ -1,3 +1,7 @@
+import { createPendingAttachmentId } from "../attachmentStore.ts";
+import { attachmentMarkdown } from "./PullRequestAttachments.ts";
+import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
+import { PullRequestProviderError } from "./PullRequestProvider.ts";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -275,6 +279,8 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly body: string;
     }) => Effect.Effect<void, BitbucketPullRequestApiError>;
 
+    readonly uploadAttachment: NonNullable<PullRequestProviderApi["uploadAttachment"]>;
+    readonly readAttachment: BitbucketApi.BitbucketApi["Service"]["readAttachment"];
     readonly updateComment: (input: {
       readonly repository: string;
       readonly number: number;
@@ -854,6 +860,33 @@ export const make = Effect.gen(function* () {
             body: JSON.stringify({ content: { raw: input.body } }),
           })
           .pipe(Effect.asVoid),
+      ),
+
+    readAttachment: bitbucket.readAttachment,
+    uploadAttachment: (input) =>
+      withRepository(input.repository, (path) =>
+        Effect.gen(function* () {
+          const name = `${createPendingAttachmentId()}-${input.name}`;
+          const formData = new FormData();
+          formData.set(
+            "files",
+            new Blob([new Uint8Array(input.data)], { type: input.mimeType }),
+            name,
+          );
+          yield* bitbucket.request({ method: "POST", url: `${path}/downloads`, formData });
+          const url = `https://bitbucket.org${path.slice("/repositories".length)}/downloads/${encodeURIComponent(name)}`;
+          return { url, markdown: attachmentMarkdown(url, input.name, input.mimeType) };
+        }),
+      ).pipe(
+        Effect.mapError(
+          (error) =>
+            new PullRequestProviderError({
+              provider: "bitbucket",
+              operation: "uploadAttachment",
+              reason: "failed",
+              detail: error.message,
+            }),
+        ),
       ),
 
     updateComment: (input) =>

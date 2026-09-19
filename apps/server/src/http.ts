@@ -1,3 +1,5 @@
+import { PullRequestService } from "./pullRequest/PullRequestService.ts";
+import { pullRequestMediaResponse } from "./assets/PullRequestMediaFetch.ts";
 import * as Mime from "effect/unstable/http/Mime";
 import {
   AuthOrchestrationOperateScope,
@@ -372,49 +374,73 @@ export const otlpTracesProxyRouteLayer = HttpRouter.add(
   ),
 );
 
-export const assetRouteLayer = HttpRouter.add(
-  "GET",
-  `${ASSET_ROUTE_PREFIX}/*`,
+export const assetRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const url = HttpServerRequest.toURL(request);
-    if (Option.isNone(url)) {
-      return HttpServerResponse.text("Bad Request", { status: 400 });
-    }
+    const pullRequests = yield* PullRequestService;
+    return HttpRouter.add(
+      "GET",
+      `${ASSET_ROUTE_PREFIX}/*`,
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const url = HttpServerRequest.toURL(request);
+        if (Option.isNone(url)) {
+          return HttpServerResponse.text("Bad Request", { status: 400 });
+        }
 
-    const suffix = url.value.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-    const separatorIndex = suffix.indexOf("/");
-    if (separatorIndex <= 0) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
+        const suffix = url.value.pathname.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separatorIndex = suffix.indexOf("/");
+        if (separatorIndex <= 0) {
+          return HttpServerResponse.text("Not Found", { status: 404 });
+        }
 
-    const asset = yield* resolveAsset(
-      suffix.slice(0, separatorIndex),
-      suffix.slice(separatorIndex + 1),
-    );
-    if (!asset) {
-      return HttpServerResponse.text("Not Found", { status: 404 });
-    }
-    if (asset.kind === "github-media") {
-      return yield* githubMediaResponse(asset, request.headers).pipe(
-        Effect.tapError((cause) =>
-          Effect.logWarning("Failed to fetch GitHub media.", { url: asset.url, cause }),
-        ),
-        Effect.orElseSucceed(() =>
-          HttpServerResponse.empty({
-            status: 502,
-            headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
-          }),
-        ),
-      );
-    }
-    return yield* assetFileResponse(
-      asset,
-      request.method === "GET" ? request.headers.range : undefined,
-      request.headers["if-range"],
-      request.method === "HEAD" ? "HEAD" : "GET",
-    ).pipe(
-      Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
+        const asset = yield* resolveAsset(
+          suffix.slice(0, separatorIndex),
+          suffix.slice(separatorIndex + 1),
+        );
+        if (!asset) {
+          return HttpServerResponse.text("Not Found", { status: 404 });
+        }
+        if (asset.kind === "pull-request-media") {
+          return yield* pullRequestMediaResponse(asset, request.headers).pipe(
+            Effect.provideService(PullRequestService, pullRequests),
+            Effect.orElseSucceed(() =>
+              HttpServerResponse.empty({
+                status: 502,
+                headers: {
+                  "cache-control": "private, no-store",
+                  "x-content-type-options": "nosniff",
+                },
+              }),
+            ),
+          );
+        }
+        if (asset.kind === "github-media") {
+          return yield* githubMediaResponse(asset, request.headers).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("Failed to fetch GitHub media.", { url: asset.url, cause }),
+            ),
+            Effect.orElseSucceed(() =>
+              HttpServerResponse.empty({
+                status: 502,
+                headers: {
+                  "cache-control": "private, no-store",
+                  "x-content-type-options": "nosniff",
+                },
+              }),
+            ),
+          );
+        }
+        return yield* assetFileResponse(
+          asset,
+          request.method === "GET" ? request.headers.range : undefined,
+          request.headers["if-range"],
+          request.method === "HEAD" ? "HEAD" : "GET",
+        ).pipe(
+          Effect.orElseSucceed(() =>
+            HttpServerResponse.text("Internal Server Error", { status: 500 }),
+          ),
+        );
+      }),
     );
   }),
 );

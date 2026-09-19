@@ -86,6 +86,10 @@ describe("diffPanelStore", () => {
 
   it("restores the selected branch base after visiting another scope", () => {
     useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/main");
+    useDiffPanelStore.getState().selectGitScope(THREAD_REF, "staged");
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({ kind: "staged" });
     useDiffPanelStore.getState().selectGitScope(THREAD_REF, "unstaged");
     useDiffPanelStore.getState().selectGitScope(THREAD_REF, "branch");
 

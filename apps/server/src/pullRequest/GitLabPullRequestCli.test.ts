@@ -1,11 +1,14 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as GitLabCli from "../sourceControl/GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const mockedExecute = vi.fn<GitLabCli.GitLabCli["Service"]["execute"]>();
 
 const layer = it.layer(
@@ -963,8 +966,11 @@ layer("GitLabPullRequestCli.layer", (it) => {
                   },
                 ],
               },
-              // A plain note is the timeline's business, not the diff's.
-              { id: "def456", notes: [{ id: 3, body: "ship it", created_at: "2026-07-01Z" }] },
+              {
+                id: "def456",
+                individual_note: true,
+                notes: [{ id: 3, body: "ship it", created_at: "2026-07-01T00:00:00Z" }],
+              },
             ]),
           ),
         ),
@@ -977,7 +983,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         number: 7,
       });
 
-      assert.strictEqual(threads.length, 1);
+      assert.strictEqual(threads.length, 2);
       expect(threads[0]).toMatchObject({
         id: "abc123",
         path: "src/a.ts",
@@ -988,6 +994,190 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(threads[0]?.comments.length, 2);
     }),
   );
+
+  for (const [name, response, expected] of [
+    [
+      "18.8 without mutation",
+      { data: { __type: null, currentUser: { username: "octocat" } } },
+      null,
+    ],
+    [
+      "18.9 with mutation",
+      {
+        data: {
+          __type: { name: "MergeRequestRequestChangesInput" },
+          currentUser: { username: "octocat" },
+        },
+      },
+      "octocat",
+    ],
+    ["disabled introspection", { errors: [{ message: "Introspection is disabled" }] }, null],
+  ] as const) {
+    it.effect(`detects request-changes support: ${name}`, () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(response))));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        expect(yield* cli.getRequestChangesViewer({ cwd: "/w" })).toBe(expected);
+        expect(decodeJson(callAt(0).stdin ?? "{}")).toMatchObject({
+          query: expect.stringContaining('__type(name: "MergeRequestRequestChangesInput")'),
+        });
+      }),
+    );
+  }
+
+  for (const ErrorType of [
+    GitLabCli.GitLabCliCommandError,
+    GitLabCli.GitLabCliRateLimitError,
+    GitLabCli.GitLabCliAuthenticationError,
+    GitLabCli.GitLabCliUnavailableError,
+  ]) {
+    it.effect(`handles capability probe failure: ${ErrorType.name}`, () =>
+      Effect.gen(function* () {
+        const failure = new ErrorType({
+          command: "glab",
+          cwd: "/w",
+          operation: "execute",
+          cause: "host refusal",
+        });
+        mockedExecute.mockReturnValueOnce(Effect.fail(failure));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        const result = yield* Effect.result(cli.getRequestChangesViewer({ cwd: "/w" }));
+        if (failure._tag !== "GitLabCliCommandError") {
+          expect(result).toMatchObject({ _tag: "Failure", failure });
+        } else {
+          expect(result).toMatchObject({ _tag: "Success", success: null });
+        }
+      }),
+    );
+  }
+
+  for (const failure of [
+    "unsupported",
+    "no-permission",
+    "not-reviewer",
+    "payload-error",
+    "graphql-error",
+    null,
+  ]) {
+    it.effect(`requests changes without publishing unrelated drafts: ${failure ?? "success"}`, () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  __type:
+                    failure === "unsupported" ? null : { name: "MergeRequestRequestChangesInput" },
+                  currentUser: { username: "octocat" },
+                  project: {
+                    mergeRequest: {
+                      userPermissions: { updateMergeRequest: failure !== "no-permission" },
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+        if (failure !== "unsupported" && failure !== "no-permission") {
+          mockedExecute.mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                mergeRequestJson({
+                  reviewers: failure === "not-reviewer" ? [] : [reviewer],
+                }),
+              ),
+            ),
+          );
+        }
+        if (
+          failure !== "unsupported" &&
+          failure !== "no-permission" &&
+          failure !== "not-reviewer"
+        ) {
+          mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+          mockedExecute.mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                encodeJson(
+                  failure === "graphql-error"
+                    ? { errors: [{ message: "Permission denied" }] }
+                    : {
+                        data: {
+                          mergeRequestRequestChanges: {
+                            errors: failure === "payload-error" ? ["Reviewer not found"] : [],
+                          },
+                        },
+                      },
+                ),
+              ),
+            ),
+          );
+        }
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        const result = yield* Effect.result(
+          cli.submitReview({
+            cwd: "/w",
+            repository: "acme/web",
+            number: 7,
+            verdict: "request-changes",
+            body: "Please fix this",
+            comments: [],
+          }),
+        );
+        expect(result._tag).toBe(failure === null ? "Success" : "Failure");
+        const writes = mockedExecute.mock.calls
+          .map(([input]) => input)
+          .filter(
+            (input) =>
+              input.args.some((arg) => arg.endsWith("/notes")) ||
+              input.stdin?.includes("mutation("),
+          );
+        if (
+          failure === "unsupported" ||
+          failure === "no-permission" ||
+          failure === "not-reviewer"
+        ) {
+          expect(writes).toEqual([]);
+        } else {
+          expect(writes).toHaveLength(2);
+          const mutation = decodeJson(writes[1]!.stdin ?? "{}");
+          expect(mutation).toMatchObject({
+            query: expect.stringContaining("mergeRequestRequestChanges"),
+            variables: { projectPath: "acme/web", iid: "7" },
+          });
+        }
+        expect(
+          mockedExecute.mock.calls.some(([input]) =>
+            input.args.some((arg) => arg.includes("draft_notes")),
+          ),
+        ).toBe(false);
+        if (result._tag === "Failure") {
+          const unavailable = failure === "unsupported" || failure === "no-permission";
+          expect(result.failure).toMatchObject({
+            _tag: unavailable
+              ? "GitLabRequestChangesUnavailableError"
+              : failure === "not-reviewer"
+                ? "GitLabReviewerRequiredError"
+                : "GitLabRequestChangesRejectedError",
+            number: 7,
+          });
+          expect(result.failure.detail).toBe(
+            unavailable
+              ? "Request changes is unavailable for this account on this GitLab server."
+              : failure === "not-reviewer"
+                ? "You must be an assigned reviewer to request changes on this merge request."
+                : "GitLab did not confirm the request for changes. Check your reviewer assignment and permission to update this merge request.",
+          );
+          if (failure === "payload-error") {
+            expect(result.failure.cause).toEqual({
+              data: { mergeRequestRequestChanges: { errors: ["Reviewer not found"] } },
+            });
+          }
+        }
+      }),
+    );
+  }
 
   it.effect("sends a review as its comments, then its summary, then the verdict", () =>
     Effect.gen(function* () {
@@ -1088,6 +1278,15 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(argsOfCall(0)[1]).toContain("/discussions/abc123");
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ resolved: true });
+      yield* cli.setDiscussionResolution({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        discussionId: "abc123",
+        resolved: false,
+      });
+      expect(argsOfCall(1)).toContain("PUT");
+      expect(callAt(1).stdin).toBe('{"resolved":false}');
     }),
   );
 
@@ -1400,6 +1599,26 @@ layer("GitLabPullRequestCli.layer", (it) => {
       ]);
       // A JSON body, so a note rewritten to a literal `true` stays text.
       expect(callAt(0).stdin).toBe('{"body":"true"}');
+    }),
+  );
+  it.effect("edits a discussion note through its encoded thread and note ids", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.updateNote({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        discussionId: "discussion/id",
+        noteId: "42/part",
+        body: "Updated reply",
+      });
+
+      expect(argsOfCall(0)[1]).toBe(
+        "projects/acme%2Fweb/merge_requests/7/discussions/discussion%2Fid/notes/42%2Fpart",
+      );
+      expect(callAt(0).stdin).toBe('{"body":"Updated reply"}');
     }),
   );
   it.effect("reads blob ids for the marked paths at the merge request's head", () =>

@@ -417,12 +417,6 @@ export interface BitbucketComments {
   readonly next: string | null;
 }
 
-/**
- * Bitbucket returns one flat list, so a thread is reassembled from it: a comment pinned to a
- * line opens a thread, and every reply that leads back to it belongs in it. A reply whose
- * parent is on a page that was not read has nowhere to go, and is left out rather than shown
- * as a thread of its own — it still stands in the flat conversation, which needs no parent.
- */
 export function buildReviewThreads(
   comments: ReadonlyArray<BitbucketRawComment>,
 ): ReadonlyArray<PullRequestReviewThread> {
@@ -431,24 +425,25 @@ export function buildReviewThreads(
     // Bounded by the number of comments read, so a parent cycle cannot spin here.
     let current = comment;
     for (let step = 0; step < byId.size; step += 1) {
-      const parent = current.parent === null ? undefined : byId.get(current.parent?.id ?? -1);
-      if (parent === undefined) return current;
+      if (current.parent == null) return current;
+      const parent = byId.get(current.parent.id);
+      if (parent === undefined) return undefined;
       current = parent;
     }
-    return current;
+    return undefined;
   };
 
   const threads = new Map<number, PullRequestReviewThread>();
   const replies = new Map<number, Array<Schema.Schema.Type<typeof RawCommentSchema>>>();
   for (const comment of comments) {
     const root = rootOf(comment);
+    if (root === undefined) continue;
     const inline = root.inline;
     const path = trimmed(inline?.path);
-    if (path === null) continue;
     if (root.id === comment.id) {
       // `to` is the line as the file stands now, `from` the line it replaced; a comment that
       // carries only `from` was written against the removed side.
-      const side = inline?.to === null || inline?.to === undefined ? "left" : "right";
+      const side = inline?.from != null && inline.to == null ? "left" : "right";
       const line = side === "left" ? inline?.from : inline?.to;
       threads.set(root.id, {
         id: String(root.id),

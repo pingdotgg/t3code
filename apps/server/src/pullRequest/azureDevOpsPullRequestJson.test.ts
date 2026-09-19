@@ -238,8 +238,97 @@ describe("decodeViewerJson", () => {
 });
 
 describe("decodeThreadsJson", () => {
+  it("keeps native general and line threads with replies and resolution state", () => {
+    const { comments, reviewThreads } = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            {
+              id: 8,
+              status: "fixed",
+              threadContext: {
+                filePath: "/src/a.ts",
+                leftFileStart: { line: 12 },
+                rightFileStart: null,
+              },
+              comments: [
+                { id: 1, content: "Question", publishedDate: "2026-07-02T00:00:00Z" },
+                { id: 2, content: "Answer", publishedDate: "2026-07-02T01:00:00Z" },
+              ],
+            },
+            {
+              id: 9,
+              status: "pending",
+              comments: [
+                { id: 1, content: "General discussion", publishedDate: "2026-07-02T00:00:00Z" },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+    expect(comments).toHaveLength(3);
+    expect(reviewThreads[0]).toMatchObject({
+      id: "8",
+      path: "src/a.ts",
+      line: 12,
+      side: "left",
+      isResolved: true,
+    });
+    expect(reviewThreads[0]?.comments.map((comment) => comment.id)).toEqual(["8:1", "8:2"]);
+    expect(reviewThreads[1]).toMatchObject({ id: "9", path: null, line: null, isResolved: false });
+  });
+
+  it("keeps comments when the host returned an unusable web URL", () => {
+    const { comments } = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            {
+              id: 5,
+              comments: [
+                { id: 1, content: "Review comment", publishedDate: "2026-07-02T00:00:00Z" },
+              ],
+            },
+          ],
+        }),
+        "invalid URL",
+      ),
+    );
+
+    expect(comments[0]).toMatchObject({ body: "Review comment", url: null });
+  });
+
+  it.each([
+    "https://dev.azure.com/acme/My%20Project/_git/web/pullrequest/42",
+    "https://acme.visualstudio.com/DefaultCollection/My%20Project/_git/web/pullrequest/42",
+  ])("links comments to their discussion on %s", (pullRequestUrl) => {
+    const { comments } = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            {
+              id: 5,
+              comments: [1, 2].map((id) => ({
+                id,
+                content: "Review comment",
+                publishedDate: "2026-07-02T00:00:00Z",
+              })),
+            },
+          ],
+        }),
+        `${pullRequestUrl}?_a=overview`,
+      ),
+    );
+
+    expect(comments.map((comment) => comment.url)).toEqual([
+      `${pullRequestUrl}?_a=overview&discussionId=5`,
+      `${pullRequestUrl}?_a=overview&discussionId=5`,
+    ]);
+  });
+
   it("takes every real comment of every thread, oldest first", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -280,7 +369,7 @@ describe("decodeThreadsJson", () => {
   });
 
   it("reads a thread pinned to a file as a review comment", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -294,11 +383,11 @@ describe("decodeThreadsJson", () => {
       ),
     );
 
-    expect(comments[0]).toMatchObject({ kind: "review-comment", path: "/src/app.ts" });
+    expect(comments[0]).toMatchObject({ kind: "review-comment", path: "src/app.ts" });
   });
 
   it("keeps the replies under a thread, which are as much of the conversation", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -320,7 +409,7 @@ describe("decodeThreadsJson", () => {
   });
 
   it("drops deleted threads and threads with nothing to show", () => {
-    const comments = expectSuccess(
+    const { comments } = expectSuccess(
       decodeThreadsJson(
         asJson({
           value: [
@@ -431,6 +520,7 @@ describe("decodeIterationChangesJson", () => {
           changeEntries: [
             {
               changeType: "rename",
+              changeTrackingId: 12,
               sourceServerItem: "/docs/old.md",
               item: { path: "/docs/new.md", objectId: "aaaa", originalObjectId: "aaaa" },
             },
@@ -447,6 +537,7 @@ describe("decodeIterationChangesJson", () => {
     expect(page.changes).toEqual([
       {
         path: "docs/new.md",
+        changeTrackingId: 12,
         oldPath: "docs/old.md",
         changeKind: "rename-pure",
         objectId: "aaaa",
@@ -561,7 +652,8 @@ describe("what az devops invoke answers with", () => {
     // Set on every JSON body it returns, from a response header these routes do not send, so it
     // arrives as null rather than not at all. Nothing reads it, and it must not fail the decode.
     expect(
-      expectSuccess(decodeThreadsJson(asJson({ value: [], count: 0, continuation_token: null }))),
+      expectSuccess(decodeThreadsJson(asJson({ value: [], count: 0, continuation_token: null })))
+        .comments,
     ).toEqual([]);
 
     expect(

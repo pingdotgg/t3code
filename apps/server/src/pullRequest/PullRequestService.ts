@@ -1,3 +1,5 @@
+import { pullRequestMediaUrl } from "@t3tools/shared/pullRequestMedia";
+import type { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import {
   canonicalRepositoryKey,
   isSshRemoteUrl,
@@ -31,6 +33,8 @@ import {
   type PullRequestActivity,
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
+  type PullRequestUploadAttachmentInput,
+  type PullRequestUploadAttachmentResult,
   type PullRequestDetail,
   type PullRequestPreview,
   type PullRequestDiffFileContentsInput,
@@ -231,6 +235,23 @@ export class PullRequestService extends Context.Service<
     readonly runAction: (input: PullRequestActionInput) => Effect.Effect<void, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
+    readonly readAttachment: (
+      input: PullRequestRef & {
+        readonly provider: SourceControlProviderKind;
+        readonly url: string;
+        readonly headers: Readonly<Record<string, string>>;
+      },
+    ) => Effect.Effect<
+      HttpClientResponse.HttpClientResponse,
+      PullRequestError,
+      Scope.Scope | HttpClient.HttpClient
+    >;
+    readonly uploadAttachment: (
+      input: PullRequestUploadAttachmentInput & {
+        readonly data: Uint8Array;
+        readonly filePath: string;
+      },
+    ) => Effect.Effect<PullRequestUploadAttachmentResult, PullRequestError>;
     readonly updateComment: (
       input: PullRequestCommentUpdateInput,
     ) => Effect.Effect<void, PullRequestError>;
@@ -479,12 +500,12 @@ function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
   limits: SourceControlRateLimit.SourceControlRateLimit["Service"],
-  options?: { readonly viewerAllowsPause: boolean },
+  options?: { readonly viewerAllowsPause?: boolean; readonly preflightAllowsPause?: boolean },
 ): PullRequestProviderApi {
   const key = { provider: api.kind, host };
-  const protect = <A>(
+  const protect = <A, R>(
     operation: string,
-    effect: Effect.Effect<A, PullRequestProviderError>,
+    effect: Effect.Effect<A, PullRequestProviderError, R>,
     allowPaused: boolean,
   ) =>
     limits.check(key, allowPaused ? { allowPaused: true } : undefined).pipe(
@@ -516,9 +537,9 @@ function withRateLimitBackoff(
       ),
     );
   const wrap =
-    <Args extends ReadonlyArray<unknown>, A>(
+    <Args extends ReadonlyArray<unknown>, A, R>(
       operation: string,
-      call: (...args: Args) => Effect.Effect<A, PullRequestProviderError>,
+      call: (...args: Args) => Effect.Effect<A, PullRequestProviderError, R>,
       allowPaused = false,
     ) =>
     (...args: Args) =>
@@ -531,6 +552,15 @@ function withRateLimitBackoff(
   const wrapped = {
     kind: api.kind,
     capabilities: api.capabilities,
+    ...(api.getCapabilities === undefined
+      ? {}
+      : {
+          getCapabilities: wrap(
+            "getCapabilities",
+            api.getCapabilities,
+            options?.preflightAllowsPause === true,
+          ),
+        }),
     // Refused during a pause like any other read, except for the caller that asks for the
     // bypass: a lookup that failed is not held, so letting every background read through would
     // spawn this host's CLI on each of them and re-extend the pause it was already in.
@@ -553,7 +583,11 @@ function withRateLimitBackoff(
       : {
           listChangeRequestStats: wrap("listChangeRequestStats", api.listChangeRequestStats),
         }),
-    getChangeRequest: wrap("getChangeRequest", api.getChangeRequest),
+    getChangeRequest: wrap(
+      "getChangeRequest",
+      api.getChangeRequest,
+      options?.preflightAllowsPause === true,
+    ),
     ...(api.getChangeRequestPreview === undefined
       ? {}
       : { getChangeRequestPreview: wrap("getChangeRequestPreview", api.getChangeRequestPreview) }),
@@ -592,6 +626,12 @@ function withRateLimitBackoff(
           updateChangeRequest: interactive("updateChangeRequest", api.updateChangeRequest),
         }),
     comment: interactive("comment", api.comment),
+    ...(api.readAttachment === undefined
+      ? {}
+      : { readAttachment: wrap("readAttachment", api.readAttachment) }),
+    ...(api.uploadAttachment === undefined
+      ? {}
+      : { uploadAttachment: interactive("uploadAttachment", api.uploadAttachment) }),
     ...(api.updateComment === undefined
       ? {}
       : { updateComment: interactive("updateComment", api.updateComment) }),
@@ -700,6 +740,7 @@ export const make = Effect.gen(function* () {
 
   const listWorkspaceProjects = (
     filter: Pick<PullRequestListInput, "projectId" | "projectIds" | "host">,
+    options?: { readonly preflightAllowsPause: boolean },
   ): Effect.Effect<WorkspaceProjects, PullRequestError> =>
     (filter.projectId === undefined
       ? projections.getProjectShells(filter.projectIds)
@@ -775,7 +816,7 @@ export const make = Effect.gen(function* () {
           supported.push({
             cursorKey: key,
             project,
-            api: withRateLimitBackoff(api, host, rateLimits),
+            api: withRateLimitBackoff(api, host, rateLimits, options),
             repository,
             host,
             remote:
@@ -795,8 +836,11 @@ export const make = Effect.gen(function* () {
    * targeting can fall back to another checkout on the host. Azure derives its organization
    * from the checkout, so it requires a matching repository.
    */
-  const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
-    listWorkspaceProjects({ projectId: ref.projectId }).pipe(
+  const requireProject = (
+    ref: PullRequestRef,
+    options?: { readonly preflightAllowsPause: boolean },
+  ): Effect.Effect<SupportedProject, PullRequestError> =>
+    listWorkspaceProjects({ projectId: ref.projectId }, options).pipe(
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
         const own = supported[0];
         const repository = ref.repository.trim();
@@ -824,6 +868,7 @@ export const make = Effect.gen(function* () {
         // the complete repository identity before narrowing those checkouts by host.
         return listWorkspaceProjects(
           repositoryKey.startsWith("dev.azure.com/") ? {} : { host },
+          options,
         ).pipe(
           Effect.flatMap(({ supported }) => {
             const onHost = supported.filter((candidate) => candidate.host === host);
@@ -1636,12 +1681,23 @@ export const make = Effect.gen(function* () {
               })
               .pipe(Effect.mapError(toPullRequestError("detail"))),
             viewerOf(project),
+            project.api
+              .getCapabilities?.({
+                cwd: project.project.workspaceRoot,
+                repository: project.repository,
+                host: project.host,
+              })
+              .pipe(Effect.mapError(toPullRequestError("detail"))) ??
+              Effect.succeed(project.api.capabilities),
           ],
           { concurrency: 2 },
         ).pipe(
-          Effect.map(([changeRequest, viewer]): PullRequestDetail => ({
+          Effect.map(([changeRequest, viewer, capabilities]): PullRequestDetail => ({
             provider: project.api.kind,
-            capabilities: project.api.capabilities,
+            capabilities:
+              changeRequest.attachments === undefined
+                ? capabilities
+                : { ...capabilities, attachments: changeRequest.attachments },
             projectId: project.project.id,
             projectTitle: project.project.title,
             workspaceRoot: project.project.workspaceRoot,
@@ -1858,11 +1914,37 @@ export const make = Effect.gen(function* () {
     );
 
   const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
-    requireProject(input).pipe(
-      Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
+    requireProject(input, { preflightAllowsPause: true }).pipe(
+      Effect.bindTo("project"),
+      Effect.bind(
+        "capabilities",
+        ({ project }) =>
+          project.api
+            .getCapabilities?.({
+              cwd: project.project.workspaceRoot,
+              repository: project.repository,
+              host: project.host,
+            })
+            .pipe(Effect.mapError(toPullRequestError("runAction"))) ??
+          Effect.succeed(project.api.capabilities),
+      ),
+      Effect.flatMap(({ project, capabilities }): Effect.Effect<string, PullRequestError> => {
+        if (
+          input.bypassMergeChecks === true &&
+          (capabilities.bypassMergeChecks !== true ||
+            input.action !== "merge" ||
+            input.stackNumber !== undefined)
+        ) {
+          return Effect.fail(
+            new PullRequestOperationError({
+              operation: "runAction",
+              detail: "This host cannot bypass checks for this action.",
+            }),
+          );
+        }
         if (
           input.stackNumber !== undefined &&
-          (project.api.capabilities.stackActions !== true ||
+          (capabilities.stackActions !== true ||
             !["merge", "update-branch"].includes(input.action) ||
             input.expectedStackHeads === undefined ||
             (input.action === "update-branch" && input.updateMethod !== "rebase"))
@@ -1876,7 +1958,7 @@ export const make = Effect.gen(function* () {
         }
         // The surface hides what a host cannot do, and this refuses it as well: a request that
         // reached here anyway must not be handed to a provider that never claimed the action.
-        if (!project.api.capabilities.actions.includes(input.action)) {
+        if (!capabilities.actions.includes(input.action)) {
           return Effect.fail(
             new PullRequestOperationError({
               operation: "runAction",
@@ -1889,7 +1971,7 @@ export const make = Effect.gen(function* () {
         // rebase would quietly merge instead of failing.
         if (
           input.mergeMethod !== undefined &&
-          !project.api.capabilities.mergeMethods.includes(input.mergeMethod)
+          !capabilities.mergeMethods.includes(input.mergeMethod)
         ) {
           return Effect.fail(
             new PullRequestOperationError({
@@ -1902,7 +1984,7 @@ export const make = Effect.gen(function* () {
         // must not be asked to rebase and left to pick something else.
         if (
           input.updateMethod !== undefined &&
-          !(project.api.capabilities.updateMethods ?? []).includes(input.updateMethod)
+          !(capabilities.updateMethods ?? []).includes(input.updateMethod)
         ) {
           return Effect.fail(
             new PullRequestOperationError({
@@ -1921,6 +2003,14 @@ export const make = Effect.gen(function* () {
           input.action === "update-branch",
         ).pipe(
           Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
+            if (input.bypassMergeChecks === true && viewer.bypassMergeChecks !== true) {
+              return Effect.fail(
+                new PullRequestOperationError({
+                  operation: "runAction",
+                  detail: "You do not have permission to bypass merge checks on this pull request.",
+                }),
+              );
+            }
             const stackRebase = input.stackNumber !== undefined && input.action === "update-branch";
             if (
               stackRebase ? viewer.stackRebase !== true : !viewer.actions.includes(input.action)
@@ -1956,6 +2046,7 @@ export const make = Effect.gen(function* () {
                   ? {}
                   : { expectedStackHeads: input.expectedStackHeads }),
                 ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+                ...(input.bypassMergeChecks === true ? { bypassMergeChecks: true } : {}),
                 ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
               })
               .pipe(
@@ -2062,6 +2153,79 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const readAttachment: PullRequestService["Service"]["readAttachment"] = (input) =>
+    withRoutingCredential(
+      input,
+      Effect.gen(function* () {
+        const project = yield* requireProject(input);
+        const url = pullRequestMediaUrl({
+          ...input,
+          host: project.host,
+          repository: project.repository,
+        });
+        if (project.api.kind !== input.provider || !project.api.readAttachment || url === null) {
+          return yield* new PullRequestOperationError({
+            operation: "readAttachment",
+            detail: "This attachment cannot be read with the selected repository credentials.",
+          });
+        }
+        return yield* project.api
+          .readAttachment({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+            number: input.number,
+            url,
+            headers: input.headers,
+          })
+          .pipe(Effect.mapError(toPullRequestError("readAttachment")));
+      }),
+    );
+
+  const uploadAttachment: PullRequestService["Service"]["uploadAttachment"] = Effect.fn(
+    "PullRequestService.uploadAttachment",
+  )(function* (input) {
+    const project = yield* requireProject(input, { preflightAllowsPause: true });
+    const ref = {
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      number: input.number,
+    };
+    const [capabilities, changeRequest] = yield* Effect.all(
+      [
+        project.api.getCapabilities?.(ref) ?? Effect.succeed(project.api.capabilities),
+        project.api.getChangeRequest(ref),
+      ],
+      { concurrency: 2 },
+    ).pipe(Effect.mapError(toPullRequestError("uploadAttachment")));
+    const capability = changeRequest.attachments ?? capabilities.attachments;
+    if (!capability?.supported || !project.api.uploadAttachment) {
+      return yield* new PullRequestOperationError({
+        operation: "uploadAttachment",
+        detail: capability?.reason ?? "This host does not support attachment uploads.",
+      });
+    }
+    if (input.data.byteLength === 0 || input.data.byteLength > capability.maxBytes) {
+      return yield* new PullRequestOperationError({
+        operation: "uploadAttachment",
+        detail: `Attachments must be between 1 and ${capability.maxBytes} bytes.`,
+      });
+    }
+    return yield* project.api
+      .uploadAttachment({
+        cwd: project.project.workspaceRoot,
+        repository: project.repository,
+        host: project.host,
+        number: input.number,
+        name: input.name,
+        mimeType: input.mimeType,
+        data: input.data,
+        filePath: input.filePath,
+      })
+      .pipe(Effect.mapError(toPullRequestError("uploadAttachment")));
+  });
+
   const updateComment: PullRequestService["Service"]["updateComment"] = (input) =>
     (input.body.trim().length === 0
       ? Effect.fail(
@@ -2088,6 +2252,7 @@ export const make = Effect.gen(function* () {
           host: project.host,
           number: input.number,
           commentId: input.commentId,
+          ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
           kind: input.kind,
           body: input.body,
         }).pipe(Effect.mapError(toPullRequestError("updateComment")));
@@ -2155,10 +2320,22 @@ export const make = Effect.gen(function* () {
             detail: "A reply cannot be empty.",
           }),
         )
-      : requireProject(input)
+      : requireProject(input, { preflightAllowsPause: true })
     ).pipe(
-      Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
-        if (!project.api.capabilities.review.reply) {
+      Effect.flatMap((project) =>
+        (
+          project.api.getCapabilities?.({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+          }) ?? Effect.succeed(project.api.capabilities)
+        ).pipe(
+          Effect.mapError(toPullRequestError("replyToThread")),
+          Effect.map((capabilities) => ({ project, capabilities })),
+        ),
+      ),
+      Effect.flatMap(({ project, capabilities }): Effect.Effect<void, PullRequestError> => {
+        if (!capabilities.review.reply) {
           return Effect.fail(
             new PullRequestOperationError({
               operation: "replyToThread",
@@ -2193,9 +2370,21 @@ export const make = Effect.gen(function* () {
     );
 
   const setThreadResolution: PullRequestService["Service"]["setThreadResolution"] = (input) =>
-    requireProject(input).pipe(
-      Effect.flatMap((project): Effect.Effect<void, PullRequestError> => {
-        if (!project.api.capabilities.review.resolve) {
+    requireProject(input, { preflightAllowsPause: true }).pipe(
+      Effect.flatMap((project) =>
+        (
+          project.api.getCapabilities?.({
+            cwd: project.project.workspaceRoot,
+            repository: project.repository,
+            host: project.host,
+          }) ?? Effect.succeed(project.api.capabilities)
+        ).pipe(
+          Effect.mapError(toPullRequestError("setThreadResolution")),
+          Effect.map((capabilities) => ({ project, capabilities })),
+        ),
+      ),
+      Effect.flatMap(({ project, capabilities }): Effect.Effect<void, PullRequestError> => {
+        if (!capabilities.review.resolve) {
           return Effect.fail(
             new PullRequestOperationError({
               operation: "setThreadResolution",
@@ -3220,6 +3409,8 @@ export const make = Effect.gen(function* () {
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),
     updateComment: invalidatedByMutation(updateComment),
+    uploadAttachment,
+    readAttachment,
     submitReview: invalidatedByMutation(submitReview),
     replyToThread: invalidatedByMutation(replyToThread),
     setThreadResolution: invalidatedByMutation(setThreadResolution),

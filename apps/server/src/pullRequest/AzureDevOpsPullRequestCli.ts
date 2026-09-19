@@ -1,11 +1,13 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
   PullRequestComment,
+  PullRequestReviewThread,
   PullRequestInvolvement,
   PullRequestListState,
   PullRequestMergeMethod,
@@ -118,6 +120,8 @@ export type AzureDevOpsPullRequestCliError =
 
 /** The version every REST call below is pinned to, so a new default cannot reshape a response. */
 const REST_API_VERSION = "7.1";
+const decodeAccessToken = Schema.decodeEffect(Schema.fromJsonString(Schema.String));
+const encodeThreadBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 /**
  * A full page of change entries is two thousand files, each carrying its path, its url and
@@ -195,9 +199,37 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
     /** Threads are not reachable through `az repos pr`, so they come from the REST API. */
     readonly listThreads: (input: {
       readonly cwd: string;
+      readonly pullRequestUrl?: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
-    }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
+    }) => Effect.Effect<
+      {
+        readonly comments: ReadonlyArray<PullRequestComment>;
+        readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+      },
+      AzureDevOpsPullRequestCliError
+    >;
+
+    readonly getAttachmentAccessToken: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<string, AzureDevOpsPullRequestCliError>;
+
+    readonly setReviewVote: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly vote: "approve" | "wait-for-author";
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+
+    readonly writeThread: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly threadId?: string;
+      readonly commentId?: string;
+      readonly method: "POST" | "PATCH";
+      readonly body: unknown;
+      readonly resource: "pullRequestThreads" | "pullRequestThreadComments";
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
     /**
      * The pushes a pull request has had, oldest first. Azure hangs the changed files off an
@@ -342,6 +374,7 @@ function isReviewerName(value: string): boolean {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   // Every command resolves the organization, project and repository from the checkout, which is
   // what the rest of the Azure wrapper does. The remote takes three shapes and only `az` knows
@@ -603,8 +636,91 @@ export const make = Effect.gen(function* () {
         resource: "pullRequestThreads",
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
-        decode: decodeThreadsJson,
+        decode: (raw) => decodeThreadsJson(raw, input.pullRequestUrl),
       }),
+
+    getAttachmentAccessToken: (input) =>
+      executeJson({
+        cwd: input.cwd,
+        args: [
+          "account",
+          "get-access-token",
+          "--resource",
+          "499b84ac-1321-427f-aa17-267ca6975798",
+          "--query",
+          "accessToken",
+        ],
+        maxOutputBytes: 32_768,
+      }).pipe(
+        Effect.flatMap((result) =>
+          decodeAccessToken(result.stdout).pipe(
+            Effect.mapError(
+              () =>
+                new AzureDevOpsPullRequestReadError({
+                  command: "az",
+                  cwd: input.cwd,
+                  operation: "getAttachmentAccessToken",
+                  cause: "Azure CLI returned an invalid access token.",
+                }),
+            ),
+          ),
+        ),
+      ),
+
+    writeThread: Effect.fn("AzureDevOpsPullRequestCli.writeThread")(function* (input) {
+      const body = yield* encodeThreadBody(input.body).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AzureDevOpsPullRequestReadError({
+              command: "az",
+              cwd: input.cwd,
+              operation: "writeThread",
+              cause,
+            }),
+        ),
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const bodyFile = yield* fileSystem.makeTempFileScoped({ prefix: "t3-azure-pr-" });
+          yield* fileSystem.writeFileString(bodyFile, body);
+          yield* executeJson({
+            cwd: input.cwd,
+            args: [
+              "devops",
+              "invoke",
+              ...detectArgs,
+              "--area",
+              "git",
+              "--resource",
+              input.resource,
+              "--api-version",
+              REST_API_VERSION,
+              "--http-method",
+              input.method,
+              "--route-parameters",
+              ...pullRequestRoute(input),
+              ...(input.threadId === undefined ? [] : [`threadId=${input.threadId}`]),
+              ...(input.commentId === undefined ? [] : [`commentId=${input.commentId}`]),
+              "--in-file",
+              bodyFile,
+            ],
+          });
+        }),
+      ).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            Effect.fail(
+              new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+                operation: "execute",
+                command: "az",
+                cwd: input.cwd,
+                argumentCount: 0,
+                cause,
+              }),
+            ),
+        }),
+      );
+    }),
 
     listIterations: (input) =>
       invoke({
@@ -696,6 +812,21 @@ export const make = Effect.gen(function* () {
               ],
             })
             .pipe(Effect.asVoid),
+
+    setReviewVote: (input) =>
+      executeJson({
+        cwd: input.cwd,
+        args: [
+          "repos",
+          "pr",
+          "set-vote",
+          ...detectArgs,
+          "--id",
+          String(input.number),
+          "--vote",
+          input.vote,
+        ],
+      }).pipe(Effect.asVoid),
 
     runPullRequestAction: (input) =>
       azure

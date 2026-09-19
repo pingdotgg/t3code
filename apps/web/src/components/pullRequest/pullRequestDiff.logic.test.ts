@@ -1,7 +1,8 @@
-import type { FileDiffMetadata } from "@pierre/diffs";
+import { parseDiffFromFile, type FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  describeReviewFile,
   isFileDiffCollapsed,
   isLineInFileDiff,
   toggleFileDiffFoldForViewed,
@@ -18,6 +19,16 @@ function fileWithHunks(
 ): FileDiffMetadata {
   return { name: "src/app.ts", hunks } as unknown as FileDiffMetadata;
 }
+
+it("folds or reopens a folder without changing other fold choices", () => {
+  const current = new Set(["src/a.ts", "other.ts"]);
+  const folded = toggleFileDiffFoldForViewed(["src/a.ts", "src/deep/b.ts"], true, null, current);
+  expect(folded).toEqual(new Set(["src/a.ts", "src/deep/b.ts", "other.ts"]));
+  expect(toggleFileDiffFoldForViewed(["src/a.ts", "src/deep/b.ts"], false, null, folded)).toEqual(
+    new Set(["other.ts"]),
+  );
+  expect(current).toEqual(new Set(["src/a.ts", "other.ts"]));
+});
 
 describe("isLineInFileDiff", () => {
   const file = fileWithHunks([
@@ -82,6 +93,21 @@ describe("isFileDiffCollapsed", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
   });
+});
+
+it("describes additions, deletions, and both kinds of rename from the actual diff", () => {
+  const file = parseDiffFromFile(
+    { name: "old.ts", contents: "const before = 1;\n" },
+    { name: "new.ts", contents: "const after = 2;\n" },
+  );
+  expect(describeReviewFile(file)).toBe(
+    "Renamed and edited file. In this diff: 1 added line, 1 removed line.",
+  );
+  expect(describeReviewFile({ ...file, type: "rename-pure", hunks: [] })).toContain(
+    "Renamed without content changes",
+  );
+  expect(describeReviewFile({ ...file, type: "deleted" })).toContain("Deleted file");
+  expect(describeReviewFile({ ...file, type: "new" })).toContain("New file");
 });
 
 describe("toggleFileDiffFoldForViewed", () => {

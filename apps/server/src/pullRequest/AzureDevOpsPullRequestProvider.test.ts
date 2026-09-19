@@ -1,11 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
   LOCATION_CACHE_CAPACITY,
-  make,
+  make as makeProvider,
   MAX_DIFF_SPAWNS,
 } from "./AzureDevOpsPullRequestProvider.ts";
 import {
@@ -16,6 +17,8 @@ import {
   parseAzureDevOpsDiffCursor,
 } from "./azureDevOpsDiff.ts";
 import type { AzureDevOpsChangeEntry } from "./azureDevOpsPullRequestJson.ts";
+
+const make = makeProvider.pipe(Effect.provide(FetchHttpClient.layer));
 
 const ITERATION = { id: 3, headCommit: "head", mergeBaseCommit: "base" };
 
@@ -418,3 +421,143 @@ describe("what one diff slice spends", () => {
     }),
   );
 });
+
+it.effect("submits Azure line reviews against the merge base with native votes", () =>
+  Effect.gen(function* () {
+    const writes: Array<
+      Parameters<AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli["Service"]["writeThread"]>[0]
+    > = [];
+    const votes: string[] = [];
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+          getPullRequest: () => Effect.succeed(PULL_REQUEST),
+          listIterations: () => Effect.succeed([ITERATION]),
+          listIterationChanges: () =>
+            Effect.succeed({
+              changes: [{ ...change("new.ts"), oldPath: "old.ts", changeTrackingId: 11 }],
+              truncated: false,
+            }),
+          writeThread: (input) =>
+            Effect.sync(() => {
+              writes.push(input);
+            }),
+          setReviewVote: (input) =>
+            Effect.sync(() => {
+              votes.push(input.vote);
+            }),
+        }),
+      ),
+    );
+    const ref = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
+    const positions = [
+      { kind: "added", newLine: 8 },
+      { kind: "deleted", oldLine: 4 },
+      { kind: "context", side: "left", oldLine: 5, newLine: 9 },
+      { kind: "context", side: "right", oldLine: 6, newLine: 10 },
+    ] as const;
+    yield* provider.submitReview({
+      ...ref,
+      verdict: "approve",
+      body: "Summary",
+      comments: positions.map((position) => ({
+        path: "new.ts",
+        oldPath: "old.ts",
+        position,
+        body: "Check this",
+      })),
+    });
+    expect(provider.capabilities.review).toMatchObject({
+      inlineComment: true,
+      verdicts: ["comment", "approve", "request-changes"],
+    });
+    expect(writes.slice(0, 4).map((write) => write.body)).toEqual(
+      [
+        { rightFileStart: { line: 8, offset: 1 }, rightFileEnd: { line: 8, offset: 1 } },
+        { leftFileStart: { line: 4, offset: 1 }, leftFileEnd: { line: 4, offset: 1 } },
+        { leftFileStart: { line: 5, offset: 1 }, leftFileEnd: { line: 5, offset: 1 } },
+        { rightFileStart: { line: 10, offset: 1 }, rightFileEnd: { line: 10, offset: 1 } },
+      ].map((position) => ({
+        status: "active",
+        comments: [{ parentCommentId: 0, content: "Check this", commentType: "text" }],
+        threadContext: { filePath: "/new.ts", ...position },
+        pullRequestThreadContext: {
+          changeTrackingId: 11,
+          iterationContext: { firstComparingIteration: 3, secondComparingIteration: 3 },
+        },
+      })),
+    );
+    expect(writes[4]?.body).toEqual({
+      status: "active",
+      comments: [{ parentCommentId: 0, content: "Summary", commentType: "text" }],
+    });
+    yield* provider.submitReview({ ...ref, verdict: "request-changes", body: "", comments: [] });
+    yield* provider.submitReview({
+      ...ref,
+      verdict: "comment",
+      body: "Comment only",
+      comments: [],
+    });
+    expect(votes).toEqual(["approve", "wait-for-author"]);
+    expect(writes).toHaveLength(6);
+  }),
+);
+
+it.effect.each(["missing-file", "missing-tracking", "no-iteration", "write-denied"] as const)(
+  "refuses an Azure review with %s before sending its vote",
+  (failure) =>
+    Effect.gen(function* () {
+      let writes = 0;
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () => Effect.succeed(failure === "no-iteration" ? [] : [ITERATION]),
+            listIterationChanges: () =>
+              Effect.succeed({
+                changes: [
+                  { ...change("a.ts"), changeTrackingId: 1 },
+                  ...(failure === "missing-file"
+                    ? []
+                    : [
+                        {
+                          ...change("b.ts"),
+                          ...(failure === "missing-tracking" ? {} : { changeTrackingId: 2 }),
+                        },
+                      ]),
+                ],
+                truncated: false,
+              }),
+            writeThread: () =>
+              Effect.gen(function* () {
+                writes++;
+                return yield* new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                  command: "az",
+                  cwd: "/w",
+                  operation: "writeThread",
+                  cause: "denied",
+                });
+              }),
+            setReviewVote: () => Effect.die("Must not vote after a failed review"),
+          }),
+        ),
+      );
+      const result = yield* provider
+        .submitReview({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "dev.azure.com",
+          number: 7,
+          verdict: "approve",
+          body: "Summary",
+          comments: ["a.ts", "b.ts"].map((path) => ({
+            path,
+            body: "Review",
+            position: { kind: "added" as const, newLine: 1 },
+          })),
+        })
+        .pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      expect(writes).toBe(failure === "write-denied" ? 1 : 0);
+    }),
+);

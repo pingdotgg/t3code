@@ -1,3 +1,4 @@
+import { NATIVE_ATTACHMENT_CAPABILITY } from "./PullRequestAttachments.ts";
 import * as Effect from "effect/Effect";
 import type {
   PullRequestCapabilities,
@@ -15,6 +16,10 @@ import {
 } from "./PullRequestProvider.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
+  attachments: {
+    ...NATIVE_ATTACHMENT_CAPABILITY,
+    reason: "Requires glab 1.91 or later. The GitLab server may set a smaller file limit.",
+  },
   diff: true,
   comment: true,
   actions: [
@@ -44,9 +49,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     inlineComment: true,
     reply: true,
     resolve: true,
-    // No "changes requested": GitLab has approval and unresolved discussions, and nothing that
-    // says a merge request has been reviewed and rejected.
-    verdicts: ["comment", "approve"],
+    verdicts: ["comment", "approve", "request-changes"],
   },
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
@@ -80,6 +83,7 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
  */
 export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
+  readonly canRequestChanges?: boolean;
 }): PullRequestViewerPermissions {
   return {
     // Arming the merge and taking the arming back are the merge, deferred, so they answer to
@@ -89,7 +93,9 @@ export function gitLabViewerPermissions(input: {
     ),
     comment: true,
     resolve: true,
-    verdicts: CAPABILITIES.review.verdicts,
+    verdicts: CAPABILITIES.review.verdicts.filter(
+      (verdict) => verdict !== "request-changes" || input.canRequestChanges === true,
+    ),
     requestReviewers: true,
     ...(input.viewerCanMerge ? { updateMethods: CAPABILITIES.updateMethods } : {}),
   };
@@ -103,6 +109,11 @@ export function gitLabProviderFailure(
   if (error._tag === "GitLabCliAuthenticationError") return { reason: "unauthenticated" };
   if (error._tag === "GitLabCliRateLimitError") return { reason: "rate-limited" };
   return { reason: "failed" };
+}
+
+function commentUrl(input: { host: string; repository: string; number: number }, id: string) {
+  const repository = input.repository.split("/").map(encodeURIComponent).join("/");
+  return `https://${input.host}/${repository}/-/merge_requests/${input.number}#note_${id}`;
 }
 
 export const make = Effect.gen(function* () {
@@ -120,6 +131,19 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "gitlab",
     capabilities: CAPABILITIES,
+    getCapabilities: (input) =>
+      cli.getRequestChangesViewer(input).pipe(
+        Effect.mapError(fail("getCapabilities")),
+        Effect.map((viewer) => ({
+          ...CAPABILITIES,
+          review: {
+            ...CAPABILITIES.review,
+            verdicts: CAPABILITIES.review.verdicts.filter(
+              (verdict) => verdict !== "request-changes" || viewer !== null,
+            ),
+          },
+        })),
+      ),
 
     getViewer: (input) =>
       cli.getViewerUsername({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
@@ -148,14 +172,20 @@ export const make = Effect.gen(function* () {
         [
           cli.getMergeRequestDetail(input),
           cli.getProjectMergeCapabilities({ cwd: input.cwd, repository: input.repository }),
+          cli.getRequestChangesViewer(input),
         ],
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
+        Effect.map(([mergeRequest, mergeCapabilities, viewer]): ProviderChangeRequestDetail => ({
           ...mergeRequest,
           mergeCapabilities,
-          viewerPermissions: gitLabViewerPermissions(mergeRequest),
+          viewerPermissions: gitLabViewerPermissions({
+            ...mergeRequest,
+            canRequestChanges:
+              viewer !== null &&
+              mergeRequest.reviewers.some((reviewer) => reviewer.login === viewer),
+          }),
           // A GitLab too old to count the divergence says nothing here rather than "up to
           // date": the banner is worth missing, and a wrong all-clear is not worth showing.
           baseComparison:
@@ -192,34 +222,57 @@ export const make = Effect.gen(function* () {
         { concurrency: 4 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => ({
-          reactions: awards.reactions,
-          comments: notes.comments.map((comment) => ({
-            ...comment,
-            reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-          })),
-          // GitLab reports no count of its own, so the walk's own total is the host's: the
-          // notes endpoint carries every comment on the merge request, including the ones
-          // written under a discussion, and it is read until GitLab runs out.
-          commentCount: notes.comments.length,
-          commentsTruncated: notes.truncated || discussions.truncated,
-          reviewThreads: discussions.threads.map((thread) => ({
-            ...thread,
-            comments: thread.comments.map((comment) => ({
-              ...comment,
-              reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+        Effect.map(([notes, commits, discussions, awards]): ProviderChangeRequestActivity => {
+          const comments = new Map(notes.comments.map((comment) => [comment.id, comment]));
+          for (const thread of discussions.threads) {
+            for (const comment of thread.comments) {
+              comments.set(comment.id, {
+                ...comment,
+                kind: thread.path === null ? "issue-comment" : "review-comment",
+                path: thread.path,
+                reviewState: null,
+              });
+            }
+          }
+          return {
+            reactions: awards.reactions,
+            comments: [...comments.values()]
+              .map((comment) => ({
+                ...comment,
+                url: commentUrl(input, comment.id),
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              }))
+              .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
+            commentCount: comments.size,
+            commentsTruncated: notes.truncated || discussions.truncated,
+            reviewThreads: discussions.threads.map((thread) => ({
+              ...thread,
+              comments: thread.comments.map((comment) => ({
+                ...comment,
+                url: commentUrl(input, comment.id),
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              })),
             })),
-          })),
-          commits,
-        })),
+            commits,
+          };
+        }),
       ),
 
     // The same read the detail takes it from, on its own: `user.can_merge` lives on the merge
     // request, so there is no cheaper thing to ask GitLab.
     getViewerPermissions: (input) =>
-      cli
-        .getMergeRequestDetail(input)
-        .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
+      Effect.all([cli.getMergeRequestDetail(input), cli.getRequestChangesViewer(input)], {
+        concurrency: 2,
+      }).pipe(
+        Effect.mapError(fail("getViewerPermissions")),
+        Effect.map(([detail, viewer]) =>
+          gitLabViewerPermissions({
+            ...detail,
+            canRequestChanges:
+              viewer !== null && detail.reviewers.some((reviewer) => reviewer.login === viewer),
+          }),
+        ),
+      ),
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 
@@ -278,8 +331,8 @@ export const make = Effect.gen(function* () {
 
     comment: (input) => cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
 
-    // The kind is not read: every comment this provider hands out, positioned or not, carries a
-    // plain REST note id, and one endpoint rewrites both.
+    uploadAttachment: (input) => cli.uploadAttachment(input),
+    ...(cli.readAttachment ? { readAttachment: cli.readAttachment } : {}),
     updateComment: (input) =>
       cli
         .updateNote({
@@ -287,6 +340,7 @@ export const make = Effect.gen(function* () {
           repository: input.repository,
           number: input.number,
           noteId: input.commentId,
+          ...(input.threadId === undefined ? {} : { discussionId: input.threadId }),
           body: input.body,
         })
         .pipe(Effect.mapError(fail("updateComment"))),

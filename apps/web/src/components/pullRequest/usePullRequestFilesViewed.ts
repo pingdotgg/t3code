@@ -34,7 +34,7 @@ export interface PullRequestFilesViewedView {
   readonly isViewed: (path: string) => boolean;
   /** This file has been pushed to since it was cleared. */
   readonly isStale: (path: string) => boolean;
-  readonly setViewed: (path: string, viewed: boolean) => void;
+  readonly setViewed: (path: string | ReadonlyArray<string>, viewed: boolean) => void;
   /** How many of the files on screen are ticked off. */
   readonly viewedCount: number;
   /** The host had more files than the read covered, so the count above may be short. */
@@ -104,47 +104,52 @@ export function usePullRequestFilesViewed(options: {
     const pending = new Set([...queued.current.keys(), ...sentBy.current.keys()]);
     const answered = new Set<string>();
     for (const [path, from] of answeredFrom.current) {
-      if (pending.has(path) || from === states) continue;
+      if (pending.has(path) || from === states || (truncated && !states?.has(path))) continue;
       answered.add(path);
       answeredFrom.current.delete(path);
     }
     setOverlay((current) => settleFileViewedOverlay(current, states, pending, answered));
-  }, [states]);
+  }, [states, truncated]);
 
   const flush = useCallback(() => {
     flushTimer.current = null;
-    const batch = toFileViewedBatch(queued.current);
-    if (batch.length === 0) return;
+    const files = toFileViewedBatch(queued.current);
+    if (files.length === 0) return;
     queued.current = new Map();
     const sentFrom = scope.current;
-    const request = ++requests.current;
-    for (const file of batch) sentBy.current.set(file.path, request);
-    void setFilesViewed({ environmentId, input: { ...reference, files: batch } }).then((result) => {
-      const mine = batch
-        .map((file) => file.path)
-        .filter((path) => sentBy.current.get(path) === request);
-      for (const path of mine) sentBy.current.delete(path);
-      // The reader has moved on, and what is on screen now has nothing to do with this answer.
-      if (scope.current !== sentFrom) return;
-      if (result._tag === "Failure") {
-        // The host never heard these, so the ticks go back to whatever it last said. Only the
-        // paths this request still answers for: one pressed again since is waiting on a request
-        // of its own, or on the next flush, and that press is the one on screen.
-        const owned = new Set(mine.filter((path) => !queued.current.has(path)));
-        setOverlay((current) => revertFileViewedOverlay(current, batch, owned));
-        // Silent when nothing was still this request's to answer for, so nothing on screen went
-        // back, and when the connection went away mid-flight, which the reader is already being
-        // told about and which the host never refused.
-        if (owned.size > 0 && !isAtomCommandInterrupted(result)) {
-          toastManager.add({ type: "error", title: "Could not update viewed files" });
-        }
-        return;
-      }
-      // Answered for from the next read on, whatever it says. A push landing between the write
-      // and that read comes back as `dismissed`, and the press must not stand over it.
-      for (const path of mine) answeredFrom.current.set(path, statesRef.current);
-      refresh();
-    });
+    for (let offset = 0; offset < files.length; offset += 500) {
+      const batch = files.slice(offset, offset + 500);
+      const request = ++requests.current;
+      for (const file of batch) sentBy.current.set(file.path, request);
+      void setFilesViewed({ environmentId, input: { ...reference, files: batch } }).then(
+        (result) => {
+          const mine = batch
+            .map((file) => file.path)
+            .filter((path) => sentBy.current.get(path) === request);
+          for (const path of mine) sentBy.current.delete(path);
+          // The reader has moved on, and what is on screen now has nothing to do with this answer.
+          if (scope.current !== sentFrom) return;
+          if (result._tag === "Failure") {
+            // The host never heard these, so the ticks go back to whatever it last said. Only the
+            // paths this request still answers for: one pressed again since is waiting on a request
+            // of its own, or on the next flush, and that press is the one on screen.
+            const owned = new Set(mine.filter((path) => !queued.current.has(path)));
+            setOverlay((current) => revertFileViewedOverlay(current, batch, owned));
+            // Silent when nothing was still this request's to answer for, so nothing on screen went
+            // back, and when the connection went away mid-flight, which the reader is already being
+            // told about and which the host never refused.
+            if (owned.size > 0 && !isAtomCommandInterrupted(result)) {
+              toastManager.add({ type: "error", title: "Could not update viewed files" });
+            }
+            return;
+          }
+          // Answered for from the next read on, whatever it says. A push landing between the write
+          // and that read comes back as `dismissed`, and the press must not stand over it.
+          for (const path of mine) answeredFrom.current.set(path, statesRef.current);
+          refresh();
+        },
+      );
+    }
   }, [environmentId, reference, refresh, setFilesViewed]);
 
   // Read through a ref rather than closed over: `setViewed` is handed to every file header the
@@ -174,9 +179,15 @@ export function usePullRequestFilesViewed(options: {
   refreshRef.current = refresh;
   const refreshFromHost = useCallback(() => refreshRef.current(), []);
 
-  const setViewed = useCallback((path: string, viewed: boolean) => {
-    setOverlay((current) => new Map(current).set(path, viewed));
-    queued.current.set(path, viewed);
+  const setViewed = useCallback((path: string | ReadonlyArray<string>, viewed: boolean) => {
+    const paths = typeof path === "string" ? [path] : path;
+    if (paths.length === 0) return;
+    setOverlay((current) => {
+      const next = new Map(current);
+      for (const path of paths) next.set(path, viewed);
+      return next;
+    });
+    for (const path of paths) queued.current.set(path, viewed);
     if (flushTimer.current !== null) clearTimeout(flushTimer.current);
     flushTimer.current = setTimeout(() => flushRef.current(), FLUSH_DELAY_MS);
   }, []);

@@ -63,6 +63,13 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires write scope for PR uploads and read scope for signed media", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsUploadAttachment)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.assetsCreateUrl)).toBe(AuthOrchestrationReadScope);
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

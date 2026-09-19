@@ -1,5 +1,6 @@
 import * as Mime from "effect/unstable/http/Mime";
 import { githubMediaFileName } from "@t3tools/shared/githubMedia";
+import { isPullRequestMediaRedirectAllowed } from "@t3tools/shared/pullRequestMedia";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -131,8 +132,9 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
     if (response.status < 300 || response.status >= 400) return response;
     // A chain this long is not GitHub answering with bytes, and its body is not the media.
     if (!location || hop >= MAX_REDIRECTS) return null;
-    const next = new URL(location, target);
-    if (next.protocol !== "https:") return null;
+    const next = URL.parse(location, target);
+    if (next === null || !isPullRequestMediaRedirectAllowed("github", new URL(url).origin, next))
+      return null;
     target = next.toString();
   }
 });
@@ -153,6 +155,13 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     if (value !== undefined) forwarded[name] = value;
   }
   const response = yield* fetchFollowingRedirects(asset.url, forwarded, token);
+  return yield* mediaResponse(asset, response);
+});
+
+export const mediaResponse = Effect.fn("GitHubMediaFetch.mediaResponse")(function* (
+  asset: { readonly url: string; readonly expiresAt: number },
+  response: HttpClientResponse.HttpClientResponse | null,
+) {
   // An upload GitHub hosts never changes under its URL, so the only thing a cached copy must
   // not outlive is the signed URL that granted it — which is the same bound the URL itself has.
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);

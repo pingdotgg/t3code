@@ -1,3 +1,5 @@
+import { uploadGitHubAttachment, readGitHubAttachment } from "./PullRequestAttachments.ts";
+import type { PullRequestProviderApi } from "./PullRequestProvider.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
@@ -652,6 +654,9 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly cursor: string;
     }) => Effect.Effect<PullRequestThreadCommentsResult, GitHubPullRequestCliError>;
 
+    readonly readAttachment?: NonNullable<PullRequestProviderApi["readAttachment"]>;
+    readonly uploadAttachment: NonNullable<PullRequestProviderApi["uploadAttachment"]>;
+
     /** The viewer's standing on its own, for deciding a write without reading the whole detail. */
     readonly getViewerAccess: (input: {
       readonly cwd: string;
@@ -710,6 +715,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly stackNumber?: number;
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       readonly mergeMethod?: PullRequestMergeMethod;
+      readonly bypassMergeChecks?: boolean;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
@@ -1031,10 +1037,11 @@ function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
   updateMethod: PullRequestUpdateMethod | undefined,
+  bypassMergeChecks = false,
 ): ReadonlyArray<string> {
   switch (action) {
     case "merge":
-      return ["merge", `--${mergeMethod ?? "merge"}`];
+      return ["merge", `--${mergeMethod ?? "merge"}`, ...(bypassMergeChecks ? ["--admin"] : [])];
     // `--auto` arms the same command instead of running it, and still needs the strategy: GitHub
     // stores the strategy with the standing instruction rather than choosing one at merge time.
     case "enable-auto-merge":
@@ -1728,6 +1735,8 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map(([, runs]) => runs));
 
   return GitHubPullRequestCli.of({
+    uploadAttachment: (input) => uploadGitHubAttachment(github.execute, input),
+    readAttachment: (input) => readGitHubAttachment(github.execute, input),
     withVerifiedCredential,
     getRoutingIdentity,
     getViewerLogin: (input) =>
@@ -2539,6 +2548,7 @@ export const make = Effect.gen(function* () {
         input.action,
         input.mergeMethod,
         input.updateMethod,
+        input.bypassMergeChecks,
       );
       return github
         .execute({

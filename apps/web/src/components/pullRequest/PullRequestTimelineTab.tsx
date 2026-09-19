@@ -4,6 +4,7 @@ import type {
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
+  PullRequestReviewThread,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
@@ -13,7 +14,7 @@ import {
   GitCommitHorizontalIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -22,7 +23,6 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
-import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -36,6 +36,10 @@ import {
   type PullRequestTimelineEvent,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
+import {
+  PullRequestCommentActions,
+  PullRequestCommentActionsContext,
+} from "./PullRequestCommentActions";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -57,6 +61,7 @@ interface ReactionSurface {
   /** Thread the timeline is shown beside, so body links can open in its in-app browser. */
   readonly threadRef: ScopedThreadRef | null;
   readonly reference: PullRequestRef;
+  readonly threads: ReadonlyMap<string, PullRequestReviewThread>;
   readonly onRefresh: () => void;
 }
 
@@ -191,6 +196,8 @@ function ConversationCard({
   reactions: ReactionSurface;
 }) {
   const [editing, setEditing] = useState(false);
+  const actions = useContext(PullRequestCommentActionsContext);
+  const disabled = actions?.disabled === true;
   const [saving, setSaving] = useState(false);
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
@@ -199,11 +206,18 @@ function ConversationCard({
   const save = async (body: string) => {
     // A review's own summary is not a kind any host rewrites, which is why `editable` is never
     // one; the check is here because the comment's own type still allows it.
-    if (editable === null || saving || editable.kind === "review") return;
+    if (editable === null || saving || disabled || editable.kind === "review") return;
     setSaving(true);
+    const thread = reactions.threads.get(editable.id);
     const result = await updateComment({
       environmentId: reactions.environmentId,
-      input: { ...reactions.reference, commentId: editable.id, kind: editable.kind, body },
+      input: {
+        ...reactions.reference,
+        commentId: editable.id,
+        kind: editable.kind,
+        body,
+        ...(thread ? { threadId: thread.id } : {}),
+      },
     });
     setSaving(false);
     if (result._tag === "Failure") {
@@ -234,24 +248,29 @@ function ConversationCard({
               ) : null}
             </PullRequestMetaLine>
           </div>
-          {editable !== null && !editing ? (
-            <PullRequestEditButton
-              className="-mt-1"
-              aria-label="Edit comment"
-              onClick={() => setEditing(true)}
-            />
-          ) : null}
           {reactions.canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
               className="ml-auto justify-end"
               reactions={event.reactions}
-              canReact={reactions.canReact}
+              canReact={reactions.canReact && !disabled}
               subjectId={event.id}
               environmentId={reactions.environmentId}
               reference={reactions.reference}
               onRefresh={reactions.onRefresh}
             />
           ) : null}
+          <PullRequestCommentActions
+            disabled={disabled || saving}
+            {...(editable !== null && !editing ? { onEdit: () => setEditing(true) } : {})}
+            showResolution
+            comment={{
+              id: event.id,
+              author: event.actor,
+              body: event.body ?? "",
+              url: event.url,
+              path: event.path,
+            }}
+          />
           <OpenOnHostButton url={event.url} onOpen={onOpen} />
         </div>
       </div>
@@ -263,7 +282,7 @@ function ConversationCard({
             environmentId={reactions.environmentId}
             threadRef={reactions.threadRef}
             label="Edit comment"
-            saving={saving}
+            saving={saving || disabled}
             onSave={(body) => void save(body)}
             onCancel={() => setEditing(false)}
           />
@@ -306,6 +325,7 @@ function ConversationGroup({
   reactions: ReactionSurface;
 }) {
   const [open, setOpen] = useState(false);
+  const [visited, setVisited] = useState(false);
   const actors = uniqueConversationActors(events);
   const first = events[0];
   if (first === undefined) return null;
@@ -318,7 +338,13 @@ function ConversationGroup({
         fallback={<MessageSquareIcon className="size-3.5" />}
         muted={!open}
       />
-      <Collapsible open={open} onOpenChange={setOpen}>
+      <Collapsible
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (next) setVisited(true);
+        }}
+      >
         <div>
           <CollapsibleTrigger
             className={cn(
@@ -343,8 +369,8 @@ function ConversationGroup({
               )}
             />
           </CollapsibleTrigger>
-          <CollapsiblePanel>
-            {open ? (
+          <CollapsiblePanel keepMounted>
+            {visited ? (
               <div className="mt-1 space-y-1">
                 {events.map((event) => (
                   <ConversationCard
@@ -563,6 +589,11 @@ export function PullRequestTimelineTab({
     environmentId,
     threadRef,
     reference,
+    threads: new Map(
+      detail.reviewThreads.flatMap((thread) =>
+        thread.comments.map((comment) => [comment.id, thread] as const),
+      ),
+    ),
     onRefresh,
   };
   // A timeline entry keeps only what it draws, so the remarks this reader may rewrite are looked

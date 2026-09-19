@@ -1,9 +1,9 @@
-import type {
-  PullRequestActor,
-  PullRequestCapabilities,
-  PullRequestComment,
-  PullRequestDetail,
-  PullRequestViewerPermissions,
+import {
+  type PullRequestActor,
+  type PullRequestCapabilities,
+  type PullRequestComment,
+  type PullRequestDetail,
+  type PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 

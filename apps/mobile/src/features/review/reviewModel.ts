@@ -6,7 +6,7 @@ import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
 
-export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
+export type ReviewSectionKind = "turn" | ReviewDiffPreviewSource["kind"];
 
 const DIRTY_WORKTREE_SECTION_ID = "git:working-tree";
 const DIRTY_WORKTREE_TITLE = "Dirty worktree";
@@ -124,6 +124,12 @@ const readyCheckpointOrder = Order.make<OrchestrationCheckpointSummary>(
 function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
   if (section.kind === "working-tree") {
     return DIRTY_WORKTREE_SUBTITLE;
+  }
+  if (section.kind === "staged") {
+    return "Changes staged for commit";
+  }
+  if (section.kind === "unstaged") {
+    return "Changes not staged for commit";
   }
   if (section.baseRef) {
     return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;

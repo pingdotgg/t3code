@@ -1,8 +1,19 @@
 import * as Effect from "effect/Effect";
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 import * as Semaphore from "effect/Semaphore";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
+import { attachmentMarkdown } from "./PullRequestAttachments.ts";
+import { createPendingAttachmentId } from "../attachmentStore.ts";
 import {
   azureDevOpsFilePatch,
   azureDevOpsUnreadableFilePatch,
@@ -57,9 +68,13 @@ const CAPABILITIES: PullRequestCapabilities = {
   // Azure serves no patch of its own, so the one the Code tab reads is built here out of the
   // files an iteration changed and both sides of each of them.
   diff: true,
-  // Reading a conversation is a plain REST read, but posting one is not something this can
-  // claim without having run it, so the composer stays hidden.
-  comment: false,
+  comment: true,
+  attachments: {
+    supported: true,
+    maxBytes: 25 * 1024 * 1024,
+    destination: "pull-request",
+    reason: "Requires az login or AZURE_DEVOPS_EXT_PAT on the server.",
+  },
   actions: [
     "merge",
     "ready",
@@ -74,18 +89,19 @@ const CAPABILITIES: PullRequestCapabilities = {
   // `az repos pr list` filters by status, creator, reviewer and branch, and by no text at all.
   search: false,
   reactions: false,
-  // The patch has lines to write against, but writing a remark at all is what Azure is not
-  // offered for here, so nothing in a review is either.
-  review: { inlineComment: false, reply: false, resolve: false, verdicts: [] },
+  review: {
+    inlineComment: true,
+    reply: true,
+    resolve: true,
+    verdicts: ["comment", "approve", "request-changes"],
+  },
   // `az repos pr reviewer add` and `remove` name identities, and nothing anywhere in `az repos`
   // lists the ones this repository could name — that lives behind the identity and graph APIs, a
   // different service with its own permissions. So the page takes a name here rather than being
   // handed a menu built out of a guess.
   reviewers: { request: true, listCandidates: false },
   // A new title and description travel on the same `az repos pr update` that moves a pull request.
-  // Rewriting a remark is false for the same reason posting one is: this cannot put a remark on
-  // Azure DevOps at all, so there is nothing here it could rewrite either.
-  edit: { changeRequest: true, comment: false },
+  edit: { changeRequest: true, comment: true },
   // Azure does keep a viewed record of its own, but only behind the undocumented contribution
   // endpoint its web UI talks to, keyed on an iteration so a push would drop every mark anyway.
   // So they are kept here instead, and the client says whose they are rather than implying the
@@ -148,6 +164,7 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
 
 export const make = Effect.gen(function* () {
   const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+  const httpClient = yield* HttpClient.HttpClient;
   // Made once with the provider, which the registry builds once, so this is the whole build's
   // allowance rather than one request's.
   const diffSpawns = yield* Semaphore.make(MAX_DIFF_SPAWNS);
@@ -292,6 +309,116 @@ export const make = Effect.gen(function* () {
         });
   };
 
+  const writeThread = Effect.fn("AzureDevOpsPullRequestProvider.writeThread")(function* (
+    input: { readonly cwd: string; readonly number: number },
+    update: Omit<Parameters<typeof cli.writeThread>[0], "cwd" | "number" | "location">,
+  ) {
+    if (
+      [update.threadId, update.commentId].some((id) => id !== undefined && !/^[1-9]\d*$/.test(id))
+    ) {
+      return yield* new PullRequestProviderError({
+        provider: "azure-devops",
+        operation: "writeThread",
+        reason: "failed",
+        detail: "Invalid Azure DevOps thread or comment ID.",
+      });
+    }
+    const location = yield* locationOf(input).pipe(Effect.mapError(fail("writeThread")));
+    if (location === null) {
+      return yield* new PullRequestProviderError({
+        provider: "azure-devops",
+        operation: "writeThread",
+        reason: "failed",
+        detail: "Azure DevOps did not return the pull request repository.",
+      });
+    }
+    yield* cli
+      .writeThread({ ...input, ...update, location })
+      .pipe(Effect.mapError(fail("writeThread")));
+  });
+
+  const attachmentScope = Effect.fn("AzureDevOpsPullRequestProvider.attachmentScope")(function* (
+    input: { readonly cwd: string; readonly number: number },
+    operation: "uploadAttachment" | "readAttachment",
+  ) {
+    const pullRequest = yield* cli.getPullRequest(input).pipe(Effect.mapError(fail(operation)));
+    const url = URL.canParse(pullRequest.url) ? new URL(pullRequest.url) : null;
+    const projectPath = url?.pathname.split("/_git/")[0];
+    if (
+      !url ||
+      url.protocol !== "https:" ||
+      (url.hostname !== "dev.azure.com" && !url.hostname.endsWith(".visualstudio.com")) ||
+      !projectPath ||
+      !pullRequest.location
+    ) {
+      return yield* new PullRequestProviderError({
+        provider: "azure-devops",
+        operation,
+        reason: "failed",
+        detail: "Azure DevOps did not return a supported pull request URL.",
+      });
+    }
+    const location = pullRequest.location;
+    return {
+      url,
+      projectPath,
+      location,
+      endpoint: `${url.origin}${projectPath}/_apis/git/repositories/${encodeURIComponent(location.repository)}/pullRequests/${input.number}/attachments/`,
+    };
+  });
+
+  const attachmentRequest = Effect.fn("AzureDevOpsPullRequestProvider.attachmentRequest")(
+    function* (
+      input: { readonly cwd: string },
+      request: HttpClientRequest.HttpClientRequest,
+      operation: "uploadAttachment" | "readAttachment",
+    ) {
+      const pat = yield* Config.String("AZURE_DEVOPS_EXT_PAT").pipe(
+        Config.option,
+        Effect.mapError(
+          (cause) =>
+            new PullRequestProviderError({
+              provider: "azure-devops",
+              operation,
+              reason: "failed",
+              detail: "Could not read Azure DevOps attachment credentials.",
+              cause,
+            }),
+        ),
+      );
+      if (Option.isSome(pat) && pat.value.trim()) {
+        request = request.pipe(HttpClientRequest.basicAuth("", pat.value));
+      } else {
+        const token = yield* cli.getAttachmentAccessToken(input).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PullRequestProviderError({
+                provider: "azure-devops",
+                operation,
+                reason: "failed",
+                detail: "Attachments require az login or AZURE_DEVOPS_EXT_PAT on the server.",
+                cause,
+              }),
+          ),
+        );
+        request = request.pipe(HttpClientRequest.bearerToken(token));
+      }
+      return yield* httpClient.execute(request).pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        Effect.mapError(
+          (cause) =>
+            new PullRequestProviderError({
+              provider: "azure-devops",
+              operation,
+              reason: "failed",
+              detail: "Could not access the Azure DevOps attachment.",
+              cause,
+            }),
+        ),
+      );
+    },
+  );
+
   const provider: PullRequestProviderApi = {
     kind: "azure-devops",
     capabilities: CAPABILITIES,
@@ -390,23 +517,28 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.flatMap((pullRequest) =>
           (pullRequest.location === null
-            ? Effect.succeed({ comments: [], truncated: true })
+            ? Effect.succeed({ comments: [], reviewThreads: [], truncated: true })
             : cli
                 .listThreads({
                   cwd: input.cwd,
+                  pullRequestUrl: pullRequest.url,
                   location: pullRequest.location,
                   number: input.number,
                 })
                 .pipe(
-                  Effect.map((comments) => ({ comments, truncated: false })),
-                  Effect.orElseSucceed(() => ({ comments: [], truncated: true })),
+                  Effect.map((conversation) => ({ ...conversation, truncated: false })),
+                  Effect.orElseSucceed(() => ({
+                    comments: [],
+                    reviewThreads: [],
+                    truncated: true,
+                  })),
                 )
           ).pipe(
             Effect.map((conversation): ProviderChangeRequestActivity => ({
               comments: conversation.comments,
               commentCount: conversation.comments.length,
               commentsTruncated: conversation.truncated,
-              reviewThreads: [],
+              reviewThreads: conversation.reviewThreads,
               commits: [],
             })),
           ),
@@ -626,16 +758,241 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("setReviewerRequest"))),
 
-    // Never called: `capabilities.comment` is false, and the service refuses a comment without it.
-    comment: () => unsupported("comment"),
+    uploadAttachment: Effect.fn("AzureDevOpsPullRequestProvider.uploadAttachment")(
+      function* (input) {
+        const scope = yield* attachmentScope(input, "uploadAttachment");
+        const name = `${createPendingAttachmentId()}-${input.name}`;
+        const response = yield* attachmentRequest(
+          input,
+          HttpClientRequest.post(
+            `${scope.endpoint}${encodeURIComponent(name)}?api-version=7.1`,
+          ).pipe(
+            HttpClientRequest.bodyUint8Array(input.data, "application/octet-stream"),
+            HttpClientRequest.acceptJson,
+          ),
+          "uploadAttachment",
+        );
+        if (response.status < 200 || response.status >= 300)
+          return yield* new PullRequestProviderError({
+            provider: "azure-devops",
+            operation: "uploadAttachment",
+            reason: "failed",
+            detail: `Azure DevOps rejected the attachment (HTTP ${response.status}).`,
+          });
+        const attachment = yield* HttpClientResponse.schemaBodyJson(
+          Schema.Struct({ url: Schema.String }),
+        )(response).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PullRequestProviderError({
+                provider: "azure-devops",
+                operation: "uploadAttachment",
+                reason: "failed",
+                detail: "Azure DevOps returned an invalid attachment URL.",
+                cause,
+              }),
+          ),
+        );
+        if (!URL.canParse(attachment.url) || new URL(attachment.url).protocol !== "https:")
+          return yield* new PullRequestProviderError({
+            provider: "azure-devops",
+            operation: "uploadAttachment",
+            reason: "failed",
+            detail: "Azure DevOps returned an invalid attachment URL.",
+          });
+        return {
+          url: attachment.url,
+          markdown: attachmentMarkdown(attachment.url, input.name, input.mimeType),
+        };
+      },
+    ),
 
-    // Declared unsupported above, so the service refuses these before a provider is reached.
-    // They exist because every provider answers the whole port.
-    submitReview: () => unsupported("submitReview"),
+    readAttachment: Effect.fn("AzureDevOpsPullRequestProvider.readAttachment")(function* (input) {
+      const scope = yield* attachmentScope(input, "readAttachment");
+      const url = URL.canParse(input.url) ? new URL(input.url) : null;
+      if (!url || url.origin !== scope.url.origin || url.username || url.password) {
+        return yield* new PullRequestProviderError({
+          provider: "azure-devops",
+          operation: "readAttachment",
+          reason: "failed",
+          detail: "The attachment URL does not belong to this pull request.",
+        });
+      }
+      const [path, projectPath] = yield* Effect.try({
+        try: () =>
+          [decodeURIComponent(url.pathname), decodeURIComponent(scope.projectPath)] as const,
+        catch: (cause) =>
+          new PullRequestProviderError({
+            provider: "azure-devops",
+            operation: "readAttachment",
+            reason: "failed",
+            detail: "Invalid attachment path.",
+            cause,
+          }),
+      });
+      const match =
+        /^(.*)\/_apis\/git\/repositories\/([^/]+)\/pullRequests\/(\d+)\/attachments\/([^/]+)$/i.exec(
+          path,
+        );
+      const projectRoot = projectPath.slice(0, projectPath.lastIndexOf("/"));
+      const projects = [
+        projectPath,
+        ...(scope.location.projectId ? [`${projectRoot}/${scope.location.projectId}`] : []),
+      ];
+      const repository = match?.[2];
+      const isRepositoryId =
+        scope.location.repositoryId !== undefined &&
+        repository?.toLowerCase() === scope.location.repositoryId.toLowerCase();
+      if (
+        !match ||
+        (repository?.toLowerCase() !== scope.location.repository.toLowerCase() &&
+          !isRepositoryId) ||
+        Number(match[3]) !== input.number ||
+        (!projects.some((project) => project.toLowerCase() === match[1]!.toLowerCase()) &&
+          !(isRepositoryId && match[1]!.toLowerCase() === projectRoot.toLowerCase())) ||
+        /[\\\p{Cc}]/u.test(match[4]!) ||
+        match[4] === "." ||
+        match[4] === ".."
+      ) {
+        return yield* new PullRequestProviderError({
+          provider: "azure-devops",
+          operation: "readAttachment",
+          reason: "failed",
+          detail: "The attachment URL does not belong to this pull request.",
+        });
+      }
+      const headers = Object.fromEntries(
+        Object.entries(input.headers).filter(([name]) =>
+          ["range", "if-range", "if-none-match", "if-modified-since", "accept"].includes(
+            name.toLowerCase(),
+          ),
+        ),
+      );
+      return yield* attachmentRequest(
+        input,
+        HttpClientRequest.get(
+          `${scope.endpoint}${encodeURIComponent(match[4]!)}?api-version=7.1`,
+        ).pipe(HttpClientRequest.setHeaders(headers)),
+        "readAttachment",
+      );
+    }),
 
-    replyToThread: () => unsupported("replyToThread"),
+    comment: (input) =>
+      writeThread(input, {
+        resource: "pullRequestThreads",
+        method: "POST",
+        body: {
+          status: "active",
+          comments: [{ parentCommentId: 0, content: input.body, commentType: "text" }],
+        },
+      }),
 
-    setThreadResolution: () => unsupported("setThreadResolution"),
+    updateComment: (input) => {
+      const ids = /^([1-9]\d*):([1-9]\d*)$/.exec(input.commentId);
+      if (!ids)
+        return Effect.fail(
+          new PullRequestProviderError({
+            provider: "azure-devops",
+            operation: "updateComment",
+            reason: "failed",
+            detail: "Invalid Azure DevOps comment ID.",
+          }),
+        );
+      return writeThread(input, {
+        resource: "pullRequestThreadComments",
+        method: "PATCH",
+        threadId: ids[1]!,
+        commentId: ids[2]!,
+        body: { content: input.body },
+      });
+    },
+
+    submitReview: Effect.fn("AzureDevOpsPullRequestProvider.submitReview")(function* (input) {
+      const threads: Array<Parameters<typeof cli.writeThread>[0]> = [];
+      if (input.comments.length > 0) {
+        const scope = yield* diffScope(input).pipe(Effect.mapError(fail("submitReview")));
+        const latest = scope?.iterations.at(-1);
+        if (!scope || !latest)
+          return yield* new PullRequestProviderError({
+            provider: "azure-devops",
+            operation: "submitReview",
+            reason: "failed",
+            detail:
+              "Azure DevOps did not return the review iteration. Refresh the pull request before submitting.",
+          });
+        const changes = yield* listLatestChanges({ ...input, ...scope }).pipe(
+          Effect.mapError(fail("submitReview")),
+        );
+        for (const comment of input.comments) {
+          const change = changes.changes.find(
+            (entry) =>
+              entry.path === comment.path &&
+              (comment.oldPath === undefined || entry.oldPath === comment.oldPath),
+          );
+          if (!change?.changeTrackingId || change.changeTrackingId < 1)
+            return yield* new PullRequestProviderError({
+              provider: "azure-devops",
+              operation: "submitReview",
+              reason: "failed",
+              detail: `Azure DevOps did not return the review position for ${comment.path}. Refresh the pull request before submitting.`,
+            });
+          const position = comment.position;
+          const left =
+            position.kind === "deleted" ||
+            (position.kind === "context" && position.side === "left");
+          const anchor = { line: left ? position.oldLine : position.newLine, offset: 1 };
+          threads.push({
+            ...input,
+            location: scope.location,
+            resource: "pullRequestThreads",
+            method: "POST",
+            body: {
+              status: "active",
+              comments: [{ parentCommentId: 0, content: comment.body, commentType: "text" }],
+              threadContext: {
+                filePath: `/${change.path}`,
+                ...(left
+                  ? { leftFileStart: anchor, leftFileEnd: anchor }
+                  : { rightFileStart: anchor, rightFileEnd: anchor }),
+              },
+              pullRequestThreadContext: {
+                changeTrackingId: change.changeTrackingId,
+                iterationContext: {
+                  firstComparingIteration: latest.id,
+                  secondComparingIteration: latest.id,
+                },
+              },
+            },
+          });
+        }
+      }
+      for (const thread of threads)
+        yield* cli.writeThread(thread).pipe(Effect.mapError(fail("submitReview")));
+      if (input.body.trim()) yield* provider.comment(input);
+      if (input.verdict !== "comment")
+        yield* cli
+          .setReviewVote({
+            ...input,
+            vote: input.verdict === "approve" ? "approve" : "wait-for-author",
+          })
+          .pipe(Effect.mapError(fail("submitReview")));
+    }),
+
+    replyToThread: (input) =>
+      writeThread(input, {
+        resource: "pullRequestThreadComments",
+        method: "POST",
+        threadId: input.threadId,
+        body: { parentCommentId: 1, content: input.body, commentType: "text" },
+      }),
+
+    setThreadResolution: (input) =>
+      writeThread(input, {
+        resource: "pullRequestThreads",
+        method: "PATCH",
+        threadId: input.threadId,
+        body: { status: input.resolved ? "fixed" : "active" },
+      }),
 
     setReaction: () => unsupported("setReaction"),
   };

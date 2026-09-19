@@ -855,6 +855,30 @@ describe("repository access decoding", () => {
 });
 
 describe("viewer permission decoding", () => {
+  it("only exposes admin merge when the host explicitly permits it", () => {
+    for (const allowed of [true, false, undefined]) {
+      const access = expectSuccess(
+        decodeViewerPermissionsJson(
+          JSON.stringify({
+            data: {
+              repository: {
+                viewerPermission: "ADMIN",
+                mergeCommitAllowed: true,
+                squashMergeAllowed: false,
+                rebaseMergeAllowed: true,
+                pullRequest: {
+                  viewerCanUpdate: true,
+                  viewerDidAuthor: false,
+                  viewerCanMergeAsAdmin: allowed,
+                },
+              },
+            },
+          }),
+        ),
+      );
+      expect(access.canBypassMergeChecks === true).toBe(allowed === true);
+    }
+  });
   const viewerJson = (repository: Record<string, unknown>) =>
     JSON.stringify({
       data: {
@@ -1075,6 +1099,30 @@ describe("review thread decoding", () => {
       },
     ]);
   });
+
+  it.each([false, true])(
+    "uses native permissions for the next resolution action: resolved=%s",
+    (isResolved) => {
+      const { threads } = expectSuccess(
+        decodeReviewThreadsJson(
+          threadsJson([
+            {
+              id: "PRRT_1",
+              path: "src/a.ts",
+              isResolved,
+              viewerCanResolve: true,
+              viewerCanReply: false,
+              viewerCanUnresolve: false,
+              comments: { nodes: [comment("c1", "Check this")] },
+            },
+          ]),
+        ),
+      );
+
+      expect(threads[0]?.thread.canResolve).toBe(!isResolved);
+      expect(threads[0]?.thread.canReply).toBe(false);
+    },
+  );
 
   it("leaves an outdated thread without a line rather than pinning it to a stale one", () => {
     const reviewThreads = expectSuccess(

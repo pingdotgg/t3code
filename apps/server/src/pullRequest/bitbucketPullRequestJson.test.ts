@@ -2,6 +2,7 @@ import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildReviewThreads,
   decodeCommentsJson,
   decodeCommitsJson,
   decodeConflictsJson,
@@ -177,6 +178,51 @@ describe("decodeViewerJson", () => {
 });
 
 describe("decodeCommentsJson", () => {
+  it("groups general replies under their root and leaves orphan replies in the flat list", () => {
+    const decoded = expectSuccess(
+      decodeCommentsJson(
+        page([
+          {
+            id: 1,
+            content: { raw: "Question" },
+            created_on: "2026-07-01T00:00:00Z",
+            resolution: {},
+          },
+          {
+            id: 2,
+            parent: { id: 1 },
+            content: { raw: "Reply" },
+            created_on: "2026-07-01T01:00:00Z",
+          },
+          {
+            id: 3,
+            parent: { id: 2 },
+            content: { raw: "Nested" },
+            created_on: "2026-07-01T02:00:00Z",
+          },
+          {
+            id: 4,
+            parent: { id: 99 },
+            content: { raw: "Orphan" },
+            created_on: "2026-07-01T03:00:00Z",
+          },
+          {
+            id: 5,
+            parent: { id: 5 },
+            content: { raw: "Cyclic parent" },
+            created_on: "2026-07-01T04:00:00Z",
+          },
+        ]),
+      ),
+    );
+    const threads = buildReviewThreads(decoded.entries);
+
+    expect(decoded.comments).toHaveLength(5);
+    expect(threads).toHaveLength(1);
+    expect(threads[0]).toMatchObject({ id: "1", path: null, line: null, isResolved: true });
+    expect(threads[0]?.comments.map((comment) => comment.id)).toEqual(["1", "2", "3"]);
+  });
+
   it("keeps a posted comment and drops deleted and unposted ones", () => {
     const decoded = expectSuccess(
       decodeCommentsJson(

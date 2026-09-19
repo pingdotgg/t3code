@@ -7,7 +7,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
-import { Textarea } from "../ui/textarea";
+import { PullRequestMarkdownField } from "./PullRequestMarkdownField";
 import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
@@ -31,6 +31,7 @@ export function PullRequestCommentComposer({
 }) {
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState("");
+  const [uploadPending, setUploadPending] = useState(false);
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
@@ -47,7 +48,7 @@ export function PullRequestCommentComposer({
 
   const submit = async (action: "comment" | "close" | "reopen") => {
     const trimmed = body.trim();
-    if (trimmed.length === 0 || submitting !== null || actionPending) return;
+    if (trimmed.length === 0 || submitting !== null || actionPending || uploadPending) return;
     setSubmitting(action);
     if (action !== "comment") {
       const result = await onCommentAction(trimmed, action);
@@ -79,19 +80,14 @@ export function PullRequestCommentComposer({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        render={
-          <Button
-            size="icon"
-            variant="glass"
-            className="rounded-full shadow-lg [--glass-opacity:50%]"
-          />
-        }
+        render={<Button size="xs" variant="ghost" disabled={actionPending} className="shrink-0" />}
         aria-label="Comment on pull request"
       >
-        <MessageSquareIcon className="size-4" />
+        <MessageSquareIcon className="size-3.5" />
+        Comment
       </PopoverTrigger>
       <PopoverPopup
-        side="top"
+        side="bottom"
         align="end"
         sideOffset={8}
         className="w-96 max-w-[calc(100vw-2rem)]"
@@ -107,8 +103,12 @@ export function PullRequestCommentComposer({
           </PopoverClose>
         </div>
         <div className="space-y-2">
-          <Textarea
-            ref={textareaRef}
+          <PullRequestMarkdownField
+            textareaRef={(element) => {
+              textareaRef.current = element;
+            }}
+            environmentId={environmentId}
+            onUploadPendingChange={setUploadPending}
             className="[&_textarea]:max-h-64"
             // Locked while posting: the body is cleared on success, which would otherwise throw
             // away a new draft typed while the request was still in flight.
@@ -117,7 +117,7 @@ export function PullRequestCommentComposer({
             rows={3}
             placeholder="Leave a comment"
             aria-label="Comment on this pull request"
-            onChange={(event) => setBody(event.target.value)}
+            onChange={setBody}
             onKeyDown={(event) => {
               if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (
@@ -137,7 +137,9 @@ export function PullRequestCommentComposer({
               <Button
                 size="xs"
                 variant={followUpAction === "close" ? "destructive-outline" : "outline"}
-                disabled={body.trim().length === 0 || submitting !== null || actionPending}
+                disabled={
+                  body.trim().length === 0 || submitting !== null || actionPending || uploadPending
+                }
                 onClick={() => void submit(followUpAction)}
               >
                 {followUpAction === "close" ? (
@@ -157,7 +159,9 @@ export function PullRequestCommentComposer({
             <Button
               size="xs"
               variant="outline"
-              disabled={body.trim().length === 0 || submitting !== null || actionPending}
+              disabled={
+                body.trim().length === 0 || submitting !== null || actionPending || uploadPending
+              }
               onClick={() => void submit("comment")}
             >
               <SendIcon className="size-3.5" />

@@ -1,3 +1,4 @@
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
@@ -1553,6 +1554,57 @@ it.effect("refuses an auto-merge the host never claimed, without asking it", () 
 
     assert.strictEqual(error._tag, "PullRequestOperationError");
     assert.isFalse(ran);
+  }),
+);
+
+it.effect("uses host capabilities for thread writes instead of the provider defaults", () =>
+  Effect.gen(function* () {
+    let allowed = true;
+    let writes = 0;
+    const defaults = fakeProvider("github").capabilities;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            ...defaults,
+            review: { ...defaults.review, reply: false, resolve: false },
+          },
+          getCapabilities: () =>
+            Effect.succeed({
+              ...defaults,
+              review: { ...defaults.review, reply: allowed, resolve: allowed },
+            }),
+          getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+          replyToThread: () =>
+            Effect.sync(() => {
+              writes++;
+            }),
+          setThreadResolution: () =>
+            Effect.sync(() => {
+              writes++;
+            }),
+        }),
+      ],
+    });
+    const reference = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      threadId: "t1",
+    };
+    const detail = yield* service.detail(reference);
+    assert.isTrue(detail.capabilities.review.resolve);
+    yield* service.replyToThread({ ...reference, body: "Reply" });
+    yield* service.setThreadResolution({ ...reference, resolved: true });
+    allowed = false;
+    const reply = yield* service.replyToThread({ ...reference, body: "Reply" }).pipe(Effect.result);
+    const resolve = yield* service
+      .setThreadResolution({ ...reference, resolved: false })
+      .pipe(Effect.result);
+    assert.strictEqual(reply._tag, "Failure");
+    assert.strictEqual(resolve._tag, "Failure");
+    assert.strictEqual(writes, 2);
   }),
 );
 
@@ -6825,4 +6877,330 @@ it.effect("keeps Azure continuation cursors separate for repositories with the s
     yield* service.list({ state: "open", cursors: { [key]: first.nextCursors[key]! } });
     assert.deepStrictEqual(seen, ["/org-b"]);
   }),
+);
+
+it.effect("requires current host permission for an explicit merge-check bypass", () =>
+  Effect.gen(function* () {
+    let allowed = false;
+    let hostAllowsBypass = true;
+    const calls: boolean[] = [];
+    const provider = fakeProvider("github");
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getCapabilities: () =>
+            Effect.succeed({ ...provider.capabilities, bypassMergeChecks: hostAllowsBypass }),
+          getViewerPermissions: (input) =>
+            provider
+              .getViewerPermissions(input)
+              .pipe(Effect.map((permissions) => ({ ...permissions, bypassMergeChecks: allowed }))),
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+          runAction: (input) => {
+            calls.push(input.bypassMergeChecks === true);
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      action: "merge" as const,
+      bypassMergeChecks: true,
+    };
+    const denied = yield* Effect.flip(service.runAction(input));
+    assert.include(denied.message, "permission to bypass");
+    assert.deepStrictEqual(calls, []);
+    allowed = true;
+    yield* service.runAction(input);
+    allowed = false;
+    yield* Effect.flip(service.runAction(input));
+    yield* service.runAction({ ...input, bypassMergeChecks: false });
+    yield* Effect.flip(service.runAction({ ...input, action: "close" }));
+    allowed = true;
+    hostAllowsBypass = false;
+    const hostDenied = yield* Effect.flip(service.runAction(input));
+    assert.include(hostDenied.message, "cannot bypass");
+    assert.deepStrictEqual(calls, [true, false]);
+  }),
+);
+
+it.effect("refuses bypass requests on every host without the capability", () =>
+  Effect.gen(function* () {
+    for (const kind of ["github", "gitlab", "bitbucket", "azure-devops"] as const) {
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "web",
+            workspaceRoot: "/a",
+            repository: "acme/web",
+            provider: kind,
+          }),
+        ],
+        providers: [fakeProvider(kind, { runAction: () => Effect.die("must not run") })],
+      });
+      const error = yield* Effect.flip(
+        service.runAction({
+          projectId: "p1" as ProjectId,
+          repository: "acme/web",
+          number: 1,
+          action: "merge",
+          bypassMergeChecks: true,
+        }),
+      );
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+    }
+  }),
+);
+
+it.effect("uploads attachments without posting a comment and checks provider limits first", () =>
+  Effect.gen(function* () {
+    const received: string[] = [];
+    const attachmentCapability = {
+      supported: true,
+      maxBytes: 3,
+      destination: "pull-request" as const,
+    };
+    let supported = true;
+    let attachmentOverride: typeof attachmentCapability | undefined;
+    const provider = fakeProvider("gitlab", {
+      getCapabilities: () =>
+        Effect.succeed({
+          ...provider.capabilities,
+          attachments: { ...attachmentCapability, supported },
+        }),
+      getChangeRequest: () =>
+        Effect.succeed({
+          ...hostedChangeRequest("Description"),
+          ...(attachmentOverride === undefined ? {} : { attachments: attachmentOverride }),
+        }),
+      uploadAttachment: (input) =>
+        Effect.sync(() => {
+          received.push(`${input.host}/${input.repository}/${input.name}`);
+          return { url: "https://gitlab.com/file", markdown: "[file](https://gitlab.com/file)" };
+        }),
+      comment: () => Effect.die("upload must not post a comment"),
+      updateChangeRequest: () => Effect.die("upload must not edit a description"),
+    });
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...provider,
+          capabilities: {
+            ...provider.capabilities,
+            attachments: { ...attachmentCapability, supported: false, maxBytes: 100 },
+          },
+        },
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      attachmentId: "pending-file",
+      name: "log.txt",
+      mimeType: "text/plain",
+      filePath: "/tmp/safe/log.txt",
+      data: new Uint8Array([1, 2, 3]),
+    };
+    const uploaded = yield* service.uploadAttachment(input);
+    assert.strictEqual(uploaded.url, "https://gitlab.com/file");
+    const error = yield* service
+      .uploadAttachment({ ...input, data: new Uint8Array(4) })
+      .pipe(Effect.flip);
+    assert.include(error.message, "between 1 and 3 bytes");
+    supported = false;
+    const unsupported = yield* service.uploadAttachment(input).pipe(Effect.flip);
+    assert.include(unsupported.message, "does not support");
+    attachmentOverride = { ...attachmentCapability, maxBytes: 2 };
+    const tooLarge = yield* service.uploadAttachment(input).pipe(Effect.flip);
+    assert.include(tooLarge.message, "between 1 and 2 bytes");
+    yield* service.uploadAttachment({ ...input, data: new Uint8Array(2) });
+    attachmentOverride = { ...attachmentCapability, supported: false };
+    const disabled = yield* service.uploadAttachment(input).pipe(Effect.flip);
+    assert.include(disabled.message, "does not support");
+    assert.strictEqual(received.length, 2);
+  }),
+);
+
+it.effect("pauses attachment reads after host rate limits and resumes them when quota resets", () =>
+  Effect.gen(function* () {
+    for (const source of ["attachment", "action"] as const) {
+      let reads = 0;
+      let limited = true;
+      let preflightLimited = false;
+      const writes: string[] = [];
+      const capabilities = {
+        ...fakeProvider("github").capabilities,
+        attachments: { supported: true, maxBytes: 10, destination: "pull-request" as const },
+      };
+      const rateLimit = new PullRequestProviderError({
+        provider: "github",
+        operation: "readAttachment",
+        reason: "rate-limited",
+        detail: "GitHub API rate limit exceeded.",
+      });
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getCapabilities: () =>
+              preflightLimited ? Effect.fail(rateLimit) : Effect.succeed(capabilities),
+            getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+            runAction: () =>
+              limited
+                ? Effect.fail(rateLimit)
+                : Effect.sync(() => {
+                    writes.push("action");
+                  }),
+            replyToThread: () =>
+              Effect.sync(() => {
+                writes.push("reply");
+              }),
+            setThreadResolution: () =>
+              Effect.sync(() => {
+                writes.push("resolve");
+              }),
+            uploadAttachment: () =>
+              Effect.sync(() => {
+                writes.push("upload");
+                return {
+                  url: "https://github.com/user-attachments/assets/file",
+                  markdown: "[file](https://github.com/user-attachments/assets/file)",
+                };
+              }),
+            readAttachment: (input) =>
+              Effect.gen(function* () {
+                reads++;
+                if (limited) return yield* rateLimit;
+                return HttpClientResponse.fromWeb(
+                  HttpClientRequest.get(input.url),
+                  new Response("image"),
+                );
+              }),
+          }),
+        ],
+      });
+      const input = {
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        host: "github.com",
+        number: 1,
+        provider: "github" as const,
+        url: "https://github.com/acme/web/blob/main/shot.png",
+        headers: {},
+      };
+      yield* Effect.flip(
+        source === "attachment"
+          ? service.readAttachment(input)
+          : service.runAction({ ...input, action: "close" }),
+      );
+      limited = false;
+      const paused = yield* service.readAttachment(input).pipe(Effect.flip);
+      assert.include(paused.message, "paused");
+      assert.strictEqual(reads, source === "attachment" ? 1 : 0);
+      const upload = {
+        ...input,
+        attachmentId: "pending-file",
+        name: "file.png",
+        mimeType: "image/png",
+        filePath: "/tmp/file.png",
+        data: new Uint8Array([1]),
+      };
+      yield* service.uploadAttachment(upload);
+      yield* service.runAction({ ...input, action: "close" });
+      yield* service.replyToThread({ ...input, threadId: "thread", body: "Reply" });
+      yield* service.setThreadResolution({ ...input, threadId: "thread", resolved: true });
+      assert.deepStrictEqual(writes, ["upload", "action", "reply", "resolve"]);
+      assert.include((yield* service.readAttachment(input).pipe(Effect.flip)).message, "paused");
+      assert.include((yield* service.detail(input).pipe(Effect.flip)).message, "paused");
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual((yield* service.readAttachment(input)).status, 200);
+      assert.strictEqual(reads, source === "attachment" ? 2 : 1);
+      preflightLimited = true;
+      const denied = yield* service.uploadAttachment(upload).pipe(Effect.flip);
+      assert.include(denied.message, "GitHub API rate limit exceeded");
+      assert.deepStrictEqual(writes, ["upload", "action", "reply", "resolve"]);
+    }
+  }).pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("Provider owns read")),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("validates private attachment provider and account before provider reads", () =>
+  Effect.gen(function* () {
+    const received: string[] = [];
+    const provider = fakeProvider("github", {
+      withVerifiedCredential: (_, use) =>
+        use({ accountId: "101", viewer: "octocat", credentialFingerprint: "credential-a" }),
+      readAttachment: (input) =>
+        Effect.sync(() => {
+          received.push(input.url);
+          return HttpClientResponse.fromWeb(
+            HttpClientRequest.get(input.url),
+            new Response("image"),
+          );
+        }),
+    });
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          provider: "github",
+        }),
+      ],
+      providers: [provider],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      host: "github.com",
+      number: 1,
+      provider: "github" as const,
+      expectedAccountId: "101",
+      url: "https://github.com/other/repo/blob/main/shot.png",
+      headers: {},
+    };
+    assert.strictEqual((yield* service.readAttachment(input)).status, 200);
+    for (const invalid of [
+      { ...input, provider: "gitlab" as const },
+      { ...input, url: "https://other.example/shot.png" },
+      { ...input, expectedAccountId: "202" },
+    ]) {
+      assert.strictEqual(
+        (yield* service.readAttachment(invalid).pipe(Effect.flip))._tag,
+        "PullRequestOperationError",
+      );
+    }
+    assert.deepStrictEqual(received, [
+      "https://raw.githubusercontent.com/other/repo/main/shot.png",
+    ]);
+  }).pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("Provider owns read")),
+    ),
+    Effect.scoped,
+  ),
 );

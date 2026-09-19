@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { GitCommandError } from "./git.ts";
 import { VcsError } from "./vcs.ts";
 
@@ -7,17 +7,23 @@ export const ReviewDiffPreviewInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   baseRef: Schema.optional(TrimmedNonEmptyString),
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  workingTreeScope: Schema.optionalKey(Schema.Literals(["staged", "unstaged"])),
   file: Schema.optionalKey(
     Schema.Struct({
       path: Schema.NonEmptyString,
       previousPath: Schema.NullOr(Schema.NonEmptyString),
-      sourceKind: Schema.Literals(["working-tree", "branch-range"]),
+      sourceKind: Schema.Literals(["working-tree", "branch-range", "staged", "unstaged"]),
     }),
   ),
 });
 export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;
 
-export const ReviewDiffPreviewSourceKind = Schema.Literals(["working-tree", "branch-range"]);
+export const ReviewDiffPreviewSourceKind = Schema.Literals([
+  "working-tree",
+  "branch-range",
+  "staged",
+  "unstaged",
+]);
 export type ReviewDiffPreviewSourceKind = typeof ReviewDiffPreviewSourceKind.Type;
 
 export const ReviewDiffFileStat = Schema.Struct({
@@ -65,6 +71,15 @@ export const ReviewDiffPreviewResult = Schema.Struct({
   sources: Schema.Array(ReviewDiffPreviewSource),
 });
 export type ReviewDiffPreviewResult = typeof ReviewDiffPreviewResult.Type;
+
+export const ReviewApplyPatchInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  sourceKind: Schema.Literals(["staged", "unstaged"]),
+  expectedDiffHash: TrimmedNonEmptyString,
+  fileIndex: NonNegativeInt,
+  hunkIndex: Schema.optionalKey(NonNegativeInt),
+});
+export type ReviewApplyPatchInput = typeof ReviewApplyPatchInput.Type;
 
 export const ReviewDiffPreviewError = Schema.Union([VcsError, GitCommandError]);
 export type ReviewDiffPreviewError = typeof ReviewDiffPreviewError.Type;

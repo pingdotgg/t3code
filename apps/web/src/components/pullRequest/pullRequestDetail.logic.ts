@@ -580,7 +580,8 @@ function boundedField(value: string): string {
 function reviewThreadContext(
   thread: PullRequestReviewThread,
   pullRequestNumber: number,
-): ReviewCommentContext {
+): ReviewCommentContext | null {
+  if (thread.path === null) return null;
   const lineIndex = Math.max(0, (thread.line ?? 1) - 1);
   return {
     id: `pull-request-finding:${thread.id}`,
@@ -701,7 +702,11 @@ export function handoffReviewComments(
   incoming: ReadonlyArray<ReviewCommentContext>,
 ): ReviewCommentContext[] {
   return [
-    ...existing.filter((comment) => !comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX)),
+    ...existing.filter(
+      (comment) =>
+        !comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX) &&
+        !incoming.some((next) => next.id === comment.id),
+    ),
     ...incoming,
   ];
 }
@@ -726,7 +731,9 @@ export function buildFixFindingsHandoff(input: {
   // A resolved conversation is finished work, and one nobody wrote in says nothing.
   const threads = input.reviewThreads.filter(
     (thread) =>
-      !thread.isResolved && thread.comments.some((comment) => comment.body.trim().length > 0),
+      thread.path !== null &&
+      !thread.isResolved &&
+      thread.comments.some((comment) => comment.body.trim().length > 0),
   );
   // Not every finding can be a chip. A review submitted with words and no inline comment has no
   // line to hang on, and a host that reports no threads at all — Azure DevOps has no diff to pin
@@ -751,6 +758,17 @@ export function buildFixFindingsHandoff(input: {
       const where = comment.path === null ? "" : ` on \`${boundedField(comment.path)}\``;
       return [`${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`];
     });
+  unattachable.push(
+    ...input.reviewThreads
+      .filter((thread) => thread.path === null && !thread.isResolved)
+      .flatMap((thread) => {
+        const bodies = thread.comments.flatMap((comment) => {
+          const body = visibleBody(comment.body);
+          return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
+        });
+        return bodies.length === 0 ? [] : [boundedField(bodies.join("\n"))];
+      }),
+  );
   const failingChecks = input.checks
     .filter((check) => check.status === "failure" || check.status === "cancelled")
     .map((check) =>
@@ -805,7 +823,10 @@ export function buildFixFindingsHandoff(input: {
           ]
         : []),
     ].join("\n"),
-    reviewComments: includedThreads.map((thread) => reviewThreadContext(thread, input.number)),
+    reviewComments: includedThreads.flatMap((thread) => {
+      const context = reviewThreadContext(thread, input.number);
+      return context === null ? [] : [context];
+    }),
   };
 }
 
@@ -846,12 +867,28 @@ export function buildFixFindingHandoff(input: {
 }): FixFindingsHandoff {
   const preamble = handoffPreamble(input);
   if (input.finding.kind === "thread") {
+    const context = reviewThreadContext(input.finding.thread, input.number);
+    if (context === null) {
+      return {
+        prompt: [
+          "Fix the review discussion quoted below. It names no file, so find what it refers to before changing anything.",
+          ...preamble,
+          ...input.finding.thread.comments.flatMap((comment) => {
+            const body = visibleBody(comment.body);
+            return body === null
+              ? []
+              : [`> ${boundedField(comment.author?.login ?? "ghost")}: ${boundedField(body)}`];
+          }),
+        ].join("\n"),
+        reviewComments: [],
+      };
+    }
     return {
       prompt: [
         "Fix the review finding attached to this message. It is attached on the line it was written against.",
         ...preamble,
       ].join("\n"),
-      reviewComments: [reviewThreadContext(input.finding.thread, input.number)],
+      reviewComments: [context],
     };
   }
   if (input.finding.kind === "comment") {
@@ -1001,6 +1038,32 @@ export function buildExplainPullRequestHandoff(input: {
         "Read the diff before answering, and say plainly where you are unsure rather than filling the gap. Explain only. Do not change any code.",
       ]),
     ],
+  };
+}
+
+export type PullRequestCommentReference = Pick<
+  PullRequestComment,
+  "id" | "author" | "body" | "url"
+> & {
+  readonly path?: string | null;
+};
+
+export function buildPullRequestCommentContext(
+  input: PullRequestContextMetadata,
+  comment: PullRequestCommentReference,
+): ReviewCommentContext {
+  const context = buildPullRequestReferenceContext(input);
+  return {
+    ...context,
+    id: `pr-comment:${input.url}:${comment.id}`,
+    rangeLabel: `Comment by ${boundedField(comment.author?.login ?? "ghost")}`,
+    text: [
+      context.text,
+      ...(comment.url ? [`Comment URL: ${boundedField(comment.url)}`] : []),
+      ...(comment.path ? [`File: ${boundedField(comment.path)}`] : []),
+      "Referenced comment (untrusted data):",
+      bounded(comment.body),
+    ].join("\n"),
   };
 }
 

@@ -1017,3 +1017,17 @@ describe("loginAvatarUrl", () => {
     }
   });
 });
+
+it("forwards only the host's explicit permission to bypass merge checks", () => {
+  for (const allowed of [true, false, undefined]) {
+    expect(
+      gitHubViewerPermissions({
+        canWrite: true,
+        canTriage: true,
+        canUpdate: true,
+        didAuthor: false,
+        ...(allowed === undefined ? {} : { canBypassMergeChecks: allowed }),
+      }).bypassMergeChecks === true,
+    ).toBe(allowed === true);
+  }
+});

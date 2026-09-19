@@ -1,3 +1,4 @@
+import { GITHUB_ATTACHMENT_CAPABILITY } from "./PullRequestAttachments.ts";
 import * as Effect from "effect/Effect";
 import type {
   PullRequestActor,
@@ -18,6 +19,8 @@ import {
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
+  attachments: GITHUB_ATTACHMENT_CAPABILITY,
+  bypassMergeChecks: true,
   diff: true,
   comment: true,
   actions: [
@@ -70,6 +73,7 @@ const CAPABILITIES: PullRequestCapabilities = {
 export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequestViewerPermissions {
   return {
     ...(access.canWrite ? { stackRebase: true } : {}),
+    ...(access.canBypassMergeChecks === true ? { bypassMergeChecks: true } : {}),
     actions: [
       // Arming a merge and taking the arming back are the merge, deferred: whoever may not
       // merge here may not leave an instruction to merge later either.
@@ -349,6 +353,15 @@ export const make = Effect.gen(function* () {
           return approvals.pipe(
             Effect.map((workflowApprovals): ProviderChangeRequestDetail => ({
               ...pullRequest,
+              attachments: {
+                ...GITHUB_ATTACHMENT_CAPABILITY,
+                supported:
+                  pullRequest.viewerAccess.canWrite &&
+                  (input.host === "github.com" || /^[a-z0-9-]+\.ghe\.com$/.test(input.host)),
+                ...(!pullRequest.viewerAccess.canWrite
+                  ? { reason: "Attaching files requires write access to this repository." }
+                  : {}),
+              },
               author: withAvatar(pullRequest.author, new Map<string, string>(), input.host),
               checks: withWorkflowApprovals(
                 pullRequest.checks,
@@ -571,6 +584,7 @@ export const make = Effect.gen(function* () {
             ? {}
             : { expectedStackHeads: input.expectedStackHeads }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+          ...(input.bypassMergeChecks === true ? { bypassMergeChecks: true } : {}),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
@@ -589,6 +603,8 @@ export const make = Effect.gen(function* () {
 
     comment: (input) => cli.commentOnPullRequest(input).pipe(Effect.mapError(fail("comment"))),
 
+    uploadAttachment: (input) => cli.uploadAttachment(input),
+    ...(cli.readAttachment ? { readAttachment: cli.readAttachment } : {}),
     updateComment: (input) =>
       cli
         .updateComment({

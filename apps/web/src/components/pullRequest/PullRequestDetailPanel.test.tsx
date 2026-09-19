@@ -7,7 +7,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { act, type ReactNode, type ReactElement, type ComponentProps } from "react";
+import { act, useState, type ReactNode, type ReactElement, type ComponentProps } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -113,6 +113,18 @@ vi.mock("./PullRequestSummaryTab", () => ({
     </button>
   ),
 }));
+vi.mock("./PullRequestCommentComposer", () => ({
+  PullRequestCommentComposer: () => {
+    const [draft, setDraft] = useState("");
+    return (
+      <input
+        aria-label="Comment draft"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+    );
+  },
+}));
 vi.mock("./PullRequestCodeTab", () => ({
   default: ({
     onAddToAgentSelection,
@@ -143,7 +155,7 @@ vi.mock("./PullRequestCodeTab", () => ({
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { pullRequestPanelContext } from "./pullRequestDetail.logic";
 
-const detail: PullRequestDetailView = {
+let detail: PullRequestDetailView = {
   provider: "github",
   projectId: ProjectId.make("project"),
   projectTitle: "Project",
@@ -334,4 +346,47 @@ describe.each([
       expect(newThread).toHaveBeenCalled();
     }
   });
+});
+
+it("keeps the toolbar comment draft while changing PR tabs", async () => {
+  const previous = detail;
+  detail = {
+    ...detail,
+    capabilities: { ...detail.capabilities, comment: true },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+  };
+  try {
+    await act(async () => {
+      renderer = create(
+        <PullRequestDetailPanel
+          environmentId={threadRef.environmentId}
+          reference={detail}
+          shortcutsEnabled={false}
+          getShortcutContext={() => ({
+            terminalFocus: false,
+            terminalOpen: false,
+            previewFocus: false,
+            previewOpen: false,
+            isWeb: true,
+            isDesktop: false,
+          })}
+        />,
+      );
+    });
+    await act(async () => {
+      renderer.root
+        .findByProps({ "aria-label": "Comment draft" })
+        .props.onChange({ target: { value: "Keep this comment" } });
+    });
+    await click("Code");
+    expect(renderer.root.findByProps({ "aria-label": "Comment draft" }).props.value).toBe(
+      "Keep this comment",
+    );
+    await click("Summary");
+    expect(renderer.root.findByProps({ "aria-label": "Comment draft" }).props.value).toBe(
+      "Keep this comment",
+    );
+  } finally {
+    detail = previous;
+  }
 });

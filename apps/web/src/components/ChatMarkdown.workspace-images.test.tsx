@@ -1,4 +1,6 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId, type AssetResource } from "@t3tools/contracts";
+import { act, type ReactNode, type ComponentProps } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -22,6 +24,29 @@ vi.mock("../assets/assetUrls", () => ({
     };
   },
 }));
+vi.mock("./ui/tooltip", async () => {
+  const { cloneElement, isValidElement } = await import("react");
+  return {
+    Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipTrigger({
+      render,
+      children,
+    }: ComponentProps<typeof import("./ui/tooltip").TooltipTrigger>) {
+      if (!isValidElement(render)) return <>{children}</>;
+      return children === undefined ? render : cloneElement(render, undefined, children);
+    },
+    TooltipPopup: () => null,
+  };
+});
+vi.mock("../hooks/useSettings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../hooks/useSettings")>();
+  const settings = actual.getClientSettings();
+  return {
+    ...actual,
+    useClientSettings: (select?: (value: typeof settings) => unknown) =>
+      select ? select(settings) : settings,
+  };
+});
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
@@ -49,6 +74,8 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 
 import ChatMarkdown, { ChatMarkdownAssetImage } from "./ChatMarkdown";
 import { FileMarkdownPreview } from "./files/FileMarkdownPreview";
+import { PullRequestMarkdown } from "./pullRequest/PullRequestMarkdown";
+import { PullRequestAttachmentContext } from "./pullRequest/PullRequestAttachmentContext";
 
 const threadRef = {
   environmentId: EnvironmentId.make("env-windows"),
@@ -404,4 +431,200 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain("max-w-[min(100%,30rem)]");
     expect(html).not.toContain("Image unavailable");
   });
+});
+
+it("loads native PR media through signed URLs and keeps ordinary external media direct", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  let renderer: ReactTestRenderer | undefined;
+  const resolveMediaResource = (
+    url: string,
+  ): Extract<AssetResource, { _tag: "pull-request-media" }> | null =>
+    url.startsWith("/uploads/") || url.startsWith("https://gitlab.com/owner/repo/-/uploads/")
+      ? {
+          _tag: "pull-request-media",
+          provider: "gitlab",
+          reference: { projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 },
+          url: url.startsWith("/") ? `https://gitlab.com/owner/repo/-${url}` : url,
+        }
+      : null;
+  const text =
+    "![private](/uploads/hash/shot.png)\n\n[Private document](https://gitlab.com/owner/repo/-/uploads/hash/report.pdf)\n\n[clip.mp4](/uploads/hash/clip.mp4)\n\n![public](https://public.example/shot.png)";
+  try {
+    testState.assetState = "loading";
+    await act(async () => {
+      renderer = create(
+        <ChatMarkdown
+          environmentId={threadRef.environmentId}
+          cwd="/repo"
+          text={text}
+          resolveMediaResource={resolveMediaResource}
+        />,
+      );
+    });
+    expect(testState.resources).toContainEqual(
+      expect.objectContaining({
+        _tag: "pull-request-media",
+        url: "https://gitlab.com/owner/repo/-/uploads/hash/shot.png",
+      }),
+    );
+    expect(testState.resources).toContainEqual(
+      expect.objectContaining({
+        _tag: "pull-request-media",
+        url: "https://gitlab.com/owner/repo/-/uploads/hash/clip.mp4",
+      }),
+    );
+    expect(
+      renderer!.root.findAllByType("img").some((node) => node.props.src?.includes("/uploads/")),
+    ).toBe(false);
+    testState.assetState = "success";
+    await act(async () => {
+      renderer!.update(
+        <ChatMarkdown
+          environmentId={threadRef.environmentId}
+          cwd="/repo"
+          text={text}
+          resolveMediaResource={(url) => resolveMediaResource(url)}
+        />,
+      );
+    });
+    expect(
+      renderer!.root
+        .findAllByType("img")
+        .some((node) => node.props.src?.startsWith("https://signed.test/")),
+    ).toBe(true);
+    expect(
+      renderer!.root
+        .findAllByType("a")
+        .some(
+          (node) => node.props.href === "https://gitlab.com/owner/repo/-/uploads/hash/report.pdf",
+        ),
+    ).toBe(true);
+
+    expect(
+      renderer!.root
+        .findAllByType("img")
+        .some((node) => node.props.src === "https://public.example/shot.png"),
+    ).toBe(true);
+  } finally {
+    if (renderer) await act(async () => renderer!.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each([
+  [
+    "github",
+    "github.com",
+    "https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789012",
+  ],
+  ["github", "github.com", "https://raw.githubusercontent.com/other/repo/main/image.png"],
+  ["bitbucket", "bitbucket.org", "https://bitbucket.org/owner/repo/downloads/shot.png"],
+  [
+    "gitlab",
+    "gitlab.com",
+    "https://gitlab.com/owner/repo/uploads/0123456789abcdef0123456789abcdef/icons.svg#icon",
+  ],
+  [
+    "gitlab",
+    "gitlab.com",
+    "https://gitlab.com/owner/repo/uploads/0123456789abcdef0123456789abcdef/shot.png",
+  ],
+  [
+    "forgejo",
+    "code.example.com",
+    "https://code.example.com/attachments/12345678-1234-1234-1234-123456789012",
+  ],
+  [
+    "azure-devops",
+    "dev.azure.com",
+    "https://dev.azure.com/org/project/_apis/git/repositories/repo/pullRequests/1/attachments/shot.png?api-version=7.1-preview.1",
+  ],
+] as const)(
+  "uses the PR context to show private %s attachments in saved comments and editor previews",
+  async (provider, host, url) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    testState.assetState = "success";
+    testState.resources.length = 0;
+    try {
+      await act(async () => {
+        renderer = create(
+          <PullRequestAttachmentContext
+            value={{
+              environmentId: threadRef.environmentId,
+              reference: {
+                projectId: ProjectId.make("project"),
+                host,
+                repository: "owner/repo",
+                number: 1,
+                expectedAccountId: "account",
+              },
+              provider,
+              cwd: "/repo",
+              url: undefined,
+              capabilities: { supported: true, maxBytes: 1024, destination: "pull-request" },
+              upload: async () => "",
+            }}
+          >
+            <PullRequestMarkdown
+              environmentId={threadRef.environmentId}
+              cwd="/repo"
+              text={`![private](${url})`}
+            />
+          </PullRequestAttachmentContext>,
+        );
+      });
+      expect(testState.resources).toContainEqual(
+        expect.objectContaining({
+          _tag: "pull-request-media",
+          provider,
+          reference: expect.objectContaining({ expectedAccountId: "account" }),
+          url: url.split("#", 1)[0],
+        }),
+      );
+      expect(
+        renderer!.root
+          .findAllByType("img")
+          .some((node) => node.props.src?.startsWith("https://signed.test/")),
+      ).toBe(true);
+      if (url.includes("#icon"))
+        expect(
+          renderer!.root.findAllByType("img").some((node) => node.props.src?.endsWith("#icon")),
+        ).toBe(true);
+    } finally {
+      if (renderer) await act(async () => renderer!.unmount());
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it("does not use the legacy GitHub credential when the PR media resolver rejects a URL", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  testState.resources.length = 0;
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(async () => {
+      renderer = create(
+        <ChatMarkdown
+          environmentId={threadRef.environmentId}
+          cwd="/repo"
+          text="![external](https://raw.githubusercontent.com/other/repo/main/image.png)"
+          githubMedia
+          resolveMediaResource={() => null}
+        />,
+      );
+    });
+    expect(testState.resources).toEqual([]);
+    expect(
+      renderer!.root
+        .findAllByType("img")
+        .some(
+          (node) =>
+            node.props.src === "https://raw.githubusercontent.com/other/repo/main/image.png",
+        ),
+    ).toBe(true);
+  } finally {
+    if (renderer) await act(async () => renderer!.unmount());
+    vi.unstubAllGlobals();
+  }
 });

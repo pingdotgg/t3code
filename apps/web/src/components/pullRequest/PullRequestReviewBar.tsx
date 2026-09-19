@@ -12,7 +12,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
+import { PullRequestMarkdownField } from "./PullRequestMarkdownField";
 import { toastManager } from "../ui/toast";
 import {
   pullRequestReviewKey,
@@ -59,9 +59,14 @@ export function PullRequestReviewBar({
   requestChangesSummaryRequired: boolean;
   onSubmitted: () => void;
 }) {
-  const [pending, setPending] = useState(false);
+  const [uploadPending, setUploadPending] = useState(false);
   const comments = usePendingReviewComments(reference);
   const reviewKey = pullRequestReviewKey(reference);
+  const pending = usePullRequestReviewStore((store) => store.submittingReviews[reviewKey] === true);
+  const setReviewSubmitting = usePullRequestReviewStore((store) => store.setReviewSubmitting);
+  const editingComments = usePullRequestReviewStore(
+    (store) => (store.editingComments[reviewKey]?.length ?? 0) > 0,
+  );
   // The panel stays mounted while the selected pull request changes. Keeping summaries beside
   // the keyed line-comment drafts makes the selected pull request's body correct on the first
   // render, before an effect could reset state left behind by the previous one.
@@ -78,34 +83,39 @@ export function PullRequestReviewBar({
   if (offered.length === 0) return null;
 
   const submit = async (verdict: (typeof VERDICTS)[number]) => {
-    if (pending) return;
+    const store = usePullRequestReviewStore.getState();
+    if (
+      store.submittingReviews[reviewKey] ||
+      uploadPending ||
+      (store.editingComments[reviewKey]?.length ?? 0) > 0
+    )
+      return;
     const submittedBody = body;
     const submittedComments = comments;
-    setPending(true);
-    const result = await submitReview({
-      environmentId,
-      input: {
-        ...reference,
-        verdict: verdict.value,
-        body: submittedBody,
-        comments: submittedComments,
-      },
-    });
-    setPending(false);
-    if (result._tag === "Failure") {
-      // The draft is kept: whatever went wrong, retyping the review is not the answer.
+    setReviewSubmitting(reviewKey, true);
+    try {
+      const result = await submitReview({
+        environmentId,
+        input: {
+          ...reference,
+          verdict: verdict.value,
+          body: submittedBody,
+          comments: submittedComments,
+        },
+      });
+      if (result._tag === "Failure") {
+        toastManager.add({ type: "error", title: "The review could not be submitted" });
+        return;
+      }
+      removeComments(reviewKey, submittedComments);
+      clearSummary(reviewKey, submittedBody);
+      toastManager.add({ type: "success", title: verdict.sent });
+      onSubmitted();
+    } catch {
       toastManager.add({ type: "error", title: "The review could not be submitted" });
-      return;
+    } finally {
+      setReviewSubmitting(reviewKey, false);
     }
-    // More remarks may have been added while the host was accepting this snapshot. Leave those,
-    // and any summary revised in the meantime, ready for the next review.
-    removeComments(
-      reviewKey,
-      submittedComments.map((comment) => comment.id),
-    );
-    clearSummary(reviewKey, submittedBody);
-    toastManager.add({ type: "success", title: verdict.sent });
-    onSubmitted();
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
@@ -128,7 +138,10 @@ export function PullRequestReviewBar({
           </Button>
         ) : null}
       </div>
-      <Textarea
+      <PullRequestMarkdownField
+        environmentId={environmentId}
+        onUploadPendingChange={setUploadPending}
+        disabled={pending}
         size="sm"
         className="mt-2"
         value={body}
@@ -138,15 +151,20 @@ export function PullRequestReviewBar({
             : "Summarize your review (optional)"
         }
         aria-label="Review summary"
-        onChange={(event) => setSummary(reviewKey, event.target.value)}
+        onChange={(value) => setSummary(reviewKey, value)}
       />
+      {editingComments ? (
+        <p className="mt-2 text-xs text-muted-foreground" role="status">
+          Finish editing pending comments before submitting.
+        </p>
+      ) : null}
       <div className="mt-2 flex flex-wrap justify-end gap-2">
         {offered.map((verdict) => (
           <Button
             key={verdict.value}
             size="xs"
             variant={verdict.value === "comment" ? "outline" : "default"}
-            disabled={pending || !canSubmit(verdict.value)}
+            disabled={pending || uploadPending || editingComments || !canSubmit(verdict.value)}
             onClick={() => void submit(verdict)}
           >
             <span className="flex items-center gap-1.5">

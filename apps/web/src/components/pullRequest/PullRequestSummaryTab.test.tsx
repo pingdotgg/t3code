@@ -212,3 +212,48 @@ it("opens bot reports in pages without hiding human comments", () => {
     renderer.root.findAllByType("p").some((p) => p.children.join("").startsWith("Bot report")),
   ).toBe(false);
 });
+
+it("shows each thread once while keeping standalone comments separate", () => {
+  const comment = {
+    id: "thread-comment",
+    body: "Review this change",
+    author: detail.author,
+    createdAt: detail.createdAt,
+    url: null,
+  };
+  act(() => {
+    renderer = create(
+      render({
+        ...detail,
+        reviewThreads: [
+          {
+            id: "discussion",
+            path: null,
+            line: null,
+            side: "right",
+            isResolved: false,
+            isOutdated: false,
+            comments: [comment],
+          },
+        ],
+        comments: [
+          { ...comment, kind: "review-comment", path: null, reviewState: null },
+          {
+            ...comment,
+            id: "standalone",
+            body: "General update",
+            kind: "issue-comment",
+            path: null,
+            reviewState: null,
+          },
+        ],
+        commentCount: 2,
+      }),
+    );
+  });
+  const paragraphs = renderer.root.findAllByType("p");
+  expect(paragraphs.filter((node) => node.children.includes("Review this change"))).toHaveLength(1);
+  expect(paragraphs.filter((node) => node.children.includes("General update"))).toHaveLength(1);
+  expect(heading("Threads (1)").props["aria-expanded"]).toBe(true);
+  expect(heading("Comments (1)").props["aria-expanded"]).toBe(true);
+});
