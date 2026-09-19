@@ -1084,7 +1084,20 @@ function useNewKeybindingDraft({
     isRecording: false,
     isWhenDraftValid: true,
   });
-  const { keyDraft, whenDraft, isRecording, isWhenDraftValid } = draft;
+  const [hasEditedWhen, setHasEditedWhen] = useState(false);
+  const { keyDraft, whenDraft: customWhenDraft, isRecording, isWhenDraftValid } = draft;
+  const whenDraft = hasEditedWhen
+    ? customWhenDraft
+    : commandDraft === "thread.archive" || commandDraft === "thread.delete"
+      ? ({
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
+        } satisfies KeybindingWhenNode)
+      : undefined;
+  const setWhenDraft = (whenDraft: KeybindingWhenNode | undefined) => {
+    setHasEditedWhen(true);
+    setDraft({ whenDraft });
+  };
   const whenDraftExpression = whenAstToExpression(whenDraft);
   const conflictLabels = keybindingConflictLabels(allRows, {
     rowId: "new",
@@ -1118,6 +1131,7 @@ function useNewKeybindingDraft({
   return {
     commandDraft,
     setCommandDraft,
+    setWhenDraft,
     keyDraft,
     whenDraft,
     whenDraftExpression,
@@ -1213,7 +1227,7 @@ function NewKeybindingWhen({
       expression={draft.whenDraftExpression}
       value={draft.whenDraft}
       variables={variables}
-      onChange={(whenDraft) => draft.setDraft({ whenDraft })}
+      onChange={draft.setWhenDraft}
       onValidityChange={(isWhenDraftValid) => draft.setDraft({ isWhenDraftValid })}
     />
   );
