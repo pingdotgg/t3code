@@ -23,6 +23,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -56,6 +57,7 @@ import {
   JujutsuIcon,
   type Icon,
 } from "../Icons";
+import { PullRequestReviewSettingsSection } from "./PullRequestReviewSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
@@ -502,6 +504,8 @@ function EmptySourceControlDiscovery({
 
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const isPrimaryEnvironment = environment?.environmentId === primaryEnvironmentId;
   // Discovery scans one machine's tools, so it shows the representative
   // environment (named in the section title when several are selected);
   // the settings rows above it fan out like everywhere else.
@@ -601,6 +605,7 @@ export function SourceControlSettingsPanel() {
       )}
 
       <SourceControlWritingSettingsSection />
+      {isPrimaryEnvironment ? <PullRequestReviewSettingsSection /> : null}
     </SettingsPageContainer>
   );
 }

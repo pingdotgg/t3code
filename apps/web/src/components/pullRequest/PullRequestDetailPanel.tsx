@@ -1,8 +1,13 @@
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
@@ -14,6 +19,7 @@ import {
   type PullRequestRef,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -22,6 +28,7 @@ import {
   ArrowUpRightIcon,
   BookOpenIcon,
   CircleDotIcon,
+  ClipboardCheckIcon,
   CopyIcon,
   ChevronDownIcon,
   ExternalLinkIcon,
@@ -78,12 +85,16 @@ import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { pullRequestEnvironment } from "~/state/pullRequests";
-import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/pullRequests";
+import {
+  pullRequestEnvironment,
+  usePullRequestTurnRefresh,
+  useSharedPullRequestSummary,
+} from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
+import { waitForStartedServerThread } from "~/components/ChatView.logic";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { useUiStateStore } from "~/uiStateStore";
 
@@ -132,6 +143,7 @@ import {
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
+  buildReviewPullRequestHandoff,
   handoffPrompt,
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
@@ -945,6 +957,42 @@ export function PullRequestDetailPanel({
   const acting =
     pickableEnvironments.find((entry) => entry.environmentId === chosenEnvironmentId) ?? null;
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
+  const pullRequestLinking = usePullRequestLinking(actingEnvironmentId);
+  // "Ask"/"Explain"/"Review" leave a thread on whatever branch it already started on — checking
+  // it out is what the other two hand-offs are for — so the server's own branch-to-PR detection
+  // never fires for these. Linking explicitly, the same way a reader could by hand from a
+  // rendered link's context menu (see externalLinkContextMenu.ts), gets threads opened this way
+  // the same PR-aware features (auto-settlement, etc.) without asking the reader to find and
+  // right-click a link buried in a chat message.
+  const linkThreadToPullRequestWhenStarted = useCallback(
+    async (targetEnvironmentId: EnvironmentId, threadId: ThreadId, url: string) => {
+      // A reader may sit on the composer a while before sending — the thread this draft will
+      // become does not exist on the server yet, so there is nothing to link until it starts. A
+      // long, bounded wait covers a normal "read it over, then send" delay without hanging onto
+      // the subscription forever if the draft is abandoned instead.
+      const started = await waitForStartedServerThread(
+        scopeThreadRef(targetEnvironmentId, threadId),
+        15 * 60 * 1000,
+      );
+      if (!started) return;
+      try {
+        await pullRequestLinking.changeLink(
+          scopeThreadRef(targetEnvironmentId, threadId),
+          url,
+          true,
+        );
+      } catch (error) {
+        console.warn("Failed to link thread to pull request", error);
+      }
+    },
+    [pullRequestLinking],
+  );
+  // The checklist "Review this PR" hands the agent: the reader's own device-local preference,
+  // not a property of whichever server happens to host this pull request — a PR can belong to
+  // any connected environment, and the checklist should read the same regardless of which one.
+  const pullRequestReviewInstructions = useClientSettings(
+    (settings) => settings.pullRequestReviewInstructions,
+  );
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId: actingEnvironmentId,
     cwd: acting?.workspaceRoot ?? detail?.workspaceRoot ?? null,
@@ -1110,8 +1158,8 @@ export function PullRequestDetailPanel({
   const openThreadWithTask = async (
     projectRef: ReturnType<typeof scopeProjectRef>,
     task: ThreadTask | null,
-    opened?: { draftId: DraftId },
-  ): Promise<{ draftId: DraftId } | null> => {
+    opened?: { draftId: DraftId; threadId: ThreadId },
+  ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const session =
       opened ??
       (await newThread(projectRef).then(
@@ -1145,6 +1193,7 @@ export function PullRequestDetailPanel({
     }
     setHandoff(kind);
     const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
+    const canLinkPullRequest = pullRequestLinking.canLink(detail.url);
     const opened = await openThreadWithTask(projectRef, task);
     setHandoff(null);
     if (opened === null) {
@@ -1154,6 +1203,9 @@ export function PullRequestDetailPanel({
         description: "Try again from the project, or open a thread first.",
       });
       return;
+    }
+    if (canLinkPullRequest) {
+      void linkThreadToPullRequestWhenStarted(actingEnvironmentId, opened.threadId, detail.url);
     }
     toastManager.add({
       type: "success",
@@ -1327,6 +1379,25 @@ export function PullRequestDetailPanel({
         isDraft: detail.isDraft,
       }),
     });
+  };
+
+  const reviewPullRequest = () => {
+    if (!detail) return;
+    void startAsk(
+      "review",
+      buildReviewPullRequestHandoff(
+        {
+          number: detail.number,
+          title: detail.title,
+          url: detail.url,
+          headBranch: detail.headBranch,
+          baseBranch: detail.baseBranch,
+          state: detail.state,
+          isDraft: detail.isDraft,
+        },
+        pullRequestReviewInstructions,
+      ),
+    );
   };
 
   const addSelectionToAgent = (selection: PullRequestAgentSelectionInput) => {
@@ -1998,6 +2069,15 @@ export function PullRequestDetailPanel({
                       <span>{handoff === "explain" ? "Opening..." : "Explain this PR"}</span>
                       <span className="text-xs text-muted-foreground">
                         A walk through the diff and what to read closely.
+                      </span>
+                    </span>
+                  </MenuItem>
+                  <MenuItem disabled={handoff !== null} onClick={reviewPullRequest}>
+                    <ClipboardCheckIcon className="mt-0.5 size-3.5 shrink-0 self-start" />
+                    <span className="flex min-w-0 flex-col">
+                      <span>{handoff === "review" ? "Opening..." : "Review this PR"}</span>
+                      <span className="text-xs text-muted-foreground">
+                        Runs your configured review checklist against the diff.
                       </span>
                     </span>
                   </MenuItem>
