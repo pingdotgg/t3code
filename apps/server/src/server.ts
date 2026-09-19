@@ -78,6 +78,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerSingleton from "./serverSingleton.ts";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor.ts";
 import { RuntimeReceiptBusLive } from "./orchestration/Layers/RuntimeReceiptBus.ts";
 import { ProviderRuntimeIngestionLive } from "./orchestration/Layers/ProviderRuntimeIngestion.ts";
@@ -220,6 +221,22 @@ const RelayClientLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     return RelayClient.layerCloudflared({ baseDir: config.baseDir });
+  }),
+);
+
+/**
+ * Claims the data directory before anything binds a port or opens the database.
+ *
+ * Provided into both `HttpServerLive` and `RuntimeDependenciesLive` (same layer
+ * identity, so one acquire) so the lock precedes the HTTP bind *and* SQLite
+ * open. Providing it only into the HTTP layer left persistence free to
+ * initialize in parallel and write `state.sqlite` before a second process
+ * refused.
+ */
+const ServerSingletonLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    yield* ServerSingleton.acquireServerSingleton(config.stateDir);
   }),
 );
 
@@ -559,6 +576,7 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
   Layer.provide(NetService.layer),
+  Layer.provide(ServerSingletonLive),
 );
 
 const commandReadinessLayer = HttpRouter.middleware(
@@ -614,9 +632,22 @@ const makeServerLayer = Layer.unwrap(
 
     const httpListeningLayer = Layer.effectDiscard(
       Effect.gen(function* () {
-        yield* HttpServer.HttpServer;
+        const server = yield* HttpServer.HttpServer;
         const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
         yield* startup.markHttpListening;
+        const address = server.address;
+        if (typeof address === "string" || !("port" in address)) {
+          return;
+        }
+        // Stamp the port as soon as the socket is bound. Waiting until
+        // runtimeStateLayer's awaitActivation left a window where the server
+        // was listening but a second launch's refusal could not name the port.
+        yield* ServerSingleton.serverLockPath(config.stateDir).pipe(
+          Effect.flatMap((lockPath) =>
+            ServerSingleton.recordServerLockPort(lockPath, address.port),
+          ),
+          Effect.ignore,
+        );
       }),
     );
     const runtimeStateLayer = Layer.effectDiscard(
@@ -631,6 +662,7 @@ const makeServerLayer = Layer.unwrap(
           }
 
           const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+
           const state = yield* makePersistedServerRuntimeState({
             config,
             port: address.port,
@@ -803,7 +835,7 @@ const makeServerLayer = Layer.unwrap(
       Layer.provideMerge(runtimeServicesLive),
       Layer.provide(activationLayer),
       Layer.provideMerge(serverRelayBrokerTracingLayer),
-      Layer.provideMerge(HttpServerLive),
+      Layer.provideMerge(HttpServerLive.pipe(Layer.provide(ServerSingletonLive))),
       Layer.provide(ApplicationObservabilityLive),
       Layer.provideMerge(FetchHttpClient.layer),
       // PR reads, Git operations, and WebSocket discovery share one process limiter.
