@@ -15,7 +15,7 @@
 
 /**
  * Opaque handle to a key event.
- * 
+ *
  * This handle represents a keyboard input event containing information about
  * the physical key pressed, modifiers, and generated text.
  *
@@ -41,14 +41,14 @@ typedef enum GHOSTTY_ENUM_TYPED {
 /**
  * Keyboard modifier keys bitmask.
  *
- * A bitmask representing all keyboard modifiers. This tracks which modifier keys 
- * are pressed and, where supported by the platform, which side (left or right) 
+ * A bitmask representing all keyboard modifiers. This tracks which modifier keys
+ * are pressed and, where supported by the platform, which side (left or right)
  * of each modifier is active.
  *
  * Use the GHOSTTY_MODS_* constants to test and set individual modifiers.
  *
  * Modifier side bits are only meaningful when the corresponding modifier bit is set.
- * Not all platforms support distinguishing between left and right modifier 
+ * Not all platforms support distinguishing between left and right modifier
  * keys and Ghostty is built to expect that some platforms may not provide this
  * information.
  *
@@ -93,13 +93,13 @@ typedef uint16_t GhosttyMods;
 /**
  * Physical key codes.
  *
- * The set of key codes that Ghostty is aware of. These represent physical keys 
- * on the keyboard and are layout-independent. For example, the "a" key on a US 
- * keyboard is the same as the "ф" key on a Russian keyboard, but both will 
+ * The set of key codes that Ghostty is aware of. These represent physical keys
+ * on the keyboard and are layout-independent. For example, the "a" key on a US
+ * keyboard is the same as the "ф" key on a Russian keyboard, but both will
  * report the same key_a value.
  *
- * Layout-dependent strings are provided separately as UTF-8 text and are produced 
- * by the platform. These values are based on the W3C UI Events KeyboardEvent code 
+ * Layout-dependent strings are provided separately as UTF-8 text and are produced
+ * by the platform. These values are based on the W3C UI Events KeyboardEvent code
  * standard. See: https://www.w3.org/TR/uievents-code
  *
  * @ingroup key
@@ -302,26 +302,26 @@ typedef enum GHOSTTY_ENUM_TYPED {
 
 /**
  * Create a new key event instance.
- * 
+ *
  * Creates a new key event with default values. The event must be freed using
  * ghostty_key_event_free() when no longer needed.
- * 
+ *
  * @param allocator Pointer to the allocator to use for memory management, or NULL to use the default allocator
  * @param event Pointer to store the created key event handle
  * @return GHOSTTY_SUCCESS on success, or an error code on failure
- * 
+ *
  * @ingroup key
  */
 GHOSTTY_API GhosttyResult ghostty_key_event_new(const GhosttyAllocator *allocator, GhosttyKeyEvent *event);
 
 /**
  * Free a key event instance.
- * 
+ *
  * Releases all resources associated with the key event. After this call,
  * the event handle becomes invalid and must not be used.
- * 
+ *
  * @param event The key event handle to free (may be NULL)
- * 
+ *
  * @ingroup key
  */
 GHOSTTY_API void ghostty_key_event_free(GhosttyKeyEvent event);

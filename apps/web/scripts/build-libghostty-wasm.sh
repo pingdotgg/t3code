@@ -10,7 +10,7 @@ VENDOR_DIR="${WEB_DIR}/src/terminal/ghostty/vendor"
 
 GHOSTTY_REVISION="$(tr -d '[:space:]' < "${CANONICAL_VENDOR_DIR}/VERSION")"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/t3code/ghostty-${GHOSTTY_REVISION:0:8}}"
-GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.15.2}"
+GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.16.0}"
 GHOSTTY_ZIG="${GHOSTTY_ZIG:-}"
 
 log() {
@@ -99,7 +99,7 @@ log "building ${GHOSTTY_REVISION} for wasm32-freestanding"
 (
   cd "${GHOSTTY_SOURCE_DIR}"
   # The pinned revision rides along as semver build metadata so the artifact
-  # identifies its own provenance through ghostty_build_info(); mobile's
+  # identifies its own provenance through ghostty_build_info(); the canonical
   # VERSION file stays the single source of truth for the pin.
   "${GHOSTTY_ZIG}" build \
     -Demit-lib-vt \
