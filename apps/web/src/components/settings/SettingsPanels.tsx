@@ -45,6 +45,7 @@ import {
   type InterfaceLanguage,
   INTERFACE_LANGUAGE_LABELS,
 } from "@t3tools/contracts/settings";
+import { setInterfaceLanguage } from "../../i18n/translate";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
@@ -2106,6 +2107,9 @@ export function GeneralSettingsPanel() {
   ] as const;
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  useEffect(() => {
+    setInterfaceLanguage(settings.interfaceLanguage);
+  }, [settings.interfaceLanguage]);
   const navigate = useNavigate();
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   // The representative environment supplies the provider list for pickers;

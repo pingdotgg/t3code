@@ -49,6 +49,7 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { useTranslate } from "../../i18n/translate";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -89,15 +90,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/archived": ArchiveIcon,
 };
 
-const SETTINGS_NAV_ITEMS: ReadonlyArray<{
-  label: string;
-  to: SettingsPath;
-  icon: ComponentType<{ className?: string }>;
-}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[]).map((to) => ({
-  to,
-  label: SETTINGS_SECTION_LABELS[to],
-  icon: SETTINGS_SECTION_ICONS[to],
-}));
+const SETTINGS_NAV_PATHS = Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[];
 
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
@@ -105,11 +98,21 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+  const t = useTranslate();
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
-  const navItems = SETTINGS_NAV_ITEMS.filter(
+  const allNavItems = useMemo(
+    () =>
+      SETTINGS_NAV_PATHS.map((to) => ({
+        to,
+        label: t(SETTINGS_SECTION_LABELS[to]),
+        icon: SETTINGS_SECTION_ICONS[to],
+      })),
+    [t],
+  );
+  const navItems = allNavItems.filter(
     (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
   );
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
@@ -310,10 +313,10 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     <SettingsSectionIcon to={item.to} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-sidebar-foreground">
-                        {item.title}
+                        {t(item.title)}
                       </span>
                       <span className="block truncate text-[11px] text-sidebar-muted-foreground/75">
-                        {SETTINGS_SECTION_LABELS[item.to]}
+                        {t(SETTINGS_SECTION_LABELS[item.to])}
                       </span>
                     </span>
                   </SidebarMenuButton>
