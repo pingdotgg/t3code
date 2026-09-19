@@ -81,5 +81,5 @@ export const OmpDriver: ProviderDriver<OmpSettings, OmpDriverEnv> = {
         adapter,
         textGeneration,
       } satisfies ProviderInstance;
-    }).pipe(Effect.mapError((cause) => cause instanceof ProviderDriverError ? cause : new ProviderDriverError({ driver: DRIVER_KIND, instanceId, detail: "Could not create omp provider.", cause }))),
+    }).pipe(Effect.mapError((cause) => Schema.is(ProviderDriverError)(cause) ? cause : new ProviderDriverError({ driver: DRIVER_KIND, instanceId, detail: "Could not create omp provider.", cause }))),
 };

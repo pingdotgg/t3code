@@ -49,7 +49,7 @@ it("keeps unrelated ACP updates out of the canonical stream", () => {
     threadId: ThreadId.make("thread-omp"),
     eventId: EventId.make("event-omp"),
     createdAt: "2026-09-19T00:00:00.000Z",
-    update: { sessionUpdate: "usage_update", used: 1, size: 2 } as never,
+    update: { sessionUpdate: "current_mode_update" } as never,
   });
 
   expect(event).toBeUndefined();
@@ -57,10 +57,10 @@ it("keeps unrelated ACP updates out of the canonical stream", () => {
 
 it("translates ACP approval decisions and the omp model catalog", () => {
   expect(ompPermissionOptionId([
-    { optionId: "allow_once", name: "Allow once" },
-    { optionId: "reject_once", name: "Reject once" },
+    { optionId: "allow_once", name: "Allow once", kind: "allow_once" },
+    { optionId: "reject_once", name: "Reject once", kind: "reject_once" },
   ], "accept")).toBe("allow_once");
-  expect(ompPermissionOptionId([{ optionId: "reject_once", name: "Reject once" }], "cancel"))
+  expect(ompPermissionOptionId([{ optionId: "reject_once", name: "Reject once", kind: "reject_once" }], "cancel"))
     .toBeUndefined();
   expect(ompModelsFromConfig([{
     id: "model", name: "Model", category: "model", type: "select", currentValue: "omp/a",

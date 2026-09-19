@@ -19,8 +19,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
@@ -36,6 +38,8 @@ import { parsePermissionRequest, type AcpToolCallState } from "../acp/AcpRuntime
 import * as AcpSessionRuntime from "../acp/AcpSessionRuntime.ts";
 
 const PROVIDER = ProviderDriverKind.make("omp");
+const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
+const isProviderAdapterSessionNotFoundError = Schema.is(ProviderAdapterSessionNotFoundError);
 const ResumeCursor = (value: unknown): string | undefined =>
   typeof value === "object" && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 1
     ? typeof (value as { sessionId?: unknown }).sessionId === "string"
@@ -118,9 +122,11 @@ export function mapOmpSessionUpdate(input: {
   if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
     const toolCall: AcpToolCallState = {
       toolCallId: update.toolCallId,
-      kind: update.kind ?? undefined,
-      title: update.title ?? undefined,
-      status: update.status === "in_progress" ? "inProgress" : update.status ?? undefined,
+      ...(update.kind != null ? { kind: update.kind } : {}),
+      ...(update.title != null ? { title: update.title } : {}),
+      ...(update.status != null
+        ? { status: update.status === "in_progress" ? "inProgress" : update.status }
+        : {}),
       data: update.rawInput && typeof update.rawInput === "object" ? update.rawInput as Record<string, unknown> : {},
     };
     return makeAcpToolCallEvent({
@@ -151,10 +157,19 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
   const crypto = yield* Crypto.Crypto;
   const events = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, SessionContext>();
-  const now = () => DateTime.formatIso(DateTime.now);
+  const now = Effect.map(DateTime.now, DateTime.formatIso);
   const emit = (event: ProviderRuntimeEvent) => PubSub.publish(events, event).pipe(Effect.asVoid);
-  const id = crypto.randomUUIDv4.pipe(Effect.map(EventId.make));
-  const requireSession = (threadId: ThreadId) => {
+  const id = crypto.randomUUIDv4.pipe(
+    Effect.map(EventId.make),
+    Effect.mapError(
+      (cause) =>
+        new EffectAcpErrors.AcpTransportError({
+          detail: "Failed to generate an omp runtime event identifier.",
+          cause,
+        }),
+    ),
+  );
+  const requireSession = (threadId: ThreadId): Effect.Effect<SessionContext, ProviderAdapterSessionNotFoundError> => {
     const session = sessions.get(threadId);
     return session
       ? Effect.succeed(session)
@@ -179,29 +194,44 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       const previous = sessions.get(input.threadId);
       if (previous) yield* stop(previous);
       const scope = yield* Scope.make("sequential");
+      const resumeSessionId = ResumeCursor(input.resumeCursor);
+      const spawn: AcpSessionRuntime.AcpSpawnInput = options.environment === undefined
+        ? { command: options.binaryPath || "omp", args: ["acp"], cwd: input.cwd }
+        : { command: options.binaryPath || "omp", args: ["acp"], cwd: input.cwd, env: options.environment };
       const runtime = yield* AcpSessionRuntime.make({
-        spawn: { command: options.binaryPath || "omp", args: ["acp"], cwd: input.cwd, env: options.environment },
+        spawn,
         cwd: input.cwd,
         clientInfo: { name: "t3-code", version: "0.0.0" },
         authMethodId: "agent",
-        ...(ResumeCursor(input.resumeCursor) ? { resumeSessionId: ResumeCursor(input.resumeCursor) } : {}),
+        ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
         resumeMethod: "load",
         cancelBehavior: "wait-for-prompt",
-        childProcessSpawner: options.childProcessSpawner,
-      }).pipe(Effect.provideService(Scope.Scope, scope));
+        }).pipe(
+          Effect.provideService(Scope.Scope, scope),
+          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, options.childProcessSpawner),
+        );
       const pending = new Map<ApprovalRequestId, PendingPermission>();
       let context: SessionContext | undefined;
       yield* runtime.handleRequestPermission((request) => {
         if (!context) return Effect.succeed({ outcome: { outcome: "cancelled" } });
+        const activeContext = context;
         return Effect.gen(function* () {
-          const requestId = ApprovalRequestId.make(yield* crypto.randomUUIDv4);
+          const requestId = ApprovalRequestId.make(yield* crypto.randomUUIDv4.pipe(
+            Effect.mapError((cause) => EffectAcpErrors.AcpRequestError.internalError(
+              "Could not create an omp permission request id.",
+              undefined,
+              { cause },
+            )),
+          ));
           const response = yield* Deferred.make<EffectAcpSchema.RequestPermissionResponse>();
           pending.set(requestId, { request, response });
-          const stamp = { eventId: yield* id, createdAt: yield* now() };
+          const stamp = { eventId: yield* id, createdAt: yield* now };
           const parsed = parsePermissionRequest(request);
           yield* emit({
             type: "request.opened", ...stamp, provider: PROVIDER, threadId: input.threadId,
-            turnId: context.activeTurnId, requestId: RuntimeRequestId.make(requestId),
+            ...(activeContext.activeTurnId ? { turnId: activeContext.activeTurnId } : {}),
+            requestId: RuntimeRequestId.make(requestId),
             payload: { requestType: "dynamic_tool_call", detail: parsed.detail ?? "omp requests permission.", args: request },
             raw: { source: "acp.jsonrpc", method: "session/request_permission", payload: request },
           });
@@ -209,7 +239,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
         });
       });
       const started = yield* runtime.start();
-      const createdAt = yield* now();
+      const createdAt = yield* now;
       const session: ProviderSession = {
         provider: PROVIDER, providerInstanceId: options.instanceId, threadId: input.threadId,
         cwd: input.cwd, status: "ready", runtimeMode: input.runtimeMode, createdAt, updatedAt: createdAt,
@@ -225,15 +255,28 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
               ? { sessionUpdate: "agent_message_chunk", content: { type: "text", text: event.text } }
               : event._tag === "UsageUpdated"
                 ? { sessionUpdate: "usage_update", used: event.used, size: event.size }
-                : { sessionUpdate: "tool_call_update", toolCallId: event.toolCall.toolCallId, title: event.toolCall.title, kind: event.toolCall.kind, status: event.toolCall.status, rawInput: event.toolCall.data };
-            const mapped = mapOmpSessionUpdate({ threadId: input.threadId, turnId: context?.activeTurnId, update: update as never, eventId: yield* id, createdAt: yield* now() });
+              : {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: event.toolCall.toolCallId,
+                  ...(event.toolCall.title != null ? { title: event.toolCall.title } : {}),
+                  ...(event.toolCall.kind != null ? { kind: event.toolCall.kind } : {}),
+                  ...(event.toolCall.status != null ? { status: event.toolCall.status } : {}),
+                  rawInput: event.toolCall.data,
+                };
+              const mapped = mapOmpSessionUpdate({
+                threadId: input.threadId,
+                ...(context?.activeTurnId ? { turnId: context.activeTurnId } : {}),
+                update: update as never,
+                eventId: yield* id,
+                createdAt: yield* now,
+              });
             if (mapped) yield* emit(mapped);
           });
         }
         return Effect.void;
       }).pipe(Effect.forkIn(scope));
       return session;
-    }).pipe(Effect.mapError((cause) => cause instanceof ProviderAdapterValidationError || cause instanceof ProviderAdapterSessionNotFoundError ? cause : error(input.threadId, "session/new", cause)));
+    }).pipe(Effect.mapError((cause) => isProviderAdapterValidationError(cause) || isProviderAdapterSessionNotFoundError(cause) ? cause : error(input.threadId, "session/new", cause)));
 
   const sendTurn: Adapter["sendTurn"] = (input: ProviderSendTurnInput) =>
     Effect.gen(function* () {
@@ -244,7 +287,7 @@ export const makeOmpAdapter = Effect.fn("makeOmpAdapter")(function* (options: Om
       const prompt = yield* context.runtime.prompt({ prompt: [{ type: "text", text: input.input }] }).pipe(Effect.forkIn(context.scope));
       context.prompt = prompt;
       return { threadId: input.threadId, turnId, resumeCursor: context.session.resumeCursor };
-    }).pipe(Effect.mapError((cause) => cause instanceof ProviderAdapterValidationError ? cause : error(input.threadId, "session/prompt", cause)));
+    }).pipe(Effect.mapError((cause) => isProviderAdapterValidationError(cause) ? cause : error(input.threadId, "session/prompt", cause)));
 
   const respondToRequest: Adapter["respondToRequest"] = (threadId, requestId, decision) =>
     Effect.gen(function* () {
