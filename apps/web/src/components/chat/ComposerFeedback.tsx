@@ -28,7 +28,11 @@ export function feedbackBannerItem(
           size="xs"
           variant="ghost"
           onClick={() => {
-            void writeTextToClipboard(submission.feedbackId, "Codex feedback thread ID").catch(
+            void writeTextToClipboard(submission.feedbackId, "Codex feedback thread ID").then(
+              (didCopy) => {
+                if (!didCopy) return;
+                toastManager.add({ type: "success", title: "Thread ID copied" });
+              },
               (error: unknown) => {
                 toastManager.add({
                   type: "error",
