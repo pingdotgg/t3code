@@ -1,11 +1,10 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import {
-  NativeHeaderToolbar,
-  NativeStackScreenOptions,
-  nativeHeaderScrollEdgeEffects,
-} from "../../native/StackHeader";
+import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { ScreenHeader } from "../../components/ScreenHeader";
+import type { ScreenHeaderMenuItem } from "../../components/ScreenHeader.types";
+import type { ReviewSectionItem } from "./reviewModel";
+import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import {
   memo,
@@ -33,8 +32,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
 import { cn } from "../../lib/cn";
 import { environmentCatalog } from "../../connection/catalog";
@@ -50,17 +48,7 @@ import {
   useAdaptiveWorkspacePaneRole,
   useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
-import { useEnvironmentQuery } from "../../state/query";
-import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
-import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
-import { useThreadSelection } from "../../state/use-thread-selection";
-import { vcsEnvironment } from "../../state/vcs";
-import {
-  AndroidWorkspaceSidebarButton,
-  WorkspaceSidebarToolbar,
-} from "../layout/workspace-sidebar-toolbar";
-import { ThreadGitMenu } from "../threads/ThreadGitControls";
 import { useReviewCacheForThread } from "./reviewState";
 import {
   isNativeReviewDiffDrawEvent,
@@ -78,8 +66,95 @@ import { useReviewCommentSelectionController } from "./useReviewCommentSelection
 import { resolveReviewAvailability } from "./reviewAvailability";
 import { resolveSelectedReviewFileId } from "./reviewPaneSelection";
 import { buildReviewSectionMenu } from "./review-section-menu";
-import type { ReviewSectionItem } from "./reviewModel";
 import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
+
+function ReviewHeader(
+  props: Parameters<typeof useReviewHeaderPresentation>[0] & {
+    readonly iconColor: string;
+    readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
+    readonly showSectionToolbar: boolean;
+    readonly showChangedFilesToggle: boolean;
+    readonly onSelectSection: (sectionId: string) => void;
+    readonly onReturnToThread: () => void;
+  },
+) {
+  const { panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const presentation = useReviewHeaderPresentation(props);
+  const sectionAction = (
+    section: ReviewSectionItem | null,
+    title: string,
+  ): ScreenHeaderMenuItem => ({
+    id: section ? `section:${section.id}` : `unavailable:${title}`,
+    title,
+    disabled: section === null,
+    selected: section !== null && section.id === props.selectedSection?.id,
+    onPress: () => {
+      if (section) props.onSelectSection(section.id);
+    },
+  });
+  return (
+    <ScreenHeader
+      title={presentation.title}
+      subtitle={presentation.subtitle}
+      onBack={props.onReturnToThread}
+      hideBottomBorder
+      options={{ headerTintColor: props.iconColor, headerTitle: props.title }}
+      backInSplitView={{ accessibilityLabel: "Back to chat", icon: "chevron.left" }}
+      actions={
+        props.showChangedFilesToggle
+          ? [
+              {
+                accessibilityLabel: panes.auxiliaryPaneVisible
+                  ? "Hide changed files"
+                  : "Show changed files",
+                icon: "sidebar.right",
+                selected: panes.auxiliaryPaneVisible,
+                onPress: toggleAuxiliaryPane,
+              },
+            ]
+          : undefined
+      }
+      menus={[
+        ...(presentation.gitMenu ? [presentation.gitMenu] : []),
+        ...(props.showSectionToolbar
+          ? [
+              {
+                title: "Select diff",
+                icon: presentation.menuIcon,
+                items: [
+                  {
+                    id: "sections",
+                    inline: true,
+                    items: [
+                      sectionAction(props.sectionMenu.workingTree, "Working tree"),
+                      sectionAction(props.sectionMenu.branchChanges, "Branch changes"),
+                      sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                    ],
+                  },
+                  ...(props.sectionMenu.turns.length > 0
+                    ? [
+                        {
+                          id: "turns",
+                          title: "Turn",
+                          items: props.sectionMenu.turns.map((section) => ({
+                            id: `section:${section.id}`,
+                            title: section.title,
+                            subtitle: section.subtitle ?? undefined,
+                            selected: section.id === props.selectedSection?.id,
+                            onPress: () => props.onSelectSection(section.id),
+                          })),
+                        },
+                      ]
+                    : []),
+                  ...(presentation.refreshAction ? [presentation.refreshAction] : []),
+                ],
+              },
+            ]
+          : []),
+      ]}
+    />
+  );
+}
 
 const REVIEW_HEADER_SPACING = 0;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
@@ -187,7 +262,7 @@ const ReviewFileNavigatorRow = memo(function ReviewFileNavigatorRow(props: {
         Platform.OS === "android"
           ? cn(
               "mt-1 min-h-12 justify-center rounded-[20px] px-3 py-2 active:bg-subtle",
-              selected && "bg-thread-selected",
+              selected && "bg-subtle-strong",
             )
           : selected
             ? "mt-1 min-h-12 justify-center rounded-xl bg-subtle-strong px-3 py-2"
@@ -206,8 +281,10 @@ const ReviewFileNavigatorRow = memo(function ReviewFileNavigatorRow(props: {
         {file.path}
       </Text>
       <View className="mt-1 flex-row gap-2">
-        <Text className="text-2xs font-t3-bold text-emerald-600">+{file.additions}</Text>
-        <Text className="text-2xs font-t3-bold text-rose-600">-{file.deletions}</Text>
+        <Text className="text-2xs font-t3-bold text-adaptive-emerald-700-300">
+          +{file.additions}
+        </Text>
+        <Text className="text-2xs font-t3-bold text-adaptive-rose-700-300">-{file.deletions}</Text>
       </View>
     </Pressable>
   );
@@ -370,10 +447,9 @@ type ReviewSheetProps = StaticScreenProps<{
 }>;
 
 export function ReviewSheet(props: ReviewSheetProps) {
-  const isAndroid = Platform.OS === "android";
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   useAdaptiveWorkspacePaneRole("inspector");
-  const { panes, showAuxiliaryPane, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { panes, showAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { themeAppearance: selectedTheme } = useAppearancePreferences();
@@ -384,23 +460,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const { draftMessage } = useThreadDraftForThread({ environmentId, threadId });
   const reviewCache = useReviewCacheForThread({ environmentId, threadId });
-  /* ─── Git actions for the toolbar menu (commit/push without leaving review) ── */
-  const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const gitState = useSelectedThreadGitState();
-  const gitActions = useSelectedThreadGitActions();
-  const gitStatusQuery = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
-      ? vcsEnvironment.status({
-          environmentId: selectedThread.environmentId,
-          input: { cwd: selectedThreadCwd },
-        })
-      : null,
-  );
-  // The selection-based git hooks only apply when this review belongs to the
-  // selected thread (it always does when reached from the thread's toolbar).
-  const gitMenuAvailable =
-    selectedThread !== null && String(selectedThread.id) === String(threadId);
   // With a solid (non-overlay) header the content lays out below the header
   // natively, so no manual top inset is needed. (Android renders its own
   // in-flow AndroidScreenHeader, so it needs no inset either.)
@@ -581,52 +641,6 @@ export function ReviewSheet(props: ReviewSheetProps) {
     hasCachedSelectedDiff,
     hasAnyCachedDiff,
   });
-  const androidSectionMenuActions = useMemo<MenuAction[]>(() => {
-    const sectionAction = (section: ReviewSectionItem | null, title: string): MenuAction => ({
-      id: section ? `section:${section.id}` : `unavailable:${title}`,
-      title: section?.id === selectedSection?.id ? `${title} (selected)` : title,
-      attributes: section ? undefined : { disabled: true },
-    });
-    const actions: MenuAction[] = [
-      sectionAction(sectionMenu.workingTree, "Working tree"),
-      sectionAction(sectionMenu.branchChanges, "Branch changes"),
-      sectionAction(sectionMenu.latestTurn, "Latest turn"),
-    ];
-
-    if (sectionMenu.turns.length > 0) {
-      actions.push({
-        id: "turns",
-        title: "Turn",
-        subactions: sectionMenu.turns.map((section) => ({
-          id: `section:${section.id}`,
-          title: section.id === selectedSection?.id ? `${section.title} (selected)` : section.title,
-          subtitle: section.subtitle ?? undefined,
-        })),
-      });
-    }
-
-    // The Android native diff surface has no pull-to-refresh, so refresh
-    // stays a menu action there (iOS refreshes via pull-to-refresh instead).
-    actions.push({
-      id: "refresh",
-      title: "Refresh current diff",
-      attributes: {
-        disabled: !selectedSection || selectedSection.isLoading,
-      },
-    });
-    return actions;
-  }, [sectionMenu, selectedSection]);
-  const handleAndroidSectionMenuAction = useCallback(
-    (event: { nativeEvent: { event: string } }) => {
-      const id = event.nativeEvent.event;
-      if (id === "refresh") {
-        void handlePullToRefresh();
-      } else if (id.startsWith("section:")) {
-        selectSection(id.slice("section:".length));
-      }
-    },
-    [handlePullToRefresh, selectSection],
-  );
   const handleRetryEnvironment = useCallback(() => {
     void retryEnvironment(environmentId);
   }, [environmentId, retryEnvironment]);
@@ -703,146 +717,22 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
   return (
     <>
-      <NativeStackScreenOptions
-        options={
-          isAndroid
-            ? // Android draws its own in-flow header (AndroidScreenHeader below).
-              { headerShown: false }
-            : {
-                // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS — the native
-                // diff scrolls internally, nothing for glass to sample). Only dynamic values
-                // here.
-                headerTintColor: headerIcon,
-                headerTitle: headerTitleText,
-                title: headerTitleText,
-                unstable_headerSubtitle:
-                  Platform.OS === "ios" && headerSubtitle.length > 0 ? headerSubtitle : undefined,
-              }
-        }
+      <ReviewHeader
+        environmentId={environmentId}
+        threadId={threadId}
+        title={headerTitleText}
+        subtitle={headerSubtitle}
+        androidSubtitle={androidHeaderSubtitle}
+        iconColor={headerIcon}
+        selectedThreadCwd={selectedThreadCwd}
+        sectionMenu={sectionMenu}
+        selectedSection={selectedSection}
+        showSectionToolbar={showSectionToolbar}
+        showChangedFilesToggle={showChangedFilesToggle}
+        onRefresh={handlePullToRefresh}
+        onSelectSection={selectSection}
+        onReturnToThread={handleReturnToThread}
       />
-
-      {isAndroid ? (
-        <AndroidScreenHeader
-          title="Review changes"
-          leading={<AndroidWorkspaceSidebarButton />}
-          hideBottomBorder
-          subtitle={androidHeaderSubtitle || "Select a diff"}
-          onBack={handleReturnToThread}
-          trailing={
-            <>
-              {showChangedFilesToggle ? (
-                <AndroidHeaderIconButton
-                  accessibilityLabel={
-                    panes.auxiliaryPaneVisible ? "Hide changed files" : "Show changed files"
-                  }
-                  icon="sidebar.right"
-                  selected={panes.auxiliaryPaneVisible}
-                  onPress={toggleAuxiliaryPane}
-                />
-              ) : null}
-              {showSectionToolbar ? (
-                <ControlPillMenu
-                  actions={androidSectionMenuActions}
-                  isAnchoredToRight
-                  onPressAction={handleAndroidSectionMenuAction}
-                >
-                  <AndroidHeaderIconButton
-                    accessibilityLabel="Select review diff"
-                    icon="ellipsis.circle"
-                  />
-                </ControlPillMenu>
-              ) : null}
-            </>
-          }
-        />
-      ) : null}
-
-      <WorkspaceSidebarToolbar>
-        <NativeHeaderToolbar.Button
-          accessibilityLabel="Back to chat"
-          icon="chevron.left"
-          onPress={handleReturnToThread}
-        />
-      </WorkspaceSidebarToolbar>
-
-      {!isAndroid && (showSectionToolbar || panes.supportsAuxiliaryPane || gitMenuAvailable) ? (
-        <NativeHeaderToolbar placement="right">
-          {showChangedFilesToggle ? (
-            <NativeHeaderToolbar.Button
-              accessibilityLabel={
-                panes.auxiliaryPaneVisible ? "Hide changed files" : "Show changed files"
-              }
-              icon="sidebar.right"
-              onPress={toggleAuxiliaryPane}
-              separateBackground
-            />
-          ) : null}
-          {gitMenuAvailable && selectedThread !== null ? (
-            <ThreadGitMenu
-              environmentId={environmentId}
-              threadId={threadId}
-              currentBranch={selectedThread.branch ?? null}
-              gitStatus={gitStatusQuery.data}
-              gitOperationLabel={gitState.gitOperationLabel}
-              onPull={gitActions.onPullSelectedThreadBranch}
-              onRunAction={gitActions.onRunSelectedThreadGitAction}
-            />
-          ) : null}
-          {showSectionToolbar ? (
-            <NativeHeaderToolbar.Menu icon="ellipsis" title="Select diff" separateBackground>
-              <NativeHeaderToolbar.Menu inline>
-                <NativeHeaderToolbar.MenuAction
-                  disabled={sectionMenu.workingTree === null}
-                  isOn={selectedSection?.id === sectionMenu.workingTree?.id}
-                  onPress={() => {
-                    if (sectionMenu.workingTree) {
-                      selectSection(sectionMenu.workingTree.id);
-                    }
-                  }}
-                >
-                  <NativeHeaderToolbar.Label>Working tree</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-                <NativeHeaderToolbar.MenuAction
-                  disabled={sectionMenu.branchChanges === null}
-                  isOn={selectedSection?.id === sectionMenu.branchChanges?.id}
-                  onPress={() => {
-                    if (sectionMenu.branchChanges) {
-                      selectSection(sectionMenu.branchChanges.id);
-                    }
-                  }}
-                >
-                  <NativeHeaderToolbar.Label>Branch changes</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-                <NativeHeaderToolbar.MenuAction
-                  disabled={sectionMenu.latestTurn === null}
-                  isOn={selectedSection?.id === sectionMenu.latestTurn?.id}
-                  onPress={() => {
-                    if (sectionMenu.latestTurn) {
-                      selectSection(sectionMenu.latestTurn.id);
-                    }
-                  }}
-                >
-                  <NativeHeaderToolbar.Label>Latest turn</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-                {sectionMenu.turns.length > 0 ? (
-                  <NativeHeaderToolbar.Menu title="Turn">
-                    {sectionMenu.turns.map((section) => (
-                      <NativeHeaderToolbar.MenuAction
-                        key={section.id}
-                        isOn={section.id === selectedSection?.id}
-                        onPress={() => selectSection(section.id)}
-                        subtitle={section.subtitle ?? undefined}
-                      >
-                        <NativeHeaderToolbar.Label>{section.title}</NativeHeaderToolbar.Label>
-                      </NativeHeaderToolbar.MenuAction>
-                    ))}
-                  </NativeHeaderToolbar.Menu>
-                ) : null}
-              </NativeHeaderToolbar.Menu>
-            </NativeHeaderToolbar.Menu>
-          ) : null}
-        </NativeHeaderToolbar>
-      ) : null}
 
       <MaterialScreenContent>
         <View className={Platform.OS === "android" ? "flex-1 bg-sheet-solid" : "flex-1 bg-sheet"}>

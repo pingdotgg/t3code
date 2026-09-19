@@ -66,7 +66,7 @@ function SelectionRow(props: {
         }
         trailing={
           props.selected ? (
-            <SymbolView name="checkmark" size={20} tintColorClassName="accent-primary" />
+            <SymbolView name="checkmark" size={20} tintColorClassName="accent-focus" />
           ) : null
         }
         accessibilityRole="radio"
@@ -482,9 +482,9 @@ export function NewTaskBranchPickerRouteScreen() {
             autoCorrect={false}
             accessibilityLabel="Find a branch"
             className="h-12 rounded-full border border-input-border bg-input px-4 font-sans text-base text-foreground"
-            selectionColorClassName="accent-primary/32"
-            cursorColorClassName="accent-primary"
-            selectionHandleColorClassName="accent-primary"
+            selectionColorClassName="accent-focus/32"
+            cursorColorClassName="accent-focus"
+            selectionHandleColorClassName="accent-focus"
             onChangeText={flow.setBranchQuery}
             placeholder="Find a branch"
             placeholderTextColorClassName="accent-placeholder"
