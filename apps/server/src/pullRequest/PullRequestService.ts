@@ -663,37 +663,38 @@ export const make = Effect.gen(function* () {
       }
     }
 
+    // Candidates in a group are checkouts of one host, so the first conclusive answer settles
+    // the group. Walking on is only worth it while a checkout could not answer at all - a
+    // broken clone, say - which is why an unsettled unknown keeps trying the next one.
+    const refineHostGroup = Effect.fn("PullRequestService.refineHostGroup")(function* (
+      candidates: ReadonlyArray<RefinementCandidate>,
+    ) {
+      for (const { project, provider, remoteName, remoteUrl } of candidates) {
+        const handle = yield* sourceControlProviders
+          .resolveHandle({
+            cwd: project.workspaceRoot,
+            context: {
+              provider: provider.kind === "forgejo" ? { ...provider, kind: "unknown" } : provider,
+              remoteName,
+              remoteUrl,
+              ...(filter.host !== undefined && isSshRemoteUrl(remoteUrl)
+                ? { requestedHost: filter.host }
+                : {}),
+            },
+          })
+          .pipe(Effect.option);
+        if (Option.isNone(handle)) continue;
+        const refined = handle.value.context?.provider;
+        if (refined !== undefined && refined.kind !== "unknown") return refined;
+        if (handle.value.conclusive === true) return null;
+      }
+      return null;
+    });
+
     return Effect.forEach(
       refinements,
       ([baseUrl, candidates]) =>
-        Effect.firstSuccessOf(
-          candidates.map(({ project, provider, remoteName, remoteUrl }) =>
-            Effect.suspend(() =>
-              sourceControlProviders.resolveHandle({
-                cwd: project.workspaceRoot,
-                context: {
-                  provider:
-                    provider.kind === "forgejo" ? { ...provider, kind: "unknown" } : provider,
-                  remoteName,
-                  remoteUrl,
-                  ...(filter.host !== undefined && isSshRemoteUrl(remoteUrl)
-                    ? { requestedHost: filter.host }
-                    : {}),
-                },
-              }),
-            ).pipe(
-              Effect.flatMap((handle) => {
-                const refined = handle.context?.provider;
-                return refined === undefined || refined.kind === "unknown"
-                  ? Effect.fail(undefined)
-                  : Effect.succeed(refined);
-              }),
-            ),
-          ),
-        ).pipe(
-          Effect.map((provider) => [baseUrl, provider] as const),
-          Effect.orElseSucceed(() => [baseUrl, null] as const),
-        ),
+        refineHostGroup(candidates).pipe(Effect.map((provider) => [baseUrl, provider] as const)),
       { concurrency: REPOSITORY_CONCURRENCY },
     ).pipe(Effect.map((resolved) => new Map(resolved)));
   };

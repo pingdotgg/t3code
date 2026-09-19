@@ -4,11 +4,12 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
 } from "@t3tools/contracts";
-import type { SourceControlProviderKind } from "@t3tools/contracts";
+import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
@@ -21,6 +22,7 @@ import {
   probeSourceControlProvider,
   refineUnknownRemoteProvider,
   type SourceControlProviderDiscoverySpec,
+  type UnknownRemoteRefinement,
 } from "./SourceControlProviderDiscovery.ts";
 import { ServerConfig } from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -28,6 +30,17 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 const PROVIDER_DETECTION_CACHE_CAPACITY = 2_048;
 const PROVIDER_DETECTION_CACHE_TTL = Duration.seconds(5);
+// Refining an unknown remote spawns every hosting CLI, and the answer belongs to the host
+// rather than to a checkout. Keeping the verdict - including "nobody claimed it" - for a few
+// minutes is what stops a workspace of projects on one unrecognised host from re-probing the
+// CLIs on every read. The window is the delay before newly authenticated CLIs are noticed.
+const UNKNOWN_REMOTE_CACHE_CAPACITY = 512;
+const UNKNOWN_REMOTE_CACHE_TTL = Duration.minutes(5);
+
+/** No host verdict this time. Failing keeps the attempt out of the cache. */
+class UnsettledRemote {
+  readonly _tag = "UnsettledRemote";
+}
 
 export interface SourceControlProviderRegistration {
   readonly kind: SourceControlProviderKind;
@@ -38,6 +51,12 @@ export interface SourceControlProviderRegistration {
 export interface SourceControlProviderHandle {
   readonly provider: SourceControlProvider.SourceControlProvider["Service"];
   readonly context: SourceControlProvider.SourceControlProviderContext | null;
+  /**
+   * The remote's provider was settled for the host: another checkout of the same host cannot
+   * refine it further. Optional so narrow test doubles stay lightweight; absent reads as "not
+   * settled", which keeps callers walking to the next checkout.
+   */
+  readonly conclusive?: boolean;
 }
 
 export class SourceControlProviderRegistry extends Context.Service<
@@ -212,6 +231,93 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
       Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
 
+    const unknownRemoteKey = (
+      context: SourceControlProvider.SourceControlProviderContext,
+    ): string | null => {
+      // The host, not the checkout, is what the refinement answers about. A requested host
+      // narrows a Forgejo login match, so it belongs in the key too.
+      const host = detectSourceControlProviderFromRemoteUrl(context.remoteUrl)?.baseUrl;
+      return host === undefined ? null : `${host}\u0000${context.requestedHost ?? ""}`;
+    };
+
+    // Any checkout of a host is an equally good place to ask from, so the lookup takes the
+    // request that most recently asked for this key. `Cache.get` collapses concurrent misses
+    // into one probe, and a refinement that settled nothing fails so it is not cached.
+    const unknownRemoteRequests = new Map<
+      string,
+      {
+        readonly cwd: string;
+        readonly context: SourceControlProvider.SourceControlProviderContext;
+      }
+    >();
+
+    const unknownRemoteCache = yield* Cache.makeWith<
+      string,
+      SourceControlProviderInfo | null,
+      UnsettledRemote
+    >(
+      (key) =>
+        Effect.suspend(() => {
+          const request = unknownRemoteRequests.get(key);
+          if (request === undefined) return Effect.fail(new UnsettledRemote());
+          return refineUnknownRemoteProvider({
+            specs: discoverySpecs,
+            process,
+            cwd: request.cwd,
+            context: request.context,
+          }).pipe(
+            Effect.flatMap((refinement) =>
+              refinement.conclusive
+                ? Effect.succeed(refinement.context?.provider ?? null)
+                : Effect.fail(new UnsettledRemote()),
+            ),
+          );
+        }),
+      {
+        capacity: UNKNOWN_REMOTE_CACHE_CAPACITY,
+        timeToLive: (exit) => (Exit.isSuccess(exit) ? UNKNOWN_REMOTE_CACHE_TTL : Duration.zero),
+      },
+    );
+
+    const refineWithHostCache = Effect.fn("SourceControlProviderRegistry.refineUnknownRemote")(
+      function* (input: {
+        readonly cwd: string;
+        readonly context: SourceControlProvider.SourceControlProviderContext | null;
+      }): Effect.fn.Return<UnknownRemoteRefinement> {
+        const context = input.context;
+        if (context === null || context.provider.kind !== "unknown") {
+          return { context, conclusive: context !== null };
+        }
+        const key = unknownRemoteKey(context);
+        if (key === null) {
+          return yield* refineUnknownRemoteProvider({
+            specs: discoverySpecs,
+            process,
+            cwd: input.cwd,
+            context,
+          });
+        }
+        const request = { cwd: input.cwd, context };
+        unknownRemoteRequests.set(key, request);
+        const provider = yield* Cache.get(unknownRemoteCache, key).pipe(
+          Effect.option,
+          Effect.ensuring(
+            // Retire only our own request. An unsettled lookup drops its zero-lived cache
+            // entry before this runs, so a later call may already have installed the request
+            // its own lookup is about to read.
+            Effect.sync(() => {
+              if (unknownRemoteRequests.get(key) === request) unknownRemoteRequests.delete(key);
+            }),
+          ),
+        );
+        if (Option.isNone(provider)) return { context, conclusive: false };
+        return {
+          context: provider.value === null ? context : { ...context, provider: provider.value },
+          conclusive: true,
+        };
+      },
+    );
+
     const detectProviderContext = Effect.fn("SourceControlProviderRegistry.detectProviderContext")(
       function* (cwd: string) {
         const handle = yield* vcsRegistry.resolve({ cwd }).pipe(
@@ -240,12 +346,8 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         );
         const context = selectProviderContext(remotes.remotes);
 
-        return yield* refineUnknownRemoteProvider({
-          specs: discoverySpecs,
-          process,
-          cwd,
-          context,
-        });
+        const refinement = yield* refineWithHostCache({ cwd, context });
+        return refinement.context;
       },
     );
 
@@ -260,20 +362,19 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 
     const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
       (input.context === undefined
-        ? Cache.get(providerContextCache, input.cwd)
-        : refineUnknownRemoteProvider({
-            specs: discoverySpecs,
-            process,
-            cwd: input.cwd,
-            context: input.context,
-          })
+        ? // The per-cwd cache keeps only the context, so this path reports no host verdict.
+          Cache.get(providerContextCache, input.cwd).pipe(
+            Effect.map((context): UnknownRemoteRefinement => ({ context, conclusive: false })),
+          )
+        : refineWithHostCache({ cwd: input.cwd, context: input.context })
       ).pipe(
-        Effect.map((context) => {
+        Effect.map(({ context, conclusive }) => {
           const kind = context?.provider.kind ?? "unknown";
           const provider = providers.get(kind) ?? unsupportedProvider(kind);
           return {
             provider: bindProviderContext(provider, context),
             context,
+            conclusive,
           } satisfies SourceControlProviderHandle;
         }),
       );
