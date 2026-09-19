@@ -865,6 +865,17 @@ const make = Effect.gen(function* () {
           (candidate) => providerConstraints(candidate, true).length === 0,
         );
         instanceId = inheritedCandidate?.instanceId ?? availableCandidate?.instanceId;
+        if (instanceId === undefined) {
+          const reasons = candidates.flatMap((candidate) =>
+            providerConstraints(candidate, true).map(
+              (constraint) => `${candidate.instanceId}: ${constraint}`,
+            ),
+          );
+          return yield* failure(
+            "provider_unavailable",
+            `No available V2 provider instance for driver ${requestedDriver}: ${reasons.join(" ")}`,
+          );
+        }
       }
       instanceId ??= input.parent.thread.modelSelection.instanceId;
 
