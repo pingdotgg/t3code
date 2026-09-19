@@ -13,17 +13,9 @@ name: Mobile Fingerprint Check
 # pnpm), so the comparison is self-consistent; no EXPO_TOKEN needed.
 on:
   pull_request:
-    paths:
-      - apps/mobile/**
-      - packages/client-runtime/**
-      - packages/contracts/**
-      - packages/shared/**
-      - assets/**
-      - scripts/**
-      - patches/**
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - .github/workflows/mobile-fingerprint-check.yml
+    # Run even when a rebase or base change removes every native input from the
+    # diff, so the label can be cleared without installing Expo dependencies.
+    types: [opened, synchronize, reopened, edited]
 
 concurrency:
   group: mobile-fingerprint-check-${{ github.event.pull_request.number }}
@@ -44,12 +36,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          # Default pull_request checkout is the merge commit (PR applied on
-          # top of base), so the "head" fingerprint is the state main would
-          # actually be in after merging — stale branches compare cleanly.
-          fetch-depth: 0
+          # The merge ref can advance after the event is queued. Pin its commit
+          # and compare against its first parent, rather than the event's base.
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+
+      - id: changes
+        name: Detect native fingerprint inputs
+        run: bash .github/scripts/mobile-fingerprint-changes.sh
 
       - name: Setup Vite+
+        if: steps.changes.outputs.relevant == 'true'
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
@@ -59,6 +56,7 @@ jobs:
               - --filter=@t3tools/mobile...
 
       - name: Expose pnpm
+        if: steps.changes.outputs.relevant == 'true'
         run: |
           pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
           vp_pnpm_bin="$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin"
@@ -66,6 +64,7 @@ jobs:
           "$vp_pnpm_bin/pnpm" --version
 
       - name: Fingerprint merge result
+        if: steps.changes.outputs.relevant == 'true'
         working-directory: apps/mobile
         run: |
           mkdir -p "$RUNNER_TEMP/fp/head" "$RUNNER_TEMP/fp/base"
@@ -74,8 +73,11 @@ jobs:
           done
 
       - name: Fingerprint base
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          BASE_SHA: ${{ steps.changes.outputs.base_sha }}
         run: |
-          git checkout --quiet "${{ github.event.pull_request.base.sha }}"
+          git checkout --quiet "$BASE_SHA"
           # Re-sync node_modules to the base commit's lockfile before
           # fingerprinting — a dep-changing PR must not fingerprint the base
           # against head's installed packages.
@@ -87,6 +89,7 @@ jobs:
 
       - id: compare
         name: Compare fingerprints
+        if: steps.changes.outputs.relevant == 'true'
         run: |
           changed=""
           {

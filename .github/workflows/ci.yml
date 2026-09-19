@@ -109,6 +109,9 @@ jobs:
       - name: Test nightly release checks
         run: node --test .github/scripts/check-nightly-release.test.cjs
 
+      - name: Test mobile fingerprint detection
+        run: node --test .github/scripts/mobile-fingerprint-changes.test.cjs
+
       - name: Test
         run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
 
