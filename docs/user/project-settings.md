@@ -61,8 +61,9 @@ hourly. Offline machines keep their existing policies.
 The storage summary shows space used by worktrees, broken down by cleanup category. Each folder
 is counted once, in order: deleted threads, inactive, merged, then no unique commits. Inactive
 uses the project's retention period, or 8 days when the rule is off. Protected worktrees appear
-under Other worktrees. Categories show matching storage even when their cleanup rules are off. Edit the rules, then choose **Save cleanup rules** to apply them. Cleanup can start
-as soon as you save. **Discard** cancels unsaved edits; existing saved rules continue running.
+under Other worktrees. Categories show matching storage even when their cleanup rules are off.
+Edit the rules, then choose **Save cleanup rules** to apply them. Cleanup can start as soon as you
+save. **Discard** cancels unsaved edits; existing saved rules continue running.
 Changing the selected scope or leaving Storage discards unsaved edits.
 
 The summary follows the selected machines and project scope, just like the cleanup rules.
