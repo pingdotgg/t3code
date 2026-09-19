@@ -1041,6 +1041,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const key = normalizeThreadPullRequestKey(command);
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} is deleted and cannot link pull request ${key.host}/${key.repository}#${key.number}`,
+        });
+      }
       const existing = findPullRequestLink(thread, key);
       // An explicit link on a dismissed stack member un-dismisses it; any
       // other duplicate is a no-op the engine would reject as zero-event.
