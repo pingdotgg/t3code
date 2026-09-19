@@ -3080,6 +3080,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
+      // The question is gone and the editor shows the thread draft again. The
+      // ref still holds the last answer text, and Send reads the ref.
+      if (lastSyncedPendingInputRef.current !== null) {
+        promptRef.current = prompt;
+      }
       lastSyncedPendingInputRef.current = null;
       return;
     }
@@ -3114,6 +3119,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.customAnswer,
     activePendingProgress?.activeQuestion?.id,
     activePendingUserInput?.requestId,
+    prompt,
     promptRef,
   ]);
 
