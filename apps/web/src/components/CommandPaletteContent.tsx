@@ -10,6 +10,8 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
   readonly footerActionLabel?: ReactNode;
   readonly footerTrailing?: ReactNode;
   readonly inputAccessory?: ReactNode;
+  /** Layer rendered behind the input's text (operator pills). */
+  readonly inputBackdrop?: ReactNode;
   readonly inputProps: ComponentProps<typeof CommandInput>;
   readonly panelClassName?: string;
   readonly showBackHint?: boolean;
@@ -27,6 +29,7 @@ export function CommandPaletteContent({
   footerActionLabel,
   footerTrailing,
   inputAccessory,
+  inputBackdrop,
   inputProps,
   panelClassName,
   showBackHint,
@@ -46,7 +49,16 @@ export function CommandPaletteContent({
     <div className="contents" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
-          <CommandInput {...inputProps} ref={inputRef} />
+          {inputBackdrop}
+          <CommandInput
+            {...inputProps}
+            ref={(node) => {
+              inputRef.current = node;
+              if (typeof inputProps.ref === "function") {
+                inputProps.ref(node);
+              }
+            }}
+          />
           {inputAccessory}
         </div>
         <CommandPanel className={panelClassName}>{children}</CommandPanel>

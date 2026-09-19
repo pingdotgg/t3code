@@ -53,7 +53,11 @@ describe("linked pull request thread navigation", () => {
     expect(groups.flatMap((group) => group.items)).toEqual(items);
     expect(items[0]?.description).toBe("Archived thread");
     await items[0]?.run();
-    expect(runThread).toHaveBeenCalledWith({ environmentId, id });
+    expect(runThread).toHaveBeenCalledWith({
+      archivedAt: "2026-09-01T00:00:00.000Z",
+      environmentId,
+      id,
+    });
   });
 });
 
