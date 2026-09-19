@@ -158,8 +158,12 @@ export class OrchestratorMcpService extends Context.Service<
 
 const isThreadManagementError = Schema.is(ThreadManagementError);
 
-function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
-  return new OrchestratorMcpFailure({ code, message });
+function failure(
+  code: OrchestratorMcpFailure["code"],
+  message: string,
+  cause?: unknown,
+): OrchestratorMcpFailure {
+  return new OrchestratorMcpFailure({ code, message, ...(cause === undefined ? {} : { cause }) });
 }
 
 function threadManagementFailure(error: ThreadManagementError): OrchestratorMcpFailure {
@@ -1097,11 +1101,94 @@ const make = Effect.gen(function* () {
       return task;
     });
 
+  // Schedule mutations arm work that later executes unattended with the
+  // task's stored runtime/interaction modes, so they get the same caller
+  // authorization as delegation and thread sends: the caller must own a
+  // live run, and the task's execution modes must not exceed the caller's
+  // — otherwise a restricted caller could re-enable or rewrite a task that
+  // fires with settings the caller itself could never run with.
+  const requireActiveParentRun = (
+    scope: McpInvocationScope,
+    parent: OrchestrationV2ThreadProjection,
+  ) => {
+    const parentRun = parent.runs
+      .filter(isActiveRun)
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+    return parentRun === undefined ||
+      parentRun.rootNodeId === null ||
+      parentRun.providerInstanceId !== scope.providerInstanceId
+      ? Effect.fail(
+          failure(
+            "parent_not_active",
+            "Scheduled-task changes require an active run owned by this MCP provider session.",
+          ),
+        )
+      : Effect.succeed(parentRun);
+  };
+
+  const requireTaskModeAccess = (
+    parent: OrchestrationV2ThreadProjection,
+    modes: Pick<ScheduledTask, "runtimeMode" | "interactionMode">,
+  ) =>
+    resolveRuntimeMode(parent.thread.runtimeMode, modes.runtimeMode).pipe(
+      Effect.andThen(resolveInteractionMode(parent.thread.interactionMode, modes.interactionMode)),
+      Effect.asVoid,
+    );
+
+  // A bound task runs under its *destination* thread's modes — sendToThread
+  // carries no runtime/interaction override — while an unbound task launches
+  // a fresh thread under the task's stored modes. Authorization therefore
+  // compares the caller against whichever modes govern the next run,
+  // resolved for the binding the mutation leaves in place.
+  const scheduledTaskExecutionModes = (
+    scope: McpInvocationScope,
+    parent: OrchestrationV2ThreadProjection,
+    task: Pick<ScheduledTask, "threadId" | "runtimeMode" | "interactionMode">,
+    bindToCurrentThread: boolean | undefined,
+  ): Effect.Effect<
+    Pick<ScheduledTask, "runtimeMode" | "interactionMode">,
+    OrchestratorMcpFailure
+  > =>
+    Effect.gen(function* () {
+      const destinationId =
+        bindToCurrentThread === true
+          ? scope.threadId
+          : bindToCurrentThread === false
+            ? null
+            : task.threadId;
+      if (destinationId === null || destinationId === scope.threadId) {
+        return destinationId === null
+          ? { runtimeMode: task.runtimeMode, interactionMode: task.interactionMode }
+          : {
+              runtimeMode: parent.thread.runtimeMode,
+              interactionMode: parent.thread.interactionMode,
+            };
+      }
+      const shell = yield* threadManagement
+        .getThreadShell(destinationId)
+        .pipe(
+          Effect.mapError((error) =>
+            failure("orchestration_error", `Unable to read thread ${destinationId}.`, error),
+          ),
+        );
+      // A missing or cross-project shell can never accept the run, so the
+      // residual privilege is the task's stored modes once rebound.
+      return shell === null || shell.projectId !== parent.thread.projectId
+        ? { runtimeMode: task.runtimeMode, interactionMode: task.interactionMode }
+        : { runtimeMode: shell.runtimeMode, interactionMode: shell.interactionMode };
+    });
+
   return OrchestratorMcpService.of({
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        // The new task inherits this thread's runtime/interaction modes, so
+        // the only additional requirement is a live caller-owned run. Both
+        // are pinned into the upsert: the destination modes are re-resolved
+        // and the run's liveness re-checked inside the write transaction, so
+        // a mode change or a settled run racing the snapshot fails the write.
+        const parentRun = yield* requireActiveParentRun(scope, parent);
         const bindToCurrentThread = input.bindToCurrentThread ?? true;
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
@@ -1119,6 +1206,23 @@ const make = Effect.gen(function* () {
           interactionMode: parent.thread.interactionMode,
           createdBy: "agent",
           creationSource: "mcp",
+          expectedActiveRun: {
+            id: parentRun.id,
+            threadId: scope.threadId,
+            providerInstanceId: scope.providerInstanceId,
+          },
+          expectedExecutionRuntimeMode: parent.thread.runtimeMode,
+          expectedExecutionInteractionMode: parent.thread.interactionMode,
+          // The task inherits this thread's modes, so the authorization is
+          // the caller's own current modes — which this pin re-reads inside
+          // the write transaction. For an unbound task the destination check
+          // above is a no-op (stored modes are the same snapshot), so this is
+          // what fails the write when the caller's modes moved mid-flight.
+          expectedCaller: {
+            threadId: scope.threadId,
+            runtimeMode: parent.thread.runtimeMode,
+            interactionMode: parent.thread.interactionMode,
+          },
           // Scope the idempotency key by provider session so two callers
           // reusing the same clientRequestId cannot collide on one task row.
           ...(input.clientRequestId === undefined
@@ -1162,57 +1266,122 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        const parentRun = yield* requireActiveParentRun(scope, parent);
         const existing = yield* loadScopedScheduledTask(
           parent.thread.projectId,
           input.scheduledTaskId,
         );
-        const threadId =
-          input.bindToCurrentThread === undefined
-            ? existing.threadId
-            : input.bindToCurrentThread
-              ? scope.threadId
-              : null;
-        // Rebinding changes where runs execute, so the workspace strategy must
-        // follow: unbinding a root-strategy task would otherwise run loose
-        // prompts in the shared project checkout.
-        const workspaceStrategy =
-          input.bindToCurrentThread === undefined
-            ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
-        const upsertInput: ScheduledTaskUpsertInput = {
-          id: existing.id,
-          title: input.title ?? existing.title,
-          prompt: input.prompt ?? existing.prompt,
-          enabled: input.enabled ?? existing.enabled,
-          schedule: input.schedule ?? existing.schedule,
-          projectId: existing.projectId,
-          threadId,
-          workspaceStrategy,
-          modelSelection: existing.modelSelection,
-          runtimeMode: existing.runtimeMode,
-          interactionMode: existing.interactionMode,
-          createdBy: existing.createdBy,
-          creationSource: existing.creationSource,
-        };
-        const { task } = yield* scheduledTasks
-          .upsert(upsertInput)
+        // Mode coverage is required only when the edit can arm or redirect
+        // execution — enabling, changing the prompt or schedule, or
+        // rebinding. An update that only disables and/or renames cannot arm
+        // privileged work, so a restricted caller may still stop a
+        // misbehaving task (the service-level setEnabled carries no mode
+        // check either); the expected* pins are likewise authorization
+        // artifacts and are unnecessary for an unconditional de-escalation.
+        const deEscalatingOnly =
+          input.enabled !== true &&
+          input.prompt === undefined &&
+          input.schedule === undefined &&
+          input.bindToCurrentThread === undefined;
+        const executionModes = deEscalatingOnly
+          ? undefined
+          : yield* scheduledTaskExecutionModes(scope, parent, existing, input.bindToCurrentThread);
+        if (executionModes !== undefined) {
+          yield* requireTaskModeAccess(parent, executionModes);
+        }
+        // Atomic scoped partial update: only the fields the caller provided
+        // are written, and only while the task still exists in this project.
+        // A delete racing the edit surfaces as task_not_found instead of the
+        // task being resurrected by a stale full-row upsert. The expected*
+        // fields pin the row this authorization ran against: a concurrent
+        // rebind or mode change between the lookup and the write transaction
+        // fails the update instead of mutating a privileged row the caller
+        // never saw.
+        const updated = yield* scheduledTasks
+          .update({
+            id: input.scheduledTaskId,
+            projectId: parent.thread.projectId,
+            // The live-run requirement is pinned into the transaction for
+            // every mutation — including de-escalation — so a change landing
+            // after the authorizing run settled is rejected, not applied.
+            expectedActiveRun: {
+              id: parentRun.id,
+              threadId: scope.threadId,
+              providerInstanceId: scope.providerInstanceId,
+            },
+            ...(executionModes === undefined
+              ? {}
+              : {
+                  expectedThreadId: existing.threadId,
+                  expectedRuntimeMode: existing.runtimeMode,
+                  expectedInteractionMode: existing.interactionMode,
+                  expectedExecutionRuntimeMode: executionModes.runtimeMode,
+                  expectedExecutionInteractionMode: executionModes.interactionMode,
+                  // requireTaskModeAccess compared the destination modes
+                  // against this thread's snapshot modes — the pin re-reads
+                  // that row inside the transaction so a caller-side mode
+                  // change racing the write fails instead of arming work the
+                  // caller no longer covers.
+                  expectedCaller: {
+                    threadId: scope.threadId,
+                    runtimeMode: parent.thread.runtimeMode,
+                    interactionMode: parent.thread.interactionMode,
+                  },
+                }),
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+            ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+            ...(input.schedule === undefined ? {} : { schedule: input.schedule }),
+            // Rebinding changes where runs execute, so the workspace strategy
+            // must follow: unbinding a root-strategy task would otherwise run
+            // loose prompts in the shared project checkout.
+            ...(input.bindToCurrentThread === undefined
+              ? {}
+              : {
+                  threadId: input.bindToCurrentThread ? scope.threadId : null,
+                  workspaceStrategy: scheduledTaskWorkspaceStrategy(input.bindToCurrentThread),
+                }),
+          })
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
             ),
           );
-        return scheduledTaskSummary(task);
+        if (Option.isNone(updated)) {
+          return yield* failure(
+            "task_not_found",
+            `Scheduled task ${input.scheduledTaskId} was not found in the calling project.`,
+          );
+        }
+        return scheduledTaskSummary(updated.value.task);
       }),
     deleteScheduledTask: (scope, input) =>
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        const parentRun = yield* requireActiveParentRun(scope, parent);
         const existing = yield* loadScopedScheduledTask(
           parent.thread.projectId,
           input.scheduledTaskId,
         );
+        // Deletion cannot arm privileged work, so mode coverage is not
+        // required — a restricted caller may still clean up a task whose
+        // modes exceed its own (the service-level delete carries no mode
+        // check either). expectedProjectId keeps the operation scoped: a
+        // task moved to another project between the lookup and the write
+        // cannot be deleted through this caller's project. The run pin is
+        // re-checked inside the transaction so a delete landing after the
+        // authorizing run settled is rejected rather than applied.
         yield* scheduledTasks
-          .delete({ id: existing.id })
+          .delete({
+            id: existing.id,
+            expectedProjectId: existing.projectId,
+            expectedActiveRun: {
+              id: parentRun.id,
+              threadId: scope.threadId,
+              providerInstanceId: scope.providerInstanceId,
+            },
+          })
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not delete scheduled task: ${error.message}`),

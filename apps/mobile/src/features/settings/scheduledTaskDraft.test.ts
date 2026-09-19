@@ -5,9 +5,11 @@ import {
   ProviderInstanceId,
   ProjectId,
   ScheduledTaskId,
+  ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
 import {
+  buildScheduledTaskUpdateInput,
   scheduledTaskDefaultModel,
   createDraft,
   editDraft,
@@ -221,6 +223,69 @@ describe("editing scheduled task branch settings", () => {
 
 it("continues to default newly created tasks to origin", () => {
   expect(createDraft(null, null).startFromOrigin).toBe(true);
+});
+
+describe("buildScheduledTaskUpdateInput", () => {
+  it("does not replay the opening enabled flag over an archive pause", () => {
+    // The editor opened while the task was enabled; another client then
+    // archived and unarchived the bound thread, which paused the task
+    // (enabled = false). A title-only save must not send enabled:true back
+    // and resume unattended execution without an explicit re-enable.
+    const draft = { ...editDraft(legacyTask), title: "Renamed review" };
+    const live = { ...legacyTask, enabled: false };
+    expect(buildScheduledTaskUpdateInput(draft, live)).toEqual({
+      id: legacyTask.id,
+      projectId: legacyTask.projectId,
+      title: "Renamed review",
+    });
+  });
+
+  it("sends enabled only when the user toggled it", () => {
+    const draft = { ...editDraft(legacyTask), enabled: false };
+    expect(buildScheduledTaskUpdateInput(draft, legacyTask)).toEqual({
+      id: legacyTask.id,
+      projectId: legacyTask.projectId,
+      enabled: false,
+    });
+  });
+
+  it("keeps a binding another client committed to the requested project", () => {
+    // Another client already moved the task to project B and bound it to a
+    // thread there. A stale editor saving the same destination must not
+    // detach that live binding.
+    const live = {
+      ...legacyTask,
+      projectId: ProjectId.make("project-b"),
+      threadId: ThreadId.make("thread-b"),
+    };
+    const draft = { ...editDraft(legacyTask), projectId: ProjectId.make("project-b") };
+    const patch = buildScheduledTaskUpdateInput(draft, live);
+    expect(patch?.nextProjectId).toBe("project-b");
+    expect(patch).not.toHaveProperty("threadId");
+  });
+
+  it("detaches a live binding only when the requested project differs", () => {
+    const live = { ...legacyTask, threadId: ThreadId.make("thread-a") };
+    const draft = { ...editDraft(legacyTask), projectId: ProjectId.make("project-b") };
+    expect(buildScheduledTaskUpdateInput(draft, live)).toMatchObject({
+      nextProjectId: "project-b",
+      threadId: null,
+    });
+  });
+
+  it("returns null when nothing changed and preserves unedited live fields", () => {
+    expect(buildScheduledTaskUpdateInput(editDraft(legacyTask), legacyTask)).toBeNull();
+    const live = {
+      ...legacyTask,
+      workspaceStrategy: { type: "worktree" as const, baseRef: "release", branch: "fix/x" },
+    };
+    const draft = { ...editDraft(legacyTask), prompt: "New prompt" };
+    expect(buildScheduledTaskUpdateInput(draft, live)).toEqual({
+      id: legacyTask.id,
+      projectId: legacyTask.projectId,
+      prompt: "New prompt",
+    });
+  });
 });
 
 describe("scheduled task model defaults", () => {
