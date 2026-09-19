@@ -1,6 +1,6 @@
 ---
 name: prepare-pr
-description: Complete or maintain T3 Code pull requests, including draft PRs, focused verification, required visual evidence, publication, readback, and review follow-up. Description-only and media-only requests stay scoped.
+description: Complete or maintain T3 Code pull requests, including draft PRs, focused verification, required visual evidence with screenshots, GIFs, and videos, publication, readback, and review follow-up; keep descriptions current as commits change, or produce media-only proof. Description-only and media-only requests stay scoped.
 ---
 
 # Create and maintain a pull request
@@ -126,8 +126,13 @@ result. A still-state slideshow cannot prove motion. MP4 links supplement these
 GIFs; they do not replace them. Missing base evidence or a required GIF is an
 explicit readiness gap, not permission to invent a baseline or omit the GIF.
 
-Use [media-workflow.md](references/media-workflow.md) for capture, contextual
-PNG/GIF cropping, annotation guidance, and inspection. Screenshots show
+Before exporting any crop, apply the [framing gate](references/media-workflow.md#framing):
+the primary evidence must explain the interaction in its surrounding UI; a detail
+view supplements it. Reject crops that sever relevant text or controls, even when
+the changed label is readable. Use [media-workflow.md](references/media-workflow.md)
+for capture, annotation guidance, and inspection, and crop PNG/GIF evidence with
+the packaged tool in [detail-crops.md](references/detail-crops.md); ad-hoc
+conversion pipelines routinely drop GIF loop and delay metadata. Screenshots show
 states; recordings show transitions. Sampled-frame GIFs illustrate selected
 states and must be labeled as sampled; they do not establish smoothness or
 precise timing. Record durations and any speed changes when relevant.
@@ -135,8 +140,11 @@ precise timing. Record durations and any speed changes when relevant.
 Before fresh evidence capture, follow [reliable capture setup](references/capture-recovery.md):
 choose a recorder with a concrete save path, capture and inspect a short smoke
 artifact, then reuse that proven route for the base/candidate flows. Verify each
-saved export immediately and keep a receipt for resuming. Use recovery only when
-that path fails; continue authorized capture and publication.
+saved export immediately and keep a receipt for resuming. When an export is black,
+blank, frozen, or from the wrong window, or a recorder is disabled, times out,
+stops early, or re-shows a dialog, or the image or accessibility tree disagrees
+with the inspected UI, follow [capture recovery](references/capture-recovery.md)
+before the next capture attempt; blind retries produce misdiagnosed captures.
 
 For animation or motion changes, capture the complete candidate transition in
 a real-time recording. When the claimed improvement is comparative, record the
@@ -145,7 +153,12 @@ states, but they do not replace the recording that proves the motion.
 
 Capture the follow-through selected in step 2. Record synthetic/disposable
 data, mocked endpoints, injected states, simulated media preferences, or
-manually composed illustrations as evidence conditions.
+manually composed illustrations as evidence conditions. When another thread or
+agent will capture, prepare, or publish the media, its brief must carry this
+skill's absolute path, the claims with their needed observations, and the
+framing and capture-recovery references; verify its returned artifacts against
+the applicable step 6 checks — legibility, framing, labels, and comparability —
+before reporting readiness.
 
 **Complete when:** each visual claim has an inspected, legible artifact showing
 the relevant action and result under comparable conditions, or a recorded gap.

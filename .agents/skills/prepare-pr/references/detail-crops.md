@@ -1,6 +1,12 @@
 # Detail crops for screenshots and GIFs
 
-Use ImageMagick 7 (`magick`) through the existing entry point:
+Apply the [framing gate](media-workflow.md#framing) before selecting regions.
+For primary evidence, select the whole affected pane. For supplemental detail,
+select the complete control and retain its contextual view in the PR. This tool
+cannot tell whether a rectangle cuts through text or removes useful context.
+
+Use ImageMagick 7 (`magick`) through the existing entry point, run from the
+repository root:
 
 ```sh
 MEDIA=.agents/skills/prepare-pr/scripts/prepare_proof_media.py
@@ -13,9 +19,11 @@ python3 "$MEDIA" detail after.png --before before.png \
 `--region` is normalized `x,y,width,height` in the fully displayed, oriented
 source canvas. Repeat it for the trigger, destination, surrounding label, or
 caption that must remain visible. The renderer takes their union and adds
-context padding, with a minimum 320×180 crop where the source permits. Regions
+context padding, with a minimum 320×180 crop where the source permits. This is
+a size floor, not a recommended composition or a phone-viewport target. Regions
 override automatic detection so an unrelated clock or cursor cannot choose the
-framing. `--padding` adjusts context; `--max-width` defaults to 960 pixels and
+framing.
+Several distant details may need separate crops plus an overview. `--padding` adjusts context; `--max-width` defaults to 960 pixels and
 only downsizes. A full-image region (`0,0,1,1`) retains the overview.
 
 For a matching before/after pair without regions, the helper suggests a crop
@@ -46,6 +54,11 @@ Outputs are `<stem>-after-detail.png|gif`, optional
 `<stem>-before-detail.png|gif`, and `<stem>-detail-receipt.json`. Sources remain
 untouched. Existing outputs require `--overwrite`; publication happens only
 after both crops and their metadata pass validation.
+
+If `magick` is unavailable on the required capture host, an available renderer
+such as FFmpeg may apply the same chosen rectangle, timing, and paired framing,
+and must preserve frame count, delays, and looping the same way. Record that
+substitution; the framing gate remains the acceptance check.
 
 These are detail derivatives; retain the raw captures as context and provenance.
 For an annotated source, include its explanatory caption in the region set.

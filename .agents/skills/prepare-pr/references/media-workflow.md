@@ -2,11 +2,12 @@
 
 For PNG/GIF crops, follow Framing. For recordings, follow Recording. Both paths
 end at Inspect and deliver. For supplied media, start directly with that file.
-Only when fresh capture is part of the task, use
-[test-t3-app](../../test-t3-app/SKILL.md) for web or
-[test-t3-mobile](../../test-t3-mobile/SKILL.md) for React Native mobile, following
-existing task authorization. Keep media-only work scoped to its requested
-artifact and destination.
+Only when fresh capture is part of the task, read the current repository's
+`.agents/skills/test-t3-app/SKILL.md` for web or
+`.agents/skills/test-t3-mobile/SKILL.md` for React Native mobile when present.
+Otherwise use an available capture skill for that surface within existing task
+authorization; record a verification gap if no suitable capture path is available.
+Keep media-only work scoped to its requested artifact and destination.
 For Electron shell or IPC changes, use the actual desktop client. If an
 authorized desktop capture is unavailable, record that verification gap;
 the web preview only proves behavior shared with the web client.
@@ -23,40 +24,65 @@ supporting evidence. For artifact-only requests, deliver the requested formats.
 
 ## Framing
 
-Inspect the source before choosing a crop. Name the claim, find the affected
-control and result, and include the labels, neighboring content, and layout
-edges needed to understand it. Keep the full frame when placement, clipping,
-navigation, or responsive layout is the claim; add a detail crop when the
-change would otherwise be small.
+Choose the primary view before choosing a crop rectangle. It should let someone
+who has not used the feature identify the surface, the action, and the result.
+For a spatial interaction such as scrolling, retain the affected pane: the
+content being scrolled, the complete control, and the composer or viewport edge
+that gives the control its meaning. Unrelated panes may be removed at their
+actual boundaries. Start from the full source, not an earlier detail crop.
 
-Prefer semantic regions selected from the actual image or accessibility
-bounds. Include both trigger and result when they are apart. Match the viewport,
-crop, and scale across before/after captures. For GIFs, inspect the start,
-action, and settled result and keep one crop covering the complete motion.
+Place crop edges in gutters or on container boundaries. Relevant text lines,
+bubbles, inputs, and buttons must remain whole horizontally. Content naturally
+entering or leaving a scroll viewport is different from cutting it with an
+editorial crop. Inspect the first frame, each changed state, and the final frame;
+one stable rectangle must preserve the interaction throughout.
 
-Read [detail-crops.md](detail-crops.md) and use `detail`. Detected pixel changes
-suggest a crop; clocks, cursors, and spinners can distract from the claim.
-Refine with semantic regions whenever context is missing or unrelated UI
-dominates. Several distant details may need separate crops plus an overview.
+When a small label is difficult to read at PR width, retain the contextual view
+and add a clearly labeled enlargement of the complete control, an unobscuring
+callout, or a comparable capture at a more suitable native viewport. A detail
+view belongs beside its contextual evidence in the reading sequence; a full-view
+MP4 link or a collapsed screenshot section alone does not repair a contextless
+primary GIF. A 390-pixel check is a presentation check, not a target crop width.
 
-**Complete when:** both states are legible at the intended inline size and
-include the action/result and necessary context. The receipt records provenance
-and framing; visual inspection establishes suitability.
+Read [detail-crops.md](detail-crops.md) for the crop tool. Its pixel-difference
+bounds and minimum dimensions are suggestions, not semantic quality checks.
+Select regions by whole UI elements, and use identical framing for the base and
+candidate. Keep raw sources so a rejected crop can be widened without loss.
+
+**Framing gate:** answer these from the images themselves — first against the
+proposed rectangle before exporting, then by inspecting the actual exports at
+desktop and narrow PR widths:
+
+- Which surface is this, what action happens, and where is its result?
+- Are the relevant controls and horizontal text lines intact at every state?
+- Can the reader follow the interaction without opening another artifact?
+- If a detail enlargement is needed, is its location clear in the primary view?
+
+A crop that leaves sentence fragments, cuts a composer or button in half, or
+shows only a floating count fails. Widen to a pane boundary or retain the full
+frame before trying a different presentation. Record the retained context,
+rectangle, and inspected states in the existing media receipt; file decoding
+and readable captions alone do not pass this gate.
+
+**Complete when:** the chosen rectangle passes the gate against the source and
+the exports keep the required context legible at desktop and narrow PR widths.
 
 ## Recording
 
 Before recording the full flow, complete the saved-file smoke check in
 [reliable capture setup](capture-recovery.md). Reuse the proven recorder and
-inspect each finalized export immediately. Record the affected flow with the
-recorder owned by the current test surface.
+inspect each finalized export immediately.
+Record the affected flow with the recorder owned by the current test surface.
 Use the attached preview's recording capability for web when exposed.
 For iOS Simulator, use XcodeBuildMCP recording when available or
 `xcrun simctl io <verified-UDID> recordVideo <output.mp4>`; stop only the recorder
 process you started. For Android, target the verified emulator serial with
 `adb -s <serial> shell screenrecord /sdcard/<unique-name>.mp4`, then pull that
-file. For a disabled recorder, recurring dialog, timeout, blank export, or
-image/accessibility mismatch, follow [capture recovery](capture-recovery.md)
-before reporting a blocker. Deliver available still evidence with its limits
+file. When a capture is black, blank, frozen, or from the wrong window, a recorder is
+disabled, times out, stops early, or re-shows a dialog, or the image or
+accessibility tree disagrees with the inspected UI, follow
+[capture recovery](capture-recovery.md) before the next capture attempt; blind
+retries produce misdiagnosed captures. Deliver available still evidence with its limits
 only after supported recovery; required recording and GIF gaps remain open.
 Keep secrets and unrelated personal data outside the frame. Capture the action
 lead-in, complete gesture, and actual settled result. Preserve the raw source.
@@ -79,10 +105,11 @@ its captions agree with the visible behavior, and edits or sampling are disclose
 
 ## Inspect and deliver
 
-Inspect the derivative in a 390 CSS-pixel mobile viewport at the PR content width. Changed text, captions,
-and relevant state must remain legible. Check GIF frames throughout the action
-and verify playback when the available tools permit it. Retain immutable raw
-sources and deliver useful detail prominently, with full context when needed.
+Repeat the framing gate at desktop and 390 CSS-pixel widths on the final
+rendered views — the published PR view when publishing.
+Check GIF frames throughout the action and verify playback when the available
+tools permit it. Confirm that an enlargement remains next to its contextual
+view and that publication scaling has not made the evidence ambiguous.
 
 For media-only work, deliver to the requested local or remote destination and
 stop here. Upload only when that destination requires it and the task authorizes it.
@@ -91,16 +118,17 @@ For authorized PR publication, upload evidence to GitHub through an API, CLI, or
 path. Keep PR-only captures and receipts outside the contribution diff. Fetch
 the resulting attachment and verify successful retrieval, media type, and
 intended content. A local path, login page, or completed upload command does
-not establish that the reviewer can access the media. Before reporting an upload blocker, attempt the available authorized
-publication path or identify the concrete missing capability or policy boundary.
-A local artifact, untried upload, or assumed permission requirement is not an
-upload blocker. If publication fails, retain the files, report the attempted
-operation and actual error, and name the remaining attachment step.
+not establish that the reviewer can access the media. Before reporting an upload
+blocker, attempt the available authorized publication path or identify the
+concrete missing capability or policy boundary. A local artifact, untried upload,
+or assumed permission requirement is not an upload blocker. If publication fails,
+retain the files, report the attempted operation and actual error, and name the
+remaining attachment step.
 
 After uploading, insert the URLs into the PR body and read it back. Verify each
-requested artifact is present and retrievable, not just hosted somewhere.
-Track an absent upstream-baseline comparison separately from successful
-publication; candidate-only media does not complete before/after proof.
+requested artifact is present and retrievable, not just hosted somewhere. Track
+an absent upstream-baseline comparison separately from successful publication;
+candidate-only media does not complete before/after proof.
 
 Report playback status and any access or lifetime limit. For a PR, return to
 the parent skill's final review; for media-only work, deliver directly.
