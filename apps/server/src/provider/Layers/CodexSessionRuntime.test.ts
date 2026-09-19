@@ -854,6 +854,43 @@ describe("isRecoverableThreadResumeError", () => {
     );
   });
 
+  it("matches list_turns capability errors without a thread mention", () => {
+    NodeAssert.equal(
+      isRecoverableThreadResumeError(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32601,
+          errorMessage: "list_turns is not supported yet",
+        }),
+      ),
+      true,
+    );
+  });
+
+  it("matches method-not-found resume failures by code", () => {
+    NodeAssert.equal(
+      isRecoverableThreadResumeError(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32601,
+          errorMessage: "Method not found: list_turns",
+        }),
+      ),
+      true,
+    );
+  });
+
+  it("matches unreadable provider thread history", () => {
+    NodeAssert.equal(
+      isRecoverableThreadResumeError(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32603,
+          errorMessage:
+            "failed to list thread history: thread-store internal error: failed to access thread history: error returned from database: (code: 11) database disk image is malformed",
+        }),
+      ),
+      true,
+    );
+  });
+
   it("ignores non-recoverable resume errors", () => {
     NodeAssert.equal(
       isRecoverableThreadResumeError(
@@ -996,6 +1033,52 @@ describe("openCodexThread", () => {
               new CodexErrors.CodexAppServerRequestError({
                 code: -32603,
                 errorMessage: "thread not found",
+              }),
+            );
+          },
+        },
+        request: (
+          method: "thread/start",
+          payload: CodexRpc.ClientRequestParamsByMethod["thread/start"],
+        ) => {
+          calls.push({ method, payload });
+          return Effect.succeed(started);
+        },
+      };
+
+      const opened = yield* openCodexThread({
+        client,
+        threadId: ThreadId.make("thread-1"),
+        runtimeMode: "full-access",
+        cwd: "/tmp/project",
+        requestedModel: "gpt-5.3-codex",
+        serviceTier: undefined,
+        resumeThreadId: "stale-thread",
+      });
+
+      NodeAssert.equal(opened.thread.id, "fresh-thread");
+      NodeAssert.deepStrictEqual(
+        calls.map((call) => call.method),
+        ["thread/resume", "thread/start"],
+      );
+    }),
+  );
+
+  it.effect("falls back to thread/start when resume hits unsupported list_turns", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ method: "thread/start" | "thread/resume"; payload: unknown }> = [];
+      const started = makeThreadOpenResponse("fresh-thread");
+      const client = {
+        raw: {
+          request: (
+            method: "thread/resume",
+            payload: CodexRpc.ClientRequestParamsByMethod["thread/resume"],
+          ) => {
+            calls.push({ method, payload });
+            return Effect.fail(
+              new CodexErrors.CodexAppServerRequestError({
+                code: -32601,
+                errorMessage: "list_turns is not supported yet",
               }),
             );
           },
