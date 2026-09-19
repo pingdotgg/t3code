@@ -1241,12 +1241,20 @@ it.effect(
         GIT_DIR: "/foreign/.git",
         GIT_WORK_TREE: "/foreign",
         GIT_COMMON_DIR: "/foreign/.git",
+        GIT_INDEX_FILE: "/foreign/index",
+        GIT_OBJECT_DIRECTORY: "/foreign/objects",
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: "/foreign/alternates",
+        GIT_CEILING_DIRECTORIES: "/foreign",
         GIT_DISCOVERY_ACROSS_FILESYSTEM: "1",
       };
       const previousGitEnv = {
         GIT_DIR: process.env.GIT_DIR,
         GIT_WORK_TREE: process.env.GIT_WORK_TREE,
         GIT_COMMON_DIR: process.env.GIT_COMMON_DIR,
+        GIT_INDEX_FILE: process.env.GIT_INDEX_FILE,
+        GIT_OBJECT_DIRECTORY: process.env.GIT_OBJECT_DIRECTORY,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: process.env.GIT_ALTERNATE_OBJECT_DIRECTORIES,
+        GIT_CEILING_DIRECTORIES: process.env.GIT_CEILING_DIRECTORIES,
         GIT_DISCOVERY_ACROSS_FILESYSTEM: process.env.GIT_DISCOVERY_ACROSS_FILESYSTEM,
       };
       Object.assign(process.env, seededGitEnv);
@@ -1265,10 +1273,9 @@ it.effect(
         // the signature match, and ambient Git bindings are scrubbed so
         // discovery always reflects the workspace itself.
         assert.equal(observedEnvs.at(-1)?.LC_ALL, "C");
-        assert.isUndefined(observedEnvs.at(-1)?.GIT_DIR);
-        assert.isUndefined(observedEnvs.at(-1)?.GIT_WORK_TREE);
-        assert.isUndefined(observedEnvs.at(-1)?.GIT_COMMON_DIR);
-        assert.isUndefined(observedEnvs.at(-1)?.GIT_DISCOVERY_ACROSS_FILESYSTEM);
+        for (const key of Object.keys(seededGitEnv) as (keyof typeof seededGitEnv)[]) {
+          assert.isUndefined(observedEnvs.at(-1)?.[key], key);
+        }
         // A successful detection runs the root and common-dir probes — the
         // scrub applies to every detection subprocess, not just the first.
         observedEnvs.length = 0;
@@ -1278,10 +1285,9 @@ it.effect(
         assert.equal(observedEnvs.length, 3);
         for (const env of observedEnvs) {
           assert.equal(env.LC_ALL, "C");
-          assert.isUndefined(env.GIT_DIR);
-          assert.isUndefined(env.GIT_WORK_TREE);
-          assert.isUndefined(env.GIT_COMMON_DIR);
-          assert.isUndefined(env.GIT_DISCOVERY_ACROSS_FILESYSTEM);
+          for (const key of Object.keys(seededGitEnv) as (keyof typeof seededGitEnv)[]) {
+            assert.isUndefined(env[key], key);
+          }
         }
         revParseResult = {
           exitCode: 128,
@@ -1347,7 +1353,9 @@ it.effect(
           Layer.mock(VcsProcess.VcsProcess)({
             run: (input) =>
               Effect.sync(() => {
-                observedEnvs.push(input.env ?? {});
+                // The real subprocess inherits this merged environment, so
+                // a probe that forgets its env leaks the ambient bindings.
+                observedEnvs.push({ ...process.env, ...input.env });
                 const result = input.args.includes("--is-inside-work-tree")
                   ? revParseResult
                   : input.args.includes("--show-toplevel")
@@ -1494,7 +1502,9 @@ it.effect("deleteCheckpointRefs propagates update-ref failures instead of swallo
         NodeServices.layer,
         Layer.mock(VcsProcess.VcsProcess)({
           run: (input) => {
-            observedEnv = input.env;
+            // The real subprocess inherits this merged environment, so an
+            // operation that forgets its env leaks the ambient bindings.
+            observedEnv = { ...process.env, ...input.env };
             // Mirror the real VcsProcess contract: a nonzero exit fails the
             // effect unless the caller opted into allowNonZeroExit.
             return input.allowNonZeroExit === true
