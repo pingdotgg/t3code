@@ -495,9 +495,11 @@ describe("composerStateAtPromptEnd", () => {
   });
 
   it("collapses mention chips so the next keystroke lands after the draft", () => {
-    const prompt = carryDisplacedCustomAnswerIntoPrompt("", "see @AGENTS.md");
+    const prompt = carryDisplacedCustomAnswerIntoPrompt("", "see @AGENTS.md please");
 
-    expect(composerStateAtPromptEnd(prompt).cursor).toBe("see ".length + 1);
+    expect(composerStateAtPromptEnd(prompt).cursor).toBe("see ".length + 1 + " please".length);
+    expect(composerStateAtPromptEnd(prompt).cursor).not.toBe(0);
+    expect(composerStateAtPromptEnd(prompt).cursor).not.toBe(prompt.length);
   });
 
   it("keeps a trailing mention trigger when the restored draft ends with @", () => {
