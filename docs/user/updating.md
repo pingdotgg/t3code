@@ -21,6 +21,16 @@ interrupted, and threads without saved provider resume state need a new message.
 If you previously enabled continuation for updates, enable this setting once
 to allow recovery without a connected client.
 
+## Update the desktop app when idle
+
+After downloading an update, open the update action in the sidebar or
+**Settings → About** and choose **Update when idle**. Keep that
+window open. T3 Code waits for agents in enabled environments, including background
+agents and agents waiting for approval or input. Disconnected environments also
+keep the update waiting. The waiting notice shows the version and lets you cancel.
+Closing or reloading the window clears the schedule. **Update now** still restarts
+immediately. This option does not wait for terminal commands.
+
 ## Update a connected server
 
 The offered action depends on how the server runs:
