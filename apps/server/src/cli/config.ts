@@ -76,6 +76,12 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
+const validateConfigFlag = Flag.Boolean("validate-config").pipe(
+  Flag.withDescription(
+    "Validate server environment variables and exit without starting the server.",
+  ),
+  Flag.optional,
+);
 
 const EnvServerConfig = Config.all({
   logLevel: Config.LogLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
@@ -175,6 +181,7 @@ const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
 );
 
 export interface CliServerFlags {
+  readonly validateConfig?: Option.Option<boolean> | undefined;
   readonly mode: Option.Option<ServerConfig.RuntimeMode>;
   readonly port: Option.Option<number>;
   readonly host: Option.Option<string>;
@@ -204,6 +211,7 @@ export const projectLocationFlags = {
 } as const;
 
 export const sharedServerCommandFlags = {
+  validateConfig: validateConfigFlag,
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,
@@ -252,6 +260,7 @@ export const resolveServerConfig = (
     const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;
     const normalizedFlags = {
+      validateConfig: flags.validateConfig ?? Option.none(),
       mode: flags.mode ?? Option.none(),
       port: flags.port ?? Option.none(),
       host: flags.host ?? Option.none(),
@@ -435,6 +444,7 @@ export const resolveCliAuthConfig = (
 ) =>
   resolveServerConfig(
     {
+      validateConfig: Option.none(),
       mode: Option.none(),
       port: Option.none(),
       host: Option.none(),

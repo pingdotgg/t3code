@@ -1,9 +1,11 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { Command, GlobalFlag } from "effect/unstable/cli";
 
 import { ServerConfig, type StartupPresentation } from "../config.ts";
 import { runServer } from "../server.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
+import { runValidateConfig } from "./envValidation.ts";
 
 export const runServerCommand = (
   flags: CliServerFlags,
@@ -13,6 +15,11 @@ export const runServerCommand = (
   },
 ) =>
   Effect.gen(function* () {
+    // Validation runs before any service, database connection, or network
+    // listener is created; `--validate-config` exits without booting the server.
+    if (Option.getOrElse(flags.validateConfig ?? Option.none(), () => false)) {
+      return yield* runValidateConfig;
+    }
     const logLevel = yield* GlobalFlag.LogLevel;
     const config = yield* resolveServerConfig(flags, logLevel, options);
     return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
