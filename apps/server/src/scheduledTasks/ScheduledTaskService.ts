@@ -927,6 +927,20 @@ export const layer = Layer.effect(
             Effect.gen(function* () {
               const existing = yield* findTask(input.id);
               if (existing === null || existing.projectId !== input.projectId) return null;
+              // A task in a project that does not exist saves fine and then
+              // fails every run at launch, so reject the move up front.
+              if (input.nextProjectId !== undefined && input.nextProjectId !== existing.projectId) {
+                const projects = yield* sql<{ matched: number }>`
+                  SELECT COUNT(*) AS matched
+                  FROM projection_projects
+                  WHERE project_id = ${input.nextProjectId} AND deleted_at IS NULL
+                `;
+                if ((projects[0]?.matched ?? 0) === 0) {
+                  return yield* taskError("The destination project does not exist.", {
+                    taskId: input.id,
+                  });
+                }
+              }
               // The patch merges with whatever is already committed, so the
               // resulting (project, thread) pair must still be dispatchable.
               if (input.threadId !== undefined || input.nextProjectId !== undefined) {

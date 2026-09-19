@@ -1028,6 +1028,17 @@ const v1ThreadId = ThreadId.make("thread:v1-only");
 const deletedThreadId = ThreadId.make("thread:deleted");
 const archivedThreadId = ThreadId.make("thread:archived");
 
+// A move is only accepted into a project that exists.
+const seedOtherProject = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const now = "2026-09-14T00:00:00.000Z";
+  yield* sql`
+    INSERT INTO projection_projects
+      (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+    VALUES (${otherProjectId}, 'other', '/tmp/other', '[]', ${now}, ${now})
+  `;
+});
+
 const seedProjectThreads = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const now = "2026-09-14T00:00:00.000Z";
@@ -1088,6 +1099,16 @@ it.effect("update applies model selection and project moves patch-style", () =>
   Effect.gen(function* () {
     const tasks = yield* ScheduledTaskService;
     const seeded = yield* seedTask;
+    const unknown = yield* tasks
+      .update({
+        id: updateTaskId,
+        projectId: updateProjectId,
+        nextProjectId: ProjectId.make("project:does-not-exist"),
+      })
+      .pipe(Effect.result);
+    if (Result.isSuccess(unknown)) assert.fail("expected the move to be rejected");
+    assert.equal(unknown.failure._tag, "ScheduledTaskError");
+    yield* seedOtherProject;
     const moved = yield* tasks.update({
       id: updateTaskId,
       projectId: updateProjectId,
@@ -1119,7 +1140,7 @@ it.effect("update applies model selection and project moves patch-style", () =>
       prompt: "new scope works",
     });
     assert.isTrue(Option.isSome(newScope));
-  }).pipe(Effect.provide(updateTestLayer)),
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
 );
 
 it.effect("update keeps a project move and a thread binding consistent", () =>
@@ -1127,6 +1148,7 @@ it.effect("update keeps a project move and a thread binding consistent", () =>
     const tasks = yield* ScheduledTaskService;
     yield* seedTask;
     yield* seedProjectThreads;
+    yield* seedOtherProject;
     // Binding to a v2 thread that lives in the task's project works.
     const bound = yield* tasks.update({
       id: updateTaskId,
