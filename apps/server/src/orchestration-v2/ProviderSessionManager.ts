@@ -2294,8 +2294,12 @@ export const layerWithOptions = (
         readonly operation: Effect.Effect<A, E>;
         readonly drainTimeout: Duration.Duration | undefined;
         readonly requiredThreadId?: ThreadId;
+        // Request/response mutations create no resource that ownership must
+        // track: an unanswered one must yield to caller interruption, not wait
+        // for a settle that may never arrive.
+        readonly interruptibleOperation?: boolean;
       }): Effect.Effect<A, E | ProviderAdapterProtocolError> =>
-        Effect.uninterruptibleMask((_restore) =>
+        Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
             const record = {
@@ -2334,14 +2338,20 @@ export const layerWithOptions = (
                       : "The provider session is no longer running.",
               });
             }
-            // The operation runs uninterruptibly inside the mask: adapters
+            // Acquisitions run uninterruptibly inside the mask: adapters
             // acquire native resources through Effect.tryPromise (Cursor's
             // Agent.create/resume), whose interruption detaches the promise
             // rather than cancelling it. Signalling `done` at interrupt time
             // would let the drain complete while a late result still lands
             // with no cleanup owner — an interruptible caller instead waits
             // for the acquisition to settle into tracked ownership.
-            return yield* input.operation.pipe(
+            // interruptibleOperation opts out for calls whose only outcome is
+            // settled-or-ambiguous (history injection): interruption reaches
+            // the request, and the uninterruptible ensuring still settles the
+            // admission record so neither the drain nor the caller wedges.
+            return yield* (
+              input.interruptibleOperation === true ? restore(input.operation) : input.operation
+            ).pipe(
               Effect.ensuring(
                 Effect.sync(() => {
                   const ops = inflightAdapterOps.get(key);
@@ -2815,6 +2825,51 @@ export const layerWithOptions = (
                       }),
                     ),
                     Effect.andThen(runtime.uploadFeedback!(input)),
+                  ),
+              }),
+          ...(runtime.injectHistory === undefined
+            ? {}
+            : {
+                injectHistory: (input: Parameters<NonNullable<typeof runtime.injectHistory>>[0]) =>
+                  requireLiveRuntime({
+                    providerSessionId,
+                    expectedRuntime: runtime,
+                    driver: runtime.driver,
+                  }).pipe(
+                    Effect.andThen(
+                      observeActivity(providerSessionId, touchActivity(providerSessionId, runtime)),
+                    ),
+                    Effect.andThen(
+                      requireLiveRuntime({
+                        providerSessionId,
+                        expectedRuntime: runtime,
+                        driver: runtime.driver,
+                      }),
+                    ),
+                    // Injection mutates an already-attached native thread
+                    // without a turn's busy pin, so it admits like snapshot and
+                    // rollback: a release drains the call before scope close
+                    // and the ownership recheck refuses a runtime a detach or
+                    // replacement already retired.
+                    Effect.andThen(
+                      runResourceCreatingAdapterOp({
+                        providerSessionId,
+                        expectedRuntime: runtime,
+                        driver: runtime.driver,
+                        operation: runtime.injectHistory!(input),
+                        ...(input.providerThread.appThreadId === null
+                          ? {}
+                          : { requiredThreadId: input.providerThread.appThreadId }),
+                        // A request/response mutation, not an acquisition: an
+                        // unanswered request must not pin teardown — the drain
+                        // bound abandons the wait and scope close reclaims the
+                        // call — and must not pin the caller either, so the
+                        // request itself restores interruption while the
+                        // admission and its settle stay masked.
+                        drainTimeout: Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS),
+                        interruptibleOperation: true,
+                      }),
+                    ),
                   ),
               }),
         };

@@ -270,6 +270,9 @@ function makeProviderAdapter(
     readonly ensureThread?: (
       input: Parameters<ProviderAdapterV2SessionRuntime["ensureThread"]>[0],
     ) => ReturnType<ProviderAdapterV2SessionRuntime["ensureThread"]>;
+    readonly injectHistory?: (
+      input: Parameters<NonNullable<ProviderAdapterV2SessionRuntime["injectHistory"]>>[0],
+    ) => ReturnType<NonNullable<ProviderAdapterV2SessionRuntime["injectHistory"]>>;
   } = {},
 ): ProviderAdapterV2Shape {
   const instanceId = options.instanceId ?? ProviderInstanceId.make("codex");
@@ -375,6 +378,10 @@ function makeProviderAdapter(
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
           forkThread: () => unimplemented("forkThread unused in test"),
+          injectHistory: (injectInput) =>
+            options.injectHistory === undefined
+              ? unimplemented("injectHistory unused in test")
+              : options.injectHistory(injectInput),
         } satisfies ProviderAdapterV2SessionRuntime;
       }),
   };
@@ -411,6 +418,9 @@ function makeTestLayer(input: {
   readonly ensureThread?: (
     input: Parameters<ProviderAdapterV2SessionRuntime["ensureThread"]>[0],
   ) => ReturnType<ProviderAdapterV2SessionRuntime["ensureThread"]>;
+  readonly injectHistory?: (
+    input: Parameters<NonNullable<ProviderAdapterV2SessionRuntime["injectHistory"]>>[0],
+  ) => ReturnType<NonNullable<ProviderAdapterV2SessionRuntime["injectHistory"]>>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly fileSystemLayer?: Layer.Layer<FileSystem.FileSystem>;
@@ -439,6 +449,7 @@ function makeTestLayer(input: {
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.resumeThread === undefined ? {} : { resumeThread: input.resumeThread }),
       ...(input.ensureThread === undefined ? {} : { ensureThread: input.ensureThread }),
+      ...(input.injectHistory === undefined ? {} : { injectHistory: input.injectHistory }),
     }),
     ...(input.extraAdapters ?? []),
   ];
@@ -3982,6 +3993,7 @@ it.effect(
 it.effect("ProviderSessionManagerV2 rejects runtime thread attachments on a released session", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const injectCount = yield* Ref.make(0);
     yield* Effect.gen(function* () {
       const manager = yield* ProviderSessionManagerV2;
       const threadId = ThreadId.make("thread-released-attach");
@@ -4002,8 +4014,165 @@ it.effect("ProviderSessionManagerV2 rejects runtime thread attachments on a rele
         error._tag === "ProviderAdapterProtocolError" ? error.detail : "",
         "no longer running",
       );
-    }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 3_600_000 })));
+      // History injection mutates native thread state the same way: the
+      // released runtime's handle rejects before reaching the adapter —
+      // injectCount staying 0 proves the adapter call never ran.
+      const idAllocator = yield* IdAllocatorV2;
+      const injectError = yield* runtime.injectHistory!({
+        providerThread: makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now: yield* DateTime.now,
+        }),
+        context: "handoff",
+        messages: [],
+      }).pipe(Effect.flip);
+      assert.equal(injectError._tag, "ProviderAdapterProtocolError");
+      assert.equal(yield* Ref.get(injectCount), 0);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+          injectHistory: () => Ref.update(injectCount, (count) => count + 1).pipe(Effect.as(true)),
+        }),
+      ),
+    );
   }),
+);
+
+it.effect("ProviderSessionManagerV2 admits history injection on a live session", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const injectCount = yield* Ref.make(0);
+    yield* Effect.gen(function* () {
+      const threadId = ThreadId.make("thread-live-inject");
+      const { allocate, open } = yield* makeThreadSessionFixture(threadId);
+      const providerSessionId = yield* allocate;
+      const runtime = yield* open(providerSessionId);
+      const idAllocator = yield* IdAllocatorV2;
+      const injected = yield* runtime.injectHistory!({
+        providerThread: makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now: yield* DateTime.now,
+        }),
+        context: "handoff",
+        messages: [],
+      });
+      assert.isTrue(injected);
+      assert.equal(yield* Ref.get(injectCount), 1);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+          injectHistory: () => Ref.update(injectCount, (count) => count + 1).pipe(Effect.as(true)),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not let an unanswered history injection block session close",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const injectStarted = yield* Deferred.make<void>();
+      const neverAnswered = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread-inject-unanswered");
+        const { allocate, open } = yield* makeThreadSessionFixture(threadId);
+        const providerSessionId = yield* allocate;
+        const runtime = yield* open(providerSessionId);
+        const idAllocator = yield* IdAllocatorV2;
+        const injecting = yield* runtime.injectHistory!({
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now: yield* DateTime.now,
+          }),
+          context: "handoff",
+          messages: [],
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(injectStarted);
+        const closing = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+        yield* TestClock.adjust("20 seconds");
+        yield* Fiber.join(closing);
+        // Teardown abandoned the unanswered call at the drain bound instead of
+        // waiting on it — this test-forked inject fiber stays parked until the
+        // request settles, but no longer pins cleanup.
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        yield* Deferred.succeed(neverAnswered, undefined);
+        yield* Fiber.join(injecting);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            injectHistory: () =>
+              Deferred.succeed(injectStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(neverAnswered)),
+                Effect.as(true),
+              ),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 lets caller interruption settle an unanswered history injection",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const injectStarted = yield* Deferred.make<void>();
+      const neverAnswered = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread-inject-interrupted");
+        const { allocate, open } = yield* makeThreadSessionFixture(threadId);
+        const providerSessionId = yield* allocate;
+        const runtime = yield* open(providerSessionId);
+        const idAllocator = yield* IdAllocatorV2;
+        const injecting = yield* runtime.injectHistory!({
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now: yield* DateTime.now,
+          }),
+          context: "handoff",
+          messages: [],
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(injectStarted);
+        // The request never settles: worker cancellation (EffectWorker's
+        // raceFirst waits on the losing execution's interruption) must still
+        // reach the caller, and the masked ensuring must settle the admission
+        // record so close below does not wait on an abandoned record.
+        yield* Fiber.interrupt(injecting);
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(injecting)));
+        yield* manager.close(providerSessionId);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            injectHistory: () =>
+              Deferred.succeed(injectStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(neverAnswered)),
+                Effect.as(true),
+              ),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(
@@ -4752,6 +4921,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const injectCount = yield* Ref.make(0);
       yield* Effect.gen(function* () {
         const manager = yield* ProviderSessionManagerV2;
         const ownerThreadId = ThreadId.make("thread-stale-runtime-owner");
@@ -4812,10 +4982,26 @@ it.effect(
           .resumeThread({ providerThread: { ...providerThread, appThreadId: null } })
           .pipe(Effect.flip);
         assert.equal(orphanResumeError._tag, "ProviderAdapterProtocolError");
+        const injectError = yield* runtimeA.injectHistory!({
+          providerThread,
+          context: "handoff",
+          messages: [],
+        }).pipe(Effect.flip);
+        assert.equal(injectError._tag, "ProviderAdapterProtocolError");
+        assert.equal(yield* Ref.get(injectCount), 0);
         assert.equal((yield* Ref.get(state)).resumeCount, 0);
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
         assert.equal((yield* Ref.get(state)).closeCount, 1);
-      }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 3_600_000 })));
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            injectHistory: () =>
+              Ref.update(injectCount, (count) => count + 1).pipe(Effect.as(true)),
+          }),
+        ),
+      );
     }),
 );
 
