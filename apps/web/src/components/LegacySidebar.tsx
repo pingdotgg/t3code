@@ -1957,34 +1957,48 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         const confirmed = await api.dialogs.confirm(
           [
             `Delete ${count} thread${count === 1 ? "" : "s"}?`,
-            "This permanently clears conversation history for these threads.",
+            "This permanently clears conversation history and deletes worktrees no other threads use.",
           ].join("\n"),
           { variant: "destructive" },
         );
         if (!confirmed) return;
       }
 
-      const { deletedThreadKeys, firstFailure } = await deleteSelectedThreadEntries({
-        entries: selectedThreadEntries,
-        delete: ({ threadRef }, deletedThreadKeys) =>
-          deleteThread(threadRef, { deletedThreadKeys }),
+      const deletionToast = toastManager.add({
+        type: "loading",
+        title: `Deleting ${count} thread${count === 1 ? "" : "s"}…`,
+        timeout: 0,
       });
-      if (firstFailure !== null) {
-        const firstError = squashAtomCommandFailure(firstFailure);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to delete threads",
-            description: firstError instanceof Error ? firstError.message : "An error occurred.",
+      try {
+        const { deletedThreadKeys, firstFailure } = await deleteSelectedThreadEntries({
+          entries: selectedThreadEntries,
+          delete: ({ threadRef }, deletedThreadKeys, deferDeletion) =>
+            deleteThread(threadRef, {
+              deletedThreadKeys,
+              deferDeletion,
+              worktreeDeletionConfirmed: true,
+            }),
+        });
+        if (firstFailure !== null) {
+          const firstError = squashAtomCommandFailure(firstFailure);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Some threads could not be deleted",
+              description: `${firstError instanceof Error ? firstError.message : "An error occurred."} Remaining threads were kept; you can retry deleting them.`,
+              timeout: 0,
+            }),
+          );
+        }
+        removeFromSelection(
+          getThreadKeysToDeselectAfterDelete(threadKeys, deletedThreadKeys, (threadKey) => {
+            const threadRef = parseScopedThreadKey(threadKey);
+            return threadRef !== null && readThreadShell(threadRef) !== null;
           }),
         );
+      } finally {
+        toastManager.close(deletionToast);
       }
-      removeFromSelection(
-        getThreadKeysToDeselectAfterDelete(threadKeys, deletedThreadKeys, (threadKey) => {
-          const threadRef = parseScopedThreadKey(threadKey);
-          return threadRef !== null && readThreadShell(threadRef) !== null;
-        }),
-      );
     },
     [
       appSettingsConfirmThreadArchive,

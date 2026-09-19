@@ -986,6 +986,7 @@ const buildAppUnderTest = (options?: {
               }),
             dispatch: () => Effect.succeed({ sequence: 0 }),
             streamDomainEvents: Stream.empty,
+            withWorktreeCleanup: (_paths, effect) => effect,
             latestSequence: Effect.succeed(0),
             ...options?.layers?.orchestrationEngine,
           }),

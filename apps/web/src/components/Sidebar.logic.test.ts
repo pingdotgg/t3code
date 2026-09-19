@@ -151,6 +151,49 @@ describe("deleteSelectedThreadEntries", () => {
     });
   });
 
+  it.each([false, true])(
+    "reports rejected deletions and waits for other entries (deferred=%s)",
+    async (deferred) => {
+      const error = new Error("Connection lost");
+      let finish!: () => void;
+      let started!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const running = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const deletion = deleteSelectedThreadEntries({
+        entries,
+        delete: async ({ threadKey }, _deletedThreadKeys, deferDeletion) => {
+          const run = async () => {
+            if (threadKey === "one") throw error;
+            if (threadKey === "two") {
+              started();
+              await pending;
+            }
+            return success;
+          };
+          if (!deferred) return run();
+          deferDeletion(run);
+          return success;
+        },
+      });
+      await running;
+      let completed = false;
+      void deletion.then(() => {
+        completed = true;
+      });
+      await Promise.resolve();
+      expect(completed).toBe(false);
+      finish();
+      const outcome = await deletion;
+      expect(outcome.deletedThreadKeys).toEqual(new Set(["two", "three"]));
+      expect(outcome.firstFailure?._tag).toBe("Failure");
+      if (outcome.firstFailure) expect(Cause.squash(outcome.firstFailure.cause)).toBe(error);
+    },
+  );
+
   it.each([
     { firstResult: success, deletedThreadKeys: new Set(["one"]), firstFailure: null },
     { firstResult: failure, deletedThreadKeys: new Set<string>(), firstFailure: failure },

@@ -97,6 +97,8 @@ const run = (activities: ReadonlyArray<ReturnType<typeof recordedSetup>>) =>
           }),
         streamDomainEvents: Stream.empty,
         subscribeDomainEvents: Effect.succeed(Stream.empty),
+        withWorktreeCleanup: <A, E>(_paths: ReadonlyArray<string>, effect: Effect.Effect<A, E>) =>
+          effect,
         latestSequence: Effect.succeed(0),
       }),
       Effect.provide(NodeServices.layer),

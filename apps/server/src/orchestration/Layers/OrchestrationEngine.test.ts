@@ -20,6 +20,8 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Metric from "effect/Metric";
@@ -54,6 +56,7 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import { removeUnusedWorktree } from "../threadWorktreeDeletion.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -130,6 +133,84 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  effectIt.effect.each(["thread.create", "thread.meta.update"] as const)(
+    "prevents concurrent %s adoption during cleanup without blocking unrelated commands",
+    (type) =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngineService;
+        const snapshots = yield* ProjectionSnapshotQuery;
+        const projectId = ProjectId.make("cleanup-project");
+        const threadId = ThreadId.make("cleanup-adopter");
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cleanup-project"),
+          projectId,
+          title: "Test",
+          workspaceRoot: "/repo",
+          createdAt: now(),
+        });
+        const create = {
+          type: "thread.create",
+          commandId: CommandId.make("cleanup-create"),
+          projectId,
+          threadId,
+          title: "Test",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/repo/staged",
+          createdAt: now(),
+        } as const;
+        if (type === "thread.meta.update")
+          yield* engine.dispatch({ ...create, worktreePath: null });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const cleanup = yield* removeUnusedWorktree(
+          { cwd: "/repo", path: create.worktreePath, force: true },
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(
+              type === "thread.meta.update" ? Effect.die("cleanup failed") : Effect.void,
+            ),
+          ),
+        ).pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        const adoption: OrchestrationCommand =
+          type === "thread.create"
+            ? create
+            : {
+                type,
+                commandId: CommandId.make("cleanup-adopt"),
+                threadId,
+                worktreePath: create.worktreePath,
+              };
+        expect((yield* engine.dispatch(adoption).pipe(Effect.exit))._tag).toBe("Failure");
+        expect(
+          (yield* snapshots.getCommandReadModel()).threads.some(
+            (thread) => thread.worktreePath === create.worktreePath,
+          ),
+        ).toBe(false);
+        // This receipt must arrive while filesystem removal is still blocked.
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("unrelated-project"),
+          projectId: ProjectId.make("unrelated-project"),
+          title: "Other work",
+          workspaceRoot: "/other",
+          createdAt: now(),
+        });
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* Fiber.join(cleanup))._tag).toBe(
+          type === "thread.meta.update" ? "Failure" : "Success",
+        );
+        yield* engine.dispatch({ ...adoption, commandId: CommandId.make("retry-adoption") });
+        expect((yield* snapshots.getCommandReadModel()).threads[0]?.worktreePath).toBe(
+          create.worktreePath,
+        );
+      }).pipe(Effect.provide(makeOrchestrationLayer())),
+  );
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {

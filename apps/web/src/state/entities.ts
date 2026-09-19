@@ -193,6 +193,13 @@ export function readEnvironmentSupportsSettlement(environmentId: EnvironmentId):
   );
 }
 
+export function readEnvironmentSupportsRecoverableDeletion(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .recoverableThreadDeletion === true
+  );
+}
+
 /** Whether the environment's server understands thread.snooze/unsnooze.
     Same version-skew contract as settlement. */
 export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boolean {

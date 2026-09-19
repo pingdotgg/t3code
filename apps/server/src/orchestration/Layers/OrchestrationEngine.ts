@@ -17,6 +17,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -89,11 +90,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const crypto = yield* Crypto.Crypto;
+  const path = yield* Path.Path;
+  const worktreeCleanups = new Map<string, number>();
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
 
-  const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
+  const commandQueue = yield* Queue.unbounded<Effect.Effect<void>>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
   const projectEventsOntoReadModel = (
@@ -242,6 +245,17 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        if (
+          (envelope.command.type === "thread.create" ||
+            envelope.command.type === "thread.meta.update") &&
+          envelope.command.worktreePath &&
+          worktreeCleanups.has(path.resolve(envelope.command.worktreePath))
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: envelope.command.type,
+            detail: "Worktree cleanup is in progress. Try again after it finishes.",
+          });
+        }
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
@@ -413,7 +427,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   yield* projectionPipeline.bootstrap;
   commandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
 
-  const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatMap(processEnvelope)));
+  const worker = Effect.forever(Queue.take(commandQueue).pipe(Effect.flatten));
   yield* Effect.forkScoped(worker);
   yield* Effect.logDebug("orchestration engine started").pipe(
     Effect.annotateLogs({ sequence: commandReadModel.snapshotSequence }),
@@ -438,20 +452,61 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const dispatch: OrchestrationEngineShape["dispatch"] = (command, options) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
-      yield* Queue.offer(commandQueue, {
+      const envelope: CommandEnvelope = {
         command,
         origin: options?.origin,
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
-      });
+      };
+      yield* Queue.offer(
+        commandQueue,
+        Effect.suspend(() => processEnvelope(envelope)),
+      );
       return yield* Deferred.await(result);
     });
+
+  const runSerialized = <A, E>(effect: Effect.Effect<A, E>) =>
+    Effect.gen(function* () {
+      const result = yield* Deferred.make<A, E>();
+      yield* Queue.offer(
+        commandQueue,
+        effect.pipe(
+          Effect.exit,
+          Effect.flatMap((exit) => Deferred.done(result, exit)),
+          Effect.asVoid,
+        ),
+      );
+      return yield* Deferred.await(result);
+    });
+
+  const withWorktreeCleanup: OrchestrationEngineShape["withWorktreeCleanup"] = (paths, cleanup) => {
+    const keys = [...new Set(paths.map((entry) => path.resolve(entry)))];
+    return Effect.acquireUseRelease(
+      runSerialized(
+        Effect.sync(() => {
+          for (const key of keys) worktreeCleanups.set(key, (worktreeCleanups.get(key) ?? 0) + 1);
+        }),
+      ),
+      () => cleanup,
+      () =>
+        runSerialized(
+          Effect.sync(() => {
+            for (const key of keys) {
+              const remaining = worktreeCleanups.get(key)! - 1;
+              if (remaining === 0) worktreeCleanups.delete(key);
+              else worktreeCleanups.set(key, remaining);
+            }
+          }),
+        ),
+    );
+  };
 
   return {
     readEvents,
     readThreadEvents,
     getThreadReplayStats,
     dispatch,
+    withWorktreeCleanup,
     subscribeDomainEvents: PubSub.subscribe(eventPubSub).pipe(Effect.map(Stream.fromSubscription)),
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (wsServer, ProviderRuntimeIngestion, CheckpointReactor, etc.)

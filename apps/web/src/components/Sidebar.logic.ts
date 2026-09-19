@@ -3,6 +3,7 @@ import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
@@ -409,14 +410,29 @@ export async function deleteSelectedThreadEntries<
   delete: (
     entry: TEntry,
     deletedThreadKeys: ReadonlySet<string>,
+    deferDeletion: (deleteThread: () => Promise<AtomCommandResult<unknown, unknown>>) => void,
   ) => Promise<AtomCommandResult<unknown, unknown> | null>;
 }) {
   const deletedThreadKeys = new Set<string>();
+  const pendingDeletions: Array<Promise<void>> = [];
   let firstFailure: AsyncResult.Failure<unknown, unknown> | null = null;
 
   for (const entry of input.entries) {
-    const result = await input.delete(entry, deletedThreadKeys);
-    if (result === null) continue;
+    let deferred = false;
+    const attempt = await settlePromise(() =>
+      input.delete(entry, deletedThreadKeys, (deleteThread) => {
+        deferred = true;
+        pendingDeletions.push(
+          settlePromise(deleteThread).then((attempt) => {
+            const result = attempt._tag === "Failure" ? attempt : attempt.value;
+            if (result._tag === "Success") deletedThreadKeys.add(entry.threadKey);
+            else if (!isAtomCommandInterrupted(result)) firstFailure ??= result;
+          }),
+        );
+      }),
+    );
+    const result = attempt._tag === "Failure" ? attempt : attempt.value;
+    if (result === null || deferred) continue;
     if (result._tag === "Failure") {
       if (isAtomCommandInterrupted(result)) break;
       firstFailure ??= result;
@@ -425,6 +441,8 @@ export async function deleteSelectedThreadEntries<
     deletedThreadKeys.add(entry.threadKey);
   }
 
+  // Wait for every outcome, including rejected promises, before updating selection.
+  await Promise.all(pendingDeletions);
   return { deletedThreadKeys, firstFailure };
 }
 
