@@ -258,8 +258,14 @@ export function createMobileThemeVariables(
     "--color-thread-hover": c.sidebarRowHover,
     "--color-row-hover": c.toolbarControlHover,
     "--color-composer-panel": themeColorWithAlpha(c.canvas, appearance === "dark" ? 0.92 : 0.88),
-    "--color-composer-surface": themeColorWithAlpha(c.surface, appearance === "dark" ? 0.9 : 0.94),
-    "--color-composer-border": themeColorWithAlpha(c.border, appearance === "dark" ? 0.46 : 0.54),
+    "--color-composer-surface": themeColorWithAlpha(
+      groupedCard,
+      appearance === "dark" ? 0.9 : 0.94,
+    ),
+    "--color-composer-border": themeColorWithAlpha(
+      c.border,
+      groupedCard === c.surface ? (appearance === "dark" ? 0.46 : 0.54) : 0.8,
+    ),
     "--color-foreground": c.text,
     "--color-foreground-secondary": readableTextColor(c.textMuted, textSurfaces),
     "--color-foreground-muted": readableTextColor(c.mutedForeground, textSurfaces),
@@ -295,7 +301,7 @@ export function createMobileThemeVariables(
     "--color-input": c.surface,
     "--color-input-border": c.input,
     "--color-sidebar-search": c.sidebarControlSurface,
-    "--color-placeholder": c.placeholder,
+    "--color-placeholder": readableTextColor(c.placeholder, textSurfaces),
     "--color-icon": c.text,
     "--color-icon-muted": c.iconMuted,
     "--color-icon-subtle": c.secondaryLabel,
@@ -303,6 +309,7 @@ export function createMobileThemeVariables(
     "--color-header-foreground": c.toolbarForeground,
     "--color-header-border": c.toolbarBorder,
     "--color-glass-surface": withAlpha(c.surfaceOverlay, 0.74),
+    "--color-glass-fallback": themeColorWithAlpha(groupedCard, appearance === "dark" ? 0.9 : 0.94),
     "--color-glass-tint": withAlpha(c.surfaceOverlay, 0.22),
     "--color-status-bar": c.canvas,
     "--color-md-body": c.text,
@@ -362,7 +369,20 @@ export function getMobileThemeVariables(
         ? colors.toolbarControlHover
         : colors.sidebarRowActive
       : colors.surface;
-  const baseVariables = createMobileThemeVariables(colors, appearance, groupedCard);
+  const mobileColors =
+    themeId === DEFAULT_MOBILE_THEME_ID
+      ? {
+          ...colors,
+          messageSurface: flattenThemeColor(
+            themeColorWithAlpha(
+              appearance === "dark" ? colors.sidebarRowActive : colors.border,
+              0.3,
+            ),
+            colors.messageSurface,
+          ),
+        }
+      : colors;
+  const baseVariables = createMobileThemeVariables(mobileColors, appearance, groupedCard);
 
   // The complete base record guarantees that optional overrides cannot leave a token undefined.
   return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;

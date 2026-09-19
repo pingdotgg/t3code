@@ -6,12 +6,12 @@ import { themeColorWithAlpha } from "../lib/mobileTheme";
 
 /** Frosted backdrop for containers that clip their children to their shape. */
 export function GlassBackdrop(props: { readonly fallbackColor?: ColorValue }) {
-  const { themeAppearance } = useAppearancePreferences();
+  const { themeAppearance, themeVariables } = useAppearancePreferences();
   const supportsBlur = Platform.OS === "ios";
-  const colorStyle =
-    props.fallbackColor === undefined
-      ? undefined
-      : { backgroundColor: themeColorWithAlpha(String(props.fallbackColor), 1) };
+  const color = props.fallbackColor ?? themeVariables["--color-glass-fallback"];
+  const colorStyle = {
+    backgroundColor: supportsBlur ? color : themeColorWithAlpha(String(color), 1),
+  };
 
   return (
     <>
@@ -25,11 +25,8 @@ export function GlassBackdrop(props: { readonly fallbackColor?: ColorValue }) {
       ) : null}
       <View
         pointerEvents="none"
-        className="absolute inset-0 bg-card"
-        style={[
-          colorStyle,
-          { opacity: supportsBlur ? (themeAppearance === "dark" ? 0.25 : 0.55) : 1 },
-        ]}
+        className="absolute inset-0 bg-glass-fallback"
+        style={colorStyle}
       />
     </>
   );

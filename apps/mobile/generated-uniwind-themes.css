@@ -16,8 +16,8 @@
       --color-thread-hover: #fcfcfc;
       --color-row-hover: #f4f4f5;
       --color-composer-panel: rgba(252, 252, 252, 0.88);
-      --color-composer-surface: rgba(255, 255, 255, 0.94);
-      --color-composer-border: rgba(228, 228, 231, 0.54);
+      --color-composer-surface: rgba(244, 244, 245, 0.94);
+      --color-composer-border: rgba(228, 228, 231, 0.8);
       --color-foreground: #27272a;
       --color-foreground-secondary: #6f6f79;
       --color-foreground-muted: #6f6f79;
@@ -53,7 +53,7 @@
       --color-input: #ffffff;
       --color-input-border: #d4d4d8;
       --color-sidebar-search: #f4f4f5;
-      --color-placeholder: #71717b;
+      --color-placeholder: #6f6f79;
       --color-icon: #27272a;
       --color-icon-muted: #71717b;
       --color-icon-subtle: #71717b;
@@ -61,6 +61,7 @@
       --color-header-foreground: #27272a;
       --color-header-border: #e4e4e7;
       --color-glass-surface: rgba(255, 255, 255, 0.74);
+      --color-glass-fallback: rgba(244, 244, 245, 0.94);
       --color-glass-tint: rgba(255, 255, 255, 0.22);
       --color-status-bar: #fcfcfc;
       --color-md-body: #27272a;
@@ -75,7 +76,7 @@
       --color-md-user-fence-bg: rgba(0, 0, 0, 0.16);
       --color-md-user-fence-text: #27272a;
       --color-md-hr: #e4e4e7;
-      --color-user-bubble: #f4f4f5;
+      --color-user-bubble: #efeff1;
       --color-user-bubble-foreground: #27272a;
       --color-user-bubble-foreground-muted: rgba(39, 39, 42, 0.78);
       --color-user-bubble-skill-foreground: #1b4ed8;
@@ -167,8 +168,8 @@
       --color-thread-hover: #131313;
       --color-row-hover: #141414;
       --color-composer-panel: rgba(10, 10, 10, 0.92);
-      --color-composer-surface: rgba(17, 17, 17, 0.9);
-      --color-composer-border: rgba(25, 25, 25, 0.46);
+      --color-composer-surface: rgba(26, 27, 27, 0.9);
+      --color-composer-border: rgba(25, 25, 25, 0.8);
       --color-foreground: #f5f5f5;
       --color-foreground-secondary: #838383;
       --color-foreground-muted: #838383;
@@ -204,7 +205,7 @@
       --color-input: #111111;
       --color-input-border: #1e1e1e;
       --color-sidebar-search: #0a0a0a;
-      --color-placeholder: #818181;
+      --color-placeholder: #838383;
       --color-icon: #f5f5f5;
       --color-icon-muted: #818181;
       --color-icon-subtle: #818181;
@@ -212,6 +213,7 @@
       --color-header-foreground: #f5f5f5;
       --color-header-border: #191919;
       --color-glass-surface: rgba(17, 17, 17, 0.74);
+      --color-glass-fallback: rgba(26, 27, 27, 0.9);
       --color-glass-tint: rgba(17, 17, 17, 0.22);
       --color-status-bar: #0a0a0a;
       --color-md-body: #f5f5f5;
@@ -226,10 +228,10 @@
       --color-md-user-fence-bg: rgba(0, 0, 0, 0.28);
       --color-md-user-fence-text: #f5f5f5;
       --color-md-hr: #191919;
-      --color-user-bubble: #141414;
+      --color-user-bubble: #161616;
       --color-user-bubble-foreground: #f5f5f5;
       --color-user-bubble-foreground-muted: rgba(245, 245, 245, 0.78);
-      --color-user-bubble-skill-foreground: #4477f2;
+      --color-user-bubble-skill-foreground: #4678f2;
       --color-backdrop: rgba(0, 0, 0, 0.48);
       --color-drawer: #000000;
       --color-drawer-foreground: #f1f3f7;
@@ -363,6 +365,7 @@
       --color-header-foreground: #501854;
       --color-header-border: #efbdeb;
       --color-glass-surface: rgba(255, 255, 255, 0.74);
+      --color-glass-fallback: rgba(250, 243, 251, 0.94);
       --color-glass-tint: rgba(255, 255, 255, 0.22);
       --color-status-bar: #fdf7fd;
       --color-md-body: #501854;
@@ -514,6 +517,7 @@
       --color-header-foreground: #f9f8fb;
       --color-header-border: #27242c;
       --color-glass-surface: rgba(16, 10, 14, 0.74);
+      --color-glass-fallback: rgba(41, 35, 45, 0.9);
       --color-glass-tint: rgba(16, 10, 14, 0.22);
       --color-status-bar: #1f1a24;
       --color-md-body: #f9f8fb;
@@ -665,6 +669,7 @@
       --color-header-foreground: #241523;
       --color-header-border: #d5e6dd;
       --color-glass-surface: rgba(231, 233, 232, 0.74);
+      --color-glass-fallback: rgba(243, 247, 244, 0.94);
       --color-glass-tint: rgba(231, 233, 232, 0.22);
       --color-status-bar: #f3f7f4;
       --color-md-body: #241523;
@@ -816,6 +821,7 @@
       --color-header-foreground: #fffaff;
       --color-header-border: #36654c;
       --color-glass-surface: rgba(68, 77, 73, 0.74);
+      --color-glass-fallback: rgba(27, 40, 33, 0.9);
       --color-glass-tint: rgba(68, 77, 73, 0.22);
       --color-status-bar: #1b2821;
       --color-md-body: #fffaff;
@@ -967,6 +973,7 @@
       --color-header-foreground: #241523;
       --color-header-border: #d8e4ee;
       --color-glass-surface: rgba(232, 233, 235, 0.74);
+      --color-glass-fallback: rgba(245, 247, 248, 0.94);
       --color-glass-tint: rgba(232, 233, 235, 0.22);
       --color-status-bar: #f5f7f8;
       --color-md-body: #241523;
@@ -1118,6 +1125,7 @@
       --color-header-foreground: #fffaff;
       --color-header-border: #36566f;
       --color-glass-surface: rgba(65, 72, 81, 0.74);
+      --color-glass-fallback: rgba(23, 33, 43, 0.9);
       --color-glass-tint: rgba(65, 72, 81, 0.22);
       --color-status-bar: #17212b;
       --color-md-body: #fffaff;
@@ -1269,6 +1277,7 @@
       --color-header-foreground: #241523;
       --color-header-border: #eee0d9;
       --color-glass-surface: rgba(236, 233, 233, 0.74);
+      --color-glass-fallback: rgba(249, 247, 245, 0.94);
       --color-glass-tint: rgba(236, 233, 233, 0.22);
       --color-status-bar: #f9f7f5;
       --color-md-body: #241523;
@@ -1420,6 +1429,7 @@
       --color-header-foreground: #fffaff;
       --color-header-border: #6e4934;
       --color-glass-surface: rgba(79, 69, 67, 0.74);
+      --color-glass-fallback: rgba(41, 30, 26, 0.9);
       --color-glass-tint: rgba(79, 69, 67, 0.22);
       --color-status-bar: #291e1a;
       --color-md-body: #fffaff;
@@ -1571,6 +1581,7 @@
       --color-header-foreground: #241523;
       --color-header-border: #e5e0f0;
       --color-glass-surface: rgba(235, 233, 237, 0.74);
+      --color-glass-fallback: rgba(248, 247, 249, 0.94);
       --color-glass-tint: rgba(235, 233, 237, 0.22);
       --color-status-bar: #f8f7f9;
       --color-md-body: #241523;
@@ -1722,6 +1733,7 @@
       --color-header-foreground: #fffaff;
       --color-header-border: #4a3c70;
       --color-glass-surface: rgba(69, 66, 80, 0.74);
+      --color-glass-fallback: rgba(29, 25, 41, 0.9);
       --color-glass-tint: rgba(69, 66, 80, 0.22);
       --color-status-bar: #1d1929;
       --color-md-body: #fffaff;

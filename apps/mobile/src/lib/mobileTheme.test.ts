@@ -15,6 +15,7 @@ import {
   createMobileThemeSelectionPatch,
   createMobileThemeVariables,
   DEFAULT_MOBILE_THEME_ID,
+  flattenThemeColor,
   getMobileThemePreviewColors,
   getMobileThemeVariables,
   normalizeMobileThemeId,
@@ -95,7 +96,9 @@ describe("mobile themes", () => {
       expect(variables["--color-card"]).toBe(themeColorToNativeColor(colors.surface));
       expect(variables["--color-composer-surface"]).toBe(
         themeColorWithAlpha(
-          themeColorToNativeColor(colors.surface),
+          themeId === DEFAULT_MOBILE_THEME_ID
+            ? variables["--color-grouped-card"]
+            : themeColorToNativeColor(colors.surface),
           appearance === "dark" ? 0.9 : 0.94,
         ),
       );
@@ -106,7 +109,11 @@ describe("mobile themes", () => {
         themeColorToNativeColor(colors.sidebarForeground),
       );
       expect(variables["--color-primary"]).toBe(themeColorToNativeColor(colors.messageAction));
-      expect(variables["--color-user-bubble"]).toBe(themeColorToNativeColor(colors.messageSurface));
+      if (themeId !== DEFAULT_MOBILE_THEME_ID) {
+        expect(variables["--color-user-bubble"]).toBe(
+          themeColorToNativeColor(colors.messageSurface),
+        );
+      }
       expect(
         contrastRatio(variables["--color-foreground"], variables["--color-screen"]),
       ).toBeGreaterThanOrEqual(4.5);
@@ -122,6 +129,7 @@ describe("mobile themes", () => {
         ["--color-primary-text", "--color-grouped-card"],
         ["--color-foreground", "--color-grouped-card"],
         ["--color-foreground-muted", "--color-grouped-card"],
+        ["--color-placeholder", "--color-grouped-card"],
         ["--color-secondary-foreground", "--color-secondary"],
         ["--color-user-bubble-foreground", "--color-user-bubble"],
         ["--color-warning-foreground", "--color-warning"],
@@ -162,6 +170,32 @@ describe("mobile themes", () => {
         contrastRatio(variables["--color-grouped-card"], variables["--color-sheet-solid"]),
       ).toBeGreaterThanOrEqual(1.06);
       expect(variables["--color-grouped-card"]).not.toBe(variables["--color-card"]);
+    },
+  );
+
+  it.each(["light", "dark"] as const)(
+    "slightly strengthens default %s messages and separates fallback materials",
+    (appearance) => {
+      const variables = getMobileThemeVariables("t3-code", appearance);
+      const desktop =
+        appearance === "dark" ? T3_CODE_DARK_THEME_COLORS : T3_CODE_LIGHT_THEME_COLORS;
+      const bubbleContrast = contrastRatio(
+        variables["--color-user-bubble"],
+        variables["--color-screen"],
+      );
+      expect(bubbleContrast).toBeGreaterThan(contrastRatio(desktop.messageSurface, desktop.canvas));
+      expect(bubbleContrast).toBeLessThan(1.2);
+      for (const role of ["--color-composer-surface", "--color-glass-fallback"] as const) {
+        const surface = flattenThemeColor(variables[role], variables["--color-screen"]);
+        expect(contrastRatio(surface, variables["--color-screen"])).toBeGreaterThanOrEqual(1.06);
+        for (const foreground of [
+          "--color-foreground",
+          "--color-placeholder",
+          "--color-primary-text",
+        ] as const) {
+          expect(contrastRatio(variables[foreground], surface)).toBeGreaterThanOrEqual(4.5);
+        }
+      }
     },
   );
 
