@@ -52,6 +52,7 @@ interface EditorLaunch {
   readonly target: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly detached?: boolean;
 }
 
 interface ProcessLaunch {
@@ -568,9 +569,11 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     target: input.cwd,
     command,
     args:
-      command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
-        : [input.cwd],
+      platform === "win32"
+        ? [normalizeWindowsFileManagerPath(input.cwd)]
+        : command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
+          ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
+          : [input.cwd],
   };
 });
 
@@ -629,11 +632,16 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   }
 
   if (platform === "win32") {
-    return fileExplorerRevealLaunch(
-      target,
-      normalizeWindowsFileManagerPath(target),
-      resolvePowerShellPath(env),
-    );
+    return {
+      ...fileExplorerRevealLaunch(
+        target,
+        normalizeWindowsFileManagerPath(target),
+        resolvePowerShellPath(env),
+      ),
+      // Windows PowerShell can exit successfully without running its command
+      // when detached with ignored stdio. The helper is still unref'ed below.
+      detached: false,
+    };
   }
 
   if (
@@ -734,7 +742,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       command: spawnCommand.command,
       args: spawnCommand.args,
       options: {
-        detached: true,
+        detached: launch.detached ?? true,
         shell: spawnCommand.shell,
         stdin: "ignore",
         stdout: "ignore",
