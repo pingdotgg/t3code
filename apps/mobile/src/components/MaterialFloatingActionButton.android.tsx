@@ -25,9 +25,9 @@ export function MaterialFloatingActionButton(props: {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const typography = useScaledTextRole("footnote");
   const primary = props.tone === "primary";
-  const containerColor = colors[primary ? "--color-primary" : "--color-thread-selected"];
+  const containerColor = colors[primary ? "--color-primary" : "--color-secondary"];
   const contentColor =
-    colors[primary ? "--color-primary-foreground" : "--color-thread-selected-foreground"];
+    colors[primary ? "--color-primary-foreground" : "--color-secondary-foreground"];
   const Component =
     props.variant === "extended"
       ? ExtendedFloatingActionButton
@@ -76,9 +76,7 @@ export function MaterialFloatingActionButton(props: {
         <SymbolView
           name={props.icon}
           size={iconSize}
-          tintColorClassName={
-            primary ? "accent-primary-foreground" : "accent-thread-selected-foreground"
-          }
+          tintColorClassName={primary ? "accent-primary-foreground" : "accent-secondary-foreground"}
         />
       </View>
     </View>

@@ -17,6 +17,7 @@ export function MaterialIconButton(props: {
   readonly disabled?: boolean;
   readonly selected?: boolean;
   readonly variant?: "standard" | "primary" | "tonal" | "danger";
+  readonly tintColorClassName?: string;
 }) {
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const variant = props.variant ?? "standard";
@@ -40,7 +41,7 @@ export function MaterialIconButton(props: {
         ? "accent-danger-foreground"
         : variant === "tonal"
           ? "accent-secondary-foreground"
-          : "accent-foreground";
+          : (props.tintColorClassName ?? "accent-foreground");
   return (
     <View
       accessible

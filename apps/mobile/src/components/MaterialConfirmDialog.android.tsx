@@ -58,9 +58,9 @@ export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
               colors={{
                 focusedTextColor: colors["--color-foreground"],
                 unfocusedTextColor: colors["--color-foreground"],
-                focusedIndicatorColor: colors["--color-primary"],
+                focusedIndicatorColor: colors["--color-focus"],
                 unfocusedIndicatorColor: colors["--color-border"],
-                cursorColor: colors["--color-primary"],
+                cursorColor: colors["--color-focus"],
               }}
             >
               <OutlinedTextField.Label>
@@ -74,7 +74,10 @@ export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
           </AlertDialog.Text>
         ) : null}
         <AlertDialog.DismissButton>
-          <TextButton onClick={props.onCancel} colors={{ contentColor: colors["--color-primary"] }}>
+          <TextButton
+            onClick={props.onCancel}
+            colors={{ contentColor: colors["--color-primary-text"] }}
+          >
             <Text style={bodyTypography}>{props.request.cancelText ?? "Cancel"}</Text>
           </TextButton>
         </AlertDialog.DismissButton>
@@ -84,7 +87,9 @@ export function MaterialConfirmDialog(props: MaterialConfirmDialogProps) {
             enabled={!props.confirmDisabled}
             colors={{
               contentColor:
-                colors[props.request.destructive ? "--color-danger" : "--color-primary"],
+                colors[
+                  props.request.destructive ? "--color-danger-foreground" : "--color-primary-text"
+                ],
             }}
           >
             <Text style={bodyTypography}>{props.request.confirmText}</Text>

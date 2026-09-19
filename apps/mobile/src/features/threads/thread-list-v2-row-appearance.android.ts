@@ -22,8 +22,9 @@ export function getThreadListV2RowAppearance(
   selected: boolean,
 ) {
   const selectedBackgroundColor = theme["--color-thread-selected"];
+  const backgroundColor = theme[sidebarPane ? "--color-drawer" : "--color-screen"];
   const style: ViewStyle = {
-    backgroundColor: selected ? selectedBackgroundColor : theme["--color-screen"],
+    backgroundColor: selected ? selectedBackgroundColor : backgroundColor,
     borderRadius: 20,
   };
   const swipeContainerStyle: ViewStyle = {
@@ -35,12 +36,25 @@ export function getThreadListV2RowAppearance(
 
   return {
     className: undefined,
-    interactionClassName: selected ? "bg-thread-selected-foreground" : "bg-primary",
+    interactionClassName: sidebarPane ? "bg-thread-hover" : "bg-row-hover",
+    interactionOpacity: selected ? 0 : 1,
+    foregroundClassName: sidebarPane ? "text-drawer-foreground" : "text-foreground",
+    mutedForegroundClassName: sidebarPane
+      ? "text-drawer-foreground-muted"
+      : "text-foreground-muted",
+    tertiaryForegroundClassName: sidebarPane
+      ? "text-drawer-foreground-muted"
+      : "text-foreground-tertiary",
+    mutedIconTintClassName: sidebarPane
+      ? "accent-drawer-foreground-muted"
+      : "accent-foreground-muted",
+    tertiaryIconTintClassName: sidebarPane
+      ? "accent-drawer-foreground-muted"
+      : "accent-foreground-tertiary",
     style,
     cardStyle: sidebarPane ? { ...style, paddingHorizontal: 12, paddingVertical: 10 } : style,
     swipeContainerStyle,
-    swipeBackgroundColor: theme["--color-screen"],
-    providerIconSurfaceColor:
-      sidebarPane && selected ? selectedBackgroundColor : theme["--color-screen"],
+    swipeBackgroundColor: backgroundColor,
+    providerIconSurfaceColor: selected ? selectedBackgroundColor : backgroundColor,
   };
 }

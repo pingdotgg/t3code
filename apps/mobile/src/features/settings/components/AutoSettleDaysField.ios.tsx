@@ -44,7 +44,7 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
               disabled(props.disabled),
               accessibilityLabel(`Days before auto-settle: ${props.value}`),
               frame({ minWidth: 64, minHeight: 44 }),
-              foregroundStyle(colors["--color-primary"]),
+              foregroundStyle(colors["--color-primary-text"]),
               font({ size: appearance.baseFontSize }),
             ]}
           >
@@ -78,7 +78,7 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
               <Button
                 label="Cancel"
                 onPress={() => setOpen(false)}
-                modifiers={[foregroundStyle(colors["--color-primary"])]}
+                modifiers={[foregroundStyle(colors["--color-primary-text"])]}
               />
               <Button
                 label="Done"
@@ -86,7 +86,7 @@ export function AutoSettleDaysField(props: AutoSettleDaysFieldProps) {
                   setOpen(false);
                   if (!props.disabled && draft !== props.value) props.onValueChange(draft);
                 }}
-                modifiers={[foregroundStyle(colors["--color-primary"])]}
+                modifiers={[foregroundStyle(colors["--color-primary-text"])]}
               />
             </HStack>
           </VStack>

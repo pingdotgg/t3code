@@ -231,10 +231,10 @@ function DevicePreviewScreen({
               </AppText>
               <Pressable
                 accessibilityRole="button"
-                className="rounded-full bg-subtle px-6 py-3"
+                className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
                 onPress={state.refresh}
               >
-                <AppText>Retry</AppText>
+                <AppText className="text-secondary-foreground">Retry</AppText>
               </Pressable>
             </>
           ) : focused && foreground ? (
@@ -278,7 +278,9 @@ function OpenDevicePreview({
         background: themeVariables["--color-sheet-solid"],
         foreground: themeVariables["--color-foreground"],
         muted: themeVariables["--color-foreground-muted"],
-        buttonBackground: themeVariables["--color-subtle"],
+        buttonBackground: themeVariables["--color-secondary"],
+        buttonForeground: themeVariables["--color-secondary-foreground"],
+        buttonBorder: themeVariables["--color-secondary-border"],
       }}
       onUnauthorized={onUnauthorized}
       onInputConnected={onInputConnected}
@@ -292,10 +294,10 @@ function OpenDevicePreview({
           </AppText>
           <Pressable
             accessibilityRole="button"
-            className="rounded-full bg-subtle px-6 py-3"
+            className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
             onPress={refresh}
           >
-            <AppText>Retry</AppText>
+            <AppText className="text-secondary-foreground">Retry</AppText>
           </Pressable>
         </>
       ) : (

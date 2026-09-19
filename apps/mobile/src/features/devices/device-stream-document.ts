@@ -10,6 +10,8 @@ export interface DeviceStreamConfiguration {
     readonly foreground: string;
     readonly muted: string;
     readonly buttonBackground: string;
+    readonly buttonForeground: string;
+    readonly buttonBorder: string;
   };
 }
 

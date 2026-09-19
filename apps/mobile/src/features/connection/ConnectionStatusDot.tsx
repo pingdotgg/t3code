@@ -10,10 +10,16 @@ import Animated, {
 } from "react-native-reanimated";
 
 import type { RemoteClientConnectionState } from "../../lib/connection";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { themeColorWithAlpha, type MobileThemeVariables } from "../../lib/mobileTheme";
 
 export type ConnectionStatusDotState = RemoteClientConnectionState;
 
-function statusDotTone(state: ConnectionStatusDotState): {
+function statusDotTone(
+  state: ConnectionStatusDotState,
+  theme: MobileThemeVariables,
+  dark: boolean,
+): {
   readonly dotColor: string;
   readonly haloColor: string;
 } {
@@ -23,25 +29,25 @@ function statusDotTone(state: ConnectionStatusDotState): {
     case "available":
     case "unsupported":
       return {
-        dotColor: "#9ca3af",
-        haloColor: "rgba(156,163,175,0.42)",
+        dotColor: theme["--color-icon-muted"],
+        haloColor: themeColorWithAlpha(theme["--color-icon-muted"], 0.42),
       };
     case "connected":
       return {
-        dotColor: "#34d399",
-        haloColor: "rgba(52,211,153,0.48)",
+        dotColor: dark ? "#34d399" : "#059669",
+        haloColor: themeColorWithAlpha(dark ? "#34d399" : "#059669", 0.48),
       };
     case "connecting":
     case "reconnecting":
       return {
-        dotColor: "#f59e0b",
-        haloColor: "rgba(245,158,11,0.5)",
+        dotColor: theme["--color-warning-foreground"],
+        haloColor: themeColorWithAlpha(theme["--color-warning-foreground"], 0.5),
       };
     case "offline":
     case "error":
       return {
-        dotColor: "#ef4444",
-        haloColor: "rgba(239,68,68,0.48)",
+        dotColor: theme["--color-danger-foreground"],
+        haloColor: themeColorWithAlpha(theme["--color-danger-foreground"], 0.48),
       };
   }
 }
@@ -78,7 +84,8 @@ export function ConnectionStatusDot(props: {
   readonly size?: number;
 }) {
   const pulseProgress = usePulseAnimation(props.pulse);
-  const tone = statusDotTone(props.state);
+  const { themeAppearance, themeVariables } = useAppearancePreferences();
+  const tone = statusDotTone(props.state, themeVariables, themeAppearance === "dark");
   const dotSize = props.size ?? 10;
   const haloSize = dotSize + 4;
   const containerSize = haloSize + 4;
