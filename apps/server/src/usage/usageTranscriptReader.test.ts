@@ -208,3 +208,122 @@ describe("readTranscriptRecords resume", () => {
     assert.isNull(await readTranscriptRecords(NodePath.join(dir, "missing.jsonl"), "claude"));
   });
 });
+
+describe("readTranscriptRecords bounded lines", () => {
+  const options = { maxLineBytes: 1024 };
+  const oversized = JSON.stringify({ type: "tool_output", output: "x".repeat(128 * 1024) });
+
+  it.each(["\n", "\r\n"])(
+    "skips oversized records before and after a resume with %j line endings",
+    async (newline) => {
+      const path = NodePath.join(dir, "rollout.jsonl");
+      const prefix = (
+        codexMetaLine() +
+        codexModelLine("gpt-5.2-codex") +
+        codexUsageLine(9, 5) +
+        `${oversized}\n`
+      ).replaceAll("\n", newline);
+      await NodeFSP.writeFile(path, prefix);
+      const first = await readTranscriptRecords(path, "codex", undefined, options);
+      assert.isNotNull(first);
+      assert.strictEqual(first.position.resumeOffset, Buffer.byteLength(prefix));
+      assert.deepStrictEqual(first.tailRecords, []);
+
+      const appended = (`${oversized}\n` + codexUsageLine(9, 5) + codexUsageLine(21, 8)).replaceAll(
+        "\n",
+        newline,
+      );
+      await NodeFSP.appendFile(path, appended);
+      const second = await readTranscriptRecords(path, "codex", first.position, options);
+      assert.isNotNull(second);
+      assert.isTrue(second.resumed);
+      assert.strictEqual(second.position.resumeOffset, Buffer.byteLength(prefix + appended));
+      assert.deepStrictEqual(
+        second.records.map((record) => record.totals.outputTokens),
+        [21],
+      );
+      assert.strictEqual(second.records[0]?.model, "gpt-5.2-codex");
+      assert.strictEqual(second.records[0]?.sessionId, "codex-session-1");
+      const full = await readTranscriptRecords(path, "codex", undefined, options);
+      assert.isNotNull(full);
+      assert.deepStrictEqual([...first.records, ...second.records], full.records);
+      assert.deepStrictEqual(second.position, full.position);
+    },
+  );
+
+  it.each([false, true])(
+    "leaves an oversized unfinished tail outside the committed position (resumed: %s)",
+    async (resume) => {
+      const path = NodePath.join(dir, "rollout.jsonl");
+      const prefix = codexMetaLine() + codexModelLine("gpt-5.2-codex");
+      await NodeFSP.writeFile(path, prefix);
+      const initial = await readTranscriptRecords(path, "codex", undefined, options);
+      assert.isNotNull(initial);
+      await NodeFSP.appendFile(path, oversized);
+      const first = await readTranscriptRecords(
+        path,
+        "codex",
+        resume ? initial.position : undefined,
+        options,
+      );
+      assert.isNotNull(first);
+      assert.strictEqual(first.resumed, resume);
+      assert.deepStrictEqual(first.position, initial.position);
+      assert.deepStrictEqual(first.records, []);
+      assert.deepStrictEqual(first.tailRecords, []);
+
+      const appended = `\n${codexUsageLine(21, 8)}`;
+      await NodeFSP.appendFile(path, appended);
+      const second = await readTranscriptRecords(path, "codex", first.position, options);
+      assert.isNotNull(second);
+      assert.isTrue(second.resumed);
+      assert.strictEqual(
+        second.position.resumeOffset,
+        Buffer.byteLength(prefix + oversized + appended),
+      );
+      assert.strictEqual(second.records.length, 1);
+      assert.strictEqual(second.records[0]?.totals.outputTokens, 21);
+      assert.strictEqual(second.records[0]?.model, "gpt-5.2-codex");
+      assert.strictEqual(second.records[0]?.sessionId, "codex-session-1");
+    },
+  );
+
+  it("enforces the limit in bytes, accepting the exact limit and rejecting one extra byte", async () => {
+    const path = NodePath.join(dir, "claude.jsonl");
+    const record = claudeLine(1, 5).trimEnd();
+    const unicodeRecord = record.replace("session-1", "session-🌍");
+    const maxLineBytes = Buffer.byteLength(unicodeRecord);
+    await NodeFSP.writeFile(path, `${unicodeRecord}\n${unicodeRecord} \n${claudeLine(2, 7)}`);
+    const result = await readTranscriptRecords(path, "claude", undefined, { maxLineBytes });
+    assert.isNotNull(result);
+    assert.deepStrictEqual(
+      result.records.map((entry) => entry.totals.outputTokens),
+      [5, 7],
+    );
+    assert.strictEqual(result.position.resumeOffset, (await NodeFSP.stat(path)).size);
+  });
+
+  it("does not parse an oversized usage tail or commit its Codex reducer state", async () => {
+    const path = NodePath.join(dir, "rollout.jsonl");
+    const prefix = codexMetaLine() + codexModelLine("gpt-5.2-codex");
+    await NodeFSP.writeFile(path, prefix);
+    const initial = await readTranscriptRecords(path, "codex", undefined, options);
+    assert.isNotNull(initial);
+    const tail = codexModelLine("ignored-model").trimEnd() + " ".repeat(2048);
+    await NodeFSP.appendFile(path, tail);
+    const first = await readTranscriptRecords(path, "codex", initial.position, options);
+    assert.isNotNull(first);
+    assert.deepStrictEqual(first.position, initial.position);
+    assert.deepStrictEqual(first.tailRecords, []);
+    await NodeFSP.appendFile(path, `\n${codexUsageLine(21, 8)}`);
+    const second = await readTranscriptRecords(path, "codex", first.position, options);
+    assert.isNotNull(second);
+    assert.strictEqual(second.records[0]?.model, "gpt-5.2-codex");
+
+    await NodeFSP.writeFile(path, claudeLine(1, 5).trimEnd() + " ".repeat(2048));
+    const oversizedTail = await readTranscriptRecords(path, "claude", undefined, options);
+    assert.isNotNull(oversizedTail);
+    assert.deepStrictEqual(oversizedTail.tailRecords, []);
+    assert.strictEqual(oversizedTail.position.resumeOffset, 0);
+  });
+});
