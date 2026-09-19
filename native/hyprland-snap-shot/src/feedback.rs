@@ -28,7 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 use wayland_client::{
-    Connection, Dispatch, QueueHandle, delegate_noop,
+    Connection, Dispatch, EventQueue, QueueHandle, delegate_noop,
     globals::registry_queue_init,
     protocol::{
         wl_output::{self, WlOutput},
@@ -85,7 +85,7 @@ struct Overlay {
     texture: Texture,
     background_attached: bool,
 }
-struct Feedback {
+pub(crate) struct Feedback {
     registry: RegistryState,
     output: OutputState,
     shm: Shm,
@@ -169,31 +169,15 @@ fn target(bounds: Rect, frame: Rect) -> Result<Rect> {
     })
 }
 
-pub fn run(directory: &Path, mut options: Options) -> Result<()> {
-    if !options.bounds.valid() {
-        return Err("Invalid capture bounds.".into());
-    }
-    ipc::ensure_unlocked()?;
-    options.animate &= ipc::animations_enabled();
-    let mut events = UnixStream::connect(ipc::session_directory()?.join(".socket2.sock"))?;
-    events.set_nonblocking(true)?;
-    let mut decoder = png::Decoder::new(BufReader::new(File::open(directory.join("capture.png"))?));
-    decoder.set_limits(png::Limits {
-        bytes: 128 * 1024 * 1024,
-    });
-    let mut reader = decoder.read_info()?;
-    let mut bytes = vec![
-        0;
-        reader
-            .output_buffer_size()
-            .ok_or("Invalid capture image size.")?
-    ];
-    let info = reader.next_frame(&mut bytes)?;
-    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
-        return Err("Expected RGBA capture image.".into());
-    }
-    let (connection, mut queue, mut state, compositor, layer_shell, subcompositor, viewporter) = {
-        let connection = Connection::connect_to_env()?;
+/// Upload the capture and create one full-output overlay per output. `bytes` is straight
+/// RGBA; the compositor may be a test fixture, so nothing here touches Hyprland IPC.
+pub(crate) fn connect(
+    connection: Connection,
+    bytes: &[u8],
+    (width, height): (u32, u32),
+    options: Options,
+) -> Result<(Connection, EventQueue<Feedback>, Feedback)> {
+    let (mut queue, mut state, compositor, layer_shell, subcompositor, viewporter) = {
         let (globals, queue) = registry_queue_init::<Feedback>(&connection)?;
         let qh = queue.handle();
         let compositor = CompositorState::bind(&globals, &qh)?;
@@ -206,9 +190,9 @@ pub fn run(directory: &Path, mut options: Options) -> Result<()> {
         let (background, canvas) = pool.create_buffer(1, 1, 4, wl_shm::Format::Argb8888)?;
         canvas.fill(0);
         let (image, canvas) = pool.create_buffer(
-            info.width as i32,
-            info.height as i32,
-            info.width as i32 * 4,
+            width as i32,
+            height as i32,
+            width as i32 * 4,
             wl_shm::Format::Argb8888,
         )?;
         // Wayland's ARGB8888 is native-endian and premultiplied; PNG is straight RGBA.
@@ -222,9 +206,9 @@ pub fn run(directory: &Path, mut options: Options) -> Result<()> {
             ]);
         }
         let (flash, canvas) = pool.create_buffer(
-            info.width as i32,
-            info.height as i32,
-            info.width as i32 * 4,
+            width as i32,
+            height as i32,
+            width as i32 * 4,
             wl_shm::Format::Argb8888,
         )?;
         for (src, dst) in bytes.chunks_exact(4).zip(canvas.chunks_exact_mut(4)) {
@@ -244,7 +228,7 @@ pub fn run(directory: &Path, mut options: Options) -> Result<()> {
             background,
             image,
             flash,
-            image_size: (info.width, info.height),
+            image_size: (width, height),
             options,
             start: Instant::now(),
             flight: None,
@@ -255,7 +239,6 @@ pub fn run(directory: &Path, mut options: Options) -> Result<()> {
             done: false,
         };
         (
-            connection,
             queue,
             state,
             compositor,
@@ -327,10 +310,43 @@ pub fn run(directory: &Path, mut options: Options) -> Result<()> {
     if state.overlays.is_empty() {
         return Err("No output is available for capture effects.".into());
     }
-    let stdin = std::io::stdin();
     if state.overlays.iter().all(|o| o.presented) {
         return Err("The captured window is outside the visible outputs.".into());
     }
+    Ok((connection, queue, state))
+}
+
+pub fn run(directory: &Path, mut options: Options) -> Result<()> {
+    if !options.bounds.valid() {
+        return Err("Invalid capture bounds.".into());
+    }
+    ipc::ensure_unlocked()?;
+    options.animate &= ipc::animations_enabled();
+    let mut events = UnixStream::connect(ipc::session_directory()?.join(".socket2.sock"))?;
+    events.set_nonblocking(true)?;
+    let mut decoder = png::Decoder::new(BufReader::new(File::open(directory.join("capture.png"))?));
+    decoder.set_limits(png::Limits {
+        bytes: 128 * 1024 * 1024,
+    });
+    let mut reader = decoder.read_info()?;
+    let mut bytes = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .ok_or("Invalid capture image size.")?
+    ];
+    let info = reader.next_frame(&mut bytes)?;
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return Err("Expected RGBA capture image.".into());
+    }
+    let (connection, mut queue, mut state) = connect(
+        Connection::connect_to_env()?,
+        &bytes,
+        (info.width, info.height),
+        options,
+    )?;
+    let qh = queue.handle();
+    let stdin = std::io::stdin();
     let deadline = Instant::now() + Duration::from_secs(8);
     let mut commands = Vec::new();
     while !state.done {
@@ -414,9 +430,7 @@ pub fn run(directory: &Path, mut options: Options) -> Result<()> {
                         let window = ipc::destination(ipc::windows()?, state.options.pid, &title)?
                             .ok_or("Capture destination is not visible.")?;
                         let dest = target(window.bounds(), frame)?;
-                        state.flight = Some((dest, Instant::now()));
-                        state.destination = Some(window);
-                        state.draw(&qh)?;
+                        state.fly(dest, window, &qh)?;
                     }
                     _ => {}
                 }
@@ -428,7 +442,20 @@ pub fn run(directory: &Path, mut options: Options) -> Result<()> {
 }
 
 impl Feedback {
-    fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
+    /// Start the flight of the capture toward `dest` inside the destination window.
+    pub(crate) fn fly(
+        &mut self,
+        dest: Rect,
+        destination: ipc::Window,
+        qh: &QueueHandle<Self>,
+    ) -> Result<()> {
+        self.flight = Some((dest, Instant::now()));
+        self.destination = Some(destination);
+        self.draw(qh)
+    }
+    /// Paint one frame: the flash or capture at its current flight position on every
+    /// overlay it touches, plus the frame and presentation requests that drive the next one.
+    pub(crate) fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
         let progress = self
             .flight
             .map(|(_, start)| start.elapsed().as_secs_f64() / 0.48);
@@ -464,19 +491,20 @@ impl Feedback {
                 overlay
                     .subsurface
                     .set_position(dest.x.round() as i32, dest.y.round() as i32);
-                // Immutable textures are uploaded only when they change. Flight frames update
-                // the viewport and subsurface position, not megabytes of shared-memory pixels.
                 let texture = if flashing {
                     Texture::Flash
                 } else {
                     Texture::Image
                 };
+                // Hyprland 0.56.2 only updates surface size on a buffer attachment.
+                // Reattach for viewport-only flight frames too; damage the immutable
+                // pixels only when the texture changes to avoid uploading them again.
+                overlay.image.attach(
+                    Some((if flashing { &self.flash } else { &self.image }).wl_buffer()),
+                    0,
+                    0,
+                );
                 if overlay.texture != texture {
-                    overlay.image.attach(
-                        Some((if flashing { &self.flash } else { &self.image }).wl_buffer()),
-                        0,
-                        0,
-                    );
                     overlay.image.damage_buffer(0, 0, i32::MAX, i32::MAX);
                     overlay.texture = texture;
                 }
