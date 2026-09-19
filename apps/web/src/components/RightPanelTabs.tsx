@@ -1150,10 +1150,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                   )}
                 >
-                  <PanelTabCloseButton
-                    label={`Close ${title}`}
-                    onClick={() => props.onCloseSurface(surface)}
-                  >
+                  <span className="relative flex size-4 shrink-0 items-center justify-center">
                     <SurfaceIcon
                       surface={surface}
                       sessions={props.previewSessions}
@@ -1168,7 +1165,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         aria-hidden
                       />
                     ) : null}
-                  </PanelTabCloseButton>
+                  </span>
                   {audio === "none" || !audioRuntimeTabId ? null : (
                     <Tooltip>
                       <TooltipTrigger
@@ -1229,7 +1226,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                               if (surface.kind === "device" && props.onRenameDevice)
                                 setRenamingDevice(surface.id);
                             }}
-                            className="cursor-pointer flex min-w-0 items-center"
+                            className="cursor-pointer flex min-w-0 shrink items-center"
                             onClick={() => props.onActivate(surface)}
                           >
                             <span className="truncate">{title}</span>
@@ -1239,6 +1236,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       <TooltipPopup>{title}</TooltipPopup>
                     </Tooltip>
                   )}
+                  <PanelTabCloseButton
+                    label={`Close ${title}`}
+                    onClick={() => props.onCloseSurface(surface)}
+                  />
                 </div>
               );
             })}

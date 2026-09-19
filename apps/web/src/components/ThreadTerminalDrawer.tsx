@@ -1683,13 +1683,9 @@ export default function ThreadTerminalDrawer({
                                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                               )}
                             >
-                              <PanelTabCloseButton
-                                label={closeTerminalLabel}
-                                onClick={() => confirmCloseTerminal(terminalId)}
-                                tooltip={closeTerminalLabel}
-                              >
+                              <span className="flex size-4 shrink-0 items-center justify-center">
                                 <TerminalSquare className="size-3 shrink-0" />
-                              </PanelTabCloseButton>
+                              </span>
                               <button
                                 type="button"
                                 className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
@@ -1697,6 +1693,11 @@ export default function ThreadTerminalDrawer({
                               >
                                 <span className="truncate">{terminalLabel}</span>
                               </button>
+                              <PanelTabCloseButton
+                                label={closeTerminalLabel}
+                                onClick={() => confirmCloseTerminal(terminalId)}
+                                tooltip={closeTerminalLabel}
+                              />
                             </div>
                           );
                         })}
