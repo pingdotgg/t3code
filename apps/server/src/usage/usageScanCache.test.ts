@@ -166,6 +166,34 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).size).toBe(0);
   });
 
+  it.each([
+    { label: "missing session", index: 2, value: 999 },
+    { label: "non-numeric session index", index: 2, value: "0" },
+    { label: "fractional session index", index: 2, value: 0.5 },
+    { label: "invalid dedupe key", index: 8, value: 42 },
+    { label: "invalid cost", index: 9, value: "1.5" },
+    { label: "non-finite cost", index: 9, value: Infinity },
+  ])("rejects $label in persisted and tail records", ({ index, value }) => {
+    const original = cacheWith([
+      ["/bad.jsonl", 100, [record()]],
+      ["/good.jsonl", 200, [record({ sessionId: "session-b" })]],
+    ]);
+    const encoded = encodeScanCache(original);
+    const entry = encoded.files["/bad.jsonl"]!;
+    const row: unknown[] = [...entry.r[0]!];
+    row[index] = value;
+    for (const field of ["r", "t"] as const) {
+      const poisoned = {
+        ...encoded,
+        files: { ...encoded.files, "/bad.jsonl": { ...entry, [field]: [row] } },
+      };
+      // JSON numeric literals may overflow to Infinity, so validate decoded values directly.
+      const restored = decodeScanCache(poisoned);
+      expect([...restored.keys()]).toEqual(["/good.jsonl"]);
+      expect(restored.get("/good.jsonl")).toEqual(original.get("/good.jsonl"));
+    }
+  });
+
   it("drops the whole entry when any row is corrupt, forcing a cold re-parse", () => {
     // Keeping the surviving rows under the original (size, mtime) would read
     // as a valid warm hit and the file would never be re-parsed.
