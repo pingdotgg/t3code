@@ -32,6 +32,10 @@ vi.mock("electron", async (importOriginal) => ({
         bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       },
     ]),
+    getDisplayMatching: vi.fn(() => ({
+      id: 1,
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+    })),
   },
 }));
 
@@ -217,6 +221,7 @@ function makeTestLayer(input: {
   readonly desktopSettings?: DesktopAppSettings.DesktopSettings;
   readonly mainWindowBoundsUpdates?: DesktopAppSettings.DesktopWindowBounds[];
   readonly mainWindowMaximizedUpdates?: boolean[];
+  readonly mainWindowDisplayIdUpdates?: (number | null)[];
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
@@ -230,23 +235,27 @@ function makeTestLayer(input: {
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
     get: Effect.sync(() => desktopSettings),
     load: Effect.sync(() => desktopSettings),
-    setMainWindowBounds: (bounds, isMaximized) =>
+    setMainWindowBounds: (bounds, isMaximized, displayId) =>
       Effect.gen(function* () {
         if (input.beforeMainWindowBoundsUpdate) {
           yield* input.beforeMainWindowBoundsUpdate(bounds);
         }
+        const nextDisplayId = displayId ?? null;
         const changed =
           desktopSettings.mainWindowBounds === null ||
           !desktopWindowBoundsEquivalence(desktopSettings.mainWindowBounds, bounds) ||
-          desktopSettings.mainWindowMaximized !== isMaximized;
+          desktopSettings.mainWindowMaximized !== isMaximized ||
+          desktopSettings.mainWindowDisplayId !== nextDisplayId;
         if (changed) {
           desktopSettings = {
             ...desktopSettings,
             mainWindowBounds: bounds,
+            mainWindowDisplayId: nextDisplayId,
             mainWindowMaximized: isMaximized,
           };
           input.mainWindowBoundsUpdates?.push(bounds);
           input.mainWindowMaximizedUpdates?.push(isMaximized);
+          input.mainWindowDisplayIdUpdates?.push(nextDisplayId);
         }
         return { settings: desktopSettings, changed };
       }),
@@ -576,6 +585,77 @@ describe("DesktopWindow", () => {
     assert.deepEqual(
       DesktopWindow.resolveInitialMainWindowBounds(persistedBounds, [displays[0]!]),
       DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+    );
+  });
+
+  it("reopens on the recorded display when normal bounds point elsewhere", () => {
+    // Maximized on the secondary monitor: normal bounds still sit on primary.
+    const persistedBounds = { x: 410, y: 86, width: 1100, height: 780 };
+    const displays = [
+      { id: 1, x: 0, y: 0, width: 1920, height: 1080 },
+      { id: 2, x: 1920, y: 0, width: 1920, height: 1080 },
+    ];
+
+    assert.deepEqual(DesktopWindow.resolveInitialMainWindowBounds(persistedBounds, displays, 2), {
+      x: 1920,
+      y: 86,
+      width: 1100,
+      height: 780,
+    });
+    // Bounds already on the recorded display are returned as-is.
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(
+        { x: 2000, y: 100, width: 1100, height: 780 },
+        displays,
+        2,
+      ),
+      { x: 2000, y: 100, width: 1100, height: 780 },
+    );
+    // A disconnected recorded display falls back to the legacy fits-any rule.
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(persistedBounds, [displays[0]!], 2),
+      persistedBounds,
+    );
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(
+        { x: 3000, y: 100, width: 1100, height: 780 },
+        [displays[0]!],
+        2,
+      ),
+      DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+    );
+    // Oversized normal bounds are constrained to the recorded display
+    // instead of spilling mostly onto the larger display they fit (which
+    // display matching and maximize would then resolve to).
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(
+        { x: 410, y: 86, width: 2000, height: 780 },
+        displays,
+        2,
+      ),
+      { x: 1920, y: 86, width: 1920, height: 780 },
+    );
+    // Left-hand secondary: a 3400-wide window clamped only in position would
+    // still overlap primary 1920px vs secondary 1280px and maximize there.
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(
+        { x: 100, y: 100, width: 3400, height: 1000 },
+        [
+          { id: 1, x: 0, y: 0, width: 1920, height: 1080 },
+          { id: 2, x: -1280, y: 0, width: 1280, height: 1024 },
+        ],
+        2,
+      ),
+      { x: -1280, y: 24, width: 1280, height: 1000 },
+    );
+    // Window minima take precedence over fitting inside an undersized display.
+    assert.deepEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(
+        { x: 0, y: 0, width: 1100, height: 780 },
+        [{ id: 3, x: 0, y: 0, width: 800, height: 600 }],
+        3,
+      ),
+      { x: 0, y: 0, width: 840, height: 620 },
     );
   });
 
@@ -916,12 +996,14 @@ describe("DesktopWindow", () => {
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
       const mainWindowMaximizedUpdates: boolean[] = [];
+      const mainWindowDisplayIdUpdates: (number | null)[] = [];
       const layer = makeTestLayer({
         window: fakeWindow.window,
         createCount,
         mainWindow,
         mainWindowBoundsUpdates,
         mainWindowMaximizedUpdates,
+        mainWindowDisplayIdUpdates,
       });
 
       yield* Effect.gen(function* () {
@@ -937,8 +1019,53 @@ describe("DesktopWindow", () => {
 
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 220, y: 140, width: 1380, height: 920 }]);
         assert.deepEqual(mainWindowMaximizedUpdates, [true]);
+        assert.deepEqual(mainWindowDisplayIdUpdates, [1]);
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
-        assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
+        assert.equal(fakeWindow.getBounds.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("records the actual display when maximizing on a secondary monitor", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      fakeWindow.isMaximized.mockReturnValue(true);
+      // Maximized geometry on the secondary monitor; normal bounds on primary.
+      fakeWindow.getBounds.mockReturnValue({ x: 1920, y: 0, width: 1920, height: 1080 });
+      fakeWindow.getNormalBounds.mockReturnValue({ x: 410, y: 86, width: 1100, height: 780 });
+      vi.mocked(Electron.screen.getDisplayMatching).mockReturnValueOnce({
+        id: 2,
+        bounds: { x: 1920, y: 0, width: 1920, height: 1080 },
+      } as Electron.Display);
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
+      const mainWindowMaximizedUpdates: boolean[] = [];
+      const mainWindowDisplayIdUpdates: (number | null)[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        mainWindowBoundsUpdates,
+        mainWindowMaximizedUpdates,
+        mainWindowDisplayIdUpdates,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const maximize = fakeWindow.windowListeners.get("maximize");
+        if (!maximize) {
+          return yield* Effect.die("window maximize listener was not registered");
+        }
+        maximize();
+        yield* TestClock.adjust(500);
+        yield* Effect.promise(() => Promise.resolve());
+
+        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 410, y: 86, width: 1100, height: 780 }]);
+        assert.deepEqual(mainWindowMaximizedUpdates, [true]);
+        assert.deepEqual(mainWindowDisplayIdUpdates, [2]);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1081,7 +1208,7 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.flushMainWindowBounds;
 
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 200, y: 130, width: 1400, height: 940 }]);
-        assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
+        assert.equal(fakeWindow.getBounds.mock.calls.length, 1);
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),
@@ -1117,7 +1244,7 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.flushMainWindowBounds;
 
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 180, y: 120, width: 1440, height: 960 }]);
-        assert.equal(fakeWindow.getBounds.mock.calls.length, 0);
+        assert.equal(fakeWindow.getBounds.mock.calls.length, 1);
         assert.equal(fakeWindow.getNormalBounds.mock.calls.length, 1);
       }).pipe(Effect.provide(layer));
     }),

@@ -25,6 +25,7 @@ const DesktopSettingsPatch = Schema.Struct({
     ),
   ),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
+  mainWindowDisplayId: Schema.optionalKey(Schema.NullOr(Schema.Number)),
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
@@ -126,6 +127,7 @@ describe("DesktopSettings", () => {
         linuxPasswordStore: "auto",
         localEnvironmentEnabled: true,
         mainWindowBounds: null,
+        mainWindowDisplayId: null,
         mainWindowMaximized: false,
         serverExposureMode: "local-only",
         tailscaleServeEnabled: false,
@@ -156,6 +158,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "gnome-libsecret",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
+          mainWindowDisplayId: null,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
@@ -257,6 +260,7 @@ describe("DesktopSettings", () => {
             "tailscaleServeEnabled": true,
             "tailscaleServePort": 8443,
             "mainWindowBounds": { "x": 120, "y": 80, "width": 1280, "height": 900 },
+            "mainWindowDisplayId": 2,
           }\n`,
         );
 
@@ -264,6 +268,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: { x: 120, y: 80, width: 1280, height: 900 },
+          mainWindowDisplayId: 2,
           mainWindowMaximized: false,
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
@@ -321,6 +326,7 @@ describe("DesktopSettings", () => {
             linuxPasswordStore: "auto",
             localEnvironmentEnabled: true,
             mainWindowBounds: null,
+            mainWindowDisplayId: null,
             mainWindowMaximized: false,
             serverExposureMode: "network-accessible",
             tailscaleServeEnabled: true,
@@ -342,7 +348,7 @@ describe("DesktopSettings", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
+        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true, 7);
         yield* settings.setServerExposureMode("network-accessible");
 
         const persisted = yield* decodeDesktopSettingsPatch(
@@ -351,6 +357,7 @@ describe("DesktopSettings", () => {
         assert.deepEqual(persisted, {
           mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
           mainWindowMaximized: true,
+          mainWindowDisplayId: 7,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
       }),
@@ -370,6 +377,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
+          mainWindowDisplayId: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
@@ -399,6 +407,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
+          mainWindowDisplayId: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
@@ -427,6 +436,7 @@ describe("DesktopSettings", () => {
           linuxPasswordStore: "auto",
           localEnvironmentEnabled: true,
           mainWindowBounds: null,
+          mainWindowDisplayId: null,
           mainWindowMaximized: false,
           serverExposureMode: "local-only",
           tailscaleServeEnabled: true,

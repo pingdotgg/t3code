@@ -157,7 +157,7 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
   return shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
 }
 
-type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
+type DisplayBounds = Electron.Rectangle & { readonly id?: number };
 
 function windowFitsWithinDisplay(
   windowBounds: DesktopAppSettings.DesktopWindowBounds,
@@ -186,14 +186,46 @@ function windowBoundsEqual(
 export function resolveInitialMainWindowBounds(
   persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
   displays: readonly DisplayBounds[],
+  persistedDisplayId?: number | null,
 ): DesktopAppSettings.DesktopWindowBounds | typeof DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE {
-  if (
-    persistedBounds !== null &&
-    displays.some((display) => windowFitsWithinDisplay(persistedBounds, display))
-  ) {
+  if (persistedBounds === null) {
+    return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
+  }
+  const preferred =
+    persistedDisplayId == null
+      ? undefined
+      : displays.find((display) => display.id === persistedDisplayId);
+  if (preferred && !windowFitsWithinDisplay(persistedBounds, preferred)) {
+    return clampBoundsIntoDisplay(persistedBounds, preferred);
+  }
+  if (displays.some((display) => windowFitsWithinDisplay(persistedBounds, display))) {
     return persistedBounds;
   }
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
+}
+
+function clampBoundsIntoDisplay(
+  windowBounds: DesktopAppSettings.DesktopWindowBounds,
+  display: DisplayBounds,
+): DesktopAppSettings.DesktopWindowBounds {
+  // Maximize chooses the largest overlap, so constrain size as well as position.
+  // Electron's minimum window size still takes precedence on smaller displays.
+  const width = Math.max(
+    DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
+    Math.min(windowBounds.width, display.width),
+  );
+  const height = Math.max(
+    DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
+    Math.min(windowBounds.height, display.height),
+  );
+  const maxX = Math.max(display.x, display.x + display.width - width);
+  const maxY = Math.max(display.y, display.y + display.height - height);
+  return {
+    x: Math.min(Math.max(windowBounds.x, display.x), maxX),
+    y: Math.min(Math.max(windowBounds.y, display.y), maxY),
+    width,
+    height,
+  };
 }
 
 // A self-contained "Connecting to WSL" splash, shown immediately in wsl-only
@@ -376,19 +408,23 @@ export const make = Effect.gen(function* () {
       try {
         return {
           _tag: "Success" as const,
-          bounds: Electron.screen.getAllDisplays().map((display) => display.bounds),
+          displays: Electron.screen.getAllDisplays().map(({ id, bounds }) => ({ id, ...bounds })),
         };
       } catch (cause) {
         return { _tag: "Failure" as const, cause };
       }
     });
-    const displayBounds =
+    const connectedDisplays =
       displayBoundsResult._tag === "Success"
-        ? displayBoundsResult.bounds
+        ? displayBoundsResult.displays
         : yield* logWindowWarning("failed to read connected displays; using defaults", {
             cause: displayBoundsResult.cause,
-          }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
-    const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
+          }).pipe(Effect.as<readonly DisplayBounds[]>([]));
+    const initialBounds = resolveInitialMainWindowBounds(
+      persistedBounds,
+      connectedDisplays,
+      persistedSettings.mainWindowDisplayId,
+    );
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
@@ -442,6 +478,14 @@ export const make = Effect.gen(function* () {
     };
     const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
     const fallbackWindowMaximized = persistedSettings.mainWindowMaximized;
+    // Normal bounds may still point at the monitor used before maximizing.
+    const readCurrentDisplayId = (): number | null => {
+      try {
+        return Electron.screen.getDisplayMatching(window.getBounds()).id;
+      } catch {
+        return null;
+      }
+    };
     const persistCurrentBounds = (): Fiber.Fiber<void, never> | undefined => {
       if (!boundsPersistenceEnabled) {
         return pendingBoundsPersistFiber;
@@ -450,8 +494,9 @@ export const make = Effect.gen(function* () {
       if (bounds === null) {
         return pendingBoundsPersistFiber;
       }
+      const displayId = readCurrentDisplayId();
       pendingBoundsPersistFiber = runFork(
-        desktopSettings.setMainWindowBounds(bounds, window.isMaximized()).pipe(
+        desktopSettings.setMainWindowBounds(bounds, window.isMaximized(), displayId).pipe(
           Effect.asVoid,
           Effect.catch((error) =>
             logWindowWarning("failed to persist main window bounds", {
@@ -469,7 +514,8 @@ export const make = Effect.gen(function* () {
           currentBounds === null ||
           (fallbackWindowBounds !== null &&
             windowBoundsEqual(currentBounds, fallbackWindowBounds) &&
-            window.isMaximized() === fallbackWindowMaximized)
+            window.isMaximized() === fallbackWindowMaximized &&
+            readCurrentDisplayId() === persistedSettings.mainWindowDisplayId)
         ) {
           return;
         }
