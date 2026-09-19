@@ -28,11 +28,15 @@ export function getMobileThemeRuntimeVariables(
     : getMobileThemeVariables(themeId, appearance);
   if (platform !== "android") return variables;
 
-  // Rounded panes share the sidebar's opaque frame. System colors replace
-  // this with their own surfaceContainerHigh afterwards.
+  // Desktop separates its near-white default surfaces with a divider. Android's
+  // rounded panes need a tonal frame; use the neutral control surface there.
+  // Named palettes keep their sidebar frame, and system colors replace it later.
   return {
     ...variables,
-    "--color-header": themeColorWithAlpha(variables["--color-drawer"], 1),
+    "--color-header": themeColorWithAlpha(
+      variables[usesDefaultPalette ? "--color-row-hover" : "--color-drawer"],
+      1,
+    ),
     "--color-header-foreground": variables["--color-drawer-foreground"],
   };
 }
