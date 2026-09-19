@@ -10,6 +10,7 @@ export const measureWorktreeBytes = Effect.fn("measureWorktreeBytes")(function* 
   return yield* Effect.tryPromise({
     try: async (signal) => {
       const directories = [root];
+      const linkedFiles = new Map<string, { seen: number; links: number; bytes: number }>();
       let entries = 0;
       let bytes = 0;
       while (directories.length > 0) {
@@ -25,7 +26,19 @@ export const measureWorktreeBytes = Effect.fn("measureWorktreeBytes")(function* 
           const stat = await NodeFSP.lstat(target);
           if (stat.isDirectory()) directories.push(target);
           else if (stat.nlink === 1) bytes += stat.blocks * 512;
+          else {
+            const key = `${stat.dev}:${stat.ino}`;
+            const previous = linkedFiles.get(key);
+            linkedFiles.set(key, {
+              seen: (previous?.seen ?? 0) + 1,
+              links: stat.nlink,
+              bytes: stat.blocks * 512,
+            });
+          }
         }
+      }
+      for (const file of linkedFiles.values()) {
+        if (file.seen === file.links) bytes += file.bytes;
       }
       return bytes;
     },
