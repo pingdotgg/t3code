@@ -620,7 +620,7 @@
       --color-thread-canvas: #f3f7f4;
       --color-thread-selected: #bad7c9;
       --color-thread-selected-foreground: #241523;
-      --color-thread-selected-foreground-muted: #6b666c;
+      --color-thread-selected-foreground-muted: #5d585e;
       --color-thread-hover: #cae0d5;
       --color-row-hover: #d5e6dd;
       --color-composer-panel: rgba(243, 247, 244, 0.88);
@@ -691,7 +691,7 @@
       --color-backdrop: rgba(0, 0, 0, 0.22);
       --color-drawer: #e2ede7;
       --color-drawer-foreground: #241523;
-      --color-drawer-foreground-muted: #6b666c;
+      --color-drawer-foreground-muted: #645f64;
       --color-drawer-border: #cbd3d0;
       --color-drawer-shadow: rgba(0, 0, 0, 0.12);
       --color-dot-separator: rgba(116, 108, 115, 0.35);
@@ -772,7 +772,7 @@
       --color-thread-canvas: #1b2821;
       --color-thread-selected: #2f5641;
       --color-thread-selected-foreground: #fffaff;
-      --color-thread-selected-foreground-muted: #9da3a2;
+      --color-thread-selected-foreground-muted: #bbc0bf;
       --color-thread-hover: #2a4938;
       --color-row-hover: #325c46;
       --color-composer-panel: rgba(27, 40, 33, 0.92);
@@ -843,7 +843,7 @@
       --color-backdrop: rgba(0, 0, 0, 0.48);
       --color-drawer: #21362b;
       --color-drawer-foreground: #fffaff;
-      --color-drawer-foreground-muted: #9da3a2;
+      --color-drawer-foreground-muted: #aab0af;
       --color-drawer-border: #6f7a75;
       --color-drawer-shadow: rgba(0, 0, 0, 0.32);
       --color-dot-separator: rgba(145, 149, 149, 0.35);
@@ -924,7 +924,7 @@
       --color-thread-canvas: #f5f7f8;
       --color-thread-selected: #bed4e5;
       --color-thread-selected-foreground: #241523;
-      --color-thread-selected-foreground-muted: #6c6570;
+      --color-thread-selected-foreground-muted: #5e5862;
       --color-thread-hover: #cdddea;
       --color-row-hover: #d8e4ee;
       --color-composer-panel: rgba(245, 247, 248, 0.88);
@@ -995,7 +995,7 @@
       --color-backdrop: rgba(0, 0, 0, 0.22);
       --color-drawer: #e4ecf2;
       --color-drawer-foreground: #241523;
-      --color-drawer-foreground-muted: #6c6570;
+      --color-drawer-foreground-muted: #655e69;
       --color-drawer-border: #cdd2d9;
       --color-drawer-shadow: rgba(0, 0, 0, 0.12);
       --color-dot-separator: rgba(116, 108, 117, 0.35);
@@ -1076,7 +1076,7 @@
       --color-thread-canvas: #17212b;
       --color-thread-selected: #2f495f;
       --color-thread-selected-foreground: #fffaff;
-      --color-thread-selected-foreground-muted: #989ca5;
+      --color-thread-selected-foreground-muted: #b0b4ba;
       --color-thread-hover: #283e50;
       --color-row-hover: #324e66;
       --color-composer-panel: rgba(23, 33, 43, 0.92);
@@ -1147,7 +1147,7 @@
       --color-backdrop: rgba(0, 0, 0, 0.48);
       --color-drawer: #1e2d3b;
       --color-drawer-foreground: #fffaff;
-      --color-drawer-foreground-muted: #989ca5;
+      --color-drawer-foreground-muted: #a2a5ae;
       --color-drawer-border: #6d757f;
       --color-drawer-shadow: rgba(0, 0, 0, 0.32);
       --color-dot-separator: rgba(141, 143, 151, 0.35);
@@ -1228,7 +1228,7 @@
       --color-thread-canvas: #f9f7f5;
       --color-thread-selected: #e5ccc0;
       --color-thread-selected-foreground: #241523;
-      --color-thread-selected-foreground-muted: #71646b;
+      --color-thread-selected-foreground-muted: #62575d;
       --color-thread-hover: #ead8cf;
       --color-row-hover: #eee0d9;
       --color-composer-panel: rgba(249, 247, 245, 0.88);
@@ -1299,7 +1299,7 @@
       --color-backdrop: rgba(0, 0, 0, 0.22);
       --color-drawer: #f3eae5;
       --color-drawer-foreground: #241523;
-      --color-drawer-foreground-muted: #71646b;
+      --color-drawer-foreground-muted: #6a5d64;
       --color-drawer-border: #dad0ce;
       --color-drawer-shadow: rgba(0, 0, 0, 0.12);
       --color-dot-separator: rgba(118, 108, 116, 0.35);
@@ -1380,7 +1380,7 @@
       --color-thread-canvas: #291e1a;
       --color-thread-selected: #5d3f2d;
       --color-thread-selected-foreground: #fffaff;
-      --color-thread-selected-foreground-muted: #a49998;
+      --color-thread-selected-foreground-muted: #b9b1b0;
       --color-thread-hover: #4f3528;
       --color-row-hover: #644330;
       --color-composer-panel: rgba(41, 30, 26, 0.92);
@@ -1451,7 +1451,7 @@
       --color-backdrop: rgba(0, 0, 0, 0.48);
       --color-drawer: #39281f;
       --color-drawer-foreground: #fffaff;
-      --color-drawer-foreground-muted: #a49998;
+      --color-drawer-foreground-muted: #aca2a1;
       --color-drawer-border: #7e716e;
       --color-drawer-shadow: rgba(0, 0, 0, 0.32);
       --color-dot-separator: rgba(150, 142, 143, 0.35);
@@ -1532,7 +1532,7 @@
       --color-thread-canvas: #f8f7f9;
       --color-thread-selected: #d4cce8;
       --color-thread-selected-foreground: #241523;
-      --color-thread-selected-foreground-muted: #6f6471;
+      --color-thread-selected-foreground-muted: #605662;
       --color-thread-hover: #ded8ed;
       --color-row-hover: #e5e0f0;
       --color-composer-panel: rgba(248, 247, 249, 0.88);
@@ -1603,7 +1603,7 @@
       --color-backdrop: rgba(0, 0, 0, 0.22);
       --color-drawer: #edeaf4;
       --color-drawer-foreground: #241523;
-      --color-drawer-foreground-muted: #6f6471;
+      --color-drawer-foreground-muted: #685d6a;
       --color-drawer-border: #d5d0db;
       --color-drawer-shadow: rgba(0, 0, 0, 0.12);
       --color-dot-separator: rgba(118, 108, 118, 0.35);
@@ -1684,7 +1684,7 @@
       --color-thread-canvas: #1d1929;
       --color-thread-selected: #3f345e;
       --color-thread-selected-foreground: #fffaff;
-      --color-thread-selected-foreground-muted: #9792a0;
+      --color-thread-selected-foreground-muted: #a6a2ae;
       --color-thread-hover: #352c4f;
       --color-row-hover: #433765;
       --color-composer-panel: rgba(29, 25, 41, 0.92);
@@ -1755,7 +1755,7 @@
       --color-backdrop: rgba(0, 0, 0, 0.48);
       --color-drawer: #272139;
       --color-drawer-foreground: #fffaff;
-      --color-drawer-foreground-muted: #9792a0;
+      --color-drawer-foreground-muted: #9b97a4;
       --color-drawer-border: #736d7e;
       --color-drawer-shadow: rgba(0, 0, 0, 0.32);
       --color-dot-separator: rgba(142, 138, 149, 0.35);

@@ -1,6 +1,7 @@
 import defaultThemeVariables from "../../generated-uniwind-default-theme-variables.json";
 import {
   DEFAULT_MOBILE_THEME_ID,
+  flattenThemeColor,
   getMobileThemeVariables,
   themeColorWithAlpha,
   type MobileThemeAppearance,
@@ -45,7 +46,7 @@ export function getMobileThemeRuntimeVariables(
           : variables["--color-drawer-foreground-muted"],
       "--color-thread-hover":
         appearance === "dark"
-          ? variables["--color-grouped-card"]
+          ? flattenThemeColor(themeColorWithAlpha(variables["--color-thread-selected"], 0.5), frame)
           : variables["--color-thread-hover"],
     };
   }

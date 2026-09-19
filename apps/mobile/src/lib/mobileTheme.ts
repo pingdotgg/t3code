@@ -254,7 +254,10 @@ export function createMobileThemeVariables(
     "--color-thread-canvas": c.canvas,
     "--color-thread-selected": c.sidebarRowActive,
     "--color-thread-selected-foreground": c.sidebarForeground,
-    "--color-thread-selected-foreground-muted": c.sidebarMutedForeground,
+    "--color-thread-selected-foreground-muted": readableTextColor(
+      c.sidebarMutedForeground,
+      c.sidebarRowActive,
+    ),
     "--color-thread-hover": c.sidebarRowHover,
     "--color-row-hover": c.toolbarControlHover,
     "--color-composer-panel": themeColorWithAlpha(c.canvas, appearance === "dark" ? 0.92 : 0.88),
@@ -331,7 +334,10 @@ export function createMobileThemeVariables(
     "--color-backdrop": withAlpha("#000000", appearance === "dark" ? 0.48 : 0.22),
     "--color-drawer": c.sidebar,
     "--color-drawer-foreground": c.sidebarForeground,
-    "--color-drawer-foreground-muted": c.sidebarMutedForeground,
+    "--color-drawer-foreground-muted": readableTextColor(c.sidebarMutedForeground, [
+      c.sidebar,
+      c.sidebarRowHover,
+    ]),
     "--color-drawer-border": c.sidebarBorder,
     "--color-drawer-shadow": withAlpha("#000000", appearance === "dark" ? 0.32 : 0.12),
     "--color-dot-separator": withAlpha(c.textMuted, 0.35),

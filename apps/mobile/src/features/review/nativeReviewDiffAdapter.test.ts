@@ -97,6 +97,19 @@ function appTheme(themeId: MobileThemeId, appearance: MobileThemeAppearance) {
     : getMobileThemeVariables(themeId, appearance);
 }
 
+function contrastRatio(first: string, second: string): number {
+  const luminance = (hex: string) => {
+    const [red, green, blue] = [1, 3, 5].map((offset) => {
+      const channel = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+  };
+  const a = luminance(first);
+  const b = luminance(second);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
 describe("getCachedNativeReviewDiffData", () => {
   it.each([true, false])(
     "preserves available diff rows before a notice (has excerpt: %s)",
@@ -251,6 +264,10 @@ describe("createNativeReviewDiffTheme", () => {
         for (const color of Object.values(theme)) {
           expect(color, `${themeId}/${appearance}`).toMatch(/^#[\da-f]{6}$/i);
         }
+        expect(
+          contrastRatio(theme.hunkText, theme.hunkBackground),
+          `${themeId}/${appearance} hunk text`,
+        ).toBeGreaterThanOrEqual(4.5);
       }
     }
   });
@@ -273,7 +290,7 @@ describe("createNativeReviewDiffTheme", () => {
       expect(theme.text).toBe("#e3e2e6");
       expect(theme.mutedText).toBe("#707076");
       expect(theme.border).toBe("#2e3036");
-      expect(theme.hunkText).toBe(theme.mutedText);
+      expect(contrastRatio(theme.hunkText, theme.hunkBackground)).toBeGreaterThanOrEqual(4.5);
       for (const color of Object.values(theme)) {
         expect(color).toMatch(/^#[\da-f]{6}$/i);
       }

@@ -122,6 +122,8 @@ describe("mobile themes", () => {
         ["--color-drawer-foreground", "--color-drawer"],
         ["--color-drawer-foreground-muted", "--color-drawer"],
         ["--color-drawer-foreground", "--color-thread-hover"],
+        ["--color-drawer-foreground-muted", "--color-thread-hover"],
+        ["--color-thread-selected-foreground-muted", "--color-thread-selected"],
         ["--color-primary-foreground", "--color-primary"],
         ["--color-primary-text", "--color-screen"],
         ["--color-primary-text", "--color-card"],

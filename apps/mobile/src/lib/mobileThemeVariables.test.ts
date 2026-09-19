@@ -74,6 +74,9 @@ describe("mobile theme runtime variables", () => {
         expect(ios["--color-header"]).toBe(android["--color-header"]);
         expect(ios["--color-header-foreground"]).toBe(ios["--color-drawer-foreground"]);
         expect(themeColorWithAlpha(ios["--color-thread-hover"], 1)).not.toBe(ios["--color-drawer"]);
+        expect(themeColorWithAlpha(ios["--color-thread-hover"], 1)).not.toBe(
+          themeColorWithAlpha(ios["--color-thread-selected"], 1),
+        );
         for (const role of [
           "--color-screen",
           "--color-thread-canvas",
