@@ -10,12 +10,15 @@ import {
   PlanId,
   ProjectId,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
   WS_METHODS,
   type OrchestrationV2Command,
+  type OrchestrationV2ProviderSession,
+  type OrchestrationV2ThreadCheckpointContext,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
@@ -51,6 +54,7 @@ import {
   revertThreadCheckpoint,
   settleThread,
   startThreadTurn,
+  stopThreadSession,
   unsettleThread,
   updateProject,
   updateThreadMetadata,
@@ -77,7 +81,11 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
+  readonly projectionInputs?: Array<Record<string, unknown>>;
+  readonly checkpointContext?: OrchestrationV2ThreadCheckpointContext;
+  readonly checkpointContextRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
+  readonly advertiseThreadCheckpointContext?: boolean;
 }) {
   const client = {
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
@@ -90,7 +98,21 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
     }) =>
       Effect.sync(() => {
         input.projectionRequests?.push(requestInput.threadId);
+        input.projectionInputs?.push(requestInput);
         return input.projection ?? v2Projection;
+      }),
+    [ORCHESTRATION_V2_WS_METHODS.getThreadCheckpointContext]: (requestInput: {
+      readonly threadId: ThreadId;
+    }) =>
+      Effect.sync(() => {
+        input.checkpointContextRequests?.push(requestInput.threadId);
+        return (
+          input.checkpointContext ?? {
+            runs: [],
+            checkpointScopes: [],
+            checkpoints: [],
+          }
+        );
       }),
     [ORCHESTRATION_V2_WS_METHODS.launchThread]: (launchInput: OrchestrationV2ThreadLaunchInput) =>
       Effect.sync(() => {
@@ -128,6 +150,9 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           ...(input.advertiseServerResolvedCommandContext === false
             ? {}
             : { serverResolvedCommandContext: true }),
+          ...(input.advertiseThreadCheckpointContext === false
+            ? {}
+            : { threadCheckpointContext: true }),
         },
       },
     } as never),
@@ -257,7 +282,12 @@ describe("V2 environment commands", () => {
         ],
       };
       const commands: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projection,
+        advertiseThreadCheckpointContext: false,
+      });
 
       yield* revertThreadCheckpoint({
         commandId: CommandId.make("rollback-thread-start"),
@@ -272,6 +302,53 @@ describe("V2 environment commands", () => {
           threadId: v2ThreadId,
           scopeId,
           checkpointId,
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("resolves rewind ordinals from the targeted checkpoint context", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionRequests: ThreadId[] = [];
+      const checkpointContextRequests: ThreadId[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projectionRequests,
+        checkpointContextRequests,
+        checkpointContext: {
+          runs: [],
+          checkpointScopes: [],
+          checkpoints: [
+            {
+              id: CheckpointId.make("checkpoint-turn-4"),
+              scopeId: CheckpointScopeId.make("scope-root"),
+              runId: RunId.make("run-4"),
+              ordinalWithinScope: 4,
+              appRunOrdinal: 4,
+              status: "ready",
+              ref: CheckpointRef.make("refs/t3/turn-4"),
+            },
+          ],
+        },
+      });
+
+      yield* revertThreadCheckpoint({
+        commandId: CommandId.make("rollback-to-turn-4"),
+        threadId: v2ThreadId,
+        turnCount: 4,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(projectionRequests).toEqual([]);
+      expect(checkpointContextRequests).toEqual([v2ThreadId]);
+      expect(commands).toEqual([
+        {
+          type: "checkpoint.rollback",
+          commandId: "rollback-to-turn-4",
+          threadId: v2ThreadId,
+          scopeId: "scope-root",
+          checkpointId: "checkpoint-turn-4",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
@@ -713,10 +790,12 @@ describe("V2 environment commands", () => {
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
       const projectionRequests: ThreadId[] = [];
+      const projectionInputs: Array<Record<string, unknown>> = [];
       const supervisor = yield* makeSupervisor({
         commands,
         projects: [],
         projectionRequests,
+        projectionInputs,
         advertiseServerResolvedCommandContext: false,
       });
 
@@ -730,6 +809,8 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(projectionRequests).toEqual([v2ThreadId]);
+      // New clients opt into bounded projections; older servers strip the key.
+      expect(projectionInputs).toEqual([{ threadId: v2ThreadId, acceptBoundedSnapshot: true }]);
       expect(commands).toEqual([
         {
           type: "provider.switch",
@@ -778,11 +859,14 @@ describe("V2 environment commands", () => {
       for (const status of ["ready", "missing", "error", "stale", null] as const) {
         const commands: OrchestrationV2Command[] = [];
         const projectionRequests: ThreadId[] = [];
+        const projectionInputs: Array<Record<string, unknown>> = [];
         const supervisor = yield* makeSupervisor({
           commands,
           projects: [],
           projectionRequests,
+          projectionInputs,
           advertiseServerResolvedCommandContext: false,
+          advertiseThreadCheckpointContext: false,
           projection: {
             ...v2Projection,
             checkpoints:
@@ -830,6 +914,9 @@ describe("V2 environment commands", () => {
           expect(commands).toEqual([]);
         }
         expect(projectionRequests).toEqual([v2ThreadId]);
+        // Ordinal fallback needs every checkpoint, so it must not opt into the
+        // bounded projection window.
+        expect(projectionInputs).toEqual([{ threadId: v2ThreadId }]);
       }
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
@@ -965,6 +1052,47 @@ describe("V2 environment commands", () => {
           commandId: "direct-interrupt",
           threadId: v2ThreadId,
           runId: "active-run",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("detaches every provider session against the unbounded projection", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionInputs: Array<Record<string, unknown>> = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projectionInputs,
+        projection: {
+          ...v2Projection,
+          providerSessions: [
+            {
+              id: ProviderSessionId.make("provider-session-detach"),
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              status: "ready",
+              cwd: "/repo",
+            } as unknown as OrchestrationV2ProviderSession,
+          ],
+        },
+      });
+
+      yield* stopThreadSession({
+        commandId: CommandId.make("stop-session"),
+        threadId: v2ThreadId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      // The bounded window omits ready sessions outside the retained cohort —
+      // the detach sweep has to see the full projection.
+      expect(projectionInputs).toEqual([{ threadId: v2ThreadId }]);
+      expect(commands).toEqual([
+        {
+          type: "provider-session.detach",
+          commandId: "stop-session:detach:provider-session-detach",
+          threadId: v2ThreadId,
+          providerSessionId: "provider-session-detach",
+          reason: "client-requested",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

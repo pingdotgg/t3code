@@ -78,6 +78,12 @@ export function mergeOlderHistoryIntoProjection(
   for (const item of projection.turnItems) {
     turnItemById.set(String(item.id), item);
   }
+  // Visibility checks see the timeline the page is about to join: live items
+  // plus the page's own rows, so same-page request/result pairs still resolve.
+  const timelineItems: OrchestrationV2TurnItem[] = [
+    ...projection.turnItems,
+    ...olderItems.map((row) => row.item),
+  ];
   const prepended: OrchestrationV2ProjectedTurnItem[] = [];
   for (const pageRow of olderItems) {
     let row = pageRow;
@@ -106,6 +112,17 @@ export function mergeOlderHistoryIntoProjection(
           continue;
         }
         row = { ...row, item: currentItem };
+      } else if (
+        !isOrchestrationV2TurnItemVisible({
+          item: row.item,
+          runs: projection.runs,
+          attempts: projection.attempts,
+          items: timelineItems,
+        })
+      ) {
+        // Previously unloaded row: a rewind or cancelled queued run may have
+        // hidden it while the page was in flight without changing the cursor.
+        continue;
       }
     }
     existingKeys.add(key);

@@ -58,10 +58,26 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  bytesOfJson,
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
+  stringifyJsonDeep,
+  threadHistoryCursorItemTag,
+  threadHistoryCursorThreadTag,
   THREAD_HISTORY_MAX_RAW_TURNS,
+  THREAD_HISTORY_MAX_RESOLVED_REQUEST_BYTES,
+  THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES,
+  THREAD_HISTORY_MAX_WINDOW_BYTES,
+  THREAD_HISTORY_MAX_WINDOW_ROWS,
 } from "./threadHistoryPaging.ts";
+import {
+  boundedPayloadPreviewJson,
+  boundedTurnItemPreviewJson,
+  compactProjectedHistoryPayloadToLimit,
+  jsonDepthExceeds,
+  parseBoundedPayloadJson,
+  THREAD_HISTORY_PREVIEW_HARD_DEPTH,
+} from "./boundedPayloadPreview.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
   "ProjectionStoreApplyEventError",
@@ -166,9 +182,11 @@ const ProjectionCheckpointContext = Schema.Struct({
   ),
   checkpoints: Schema.Array(
     OrchestrationV2CheckpointJsonSchema.mapFields(
-      ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+      ({ id, scopeId, runId, ordinalWithinScope, appRunOrdinal, status, ref }) => ({
+        id,
         scopeId,
         runId,
+        ordinalWithinScope,
         appRunOrdinal,
         status,
         ref,
@@ -285,6 +303,15 @@ export interface ProjectionStoreV2Shape {
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, ProjectionStoreV2Error>;
+  /**
+   * One raw turn item by id — the recovery path for items whose bounded
+   * preview dropped content (`payloadTruncated`). Returns `null` when no row
+   * with that id exists on the thread; never reads the preview column.
+   */
+  readonly getThreadTurnItem: (
+    threadId: ThreadId,
+    itemId: TurnItemId,
+  ) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
@@ -309,12 +336,24 @@ export interface ProjectionStoreV2Shape {
       readonly userTurnLimit?: number | undefined;
       readonly anchorItemId?: TurnItemId | undefined;
       readonly anchorThreadId?: ThreadId | undefined;
+      /** v2 history cursors anchor on the item's ordinal — bounded regardless of id length. */
+      readonly anchorOrdinal?: number | undefined;
+      /** v2 cursors carry a digest of the source thread id, resolved via fork ancestry. */
+      readonly anchorThreadDigest?: string | undefined;
+      /** v2 cursors carry a digest of the source item id — ordinals are not unique. */
+      readonly anchorItemDigest?: string | undefined;
       readonly requiredRunId?: RunId | undefined;
+      /** Hard caps applied in SQL before payload decode; rows dropped by them stay pageable. */
+      readonly maxWindowRows?: number | undefined;
+      readonly maxWindowBytes?: number | undefined;
+      readonly maxRowPayloadBytes?: number | undefined;
     },
   ) => Effect.Effect<
     {
       readonly schemaVersion: number;
       readonly snapshotSequence: number;
+      /** True when rows older than the returned window were dropped by turn or hard caps. */
+      readonly hasOlderHistory: boolean;
       readonly projection: OrchestrationV2ThreadProjection;
     },
     ProjectionStoreV2Error
@@ -325,7 +364,7 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
   "t3/orchestration-v2/ProjectionStore/ProjectionStoreV2",
 ) {}
 
-export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
+export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 3;
 
 function needsRecovery(
   projection: OrchestrationV2ThreadProjection,
@@ -629,11 +668,19 @@ export function applyToProjection(
 export interface ProjectionReplayState {
   readonly projections: Map<ThreadId, OrchestrationV2ThreadProjection>;
   readonly providerSessionThreadIds: Map<ProviderSessionId, ReadonlySet<ThreadId>>;
+  // Provider threads are globally keyed like the SQL provider_threads table:
+  // the same thread can appear in several per-thread projections at different
+  // versions, so the latest event — not first-seen projection order — wins.
+  readonly providerThreadsById: Map<
+    ProviderThreadId,
+    OrchestrationV2ThreadProjection["providerThreads"][number]
+  >;
 }
 
 function makeProjectionReplayState(): ProjectionReplayState {
   return {
     projections: new Map(),
+    providerThreadsById: new Map(),
     providerSessionThreadIds: new Map(),
   };
 }
@@ -704,6 +751,10 @@ function applyToProjectionReplayState(
       }
       break;
     }
+    case "provider-thread.updated": {
+      state.providerThreadsById.set(event.payload.id, event.payload);
+      break;
+    }
   }
 
   return true;
@@ -758,6 +809,7 @@ type ShellRunItemCountRow = {
 };
 
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const encodeRowidList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Number)));
 
 const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
@@ -804,6 +856,39 @@ const encodeContextHandoffPayload = Schema.encodeEffect(
 );
 const encodeContextTransferPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
+);
+
+// Value-level encoders for the memory driver's boundRow: fromJsonString would
+// stringify internally, and JSON.stringify overflows on deep decoded payloads
+// (Schema.Unknown members pass through encode unbounded). stringifyJsonDeep
+// serializes the encoded value without a recursive call stack.
+const encodeThreadPayloadValue = Schema.encodeEffect(OrchestrationV2AppThreadJsonSchema);
+const encodeRunPayloadValue = Schema.encodeEffect(OrchestrationV2RunJsonSchema);
+const encodeRunAttemptPayloadValue = Schema.encodeEffect(OrchestrationV2RunAttemptJsonSchema);
+const encodeNodePayloadValue = Schema.encodeEffect(OrchestrationV2ExecutionNodeJsonSchema);
+const encodeSubagentPayloadValue = Schema.encodeEffect(OrchestrationV2SubagentJsonSchema);
+const encodeProviderSessionPayloadValue = Schema.encodeEffect(
+  OrchestrationV2ProviderSessionJsonSchema,
+);
+const encodeProviderThreadPayloadValue = Schema.encodeEffect(
+  OrchestrationV2ProviderThreadJsonSchema,
+);
+const encodeProviderTurnPayloadValue = Schema.encodeEffect(OrchestrationV2ProviderTurnJsonSchema);
+const encodeRuntimeRequestPayloadValue = Schema.encodeEffect(
+  OrchestrationV2RuntimeRequestJsonSchema,
+);
+const encodeMessagePayloadValue = Schema.encodeEffect(OrchestrationV2ConversationMessageJsonSchema);
+const encodePlanPayloadValue = Schema.encodeEffect(OrchestrationV2PlanArtifactSchema);
+const encodeTurnItemPayloadValue = Schema.encodeEffect(OrchestrationV2TurnItemJsonSchema);
+const encodeCheckpointScopePayloadValue = Schema.encodeEffect(
+  OrchestrationV2CheckpointScopeJsonSchema,
+);
+const encodeCheckpointPayloadValue = Schema.encodeEffect(OrchestrationV2CheckpointJsonSchema);
+const encodeContextHandoffPayloadValue = Schema.encodeEffect(
+  OrchestrationV2ContextHandoffJsonSchema,
+);
+const encodeContextTransferPayloadValue = Schema.encodeEffect(
+  OrchestrationV2ContextTransferJsonSchema,
 );
 
 const decodeThreadPayload = Schema.decodeUnknownEffect(
@@ -960,6 +1045,89 @@ function localVisibleTurnItems(
 ): Array<OrchestrationV2ProjectedTurnItem> {
   return activeLocalTurnItems(projection);
 }
+
+// `ORDER BY turn_item_id` compares ids as UTF-8 bytes under SQLite's BINARY
+// collation; JS `<` compares UTF-16 code units and diverges for supplementary
+// characters, so the tie-break encodes first. Binding also diverges on lone
+// surrogates: node:sqlite substitutes U+FFFD (Buffer's utf8 does the same)
+// while bun:sqlite stores raw surrogate bytes (WTF-8), so the encoder follows
+// the runtime.
+const wtf8Bytes = (value: string): Uint8Array => {
+  const bytes: Array<number> = [];
+  // bun:sqlite consumes a leading BOM from the UTF-16 buffer:
+  // U+FEFF is stripped, and U+FFFE marks the rest big-endian —
+  // every subsequent unit is byte-swapped before encoding.
+  const first = value.charCodeAt(0);
+  const swapped = first === 0xfffe;
+  const start = swapped || first === 0xfeff ? 1 : 0;
+  const unitAt = (index: number): number => {
+    const code = value.charCodeAt(index);
+    return swapped ? ((code & 0xff) << 8) | (code >> 8) : code;
+  };
+  for (let index = start; index < value.length; index += 1) {
+    const code = unitAt(index);
+    // bun:sqlite's UTF-8 conversion pairs ANY surrogate code unit
+    // with the following unit, masking both to 10 bits — a lone
+    // high surrogate before 'x' encodes U+10078, not ED A0 80.
+    if (code >= 0xd800 && code <= 0xdfff && index + 1 < value.length) {
+      const point = 0x10000 + ((code & 0x3ff) << 10) + (unitAt(index + 1) & 0x3ff);
+      bytes.push(
+        0xf0 | (point >> 18),
+        0x80 | ((point >> 12) & 0x3f),
+        0x80 | ((point >> 6) & 0x3f),
+        0x80 | (point & 0x3f),
+      );
+      index += 1;
+      continue;
+    }
+    if (code < 0x80) {
+      bytes.push(code);
+    } else if (code < 0x800) {
+      bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+    } else {
+      // A lone surrogate with no following unit lands here:
+      // ED A0-BF 80-BF, matching bun:sqlite's raw bind.
+      bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+    }
+  }
+  return Uint8Array.from(bytes);
+};
+const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+const compareUtf8 = (left: string, right: string): number =>
+  isBunRuntime
+    ? Buffer.compare(wtf8Bytes(left), wtf8Bytes(right))
+    : Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+
+// The cohort decode path for retained rows: oversized or over-deep stored
+// payloads are compacted to the row cap before schema decode, so every item
+// the window compares against is the bounded form.
+const boundRetainedPayloadJson = (payloadJson: string, maxRowPayloadBytes: number): string =>
+  Buffer.byteLength(payloadJson, "utf8") > maxRowPayloadBytes ||
+  jsonDepthExceeds(payloadJson, THREAD_HISTORY_PREVIEW_HARD_DEPTH)
+    ? JSON.stringify(
+        compactProjectedHistoryPayloadToLimit(
+          parseBoundedPayloadJson(payloadJson),
+          maxRowPayloadBytes,
+        ),
+      )
+    : payloadJson;
+
+// Turn-item variant: compaction means content was dropped, so the flag rides
+// inside the emitted JSON — every downstream decode produces a flagged item
+// without each decode site tracking provenance. Stored previews already carry
+// the flag from the write-time stamp (and the 057 backfill), so this only
+// marks rows compacted on the fly — raw rows over the cap with no preview, or
+// previews re-compacted under a caller's tighter cap.
+const boundRetainedTurnItemPayloadJson = (
+  payloadJson: string,
+  maxRowPayloadBytes: number,
+): string => {
+  const boundJson = boundRetainedPayloadJson(payloadJson, maxRowPayloadBytes);
+  if (boundJson === payloadJson) return boundJson;
+  const preview = parseBoundedPayloadJson(boundJson) as Record<string, unknown>;
+  preview["payloadTruncated"] = true;
+  return JSON.stringify(preview);
+};
 
 function inheritedVisibleTurnItemsFromLocalItems(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
@@ -1482,7 +1650,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at,
                 archived_at,
                 deleted_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1497,7 +1666,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${stringField(payload, "updatedAt")},
                 ${nullableStringField(payload, "archivedAt")},
                 ${nullableStringField(payload, "deletedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(thread_id)
               DO UPDATE SET
@@ -1512,7 +1682,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -1531,7 +1702,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status,
                 requested_at,
                 completed_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1543,7 +1715,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.status},
                 ${stringField(payload, "requestedAt")},
                 ${nullableStringField(payload, "completedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(run_id)
               DO UPDATE SET
@@ -1567,6 +1740,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     )
                   )
                   ELSE excluded.payload_json
+                END,
+                -- The delegatedCompletion merge applies to the preview too:
+                -- graft the member from the previous raw payload — never the
+                -- previous preview, which may have dropped it and would graft a
+                -- schema-invalid JSON null. The graft can push the combined
+                -- preview over the row cap; in that case keep the new payload's
+                -- own preview — still bounded and decode-safe since
+                -- delegatedCompletion is optional — while the raw payload
+                -- keeps the merged member.
+                bounded_json = CASE
+                  WHEN json_type(excluded.payload_json, '$.delegatedCompletion') IS NULL
+                    AND json_type(orchestration_v2_projection_runs.payload_json, '$.delegatedCompletion') IS NOT NULL
+                  THEN CASE
+                    WHEN LENGTH(CAST(
+                      json_set(
+                        COALESCE(excluded.bounded_json, excluded.payload_json),
+                        '$.delegatedCompletion',
+                        json_extract(
+                          orchestration_v2_projection_runs.payload_json,
+                          '$.delegatedCompletion'
+                        )
+                      ) AS BLOB)) <= ${THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES}
+                    THEN json_set(
+                      COALESCE(excluded.bounded_json, excluded.payload_json),
+                      '$.delegatedCompletion',
+                      json_extract(
+                        orchestration_v2_projection_runs.payload_json,
+                        '$.delegatedCompletion'
+                      )
+                    )
+                    ELSE COALESCE(excluded.bounded_json, excluded.payload_json)
+                  END
+                  ELSE excluded.bounded_json
                 END
             `;
             break;
@@ -1586,7 +1792,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 provider_thread_id,
                 provider_turn_id,
                 status,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1599,7 +1806,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.providerThreadId},
                 ${event.payload.providerTurnId},
                 ${event.payload.status},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(attempt_id)
               DO UPDATE SET
@@ -1612,7 +1820,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 provider_thread_id = excluded.provider_thread_id,
                 provider_turn_id = excluded.provider_turn_id,
                 status = excluded.status,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -1634,7 +1843,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 checkpoint_scope_id,
                 started_at,
                 completed_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1650,7 +1860,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.checkpointScopeId},
                 ${nullableStringField(payload, "startedAt")},
                 ${nullableStringField(payload, "completedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(node_id)
               DO UPDATE SET
@@ -1666,7 +1877,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 checkpoint_scope_id = excluded.checkpoint_scope_id,
                 started_at = excluded.started_at,
                 completed_at = excluded.completed_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -1689,7 +1901,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 started_at,
                 completed_at,
                 updated_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1706,7 +1919,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${nullableStringField(payload, "startedAt")},
                 ${nullableStringField(payload, "completedAt")},
                 ${stringField(payload, "updatedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(subagent_id)
               DO UPDATE SET
@@ -1735,6 +1949,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     )
                   )
                   ELSE excluded.payload_json
+                END,
+                -- Same graft discipline as the runs merge above: source the
+                -- merged member from the previous raw payload so a preview that
+                -- dropped it cannot graft a schema-invalid JSON null, and keep
+                -- the new payload's own preview when the graft exceeds the cap.
+                bounded_json = CASE
+                  WHEN json_type(excluded.payload_json, '$.completionDelivery') IS NULL
+                    AND json_type(orchestration_v2_projection_subagents.payload_json, '$.completionDelivery') IS NOT NULL
+                  THEN CASE
+                    WHEN LENGTH(CAST(
+                      json_set(
+                        COALESCE(excluded.bounded_json, excluded.payload_json),
+                        '$.completionDelivery',
+                        json_extract(
+                          orchestration_v2_projection_subagents.payload_json,
+                          '$.completionDelivery'
+                        )
+                      ) AS BLOB)) <= ${THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES}
+                    THEN json_set(
+                      COALESCE(excluded.bounded_json, excluded.payload_json),
+                      '$.completionDelivery',
+                      json_extract(
+                        orchestration_v2_projection_subagents.payload_json,
+                        '$.completionDelivery'
+                      )
+                    )
+                    ELSE COALESCE(excluded.bounded_json, excluded.payload_json)
+                  END
+                  ELSE excluded.bounded_json
                 END
             `;
             break;
@@ -1753,7 +1996,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status,
                 model,
                 updated_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1764,7 +2008,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.status},
                 ${event.payload.model},
                 ${stringField(payload, "updatedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(provider_session_id)
               DO UPDATE SET
@@ -1775,7 +2020,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 model = excluded.model,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             if (event.type === "provider-session.attached") {
               yield* sql`
@@ -1812,7 +2058,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 first_run_ordinal,
                 last_run_ordinal,
                 updated_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1826,7 +2073,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.firstRunOrdinal},
                 ${event.payload.lastRunOrdinal},
                 ${stringField(payload, "updatedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(provider_thread_id)
               DO UPDATE SET
@@ -1840,7 +2088,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 first_run_ordinal = excluded.first_run_ordinal,
                 last_run_ordinal = excluded.last_run_ordinal,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             if (
               event.payload.appThreadId !== null &&
@@ -1866,7 +2115,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SET
                     active_provider_thread_id = ${event.payload.id},
                     updated_at = ${stringField(parseEncodedPayload(updatedThreadPayloadJson), "updatedAt")},
-                    payload_json = ${updatedThreadPayloadJson}
+                    payload_json = ${updatedThreadPayloadJson},
+                    bounded_json = ${boundedPayloadPreviewJson(updatedThreadPayloadJson)}
                   WHERE thread_id = ${event.payload.appThreadId}
                 `;
               }
@@ -1904,7 +2154,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status,
                 started_at,
                 completed_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1916,7 +2167,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${providerTurn.status},
                 ${nullableStringField(payload, "startedAt")},
                 ${nullableStringField(payload, "completedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(provider_turn_id)
               DO UPDATE SET
@@ -1928,7 +2180,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 started_at = excluded.started_at,
                 completed_at = excluded.completed_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -1945,7 +2198,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status,
                 created_at,
                 resolved_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1956,7 +2210,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.status},
                 ${stringField(payload, "createdAt")},
                 ${nullableStringField(payload, "resolvedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(runtime_request_id)
               DO UPDATE SET
@@ -1967,7 +2222,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 created_at = excluded.created_at,
                 resolved_at = excluded.resolved_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -1984,7 +2240,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 streaming,
                 created_at,
                 updated_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -1995,7 +2252,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${booleanInt(event.payload.streaming)},
                 ${stringField(payload, "createdAt")},
                 ${stringField(payload, "updatedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(message_id)
               DO UPDATE SET
@@ -2006,7 +2264,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 streaming = excluded.streaming,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -2020,7 +2279,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 node_id,
                 kind,
                 status,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -2029,7 +2289,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.nodeId},
                 ${event.payload.kind},
                 ${event.payload.status},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(plan_id)
               DO UPDATE SET
@@ -2038,7 +2299,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 node_id = excluded.node_id,
                 kind = excluded.kind,
                 status = excluded.status,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -2058,7 +2320,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 type,
                 status,
                 updated_at,
-                payload_json
+                payload_json,
+                bounded_json,
+                item_id_digest
               )
               VALUES (
                 ${event.payload.id},
@@ -2072,7 +2336,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.type},
                 ${event.payload.status},
                 ${stringField(payload, "updatedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedTurnItemPreviewJson(payloadJson)},
+                -- Digest of the decoded id — the column's bound bytes can
+                -- differ (lone surrogates, leading BOM under bun:sqlite), so
+                -- cursor anchors must match on this, never on turn_item_id.
+                ${threadHistoryCursorItemTag(event.payload.id)}
               )
               ON CONFLICT(turn_item_id)
               DO UPDATE SET
@@ -2086,7 +2355,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 type = excluded.type,
                 status = excluded.status,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json,
+                item_id_digest = excluded.item_id_digest
             `;
             break;
           }
@@ -2105,7 +2376,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ordinal_within_parent,
                 advances_app_run_count,
                 created_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -2118,7 +2390,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.ordinalWithinParent},
                 ${booleanInt(event.payload.advancesAppRunCount)},
                 ${stringField(payload, "createdAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(scope_id)
               DO UPDATE SET
@@ -2131,7 +2404,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ordinal_within_parent = excluded.ordinal_within_parent,
                 advances_app_run_count = excluded.advances_app_run_count,
                 created_at = excluded.created_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -2150,7 +2424,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 app_run_ordinal,
                 status,
                 captured_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -2163,7 +2438,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.appRunOrdinal},
                 ${event.payload.status},
                 ${stringField(payload, "capturedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(checkpoint_id)
               DO UPDATE SET
@@ -2176,7 +2452,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 app_run_ordinal = excluded.app_run_ordinal,
                 status = excluded.status,
                 captured_at = excluded.captured_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -2194,7 +2471,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 strategy,
                 status,
                 updated_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -2204,7 +2482,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.strategy},
                 ${event.payload.status},
                 ${stringField(payload, "updatedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(context_handoff_id)
               DO UPDATE SET
@@ -2214,7 +2493,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 strategy = excluded.strategy,
                 status = excluded.status,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -2235,7 +2515,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 source_provider_instance_id,
                 target_provider_instance_id,
                 updated_at,
-                payload_json
+                payload_json,
+                bounded_json
               )
               VALUES (
                 ${event.payload.id},
@@ -2249,7 +2530,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.sourceProviderInstanceId},
                 ${event.payload.targetProviderInstanceId},
                 ${stringField(payload, "updatedAt")},
-                ${payloadJson}
+                ${payloadJson},
+                ${boundedPayloadPreviewJson(payloadJson)}
               )
               ON CONFLICT(context_transfer_id)
               DO UPDATE SET
@@ -2263,7 +2545,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 source_provider_instance_id = excluded.source_provider_instance_id,
                 target_provider_instance_id = excluded.target_provider_instance_id,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                bounded_json = excluded.bounded_json
             `;
             break;
           }
@@ -2304,7 +2587,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               UPDATE orchestration_v2_projection_threads
               SET
                 updated_at = ${stringField(parseEncodedPayload(payloadJson), "updatedAt")},
-                payload_json = ${payloadJson}
+                payload_json = ${payloadJson},
+                bounded_json = ${boundedPayloadPreviewJson(payloadJson)}
               WHERE thread_id = ${event.threadId}
             `;
           }
@@ -2324,24 +2608,51 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       window?: {
         readonly rowLimit: number;
         readonly userTurnLimit?: number | undefined;
-        readonly anchorItemId?: TurnItemId | undefined;
+        /** Resolved anchor row identity — a rowid, not a rebound id: a stored
+         *  turn_item_id does not reliably round-trip through the driver (lone
+         *  surrogates fold on bind; bun:sqlite reads them back empty). */
+        readonly anchorRowId?: number | undefined;
+        readonly anchorOrdinal?: number | undefined;
+        /** Anchors bound a history page; fork cutoffs bound but do not. */
+        readonly anchorIsPageBoundary?: boolean | undefined;
         readonly requiredRunId?: RunId | undefined;
+        /** Fork run's rowid, resolved through stored payload identity — the
+         *  bound run id can diverge from the stored column when the driver
+         *  rewrites lone surrogates. */
+        readonly requiredRunRowId?: number | undefined;
         readonly suppressLocal?: boolean | undefined;
+        readonly maxWindowRows?: number | undefined;
+        readonly maxWindowBytes?: number | undefined;
+        readonly maxRowPayloadBytes?: number | undefined;
       },
     ) =>
       Effect.gen(function* () {
-        const threadRows = yield* sql<PayloadRow>`
-          SELECT payload_json
-          FROM orchestration_v2_projection_threads
-          WHERE thread_id = ${threadId}
-          LIMIT 1
-        `;
+        const threadRows =
+          window === undefined
+            ? yield* sql<PayloadRow>`
+                SELECT payload_json
+                FROM orchestration_v2_projection_threads
+                WHERE thread_id = ${threadId}
+                LIMIT 1
+              `
+            : yield* sql<PayloadRow>`
+                -- Thread fields are not provably small (title is unbounded), so
+                -- bounded reads take the write-time preview here too.
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json
+                FROM orchestration_v2_projection_threads
+                WHERE thread_id = ${threadId}
+                LIMIT 1
+              `;
         const threadRow = threadRows[0];
         if (!threadRow) {
           return yield* new ProjectionStoreThreadNotFoundError({ threadId });
         }
 
-        const boundedTurnItemRows =
+        const maxWindowRows = window?.maxWindowRows ?? THREAD_HISTORY_MAX_WINDOW_ROWS;
+        const maxWindowBytes = window?.maxWindowBytes ?? THREAD_HISTORY_MAX_WINDOW_BYTES;
+        const maxRowPayloadBytes =
+          window?.maxRowPayloadBytes ?? THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES;
+        const windowedTurnItemRows =
           window === undefined
             ? yield* sql<PayloadRow>`
                 SELECT payload_json
@@ -2349,23 +2660,64 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE thread_id = ${threadId}
                 ORDER BY ordinal ASC, turn_item_id ASC
               `
-            : yield* sql<PayloadRow>`
+            : yield* sql<
+                PayloadRow & {
+                  readonly has_older: number;
+                  readonly in_window: number;
+                  readonly turn_item_id: string;
+                  readonly run_rowid: number | null;
+                }
+              >`
                 WITH eligible AS NOT MATERIALIZED (
-                  SELECT item.payload_json, item.ordinal, item.turn_item_id,
+                  SELECT
+                    -- bounded_json is the write-time preview: bounded reads
+                    -- never transfer raw payloads, so fetch, parse, and decode
+                    -- work stay capped regardless of stored payload size or
+                    -- JSON depth.
+                    COALESCE(item.bounded_json, item.payload_json) AS payload_json,
+                    item.ordinal, item.turn_item_id,
                     item.run_id, item.node_id, item.type
                   FROM orchestration_v2_projection_turn_items AS item
                   LEFT JOIN orchestration_v2_projection_runs AS run
                     ON run.run_id = item.run_id
                   WHERE item.thread_id = ${threadId}
-                    AND item.ordinal <= COALESCE(
-                      (
-                        SELECT ordinal
-                        FROM orchestration_v2_projection_turn_items
-                        WHERE thread_id = ${threadId}
-                          AND turn_item_id = ${window.anchorItemId ?? null}
-                        LIMIT 1
-                      ),
-                      9223372036854775807
+                    -- Anchors bound by the full (ordinal, turn_item_id)
+                    -- tuple: siblings newer than the anchor belong to an
+                    -- already-delivered page, and keeping them eligible would
+                    -- report them as dropped history forever, suppressing
+                    -- ancestor merging even after local rows are exhausted.
+                    AND (
+                      item.ordinal < COALESCE(
+                        ${window.anchorOrdinal ?? null},
+                        (
+                          SELECT anchor.ordinal
+                          FROM orchestration_v2_projection_turn_items AS anchor
+                          WHERE anchor.rowid = ${window.anchorRowId ?? null}
+                          LIMIT 1
+                        ),
+                        9223372036854775807
+                      )
+                      OR (
+                        item.ordinal = COALESCE(
+                          ${window.anchorOrdinal ?? null},
+                          (
+                            SELECT anchor.ordinal
+                            FROM orchestration_v2_projection_turn_items AS anchor
+                            WHERE anchor.rowid = ${window.anchorRowId ?? null}
+                            LIMIT 1
+                          ),
+                          9223372036854775807
+                        )
+                        AND (
+                          ${window.anchorRowId ?? null} IS NULL
+                          OR item.turn_item_id <= (
+                            SELECT anchor_id.turn_item_id
+                            FROM orchestration_v2_projection_turn_items AS anchor_id
+                            WHERE anchor_id.rowid = ${window.anchorRowId ?? null}
+                            LIMIT 1
+                          )
+                        )
+                      )
                     )
                     AND (
                       ${window.requiredRunId ?? null} IS NOT NULL
@@ -2373,7 +2725,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         (run.status IS NULL OR run.status <> 'rolled_back')
                         AND NOT (
                           item.type = 'user_message'
-                          AND json_extract(item.payload_json, '$.inputIntent') = 'queued_turn'
+                          AND json_extract(
+                            COALESCE(item.bounded_json, item.payload_json), '$.inputIntent'
+                          ) = 'queued_turn'
                           AND run.status IS 'cancelled'
                         )
                       )
@@ -2386,14 +2740,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                           SELECT 1
                           FROM orchestration_v2_projection_threads AS source_thread
                           WHERE source_thread.thread_id = item.thread_id
-                            AND json_extract(source_thread.payload_json, '$.historyOrigin') = 'v1_import'
+                            AND json_extract(
+                              COALESCE(source_thread.bounded_json, source_thread.payload_json),
+                              '$.historyOrigin'
+                            ) = 'v1_import'
                         )
                       )
                       OR run.ordinal <= (
                         SELECT required_run.ordinal
                         FROM orchestration_v2_projection_runs AS required_run
                         WHERE required_run.thread_id = item.thread_id
-                          AND required_run.run_id = ${window.requiredRunId ?? null}
+                          AND (required_run.rowid = ${window.requiredRunRowId ?? null}
+                            OR (${window.requiredRunRowId ?? null} IS NULL
+                              AND required_run.run_id = ${window.requiredRunId ?? null}))
                         LIMIT 1
                       )
                     )
@@ -2436,44 +2795,327 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ELSE 0
                   END AS ordinal, (SELECT COUNT(*) FROM turn_anchors) AS anchors
                   FROM user_anchors
+                ), billed AS (
+                  -- Turn windows must not materialize unbounded rows or bytes: a
+                  -- single long turn can exceed every policy bound. Bill each row
+                  -- at its emitted size: previews preserve identity members
+                  -- whole, so a row can legitimately ship more than the per-row
+                  -- cap and billing it at the cap would let many such rows
+                  -- overflow the byte budget. A row bigger than the whole window
+                  -- budget still stays reachable — the kept_visible unions below
+                  -- (newest row, anchor, and the row below an anchor) survive
+                  -- every cap, so it pages one position at a time.
+                  -- The byte filter below keeps a newest-first prefix of this
+                  -- ordering and the row cap never exceeds maxWindowRows, so no
+                  -- row older than the newest maxWindowRows candidates can ever
+                  -- be selected. Limiting here keeps the payload-length reads
+                  -- and the suffix-sum scan O(window), not O(history).
+                  SELECT eligible.*,
+                    LENGTH(CAST(eligible.payload_json AS BLOB)) AS bill_bytes
+                  FROM eligible
+                  WHERE eligible.ordinal >= (SELECT ordinal FROM boundary)
+                  ORDER BY eligible.ordinal DESC, eligible.turn_item_id DESC
+                  LIMIT ${maxWindowRows}
                 ), selected AS (
                   SELECT payload_json, ordinal, turn_item_id, run_id, type
-                  FROM eligible
-                  WHERE ordinal >= (SELECT ordinal FROM boundary)
-                  ORDER BY ordinal DESC, turn_item_id DESC
+                  FROM (
+                    SELECT billed.*,
+                      SUM(billed.bill_bytes) OVER (
+                        ORDER BY billed.ordinal DESC, billed.turn_item_id DESC
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                      ) AS suffix_bill_bytes
+                    FROM billed
+                  ) AS windowed
+                  WHERE windowed.suffix_bill_bytes <= ${maxWindowBytes}
+                  ORDER BY windowed.ordinal DESC, windowed.turn_item_id DESC
                   LIMIT CASE
                     WHEN ${window.rowLimit} = 0 THEN 0
-                    WHEN (SELECT anchors FROM boundary) > 0 THEN -1
-                    ELSE ${window.rowLimit}
+                    WHEN (SELECT anchors FROM boundary) > 0 THEN ${maxWindowRows}
+                    -- Row mode must also honor the hard cap so SQL and the
+                    -- in-memory fallback bound identically.
+                    ELSE MIN(${window.rowLimit}, ${maxWindowRows})
                   END
-                ), retained AS (
-                  SELECT payload_json, ordinal, turn_item_id FROM selected
-                  UNION
-                  SELECT request.payload_json, request.ordinal, request.turn_item_id
-                  FROM orchestration_v2_projection_turn_items AS request
-                  WHERE request.run_id IN (
-                      SELECT run_id FROM selected
-                      WHERE type = 'run_interrupt_result' AND run_id IS NOT NULL
+                ), align_boundary AS (
+                  -- The drop boundary is the oldest retained turn start's
+                  -- position in the (ordinal, turn_item_id) order: an
+                  -- equal-ordinal sibling that sorts before it still belongs
+                  -- to the partial turn below and must drop with it, so the
+                  -- cutoff carries the id too, not just the ordinal.
+                  SELECT turns.ordinal AS cut_ordinal, turns.turn_item_id AS cut_id
+                  FROM selected AS turns
+                  WHERE turns.type = 'user_message'
+                    AND json_extract(turns.payload_json, '$.inputIntent')
+                      IN ('turn_start', 'queued_turn')
+                    AND EXISTS (
+                      SELECT 1
+                      FROM eligible AS below
+                      WHERE below.ordinal <
+                        (SELECT MIN(ol.ordinal) FROM selected AS ol)
+                        AND below.type = 'user_message'
+                        AND json_extract(below.payload_json, '$.inputIntent')
+                          IN ('turn_start', 'queued_turn')
                     )
-                    AND request.type = 'run_interrupt_request'
+                  ORDER BY turns.ordinal ASC, turns.turn_item_id ASC
+                  LIMIT 1
+                ), aligned AS (
+                  -- Initial turn-mode snapshots start on a turn boundary: when
+                  -- caps stop the window mid-turn and complete newer turns fit,
+                  -- drop the partial oldest turn. History-page reads must not
+                  -- align — a page that collapses to its anchor returns nothing
+                  -- and the rows the cap dropped become unreachable. A fork
+                  -- cutoff is not a page boundary: initial inherited snapshots
+                  -- still align. The drop also requires a turn start below the
+                  -- window: without one the leading rows are the indivisible
+                  -- pre-first-turn segment.
+                  SELECT payload_json, ordinal, turn_item_id, run_id, type
+                  FROM selected
+                  WHERE ${window.userTurnLimit ?? null} IS NULL
+                    OR ${window.anchorIsPageBoundary === true ? 1 : null} IS NOT NULL
+                    OR NOT EXISTS (SELECT 1 FROM align_boundary)
+                    OR ordinal > (SELECT cut_ordinal FROM align_boundary)
+                    OR (
+                      ordinal = (SELECT cut_ordinal FROM align_boundary)
+                      AND turn_item_id >= (SELECT cut_id FROM align_boundary)
+                    )
+                ), kept_visible AS (
+                  SELECT payload_json, ordinal, turn_item_id, run_id, type, 1 AS in_window
+                  FROM aligned
                   UNION
-                  SELECT latest.payload_json, latest.ordinal, latest.turn_item_id
+                  -- Even when the caps reject every older row, keep the newest
+                  -- eligible row so anchored pages always make progress.
+                  SELECT newest.payload_json, newest.ordinal, newest.turn_item_id,
+                    newest.run_id, newest.type, 1
                   FROM (
-                    SELECT payload_json, ordinal, turn_item_id
+                    SELECT payload_json, ordinal, turn_item_id, run_id, type
+                    FROM eligible
+                    WHERE ${window.rowLimit} > 0
+                    ORDER BY ordinal DESC, turn_item_id DESC
+                    LIMIT 1
+                  ) AS newest
+                  UNION
+                  -- The anchor row itself must survive every cap: page
+                  -- extraction locates the cursor boundary by identity, and a
+                  -- dropped anchor dead-ends paging. Equal-ordinal siblings can
+                  -- otherwise displace it under byte/row budgets.
+                  SELECT COALESCE(anchor_row.bounded_json, anchor_row.payload_json),
+                    anchor_row.ordinal, anchor_row.turn_item_id, anchor_row.run_id,
+                    anchor_row.type, 1
+                  FROM orchestration_v2_projection_turn_items AS anchor_row
+                  WHERE ${window.anchorRowId ?? null} IS NOT NULL
+                    AND anchor_row.rowid = ${window.anchorRowId ?? null}
+                  UNION
+                  -- A page anchored on its oldest surviving row must still
+                  -- surface one row below the anchor — the selector drops the
+                  -- anchor itself, so anchor-only pages would emit no items and
+                  -- dead-end the cursor while older rows remain. Only real page
+                  -- boundaries get the row: a fork cutoff would re-surface the
+                  -- partial-turn rows alignment just dropped. "Below" follows
+                  -- the (ordinal, turn_item_id) order so equal-ordinal siblings
+                  -- of the anchor stay reachable under caps.
+                  SELECT older.payload_json, older.ordinal, older.turn_item_id,
+                    older.run_id, older.type, 1
+                  FROM (
+                    SELECT payload_json, ordinal, turn_item_id, run_id, type
+                    FROM eligible
+                    WHERE ${window.anchorIsPageBoundary === true ? 1 : null} IS NOT NULL
+                      AND ${window.rowLimit} > 0
+                      AND (
+                        ordinal < COALESCE(
+                          ${window.anchorOrdinal ?? null},
+                          (
+                            SELECT anchor.ordinal
+                            FROM orchestration_v2_projection_turn_items AS anchor
+                            WHERE anchor.rowid = ${window.anchorRowId ?? null}
+                            LIMIT 1
+                          ),
+                          -1
+                        )
+                        OR (
+                          ${window.anchorRowId ?? null} IS NOT NULL
+                          AND ordinal = COALESCE(
+                            ${window.anchorOrdinal ?? null},
+                            (
+                              SELECT anchor.ordinal
+                              FROM orchestration_v2_projection_turn_items AS anchor
+                              WHERE anchor.rowid = ${window.anchorRowId ?? null}
+                              LIMIT 1
+                            ),
+                            -1
+                          )
+                          AND turn_item_id < (
+                            SELECT anchor_id.turn_item_id
+                            FROM orchestration_v2_projection_turn_items AS anchor_id
+                            WHERE anchor_id.rowid = ${window.anchorRowId ?? null}
+                            LIMIT 1
+                          )
+                        )
+                      )
+                    ORDER BY ordinal DESC, turn_item_id DESC
+                    LIMIT 1
+                  ) AS older
+                ), kept AS (
+                  SELECT * FROM kept_visible
+                  UNION
+                  -- Keep the newest row for the watermark fields even when the
+                  -- eligibility filters excluded it (rolled-back run, cancelled
+                  -- queued turn). in_window = 0 keeps it in turnItems but out of
+                  -- the visible timeline, so hiding it never depends on
+                  -- hydrating its run through id text the driver may have
+                  -- mangled. The anti-join covers every visible branch so a row
+                  -- kept normally keeps in_window = 1.
+                  SELECT
+                    COALESCE(latest.bounded_json, latest.payload_json),
+                    latest.ordinal, latest.turn_item_id, latest.run_id, latest.type, 0
+                  FROM (
+                    SELECT bounded_json, payload_json, ordinal, turn_item_id, run_id, type
                     FROM orchestration_v2_projection_turn_items
                     WHERE thread_id = ${threadId}
-                      AND ${window.anchorItemId ?? null} IS NULL
+                      AND ${window.anchorRowId ?? null} IS NULL
+                      AND ${window.anchorOrdinal ?? null} IS NULL
                       AND ${window.requiredRunId ?? null} IS NULL
                     ORDER BY ordinal DESC, turn_item_id DESC
                     LIMIT 1
                   ) AS latest
+                  WHERE NOT EXISTS (
+                    SELECT 1 FROM kept_visible
+                    WHERE kept_visible.turn_item_id = latest.turn_item_id
+                  )
+                ), retained AS (
+                  SELECT payload_json, ordinal, turn_item_id, run_id, in_window
+                  FROM kept
+                  UNION
+                  -- Interrupt requests for kept results are dependencies, not
+                  -- pageable rows: in_window = 0 keeps them out of the visible
+                  -- timeline so a cursor can never anchor below the retained
+                  -- window and skip capped rows. The join runs over kept — not
+                  -- just aligned — so results surfaced by the progress branches
+                  -- still pull their request in.
+                  SELECT
+                    COALESCE(request.bounded_json, request.payload_json),
+                    request.ordinal, request.turn_item_id, request.run_id, 0
+                  FROM orchestration_v2_projection_turn_items AS request
+                  WHERE request.thread_id = ${threadId}
+                    AND request.type = 'run_interrupt_request'
+                    AND request.run_id IN (
+                      SELECT run_id FROM kept
+                      WHERE type = 'run_interrupt_result' AND run_id IS NOT NULL
+                    )
+                    AND request.turn_item_id NOT IN (SELECT turn_item_id FROM kept)
+                  UNION
+                  -- Items carrying a pending runtime request are dependencies,
+                  -- not pageable rows: runtimeRequests retains the pending
+                  -- request even when its display item paged out, and pending
+                  -- questions/approvals render from that item's payload.
+                  -- Payload-to-payload hex joins keep both sides in decoded
+                  -- space so lone-surrogate ids cannot strand the match.
+                  SELECT
+                    COALESCE(item.bounded_json, item.payload_json),
+                    item.ordinal, item.turn_item_id, item.run_id, 0
+                  FROM orchestration_v2_projection_turn_items AS item
+                  WHERE item.thread_id = ${threadId}
+                    AND (
+                      hex(json_extract(
+                        COALESCE(item.bounded_json, item.payload_json), '$.requestId'))
+                        IN (
+                          SELECT hex(json_extract(
+                            COALESCE(request.bounded_json, request.payload_json), '$.id'))
+                          FROM orchestration_v2_projection_runtime_requests AS request
+                          WHERE request.thread_id = ${threadId}
+                            AND request.status = 'pending'
+                        )
+                      OR hex(json_extract(
+                        COALESCE(item.bounded_json, item.payload_json), '$.runtimeRequestId'))
+                        IN (
+                          SELECT hex(json_extract(
+                            COALESCE(request.bounded_json, request.payload_json), '$.id'))
+                          FROM orchestration_v2_projection_runtime_requests AS request
+                          WHERE request.thread_id = ${threadId}
+                            AND request.status = 'pending'
+                        )
+                    )
+                    AND item.turn_item_id NOT IN (SELECT turn_item_id FROM kept)
                 )
-                SELECT payload_json
+                SELECT
+                  retained.turn_item_id AS turn_item_id,
+                  retained.in_window AS in_window,
+                  -- eligible/dependency branches already emit the write-time
+                  -- bounded_json preview, so fetched bytes match billed bytes
+                  -- and schema decode never sees a raw oversized payload.
+                  retained.payload_json AS payload_json,
+                  -- The cohort's stored run identity, resolved column-to-column:
+                  -- decoded payload ids rebound into SQL can mismatch the
+                  -- run_id column when the driver rewrites lone surrogates,
+                  -- which strands every run join downstream.
+                  (
+                    SELECT cohort_run.rowid
+                    FROM orchestration_v2_projection_runs AS cohort_run
+                    WHERE cohort_run.run_id = retained.run_id
+                    LIMIT 1
+                  ) AS run_rowid,
+                  -- Rows before the turn boundary or dropped by the hard caps are
+                  -- still reachable through history paging; report them so the
+                  -- selector emits a cursor even when it fetched nothing older.
+                  -- Compare identities, not counts: kept can carry a row
+                  -- eligible excluded (the latest-row watermark can sit in a
+                  -- rolled-back run), and equal counts would hide a real drop.
+                  (SELECT CASE
+                    WHEN EXISTS (SELECT 1 FROM eligible AS dropped
+                                 WHERE NOT EXISTS (
+                                   SELECT 1 FROM kept
+                                   WHERE kept.in_window = 1
+                                     AND kept.turn_item_id = dropped.turn_item_id
+                                 )) THEN 1
+                    ELSE 0 END
+                  ) AS has_older
                 FROM retained
-                ORDER BY ordinal ASC, turn_item_id ASC
+                ORDER BY retained.ordinal ASC, retained.turn_item_id ASC
               `;
-        const cohortPayloads = boundedTurnItemRows.map((row) =>
-          parseEncodedPayload(row.payload_json),
+        // Stored previews are bounded by the default row cap; callers may
+        // request a tighter cap, so compact again between JSON.parse and
+        // schema decode — decode never sees more than the billed size. This
+        // applies to every fetched collection, not just turn items: the thread
+        // row and cohort payloads carry the same preview contract.
+        const boundFetchedPayloadJson = (payloadJson: string) =>
+          boundRetainedPayloadJson(payloadJson, maxRowPayloadBytes);
+        const boundFetchedRows = (rows: ReadonlyArray<PayloadRow>) =>
+          window === undefined
+            ? rows
+            : rows.map((row) => ({
+                ...row,
+                payload_json: boundFetchedPayloadJson(row.payload_json),
+              }));
+        const boundFetchedTurnItemRows = (rows: ReadonlyArray<PayloadRow>) =>
+          window === undefined
+            ? rows
+            : rows.map((row) => ({
+                ...row,
+                payload_json: boundRetainedTurnItemPayloadJson(
+                  row.payload_json,
+                  maxRowPayloadBytes,
+                ),
+              }));
+        const boundedTurnItemRows: ReadonlyArray<PayloadRow> =
+          boundFetchedTurnItemRows(windowedTurnItemRows);
+        const hasOlderHistory =
+          window !== undefined &&
+          windowedTurnItemRows.some((row) => "has_older" in row && row.has_older === 1);
+        // Cohort ids come from the stored previews, not the caller-capped rows:
+        // a tight requested cap could truncate a long id and break the joins.
+        const cohortPayloads = windowedTurnItemRows.map((row) =>
+          parseBoundedPayloadJson(row.payload_json),
+        );
+        // Retained dependency rows (interrupt requests below the retained
+        // window) stay in turnItems for visibility resolution but must not
+        // become timeline rows: a cursor anchored on one would skip rows the
+        // caps dropped between it and the window. The check compares decoded
+        // item ids, so the set must hold decoded ids too — the turn_item_id
+        // column's bound bytes can differ (lone surrogates fold to U+FFFD).
+        const hiddenTurnItemIds = new Set(
+          windowedTurnItemRows.flatMap((row, index) => {
+            if (!("in_window" in row) || row.in_window !== 0) return [];
+            const id = nullableStringField(cohortPayloads[index]!, "id");
+            return id === null ? [] : [id];
+          }),
         );
         const cohortJson = (field: string) =>
           JSON.stringify(
@@ -2482,47 +3124,92 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               return value === null ? [] : [value];
             }),
           );
-        const cohortRunIds = cohortJson("runId");
+        // Run membership joins go through rowids resolved inside SQL, not the
+        // decoded payload runId: rebinding a decoded id can mismatch the
+        // stored run_id column (driver surrogate handling), which would drop
+        // the run's hydration and hide its inherited items.
+        const cohortRunRowids = encodeRowidList(
+          windowedTurnItemRows.flatMap((row) =>
+            "run_rowid" in row && typeof row.run_rowid === "number" ? [row.run_rowid] : [],
+          ),
+        );
         // A run can contain thousands of completed nodes. Load the visible
         // nodes and live control dependencies, then walk only their ancestors.
-        const cohortNodeIds =
+        const cohortNodeHexes =
           window === undefined
-            ? cohortJson("nodeId")
+            ? encodeIdList(
+                (yield* sql<{ readonly node_hex: string }>`
+                  SELECT hex(value) AS node_hex
+                  FROM json_each(${cohortJson("nodeId")})
+                `).map((row) => row.node_hex),
+              )
             : encodeIdList(
-                (yield* sql<{ readonly node_id: string }>`
-            WITH RECURSIVE retained(node_id) AS (
-              SELECT value FROM json_each(${cohortJson("nodeId")})
+                (yield* sql<{ readonly node_hex: string }>`
+            -- The cohort walks in decoded space: every seed and join key is a
+            -- json_extract of the stored payload, never an id column, so the
+            -- walk stays consistent regardless of how the driver bound the
+            -- column text (lone surrogates fold on bind but survive verbatim
+            -- as JSON escapes). Results cross back to JavaScript as hex of
+            -- the decoded bytes: decoded text itself does not survive the
+            -- driver boundary (node:sqlite reads raw surrogate bytes as
+            -- U+FFFD triples; bun:sqlite reads them back empty), while hex is
+            -- plain ASCII and byte-exact.
+            WITH RECURSIVE retained(node_hex) AS (
+              SELECT hex(value) FROM json_each(${cohortJson("nodeId")})
               UNION
-              SELECT node_id FROM orchestration_v2_projection_nodes
+              SELECT hex(json_extract(COALESCE(bounded_json, payload_json), '$.id'))
+              FROM orchestration_v2_projection_nodes
               WHERE thread_id = ${threadId} AND status IN ('pending','starting','running','waiting')
               UNION
-              SELECT root_node_id FROM orchestration_v2_projection_run_attempts
+              SELECT hex(json_extract(COALESCE(bounded_json, payload_json), '$.rootNodeId'))
+              FROM orchestration_v2_projection_run_attempts
               WHERE thread_id = ${threadId} AND (
                 status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR run_id = ${window.requiredRunId ?? null})
+                OR run_id IN (
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                )
+                OR run_id = (
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE rowid = ${window.requiredRunRowId ?? null} LIMIT 1
+                )
+                OR (${window.requiredRunRowId ?? null} IS NULL
+                  AND run_id = ${window.requiredRunId ?? null}))
               UNION
-              SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs
+              SELECT hex(json_extract(COALESCE(bounded_json, payload_json), '$.rootNodeId'))
+              FROM orchestration_v2_projection_runs
               WHERE thread_id = ${threadId} AND (
                 status IN ('queued','preparing','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR run_id = ${window.requiredRunId ?? null})
+                OR rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                OR rowid = ${window.requiredRunRowId ?? null}
+                OR (${window.requiredRunRowId ?? null} IS NULL
+                  AND run_id = ${window.requiredRunId ?? null}))
               UNION
-              SELECT node_id FROM orchestration_v2_projection_runtime_requests
-              WHERE thread_id = ${threadId} AND status IN ('pending','waiting')
+              SELECT hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+              FROM orchestration_v2_projection_runtime_requests
+              WHERE thread_id = ${threadId} AND status = 'pending'
               UNION
-              SELECT parent_node_id FROM orchestration_v2_projection_subagents
+              SELECT hex(json_extract(COALESCE(bounded_json, payload_json), '$.parentNodeId'))
+              FROM orchestration_v2_projection_subagents
               WHERE thread_id = ${threadId} AND status IN ('pending','starting','running','waiting')
               UNION
-              SELECT node_id FROM orchestration_v2_projection_provider_turns
+              SELECT hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+              FROM orchestration_v2_projection_provider_turns
               WHERE thread_id = ${threadId} AND status IN ('starting','running','waiting')
               UNION
-              SELECT parent.parent_node_id FROM orchestration_v2_projection_nodes AS parent
-              INNER JOIN retained ON parent.node_id = retained.node_id
-              WHERE parent.thread_id = ${threadId} AND parent.parent_node_id IS NOT NULL
+              SELECT hex(json_extract(
+                COALESCE(parent.bounded_json, parent.payload_json), '$.parentNodeId'))
+              FROM orchestration_v2_projection_nodes AS parent
+              INNER JOIN retained ON retained.node_hex != ''
+                AND hex(json_extract(
+                COALESCE(parent.bounded_json, parent.payload_json), '$.id'
+              )) = retained.node_hex
+              WHERE parent.thread_id = ${threadId}
             )
-            SELECT node_id FROM retained WHERE node_id IS NOT NULL
-          `).map((row) => row.node_id),
+            -- hex() of NULL/missing members is '' — keep it out of the
+            -- cohort so rows without the reference field cannot match.
+            SELECT node_hex FROM retained WHERE node_hex IS NOT NULL AND node_hex != ''
+          `).map((row) => row.node_hex),
               );
         const cohortProviderThreadIds = cohortJson("providerThreadId");
         const cohortProviderTurnIds = cohortJson("providerTurnId");
@@ -2530,6 +3217,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const cohortPlanIds = cohortJson("planId");
         const cohortCheckpointIds = cohortJson("checkpointId");
         const cohortHandoffIds = cohortJson("contextHandoffId");
+        // Resolved runtime requests hydrate only when a retained item
+        // references them (requestId on approval/user-input items,
+        // runtimeRequestId on interrupt items) — never fan out by turn.
+        const cohortRequestIds =
+          stringifyJsonDeep(
+            cohortPayloads.flatMap((payload) => {
+              const requestId = nullableStringField(payload, "requestId");
+              const runtimeRequestId = nullableStringField(payload, "runtimeRequestId");
+              return [
+                ...(requestId === null ? [] : [requestId]),
+                ...(runtimeRequestId === null ? [] : [runtimeRequestId]),
+              ];
+            }),
+          ) ?? "[]";
 
         const [
           thread,
@@ -2549,7 +3250,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           contextHandoffRows,
           contextTransferRows,
         ] = yield* Effect.all([
-          decodeThreadPayload(threadRow.payload_json),
+          decodeThreadPayload(
+            window === undefined
+              ? threadRow.payload_json
+              : boundFetchedPayloadJson(threadRow.payload_json),
+          ),
           window === undefined
             ? sql<PayloadRow>`
             SELECT payload_json
@@ -2558,11 +3263,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY ordinal ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_runs
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_runs
             WHERE thread_id = ${threadId}
               AND (status IN ('queued','preparing','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR run_id = ${window.requiredRunId ?? null})
+                OR rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                OR rowid = ${window.requiredRunRowId ?? null}
+                OR (${window.requiredRunRowId ?? null} IS NULL
+                  AND run_id = ${window.requiredRunId ?? null}))
             ORDER BY ordinal ASC
           `,
           window === undefined
@@ -2573,10 +3281,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY run_id ASC, attempt_ordinal ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_run_attempts
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_run_attempts
             WHERE thread_id = ${threadId}
               AND (status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds})))
+                OR run_id IN (
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                )
+                OR run_id = (
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE rowid = ${window.requiredRunRowId ?? null} LIMIT 1
+                )
+                OR (${window.requiredRunRowId ?? null} IS NULL
+                  AND run_id = ${window.requiredRunId ?? null}))
             ORDER BY run_id ASC, attempt_ordinal ASC
           `,
           window === undefined
@@ -2587,9 +3305,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY COALESCE(started_at, ''), node_id ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_nodes
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_nodes
             WHERE thread_id = ${threadId}
-              AND node_id IN (SELECT value FROM json_each(${cohortNodeIds}))
+              AND hex(json_extract(COALESCE(bounded_json, payload_json), '$.id'))
+                IN (SELECT value FROM json_each(${cohortNodeHexes}))
             ORDER BY COALESCE(started_at, ''), node_id ASC
           `,
           window === undefined
@@ -2600,11 +3320,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_subagents
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_subagents
             WHERE thread_id = ${threadId}
               AND (status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR parent_node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+                OR run_id IN (
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                )
+                OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.parentNodeId'))
+                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `,
           window === undefined
@@ -2617,7 +3342,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
           `
             : sql<PayloadRow>`
-            SELECT DISTINCT sessions.payload_json
+            SELECT DISTINCT COALESCE(sessions.bounded_json, sessions.payload_json) AS payload_json
             FROM orchestration_v2_projection_provider_sessions AS sessions
             INNER JOIN orchestration_v2_projection_provider_session_bindings AS bindings
               ON bindings.provider_session_id = sessions.provider_session_id
@@ -2625,7 +3350,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ON threads.provider_session_id = sessions.provider_session_id
             WHERE bindings.thread_id = ${threadId}
               AND (sessions.status IN ('starting','running','waiting')
-                OR threads.provider_thread_id IN (SELECT value FROM json_each(${cohortProviderThreadIds})))
+                OR (json_valid(
+                  COALESCE(threads.bounded_json, threads.payload_json))
+                  AND json_extract(
+                    COALESCE(threads.bounded_json, threads.payload_json), '$.id'
+                  ) IN (SELECT value FROM json_each(${cohortProviderThreadIds}))))
             ORDER BY sessions.updated_at ASC, sessions.provider_session_id ASC
           `,
           window === undefined
@@ -2647,10 +3376,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_provider_threads
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_provider_threads
             WHERE (thread_id = ${threadId} AND status = 'active')
-              OR provider_thread_id IN (SELECT value FROM json_each(${cohortProviderThreadIds}))
-              OR owner_node_id IN (SELECT value FROM json_each(${cohortNodeIds}))
+              -- The cohort arms scan foreign threads' rows; a row whose
+              -- payload cannot be parsed (migration 054 leaves bounded_json
+              -- NULL for those) must be skipped, not abort the whole query.
+              OR (json_valid(COALESCE(bounded_json, payload_json))
+                AND json_extract(COALESCE(bounded_json, payload_json), '$.id')
+                  IN (SELECT value FROM json_each(${cohortProviderThreadIds})))
+              OR (json_valid(COALESCE(bounded_json, payload_json))
+                AND hex(json_extract(
+                  COALESCE(bounded_json, payload_json), '$.ownerNodeId'))
+                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `,
           window === undefined
@@ -2661,11 +3399,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY provider_thread_id ASC, ordinal ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_provider_turns
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_provider_turns
             WHERE thread_id = ${threadId}
               AND (status IN ('starting','running','waiting')
-                OR provider_turn_id IN (SELECT value FROM json_each(${cohortProviderTurnIds}))
-                OR node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+                OR json_extract(COALESCE(bounded_json, payload_json), '$.id')
+                  IN (SELECT value FROM json_each(${cohortProviderTurnIds}))
+                OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
             ORDER BY provider_thread_id ASC, ordinal ASC
           `,
           window === undefined
@@ -2676,11 +3417,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY created_at ASC, runtime_request_id ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_runtime_requests
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','waiting')
-                OR node_id IN (SELECT value FROM json_each(${cohortNodeIds}))
-                OR provider_turn_id IN (SELECT value FROM json_each(${cohortProviderTurnIds})))
+            -- Pending requests always hydrate. Resolved ones hydrate only when
+            -- a retained item references them (one turn's resolved approvals
+            -- cannot fan out unbounded), and the resolved cohort shares one
+            -- aggregate stored-byte budget enforced before decode.
+            SELECT payload_json, created_at, runtime_request_id FROM (
+              SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                created_at, runtime_request_id
+              FROM orchestration_v2_projection_runtime_requests
+              WHERE thread_id = ${threadId} AND status = 'pending'
+              UNION ALL
+              SELECT payload_json, created_at, runtime_request_id FROM (
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                  created_at, runtime_request_id,
+                  SUM(LENGTH(CAST(COALESCE(bounded_json, payload_json) AS BLOB))) OVER (
+                    ORDER BY created_at DESC, runtime_request_id DESC
+                  ) AS resolved_running_bytes
+                FROM orchestration_v2_projection_runtime_requests
+                WHERE thread_id = ${threadId}
+                  AND status <> 'pending'
+                  AND runtime_request_id
+                    IN (SELECT value FROM json_each(${cohortRequestIds}))
+              ) WHERE resolved_running_bytes <= ${THREAD_HISTORY_MAX_RESOLVED_REQUEST_BYTES}
+            )
             ORDER BY created_at ASC, runtime_request_id ASC
           `,
           window === undefined
@@ -2689,10 +3448,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE thread_id = ${threadId} ORDER BY created_at ASC, message_id ASC
               `
             : sql<PayloadRow>`
-                SELECT payload_json FROM orchestration_v2_projection_messages AS message
+                SELECT COALESCE(message.bounded_json, message.payload_json) AS payload_json
+                FROM orchestration_v2_projection_messages AS message
                 WHERE message.thread_id = ${threadId}
                   AND (
-                    message.message_id IN (
+                    json_extract(
+                      COALESCE(message.bounded_json, message.payload_json), '$.id'
+                    ) IN (
                       SELECT value FROM json_each(${cohortMessageIds})
                     )
                     OR message.run_id IN (
@@ -2709,11 +3471,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE thread_id = ${threadId} ORDER BY plan_id ASC
               `
             : sql<PayloadRow>`
-                SELECT payload_json FROM orchestration_v2_projection_plans AS plan
+                SELECT COALESCE(plan.bounded_json, plan.payload_json) AS payload_json
+                FROM orchestration_v2_projection_plans AS plan
                 WHERE plan.thread_id = ${threadId}
                   AND (
                     plan.status = 'active'
-                    OR plan.plan_id IN (
+                    OR json_extract(
+                      COALESCE(plan.bounded_json, plan.payload_json), '$.id'
+                    ) IN (
                       SELECT value FROM json_each(${cohortPlanIds})
                     )
                   )
@@ -2728,10 +3493,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY ordinal_within_parent ASC, scope_id ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_checkpoint_scopes
             WHERE thread_id = ${threadId}
-              AND (run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+              AND (run_id IN (
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                )
+                OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
             ORDER BY ordinal_within_parent ASC, scope_id ASC
           `,
           window === undefined
@@ -2742,12 +3512,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY scope_id ASC, ordinal_within_scope ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_checkpoints
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_checkpoints
             WHERE thread_id = ${threadId}
               AND (status IN ('pending','capturing')
-                OR checkpoint_id IN (SELECT value FROM json_each(${cohortCheckpointIds}))
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+                OR json_extract(COALESCE(bounded_json, payload_json), '$.id')
+                  IN (SELECT value FROM json_each(${cohortCheckpointIds}))
+                OR run_id IN (
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                )
+                OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
             ORDER BY scope_id ASC, ordinal_within_scope ASC
           `,
           window === undefined
@@ -2756,11 +3532,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE thread_id = ${threadId} ORDER BY rowid ASC
               `
             : sql<PayloadRow>`
-                SELECT payload_json FROM orchestration_v2_projection_context_handoffs AS handoff
+                SELECT COALESCE(handoff.bounded_json, handoff.payload_json) AS payload_json
+                FROM orchestration_v2_projection_context_handoffs AS handoff
                 WHERE handoff.thread_id = ${threadId}
                   AND (
                     handoff.status IN ('pending', 'ready')
-                    OR handoff.context_handoff_id IN (
+                    OR json_extract(
+                      COALESCE(handoff.bounded_json, handoff.payload_json), '$.id'
+                    ) IN (
                       SELECT value FROM json_each(${cohortHandoffIds})
                     )
                   )
@@ -2774,11 +3553,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY rowid ASC
           `
             : sql<PayloadRow>`
-            SELECT payload_json FROM orchestration_v2_projection_context_transfers
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_context_transfers
             WHERE (source_thread_id = ${threadId} OR target_thread_id = ${threadId})
               AND (status IN ('pending','running','waiting')
-                OR target_run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR json_extract(payload_json, '$.contextHandoffId') IN
+                OR target_run_id IN (
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                )
+                OR json_extract(COALESCE(bounded_json, payload_json), '$.resolution.contextHandoffId') IN
                   (SELECT value FROM json_each(${cohortHandoffIds})))
             ORDER BY rowid ASC
           `,
@@ -2801,21 +3584,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           contextHandoffs,
           contextTransfers,
         ] = yield* Effect.all([
-          decodeRows(decodeRunPayload, threadId)(runRows),
-          decodeRows(decodeRunAttemptPayload, threadId)(attemptRows),
-          decodeRows(decodeNodePayload, threadId)(nodeRows),
-          decodeRows(decodeSubagentPayload, threadId)(subagentRows),
-          decodeRows(decodeProviderSessionPayload, threadId)(providerSessionRows),
-          decodeRows(decodeProviderThreadPayload, threadId)(providerThreadRows),
-          decodeRows(decodeProviderTurnPayload, threadId)(providerTurnRows),
-          decodeRows(decodeRuntimeRequestPayload, threadId)(runtimeRequestRows),
-          decodeRows(decodeMessagePayload, threadId)(messageRows),
-          decodeRows(decodePlanPayload, threadId)(planRows),
+          decodeRows(decodeRunPayload, threadId)(boundFetchedRows(runRows)),
+          decodeRows(decodeRunAttemptPayload, threadId)(boundFetchedRows(attemptRows)),
+          decodeRows(decodeNodePayload, threadId)(boundFetchedRows(nodeRows)),
+          decodeRows(decodeSubagentPayload, threadId)(boundFetchedRows(subagentRows)),
+          decodeRows(decodeProviderSessionPayload, threadId)(boundFetchedRows(providerSessionRows)),
+          decodeRows(decodeProviderThreadPayload, threadId)(boundFetchedRows(providerThreadRows)),
+          decodeRows(decodeProviderTurnPayload, threadId)(boundFetchedRows(providerTurnRows)),
+          decodeRows(decodeRuntimeRequestPayload, threadId)(boundFetchedRows(runtimeRequestRows)),
+          decodeRows(decodeMessagePayload, threadId)(boundFetchedRows(messageRows)),
+          decodeRows(decodePlanPayload, threadId)(boundFetchedRows(planRows)),
           decodeRows(decodeTurnItemPayload, threadId)(turnItemRows),
-          decodeRows(decodeCheckpointScopePayload, threadId)(checkpointScopeRows),
-          decodeRows(decodeCheckpointPayload, threadId)(checkpointRows),
-          decodeRows(decodeContextHandoffPayload, threadId)(contextHandoffRows),
-          decodeRows(decodeContextTransferPayload, threadId)(contextTransferRows),
+          decodeRows(decodeCheckpointScopePayload, threadId)(boundFetchedRows(checkpointScopeRows)),
+          decodeRows(decodeCheckpointPayload, threadId)(boundFetchedRows(checkpointRows)),
+          decodeRows(decodeContextHandoffPayload, threadId)(boundFetchedRows(contextHandoffRows)),
+          decodeRows(decodeContextTransferPayload, threadId)(boundFetchedRows(contextTransferRows)),
         ]);
         const orderedMessages = sortMessagesByTurnItemOrder(messages, turnItems);
         const projection = {
@@ -2838,7 +3621,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           visibleTurnItems: [],
           updatedAt: thread.updatedAt,
         } satisfies OrchestrationV2ThreadProjection;
-        return withLocalVisibleTurnItems(projection);
+        return {
+          projection: withLocalVisibleTurnItems(projection),
+          hasOlderHistory,
+          hiddenTurnItemIds,
+        };
       }).pipe(
         Effect.mapError((cause) =>
           isProjectionStoreThreadNotFoundError(cause)
@@ -2856,36 +3643,215 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       window?: {
         readonly rowLimit: number;
         readonly userTurnLimit?: number | undefined;
-        readonly anchorItemId?: TurnItemId | undefined;
+        readonly anchorRowId?: number | undefined;
+        readonly anchorOrdinal?: number | undefined;
+        readonly anchorIsPageBoundary?: boolean | undefined;
         readonly requiredRunId?: RunId | undefined;
+        /** Fork run's rowid, resolved through stored payload identity — the
+         *  bound run id can diverge from the stored column when the driver
+         *  rewrites lone surrogates. */
+        readonly requiredRunRowId?: number | undefined;
         readonly suppressLocal?: boolean | undefined;
+        readonly maxWindowRows?: number | undefined;
+        readonly maxWindowBytes?: number | undefined;
+        readonly maxRowPayloadBytes?: number | undefined;
         readonly historyAnchor?:
-          | { readonly threadId: ThreadId; readonly itemId: TurnItemId }
+          | {
+              readonly threadId: ThreadId;
+              readonly rowid?: number | undefined;
+              readonly ordinal?: number | undefined;
+            }
           | undefined;
       },
-    ): Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error> =>
+    ): Effect.Effect<
+      {
+        readonly projection: OrchestrationV2ThreadProjection;
+        readonly hasOlderHistory: boolean;
+        readonly hiddenTurnItemIds: ReadonlySet<string>;
+      },
+      ProjectionStoreV2Error
+    > =>
       Effect.gen(function* () {
         const localWindow =
           window?.suppressLocal === true ||
           (window?.historyAnchor !== undefined && window.historyAnchor.threadId !== threadId)
-            ? { ...window, rowLimit: 0, anchorItemId: undefined }
+            ? {
+                ...window,
+                rowLimit: 0,
+                anchorRowId: undefined,
+                anchorOrdinal: undefined,
+                anchorIsPageBoundary: undefined,
+              }
             : window;
-        const projection = yield* readCanonicalProjection(threadId, localWindow);
+        const { projection, hasOlderHistory, hiddenTurnItemIds } = yield* readCanonicalProjection(
+          threadId,
+          localWindow,
+        );
+        // Retained dependency rows are excluded from the visible timeline so a
+        // page cursor can never anchor on them and skip capped rows.
+        const withVisibleTurnItems = (p: OrchestrationV2ThreadProjection) => {
+          const projected = withLocalVisibleTurnItems(p);
+          return hiddenTurnItemIds.size === 0
+            ? projected
+            : {
+                ...projected,
+                visibleTurnItems: projected.visibleTurnItems.filter(
+                  (row) => !hiddenTurnItemIds.has(String(row.item.id)),
+                ),
+              };
+        };
         const forkedFrom = projection.thread.forkedFrom;
         if (forkedFrom?.type !== "run" || seenThreadIds.has(forkedFrom.threadId)) {
-          return withLocalVisibleTurnItems(projection);
+          return {
+            projection: withVisibleTurnItems(projection),
+            hasOlderHistory,
+            hiddenTurnItemIds,
+          };
         }
 
-        // A row-limited segment without turn anchors must finish paging locally
-        // before inherited user turns can influence the page boundary.
+        // A truncated local segment must finish paging locally before inherited
+        // rows can influence the page boundary — otherwise a cursor could
+        // anchor in ancestor history while capped local rows remain unfetched.
+        // Row-only windows have no turn alignment, so dropped local rows
+        // (hasOlderHistory) are sufficient evidence; turn windows also guard
+        // on a full mid-turn window whose boundary rows were aligned away.
         if (
-          window?.userTurnLimit !== undefined &&
           localWindow !== undefined &&
           localWindow.rowLimit > 0 &&
-          projection.turnItems.length >= localWindow.rowLimit &&
-          !projection.turnItems.some(isThreadHistoryTurnStart)
+          (hasOlderHistory ||
+            (window?.userTurnLimit !== undefined &&
+              projection.turnItems.length >= localWindow.rowLimit &&
+              !projection.turnItems.some(isThreadHistoryTurnStart)))
         ) {
-          return withLocalVisibleTurnItems(projection);
+          return {
+            projection: withVisibleTurnItems(projection),
+            hasOlderHistory,
+            hiddenTurnItemIds,
+          };
+        }
+
+        // Ancestor segments share this call's window budget: without a
+        // remaining cap each source read returns up to maxWindowRows of its
+        // own, so a fork chain decodes and accumulates depth × window rows
+        // before the wire page trims them. Rows this segment will emit count
+        // against what ancestors may spend — suppressed local reads are
+        // pass-throughs on the way to a deeper anchor and consume nothing.
+        // The rows this segment contributes to the merged timeline: under a
+        // requiredRunId fork read the kept items at-or-before the fork run —
+        // including rows of runs rolled back after the fork, which local
+        // visibility hides but visibleTurnItemsThroughRun restores into the
+        // descendant's inherited prefix. Billing only the locally-visible set
+        // would let each rolled-back ancestor row evade the shared budget.
+        const localVisibleRows = withVisibleTurnItems(projection).visibleTurnItems;
+        const requiredRun =
+          window?.requiredRunId === undefined
+            ? undefined
+            : projection.runs.find((run) => run.id === window.requiredRunId);
+        const runOrdinalById =
+          requiredRun === undefined
+            ? undefined
+            : new Map(projection.runs.map((run) => [run.id, run.ordinal]));
+        const contributedItems: ReadonlyArray<OrchestrationV2TurnItem> =
+          window === undefined || window.requiredRunId === undefined
+            ? localVisibleRows.map((row) => row.item)
+            : requiredRun === undefined || runOrdinalById === undefined
+              ? []
+              : projection.turnItems.filter(
+                  (item) =>
+                    !hiddenTurnItemIds.has(String(item.id)) &&
+                    isTurnItemAtOrBeforeRun({
+                      historyOrigin: projection.thread.historyOrigin,
+                      itemRunId: item.runId,
+                      runOrdinalById,
+                      sourceRunOrdinal: requiredRun.ordinal,
+                    }),
+                );
+        // The anchor row is already-delivered boundary, not page content:
+        // billing it would let a single oversized anchor consume the whole
+        // budget, skip every ancestor, and dead-end the cursor on an empty
+        // page. The boundary is exempted by identity, never by an ordering
+        // approximation of it: SQLite orders the stored turn_item_id bytes,
+        // while the decoded ids here can fold differently under another
+        // driver's binding (a Bun-written surrogate group read under Node
+        // collapses to one value) — an ordering pick could exempt a whole
+        // collision group instead of the one delivered row. The stored rowid
+        // identifies the boundary when the anchor resolved; ordinal-only
+        // marker anchors fall back to the ordinal group's stored-order
+        // maximum, matching the fork-cutoff pick.
+        const anchorOrdinal =
+          localWindow?.anchorIsPageBoundary === true ? localWindow.anchorOrdinal : undefined;
+        const anchorRowId =
+          localWindow?.anchorIsPageBoundary === true ? localWindow.anchorRowId : undefined;
+        const anchorItem =
+          anchorOrdinal === undefined
+            ? undefined
+            : yield* Effect.gen(function* () {
+                const rows = yield* sql<{ readonly payload_json: string }>`
+                  SELECT COALESCE(bounded_json, payload_json) AS payload_json
+                  FROM orchestration_v2_projection_turn_items
+                  WHERE (
+                    ${anchorRowId ?? null} IS NOT NULL
+                    AND rowid = ${anchorRowId ?? null}
+                  ) OR (
+                    ${anchorRowId ?? null} IS NULL
+                    AND thread_id = ${threadId}
+                    AND ordinal = ${anchorOrdinal}
+                  )
+                  ORDER BY turn_item_id DESC
+                  LIMIT 1
+                `;
+                const row = rows[0];
+                if (row === undefined) return undefined;
+                // Decode through the same bounded path the cohort items came
+                // through so the size comparison below compares like forms.
+                const decoded = yield* Effect.option(
+                  decodeTurnItemPayload(
+                    boundRetainedPayloadJson(
+                      row.payload_json,
+                      window?.maxRowPayloadBytes ?? THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES,
+                    ),
+                  ),
+                );
+                return decoded._tag === "Some"
+                  ? { itemId: String(decoded.value.id), encodedBytes: bytesOfJson(decoded.value) }
+                  : undefined;
+              });
+        // Exactly one row is exempt: the delivered boundary. Distinct stored
+        // rows can decode to the same item id when a driver's binding folded
+        // the written bytes differently than it decodes now (a Bun-written
+        // surrogate group read under Node collapses to one value), so the
+        // boundary is picked out of a collision group by its own decoded
+        // size — every other twin is undelivered content and keeps consuming
+        // budget. A group whose rows all share the boundary's size bills
+        // identically whichever row is skipped.
+        const boundaryIndex =
+          anchorItem === undefined
+            ? -1
+            : contributedItems.findIndex(
+                (item) =>
+                  item.ordinal === anchorOrdinal &&
+                  String(item.id) === anchorItem.itemId &&
+                  bytesOfJson(item) === anchorItem.encodedBytes,
+              );
+        const pageRows =
+          boundaryIndex === -1
+            ? contributedItems
+            : contributedItems.filter((_, index) => index !== boundaryIndex);
+        const spentRows =
+          window === undefined || (localWindow?.rowLimit ?? 0) <= 0 ? 0 : pageRows.length;
+        const spentBytes =
+          spentRows === 0 ? 0 : pageRows.reduce((total, item) => total + bytesOfJson(item), 0);
+        const remainingRows = (window?.maxWindowRows ?? THREAD_HISTORY_MAX_WINDOW_ROWS) - spentRows;
+        const remainingBytes =
+          (window?.maxWindowBytes ?? THREAD_HISTORY_MAX_WINDOW_BYTES) - spentBytes;
+        if (window !== undefined && (remainingRows <= 0 || remainingBytes <= 0)) {
+          return {
+            projection: withVisibleTurnItems(projection),
+            // Skipped ancestors may still hold older rows; over-reporting
+            // emits a cursor whose final page simply comes back empty.
+            hasOlderHistory: true,
+            hiddenTurnItemIds,
+          };
         }
 
         const sourceWindow =
@@ -2894,69 +3860,109 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : yield* Effect.gen(function* () {
                 const historyAnchor = window.historyAnchor;
                 const anchorBelongsToSource = historyAnchor?.threadId === forkedFrom.threadId;
-                const rows = yield* sql<{ readonly turn_item_id: string }>`
+                // The fork run resolves ONLY through stored payload identity:
+                // a bound forkedFrom.runId folds lone surrogates and can
+                // collide with a different run whose id literally contains
+                // U+FFFD — under OR…LIMIT 1 that alias row could win the fork
+                // boundary. Comparing json_extract outputs decodes both sides
+                // of stored JSON identically, independent of driver binding.
+                const requiredRunRows = yield* sql<{ readonly row_id: number }>`
+                  SELECT run.rowid AS row_id
+                  FROM orchestration_v2_projection_runs AS run
+                  WHERE run.thread_id = ${forkedFrom.threadId}
+                    AND json_valid(COALESCE(run.bounded_json, run.payload_json))
+                    AND json_extract(
+                      COALESCE(run.bounded_json, run.payload_json), '$.id'
+                    ) = (
+                      SELECT json_extract(
+                        COALESCE(
+                          source_thread.bounded_json,
+                          source_thread.payload_json
+                        ),
+                        '$.forkedFrom.runId'
+                      )
+                      FROM orchestration_v2_projection_threads AS source_thread
+                      WHERE source_thread.thread_id = ${threadId}
+                        AND json_valid(
+                          COALESCE(
+                            source_thread.bounded_json,
+                            source_thread.payload_json
+                          )
+                        )
+                      LIMIT 1
+                    )
+                  LIMIT 1
+                `;
+                const requiredRunRowId = requiredRunRows[0]?.row_id;
+                const rows = yield* sql<{
+                  readonly row_id: number;
+                  readonly ordinal: number;
+                }>`
                   WITH fork_run AS (
                     SELECT ordinal
                     FROM orchestration_v2_projection_runs
                     WHERE thread_id = ${forkedFrom.threadId}
-                      AND run_id = ${forkedFrom.runId}
+                      AND (rowid = ${requiredRunRowId ?? null}
+                        OR (${requiredRunRowId ?? null} IS NULL
+                          AND run_id = ${forkedFrom.runId}))
                     LIMIT 1
-                  ), fork_boundary AS (
-                    SELECT (
-                      SELECT item.ordinal
-                      FROM orchestration_v2_projection_turn_items AS item
-                      WHERE item.run_id = run.run_id
-                      ORDER BY item.ordinal DESC
-                      LIMIT 1
-                    ) AS ordinal
-                    FROM orchestration_v2_projection_runs AS run
-                    WHERE run.thread_id = ${forkedFrom.threadId}
-                      AND run.ordinal <= (SELECT ordinal FROM fork_run)
-                      AND EXISTS (
-                        SELECT 1
-                        FROM orchestration_v2_projection_turn_items AS item
-                        WHERE item.run_id = run.run_id
-                        LIMIT 1
+                  ), qualifying AS (
+                    -- Inherited rows are decided by their run's ordinal —
+                    -- matching isTurnItemAtOrBeforeRun — never by the item's
+                    -- own ordinal: item ordinals are not monotonic across
+                    -- runs, so a scalar cutoff either drops earlier runs'
+                    -- rows or admits rows from runs past the fork point.
+                    SELECT item.rowid AS row_id, item.ordinal, item.turn_item_id
+                    FROM orchestration_v2_projection_turn_items AS item
+                    LEFT JOIN orchestration_v2_projection_runs AS run
+                      ON run.run_id = item.run_id
+                    WHERE item.thread_id = ${forkedFrom.threadId}
+                      AND (
+                        run.ordinal <= (SELECT ordinal FROM fork_run)
+                        OR (
+                          item.run_id IS NULL
+                          AND EXISTS (
+                            SELECT 1
+                            FROM orchestration_v2_projection_threads AS source_thread
+                            WHERE source_thread.thread_id = item.thread_id
+                              AND json_extract(
+                                COALESCE(
+                                  source_thread.bounded_json,
+                                  source_thread.payload_json
+                                ),
+                                '$.historyOrigin'
+                              ) = 'v1_import'
+                          )
+                        )
                       )
-                    ORDER BY run.ordinal DESC
-                    LIMIT 1
-                  ), effective_boundary AS (
-                    SELECT COALESCE(
-                      (SELECT ordinal FROM fork_boundary),
-                      (
-                        SELECT ordinal
-                        FROM orchestration_v2_projection_turn_items
-                        WHERE thread_id = ${forkedFrom.threadId}
-                          AND run_id IS NULL
-                          AND json_extract(payload_json, '$.historyOrigin') = 'v1_import'
-                        ORDER BY ordinal DESC, turn_item_id DESC
-                        LIMIT 1
-                      ),
-                      -1
-                    ) AS ordinal
                   )
-                  SELECT turn_item_id
-                  FROM orchestration_v2_projection_turn_items
-                  WHERE thread_id = ${forkedFrom.threadId}
-                    AND ordinal <= COALESCE(
-                      (SELECT ordinal FROM effective_boundary),
-                      -1
+                  SELECT row_id, ordinal
+                  FROM qualifying
+                  WHERE (
+                    ${anchorBelongsToSource ? 1 : 0} = 0
+                    -- The bound resolves through the stored rowid only:
+                    -- synthetic timeline rows (the fork marker sits at
+                    -- ordinal 0 in its ancestor's segment) have no source
+                    -- row, and an ordinal-only match would clamp to any
+                    -- sibling carrying that ordinal — silently skipping
+                    -- inherited rows above it. Unresolved anchors, like a
+                    -- missing v1 item id, fall back to the fork boundary.
+                    OR ordinal <= COALESCE(
+                      (SELECT ordinal FROM qualifying
+                       WHERE row_id = ${historyAnchor?.rowid ?? null}
+                       LIMIT 1),
+                      9223372036854775807
                     )
-                    AND (
-                      ${anchorBelongsToSource ? 1 : 0} = 0
-                      OR ordinal <= COALESCE(
-                        (SELECT ordinal FROM orchestration_v2_projection_turn_items
-                         WHERE thread_id = ${forkedFrom.threadId}
-                           AND turn_item_id = ${historyAnchor?.itemId ?? null}
-                         LIMIT 1),
-                        (SELECT ordinal FROM effective_boundary),
-                        -1
-                      )
-                    )
-                  ORDER BY ordinal DESC, turn_item_id DESC
+                  )
+                  -- The resolved anchor row wins over an equal-ordinal sibling:
+                  -- ordinals are not unique, so ordering alone can pick the
+                  -- wrong row as the page boundary. The rowid — not the stored
+                  -- id — survives the driver's text encoding.
+                  ORDER BY (row_id = ${historyAnchor?.rowid ?? null}) DESC,
+                    ordinal DESC, turn_item_id DESC
                   LIMIT 1
                 `;
-                const anchor = rows[0]?.turn_item_id;
+                const anchor = rows[0];
                 const anchorIsInDescendant =
                   historyAnchor !== undefined &&
                   historyAnchor.threadId !== threadId &&
@@ -2965,27 +3971,51 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   rowLimit: window.rowLimit,
                   userTurnLimit: window.userTurnLimit,
                   requiredRunId: forkedFrom.runId,
+                  requiredRunRowId,
+                  maxWindowRows: remainingRows,
+                  maxWindowBytes: remainingBytes,
+                  maxRowPayloadBytes: window.maxRowPayloadBytes,
                   suppressLocal: anchor === undefined || anchorIsInDescendant,
                   ...(anchor === undefined || anchorIsInDescendant
                     ? {}
-                    : { anchorItemId: TurnItemId.make(anchor) }),
+                    : {
+                        anchorRowId: anchor.row_id,
+                        anchorOrdinal: anchor.ordinal,
+                        // Only a caller-anchored page disables turn alignment;
+                        // an initial snapshot's fork cutoff still aligns.
+                        anchorIsPageBoundary: anchorBelongsToSource,
+                      }),
                   ...(historyAnchor === undefined || historyAnchor.threadId === threadId
                     ? {}
                     : { historyAnchor }),
                 };
               });
 
-        const sourceProjection = yield* readProjection(
+        const source = yield* readProjection(
           forkedFrom.threadId,
           new Set([...seenThreadIds, threadId]),
           sourceWindow,
         );
+        const mergedHiddenTurnItemIds =
+          source.hiddenTurnItemIds.size === 0
+            ? hiddenTurnItemIds
+            : new Set([...hiddenTurnItemIds, ...source.hiddenTurnItemIds]);
         return {
-          ...projection,
-          visibleTurnItems: buildVisibleTurnItems({
-            projection,
-            sourceProjection,
-          }),
+          projection: {
+            ...projection,
+            visibleTurnItems:
+              mergedHiddenTurnItemIds.size === 0
+                ? buildVisibleTurnItems({
+                    projection,
+                    sourceProjection: source.projection,
+                  })
+                : buildVisibleTurnItems({
+                    projection,
+                    sourceProjection: source.projection,
+                  }).filter((row) => !mergedHiddenTurnItemIds.has(String(row.item.id))),
+          },
+          hasOlderHistory: hasOlderHistory || source.hasOlderHistory,
+          hiddenTurnItemIds: mergedHiddenTurnItemIds,
         };
       }).pipe(
         Effect.mapError((cause) =>
@@ -3259,7 +4289,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     );
 
     const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
-      readProjection(threadId, new Set());
+      readProjection(threadId, new Set()).pipe(Effect.map((read) => read.projection));
 
     const getRuntimeRecoveryProjection: ProjectionStoreV2Shape["getRuntimeRecoveryProjection"] = (
       threadId,
@@ -3816,7 +4846,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ORDER BY ordinal_within_parent ASC, scope_id ASC
             `,
               sql`
-              SELECT scope_id AS "scopeId", run_id AS "runId",
+              SELECT checkpoint_id AS id, scope_id AS "scopeId", run_id AS "runId",
+                ordinal_within_scope AS "ordinalWithinScope",
                 app_run_ordinal AS "appRunOrdinal", status,
                 json_extract(payload_json, '$.ref') AS ref
               FROM orchestration_v2_projection_checkpoints
@@ -3834,6 +4865,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               : new ProjectionStoreReadError({ threadId, cause }),
           ),
         );
+
+    const getThreadTurnItem: ProjectionStoreV2Shape["getThreadTurnItem"] = (threadId, itemId) =>
+      Effect.gen(function* () {
+        // The digest column matches decoded ids — the stored turn_item_id can
+        // fold lone surrogates differently at bind time. The OR keeps rows
+        // readable from before the 056 digest backfill.
+        const rows = yield* sql<{ readonly payload_json: string }>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+            AND (item_id_digest = ${threadHistoryCursorItemTag(itemId)}
+              OR (item_id_digest IS NULL AND turn_item_id = ${itemId}))
+          ORDER BY rowid DESC
+          LIMIT 1
+        `;
+        const row = rows[0];
+        if (row === undefined) return null;
+        const decoded = yield* Effect.option(decodeTurnItemPayload(row.payload_json));
+        return decoded._tag === "Some" ? decoded.value : null;
+      }).pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
 
     const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
       sql
@@ -3862,6 +4913,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
+    // A v2 cursor's thread digest must resolve within the requested thread's
+    // fork ancestry — anchor source rows always live on the leaf or an
+    // ancestor. Non-run fork kinds carry no threadId, so the walk ends there.
+    const resolveAnchorThreadDigest = (threadId: ThreadId, digest: string) =>
+      Effect.gen(function* () {
+        const seen = new Set<string>();
+        let candidate: ThreadId | undefined = threadId;
+        while (candidate !== undefined && !seen.has(candidate)) {
+          seen.add(candidate);
+          if (threadHistoryCursorThreadTag(candidate) === digest) {
+            return candidate;
+          }
+          // Decode the parent link in JS rather than via json_extract: the
+          // digest is computed over the raw stored id, and SQLite's JSON
+          // extraction rewrites lone surrogates that legal ids may contain.
+          // The bounded preview keeps each hop's transfer and decode capped.
+          const rows: ReadonlyArray<{ readonly payload_json: string }> = yield* sql<{
+            readonly payload_json: string;
+          }>`
+            SELECT COALESCE(bounded_json, payload_json) AS payload_json
+            FROM orchestration_v2_projection_threads
+            WHERE thread_id = ${candidate}
+            LIMIT 1
+          `;
+          const row = rows[0];
+          if (row === undefined) {
+            return undefined;
+          }
+          const payload = yield* decodeThreadPayload(row.payload_json);
+          candidate = payload.forkedFrom?.type === "run" ? payload.forkedFrom.threadId : undefined;
+        }
+        return undefined;
+      });
+
     const getThreadSnapshotWindow: ProjectionStoreV2Shape["getThreadSnapshotWindow"] = (
       threadId,
       options,
@@ -3869,26 +4954,130 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const historyAnchor =
-              options.anchorItemId === undefined
-                ? undefined
-                : {
-                    itemId: options.anchorItemId,
-                    threadId:
-                      options.anchorThreadId ??
-                      (yield* sql<{ readonly thread_id: string }>`
-                        SELECT thread_id
-                        FROM orchestration_v2_projection_turn_items
-                        WHERE turn_item_id = ${options.anchorItemId}
-                        LIMIT 1
-                      `).map((row) => ThreadId.make(row.thread_id))[0] ??
-                      threadId,
-                  };
-            const projection = yield* readProjection(threadId, new Set(), {
+            const historyAnchor = yield* Effect.gen(function* () {
+              if (options.anchorOrdinal !== undefined) {
+                // Ordinal anchors come from v2 cursors, which carry a digest
+                // of the source thread id; resolve it by walking the fork
+                // ancestry (the anchor's source is always an ancestor). An
+                // unresolvable digest falls back to the local thread, so the
+                // anchored row can't match and the page errors typed.
+                const anchorThreadId =
+                  options.anchorThreadId ??
+                  (options.anchorThreadDigest === undefined
+                    ? threadId
+                    : ((yield* resolveAnchorThreadDigest(threadId, options.anchorThreadDigest)) ??
+                      threadId));
+                // Ordinals are not unique per thread — several producers
+                // allocate them independently — so the v2 cursor's item
+                // digest picks the exact anchor row among equal-ordinal
+                // siblings. item_id_digest was written from the decoded id —
+                // the turn_item_id column's bound bytes can differ (lone
+                // surrogates fold on bind) — and resolution returns the rowid
+                // because a stored id cannot be reliably rebound under
+                // bun:sqlite (a trailing-surrogate value reads back as "").
+                const anchorRowId =
+                  options.anchorItemDigest === undefined
+                    ? undefined
+                    : yield* Effect.gen(function* () {
+                        const byDigest = yield* sql<{ readonly row_id: number }>`
+                          SELECT rowid AS row_id
+                          FROM orchestration_v2_projection_turn_items
+                          WHERE thread_id = ${anchorThreadId}
+                            AND ordinal = ${options.anchorOrdinal}
+                            AND item_id_digest = ${options.anchorItemDigest}
+                          LIMIT 1
+                        `;
+                        if (byDigest[0] !== undefined) {
+                          return byDigest[0].row_id;
+                        }
+                        // Rows written before the digest column existed (or
+                        // whose backfill could not parse the payload) resolve
+                        // by hashing the decoded ids of the ordinal cohort —
+                        // bounded by sibling count, and a malformed candidate
+                        // is skipped rather than failing the read.
+                        const candidates = yield* sql<{
+                          readonly row_id: number;
+                          readonly payload_json: string;
+                        }>`
+                          SELECT rowid AS row_id,
+                            COALESCE(bounded_json, payload_json) AS payload_json
+                          FROM orchestration_v2_projection_turn_items
+                          WHERE thread_id = ${anchorThreadId}
+                            AND ordinal = ${options.anchorOrdinal}
+                            AND item_id_digest IS NULL
+                        `;
+                        for (const candidate of candidates) {
+                          const decoded = yield* Effect.option(
+                            decodeTurnItemPayload(candidate.payload_json),
+                          );
+                          if (
+                            decoded._tag === "Some" &&
+                            threadHistoryCursorItemTag(decoded.value.id) ===
+                              options.anchorItemDigest
+                          ) {
+                            return candidate.row_id;
+                          }
+                        }
+                        return undefined;
+                      });
+                return {
+                  ordinal: options.anchorOrdinal,
+                  threadId: anchorThreadId,
+                  // A digest that matches no stored row (deleted anchor or a
+                  // synthetic marker, which has no stored row) stays
+                  // ordinal-only: the marker falls back to the fork boundary
+                  // and page extraction rejects a truly missing anchor typed.
+                  ...(anchorRowId === undefined ? {} : { rowid: anchorRowId }),
+                };
+              }
+              if (options.anchorItemId === undefined) {
+                return undefined;
+              }
+              // v1 anchors carry a verbatim item id; resolve the row once so
+              // every downstream comparison uses the rowid — the id column's
+              // stored bytes may not equal the decoded id, but they do match
+              // the freshly bound client value under the same encoding. The
+              // lookup is thread-scoped when the cursor carries a thread: a
+              // forged pair must not force-keep a foreign row into this window.
+              const anchorRow = (yield* sql<{
+                readonly row_id: number;
+                readonly thread_id: string;
+                readonly ordinal: number;
+              }>`
+                  SELECT rowid AS row_id, thread_id, ordinal
+                  FROM orchestration_v2_projection_turn_items
+                  WHERE turn_item_id = ${options.anchorItemId}
+                    AND (
+                      ${options.anchorThreadId ?? null} IS NULL
+                      OR thread_id = ${options.anchorThreadId ?? null}
+                    )
+                  LIMIT 1
+                `)[0];
+              return {
+                threadId:
+                  options.anchorThreadId ??
+                  (anchorRow === undefined ? threadId : ThreadId.make(anchorRow.thread_id)),
+                ...(anchorRow === undefined
+                  ? {}
+                  : { rowid: anchorRow.row_id, ordinal: anchorRow.ordinal }),
+              };
+            });
+            const { projection, hasOlderHistory } = yield* readProjection(threadId, new Set(), {
               rowLimit: options.rowLimit,
               userTurnLimit: options.userTurnLimit,
+              maxWindowRows: options.maxWindowRows,
+              maxWindowBytes: options.maxWindowBytes,
+              maxRowPayloadBytes: options.maxRowPayloadBytes,
               ...(historyAnchor?.threadId === threadId
-                ? { anchorItemId: historyAnchor.itemId }
+                ? {
+                    ...(historyAnchor.rowid === undefined
+                      ? {}
+                      : { anchorRowId: historyAnchor.rowid }),
+                    ...(historyAnchor.ordinal === undefined
+                      ? {}
+                      : { anchorOrdinal: historyAnchor.ordinal }),
+                    anchorIsPageBoundary: true,
+                  }
                 : {}),
               ...(historyAnchor === undefined ? {} : { historyAnchor }),
             });
@@ -3902,6 +5091,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return {
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
               snapshotSequence: rows[0]?.snapshot_sequence ?? 0,
+              hasOlderHistory,
               projection,
             };
           }),
@@ -4524,6 +5714,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadProviderContext,
       getRuntimeResponseContext,
       getCheckpointContext,
+      getThreadTurnItem,
       getPendingNativeUserInputs,
       getRuntimeRequest,
       getPlan,
@@ -4549,6 +5740,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             const next: ProjectionReplayState = {
               projections: new Map(existing.projections),
               providerSessionThreadIds: new Map(existing.providerSessionThreadIds),
+              providerThreadsById: new Map(existing.providerThreadsById),
             };
             if (!applyToProjectionReplayState(next, event)) {
               return [
@@ -4789,15 +5981,25 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               cwd,
             })),
             checkpoints: projection.checkpoints.map(
-              ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+              ({ id, scopeId, runId, ordinalWithinScope, appRunOrdinal, status, ref }) => ({
+                id,
                 scopeId,
                 runId,
+                ordinalWithinScope,
                 appRunOrdinal,
                 status,
                 ref,
               }),
             ),
           };
+        }),
+      getThreadTurnItem: (threadId, itemId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined) {
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          }
+          return projection.turnItems.find((item) => item.id === itemId) ?? null;
         }),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
@@ -4847,37 +6049,573 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         ),
       getThreadSnapshotWindow: (threadId, options) =>
         service.getThreadSnapshot(threadId).pipe(
-          Effect.map((snapshot) => {
-            const anchorIndex =
-              options.anchorItemId === undefined
+          Effect.flatMap((snapshot) =>
+            Effect.gen(function* () {
+              const hasAnchor =
+                options.anchorItemId !== undefined || options.anchorOrdinal !== undefined;
+              const anchorIndex = !hasAnchor
                 ? snapshot.projection.visibleTurnItems.length
-                : snapshot.projection.visibleTurnItems.findIndex(
-                    (row) => row.sourceItemId === options.anchorItemId,
+                : snapshot.projection.visibleTurnItems.findIndex((row) =>
+                    options.anchorOrdinal !== undefined
+                      ? // The merged timeline already carries each row's
+                        // source thread id, so the digest matches directly —
+                        // no ancestry walk needed here. The item digest
+                        // disambiguates equal-ordinal siblings.
+                        (options.anchorThreadDigest === undefined
+                          ? String(row.sourceThreadId) ===
+                            String(options.anchorThreadId ?? threadId)
+                          : threadHistoryCursorThreadTag(row.sourceThreadId) ===
+                            options.anchorThreadDigest) &&
+                        row.item.ordinal === options.anchorOrdinal &&
+                        (options.anchorItemDigest === undefined ||
+                          threadHistoryCursorItemTag(row.sourceItemId) === options.anchorItemDigest)
+                      : row.sourceItemId === options.anchorItemId,
                   ) + 1;
-            const candidates = snapshot.projection.visibleTurnItems.slice(0, anchorIndex);
-            const turnAnchors =
-              options.userTurnLimit === undefined
-                ? []
-                : candidates.flatMap((row, index) =>
-                    isThreadHistoryTurnStart(row.item) ? [index] : [],
-                  );
-            const rawStart = turnAnchors.at(-(THREAD_HISTORY_MAX_RAW_TURNS + 2)) ?? 0;
-            const anchors = turnAnchors.filter(
-              (index) => index >= rawStart && isThreadHistoryUserTurn(candidates[index]!.item),
-            );
-            const anchorLimit = (options.userTurnLimit ?? 0) + 2;
-            const start =
-              turnAnchors.length > 0
-                ? anchors.length < anchorLimit
-                  ? rawStart
-                  : anchors.at(-anchorLimit)!
-                : Math.max(0, anchorIndex - options.rowLimit);
-            const visibleTurnItems = candidates.slice(start);
-            return {
-              ...snapshot,
-              projection: { ...snapshot.projection, visibleTurnItems },
-            };
-          }),
+              const candidates = snapshot.projection.visibleTurnItems.slice(0, anchorIndex);
+              const turnAnchors =
+                options.userTurnLimit === undefined
+                  ? []
+                  : candidates.flatMap((row, index) =>
+                      isThreadHistoryTurnStart(row.item) ? [index] : [],
+                    );
+              const rawStart = turnAnchors.at(-(THREAD_HISTORY_MAX_RAW_TURNS + 2)) ?? 0;
+              const anchors = turnAnchors.filter(
+                (index) => index >= rawStart && isThreadHistoryUserTurn(candidates[index]!.item),
+              );
+              const anchorLimit = (options.userTurnLimit ?? 0) + 2;
+              const start =
+                turnAnchors.length > 0
+                  ? anchors.length < anchorLimit
+                    ? rawStart
+                    : anchors.at(-anchorLimit)!
+                  : Math.max(0, anchorIndex - options.rowLimit);
+              // Mirror the SQL window hard caps: keep the newest rows within the
+              // row and byte budgets and report anything dropped as older history.
+              const maxWindowRows = options.maxWindowRows ?? THREAD_HISTORY_MAX_WINDOW_ROWS;
+              const maxWindowBytes = options.maxWindowBytes ?? THREAD_HISTORY_MAX_WINDOW_BYTES;
+              const maxRowPayloadBytes =
+                options.maxRowPayloadBytes ?? THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES;
+              // Bound decoded values through the schema codec, exactly like the
+              // SQL path's preview-then-decode: compaction runs on the encoded
+              // JSON (decoded-only shapes like DateTime are never rebuilt by
+              // hand) and decoding the compacted JSON produces only values the
+              // schema itself emits — forward-compatible collections drop
+              // malformed records the same way on both drivers. The value-level
+              // encoder plus stringifyJsonDeep keeps deep Unknown subtrees off
+              // the recursive serializer.
+              const boundRow = <A, E>(
+                value: A,
+                encode: (value: A) => Effect.Effect<unknown, E>,
+                decode: (json: string) => Effect.Effect<A, E>,
+              ): Effect.Effect<A, E> =>
+                encode(value).pipe(
+                  Effect.flatMap((encodedValue) => {
+                    // Schema encoders never yield undefined, but keep the
+                    // fallback explicit so an unserializable encoded root
+                    // cannot crash the byte/depth checks below.
+                    const json = stringifyJsonDeep(encodedValue) ?? "null";
+                    return Buffer.byteLength(json, "utf8") <= maxRowPayloadBytes &&
+                      // Depth matters even below the byte cap: a deep payload
+                      // stays deep on the wire here, while the SQL path's stored
+                      // preview collapses it — both drivers must emit the same
+                      // bounded shape.
+                      !jsonDepthExceeds(json, THREAD_HISTORY_PREVIEW_HARD_DEPTH)
+                      ? Effect.succeed(value)
+                      : decode(
+                          JSON.stringify(
+                            compactProjectedHistoryPayloadToLimit(
+                              parseBoundedPayloadJson(json),
+                              maxRowPayloadBytes,
+                            ),
+                          ),
+                        );
+                  }),
+                );
+              const boundRows = <A, E>(
+                rows: ReadonlyArray<A>,
+                encode: (value: A) => Effect.Effect<unknown, E>,
+                decode: (json: string) => Effect.Effect<A, E>,
+              ) => Effect.forEach(rows, (row) => boundRow(row, encode, decode));
+              // boundRow returns the same reference when a row fits, so a
+              // different result means the item was compacted — flag it like
+              // the SQL path's stamped previews.
+              const boundTurnItemRow = (item: OrchestrationV2TurnItem) =>
+                boundRow(item, encodeTurnItemPayloadValue, decodeTurnItemPayload).pipe(
+                  Effect.map((bound) =>
+                    bound === item ? bound : { ...bound, payloadTruncated: true },
+                  ),
+                );
+              // Over-cap rows run boundRow once here so billing sees the true
+              // emitted size; aligned rows reuse the bound item instead of
+              // encoding it twice.
+              const boundItems = new WeakMap<
+                OrchestrationV2ProjectedTurnItem,
+                OrchestrationV2TurnItem
+              >();
+              const capped: typeof candidates = [];
+              let billedBytes = 0;
+              let headIndex = candidates.length;
+              for (
+                let index = candidates.length - 1;
+                index >= start && capped.length < maxWindowRows;
+                index -= 1
+              ) {
+                // Bill the emitted item payload, like SQL bills
+                // LENGTH(bounded_json): compaction preserves identity members
+                // whole, so an over-cap row can legitimately ship more than the
+                // per-row cap and billing it at the cap would let many such
+                // rows overflow the byte budget. Charging the projected row
+                // wrapper instead of the item would diverge from the SQL
+                // window on identical history. The over-cap path must measure
+                // the bound row — direct compaction of the decoded item hands
+                // deep subtrees to the recursive JSON.stringify and overflows
+                // the stack.
+                const row = candidates[index]!;
+                const rawRowBytes = bytesOfJson(row.item);
+                if (rawRowBytes > maxRowPayloadBytes) {
+                  const boundItem = yield* boundTurnItemRow(row.item);
+                  boundItems.set(row, boundItem);
+                  billedBytes += bytesOfJson(boundItem);
+                } else {
+                  billedBytes += rawRowBytes;
+                }
+                if (billedBytes > maxWindowBytes && capped.length > 0) break;
+                headIndex = index;
+                capped.push(row);
+              }
+              capped.reverse();
+              // Mirror the SQL alignment (initial turn-mode snapshots only): when
+              // complete newer turns fit, drop a partial oldest turn; a single
+              // oversized turn still pages in parts. Anchored reads skip the drop
+              // — a page collapsing to its anchor dead-ends the cursor. The drop
+              // also requires a turn start below the window — without one the
+              // leading rows are the indivisible pre-first-turn segment and must
+              // stay reachable.
+              const firstTurnIndex =
+                options.userTurnLimit === undefined || hasAnchor
+                  ? -1
+                  : capped.findIndex((row) => isThreadHistoryTurnStart(row.item));
+              const hasTurnStartBelow = candidates
+                .slice(start, headIndex)
+                .some((row) => isThreadHistoryTurnStart(row.item));
+              // Mirror the SQL below-anchor retention: a page anchored on its
+              // oldest surviving row must still surface one row below the anchor
+              // — the selector drops the anchor itself, so anchor-only pages
+              // dead-end the cursor while older rows remain.
+              const aligned =
+                firstTurnIndex > 0 && hasTurnStartBelow ? capped.slice(firstTurnIndex) : capped;
+              const windowStartIndex = headIndex + (capped.length - aligned.length);
+              if (hasAnchor && windowStartIndex >= anchorIndex - 1 && anchorIndex - 2 >= 0) {
+                aligned.unshift(candidates[anchorIndex - 2]!);
+              }
+              const bounded = yield* Effect.forEach(aligned, (row) => {
+                const bound = boundItems.get(row);
+                return Effect.map(
+                  bound === undefined ? boundTurnItemRow(row.item) : Effect.succeed(bound),
+                  (item) => ({ ...row, item }),
+                );
+              });
+              // Mirror the SQL retained set: turnItems carries the window cohort
+              // plus interrupt-request dependencies of in-window results — not
+              // the full stored projection, which would put every historical row
+              // back on the wire. Requests stay out of visibleTurnItems.
+              const retainedIds = new Set(bounded.map((row) => String(row.sourceItemId)));
+              const inWindowResultRunIds = new Set(
+                bounded.flatMap((row) =>
+                  row.item.type === "run_interrupt_result" && row.item.runId !== null
+                    ? [row.item.runId]
+                    : [],
+                ),
+              );
+              // Mirror the SQL latest-row watermark: unanchored reads retain the
+              // thread's newest stored row even when eligibility filters it out
+              // (e.g. a rolled-back run) so latestLocalTurnOrdinal matches.
+              const watermarkId =
+                hasAnchor || options.requiredRunId !== undefined
+                  ? null
+                  : (snapshot.projection.turnItems.reduce<{
+                      readonly id: string;
+                      readonly ordinal: number;
+                    } | null>(
+                      (latest, item) =>
+                        latest === null ||
+                        item.ordinal > latest.ordinal ||
+                        (item.ordinal === latest.ordinal &&
+                          compareUtf8(String(item.id), latest.id) > 0)
+                          ? { id: String(item.id), ordinal: item.ordinal }
+                          : latest,
+                      null,
+                    )?.id ?? null);
+              // Items carrying a pending runtime request are dependencies:
+              // runtimeRequests retains the pending request even when its
+              // display item paged out, and pending questions/approvals
+              // render from that item's payload.
+              const pendingRequestIds = new Set(
+                snapshot.projection.runtimeRequests.flatMap((request) =>
+                  request.status === "pending" ? [String(request.id)] : [],
+                ),
+              );
+              const itemRequestRef = (item: (typeof snapshot.projection.turnItems)[number]) => {
+                const record = item as Record<string, unknown>;
+                const requestId = record["requestId"];
+                if (typeof requestId === "string") return requestId;
+                const runtimeRequestId = record["runtimeRequestId"];
+                return typeof runtimeRequestId === "string" ? runtimeRequestId : null;
+              };
+              const turnItems = yield* Effect.forEach(
+                snapshot.projection.turnItems.filter(
+                  (item) =>
+                    retainedIds.has(String(item.id)) ||
+                    String(item.id) === watermarkId ||
+                    (item.type === "run_interrupt_request" &&
+                      item.runId !== null &&
+                      inWindowResultRunIds.has(item.runId)) ||
+                    (() => {
+                      const requestRef = itemRequestRef(item);
+                      return requestRef !== null && pendingRequestIds.has(requestRef);
+                    })(),
+                ),
+                boundTurnItemRow,
+              );
+              // Mirror the SQL hydration cohorts: each collection carries only
+              // the rows the retained window can reference plus live/dependent
+              // rows — not the thread's whole stored history. Ids compare as
+              // decoded values here, so the SQL path's hex/rowid encoding
+              // bridges are unnecessary.
+              const itemFieldValue = (
+                item: (typeof turnItems)[number],
+                field: string,
+              ): string | null => {
+                const value = (item as Record<string, unknown>)[field];
+                return typeof value === "string" ? value : null;
+              };
+              const cohortItemIds = (field: string) => {
+                const ids = new Set<string>();
+                for (const item of turnItems) {
+                  const value = itemFieldValue(item, field);
+                  if (value !== null) ids.add(value);
+                }
+                return ids;
+              };
+              const runIds = new Set(snapshot.projection.runs.map((run) => String(run.id)));
+              const cohortRunIds = cohortItemIds("runId");
+              // SQL resolves run membership through the runs table: a retained
+              // item whose run row no longer exists seeds nothing.
+              for (const id of cohortRunIds) {
+                if (!runIds.has(id)) cohortRunIds.delete(id);
+              }
+              const requiredRunId =
+                options.requiredRunId !== undefined && runIds.has(String(options.requiredRunId))
+                  ? String(options.requiredRunId)
+                  : undefined;
+              const cohortProviderThreadIds = cohortItemIds("providerThreadId");
+              const cohortProviderTurnIds = cohortItemIds("providerTurnId");
+              const cohortMessageIds = cohortItemIds("messageId");
+              const cohortPlanIds = cohortItemIds("planId");
+              const cohortCheckpointIds = cohortItemIds("checkpointId");
+              const cohortHandoffIds = cohortItemIds("contextHandoffId");
+              const activeExecutionStatuses: ReadonlySet<string> = new Set([
+                "pending",
+                "starting",
+                "running",
+                "waiting",
+              ]);
+              const activeRunStatuses: ReadonlySet<string> = new Set([
+                "queued",
+                "preparing",
+                "starting",
+                "running",
+                "waiting",
+              ]);
+              const activeProviderTurnStatuses: ReadonlySet<string> = new Set([
+                "starting",
+                "running",
+                "waiting",
+              ]);
+              const activeSessionStatuses: ReadonlySet<string> = new Set([
+                "starting",
+                "running",
+                "waiting",
+              ]);
+              const activeRequestStatuses: ReadonlySet<string> = new Set(["pending", "waiting"]);
+              const activeCheckpointStatuses: ReadonlySet<string> = new Set([
+                "pending",
+                "capturing",
+              ]);
+              const activeHandoffStatuses: ReadonlySet<string> = new Set(["pending", "ready"]);
+              const activeTransferStatuses: ReadonlySet<string> = new Set([
+                "pending",
+                "running",
+                "waiting",
+              ]);
+              // The node cohort mirrors the recursive SQL walk: retained items,
+              // live control rows, and run/attempt roots seed it, then only the
+              // ancestors of seeded nodes join.
+              const nodesById = new Map(
+                snapshot.projection.nodes.map((node) => [String(node.id), node] as const),
+              );
+              const cohortNodeIds = new Set<string>();
+              const seedNode = (id: string | null | undefined) => {
+                if (id !== null && id !== undefined && id !== "") {
+                  cohortNodeIds.add(String(id));
+                }
+              };
+              for (const item of turnItems) seedNode(itemFieldValue(item, "nodeId"));
+              for (const node of snapshot.projection.nodes) {
+                if (activeExecutionStatuses.has(node.status)) seedNode(node.id);
+              }
+              for (const attempt of snapshot.projection.attempts) {
+                if (
+                  activeExecutionStatuses.has(attempt.status) ||
+                  cohortRunIds.has(String(attempt.runId)) ||
+                  (requiredRunId !== undefined && String(attempt.runId) === requiredRunId)
+                ) {
+                  seedNode(attempt.rootNodeId);
+                }
+              }
+              for (const run of snapshot.projection.runs) {
+                if (
+                  activeRunStatuses.has(run.status) ||
+                  cohortRunIds.has(String(run.id)) ||
+                  (requiredRunId !== undefined && String(run.id) === requiredRunId)
+                ) {
+                  seedNode(run.rootNodeId);
+                }
+              }
+              for (const request of snapshot.projection.runtimeRequests) {
+                if (activeRequestStatuses.has(request.status)) seedNode(request.nodeId);
+              }
+              for (const subagent of snapshot.projection.subagents) {
+                if (activeExecutionStatuses.has(subagent.status)) {
+                  seedNode(subagent.parentNodeId);
+                }
+              }
+              for (const providerTurn of snapshot.projection.providerTurns) {
+                if (activeProviderTurnStatuses.has(providerTurn.status)) {
+                  seedNode(providerTurn.nodeId);
+                }
+              }
+              const nodeQueue = [...cohortNodeIds];
+              while (nodeQueue.length > 0) {
+                const parentId = nodesById.get(nodeQueue.pop()!)?.parentNodeId;
+                if (parentId !== null && parentId !== undefined) {
+                  const id = String(parentId);
+                  if (!cohortNodeIds.has(id)) {
+                    cohortNodeIds.add(id);
+                    nodeQueue.push(id);
+                  }
+                }
+              }
+              const inCohort = (ids: ReadonlySet<string>, id: string | null | undefined) =>
+                id !== null && id !== undefined && ids.has(String(id));
+              const liveRunIds = new Set(
+                snapshot.projection.runs.flatMap((run) =>
+                  activeRunStatuses.has(run.status) ? [String(run.id)] : [],
+                ),
+              );
+              const windowRuns = snapshot.projection.runs.filter(
+                (run) =>
+                  activeRunStatuses.has(run.status) ||
+                  cohortRunIds.has(String(run.id)) ||
+                  (requiredRunId !== undefined && String(run.id) === requiredRunId),
+              );
+              const windowAttempts = snapshot.projection.attempts.filter(
+                (attempt) =>
+                  activeExecutionStatuses.has(attempt.status) ||
+                  cohortRunIds.has(String(attempt.runId)) ||
+                  (requiredRunId !== undefined && String(attempt.runId) === requiredRunId),
+              );
+              const windowNodes = snapshot.projection.nodes.filter((node) =>
+                cohortNodeIds.has(String(node.id)),
+              );
+              const windowSubagents = snapshot.projection.subagents.filter(
+                (subagent) =>
+                  activeExecutionStatuses.has(subagent.status) ||
+                  inCohort(cohortRunIds, subagent.runId) ||
+                  cohortNodeIds.has(String(subagent.parentNodeId)),
+              );
+              // The SQL cohort arms join provider_threads globally: a retained
+              // item can reference a thread owned by another app thread, and
+              // its session still belongs in this snapshot. The replay index
+              // holds the latest event per provider thread id, matching the
+              // ON CONFLICT(provider_thread_id) global table.
+              const allProviderThreads = [
+                ...(yield* Ref.get(replayState)).providerThreadsById.values(),
+              ];
+              const windowProviderThreads = allProviderThreads.filter(
+                (providerThread) =>
+                  (providerThread.appThreadId !== null &&
+                    String(providerThread.appThreadId) === String(threadId) &&
+                    providerThread.status === "active") ||
+                  cohortProviderThreadIds.has(String(providerThread.id)) ||
+                  inCohort(cohortNodeIds, providerThread.ownerNodeId),
+              );
+              const cohortProviderThreadSessionIds = new Set(
+                allProviderThreads.flatMap((providerThread) =>
+                  cohortProviderThreadIds.has(String(providerThread.id)) &&
+                  providerThread.providerSessionId !== null
+                    ? [String(providerThread.providerSessionId)]
+                    : [],
+                ),
+              );
+              const windowProviderSessions = snapshot.projection.providerSessions.filter(
+                (session) =>
+                  activeSessionStatuses.has(session.status) ||
+                  cohortProviderThreadSessionIds.has(String(session.id)),
+              );
+              const windowProviderTurns = snapshot.projection.providerTurns.filter(
+                (providerTurn) =>
+                  activeProviderTurnStatuses.has(providerTurn.status) ||
+                  cohortProviderTurnIds.has(String(providerTurn.id)) ||
+                  cohortNodeIds.has(String(providerTurn.nodeId)),
+              );
+              // Pending requests always hydrate. Resolved ones hydrate only
+              // when a retained item references them (no per-turn fan-out),
+              // sharing the same aggregate byte budget as the SQL path —
+              // newest first, so the cap drops the oldest referenced history.
+              const cohortRequestIds = new Set([
+                ...cohortItemIds("requestId"),
+                ...cohortItemIds("runtimeRequestId"),
+              ]);
+              const resolvedRequestKeepIds = new Set<string>();
+              {
+                let resolvedBytes = 0;
+                for (
+                  let index = snapshot.projection.runtimeRequests.length - 1;
+                  index >= 0;
+                  index -= 1
+                ) {
+                  const request = snapshot.projection.runtimeRequests[index]!;
+                  if (activeRequestStatuses.has(request.status)) continue;
+                  if (!cohortRequestIds.has(String(request.id))) continue;
+                  resolvedBytes += bytesOfJson(request);
+                  if (resolvedBytes > THREAD_HISTORY_MAX_RESOLVED_REQUEST_BYTES) break;
+                  resolvedRequestKeepIds.add(String(request.id));
+                }
+              }
+              const windowRuntimeRequests = snapshot.projection.runtimeRequests.filter(
+                (request) =>
+                  activeRequestStatuses.has(request.status) ||
+                  resolvedRequestKeepIds.has(String(request.id)),
+              );
+              const windowMessages = snapshot.projection.messages.filter(
+                (message) =>
+                  cohortMessageIds.has(String(message.id)) || inCohort(liveRunIds, message.runId),
+              );
+              const windowPlans = snapshot.projection.plans.filter(
+                (plan) => plan.status === "active" || cohortPlanIds.has(String(plan.id)),
+              );
+              const windowCheckpointScopes = snapshot.projection.checkpointScopes.filter(
+                (scope) =>
+                  inCohort(cohortRunIds, scope.runId) || cohortNodeIds.has(String(scope.nodeId)),
+              );
+              const windowCheckpoints = snapshot.projection.checkpoints.filter(
+                (checkpoint) =>
+                  activeCheckpointStatuses.has(checkpoint.status) ||
+                  cohortCheckpointIds.has(String(checkpoint.id)) ||
+                  inCohort(cohortRunIds, checkpoint.runId) ||
+                  cohortNodeIds.has(String(checkpoint.nodeId)),
+              );
+              const windowContextHandoffs = snapshot.projection.contextHandoffs.filter(
+                (handoff) =>
+                  activeHandoffStatuses.has(handoff.status) ||
+                  cohortHandoffIds.has(String(handoff.id)),
+              );
+              const windowContextTransfers = snapshot.projection.contextTransfers.filter(
+                (transfer) =>
+                  activeTransferStatuses.has(transfer.status) ||
+                  inCohort(cohortRunIds, transfer.targetRunId) ||
+                  (transfer.resolution !== null &&
+                    "contextHandoffId" in transfer.resolution &&
+                    cohortHandoffIds.has(String(transfer.resolution.contextHandoffId))),
+              );
+              const [
+                thread,
+                runs,
+                attempts,
+                nodes,
+                subagents,
+                providerSessions,
+                providerThreads,
+                providerTurns,
+                runtimeRequests,
+                messages,
+                plans,
+                checkpointScopes,
+                checkpoints,
+                contextHandoffs,
+                contextTransfers,
+              ] = yield* Effect.all([
+                boundRow(snapshot.projection.thread, encodeThreadPayloadValue, decodeThreadPayload),
+                boundRows(windowRuns, encodeRunPayloadValue, decodeRunPayload),
+                boundRows(windowAttempts, encodeRunAttemptPayloadValue, decodeRunAttemptPayload),
+                boundRows(windowNodes, encodeNodePayloadValue, decodeNodePayload),
+                boundRows(windowSubagents, encodeSubagentPayloadValue, decodeSubagentPayload),
+                boundRows(
+                  windowProviderSessions,
+                  encodeProviderSessionPayloadValue,
+                  decodeProviderSessionPayload,
+                ),
+                boundRows(
+                  windowProviderThreads,
+                  encodeProviderThreadPayloadValue,
+                  decodeProviderThreadPayload,
+                ),
+                boundRows(
+                  windowProviderTurns,
+                  encodeProviderTurnPayloadValue,
+                  decodeProviderTurnPayload,
+                ),
+                boundRows(
+                  windowRuntimeRequests,
+                  encodeRuntimeRequestPayloadValue,
+                  decodeRuntimeRequestPayload,
+                ),
+                boundRows(windowMessages, encodeMessagePayloadValue, decodeMessagePayload),
+                boundRows(windowPlans, encodePlanPayloadValue, decodePlanPayload),
+                boundRows(
+                  windowCheckpointScopes,
+                  encodeCheckpointScopePayloadValue,
+                  decodeCheckpointScopePayload,
+                ),
+                boundRows(windowCheckpoints, encodeCheckpointPayloadValue, decodeCheckpointPayload),
+                boundRows(
+                  windowContextHandoffs,
+                  encodeContextHandoffPayloadValue,
+                  decodeContextHandoffPayload,
+                ),
+                boundRows(
+                  windowContextTransfers,
+                  encodeContextTransferPayloadValue,
+                  decodeContextTransferPayload,
+                ),
+              ]);
+              return {
+                ...snapshot,
+                hasOlderHistory: start > 0 || bounded.length < candidates.length - start,
+                projection: {
+                  ...snapshot.projection,
+                  thread,
+                  runs,
+                  attempts,
+                  nodes,
+                  subagents,
+                  providerSessions,
+                  providerThreads,
+                  providerTurns,
+                  runtimeRequests,
+                  messages,
+                  plans,
+                  checkpointScopes,
+                  checkpoints,
+                  contextHandoffs,
+                  contextTransfers,
+                  turnItems,
+                  visibleTurnItems: bounded,
+                },
+              };
+            }).pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+          ),
         ),
     };
 

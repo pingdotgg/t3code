@@ -40,6 +40,7 @@ import {
   ThreadHistoryController,
   threadHistoryControllerLayer,
 } from "./threadHistoryController.ts";
+import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
@@ -822,6 +823,222 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect(
+    "reseeds progressive history from a bounded snapshot when the cursor anchor is gone",
+    () =>
+      Effect.gen(function* () {
+        const refreshedProjection: OrchestrationV2ThreadProjection = {
+          ...BASE_PROJECTION,
+          thread: { ...BASE_PROJECTION.thread, title: "Refreshed snapshot" },
+        };
+        const requestedPaths: string[] = [];
+        const harness = yield* makeHarness({
+          historyHttpClient: HttpClient.make((request, url) => {
+            requestedPaths.push(url.pathname);
+            if (url.pathname.endsWith("/history")) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json(
+                    {
+                      _tag: "EnvironmentRequestInvalidError",
+                      code: "invalid_request",
+                      reason: "invalid_history_cursor",
+                      traceId: "trace-dead-cursor",
+                    },
+                    { status: 400 },
+                  ),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  snapshotSequence: 20,
+                  projection: refreshedProjection,
+                  historyCursor: "fresh-history-cursor",
+                  hasMoreHistory: true,
+                  latestLocalTurnOrdinal: 12,
+                }),
+              ),
+            );
+          }),
+        });
+        yield* Queue.offer(harness.inputs, {
+          kind: "snapshot",
+          snapshotSequence: 14,
+          projection: BASE_PROJECTION,
+          historyCursor: "dead-history-cursor",
+          hasMoreHistory: true,
+          latestLocalTurnOrdinal: 10,
+          payloadBudgetExceeded: false,
+        });
+        yield* awaitThreadState(
+          harness.observed,
+          (value) =>
+            value.status === "live" && value.history.historyCursor === "dead-history-cursor",
+        );
+
+        expect(yield* harness.loadEarlier()).toEqual({ _tag: "loaded" });
+
+        const state = yield* SubscriptionRef.get(harness.threadState);
+        expect(requestedPaths.some((path) => path.endsWith("/history"))).toBe(true);
+        expect(requestedPaths.some((path) => path.endsWith("/bounded"))).toBe(true);
+        expect(state.history).toMatchObject({
+          historyCursor: "fresh-history-cursor",
+          hasMoreHistory: true,
+          loading: false,
+          error: null,
+          expanded: false,
+          latestLocalTurnOrdinal: 12,
+        });
+        expect(Option.getOrThrow(state.data).thread.title).toBe("Refreshed snapshot");
+      }),
+  );
+
+  it.effect("marks the thread deleted when the bounded reseed reports not found", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        historyHttpClient: HttpClient.make((request, url) => {
+          if (url.pathname.endsWith("/history")) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  {
+                    _tag: "EnvironmentRequestInvalidError",
+                    code: "invalid_request",
+                    reason: "invalid_history_cursor",
+                    traceId: "trace-dead-cursor",
+                  },
+                  { status: 400 },
+                ),
+              ),
+            );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                {
+                  _tag: "EnvironmentResourceNotFoundError",
+                  code: "not_found",
+                  reason: "thread_not_found",
+                  traceId: "trace-reseed-missing",
+                },
+                { status: 404 },
+              ),
+            ),
+          );
+        }),
+      });
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshotSequence: 14,
+        projection: BASE_PROJECTION,
+        historyCursor: "dead-history-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 10,
+        payloadBudgetExceeded: false,
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && value.history.historyCursor === "dead-history-cursor",
+      );
+
+      // A dead cursor on a deleted thread must not keep the stale projection
+      // rendered or retry an unrecoverable cursor.
+      expect(yield* harness.loadEarlier()).toEqual({ _tag: "noop" });
+
+      const state = yield* SubscriptionRef.get(harness.threadState);
+      expect(state.status).toBe("deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(state.history).toEqual(EMPTY_THREAD_HISTORY_META);
+    }),
+  );
+
+  it.effect("skips a stale bounded reseed when a newer socket event landed in flight", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const boundedRequested = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        historyHttpClient: HttpClient.make((request, url) => {
+          if (url.pathname.endsWith("/history")) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  {
+                    _tag: "EnvironmentRequestInvalidError",
+                    code: "invalid_request",
+                    reason: "invalid_history_cursor",
+                    traceId: "trace-dead-cursor",
+                  },
+                  { status: 400 },
+                ),
+              ),
+            );
+          }
+          return Deferred.succeed(boundedRequested, void 0).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.map(() =>
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  snapshotSequence: 20,
+                  projection: {
+                    ...BASE_PROJECTION,
+                    thread: { ...BASE_PROJECTION.thread, title: "Stale reseed" },
+                  },
+                  historyCursor: "fresh-history-cursor",
+                  hasMoreHistory: true,
+                  latestLocalTurnOrdinal: 12,
+                }),
+              ),
+            ),
+          );
+        }),
+      });
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshotSequence: 14,
+        projection: BASE_PROJECTION,
+        historyCursor: "dead-history-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 10,
+        payloadBudgetExceeded: false,
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && value.history.historyCursor === "dead-history-cursor",
+      );
+
+      const pending = yield* Effect.forkChild(harness.loadEarlier());
+      // The bounded reseed must be in flight before the socket event lands.
+      yield* Deferred.await(boundedRequested);
+      // A socket event newer than the in-flight reseed must not be discarded.
+      yield* Queue.offer(harness.inputs, titleUpdated("In-flight update", 21));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) && value.data.value.thread.title === "In-flight update",
+      );
+      yield* Deferred.succeed(gate, void 0);
+
+      const result = yield* Fiber.join(pending);
+      expect(result._tag).toBe("error");
+
+      const state = yield* SubscriptionRef.get(harness.threadState);
+      expect(Option.getOrThrow(state.data).thread.title).toBe("In-flight update");
+      expect(state.history).toMatchObject({
+        historyCursor: "dead-history-cursor",
+        loading: false,
+      });
+      expect(state.history.error).not.toBeNull();
+    }),
+  );
+
   it.effect("seeds the thread from the HTTP snapshot and resumes live events", () =>
     Effect.gen(function* () {
       const httpProjection: OrchestrationV2ThreadProjection = {
@@ -1397,6 +1614,226 @@ describe("EnvironmentThreads", () => {
       // Title event applied; drop itself did not clear progressive meta.
       expect(seededProjection.turnItems.map((item) => String(item.id))).toEqual([
         String(recent.id),
+      ]);
+    }),
+  );
+
+  it.effect("keeps new-run items whose ordinals sort below the partial watermark", () =>
+    Effect.gen(function* () {
+      // A long provider turn fills the retained window at ordinal 1250. The
+      // next run's items allocate runOrdinal*100 and providerTurnOrdinal*100+i
+      // from lower counters, so they sort below the watermark — they are new
+      // live content, not paged history.
+      const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+      const retained = {
+        id: TurnItemId.make("item-turn-11-tail"),
+        threadId: THREAD_ID,
+        runId: "run-11" as never,
+        nodeId: null,
+        providerThreadId: "provider-thread-1" as never,
+        providerTurnId: "turn-11" as never,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1250,
+        status: "completed" as const,
+        title: null,
+        startedAt: NOW,
+        completedAt: NOW,
+        updatedAt: NOW,
+        type: "command_execution" as const,
+        input: "tail",
+        output: "ok",
+        exitCode: 0,
+      } satisfies OrchestrationV2TurnItem;
+      const retainedRow = {
+        position: 0,
+        visibility: "local" as const,
+        sourceThreadId: THREAD_ID,
+        sourceItemId: retained.id,
+        item: retained,
+      };
+      const boundedProjection: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        thread: { ...BASE_PROJECTION.thread, title: "Long turn" },
+        runs: [
+          {
+            id: "run-11" as never,
+            threadId: THREAD_ID,
+            ordinal: 11,
+            providerInstanceId: "codex" as never,
+            modelSelection: { instanceId: "codex" as never, model: "gpt-5" },
+            providerThreadId: "provider-thread-1" as never,
+            userMessageId: "message-11" as never,
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed" as const,
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+        providerTurns: [
+          {
+            id: "turn-11" as never,
+            providerThreadId: "provider-thread-1" as never,
+            nodeId: "node-1" as never,
+            runAttemptId: "attempt-11" as never,
+            nativeTurnRef: null,
+            ordinal: 12,
+            status: "completed" as const,
+            startedAt: NOW,
+            completedAt: NOW,
+          },
+        ],
+        turnItems: [retained],
+        visibleTurnItems: [retainedRow],
+      };
+      const harness = yield* makeHarness({
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: {
+            snapshotSequence: 5,
+            projection: boundedProjection,
+            latestLocalTurnOrdinal: 1250,
+          },
+          history: {
+            historyCursor: "partial-cursor",
+            hasMoreHistory: true,
+            latestLocalTurnOrdinal: 1250,
+          },
+        },
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+
+      // Run 12 starts: run.updated then its turn, then items below the
+      // watermark — a new user message at 1200 and the provider turn's first
+      // item at 1105.
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 6,
+        event: {
+          id: EventId.make("event-run-12"),
+          type: "run.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+          payload: {
+            id: "run-12" as never,
+            threadId: THREAD_ID,
+            ordinal: 12,
+            providerInstanceId: "codex" as never,
+            modelSelection: { instanceId: "codex" as never, model: "gpt-5" },
+            providerThreadId: "provider-thread-1" as never,
+            userMessageId: "message-12" as never,
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "starting" as const,
+            requestedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+            startedAt: null,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+      });
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 7,
+        event: {
+          id: EventId.make("event-turn-12"),
+          type: "provider-turn.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+          payload: {
+            id: "turn-12" as never,
+            providerThreadId: "provider-thread-1" as never,
+            nodeId: "node-1" as never,
+            runAttemptId: "attempt-12" as never,
+            nativeTurnRef: null,
+            ordinal: 11,
+            status: "running" as const,
+            startedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+            completedAt: null,
+          },
+        },
+      });
+      const userMessage = {
+        id: TurnItemId.make("item-run-12-user"),
+        threadId: THREAD_ID,
+        runId: "run-12" as never,
+        nodeId: null,
+        providerThreadId: "provider-thread-1" as never,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1200,
+        status: "completed" as const,
+        title: null,
+        startedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+        completedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+        updatedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+        type: "user_message" as const,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        messageId: "message-12" as never,
+        inputIntent: "turn_start" as const,
+        text: "next question",
+        attachments: [],
+      } satisfies OrchestrationV2TurnItem;
+      const providerItem = {
+        ...retained,
+        id: TurnItemId.make("item-turn-12-first"),
+        runId: "run-12" as never,
+        providerTurnId: "turn-12" as never,
+        ordinal: 1105,
+        status: "running" as const,
+        completedAt: null,
+      } satisfies OrchestrationV2TurnItem;
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 8,
+        event: {
+          id: EventId.make("event-user-12"),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+          payload: userMessage,
+        },
+      });
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 9,
+        event: {
+          id: EventId.make("event-provider-12"),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+          payload: providerItem,
+        },
+      });
+
+      const after = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.turnItems.length === 3,
+      );
+      const applied = Option.getOrThrow(after.data);
+      // Both new items survive despite ordinals below the 1250 watermark.
+      expect(applied.turnItems.map((item) => String(item.id))).toEqual([
+        String(retained.id),
+        String(userMessage.id),
+        String(providerItem.id),
+      ]);
+      expect(applied.visibleTurnItems.map((row) => String(row.sourceItemId))).toEqual([
+        String(providerItem.id),
+        String(userMessage.id),
+        String(retained.id),
       ]);
     }),
   );

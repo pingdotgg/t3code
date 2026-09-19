@@ -262,14 +262,28 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
-const getProjection = (threadId: ThreadId) =>
-  request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
+const getProjection = (threadId: ThreadId, options?: { readonly bounded?: boolean }) =>
+  request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, {
+    threadId,
+    // Older servers strip the unknown key and return the full projection.
+    ...(options?.bounded === false ? {} : { acceptBoundedSnapshot: true as const }),
+  });
+
+const getCheckpointContext = (threadId: ThreadId) =>
+  request(ORCHESTRATION_V2_WS_METHODS.getThreadCheckpointContext, { threadId });
 
 const supportsServerResolvedCommandContext = Effect.fn(
   "EnvironmentCommands.supportsServerResolvedCommandContext",
 )(function* () {
   const config = yield* getInitialServerConfig();
   return config.environment.capabilities.serverResolvedCommandContext === true;
+});
+
+const supportsThreadCheckpointContext = Effect.fn(
+  "EnvironmentCommands.supportsThreadCheckpointContext",
+)(function* () {
+  const config = yield* getInitialServerConfig();
+  return config.environment.capabilities.threadCheckpointContext === true;
 });
 
 const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
@@ -837,12 +851,18 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
         checkpointId: CheckpointId.make(input.checkpointId),
       });
     }
-    const projection = yield* getProjection(input.threadId);
+    // Bounded projections only retain cohort checkpoints; the targeted context
+    // read resolves ordinals across the whole history without a projection.
+    // The projection fallback needs every checkpoint, so it must not opt into
+    // the bounded window.
+    const checkpoints = (yield* supportsThreadCheckpointContext())
+      ? (yield* getCheckpointContext(input.threadId)).checkpoints
+      : (yield* getProjection(input.threadId, { bounded: false })).checkpoints;
     const checkpoint =
-      projection.checkpoints.find(
+      checkpoints.find(
         (candidate) => candidate.id === input.checkpointId && candidate.scopeId === input.scopeId,
       ) ??
-      projection.checkpoints.findLast((candidate) =>
+      checkpoints.findLast((candidate) =>
         input.turnCount === 0
           ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
           : candidate.appRunOrdinal === input.turnCount,
@@ -871,7 +891,9 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
 export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSession")(function* (
   input: StopThreadSessionInput,
 ) {
-  const projection = yield* getProjection(input.threadId);
+  // Detach must see every live session; the bounded window only carries the
+  // retained timeline cohort, so a ready session outside it would survive.
+  const projection = yield* getProjection(input.threadId, { bounded: false });
   const commandId = yield* allocateCommandId(input);
   let result = { sequence: 0 };
   for (const session of projection.providerSessions) {

@@ -1024,6 +1024,12 @@ const OrchestrationV2TurnItemBaseFields = {
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
+  /**
+   * Set when the stored bounded preview dropped content (oversized or
+   * over-deep payload). The complete raw item remains retrievable through
+   * `orchestration.getThreadTurnItem`.
+   */
+  payloadTruncated: Schema.optional(Schema.Boolean),
 } as const;
 
 export const OrchestrationV2FileSearchResult = Schema.Struct({
@@ -2604,6 +2610,9 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   searchThreads: "orchestration.searchThreads",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadProjection: "orchestration.getThreadProjection",
+  getThreadHistoryPage: "orchestration.getThreadHistoryPage",
+  getThreadCheckpointContext: "orchestration.getThreadCheckpointContext",
+  getThreadTurnItem: "orchestration.getThreadTurnItem",
   getWorkflowScript: "orchestration.getWorkflowScript",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
@@ -2695,9 +2704,117 @@ export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2Dispatc
 
 export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
   threadId: ThreadId,
+  /**
+   * Opt in to the bounded snapshot-window response (recent complete turns plus
+   * progressive-history metadata). Older servers decode the input without this
+   * key and still return the full projection; callers that omit it always get
+   * the legacy unbounded response so rewind and history access keep working.
+   */
+  acceptBoundedSnapshot: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2GetThreadProjectionInput =
   typeof OrchestrationV2GetThreadProjectionInput.Type;
+
+/**
+ * Compatibility response for `orchestration.getThreadProjection`. When the
+ * request opts in via `acceptBoundedSnapshot`, the timeline fields
+ * (`turnItems`, `visibleTurnItems`, `messages`) carry the same bounded recent
+ * window as `OrchestrationV2ThreadBoundedSnapshot` instead of the full history;
+ * the additive progressive-history fields declare that bound in-band. Requests
+ * without the opt-in keep the legacy full projection so older clients retain
+ * complete history access and out-of-window checkpoint rewind. Newer clients
+ * page older rows with `historyCursor` through `orchestration.getThreadHistoryPage`
+ * or the HTTP history endpoint. Absent fields mean the server did not bound the
+ * response.
+ */
+export const OrchestrationV2GetThreadProjectionResult = Schema.Struct({
+  ...OrchestrationV2ThreadProjection.fields,
+  /**
+   * Event high-water mark behind this snapshot. A client may pass it to
+   * `orchestration.subscribeThread`'s `afterSequence` to resume live events
+   * without replaying the window it already holds.
+   */
+  snapshotSequence: Schema.optionalKey(NonNegativeInt),
+  /** Opaque cursor into older history; clients must not parse it. */
+  historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  hasMoreHistory: Schema.optionalKey(Schema.Boolean),
+  /** Max local turn ordinal from the authoritative full projection. */
+  latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
+  /** True when complete turns or required live control state exceed the usual byte budget. */
+  payloadBudgetExceeded: Schema.optionalKey(Schema.Boolean),
+});
+export type OrchestrationV2GetThreadProjectionResult =
+  typeof OrchestrationV2GetThreadProjectionResult.Type;
+
+export const OrchestrationV2GetThreadHistoryPageInput = Schema.Struct({
+  threadId: ThreadId,
+  /**
+   * Opaque cursor issued by a bounded `getThreadProjection` response or a prior
+   * history page (`nextCursor`). Same format as the HTTP history endpoint.
+   */
+  historyCursor: TrimmedNonEmptyString,
+});
+export type OrchestrationV2GetThreadHistoryPageInput =
+  typeof OrchestrationV2GetThreadHistoryPageInput.Type;
+
+export const OrchestrationV2GetThreadCheckpointContextInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2GetThreadCheckpointContextInput =
+  typeof OrchestrationV2GetThreadCheckpointContextInput.Type;
+
+export const OrchestrationV2GetThreadTurnItemInput = Schema.Struct({
+  threadId: ThreadId,
+  itemId: TurnItemId,
+});
+export type OrchestrationV2GetThreadTurnItemInput =
+  typeof OrchestrationV2GetThreadTurnItemInput.Type;
+
+/**
+ * Single raw turn item fetched outside the bounded window — the recovery path
+ * for items whose stored preview was compacted (`payloadTruncated`). `null`
+ * when no row with that id exists on the thread.
+ */
+export const OrchestrationV2GetThreadTurnItemResult = Schema.Struct({
+  item: Schema.NullOr(OrchestrationV2TurnItem),
+});
+export type OrchestrationV2GetThreadTurnItemResult =
+  typeof OrchestrationV2GetThreadTurnItemResult.Type;
+
+/**
+ * Checkpoint metadata for command shaping (e.g. resolving a rewind ordinal to
+ * a durable rollback target). Metadata columns only — no run payloads, file
+ * summaries, or timeline rows — so a client can validate an identified or
+ * ordinal checkpoint without fetching a thread projection.
+ */
+export const OrchestrationV2ThreadCheckpointContext = Schema.Struct({
+  runs: Schema.Array(
+    OrchestrationV2Run.mapFields(({ id, ordinal, status }) => ({ id, ordinal, status })),
+  ),
+  checkpointScopes: Schema.Array(
+    OrchestrationV2CheckpointScope.mapFields(({ id, runId, kind, cwd }) => ({
+      id,
+      runId,
+      kind,
+      cwd,
+    })),
+  ),
+  checkpoints: Schema.Array(
+    OrchestrationV2Checkpoint.mapFields(
+      ({ id, scopeId, runId, ordinalWithinScope, appRunOrdinal, status, ref }) => ({
+        id,
+        scopeId,
+        runId,
+        ordinalWithinScope,
+        appRunOrdinal,
+        status,
+        ref,
+      }),
+    ),
+  ),
+});
+export type OrchestrationV2ThreadCheckpointContext =
+  typeof OrchestrationV2ThreadCheckpointContext.Type;
 
 export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   /**
@@ -2824,6 +2941,16 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   },
 ) {}
 
+/** Raised when a history-page cursor no longer resolves, so callers reseed instead of retrying it. */
+export class OrchestrationV2InvalidHistoryCursorError extends Schema.TaggedError<OrchestrationV2InvalidHistoryCursorError>()(
+  "OrchestrationV2InvalidHistoryCursorError",
+  {
+    threadId: ThreadId,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export class OrchestrationV2GetShellSnapshotError extends Schema.TaggedError<OrchestrationV2GetShellSnapshotError>()(
   "OrchestrationV2GetShellSnapshotError",
   {
@@ -2846,6 +2973,7 @@ export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
+  OrchestrationV2InvalidHistoryCursorError,
   OrchestrationV2ThreadLaunchError,
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
@@ -2919,7 +3047,19 @@ export const OrchestrationV2RpcSchemas = {
   },
   getThreadProjection: {
     input: OrchestrationV2GetThreadProjectionInput,
-    output: OrchestrationV2ThreadProjection,
+    output: OrchestrationV2GetThreadProjectionResult,
+  },
+  getThreadHistoryPage: {
+    input: OrchestrationV2GetThreadHistoryPageInput,
+    output: OrchestrationV2ThreadHistoryPage,
+  },
+  getThreadCheckpointContext: {
+    input: OrchestrationV2GetThreadCheckpointContextInput,
+    output: OrchestrationV2ThreadCheckpointContext,
+  },
+  getThreadTurnItem: {
+    input: OrchestrationV2GetThreadTurnItemInput,
+    output: OrchestrationV2GetThreadTurnItemResult,
   },
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,

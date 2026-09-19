@@ -180,6 +180,7 @@ import {
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2InvalidHistoryCursorError,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
@@ -1471,6 +1472,37 @@ const WsOrchestrationV2GetThreadProjectionRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetThreadHistoryPageRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadHistoryPage,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadHistoryPage.input,
+    success: OrchestrationV2RpcSchemas.getThreadHistoryPage.output,
+    error: Schema.Union([
+      OrchestrationV2GetThreadProjectionError,
+      OrchestrationV2InvalidHistoryCursorError,
+      EnvironmentAuthorizationError,
+    ]),
+  },
+);
+
+const WsOrchestrationV2GetThreadCheckpointContextRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadCheckpointContext,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadCheckpointContext.input,
+    success: OrchestrationV2RpcSchemas.getThreadCheckpointContext.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsOrchestrationV2GetThreadTurnItemRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadTurnItem,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadTurnItem.input,
+    success: OrchestrationV2RpcSchemas.getThreadTurnItem.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
   {
@@ -1777,6 +1809,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SearchThreadsRpc,
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
+  WsOrchestrationV2GetThreadHistoryPageRpc,
+  WsOrchestrationV2GetThreadCheckpointContextRpc,
+  WsOrchestrationV2GetThreadTurnItemRpc,
   WsOrchestrationV2LaunchThreadRpc,
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
