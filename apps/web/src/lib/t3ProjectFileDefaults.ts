@@ -25,7 +25,13 @@ export async function readT3ProjectFileDefaultThreadEnvMode(
   const result = await executeAtomQuery(
     appAtomRegistry,
     getProjectFileQueryAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME),
-    { reportDefect: false, reportFailure: false },
+    {
+      reportDefect: false,
+      reportFailure: false,
+      // The connection can drop after the caller's availability check. This
+      // optional read must still settle so draft creation can use its fallback.
+      signal: AbortSignal.timeout(3_000),
+    },
   );
   const data = resolveProjectFileQueryData(
     environmentId,
