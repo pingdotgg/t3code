@@ -9,6 +9,8 @@ const baseState: ThreadActionMenuState = {
   isSettled: false,
   isSnoozed: false,
   canSnoozeNow: true,
+  isPaused: false,
+  canPauseNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
   supports: { settlement: true, snooze: true, pinning: true, titleRegeneration: true },
@@ -34,7 +36,7 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         supports: { settlement: false, snooze: false, pinning: false, titleRegeneration: false },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual(["pause", "rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
   });
 
   it("groups project settings with utility actions before archive", () => {
@@ -127,5 +129,12 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "archive",
     );
     expect(archiveItem?.disabled).toBe(true);
+  });
+
+  it("offers pause when the session can pause, hiding it once paused", () => {
+    expect(ids(baseState)).toContain("pause");
+    expect(ids({ ...baseState, canPauseNow: false })).not.toContain("pause");
+    expect(ids({ ...baseState, isPaused: true })).not.toContain("pause");
+    expect(ids({ ...baseState, isSettled: true })).not.toContain("pause");
   });
 });

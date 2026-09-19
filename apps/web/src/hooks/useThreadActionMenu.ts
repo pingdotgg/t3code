@@ -6,7 +6,12 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canPauseSession,
+  canSnooze,
+  effectiveSnoozed,
+  isSessionPaused,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
@@ -86,6 +91,7 @@ export function useThreadActionMenu(input: {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    pauseThreadSession,
     pinThread,
     confirmAndUnpinThread,
     archiveThread,
@@ -147,6 +153,8 @@ export function useThreadActionMenu(input: {
           isSettled: supports.settlement && thread.settledOverride === "settled",
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
+          isPaused: isSessionPaused(thread),
+          canPauseNow: canPauseSession(thread),
           isRegeneratingTitle,
           isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
           supports,
@@ -237,6 +245,9 @@ export function useThreadActionMenu(input: {
             return;
           case "unsnooze":
             await reportFailure("Failed to wake thread", () => unsnoozeThread(threadRef));
+            return;
+          case "pause":
+            await reportFailure("Failed to pause session", () => pauseThreadSession(threadRef));
             return;
           case "pin":
             await reportFailure("Failed to pin thread", () => pinThread(threadRef));
@@ -348,6 +359,7 @@ export function useThreadActionMenu(input: {
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
       onStartRename,
+      pauseThreadSession,
       pinThread,
       projectCwd,
       projectGroupingSettings,

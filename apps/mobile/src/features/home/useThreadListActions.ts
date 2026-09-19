@@ -1,6 +1,10 @@
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canPauseSession,
+  canSnooze,
+  effectiveSnoozed,
+} from "@t3tools/client-runtime/state/thread-settled";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
@@ -232,6 +236,7 @@ export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly pauseThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -245,6 +250,9 @@ export function useThreadListActions(): {
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
   const executeAction = useThreadActionExecutor();
+  const stopSessionMutation = useAtomCommand(threadEnvironment.stopSession, {
+    reportFailure: false,
+  });
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
@@ -264,6 +272,41 @@ export function useThreadListActions(): {
   const settleThread = useCallback(
     async (thread: EnvironmentThreadShell) => (await executeAction("settle", thread)) === true,
     [executeAction],
+  );
+  const pauseThread = useCallback(
+    async (thread: EnvironmentThreadShell) => {
+      // Same guard as web/archive: never yank a thread mid-turn. Interrupt
+      // first, then pause. Resume is the next message (the server recreates
+      // a stopped session on turn start).
+      if (!canPauseSession(thread)) {
+        Alert.alert(
+          "Could not pause session",
+          thread.session?.status === "running"
+            ? "This thread is working. Interrupt it first, then try again."
+            : thread.session?.status === "starting"
+              ? "This thread is still starting. Try again once it's idle."
+              : "This thread has no active session to pause.",
+        );
+        return false;
+      }
+      selectionHaptic();
+      const result = await stopSessionMutation({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Alert.alert(
+          "Could not pause session",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The session could not be paused.",
+        );
+        return false;
+      }
+      return true;
+    },
+    [stopSessionMutation],
   );
   const snoozeThread = useCallback(
     async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
@@ -693,6 +736,7 @@ export function useThreadListActions(): {
     archiveThread,
     confirmDeleteThread,
     settleThread,
+    pauseThread,
     snoozeThread,
     unsnoozeThread,
     unsettleThread,

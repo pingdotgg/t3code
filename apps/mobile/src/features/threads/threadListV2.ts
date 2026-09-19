@@ -34,7 +34,7 @@ export { snoozeWakeLabel };
  * (approval), "in motion" (working), and "broken" (failed). Ready is the
  * unlabeled resting state.
  */
-export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
+export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "paused" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
@@ -146,6 +146,11 @@ export function resolveThreadListV2Status(
   }
   if (thread.session?.status === "error") {
     return "failed";
+  }
+  if (thread.session != null && thread.session.status === "stopped") {
+    // A stopped session carrying a failure still reads as failed, never as
+    // the calm Paused state. Mirrors the web sidebar's Paused pill gating.
+    return thread.session.lastError != null ? "failed" : "paused";
   }
   return "ready";
 }
