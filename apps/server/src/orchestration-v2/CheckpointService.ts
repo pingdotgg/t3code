@@ -19,6 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import { checkpointStartRef } from "../checkpointing/Utils.ts";
 import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "./IdAllocator.ts";
@@ -115,6 +116,15 @@ export type CheckpointServiceV2Error = typeof CheckpointServiceV2Error.Type;
 
 const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 
+export class CheckpointBaselineCleanupError extends Schema.TaggedError<CheckpointBaselineCleanupError>()(
+  "CheckpointBaselineCleanupError",
+  { scopeId: CheckpointScopeId, ordinalWithinScope: Schema.Number, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to clean up checkpoint baseline ${this.ordinalWithinScope} for scope ${this.scopeId}.`;
+  }
+}
+
 export interface CheckpointServiceV2Shape {
   readonly prepareRootRunScope: (input: {
     readonly threadId: ThreadId;
@@ -135,6 +145,10 @@ export interface CheckpointServiceV2Shape {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
+  readonly discardBaseline: (input: {
+    readonly scope: OrchestrationV2CheckpointScope;
+    readonly ordinalWithinScope: number;
+  }) => Effect.Effect<void, CheckpointBaselineCleanupError>;
   readonly capture: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly runId: RunId | null;
@@ -273,8 +287,12 @@ export const layer: Layer.Layer<
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(getWorkspaceSemaphore(cwd), (semaphore) => semaphore.withPermits(1)(effect));
 
-    const isGitCheckpointable = (cwd: string) =>
-      checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
+    // A false here must mean a confirmed non-Git workspace. Detection failures
+    // propagate as typed errors: outbox-driven callers retry them within the
+    // worker's attempt budget and mark the effect failed if they persist,
+    // instead of recording a false "no repository" that could strand a
+    // previously captured baseline ref.
+    const isGitCheckpointable = (cwd: string) => checkpointStore.isGitRepository(cwd);
 
     const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
 
@@ -294,13 +312,25 @@ export const layer: Layer.Layer<
             cwd: input.scope.cwd,
             checkpointRef,
           });
-          if (exists) {
-            return;
+          if (!exists) {
+            yield* checkpointStore.captureCheckpoint({ cwd: input.scope.cwd, checkpointRef });
           }
-
+          const startRef = checkpointStartRef(
+            checkpointRefForScopeOrdinal({
+              scopeId: input.scope.id,
+              ordinalWithinScope: input.ordinalWithinScope + 1,
+            }),
+          );
+          if (
+            yield* checkpointStore.hasCheckpointRef({
+              cwd: input.scope.cwd,
+              checkpointRef: startRef,
+            })
+          )
+            return;
           yield* checkpointStore.captureCheckpoint({
             cwd: input.scope.cwd,
-            checkpointRef,
+            checkpointRef: startRef,
           });
         }),
       ).pipe(
@@ -387,7 +417,7 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             ordinalWithinScope: input.ordinalWithinScope,
           });
-          const previousCheckpointRef = checkpointRefForScopeOrdinal({
+          const legacyPreviousCheckpointRef = checkpointRefForScopeOrdinal({
             scopeId: input.scope.id,
             ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
           });
@@ -440,6 +470,22 @@ export const layer: Layer.Layer<
             });
           }
 
+          const startRef = checkpointStartRef(checkpointRef);
+          const startRefExists = yield* checkpointStore
+            .hasCheckpointRef({
+              cwd: input.scope.cwd,
+              checkpointRef: startRef,
+            })
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration V2 checkpoint start ref lookup failed", {
+                  scopeId: input.scope.id,
+                  checkpointRef: startRef,
+                  cause: String(cause),
+                }).pipe(Effect.as(false)),
+              ),
+            );
+          const previousCheckpointRef = startRefExists ? startRef : legacyPreviousCheckpointRef;
           const previousExists = yield* checkpointStore
             .hasCheckpointRef({
               cwd: input.scope.cwd,
@@ -549,7 +595,10 @@ export const layer: Layer.Layer<
         input.scope.cwd,
         checkpointStore.deleteCheckpointRefs({
           cwd: input.scope.cwd,
-          checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+          checkpointRefs: input.checkpoints.flatMap((checkpoint) => [
+            checkpoint.ref,
+            checkpointStartRef(checkpoint.ref),
+          ]),
         }),
       ).pipe(
         Effect.mapError(
@@ -563,6 +612,39 @@ export const layer: Layer.Layer<
       );
 
     return CheckpointServiceV2.of({
+      discardBaseline: (input) =>
+        withWorkspaceLock(
+          input.scope.cwd,
+          Effect.gen(function* () {
+            // A confirmed non-Git workspace never stored a start ref, so skip
+            // without resolving a driver for one. Detection failures still
+            // propagate: an earlier baseline may exist, and the effect retries
+            // within its attempt budget rather than falsely skipping.
+            if (!(yield* isGitCheckpointable(input.scope.cwd))) {
+              return;
+            }
+            yield* checkpointStore.deleteCheckpointRefs({
+              cwd: input.scope.cwd,
+              checkpointRefs: [
+                checkpointStartRef(
+                  checkpointRefForScopeOrdinal({
+                    scopeId: input.scope.id,
+                    ordinalWithinScope: input.ordinalWithinScope,
+                  }),
+                ),
+              ],
+            });
+          }),
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new CheckpointBaselineCleanupError({
+                scopeId: input.scope.id,
+                ordinalWithinScope: input.ordinalWithinScope,
+                cause,
+              }),
+          ),
+        ),
       prepareRootRunScope: (input) =>
         makeRootRunScope({ ...input, idAllocator }).pipe(
           Effect.mapError(

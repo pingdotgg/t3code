@@ -1,3 +1,10 @@
+import * as Path from "effect/Path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { ServerConfig } from "../config.ts";
+import { checkpointStartRef } from "../checkpointing/Utils.ts";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -104,4 +111,210 @@ it.effect.each([false, true, "interrupt"] as const)(
       });
     }).pipe(Effect.provide(testLayer));
   },
+);
+
+it.effect("propagates repository detection failures after a captured baseline", () => {
+  const scope: OrchestrationV2CheckpointScope = {
+    id: CheckpointScopeId.make("checkpoint-scope:detection-failure"),
+    threadId: ThreadId.make("thread:detection-failure"),
+    runId: RunId.make("run:detection-failure:1"),
+    nodeId: NodeId.make("node:detection-failure:1"),
+    parentScopeId: null,
+    providerThreadId: ProviderThreadId.make("provider-thread:detection-failure"),
+    kind: "root_run",
+    ordinalWithinParent: 0,
+    advancesAppRunCount: true,
+    cwd: "/repo",
+    createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+  };
+  let detectionFails = false;
+  const deletedRefs: string[] = [];
+  const isGitRepository = vi.fn((_cwd: string) =>
+    detectionFails
+      ? Effect.fail(
+          new VcsProcessTimeoutError({
+            operation: "test.detect",
+            command: "git",
+            cwd: "/repo",
+            timeoutMs: 5000,
+          }),
+        )
+      : Effect.succeed(true),
+  );
+  const testLayer = checkpointServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        idAllocatorLayer,
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          isGitRepository,
+          hasCheckpointRef: () => Effect.succeed(true),
+          captureCheckpoint: () => Effect.void,
+          deleteCheckpointRefs: (input) =>
+            Effect.sync(() => {
+              deletedRefs.push(...input.checkpointRefs);
+            }),
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const checkpoints = yield* CheckpointServiceV2;
+    // Baseline capture succeeded, so the next turn's start ref now exists.
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 0 });
+    // A transient detection failure must not masquerade as a confirmed
+    // non-Git workspace: recording "missing" would leak the captured start
+    // ref, and silently skipping cleanup would strand it forever.
+    detectionFails = true;
+    const captureError = yield* checkpoints
+      .capture({
+        scope,
+        runId: scope.runId!,
+        nodeId: scope.nodeId!,
+        ordinalWithinScope: 1,
+        appRunOrdinal: 1,
+        capturedAt: scope.createdAt,
+      })
+      .pipe(Effect.flip);
+    assert.equal(captureError._tag, "CheckpointCaptureError");
+    const baselineError = yield* checkpoints
+      .captureBaseline({ scope, ordinalWithinScope: 1 })
+      .pipe(Effect.flip);
+    assert.equal(baselineError._tag, "CheckpointBaselineCaptureError");
+    const materializeError = yield* checkpoints
+      .materializeBaselineCheckpoint({ scope, ordinalWithinScope: 1 })
+      .pipe(Effect.flip);
+    assert.equal(materializeError._tag, "CheckpointCaptureError");
+    const cleanupError = yield* checkpoints
+      .discardBaseline({ scope, ordinalWithinScope: 1 })
+      .pipe(Effect.flip);
+    assert.equal(cleanupError._tag, "CheckpointBaselineCleanupError");
+    assert.deepEqual(deletedRefs, []);
+    // Once detection recovers, cleanup eligibility is preserved: the same
+    // call deletes the start ref captured before the failure.
+    detectionFails = false;
+    yield* checkpoints.discardBaseline({ scope, ordinalWithinScope: 1 });
+    assert.deepEqual(deletedRefs, [
+      checkpointStartRef(
+        checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 1 }),
+      ),
+    ]);
+  }).pipe(Effect.provide(testLayer));
+});
+
+const processLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const storeLayer = CheckpointStore.layer.pipe(
+  Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(processLayer))),
+  Layer.provide(NodeServices.layer),
+);
+const integrationLayer = checkpointServiceLayer.pipe(
+  Layer.provideMerge(storeLayer),
+  Layer.provide(idAllocatorLayer),
+  Layer.provideMerge(processLayer),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-v2-turn-baseline-" })),
+  Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect("excludes idle edits, preserves history, and discards baselines on rollback", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-turn-baseline-" });
+    const process = yield* VcsProcess.VcsProcess;
+    const git = (args: ReadonlyArray<string>) =>
+      process.run({
+        operation: "CheckpointService.test",
+        command: "git",
+        cwd,
+        args,
+        timeoutMs: 10000,
+      });
+    yield* git(["init"]);
+    yield* git(["config", "user.name", "Test"]);
+    yield* git(["config", "user.email", "test@example.com"]);
+    const readme = path.join(cwd, "README.md");
+    yield* fs.writeFileString(readme, "initial\n");
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "initial"]);
+    const checkpoints = yield* CheckpointServiceV2;
+    const store = yield* CheckpointStore.CheckpointStore;
+    const scope = yield* checkpoints.prepareRootRunScope({
+      threadId: ThreadId.make("thread:idle-edits"),
+      runId: RunId.make("run:idle-edits"),
+      rootNodeId: NodeId.make("node:idle-edits"),
+      providerThreadId: ProviderThreadId.make("provider:idle-edits"),
+      cwd,
+      createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+    });
+    const capture = (ordinal: number) =>
+      checkpoints.capture({
+        scope,
+        runId: RunId.make(`run:${ordinal}`),
+        nodeId: scope.nodeId,
+        ordinalWithinScope: ordinal,
+        appRunOrdinal: ordinal,
+        capturedAt: DateTime.makeUnsafe("2026-01-01T00:01:00Z"),
+      });
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 0 });
+    const first = yield* capture(1);
+    assert.deepEqual(first.files, []);
+    yield* fs.writeFileString(readme, "upstream\n");
+    yield* git(["commit", "-am", "external update"]);
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 1 });
+    const second = yield* capture(2);
+    assert.deepEqual(second.files, []);
+    assert.equal((yield* git(["show", `${first.ref}:README.md`])).stdout, "initial\n");
+    yield* fs.writeFileString(path.join(cwd, "outside.txt"), "outside\n");
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 2 });
+    yield* fs.writeFileString(readme, "agent\n");
+    // Duplicate start delivery must not move the baseline past agent edits.
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 2 });
+    const third = yield* capture(3);
+    assert.deepEqual(third.files, [
+      { path: "README.md", kind: "modified", additions: 1, deletions: 1 },
+    ]);
+    assert.equal((yield* git(["show", `${second.ref}:README.md`])).stdout, "upstream\n");
+    yield* checkpoints.restore({ scope, checkpoint: second });
+    assert.equal(yield* fs.readFileString(readme), "upstream\n");
+    yield* checkpoints.deleteStaleRefs({ scope, checkpoints: [third] });
+    assert.equal(
+      yield* store.hasCheckpointRef({ cwd, checkpointRef: checkpointStartRef(third.ref) }),
+      false,
+    );
+    yield* fs.writeFileString(readme, "new external state\n");
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 2 });
+    assert.deepEqual((yield* capture(3)).files, []);
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 3 });
+    const abandonedRef = checkpointStartRef(
+      checkpointRefForScopeOrdinal({
+        scopeId: scope.id,
+        ordinalWithinScope: 4,
+      }),
+    );
+    assert.isTrue(yield* store.hasCheckpointRef({ cwd, checkpointRef: abandonedRef }));
+    yield* checkpoints.discardBaseline({ scope, ordinalWithinScope: 4 });
+    yield* checkpoints.discardBaseline({ scope, ordinalWithinScope: 4 });
+    assert.isFalse(yield* store.hasCheckpointRef({ cwd, checkpointRef: abandonedRef }));
+    assert.isTrue(
+      yield* store.hasCheckpointRef({ cwd, checkpointRef: checkpointStartRef(third.ref) }),
+    );
+  }).pipe(Effect.provide(integrationLayer), Effect.scoped),
+);
+
+it.effect("discards baselines without failing in a workspace that has no repository", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-turn-baseline-nogit-" });
+    const checkpoints = yield* CheckpointServiceV2;
+    const scope = yield* checkpoints.prepareRootRunScope({
+      threadId: ThreadId.make("thread:no-git"),
+      runId: RunId.make("run:no-git"),
+      rootNodeId: NodeId.make("node:no-git"),
+      providerThreadId: ProviderThreadId.make("provider:no-git"),
+      cwd,
+      createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+    });
+    // Cleanup runs from the outbox, so failing here would retry forever.
+    yield* checkpoints.discardBaseline({ scope, ordinalWithinScope: 1 });
+  }).pipe(Effect.provide(integrationLayer), Effect.scoped),
 );
