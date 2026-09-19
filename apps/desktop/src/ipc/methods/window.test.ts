@@ -31,6 +31,7 @@ import {
   pasteAsText,
   pickProjectFavicon,
   probeRemoteEditors,
+  revealWindow,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -212,6 +213,26 @@ describe("pasteAsText", () => {
       );
     },
   );
+});
+
+describe("revealWindow", () => {
+  it.effect("reveals the main window only when it asks", () => {
+    const window = { webContents: { id: 42 } } as unknown as Electron.BrowserWindow;
+    const reveal = vi.fn(() => Effect.void);
+    return Effect.gen(function* () {
+      yield* revealWindow.handler(undefined, { sender: { id: 99 } });
+      assert.equal(reveal.mock.calls.length, 0);
+      yield* revealWindow.handler(undefined, { sender: { id: 42 } });
+      assert.deepEqual(reveal.mock.calls, [[window]]);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          main: Effect.succeed(Option.some(window)),
+          reveal,
+        }),
+      ),
+    );
+  });
 });
 
 describe("pickProjectFavicon", () => {

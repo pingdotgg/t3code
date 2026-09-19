@@ -251,4 +251,23 @@ describe("thread notifications", () => {
       silent: true,
     });
   });
+
+  it("reveals the desktop window and opens the thread when a system alert is clicked", async () => {
+    const revealWindow = vi.fn(() => Promise.resolve());
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), { focus: vi.fn(), desktopBridge: { revealWindow } }),
+    );
+    state.mode = "notifications";
+    state.focused = false;
+    await render();
+    await complete();
+    const notification: EventTarget = state.notification.mock.results[0]?.value;
+    notification.dispatchEvent(new Event("click"));
+    expect(revealWindow).toHaveBeenCalledTimes(1);
+    expect(state.navigate).toHaveBeenCalledWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "env-1", threadId: "thread-1" },
+    });
+  });
 });
