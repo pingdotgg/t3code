@@ -691,16 +691,26 @@ describe("resolveThreadSwitchTimeline", () => {
     ).toEqual({ entries: [], displayThreadKey: "env-1:thread-a" });
   });
 
-  it("keeps the held thread workspace cwd with the snapshot", () => {
+  it("keeps the held thread workspace cwd and skills with the snapshot", () => {
+    const skills: ServerProvider["skills"] = [
+      {
+        name: "deploy",
+        displayName: "Deploy",
+        path: "/repo/a/.claude/skills/deploy",
+        enabled: true,
+      },
+    ];
     rememberReadyThreadTimeline({
       ...held,
       markdownCwd: "/repo/a",
       workspaceRoot: "/repo/a",
+      skills,
     });
     expect(peekHeldThreadTimeline<string[]>()).toEqual({
       ...held,
       markdownCwd: "/repo/a",
       workspaceRoot: "/repo/a",
+      skills,
     });
   });
 

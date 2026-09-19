@@ -17,7 +17,6 @@ import {
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
-  type ServerProviderSkill,
   type ToolActivityIcon,
   type TurnId,
   type WorktreeSetupSnapshot,
@@ -237,6 +236,7 @@ import {
   CHAT_INLINE_CHIP_CLASS_NAME,
   CHAT_INLINE_CHIP_LABEL_CLASS_NAME,
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+  SKILL_CHIP_ICON_CLASS_NAME,
   SKILL_CHIP_ICON_SVG,
   CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES,
   CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES,
@@ -251,7 +251,7 @@ import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 
-import { SkillInlineText } from "./SkillInlineText";
+import { SkillInlineText, type InlineSkill } from "./SkillInlineText";
 import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import {
@@ -277,7 +277,7 @@ interface TimelineRowSharedState {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills: ReadonlyArray<InlineSkill>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
@@ -370,7 +370,7 @@ function TimelineListFooter({ composerInset }: { readonly composerInset: number 
     </div>
   );
 }
-const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_TIMELINE_SKILLS: ReadonlyArray<InlineSkill> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
   on: {
@@ -438,7 +438,7 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
-  skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills?: ReadonlyArray<InlineSkill>;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   contentInsetEndAdjustment: number;
@@ -3674,7 +3674,7 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             icon={
               <span
                 aria-hidden="true"
-                className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+                className={SKILL_CHIP_ICON_CLASS_NAME}
                 dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
               />
             }
@@ -3969,7 +3969,7 @@ function shouldCollapseUserMessage(text: string): boolean {
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills: ReadonlyArray<InlineSkill>;
   markdownCwd: string | undefined;
   footer?: ReactNode;
 }) {
@@ -4037,7 +4037,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  skills: ReadonlyArray<InlineSkill>;
   markdownCwd: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);

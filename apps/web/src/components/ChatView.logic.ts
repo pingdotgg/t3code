@@ -299,6 +299,7 @@ export type HeldThreadTimeline<T extends readonly unknown[]> = {
   entries: T;
   markdownCwd?: string | null;
   workspaceRoot?: string | null;
+  skills?: ServerProvider["skills"];
 };
 
 const MAX_REMEMBERED_THREAD_TIMELINES = 16;

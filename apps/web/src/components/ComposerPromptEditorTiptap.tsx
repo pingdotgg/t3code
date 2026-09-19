@@ -59,7 +59,7 @@ import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import {
   COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME,
-  COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+  SKILL_CHIP_ICON_CLASS_NAME,
   COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
   COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME,
   SKILL_CHIP_ICON_SVG,
@@ -287,7 +287,7 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
           <>
             <span
               aria-hidden="true"
-              className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+              className={SKILL_CHIP_ICON_CLASS_NAME}
               dangerouslySetInnerHTML={{ __html: SKILL_CHIP_ICON_SVG }}
             />
             <span className={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}>{skillLabel}</span>
