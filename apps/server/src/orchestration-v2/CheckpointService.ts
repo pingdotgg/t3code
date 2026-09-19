@@ -471,20 +471,13 @@ export const layer: Layer.Layer<
           }
 
           const startRef = checkpointStartRef(checkpointRef);
-          const startRefExists = yield* checkpointStore
-            .hasCheckpointRef({
-              cwd: input.scope.cwd,
-              checkpointRef: startRef,
-            })
-            .pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("orchestration V2 checkpoint start ref lookup failed", {
-                  scopeId: input.scope.id,
-                  checkpointRef: startRef,
-                  cause: String(cause),
-                }).pipe(Effect.as(false)),
-              ),
-            );
+          // A failed lookup is not a missing start ref: falling back to the
+          // legacy baseline here would fold pre-turn edits into this turn's
+          // summary, so propagate for outbox retry like detection failures.
+          const startRefExists = yield* checkpointStore.hasCheckpointRef({
+            cwd: input.scope.cwd,
+            checkpointRef: startRef,
+          });
           const previousCheckpointRef = startRefExists ? startRef : legacyPreviousCheckpointRef;
           const previousExists = yield* checkpointStore
             .hasCheckpointRef({

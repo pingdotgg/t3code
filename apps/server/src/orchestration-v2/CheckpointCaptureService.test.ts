@@ -374,6 +374,16 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
             .execute({ threadId, runId, scopeId: CheckpointScopeId.make("missing-scope") })
             .pipe(Effect.flip);
           assert.instanceOf(incomplete, CheckpointCaptureService.CheckpointCaptureExecutionError);
+          if (refLookupFails) {
+            // A failed turn-start ref lookup must propagate rather than fall
+            // back to the legacy baseline: diffing it would fold pre-turn
+            // edits into the summary, so capture fails for outbox retry and
+            // nothing is committed.
+            const error = yield* service.execute({ threadId, runId, scopeId }).pipe(Effect.flip);
+            assert.equal(error._tag, "CheckpointCaptureExecutionError");
+            assert.deepEqual(yield* Ref.get(committed), []);
+            return;
+          }
           // Capture reads the waiting run while the projection still holds the stale cohort.
           yield* service.execute({ threadId, runId, scopeId });
 
@@ -385,14 +395,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
           }
           assert.equal(runUpdated.payload.status, "completed");
           const capturedEvent = events.find((event) => event.type === "checkpoint.captured");
-          assert.equal(
-            runUpdated.payload.checkpointId,
-            refLookupFails ? capturedEvent?.payload.id : captured.id,
-          );
-          if (refLookupFails && capturedEvent?.type === "checkpoint.captured") {
-            assert.equal(capturedEvent.payload.status, "ready");
-            assert.deepEqual(capturedEvent.payload.files, []);
-          }
+          assert.equal(runUpdated.payload.checkpointId, captured.id);
           assert.isUndefined(
             runUpdated.payload.delegatedCompletion,
             "checkpoint capture must omit delegatedCompletion so ProjectionStore can keep a newer cohort",

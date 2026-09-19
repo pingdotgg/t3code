@@ -202,6 +202,74 @@ it.effect("propagates repository detection failures after a captured baseline", 
   }).pipe(Effect.provide(testLayer));
 });
 
+it.effect(
+  "propagates turn-start ref lookup failures instead of falling back to the legacy baseline",
+  () => {
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:start-ref-lookup-failure"),
+      threadId: ThreadId.make("thread:start-ref-lookup-failure"),
+      runId: RunId.make("run:start-ref-lookup-failure:1"),
+      nodeId: NodeId.make("node:start-ref-lookup-failure:1"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:start-ref-lookup-failure"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo",
+      createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+    };
+    const startRef = checkpointStartRef(
+      checkpointRefForScopeOrdinal({ scopeId: scope.id, ordinalWithinScope: 1 }),
+    );
+    const hasCheckpointRef = vi.fn((input: { cwd: string; checkpointRef: string }) =>
+      input.checkpointRef === startRef
+        ? Effect.fail(
+            new VcsProcessTimeoutError({
+              operation: "test.has-ref",
+              command: "git",
+              cwd: "/repo",
+              timeoutMs: 5000,
+            }),
+          )
+        : Effect.succeed(false),
+    );
+    const testLayer = checkpointServiceLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          idAllocatorLayer,
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: () => Effect.succeed(true),
+            hasCheckpointRef,
+            captureCheckpoint: () => Effect.void,
+          }),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const checkpoints = yield* CheckpointServiceV2;
+      // A transient lookup failure must not be treated as "no start ref":
+      // diffing against the legacy previous ref would fold pre-turn edits into
+      // this turn's summary, so capture fails for outbox retry instead.
+      const captureError = yield* checkpoints
+        .capture({
+          scope,
+          runId: scope.runId!,
+          nodeId: scope.nodeId!,
+          ordinalWithinScope: 1,
+          appRunOrdinal: 1,
+          capturedAt: scope.createdAt,
+        })
+        .pipe(Effect.flip);
+      assert.equal(captureError._tag, "CheckpointCaptureError");
+      assert.deepEqual(hasCheckpointRef.mock.calls[0]?.[0], {
+        cwd: scope.cwd,
+        checkpointRef: startRef,
+      });
+    }).pipe(Effect.provide(testLayer));
+  },
+);
+
 const processLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const storeLayer = CheckpointStore.layer.pipe(
   Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(processLayer))),
