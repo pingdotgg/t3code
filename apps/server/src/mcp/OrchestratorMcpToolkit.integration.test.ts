@@ -36,6 +36,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -207,6 +208,8 @@ function makeDeterministicAdapter(input: {
           });
         const runOrdinals = new Map<ProviderTurnId, number>();
         const turnInputs = new Map<ProviderTurnId, ProviderAdapterV2TurnInput>();
+        const turnFibers = new Map<ProviderTurnId, Fiber.Fiber<void>>();
+        const sessionScope = yield* Effect.scope;
 
         return {
           instanceId: input.instanceId,
@@ -278,76 +281,89 @@ function makeDeterministicAdapter(input: {
                   },
                 },
               ]);
-              const terminalGate = input.terminalGate?.(turnInput);
-              if (terminalGate !== undefined) {
-                yield* Deferred.await(terminalGate);
-              } else if (!input.shouldComplete(turnInput)) {
-                return;
-              }
-              const response = input.response(turnInput);
-              yield* publish([
-                {
-                  type: "provider_turn.updated",
-                  driver: input.driver,
-                  providerTurn: {
-                    id: providerTurnId,
-                    providerThreadId: turnInput.providerThread.id,
-                    nodeId: turnInput.rootNodeId,
-                    runAttemptId: turnInput.attemptId,
-                    nativeTurnRef: {
-                      driver: input.driver,
-                      nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
-                      strength: "strong",
+              // Acquire-then-return like the production adapters: the call
+              // returns after dispatch and the gated completion runs in a
+              // session-scoped fiber. Holding the call open until the gate
+              // released would leave an admitted adapter op parked until scope
+              // close, where the release drain would wait on it forever.
+              const fiber = yield* Effect.gen(function* () {
+                const terminalGate = input.terminalGate?.(turnInput);
+                if (terminalGate !== undefined) {
+                  yield* Deferred.await(terminalGate);
+                } else if (!input.shouldComplete(turnInput)) {
+                  return;
+                }
+                const response = input.response(turnInput);
+                yield* publish([
+                  {
+                    type: "provider_turn.updated",
+                    driver: input.driver,
+                    providerTurn: {
+                      id: providerTurnId,
+                      providerThreadId: turnInput.providerThread.id,
+                      nodeId: turnInput.rootNodeId,
+                      runAttemptId: turnInput.attemptId,
+                      nativeTurnRef: {
+                        driver: input.driver,
+                        nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
+                        strength: "strong",
+                      },
+                      ordinal: turnInput.providerTurnOrdinal,
+                      status: "completed",
+                      startedAt: eventTime,
+                      completedAt: eventTime,
                     },
-                    ordinal: turnInput.providerTurnOrdinal,
-                    status: "completed",
-                    startedAt: eventTime,
-                    completedAt: eventTime,
                   },
-                },
-                {
-                  type: "turn_item.updated",
-                  driver: input.driver,
-                  turnItem: {
-                    id: TurnItemId.make(
-                      `turn-item:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
-                    ),
-                    threadId: turnInput.threadId,
-                    runId: turnInput.runId,
-                    nodeId: turnInput.rootNodeId,
+                  {
+                    type: "turn_item.updated",
+                    driver: input.driver,
+                    turnItem: {
+                      id: TurnItemId.make(
+                        `turn-item:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      ),
+                      threadId: turnInput.threadId,
+                      runId: turnInput.runId,
+                      nodeId: turnInput.rootNodeId,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: turnInput.runOrdinal * 100 + 1,
+                      status: "completed",
+                      title: null,
+                      startedAt: eventTime,
+                      completedAt: eventTime,
+                      updatedAt: eventTime,
+                      type: "assistant_message",
+                      messageId: MessageId.make(
+                        `message:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+                      ),
+                      text: response,
+                      streaming: false,
+                    },
+                  },
+                  {
+                    type: "turn.terminal",
+                    driver: input.driver,
                     providerThreadId: turnInput.providerThread.id,
                     providerTurnId,
-                    nativeItemRef: null,
-                    parentItemId: null,
-                    ordinal: turnInput.runOrdinal * 100 + 1,
+                    runOrdinal: turnInput.runOrdinal,
                     status: "completed",
-                    title: null,
-                    startedAt: eventTime,
-                    completedAt: eventTime,
-                    updatedAt: eventTime,
-                    type: "assistant_message",
-                    messageId: MessageId.make(
-                      `message:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
-                    ),
-                    text: response,
-                    streaming: false,
+                    failure: null,
+                    threadDisposition: "reusable",
                   },
-                },
-                {
-                  type: "turn.terminal",
-                  driver: input.driver,
-                  providerThreadId: turnInput.providerThread.id,
-                  providerTurnId,
-                  runOrdinal: turnInput.runOrdinal,
-                  status: "completed",
-                  failure: null,
-                  threadDisposition: "reusable",
-                },
-              ]);
+                ]);
+              }).pipe(Effect.forkIn(sessionScope));
+              turnFibers.set(providerTurnId, fiber);
             }),
           steerTurn: () => Effect.void,
           interruptTurn: ({ providerThread, providerTurnId }) =>
             Effect.gen(function* () {
+              const fiber = turnFibers.get(providerTurnId);
+              if (fiber !== undefined) {
+                yield* Fiber.interrupt(fiber);
+                turnFibers.delete(providerTurnId);
+              }
               const turnInput = turnInputs.get(providerTurnId);
               const completedAt = yield* DateTime.now;
               if (turnInput !== undefined) {

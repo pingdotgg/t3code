@@ -15,11 +15,13 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { ServerConfig, layerTest as serverConfigLayerTest } from "../../config.ts";
@@ -35,7 +37,11 @@ import {
   makeCursorAdapterV2,
   nestedToolCallFromEnvelope,
 } from "./CursorAdapterV2.ts";
-import { isCursorCancellationError, loggedCursorAgentOptions } from "./CursorAgentSdk.ts";
+import {
+  CursorAgentSdkRunnerError,
+  isCursorCancellationError,
+  loggedCursorAgentOptions,
+} from "./CursorAgentSdk.ts";
 
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
@@ -780,6 +786,68 @@ describe("CursorAdapterV2", () => {
     assert.isFalse(isCursorCancellationError(new Error("request failed")));
     assert.isFalse(isCursorCancellationError(null));
   });
+
+  it.effect("propagates a native session close failure through the session scope", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-close-",
+      });
+      const scope = yield* Scope.make();
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-close-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = makeCursorAdapterV2({
+        instanceId,
+        settings: yield* decodeCursorSettings({}),
+        environment: { HOME: workspace },
+        fileSystem,
+        path,
+        idAllocator: yield* IdAllocatorV2,
+        serverConfig: yield* ServerConfig.pipe(
+          Effect.provide(serverConfigLayerTest(workspace, { prefix: "cursor-v2-close-config-" })),
+        ),
+        runner: {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-close",
+              listMessages: Effect.succeed([]),
+              // A typed runner failure is what `Effect.ignore` used to
+              // swallow — a defect would propagate through it either way, so
+              // only the error channel distinguishes the fixed behavior.
+              close: Effect.fail(
+                new CursorAgentSdkRunnerError({
+                  method: "agent.close",
+                  cause: new Error("cursor session close failed"),
+                }),
+              ),
+              send: () => Effect.die("unused in close test"),
+            }),
+        },
+      });
+      const runtime = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-close-session"),
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.provideService(Scope.Scope, scope));
+      yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+
+      // The native close failure must reach the scope close so the session
+      // manager records a failed cleanup instead of a clean release.
+      const closeExit = yield* Scope.close(scope, Exit.void).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(closeExit));
+    }).pipe(Effect.provide(Layer.merge(NodeServices.layer, idAllocatorLayer))),
+  );
 
   it("preserves failed nested read calls when Cursor omits their path", () => {
     assert.deepEqual(

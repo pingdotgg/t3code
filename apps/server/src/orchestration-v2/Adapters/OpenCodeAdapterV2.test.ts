@@ -162,7 +162,17 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     environment: {},
     runtime: {
       connectToOpenCodeServer: () => Effect.succeed({ url: "http://test.invalid", external: true }),
-      createOpenCodeSdkClient: () => client,
+      createOpenCodeSdkClient: () => ({
+        ...(client as Record<string, unknown>),
+        session: {
+          // Real SDK clients always implement the teardown calls the session
+          // finalizer invokes; fakes that omit them get benign stubs so scope
+          // close can complete. Tests that stub their own keep theirs.
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+          ...(client as { session?: Record<string, unknown> }).session,
+        },
+      }),
     } as unknown as OpenCodeRuntimeShape,
     idAllocator,
     serverConfig: {
@@ -527,12 +537,58 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
+  it.effect("propagates an external session abort failure while continuing cleanup", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const nativeEvents = asyncEventStream();
+      const calls: string[] = [];
+      yield* makeOpenCodeRuntimeHarness("release-failed-abort", "root", {
+        event: {
+          subscribe: async (_input: unknown, options: { signal: AbortSignal }) => {
+            options.signal.addEventListener("abort", () => {
+              calls.push("stream.close");
+              nativeEvents.close();
+            });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          abort: async ({ sessionID }: { sessionID: string }) => {
+            calls.push(`abort:${sessionID}`);
+            if (sessionID === "root") throw new Error("root abort failed");
+            return { data: true };
+          },
+          children: async ({ sessionID }: { sessionID: string }) => {
+            calls.push(`children:${sessionID}`);
+            return { data: sessionID === "root" ? [{ id: "child" }] : [] };
+          },
+        },
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      // The abort failure must reach the scope close so the session manager
+      // records a failed cleanup instead of a clean release — while the
+      // descendant sweep and stream teardown still run to completion.
+      const closeExit = yield* Scope.close(scope, Exit.void).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(closeExit));
+      assert.deepEqual(calls, [
+        "abort:root",
+        "children:root",
+        "abort:child",
+        "children:child",
+        "stream.close",
+      ]);
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   for (const failure of ["enumeration", "abort", "not-found", "timeout"] as const) {
     it.effect(`reports descendant cleanup ${failure}`, () =>
       Effect.gen(function* () {
         const nativeEvents = asyncEventStream();
         const called = promiseGate<void>();
         let childSignal: AbortSignal | undefined;
+        // The failure under test only applies to the interruptTurn sweep; once
+        // it settles, teardown aborts succeed so scope close stays clean.
+        let settled = false;
         const harness = yield* makeOpenCodeRuntimeHarness(`cleanup-${failure}`, "root", {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
           session: {
@@ -541,14 +597,14 @@ describe("OpenCodeAdapterV2", () => {
             get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             messages: async () => ({ data: [] }),
             children: async ({ sessionID }: { sessionID: string }) => {
-              if (failure === "enumeration") throw new Error("cannot enumerate");
+              if (failure === "enumeration" && !settled) throw new Error("cannot enumerate");
               return { data: sessionID === "root" ? [{ id: "child" }] : [] };
             },
             abort: async (
               { sessionID }: { sessionID: string },
               options: { signal: AbortSignal },
             ) => {
-              if (sessionID === "root") return { data: true };
+              if (sessionID === "root" || settled) return { data: true };
               if (failure === "timeout" && childSignal?.aborted) return { data: true };
               childSignal = options.signal;
               called.resolve();
@@ -577,6 +633,7 @@ describe("OpenCodeAdapterV2", () => {
         const result = yield* Fiber.join(stop);
         assert.equal(Exit.isSuccess(result), failure === "not-found");
         if (failure === "timeout") assert.isTrue(childSignal?.aborted);
+        settled = true;
       }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
     );
   }
@@ -1998,6 +2055,8 @@ describe("OpenCodeAdapterV2", () => {
             createCount += 1;
             return { data: { id: `ses_native_${createCount}`, time: { created: 1, updated: 1 } } };
           },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
         },
       } as unknown as OpencodeClient;
       const unused = (operation: string) => () => Effect.die(`${operation} is not used`);

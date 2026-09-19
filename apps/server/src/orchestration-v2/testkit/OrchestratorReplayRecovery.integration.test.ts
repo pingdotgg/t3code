@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -138,6 +140,7 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
         steps: phase1Steps,
         projectionThreadIds: materialized.projectionThreadIds,
         runtimePolicyOverride: { cwd: tempDir },
+        runtimeRestart: true,
       },
       harness,
       options,
@@ -153,6 +156,7 @@ const runCursorRecovery = Effect.fn("runCursorRecovery")(function* (input: {
         steps: phase2Steps,
         projectionThreadIds: materialized.projectionThreadIds,
         runtimePolicyOverride: { cwd: tempDir },
+        runtimeRestart: true,
       },
       harness,
       options,
@@ -292,5 +296,214 @@ describe("orchestrator replay recovery", () => {
           Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
         ),
       ),
+  );
+
+  it.effect("reconciles persisted effects before the effect worker restarts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const transcript = yield* readCursorTranscript();
+        const runner = makeCursorAgentSdkReplayRunner(transcript);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* Effect.acquireRelease(
+          fs.makeTempDirectory({
+            prefix: "t3-orchestration-v2-cursor-recovery-",
+          }),
+          (directory) => fs.remove(directory, { recursive: true, force: true }).pipe(Effect.orDie),
+        );
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        const dbPath = path.join(tempDir, "state.sqlite");
+        const materialized = yield* materializeFixtureInput({
+          scenario: "provider_thread_resume",
+          fixtureInput: {
+            steps: [
+              { type: "message", text: PROVIDER_THREAD_RESUME_FIRST_PROMPT },
+              { type: "message", text: PROVIDER_THREAD_RESUME_SECOND_PROMPT },
+            ],
+          },
+          driver: ProviderDriverKind.make("cursor"),
+          modelSelection: CURSOR_MODEL_SELECTION,
+        });
+        const { phase1Commands, phase1Steps, phase2Commands, phase2Steps } =
+          splitAfterFirstIdle(materialized);
+        const options = {
+          databaseLayer: makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer)),
+        };
+        const harness = {
+          ...CursorOrchestratorReplayHarness,
+          makeProviderAdapterRegistryLayer: () =>
+            makeCursorProviderAdapterRegistryReplayLayer(transcript, {
+              runner,
+              assertCompleteOnFinalize: false,
+            }),
+        };
+
+        yield* Effect.scoped(
+          runOrchestratorV2ProviderReplayScenario(
+            {
+              name: "provider_thread_resume/cursor:reconcile-first-runtime",
+              transcript,
+              commands: phase1Commands,
+              steps: phase1Steps,
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: tempDir },
+              runtimeRestart: true,
+            },
+            harness,
+            options,
+          ),
+        );
+
+        // Persisted work left behind by the dead process: a pending row that
+        // must be claimed exactly once after reconciliation, and a running
+        // row that reconciliation must requeue before it can execute again.
+        // The deterministic runtime's clock starts at epoch, so persisted
+        // rows must be seeded at epoch to be immediately claimable.
+        const pendingEffectId = "restart-reconcile-pending";
+        const runningEffectId = "restart-reconcile-running";
+        const seededAt = "1970-01-01T00:00:00.000Z";
+        const seed = new NodeSqlite.DatabaseSync(dbPath);
+        try {
+          const insert = seed.prepare(
+            `INSERT INTO orchestration_v2_effect_outbox (
+                effect_id, command_id, thread_id, effect_type, payload_json,
+                status, attempt_count, available_at, created_at, updated_at
+              ) VALUES (?, ?, ?, 'terminal.cleanup', '{"type":"terminal.cleanup"}', ?, ?, ?, ?, ?)`,
+          );
+          insert.run(
+            pendingEffectId,
+            "restart-reconcile-command-pending",
+            "restart-reconcile-thread-pending",
+            "pending",
+            0,
+            seededAt,
+            seededAt,
+            seededAt,
+          );
+          insert.run(
+            runningEffectId,
+            "restart-reconcile-command-running",
+            "restart-reconcile-thread-running",
+            "running",
+            1,
+            seededAt,
+            seededAt,
+            seededAt,
+          );
+        } finally {
+          seed.close();
+        }
+
+        yield* Effect.scoped(
+          runOrchestratorV2ProviderReplayScenario(
+            {
+              name: "provider_thread_resume/cursor:reconcile-second-runtime",
+              transcript,
+              commands: phase2Commands,
+              steps: phase2Steps,
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: tempDir },
+              runtimeRestart: true,
+            },
+            harness,
+            options,
+          ),
+        );
+
+        const check = new NodeSqlite.DatabaseSync(dbPath);
+        try {
+          const rows = check
+            .prepare(
+              `SELECT effect_id, status, attempt_count, last_error
+                 FROM orchestration_v2_effect_outbox
+                 WHERE effect_id IN (?, ?)`,
+            )
+            .all(pendingEffectId, runningEffectId) as unknown as ReadonlyArray<{
+            readonly effect_id: string;
+            readonly status: string;
+            readonly attempt_count: number;
+            readonly last_error: string | null;
+          }>;
+          const pendingRow = rows.find((row) => row.effect_id === pendingEffectId);
+          const runningRow = rows.find((row) => row.effect_id === runningEffectId);
+          // A pre-reconciliation claim would surface as a second attempt
+          // after reconciliation requeues the claimed row.
+          assert.deepStrictEqual(pendingRow, {
+            effect_id: pendingEffectId,
+            status: "succeeded",
+            attempt_count: 1,
+            last_error: null,
+          });
+          assert.deepStrictEqual(runningRow, {
+            effect_id: runningEffectId,
+            status: "succeeded",
+            attempt_count: 2,
+            last_error: null,
+          });
+        } finally {
+          check.close();
+        }
+
+        // A restart with the worker disabled must not start the daemon after
+        // reconciliation — persisted work stays parked for manual inspection.
+        const parkedEffectId = "restart-reconcile-parked";
+        const seedParked = new NodeSqlite.DatabaseSync(dbPath);
+        try {
+          seedParked
+            .prepare(
+              `INSERT INTO orchestration_v2_effect_outbox (
+                  effect_id, command_id, thread_id, effect_type, payload_json,
+                  status, attempt_count, available_at, created_at, updated_at
+                ) VALUES (?, ?, ?, 'terminal.cleanup', '{"type":"terminal.cleanup"}', 'pending', 0, ?, ?, ?)`,
+            )
+            .run(
+              parkedEffectId,
+              "restart-reconcile-command-parked",
+              "restart-reconcile-thread-parked",
+              seededAt,
+              seededAt,
+              seededAt,
+            );
+        } finally {
+          seedParked.close();
+        }
+
+        yield* Effect.scoped(
+          runOrchestratorV2ProviderReplayScenario(
+            {
+              name: "provider_thread_resume/cursor:reconcile-worker-disabled",
+              transcript,
+              commands: [],
+              steps: [],
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: tempDir },
+              runtimeRestart: true,
+            },
+            harness,
+            { ...options, runEffectWorker: false },
+          ),
+        );
+
+        const checkParked = new NodeSqlite.DatabaseSync(dbPath);
+        try {
+          const parkedRow = checkParked
+            .prepare(
+              `SELECT status, attempt_count
+                 FROM orchestration_v2_effect_outbox
+                 WHERE effect_id = ?`,
+            )
+            .get(parkedEffectId) as unknown as {
+            readonly status: string;
+            readonly attempt_count: number;
+          };
+          assert.deepStrictEqual(parkedRow, { status: "pending", attempt_count: 0 });
+        } finally {
+          checkParked.close();
+        }
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
+      ),
+    ),
   );
 });

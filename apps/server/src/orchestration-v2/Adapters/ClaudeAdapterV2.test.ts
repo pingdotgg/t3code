@@ -38,9 +38,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { Tool } from "effect/unstable/ai";
 import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeCompaction";
 
@@ -6502,5 +6504,184 @@ describe("ClaudeAdapterV2 query message stream", () => {
       yield* Scope.close(scope, Exit.void);
       assert.isTrue(closed);
     }),
+  );
+});
+
+describe("ClaudeAdapterV2 session cleanup", () => {
+  it.effect("propagates a native query close failure through the session scope", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-close-",
+      });
+      const scope = yield* Scope.make();
+      const adapter = makeClaudeAdapterV2({
+        instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CLAUDE_SETTINGS,
+        environment: {},
+        attachmentsDir,
+        fileSystem,
+        path: yield* Path.Path,
+        idAllocator: yield* IdAllocatorV2,
+        queryRunner: {
+          allocateSessionId: Effect.succeed("native-thread-claude-close"),
+          open: () =>
+            Effect.succeed({
+              messages: Stream.never,
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              interrupt: Effect.void,
+              // A typed runner failure is what `Effect.ignore` used to
+              // swallow — a defect would propagate through it either way, so
+              // only the error channel distinguishes the fixed behavior.
+              close: Effect.fail(
+                new ClaudeAgentSdkQueryRunnerError({
+                  method: "query.close",
+                  cause: new Error("claude query close failed"),
+                }),
+              ),
+            }),
+          forkSession: () => Effect.die("unused"),
+          assertComplete: Effect.void,
+        },
+      });
+      const threadId = ThreadId.make("thread-claude-close");
+      const runtime = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-close"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        })
+        .pipe(Effect.provideService(Scope.Scope, scope));
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      yield* runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId,
+          providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-close"),
+          text: "hello",
+          attachments: [],
+        }),
+      );
+
+      // The native close failure must reach the scope close so the session
+      // manager records a failed cleanup instead of a clean release.
+      const closeExit = yield* Scope.close(scope, Exit.void).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(closeExit));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+  );
+
+  it.effect("keeps a failed interrupt close tracked so the session scope retries it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-interrupt-close-",
+      });
+      const scope = yield* Scope.make();
+      const closeCalls = yield* Ref.make(0);
+      const interrupted = yield* Deferred.make<void>();
+      const adapter = makeClaudeAdapterV2({
+        instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CLAUDE_SETTINGS,
+        environment: {},
+        attachmentsDir,
+        fileSystem,
+        path: yield* Path.Path,
+        idAllocator: yield* IdAllocatorV2,
+        queryRunner: {
+          allocateSessionId: Effect.succeed("native-thread-claude-interrupt-close"),
+          open: () =>
+            Effect.succeed({
+              // Never ends, so interruptTurn's closed wait can only resolve
+              // through its own timeout path.
+              messages: Stream.never,
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              interrupt: Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+              close: Ref.update(closeCalls, (count) => count + 1).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ClaudeAgentSdkQueryRunnerError({
+                      method: "query.close",
+                      cause: new Error("claude query close failed"),
+                    }),
+                  ),
+                ),
+              ),
+            }),
+          forkSession: () => Effect.die("unused"),
+          assertComplete: Effect.void,
+        },
+      });
+      const threadId = ThreadId.make("thread-claude-interrupt-close");
+      const runtime = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-interrupt-close"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        })
+        .pipe(Effect.provideService(Scope.Scope, scope));
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      const events: Array<ProviderAdapterV2Event> = [];
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        ),
+        Effect.forkIn(scope),
+      );
+      yield* runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId,
+          providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-interrupt-close"),
+          text: "hello",
+          attachments: [],
+        }),
+      );
+      for (let attempt = 0; attempt < 5000; attempt++) {
+        if (events.some((event) => event.type === "provider_turn.updated")) {
+          break;
+        }
+        yield* Effect.yieldNow;
+      }
+      const providerTurnId = events.find(
+        (event): event is Extract<ProviderAdapterV2Event, { type: "provider_turn.updated" }> =>
+          event.type === "provider_turn.updated",
+      )?.providerTurn.id;
+      assert.isDefined(providerTurnId);
+
+      const interrupting = yield* runtime
+        .interruptTurn({ providerThread, providerTurnId: providerTurnId! })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(interrupted);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("10 seconds");
+      const interruptExit = yield* Fiber.join(interrupting);
+      // The failed close propagates through interruptTurn...
+      assert.equal(interruptExit._tag, "Failure");
+      assert.equal(yield* Ref.get(closeCalls), 1);
+
+      // ...and the query stays tracked, so the scope close retries the
+      // native close and surfaces the failure instead of reporting a clean
+      // release over a CLI that may still be alive.
+      const closeExit = yield* Scope.close(scope, Exit.void).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(closeExit));
+      assert.equal(yield* Ref.get(closeCalls), 2);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
   );
 });

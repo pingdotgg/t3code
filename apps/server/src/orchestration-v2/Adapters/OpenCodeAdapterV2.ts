@@ -2853,22 +2853,32 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           yield* Scope.addFinalizer(
             scope,
             Effect.suspend(() =>
+              // Every root's abort and every descendant sweep runs even when a
+              // sibling fails — but the first failure propagates through the
+              // scope close so the manager keeps ownership instead of
+              // recording a clean release over a live provider process.
               Effect.forEach(
                 Array.from(threads.values()).filter((state) => state.parentSubagent === null),
                 (state) =>
-                  sdkCall("session.abort", { sessionID: state.nativeSessionId }, (signal) =>
-                    client.session.abort({ sessionID: state.nativeSessionId }, { signal }),
-                  ).pipe(
-                    Effect.timeout("1 second"),
-                    Effect.ignore({ log: true }),
-                    Effect.andThen(
-                      abortDescendants(state.nativeSessionId).pipe(
-                        Effect.timeout("1 second"),
-                        Effect.ignore({ log: true }),
-                      ),
+                  Effect.zip(
+                    sdkCall("session.abort", { sessionID: state.nativeSessionId }, (signal) =>
+                      client.session.abort({ sessionID: state.nativeSessionId }, { signal }),
+                    ).pipe(Effect.timeout("1 second"), Effect.exit),
+                    abortDescendants(state.nativeSessionId).pipe(
+                      Effect.timeout("1 second"),
+                      Effect.exit,
                     ),
                   ),
-                { concurrency: 8, discard: true },
+                { concurrency: 8 },
+              ).pipe(
+                Effect.flatMap((outcomes) => {
+                  const failed = outcomes
+                    .flatMap(([abortExit, descendantsExit]) => [abortExit, descendantsExit])
+                    .find(Exit.isFailure);
+                  return failed === undefined || failed._tag !== "Failure"
+                    ? Effect.void
+                    : Effect.failCause(failed.cause).pipe(Effect.orDie);
+                }),
               ),
             ),
           );

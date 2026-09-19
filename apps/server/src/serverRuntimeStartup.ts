@@ -97,6 +97,18 @@ const settleQueuedCommand = <A, E>(deferred: Deferred.Deferred<A, E>, exit: Exit
     ? Deferred.succeed(deferred, exit.value)
     : Deferred.failCause(deferred, exit.cause);
 
+const EFFECT_WORKER_INTERRUPT_TIMEOUT_MS = 30_000;
+
+// Adapter resource acquisitions run inside an uninterruptible mask, so a
+// stalled worker can never honour the interrupt. The interrupt signal is still
+// delivered; only the wait is bounded — an overdue worker dies with the
+// runtime while teardown moves on to bounded session cleanup.
+const interruptEffectWorker = (workerFiber: Fiber.Fiber<void, never>) =>
+  Fiber.interrupt(workerFiber).pipe(
+    Effect.timeoutOption(EFFECT_WORKER_INTERRUPT_TIMEOUT_MS),
+    Effect.ignore,
+  );
+
 export const makeCommandGate = Effect.gen(function* () {
   const commandReady = yield* Deferred.make<void, ServerRuntimeStartupError>();
   const commandQueue = yield* Queue.unbounded<QueuedCommand>();
@@ -363,8 +375,26 @@ export const startEffectWorkerWithRelay = Effect.fn(
   readonly startRelay: Effect.Effect<void, never, RelayContext>;
   readonly workerFiberRef: Ref.Ref<Fiber.Fiber<void, never> | null>;
 }) {
-  const workerFiber = yield* forkParkedFiber(input.runWorker);
-  yield* Ref.set(input.workerFiberRef, workerFiber);
+  // The worker is detached from the scope and bound by the bounded-interrupt
+  // finalizer below instead: forkScoped's own finalizer waits on the worker's
+  // exit unboundedly, and it is registered after the teardown finalizer, so a
+  // stalled worker would pin scope close before providerSessions.shutdown.
+  // Fork, ownership record, and finalizer registration run uninterruptibly —
+  // an interrupt between them would leave a detached worker nobody owns,
+  // parked at activation and free to run against a closed runtime.
+  yield* Effect.uninterruptible(
+    Effect.gen(function* () {
+      const workerFiber = yield* forkParkedFiber(input.runWorker, { detached: true });
+      yield* Ref.set(input.workerFiberRef, workerFiber);
+      yield* Effect.addFinalizer(() =>
+        Ref.getAndSet(input.workerFiberRef, null).pipe(
+          Effect.flatMap((ownedWorkerFiber) =>
+            ownedWorkerFiber === null ? Effect.void : interruptEffectWorker(ownedWorkerFiber),
+          ),
+        ),
+      );
+    }),
+  );
   yield* input.startRelay.pipe(
     Effect.onExit((exit) => {
       if (Exit.isSuccess(exit)) {
@@ -372,9 +402,7 @@ export const startEffectWorkerWithRelay = Effect.fn(
       }
       return Ref.getAndSet(input.workerFiberRef, null).pipe(
         Effect.flatMap((ownedWorkerFiber) =>
-          ownedWorkerFiber === null
-            ? Effect.void
-            : Fiber.interrupt(ownedWorkerFiber).pipe(Effect.asVoid),
+          ownedWorkerFiber === null ? Effect.void : interruptEffectWorker(ownedWorkerFiber),
         ),
       );
     }),
@@ -438,7 +466,7 @@ const make = (options?: StartupOptions) =>
         );
         const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
         if (workerFiber !== null) {
-          yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
+          yield* interruptEffectWorker(workerFiber);
         }
         yield* providerRuntimeRecovery.prepareForShutdown.pipe(
           Effect.ensuring(providerSessions.shutdown),

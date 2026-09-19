@@ -6761,7 +6761,12 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
                     !restartRequired &&
                     !transportHadOutstandingResponses
                   ) {
-                    yield* runtime.closeSession().pipe(Effect.ignore);
+                    // A failed native close means the ACP subprocess may still
+                    // own the thread — the failure must reach Scope.close so
+                    // the manager keeps cleanup ownership instead of releasing
+                    // a live process. Finalizers cannot carry typed errors,
+                    // so the failure surfaces as a defect.
+                    yield* runtime.closeSession().pipe(Effect.orDie);
                   }
                 }),
               );
@@ -6770,7 +6775,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               yield* flavor.assertComplete.pipe(Effect.orDie);
             }
             if (runtimeScope !== undefined) {
-              yield* Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore);
+              yield* Scope.close(runtimeScope, Exit.void);
             }
           }),
         );
