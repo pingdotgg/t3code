@@ -81,6 +81,7 @@ export function enumerateDays(sinceDay: string, untilDay: string): readonly stri
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
 
 const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 
@@ -185,6 +186,60 @@ export function formatRelativeHourShort(
   if (calendarDaysAgo === 0) return `${hour} today`;
   if (calendarDaysAgo === 1) return `${hour} yesterday`;
   return formatDateTimeShort(hourStart, timeZone);
+}
+
+/**
+ * First real minute in a viewer-local calendar day.
+ *
+ * Some zones skip midnight during daylight-saving changes. Searching instants
+ * by their formatted local day avoids starting the query in the prior day.
+ */
+function firstMinuteOfLocalDay(day: string, format: Intl.DateTimeFormat): Date {
+  const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
+  const start = Date.UTC(year, month - 1, date) - 24 * HOUR_MS;
+  let low = 0;
+  let high = 48 * 60;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (format.format(new Date(start + middle * MINUTE_MS)) < day) low = middle + 1;
+    else high = middle;
+  }
+
+  return new Date(start + low * MINUTE_MS);
+}
+
+/** Current local calendar day, from its first real minute through current minute. */
+export function makeTodayWindow(now = new Date()): UsageSummaryInput {
+  let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  let dayFormat: Intl.DateTimeFormat;
+  try {
+    dayFormat = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch {
+    timeZone = "UTC";
+    dayFormat = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  }
+  const day = dayFormat.format(now);
+  const sinceTime = firstMinuteOfLocalDay(day, dayFormat);
+  const untilTime = new Date(Math.floor(now.getTime() / MINUTE_MS) * MINUTE_MS);
+  return {
+    sinceDay: UsageDay.make(dayFormat.format(sinceTime)),
+    untilDay: UsageDay.make(dayFormat.format(untilTime)),
+    timeZone,
+    resolution: "hour",
+    sinceTime: sinceTime.toISOString(),
+    untilTime: untilTime.toISOString(),
+  };
 }
 
 /**

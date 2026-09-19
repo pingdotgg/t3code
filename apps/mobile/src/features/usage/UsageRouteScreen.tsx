@@ -16,6 +16,7 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  makeTodayWindow,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -47,11 +48,13 @@ const TAB_OPTIONS = [
 // Labels are abbreviated to share a row with the metric toggle; screen
 // readers get the full phrase.
 const WINDOW_OPTIONS = [
+  { value: "today", label: "Today", accessibilityLabel: "Today so far" },
   { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
   { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
   { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
   { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
 ] as const;
+type UsageWindowDays = (typeof WINDOW_OPTIONS)[number]["value"];
 
 const METRIC_OPTIONS = [
   { value: "cost", label: "Cost" },
@@ -82,13 +85,13 @@ export function UsageRouteScreen() {
   }
   const { tab } = selection;
   const setTab = (tab: UsageTab) => setSelection({ params: route.params, tab });
-  const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
-    window: makeWindow(30),
-  }));
+  const [windowSelection, setWindowSelection] = useState<{
+    days: UsageWindowDays;
+    window: ReturnType<typeof makeWindow>;
+  }>(() => ({ days: 30, window: makeWindow(30) }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const isPast24Hours = windowDays === 1 || windowDays === "today";
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
@@ -125,15 +128,19 @@ export function UsageRouteScreen() {
   const [refreshingUsage, setRefreshingUsage] = useState(false);
   const refreshingRef = useRef(false);
   const showingLimits = tab === "limits";
-  const selectWindow = (days: number) => {
+  const selectWindow = (days: UsageWindowDays) => {
     setWindowSelection({
       days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+      window:
+        days === "today" ? makeTodayWindow() : makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
   };
   const refreshWindow = () => {
     if (refreshingRef.current) return;
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow =
+      windowDays === "today"
+        ? makeTodayWindow()
+        : makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||

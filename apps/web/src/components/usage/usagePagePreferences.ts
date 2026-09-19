@@ -5,7 +5,7 @@ import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalSt
 const STORAGE_KEY = "t3code:usage-page-preferences:v1";
 const UsagePagePreferencesSchema = Schema.Struct({
   metric: Schema.Literals(["cost", "tokens", "limits"]),
-  windowDays: Schema.Literals([1, 7, 30, 90]),
+  windowDays: Schema.Literals(["today", 1, 7, 30, 90]),
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
 
@@ -14,6 +14,7 @@ export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
 // tab sticks after that.
 const DEFAULT_PREFERENCES: UsagePagePreferences = { metric: "limits", windowDays: 30 };
 
+/** Reads persisted usage-page choices, falling back when storage is unavailable. */
 export function readUsagePagePreferences(): UsagePagePreferences {
   try {
     return getLocalStorageItem(STORAGE_KEY, UsagePagePreferencesSchema) ?? DEFAULT_PREFERENCES;
@@ -23,6 +24,7 @@ export function readUsagePagePreferences(): UsagePagePreferences {
   }
 }
 
+/** Persists usage-page choices without making the page fail on storage errors. */
 export function saveUsagePagePreferences(preferences: UsagePagePreferences): void {
   try {
     setLocalStorageItem(STORAGE_KEY, preferences, UsagePagePreferencesSchema);

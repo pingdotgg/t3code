@@ -6,6 +6,7 @@ import {
   formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
+  makeTodayWindow,
   makeWindow,
 } from "./usageFormat.ts";
 
@@ -77,6 +78,36 @@ describe("hourly usage formatting", () => {
     expect(window.resolution).toBe("hour");
     expect(window.sinceTime).toBe("2026-08-10T12:37:00.000Z");
     expect(window.untilTime).toBe("2026-08-11T12:37:00.000Z");
+  });
+
+  it("builds an hourly window from local midnight instead of a rolling day", () => {
+    vi.stubEnv("TZ", "UTC");
+    try {
+      expect(makeTodayWindow(new Date("2026-08-11T12:37:42.123Z"))).toMatchObject({
+        resolution: "hour",
+        sinceTime: "2026-08-11T00:00:00.000Z",
+        untilTime: "2026-08-11T12:37:00.000Z",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("starts at first local minute when daylight saving skips midnight", () => {
+    const resolved = new Intl.DateTimeFormat().resolvedOptions();
+    const resolvedOptions = vi
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ ...resolved, timeZone: "America/Santiago" });
+
+    try {
+      expect(makeTodayWindow(new Date("2026-09-06T12:37:42.123Z"))).toMatchObject({
+        sinceDay: "2026-09-06",
+        sinceTime: "2026-09-06T04:00:00.000Z",
+        untilTime: "2026-09-06T12:37:00.000Z",
+      });
+    } finally {
+      resolvedOptions.mockRestore();
+    }
   });
 
   it("degrades an unknown resolved zone to UTC instead of crashing", () => {
