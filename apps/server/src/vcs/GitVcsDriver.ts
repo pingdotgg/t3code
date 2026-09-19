@@ -525,6 +525,25 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     ignoreClassifier: "native" as const,
   };
 
+  // Ambient Git bindings must not redirect which repository these
+  // subprocesses operate on: GIT_DIR and friends can point discovery at a
+  // foreign repository or mask a real one, so detection and checkpoint
+  // operations share one scrubbed base and always act on the workspace's
+  // own repository. LC_ALL pins the diagnostic locale since detection
+  // classifies English fatal text that localized Git builds translate.
+  const repositoryEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    LC_ALL: "C",
+    GIT_DIR: undefined,
+    GIT_WORK_TREE: undefined,
+    GIT_COMMON_DIR: undefined,
+    GIT_INDEX_FILE: undefined,
+    GIT_OBJECT_DIRECTORY: undefined,
+    GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+    GIT_CEILING_DIRECTORIES: undefined,
+    GIT_DISCOVERY_ACROSS_FILESYSTEM: undefined,
+  };
+
   const isInsideWorkTree: VcsDriver.VcsDriver["Service"]["isInsideWorkTree"] = (cwd) =>
     gitCommand(
       vcsProcess,
@@ -535,6 +554,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         allowNonZeroExit: true,
         timeoutMs: 5_000,
         maxOutputBytes: 4_096,
+        env: repositoryEnv,
       },
     ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"));
 
@@ -550,23 +570,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         ? { appendTruncationMarker: input.appendTruncationMarker }
         : {}),
     });
-
-  // Detection must not honor the server's ambient Git bindings: GIT_DIR and
-  // friends can point discovery at a foreign repository or mask a real one.
-  // LC_ALL pins the diagnostic locale since the classification below matches
-  // English fatal text that localized Git builds would translate.
-  const detectionEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    LC_ALL: "C",
-    GIT_DIR: undefined,
-    GIT_WORK_TREE: undefined,
-    GIT_COMMON_DIR: undefined,
-    GIT_INDEX_FILE: undefined,
-    GIT_OBJECT_DIRECTORY: undefined,
-    GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
-    GIT_CEILING_DIRECTORIES: undefined,
-    GIT_DISCOVERY_ACROSS_FILESYSTEM: undefined,
-  };
 
   // Whether the path itself exists, including as a symlink — exists()
   // resolves the target, so a dangling .git link would look absent even
@@ -620,7 +623,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         allowNonZeroExit: true,
         timeoutMs: 5_000,
         maxOutputBytes: 4_096,
-        env: detectionEnv,
+        env: repositoryEnv,
       },
     );
     if (insideWorkTreeResult.exitCode !== 0) {
@@ -654,14 +657,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       "GitVcsDriver.detectRepository.root",
       cwd,
       ["rev-parse", "--show-toplevel"],
-      { env: detectionEnv },
+      { env: repositoryEnv },
     );
     const gitCommonDir = yield* gitCommand(
       vcsProcess,
       "GitVcsDriver.detectRepository.commonDir",
       cwd,
       ["rev-parse", "--git-common-dir"],
-      { env: detectionEnv },
+      { env: repositoryEnv },
     ).pipe(Effect.orElseSucceed(() => null));
 
     return {
@@ -690,6 +693,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         timeoutMs: 20_000,
         maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
         appendTruncationMarker: true,
+        env: repositoryEnv,
       },
     ).pipe(
       Effect.flatMap((result) =>
@@ -819,6 +823,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       cwd,
       args: ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
       allowNonZeroExit: true,
+      env: repositoryEnv,
     }).pipe(
       Effect.map((result) => {
         if (result.exitCode !== 0) {
@@ -829,13 +834,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
-  const hasHeadCommit = (cwd: string, env?: NodeJS.ProcessEnv) =>
+  const hasHeadCommit = (cwd: string, env: NodeJS.ProcessEnv = repositoryEnv) =>
     execute({
       operation: "GitVcsDriver.checkpoints.hasHeadCommit",
       cwd,
       args: ["rev-parse", "--verify", "HEAD"],
       allowNonZeroExit: true,
-      ...(env !== undefined ? { env } : {}),
+      env,
     }).pipe(Effect.map((result) => result.exitCode === 0));
 
   const resolveCheckpointCommit = (cwd: string, checkpointRef: string) =>
@@ -844,6 +849,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       cwd,
       args: ["rev-parse", "--verify", "--quiet", `${checkpointRef}^{commit}`],
       allowNonZeroExit: true,
+      env: repositoryEnv,
     }).pipe(
       Effect.map((result) => {
         if (result.exitCode !== 0) {
@@ -860,6 +866,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
         cwd,
         args: ["rev-parse", "--git-common-dir"],
+        env: repositoryEnv,
       });
       const gitCommonDir = result.stdout.trim();
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
@@ -891,7 +898,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
       );
       const commitEnv: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...repositoryEnv,
         GIT_INDEX_FILE: tempIndexPath,
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
@@ -913,6 +920,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: ["config", "--bool", "core.sparseCheckout"],
           allowNonZeroExit: true,
+          env: repositoryEnv,
         });
         let sparseCheckout = sparseConfig.stdout.trim() === "true";
         if (sparseCheckout) {
@@ -921,6 +929,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             cwd: input.cwd,
             args: ["add", "-h"],
             allowNonZeroExit: true,
+            env: repositoryEnv,
           });
           sparseCheckout = /--(?:\[no-\])?sparse\b/.test(`${help.stdout}${help.stderr}`);
         }
@@ -930,6 +939,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               operation,
               cwd: input.cwd,
               args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+              env: repositoryEnv,
             });
             const { mtime } = yield* fileSystem.stat(indexPath.stdout.trim());
             if (Option.isNone(mtime)) return false;
@@ -1007,6 +1017,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 cwd: input.cwd,
                 args: ["config", "--bool", "core.sparseCheckoutCone"],
                 allowNonZeroExit: true,
+                env: repositoryEnv,
               });
               // Rebuilding a non-cone index loses exclusions; do not publish false deletions.
               if (cone.stdout.trim() !== "true") {
@@ -1069,15 +1080,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 // Refuse excessive recovery work before probing any nested repositories.
                 if (candidates.length > CHECKPOINT_RECOVERY_MAX_CANDIDATES) return yield* error;
                 // Discover each child's repository instead of inheriting the server's Git bindings.
-                const nestedRepoEnv: NodeJS.ProcessEnv = {
-                  ...process.env,
-                  GIT_DIR: undefined,
-                  GIT_WORK_TREE: undefined,
-                  GIT_COMMON_DIR: undefined,
-                  GIT_INDEX_FILE: undefined,
-                  GIT_OBJECT_DIRECTORY: undefined,
-                  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
-                };
                 const exclusions: Array<string> = [];
                 for (const entry of candidates) {
                   const nestedCwd = path.join(input.cwd, entry);
@@ -1085,7 +1087,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                     (yield* fileSystem
                       .exists(path.join(nestedCwd, ".git"))
                       .pipe(Effect.mapError(() => error))) &&
-                    !(yield* hasHeadCommit(nestedCwd, nestedRepoEnv))
+                    !(yield* hasHeadCommit(nestedCwd, repositoryEnv))
                   ) {
                     exclusions.push(`:(exclude,literal)${entry}`);
                   }
@@ -1141,6 +1143,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
+          env: repositoryEnv,
         });
       }).pipe(Effect.ensuring(cleanupTempIndex));
     }),
@@ -1167,6 +1170,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         operation,
         cwd: input.cwd,
         args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
+        env: repositoryEnv,
       });
       // An empty index and checkpoint have nothing for git restore's pathspec to match.
       if (tracked.stdout.length > 0) {
@@ -1174,6 +1178,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+          env: repositoryEnv,
         });
       }
       // Restoring away the last tracked file can remove a nested workspace directory.
@@ -1194,6 +1199,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd: input.cwd,
         args: ["clean", "-fd", "--", "."],
         allowNonZeroExit: true,
+        env: repositoryEnv,
       });
       if (cleaned.exitCode !== 0) {
         // Git can remove every child, then fail trying to remove './' itself.
@@ -1220,6 +1226,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: ["reset", "--quiet", "--", "."],
+          env: repositoryEnv,
         });
       }
 
@@ -1277,6 +1284,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         allowNonZeroExit: true,
         maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
         outputMode: input.format === "numstat" ? "error" : "truncate",
+        env: repositoryEnv,
       });
 
       if (result.exitCode !== 0) {
@@ -1303,6 +1311,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
               cwd: input.cwd,
               args: ["update-ref", "-d", checkpointRef],
+              env: repositoryEnv,
             }),
           { discard: true },
         );
