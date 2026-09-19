@@ -349,8 +349,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      assert.notProperty(preview, "publish");
-      assert.notProperty(previewChannel, "publish");
+      assert.strictEqual(preview.publish, null);
+      assert.strictEqual(previewChannel.publish, null);
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
@@ -2009,6 +2009,53 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
         assert.instanceOf(error, WslRuntimeArchiveMissingError);
       }),
+    ),
+  );
+
+  it.effect("disables publishing when no update repository is configured", () =>
+    Effect.gen(function* () {
+      // An ambient GH_TOKEN must not let electron-builder infer a GitHub
+      // publisher for a local build: it cannot resolve owner/repo from the
+      // staged app and crashes while building update metadata.
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.strictEqual(config.publish, null);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { GH_TOKEN: "test-token" } })),
+      ),
+    ),
+  );
+
+  it.effect("publishes to the configured GitHub update repository", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.deepStrictEqual(config.publish, [
+        { provider: "github", owner: "pingdotgg", repo: "t3code", releaseType: "release" },
+      ]);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
     ),
   );
 
