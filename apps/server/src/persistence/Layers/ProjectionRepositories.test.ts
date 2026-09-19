@@ -518,9 +518,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       assert.deepStrictEqual(Option.getOrNull(persisted)?.linkedPullRequest, linkedPullRequest);
       assert.deepStrictEqual(Option.getOrNull(persisted)?.branchPullRequest, branchPullRequest);
 
-      const listed = yield* threads.listByProjectId({ projectId: linkedPullRequest.projectId });
-      assert.deepStrictEqual(listed[0]?.branchPullRequest, branchPullRequest);
-
       const row = Option.getOrNull(persisted);
       if (row === null) return yield* Effect.die("Expected linked thread row to exist.");
       yield* threads.upsert({ ...row, linkedPullRequest: null });

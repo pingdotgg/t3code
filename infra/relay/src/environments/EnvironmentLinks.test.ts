@@ -66,7 +66,7 @@ describe("EnvironmentLinks", () => {
 
       expect(error).toMatchObject({
         _tag: "EnvironmentLinkUserListPersistenceError",
-        operation: "list-delivery-users",
+        message: "Environment link user query 'list-delivery-users' failed for environment 'env-1'",
         environmentId: "env-1",
       });
       expect(error.cause).toBe(cause);
@@ -78,7 +78,7 @@ describe("EnvironmentLinks", () => {
     );
   });
 
-  it.effect("selects users when either notifications or Live Activities are enabled", () => {
+  it.effect("selects notification or Live Activity users by environment key", () => {
     const whereConditions: Array<unknown> = [];
     const fakeDb = {
       select: (selection: unknown) => {
@@ -99,7 +99,12 @@ describe("EnvironmentLinks", () => {
 
     return Effect.gen(function* () {
       const links = yield* EnvironmentLinks.EnvironmentLinks;
-      expect(yield* links.listUsersForEnvironment({ environmentId: "env-1" })).toEqual([]);
+      expect(
+        yield* links.listDeliveryUsersForEnvironment({
+          environmentId: "env-1",
+          environmentPublicKey: "public-key-1",
+        }),
+      ).toEqual([]);
       expect(whereConditions).toHaveLength(1);
 
       const query = new PgDialect().sqlToQuery(whereConditions[0] as never);
@@ -107,8 +112,9 @@ describe("EnvironmentLinks", () => {
       expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
       expect(query.sql).toContain('"relay_environment_links"."notifications_enabled" = $2');
       expect(query.sql).toContain('"relay_environment_links"."live_activities_enabled" = $3');
+      expect(query.sql).toContain('"relay_environment_links"."environment_public_key" = $4');
       expect(query.sql).toContain(" or ");
-      expect(query.params).toEqual(["env-1", true, true]);
+      expect(query.params).toEqual(["env-1", true, true, "public-key-1"]);
     }).pipe(
       Effect.provide(
         EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),

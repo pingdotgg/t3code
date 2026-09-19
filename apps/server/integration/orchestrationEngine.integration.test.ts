@@ -20,7 +20,6 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type { TestTurnResponse } from "./TestProviderAdapter.integration.ts";
@@ -247,14 +246,7 @@ it.live("runs a single turn end-to-end and persists checkpoint state in sqlite +
       );
       assert.equal(thread.checkpoints[0]?.status, "ready");
       assert.equal(thread.checkpoints[0]?.checkpointTurnCount, 1);
-
-      const checkpointRows = yield* harness.checkpointRepository.listByThreadId({
-        threadId: THREAD_ID,
-      });
-      assert.equal(checkpointRows.length, 1);
-      assert.equal(checkpointRows[0]?.checkpointTurnCount, 1);
-      assert.equal(checkpointRows[0]?.status, "ready");
-      assert.deepEqual(checkpointRows[0]?.files, []);
+      assert.deepEqual(thread.checkpoints[0]?.files, []);
 
       const ref0 = checkpointRefForThreadTurn(THREAD_ID, 0);
       const ref1 = checkpointRefForThreadTurn(THREAD_ID, 1);
@@ -498,11 +490,8 @@ it.live("runs multi-turn file edits and persists checkpoint diffs", () =>
         true,
       );
 
-      const checkpointRows = yield* harness.checkpointRepository.listByThreadId({
-        threadId: THREAD_ID,
-      });
       assert.deepEqual(
-        checkpointRows.map((row) => row.checkpointTurnCount),
+        secondTurnThread.checkpoints.map((row) => row.checkpointTurnCount),
         [1, 2],
       );
 
@@ -688,14 +677,7 @@ it.live("records failed turn runtime state and checkpoint status as error", () =
       assert.equal(thread.session?.status, "error");
       assert.equal(thread.checkpoints[0]?.status, "error");
 
-      const checkpointRow = yield* harness.checkpointRepository.getByThreadAndTurnCount({
-        threadId: THREAD_ID,
-        checkpointTurnCount: 1,
-      });
-      assert.equal(Option.isSome(checkpointRow), true);
-      if (Option.isSome(checkpointRow)) {
-        assert.equal(checkpointRow.value.status, "error");
-      }
+      assert.equal(thread.checkpoints[0]?.checkpointTurnCount, 1);
       assert.equal(
         gitRefExists(harness.workspaceDir, checkpointRefForThreadTurn(THREAD_ID, 1)),
         true,
@@ -878,11 +860,6 @@ it.live("reverts to an earlier checkpoint and trims checkpoint projections + git
         false,
       );
       assert.deepEqual(harness.adapterHarness!.getRollbackCalls(THREAD_ID), [1]);
-
-      const checkpointRows = yield* harness.checkpointRepository.listByThreadId({
-        threadId: THREAD_ID,
-      });
-      assert.equal(checkpointRows.length, 1);
     }),
   ),
 );

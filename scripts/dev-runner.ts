@@ -190,17 +190,6 @@ export class DevRunnerHostNotProxiableError extends Schema.TaggedError<DevRunner
   }
 }
 
-export const DevRunnerError = Schema.Union([
-  DevRunnerConfigurationError,
-  DevRunnerHostNotProxiableError,
-  DevRunnerInvalidPortOffsetError,
-  DevRunnerPortExhaustedError,
-  DevRunnerProcessError,
-  DevRunnerProcessExitError,
-]);
-export type DevRunnerError = typeof DevRunnerError.Type;
-export const isDevRunnerError = Schema.is(DevRunnerError);
-
 const optionalStringConfig = (name: string): Config.Config<string | undefined> =>
   Config.String(name).pipe(
     Config.option,

@@ -70,7 +70,6 @@ function makePoolLayer(
           latest: Effect.succeed(Option.none()),
           changes: Stream.empty,
           encoded: Stream.empty,
-          handleControl: () => Effect.void,
           handleControlForSource: () => Effect.void,
           removeControlSource: () => Effect.void,
           publishUpdateReport: () => Effect.void,
