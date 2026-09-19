@@ -110,7 +110,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               icon="plus"
               label="Create & checkout"
               tone="primary"
-              disabled={!canWriteSourceControl || busy || newBranchName.trim().length === 0}
+              disabled={!canChangeThreadBranch || busy || newBranchName.trim().length === 0}
               onPress={() => {
                 const branch = sanitizeFeatureBranchName(newBranchName.trim());
                 if (branch.length === 0) return;
@@ -152,7 +152,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               label="Create worktree"
               tone="primary"
               disabled={
-              !canChangeThreadBranch ||                 busy ||
+                !canChangeThreadBranch ||
+                busy ||
                 worktreeBaseBranch.trim().length === 0 ||
                 worktreeBranchName.trim().length === 0
               }
@@ -163,7 +164,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
                 void gitActions
                   .onCreateSelectedThreadWorktree({ baseBranch, newBranch })
                   .then((result) => {
-                  if (result === null) return;
+                    if (result === null) return;
                     setWorktreeBranchName("");
                     navigation.goBack();
                   });
@@ -206,10 +207,10 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
                   )}
                   accessibilityRole="button"
                   accessibilityState={{ selected: branch.current, disabled: busy || disabled }}
-                  disabled={!canWriteSourceControl || busy || disabled}
+                  disabled={!canChangeThreadBranch || busy || disabled}
                   onPress={() => {
                     void gitActions.onCheckoutSelectedThreadBranch(branch.name).then((result) => {
-                  if (result === null) return;
+                      if (result === null) return;
                       navigation.goBack();
                     });
                   }}

@@ -284,8 +284,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               <SheetActionButton
                 icon="arrow.branch"
                 label="Commit on new branch"
-              disabled={!canChangeThreadBranch || noneSelected || busy}
-                disabled={noneSelected || busy}
+                disabled={!canChangeThreadBranch || noneSelected || busy}
                 onPress={() => void runCommitAction(true)}
               />
             </View>
@@ -294,7 +293,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                 icon="checkmark.circle"
                 label="Commit"
                 tone="primary"
-                disabled={noneSelected || busy}
+                disabled={!canWriteSourceControl || noneSelected || busy}
                 onPress={() => void runCommitAction(false)}
               />
             </View>
