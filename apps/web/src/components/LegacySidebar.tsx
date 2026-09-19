@@ -109,6 +109,9 @@ import {
 } from "../keybindings";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
+import { resolveThreadSwitcherEntries, resolveThreadSwitcherHoldModifier } from "../threadSwitcher";
+import { useThreadSwitcher } from "../hooks/useThreadSwitcher";
+import { ThreadSwitcherOverlay } from "./ThreadSwitcherOverlay";
 import { ensureLocalApi, readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -3562,6 +3565,33 @@ export default function LegacySidebar() {
     updateThreadJumpHintsVisibility(shouldShowThreadJumpHintsNow);
   }, [shouldShowThreadJumpHintsNow, updateThreadJumpHintsVisibility]);
 
+  const openThreadByKey = useCallback(
+    (threadKey: string) => {
+      const thread = sidebarThreadByKey.get(threadKey);
+      if (!thread) return false;
+      navigateToThread(scopeThreadRef(thread.environmentId, thread.id));
+      return true;
+    },
+    [navigateToThread, sidebarThreadByKey],
+  );
+  const threadSwitcher = useThreadSwitcher({
+    navigateToThreadKey: openThreadByKey,
+    orderedThreadKeys: orderedSidebarThreadKeys,
+    routeThreadKey,
+  });
+  const { advance: advanceThreadSwitcher } = threadSwitcher;
+  const switcherThreadKeys = threadSwitcher.threadKeys;
+  const threadSwitcherEntries = useMemo(
+    () =>
+      switcherThreadKeys === null
+        ? []
+        : resolveThreadSwitcherEntries(switcherThreadKeys, (threadKey) => {
+            const thread = sidebarThreadByKey.get(threadKey);
+            return thread ? { subtitle: null, title: thread.title } : null;
+          }),
+    [sidebarThreadByKey, switcherThreadKeys],
+  );
+
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
       const shortcutContext = getCurrentSidebarShortcutContext();
@@ -3576,6 +3606,13 @@ export default function LegacySidebar() {
       });
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
+        const holdModifier = resolveThreadSwitcherHoldModifier(event);
+        if (holdModifier !== null) {
+          event.preventDefault();
+          event.stopPropagation();
+          advanceThreadSwitcher(holdModifier, traversalDirection);
+          return;
+        }
         const targetThreadKey = resolveAdjacentThreadId({
           threadIds: orderedSidebarThreadKeys,
           currentThreadId: routeThreadKey,
@@ -3620,6 +3657,7 @@ export default function LegacySidebar() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
+    advanceThreadSwitcher,
     getCurrentSidebarShortcutContext,
     keybindings,
     navigateToThread,
@@ -3818,6 +3856,7 @@ export default function LegacySidebar() {
         projectsLength={projects.length}
       />
       <SidebarChromeFooter />
+      <ThreadSwitcherOverlay entries={threadSwitcherEntries} index={threadSwitcher.index} />
     </>
   );
 }

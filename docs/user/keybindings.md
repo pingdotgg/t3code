@@ -30,6 +30,16 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Switch between threads
+
+On web and desktop, hold `mod+shift` and tap `]` or `[` to switch threads. Release to open
+the highlighted thread, or press Escape to stay where you are. Threads are ordered by how
+recently you had them open, so a single tap returns to the one you came from. Use `mod+k`
+for anything older.
+
+If you rebind these commands to keys without a modifier, they step through the sidebar in
+order instead.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`
