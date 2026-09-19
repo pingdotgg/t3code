@@ -110,6 +110,8 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly rowsJson: string;
   readonly tokensJson?: string;
   readonly tokensPatchJson?: string;
+  readonly wordDiffRangesPatchJson?: string;
+  readonly onWordDiffRangesPatchSent?: () => void;
   readonly tokensResetKey?: string;
   readonly contentResetKey?: string;
   readonly collapsedFileIdsJson?: string;
@@ -163,7 +165,12 @@ interface NativeReviewDiffViewRef {
 
 type NativeReviewDiffRawViewProps = Omit<
   NativeReviewDiffViewProps,
-  "nativeViewRef" | "rowsJson" | "tokensJson" | "tokensPatchJson"
+  | "nativeViewRef"
+  | "rowsJson"
+  | "tokensJson"
+  | "tokensPatchJson"
+  | "wordDiffRangesPatchJson"
+  | "onWordDiffRangesPatchSent"
 > & {
   readonly ref?: Ref<NativeReviewDiffViewRef>;
 };
@@ -186,6 +193,7 @@ function useNativeReviewDiffPayload(
   nativeRef: React.RefObject<NativeReviewDiffViewRef | null>,
   method: NativeReviewDiffPayloadMethod,
   payload: string | undefined,
+  onSent?: () => void,
 ) {
   useEffect(() => {
     if (payload === undefined) {
@@ -211,18 +219,23 @@ function useNativeReviewDiffPayload(
         return;
       }
 
-      void command.call(view, payload).catch((error: unknown) => {
-        if (
-          !cancelled &&
-          attempts < NATIVE_REVIEW_DIFF_PAYLOAD_RETRY_FRAMES &&
-          isPendingNativeViewRegistration(error)
-        ) {
-          attempts += 1;
-          frame = requestAnimationFrame(dispatch);
-          return;
-        }
-        console.error(`[native-review-diff] ${method} failed`, error);
-      });
+      void command
+        .call(view, payload)
+        .then(() => {
+          if (!cancelled) onSent?.();
+        })
+        .catch((error: unknown) => {
+          if (
+            !cancelled &&
+            attempts < NATIVE_REVIEW_DIFF_PAYLOAD_RETRY_FRAMES &&
+            isPendingNativeViewRegistration(error)
+          ) {
+            attempts += 1;
+            frame = requestAnimationFrame(dispatch);
+            return;
+          }
+          console.error(`[native-review-diff] ${method} failed`, error);
+        });
     };
 
     // Fabric attaches the React ref before Expo registers the native tag used by
@@ -235,7 +248,7 @@ function useNativeReviewDiffPayload(
         cancelAnimationFrame(frame);
       }
     };
-  }, [method, nativeRef, payload]);
+  }, [method, nativeRef, onSent, payload]);
 }
 
 function getExpoViewConfig(moduleName: string) {
@@ -245,11 +258,25 @@ function getExpoViewConfig(moduleName: string) {
 }
 
 function NativeReviewDiffView(props: NativeReviewDiffViewProps) {
-  const { nativeViewRef, rowsJson, tokensJson, tokensPatchJson, ...nativeProps } = props;
+  const {
+    nativeViewRef,
+    rowsJson,
+    tokensJson,
+    tokensPatchJson,
+    wordDiffRangesPatchJson,
+    onWordDiffRangesPatchSent,
+    ...nativeProps
+  } = props;
   const nativeRef = useRef<NativeReviewDiffViewRef>(null);
   useNativeReviewDiffPayload(nativeRef, "setRowsJson", rowsJson);
   useNativeReviewDiffPayload(nativeRef, "setTokensJson", tokensJson);
   useNativeReviewDiffPayload(nativeRef, "setTokensPatchJson", tokensPatchJson);
+  useNativeReviewDiffPayload(
+    nativeRef,
+    "setTokensPatchJson",
+    wordDiffRangesPatchJson,
+    onWordDiffRangesPatchSent,
+  );
   useImperativeHandle(
     nativeViewRef,
     () => ({
