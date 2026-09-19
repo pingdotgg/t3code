@@ -790,7 +790,7 @@ export const exportBrandIcons = Effect.fn("exportBrandIcons")(function* (checkOn
 export const exportBrandIconsCommand = Command.make(
   "export-brand-icons",
   {
-    check: Flag.boolean("check").pipe(
+    check: Flag.Boolean("check").pipe(
       Flag.withDescription("Verify generated icon assets without modifying files."),
       Flag.withDefault(false),
     ),

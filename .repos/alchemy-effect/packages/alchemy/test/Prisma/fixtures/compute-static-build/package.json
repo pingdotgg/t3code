@@ -1,0 +1,8 @@
+{
+  "name": "prisma-compute-static-build-test",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "vite": "*"
+  }
+}

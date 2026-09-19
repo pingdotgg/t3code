@@ -55,7 +55,7 @@ export default class OtelEventFlushWorker extends Cloudflare.Worker<OtelEventFlu
   }).pipe(
     Effect.provide(
       Layer.unwrap(
-        Config.string("OTLP_EVENT_FLUSH_URL").pipe(
+        Config.String("OTLP_EVENT_FLUSH_URL").pipe(
           Effect.map((url) =>
             Telemetry.layerOtlp({
               traces: { url },

@@ -103,18 +103,13 @@ test.provider.skipIf(!!process.env.FAST)(
               : Effect.fail(new Error(`Worker not ready: ${res.status}`)),
           ),
           Effect.retry({
-            // Cap the exponential at 3s — uncapped, the sleeps double each
-            // attempt and a handful of misses burns minutes of the test
-            // timeout on a single send. 30 attempts ≈ 85s total budget:
-            // fresh workers.dev URLs serve 404 well past the ~40s a
-            // 15-attempt budget covers when the account is under
-            // full-suite deploy load.
+            // Bound fresh workers.dev readiness to roughly 25 seconds.
             schedule: Schedule.max([
               Schedule.min([
                 Schedule.exponential("500 millis"),
                 Schedule.spaced("3 seconds"),
               ]),
-              Schedule.recurs(30),
+              Schedule.recurs(10),
             ]),
           }),
         );
@@ -168,28 +163,24 @@ test.provider.skipIf(!!process.env.FAST)(
                 );
           }),
           Effect.retry({
-            // Cap the exponential at 4s so 75 attempts sample for ~5 minutes.
-            // Uncapped, the doubling sleeps pass the whole test budget after
-            // ~9 attempts and the test dies in a single long sleep even
-            // though the consumer would have caught up moments later. The
-            // ~5 minute ceiling matters under full-suite load: queue consumer
-            // scheduling lags well past 2.5 minutes when the account is
-            // deploying hundreds of workers concurrently.
+            // Bound consumer catch-up to roughly 35 seconds.
             schedule: Schedule.max([
               Schedule.min([
                 Schedule.exponential("500 millis"),
                 Schedule.spaced("4 seconds"),
               ]),
-              Schedule.recurs(75),
+              Schedule.recurs(10),
             ]),
           }),
         );
 
       // Poll the DO snapshot until each consumer has caught up.
-      const snapshot = yield* readSnapshot(name, messages.length);
-      const secondarySnapshot = yield* readSnapshot(
-        secondaryName,
-        secondaryMessages.length,
+      const [snapshot, secondarySnapshot] = yield* Effect.all(
+        [
+          readSnapshot(name, messages.length),
+          readSnapshot(secondaryName, secondaryMessages.length),
+        ],
+        { concurrency: "unbounded" },
       );
 
       // The DO observed every message. Cloudflare Queues are
@@ -212,7 +203,5 @@ test.provider.skipIf(!!process.env.FAST)(
 
       yield* stack.destroy();
     }).pipe(logLevel),
-  // The send readiness budget (~85s) plus two DO catch-up polls (~2.5 min
-  // cap each) can legitimately stack under full-suite load.
-  { timeout: 600_000 },
+  { timeout: 120_000 },
 );

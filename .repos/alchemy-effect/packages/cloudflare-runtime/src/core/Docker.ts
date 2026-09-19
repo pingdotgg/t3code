@@ -84,11 +84,11 @@ const DEFAULT_DOCKER_HOST =
     : "unix:///var/run/docker.sock";
 const DEV_CONTAINER_PREFIX = "alchemy-dev";
 
-const DockerHost = Config.string("DOCKER_HOST");
-const DockerBin = Config.string("DOCKER_BIN").pipe(
+const DockerHost = Config.String("DOCKER_HOST");
+const DockerBin = Config.String("DOCKER_BIN").pipe(
   Config.orElse(() => Config.succeed("docker")),
 );
-const ContainerEgressInterceptorImage = Config.string(
+const ContainerEgressInterceptorImage = Config.String(
   "CONTAINER_EGRESS_INTERCEPTOR_IMAGE",
 ).pipe(
   Config.orElse(() =>
@@ -404,8 +404,24 @@ export const DockerLive = Layer.effect(
     ): Effect.Effect<void, E> =>
       result.exitCode === 0 ? Effect.void : Effect.fail(onNonZero(result));
 
-    const pull = ({ imageUri }: ContainerImage.Pull) =>
-      run(["pull", toPullRef(imageUri), "--platform", "linux/amd64"]).pipe(
+    /**
+     * `platform` is omitted for the egress interceptor: it is a host-side
+     * sidecar, not a deployable image, so Docker must resolve the
+     * host-native variant. Forcing `linux/amd64` there runs it under
+     * emulation on arm64 hosts, where its transparent-proxy setup dies at
+     * startup with `Fatal error: setsockoptint: protocol not available`.
+     * Deployable user images pass `linux/amd64` explicitly, because that is
+     * the architecture Cloudflare's container runtime executes.
+     */
+    const pull = ({
+      imageUri,
+      platform,
+    }: ContainerImage.Pull & { readonly platform?: string }) =>
+      run([
+        "pull",
+        toPullRef(imageUri),
+        ...(platform ? ["--platform", platform] : []),
+      ]).pipe(
         Effect.mapError(
           (cause) =>
             new SystemError({
@@ -568,7 +584,7 @@ export const DockerLive = Layer.effect(
           );
         }),
       pull: (tag, image) =>
-        pull(image).pipe(
+        pull({ ...image, platform: "linux/amd64" }).pipe(
           Effect.andThen(
             run(["tag", image.imageUri, tag]).pipe(
               Effect.mapError(

@@ -7,7 +7,7 @@ import { API_PORT, Marker, SECRET_NAME, Site } from "./shared.ts";
 
 /**
  * HTTP Service: Fly injects {@link Marker} as env `{@link SECRET_NAME}`.
- * Read it from `fetch` with `Config.string` — never the plaintext.
+ * Read it from `fetch` with `Config.String` — never the plaintext.
  */
 export default class Api extends Fly.Service<Api>()(
   "Api",
@@ -25,7 +25,7 @@ export default class Api extends Fly.Service<Api>()(
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
         const url = new URL(request.url, "http://service");
-        const value = yield* Config.string(SECRET_NAME).pipe(
+        const value = yield* Config.String(SECRET_NAME).pipe(
           Effect.orElseSucceed(() => ""),
         );
         const body = {

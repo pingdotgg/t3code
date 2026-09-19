@@ -1,4 +1,4 @@
-import type { CloudflareResolvedCredentials } from "@/Cloudflare/Auth/AuthProvider.ts";
+import type { CloudflareResolvedCredentials } from "@/Cloudflare/Auth/AuthConfig.ts";
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment.ts";
 import { type Database, DatabaseProvider } from "@/Cloudflare/D1/Database.ts";
 import {
@@ -65,7 +65,7 @@ const credentials: CloudflareResolvedCredentials = {
   type: "apiToken",
   apiToken: Redacted.make("test-token"),
   accountId: TEST_ACCOUNT,
-  source: { type: "env" },
+  source: { type: "stored" },
 };
 
 const env = Layer.mergeAll(
