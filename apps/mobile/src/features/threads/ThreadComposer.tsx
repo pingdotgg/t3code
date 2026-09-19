@@ -140,7 +140,8 @@ export interface ThreadComposerProps {
   readonly sendBlockedReason?: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
-  readonly onPickDraftMedia: () => Promise<void>;
+  /** Adds normalized media from the requested native source to the current draft. */
+  readonly onPickDraftMedia: (source: "camera" | "library") => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
@@ -267,6 +268,7 @@ export function ComposerSurface(props: {
   );
 }
 
+/** Renders the live thread composer and its source-aware attachment controls. */
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
@@ -686,7 +688,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 supportsFiles={Boolean(
                   props.serverConfig?.environment.capabilities.fileAttachments,
                 )}
-                onPickMedia={props.onPickDraftMedia}
+                onTakePhoto={() => props.onPickDraftMedia("camera")}
+                onPickMedia={() => props.onPickDraftMedia("library")}
                 onPickFiles={props.onPickDraftFiles}
               />
             ) : null}
@@ -937,7 +940,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       supportsFiles={Boolean(
                         props.serverConfig?.environment.capabilities.fileAttachments,
                       )}
-                      onPickMedia={props.onPickDraftMedia}
+                      onTakePhoto={() => props.onPickDraftMedia("camera")}
+                      onPickMedia={() => props.onPickDraftMedia("library")}
                       onPickFiles={props.onPickDraftFiles}
                     />
                     <View className="min-w-0 shrink">

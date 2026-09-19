@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   documentUri: "file:///documents",
   pickFile: vi.fn(),
   pickMedia: vi.fn(),
+  takePhoto: vi.fn(),
+  requestCameraPermission: vi.fn(),
   copy: vi.fn(),
   delete: vi.fn(),
   open: vi.fn(),
@@ -13,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   readBase64: vi.fn(),
   manipulate: vi.fn(),
   release: vi.fn(),
+  save: vi.fn(),
 }));
 
 vi.mock("expo-file-system", () => {
@@ -80,7 +83,11 @@ vi.mock("expo-file-system", () => {
   };
 });
 
-vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: mocks.pickMedia }));
+vi.mock("expo-image-picker", () => ({
+  launchImageLibraryAsync: mocks.pickMedia,
+  launchCameraAsync: mocks.takePhoto,
+  requestCameraPermissionsAsync: mocks.requestCameraPermission,
+}));
 vi.mock("expo-document-picker", () => ({ getDocumentAsync: mocks.pickFile }));
 vi.mock("expo-image-manipulator", () => ({
   SaveFormat: { JPEG: "jpeg", PNG: "png", WEBP: "webp" },
@@ -94,22 +101,28 @@ import {
   pickComposerImages,
   pickComposerMedia,
   removePersistedComposerAttachmentFile,
+  takeComposerPhoto,
 } from "./composerImages";
 import { isForegroundHandoffActive } from "./foreground-handoff";
 import { retainComposerAttachmentFile } from "./composerAttachmentFiles";
 
 describe("composer file attachments", () => {
-  beforeEach(() => {
+  /** Restores the file and native-picker mocks shared by every attachment test. */
+  function resetAttachmentMocks() {
     mocks.documentUri = "file:///documents";
     mocks.pickFile.mockReset();
     mocks.pickMedia.mockReset();
+    mocks.takePhoto.mockReset();
+    mocks.requestCameraPermission.mockReset();
     mocks.copy.mockReset();
     mocks.delete.mockReset();
     mocks.open.mockReset();
     mocks.size.mockReset();
     mocks.readBase64.mockReset();
     mocks.size.mockImplementation((uri: string) => (uri.startsWith("content:") ? null : 42));
-  });
+  }
+
+  beforeEach(resetAttachmentMocks);
 
   describe("photo library image conversion", () => {
     const rendered = { uri: "file:///cache/ImageManipulator/photo.jpg", base64: "/9j/2Q==" };
@@ -132,12 +145,15 @@ describe("composer file attachments", () => {
       saved: rendered as { uri: string; base64?: string },
     };
 
-    beforeEach(() => {
+    /** Restores the simulated native image pipeline and grants camera access by default. */
+    function resetNativeImageMocks() {
       native.size = { width: 1, height: 1 };
       native.resizes = [];
       native.saved = rendered;
       mocks.manipulate.mockReset();
       mocks.release.mockReset();
+      mocks.save.mockReset();
+      mocks.save.mockImplementation(async () => native.saved);
       mocks.manipulate.mockImplementation(() => {
         const context = {
           resize(size: { width?: number | null; height?: number | null }) {
@@ -147,12 +163,139 @@ describe("composer file attachments", () => {
           renderAsync: async () => ({
             ...native.size,
             release: mocks.release,
-            saveAsync: async () => native.saved,
+            saveAsync: mocks.save,
           }),
         };
         return context;
       });
-    });
+      mocks.requestCameraPermission.mockResolvedValue({ granted: true });
+    }
+
+    beforeEach(resetNativeImageMocks);
+
+    /** Verifies that an authorized camera capture is normalized into a composer image. */
+    async function attachCapturedPhoto() {
+      mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [photo] });
+
+      const result = await takeComposerPhoto({ existingCount: 0 });
+
+      expect(mocks.requestCameraPermission).toHaveBeenCalledOnce();
+      expect(mocks.takePhoto).toHaveBeenCalledWith({
+        mediaTypes: ["images"],
+        base64: false,
+        quality: 1,
+      });
+      expect(mocks.pickMedia).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        attachments: [
+          expect.objectContaining({
+            type: "image",
+            name: "photo.jpg",
+            mimeType: "image/jpeg",
+            previewUri: rendered.uri,
+          }),
+        ],
+        error: null,
+      });
+    }
+
+    it("requests camera access and attaches a captured photo", attachCapturedPhoto);
+
+    /** Verifies that an oversized first camera render is retried at a smaller output size. */
+    async function recompressOversizedCameraPhoto() {
+      const oversized =
+        rendered.base64.slice(0, 4) +
+        "A".repeat(Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4);
+      native.size = { width: 4032, height: 3024 };
+      mocks.save.mockResolvedValueOnce({ uri: rendered.uri, base64: oversized });
+      mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [photo] });
+
+      const result = await takeComposerPhoto({ existingCount: 0 });
+
+      expect(native.resizes).toEqual([{ width: 2048 }, { width: 1536 }]);
+      expect(mocks.save).toHaveBeenNthCalledWith(1, {
+        format: "jpeg",
+        compress: 0.85,
+        base64: true,
+      });
+      expect(mocks.save).toHaveBeenNthCalledWith(2, {
+        format: "jpeg",
+        compress: 0.72,
+        base64: true,
+      });
+      expect(mocks.delete).toHaveBeenCalledOnce();
+      expect(mocks.delete).toHaveBeenCalledWith(rendered.uri);
+      expect(result).toEqual({
+        attachments: [
+          expect.objectContaining({
+            type: "image",
+            name: "photo.jpg",
+            sizeBytes: 4,
+            previewUri: rendered.uri,
+          }),
+        ],
+        error: null,
+      });
+    }
+
+    it("recompresses an oversized camera render", recompressOversizedCameraPhoto);
+
+    /** Verifies that every temporary render is deleted when no attempt fits the wire limit. */
+    async function rejectPersistentlyOversizedCameraPhoto() {
+      const oversized =
+        rendered.base64.slice(0, 4) +
+        "A".repeat(Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4);
+      native.size = { width: 4032, height: 3024 };
+      mocks.save.mockResolvedValue({ uri: rendered.uri, base64: oversized });
+      mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [photo] });
+
+      await expect(takeComposerPhoto({ existingCount: 0 })).resolves.toEqual({
+        attachments: [],
+        error: "'photo.HEIC' exceeds the 10 MB attachment limit.",
+      });
+
+      expect(native.resizes).toEqual([{ width: 2048 }, { width: 1536 }, { width: 1024 }]);
+      expect(mocks.delete).toHaveBeenCalledTimes(3);
+      expect(mocks.delete).toHaveBeenNthCalledWith(1, rendered.uri);
+      expect(mocks.delete).toHaveBeenNthCalledWith(2, rendered.uri);
+      expect(mocks.delete).toHaveBeenNthCalledWith(3, rendered.uri);
+    }
+
+    it(
+      "cleans up every persistently oversized camera render",
+      rejectPersistentlyOversizedCameraPhoto,
+    );
+
+    /** Verifies that denied camera permission stops capture and closes the handoff. */
+    async function rejectDeniedCameraAccess() {
+      mocks.requestCameraPermission.mockResolvedValue({ granted: false });
+
+      await expect(takeComposerPhoto({ existingCount: 0 })).resolves.toEqual({
+        attachments: [],
+        error: "Camera access is required to take a photo.",
+      });
+
+      expect(mocks.takePhoto).not.toHaveBeenCalled();
+      expect(isForegroundHandoffActive()).toBe(false);
+    }
+
+    it("does not open the camera when access is denied", rejectDeniedCameraAccess);
+
+    /** Verifies that attachment limits short-circuit before permission or capture prompts. */
+    async function rejectCameraCaptureForFullDraft() {
+      await expect(takeComposerPhoto({ existingCount: 8 })).resolves.toEqual({
+        attachments: [],
+        error: "You can attach up to 8 attachments per message.",
+      });
+
+      expect(mocks.requestCameraPermission).not.toHaveBeenCalled();
+      expect(mocks.takePhoto).not.toHaveBeenCalled();
+    }
+
+    it(
+      "does not request camera access when the draft is already full",
+      rejectCameraCaptureForFullDraft,
+    );
 
     it.each(["image/heic", "image/heif", undefined])(
       "renders a %s photo to JPEG natively and previews the rendered file",

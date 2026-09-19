@@ -12,7 +12,7 @@ import { Alert, View } from "react-native";
 import { useEffect, useRef, useState } from "react";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
+import { pickComposerFiles, pickComposerMedia, takeComposerPhoto } from "../../lib/composerImages";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useNavigation } from "@react-navigation/native";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -31,6 +31,7 @@ import {
   questionAttachmentPreparationAtom,
 } from "../../state/question-attachments";
 
+/** Manages attachments and custom-answer text for one pending agent question. */
 export function QuestionAttachments(props: {
   requestId: ApprovalRequestId;
   question: UserInputQuestion;
@@ -123,8 +124,15 @@ export function QuestionAttachments(props: {
     props.question.id,
   );
   const attachments = drafts[key]?.attachments ?? [];
-  const pick = async (kind: "media" | "files") => {
+  /** Runs one system picker while preserving the question's cross-client attachment reservation. */
+  const pick = async (kind: "camera" | "media" | "files") => {
     const scope = pickerScope.current;
+    const failureTitle =
+      kind === "camera"
+        ? "Could not take photo"
+        : kind === "media"
+          ? "Could not attach photo or video"
+          : "Could not attach file";
     changeQuestionAttachmentPreparation(key, 1);
     try {
       const existingCount = appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0;
@@ -134,10 +142,12 @@ export function QuestionAttachments(props: {
               existingCount,
               maxBytes: capabilities?.fileAttachments?.maxUploadBytes,
             })
-          : await pickComposerMedia({
-              existingCount,
-              maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
-            });
+          : kind === "camera"
+            ? await takeComposerPhoto({ existingCount })
+            : await pickComposerMedia({
+                existingCount,
+                maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
+              });
       const picked = "files" in result ? result.files : result.attachments;
       // Resolution on another client clears the reservation while the picker is open.
       if (
@@ -149,9 +159,9 @@ export function QuestionAttachments(props: {
       }
       const rejected = append(key, picked);
       if (result.error || rejected > 0)
-        Alert.alert("Could not attach file", result.error ?? "Too many attachments.");
+        Alert.alert(failureTitle, result.error ?? "Too many attachments.");
     } catch (error) {
-      Alert.alert("Could not attach file", error instanceof Error ? error.message : "Try again.");
+      Alert.alert(failureTitle, error instanceof Error ? error.message : "Try again.");
     } finally {
       changeQuestionAttachmentPreparation(key, -1);
     }
@@ -162,6 +172,7 @@ export function QuestionAttachments(props: {
         <ComposerAttachmentButton
           disabled={props.disabled}
           supportsFiles={Boolean(capabilities?.fileAttachments)}
+          onTakePhoto={() => pick("camera")}
           onPickMedia={() => pick("media")}
           onPickFiles={() => pick("files")}
         />
