@@ -26,17 +26,30 @@ export function getMobileThemeRuntimeVariables(
   const variables = usesDefaultPalette
     ? defaults[appearance]
     : getMobileThemeVariables(themeId, appearance);
+  // Desktop separates its near-white default surfaces with a divider. Android's
+  // rounded panes and the iPad sidebar use the same neutral mobile chrome.
+  // Named palettes keep their sidebar frame; system colors replace it later.
+  const frame = themeColorWithAlpha(
+    variables[usesDefaultPalette ? "--color-row-hover" : "--color-drawer"],
+    1,
+  );
+  if (platform === "ios" && usesDefaultPalette) {
+    return {
+      ...variables,
+      "--color-header": frame,
+      "--color-header-foreground": variables["--color-drawer-foreground"],
+      "--color-drawer": frame,
+      "--color-thread-hover":
+        appearance === "dark"
+          ? variables["--color-grouped-card"]
+          : variables["--color-thread-hover"],
+    };
+  }
   if (platform !== "android") return variables;
 
-  // Desktop separates its near-white default surfaces with a divider. Android's
-  // rounded panes need a tonal frame; use the neutral control surface there.
-  // Named palettes keep their sidebar frame, and system colors replace it later.
   return {
     ...variables,
-    "--color-header": themeColorWithAlpha(
-      variables[usesDefaultPalette ? "--color-row-hover" : "--color-drawer"],
-      1,
-    ),
+    "--color-header": frame,
     "--color-header-foreground": variables["--color-drawer-foreground"],
   };
 }

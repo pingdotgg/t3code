@@ -6,6 +6,8 @@ import tailwindColors from "tailwindcss/colors";
 import { BUILT_IN_THEME_IDS, type BuiltInThemeId } from "@t3tools/shared/themePalettes";
 
 import {
+  createMobileThemeVariables,
+  getMobileThemeColors,
   getMobileThemeVariables,
   DEFAULT_MOBILE_THEME_ID,
   type MobileThemeAppearance,
@@ -157,7 +159,11 @@ const variablesFor = (themeId: BuiltInThemeId, appearance: MobileThemeAppearance
 // Clerk's native screens use one build-time palette per appearance. Custom
 // profile pages must match it even when the rest of the app uses a named theme.
 const clerkColorsFor = (appearance: MobileThemeAppearance) => {
-  const variables = getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, appearance);
+  // Native authentication uses plain cards, rather than tonal settings groups.
+  const variables = createMobileThemeVariables(
+    getMobileThemeColors(DEFAULT_MOBILE_THEME_ID, appearance),
+    appearance,
+  );
   return {
     primary: variables["--color-primary"],
     background: variables["--color-sheet-solid"],

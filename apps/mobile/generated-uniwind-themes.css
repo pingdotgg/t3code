@@ -6,6 +6,7 @@
       --color-sheet: rgba(252, 252, 252, 0.98);
       --color-sheet-solid: #fcfcfc;
       --color-card: #ffffff;
+      --color-grouped-card: #f4f4f5;
       --color-card-alt: #fcfcfc;
       --color-card-translucent: rgba(255, 255, 255, 0.8);
       --color-thread-canvas: #fcfcfc;
@@ -18,8 +19,8 @@
       --color-composer-surface: rgba(255, 255, 255, 0.94);
       --color-composer-border: rgba(228, 228, 231, 0.54);
       --color-foreground: #27272a;
-      --color-foreground-secondary: #71717b;
-      --color-foreground-muted: #71717b;
+      --color-foreground-secondary: #6f6f79;
+      --color-foreground-muted: #6f6f79;
       --color-foreground-tertiary: #71717b;
       --color-border: #e4e4e7;
       --color-focus: #1b4ed8;
@@ -156,6 +157,7 @@
       --color-sheet: rgba(10, 10, 10, 0.98);
       --color-sheet-solid: #0a0a0a;
       --color-card: #111111;
+      --color-grouped-card: #1a1b1b;
       --color-card-alt: #111111;
       --color-card-translucent: rgba(17, 17, 17, 0.8);
       --color-thread-canvas: #0a0a0a;
@@ -168,8 +170,8 @@
       --color-composer-surface: rgba(17, 17, 17, 0.9);
       --color-composer-border: rgba(25, 25, 25, 0.46);
       --color-foreground: #f5f5f5;
-      --color-foreground-secondary: #818181;
-      --color-foreground-muted: #818181;
+      --color-foreground-secondary: #838383;
+      --color-foreground-muted: #838383;
       --color-foreground-tertiary: #818181;
       --color-border: #191919;
       --color-focus: #346bf1;
@@ -182,7 +184,7 @@
       --color-inline-skill-foreground: #f5f5f5;
       --color-primary: #346bf1;
       --color-primary-foreground: #ffffff;
-      --color-primary-text: #4174f2;
+      --color-primary-text: #4b7cf3;
       --color-primary-shadow: #000000;
       --color-secondary: #111111;
       --color-secondary-foreground: #f5f5f5;
@@ -306,6 +308,7 @@
       --color-sheet: rgba(253, 247, 253, 0.98);
       --color-sheet-solid: #fdf7fd;
       --color-card: #faf3fb;
+      --color-grouped-card: #faf3fb;
       --color-card-alt: #fdfafd;
       --color-card-translucent: rgba(250, 243, 251, 0.8);
       --color-thread-canvas: #fdf7fd;
@@ -456,6 +459,7 @@
       --color-sheet: rgba(31, 26, 36, 0.98);
       --color-sheet-solid: #1f1a24;
       --color-card: #29232d;
+      --color-grouped-card: #29232d;
       --color-card-alt: #2c2631;
       --color-card-translucent: rgba(41, 35, 45, 0.8);
       --color-thread-canvas: #1f1a24;
@@ -606,6 +610,7 @@
       --color-sheet: rgba(243, 247, 244, 0.98);
       --color-sheet-solid: #f3f7f4;
       --color-card: #f3f7f4;
+      --color-grouped-card: #f3f7f4;
       --color-card-alt: #ecefed;
       --color-card-translucent: rgba(243, 247, 244, 0.8);
       --color-thread-canvas: #f3f7f4;
@@ -618,7 +623,7 @@
       --color-composer-surface: rgba(243, 247, 244, 0.94);
       --color-composer-border: rgba(203, 213, 209, 0.54);
       --color-foreground: #241523;
-      --color-foreground-secondary: #746c73;
+      --color-foreground-secondary: #726a71;
       --color-foreground-muted: #6e696f;
       --color-foreground-tertiary: #746c73;
       --color-border: #cbd5d1;
@@ -756,6 +761,7 @@
       --color-sheet: rgba(27, 40, 33, 0.98);
       --color-sheet-solid: #1b2821;
       --color-card: #1b2821;
+      --color-grouped-card: #1b2821;
       --color-card-alt: #36413c;
       --color-card-translucent: rgba(27, 40, 33, 0.8);
       --color-thread-canvas: #1b2821;
@@ -768,8 +774,8 @@
       --color-composer-surface: rgba(27, 40, 33, 0.9);
       --color-composer-border: rgba(65, 95, 79, 0.46);
       --color-foreground: #fffaff;
-      --color-foreground-secondary: #919595;
-      --color-foreground-muted: #9da5a2;
+      --color-foreground-secondary: #a6aaaa;
+      --color-foreground-muted: #a3aba8;
       --color-foreground-tertiary: #919595;
       --color-border: #415f4f;
       --color-focus: #69d69a;
@@ -906,6 +912,7 @@
       --color-sheet: rgba(245, 247, 248, 0.98);
       --color-sheet-solid: #f5f7f8;
       --color-card: #f5f7f8;
+      --color-grouped-card: #f5f7f8;
       --color-card-alt: #edeff1;
       --color-card-translucent: rgba(245, 247, 248, 0.8);
       --color-thread-canvas: #f5f7f8;
@@ -918,7 +925,7 @@
       --color-composer-surface: rgba(245, 247, 248, 0.94);
       --color-composer-border: rgba(205, 212, 220, 0.54);
       --color-foreground: #241523;
-      --color-foreground-secondary: #746c75;
+      --color-foreground-secondary: #726a73;
       --color-foreground-muted: #6f6873;
       --color-foreground-tertiary: #746c75;
       --color-border: #cdd4dc;
@@ -1056,6 +1063,7 @@
       --color-sheet: rgba(23, 33, 43, 0.98);
       --color-sheet-solid: #17212b;
       --color-card: #17212b;
+      --color-grouped-card: #17212b;
       --color-card-alt: #333b45;
       --color-card-translucent: rgba(23, 33, 43, 0.8);
       --color-thread-canvas: #17212b;
@@ -1068,8 +1076,8 @@
       --color-composer-surface: rgba(23, 33, 43, 0.9);
       --color-composer-border: rgba(64, 85, 103, 0.46);
       --color-foreground: #fffaff;
-      --color-foreground-secondary: #8d8f97;
-      --color-foreground-muted: #969ca6;
+      --color-foreground-secondary: #a2a3aa;
+      --color-foreground-muted: #9ea4ad;
       --color-foreground-tertiary: #8d8f97;
       --color-border: #405567;
       --color-focus: #70b9ee;
@@ -1206,6 +1214,7 @@
       --color-sheet: rgba(249, 247, 245, 0.98);
       --color-sheet-solid: #f9f7f5;
       --color-card: #f9f7f5;
+      --color-grouped-card: #f9f7f5;
       --color-card-alt: #f1efee;
       --color-card-translucent: rgba(249, 247, 245, 0.8);
       --color-thread-canvas: #f9f7f5;
@@ -1218,7 +1227,7 @@
       --color-composer-surface: rgba(249, 247, 245, 0.94);
       --color-composer-border: rgba(221, 210, 206, 0.54);
       --color-foreground: #241523;
-      --color-foreground-secondary: #766c74;
+      --color-foreground-secondary: #746a72;
       --color-foreground-muted: #74686f;
       --color-foreground-tertiary: #766c74;
       --color-border: #ddd2ce;
@@ -1356,6 +1365,7 @@
       --color-sheet: rgba(41, 30, 26, 0.98);
       --color-sheet-solid: #291e1a;
       --color-card: #291e1a;
+      --color-grouped-card: #291e1a;
       --color-card-alt: #433835;
       --color-card-translucent: rgba(41, 30, 26, 0.8);
       --color-thread-canvas: #291e1a;
@@ -1368,8 +1378,8 @@
       --color-composer-surface: rgba(41, 30, 26, 0.9);
       --color-composer-border: rgba(102, 76, 63, 0.46);
       --color-foreground: #fffaff;
-      --color-foreground-secondary: #968e8f;
-      --color-foreground-muted: #a59996;
+      --color-foreground-secondary: #a8a2a2;
+      --color-foreground-muted: #aca19f;
       --color-foreground-tertiary: #968e8f;
       --color-border: #664c3f;
       --color-focus: #f09a64;
@@ -1506,6 +1516,7 @@
       --color-sheet: rgba(248, 247, 249, 0.98);
       --color-sheet-solid: #f8f7f9;
       --color-card: #f8f7f9;
+      --color-grouped-card: #f8f7f9;
       --color-card-alt: #f0eff2;
       --color-card-translucent: rgba(248, 247, 249, 0.8);
       --color-thread-canvas: #f8f7f9;
@@ -1518,7 +1529,7 @@
       --color-composer-surface: rgba(248, 247, 249, 0.94);
       --color-composer-border: rgba(214, 209, 222, 0.54);
       --color-foreground: #241523;
-      --color-foreground-secondary: #766c76;
+      --color-foreground-secondary: #746a74;
       --color-foreground-muted: #726874;
       --color-foreground-tertiary: #766c76;
       --color-border: #d6d1de;
@@ -1656,6 +1667,7 @@
       --color-sheet: rgba(29, 25, 41, 0.98);
       --color-sheet-solid: #1d1929;
       --color-card: #1d1929;
+      --color-grouped-card: #1d1929;
       --color-card-alt: #383443;
       --color-card-translucent: rgba(29, 25, 41, 0.8);
       --color-thread-canvas: #1d1929;
@@ -1668,8 +1680,8 @@
       --color-composer-surface: rgba(29, 25, 41, 0.9);
       --color-composer-border: rgba(77, 67, 102, 0.46);
       --color-foreground: #fffaff;
-      --color-foreground-secondary: #8e8a95;
-      --color-foreground-muted: #9690a1;
+      --color-foreground-secondary: #a09da6;
+      --color-foreground-muted: #a19cab;
       --color-foreground-tertiary: #8e8a95;
       --color-border: #4d4366;
       --color-focus: #9d7df2;

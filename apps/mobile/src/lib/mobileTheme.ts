@@ -191,8 +191,8 @@ function contrastRatio(
   );
 }
 
-/** Preserve the action hue while giving text 4.5:1 contrast on every supplied surface. */
-function readableActionText(accent: string, surface: string | ReadonlyArray<string>): string {
+/** Preserve the color's hue while giving text 4.5:1 contrast on every supplied surface. */
+function readableTextColor(accent: string, surface: string | ReadonlyArray<string>): string {
   const accentChannels = rgbChannels(accent);
   const surfaceChannels = (typeof surface === "string" ? [surface] : surface)
     .map(rgbChannels)
@@ -235,13 +235,20 @@ export function themeColorWithAlpha(color: string, alpha: number): string {
   return rgb ? `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})` : color;
 }
 
-export function createMobileThemeVariables(colors: ThemeColors, appearance: MobileThemeAppearance) {
+export function createMobileThemeVariables(
+  colors: ThemeColors,
+  appearance: MobileThemeAppearance,
+  groupedCardColor = colors.surface,
+) {
   const c = nativeColors(colors);
+  const groupedCard = themeColorToNativeColor(groupedCardColor);
+  const textSurfaces = [c.canvas, c.surface, c.surfaceRaised, c.chrome, groupedCard];
   return {
     "--color-screen": c.canvas,
     "--color-sheet": withAlpha(c.chrome, 0.98),
     "--color-sheet-solid": c.chrome,
     "--color-card": c.surface,
+    "--color-grouped-card": groupedCard,
     "--color-card-alt": c.surfaceRaised,
     "--color-card-translucent": withAlpha(c.surface, 0.8),
     "--color-thread-canvas": c.canvas,
@@ -254,8 +261,8 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-composer-surface": themeColorWithAlpha(c.surface, appearance === "dark" ? 0.9 : 0.94),
     "--color-composer-border": themeColorWithAlpha(c.border, appearance === "dark" ? 0.46 : 0.54),
     "--color-foreground": c.text,
-    "--color-foreground-secondary": c.textMuted,
-    "--color-foreground-muted": c.mutedForeground,
+    "--color-foreground-secondary": readableTextColor(c.textMuted, textSurfaces),
+    "--color-foreground-muted": readableTextColor(c.mutedForeground, textSurfaces),
     "--color-foreground-tertiary": c.secondaryLabel,
     "--color-border": c.border,
     "--color-focus": c.focus,
@@ -268,12 +275,7 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-inline-skill-foreground": c.accentSurfaceForeground,
     "--color-primary": c.messageAction,
     "--color-primary-foreground": c.messageActionForeground,
-    "--color-primary-text": readableActionText(c.messageAction, [
-      c.canvas,
-      c.surface,
-      c.surfaceRaised,
-      c.chrome,
-    ]),
+    "--color-primary-text": readableTextColor(c.messageAction, textSurfaces),
     "--color-primary-shadow": "#000000",
     "--color-secondary": c.secondary,
     "--color-secondary-foreground": c.secondaryForeground,
@@ -305,7 +307,7 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-status-bar": c.canvas,
     "--color-md-body": c.text,
     "--color-md-strong": c.text,
-    "--color-md-link": readableActionText(c.messageAction, c.canvas),
+    "--color-md-link": readableTextColor(c.messageAction, c.canvas),
     "--color-md-blockquote-border": c.border,
     "--color-md-blockquote-bg": c.muted,
     "--color-md-code-bg": c.codeBackground,
@@ -318,7 +320,7 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-user-bubble": c.messageSurface,
     "--color-user-bubble-foreground": c.messageForeground,
     "--color-user-bubble-foreground-muted": withAlpha(c.messageForeground, 0.78),
-    "--color-user-bubble-skill-foreground": readableActionText(c.messageAction, c.messageSurface),
+    "--color-user-bubble-skill-foreground": readableTextColor(c.messageAction, c.messageSurface),
     "--color-backdrop": withAlpha("#000000", appearance === "dark" ? 0.48 : 0.22),
     "--color-drawer": c.sidebar,
     "--color-drawer-foreground": c.sidebarForeground,
@@ -352,7 +354,15 @@ export function getMobileThemeVariables(
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
-  const baseVariables = createMobileThemeVariables(colors, appearance);
+  // Mobile settings groups use tonal fills where desktop uses outlined cards.
+  // Keep the regular card and composer roles on their shared desktop surfaces.
+  const groupedCard =
+    themeId === DEFAULT_MOBILE_THEME_ID
+      ? appearance === "light"
+        ? colors.toolbarControlHover
+        : colors.sidebarRowActive
+      : colors.surface;
+  const baseVariables = createMobileThemeVariables(colors, appearance, groupedCard);
 
   // The complete base record guarantees that optional overrides cannot leave a token undefined.
   return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;

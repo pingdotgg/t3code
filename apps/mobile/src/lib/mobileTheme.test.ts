@@ -119,6 +119,9 @@ describe("mobile themes", () => {
         ["--color-primary-text", "--color-card"],
         ["--color-primary-text", "--color-card-alt"],
         ["--color-primary-text", "--color-sheet-solid"],
+        ["--color-primary-text", "--color-grouped-card"],
+        ["--color-foreground", "--color-grouped-card"],
+        ["--color-foreground-muted", "--color-grouped-card"],
         ["--color-secondary-foreground", "--color-secondary"],
         ["--color-user-bubble-foreground", "--color-user-bubble"],
         ["--color-warning-foreground", "--color-warning"],
@@ -150,6 +153,17 @@ describe("mobile themes", () => {
     expect(variables["--color-primary"]).toBe("#123456");
     expect(variables["--color-screen"]).toMatch(/^#/);
   });
+
+  it.each(["light", "dark"] as const)(
+    "separates default settings groups from their %s background",
+    (appearance) => {
+      const variables = getMobileThemeVariables("t3-code", appearance);
+      expect(
+        contrastRatio(variables["--color-grouped-card"], variables["--color-sheet-solid"]),
+      ).toBeGreaterThanOrEqual(1.06);
+      expect(variables["--color-grouped-card"]).not.toBe(variables["--color-card"]);
+    },
+  );
 
   it("uses the same preview roles and standard artwork as desktop", () => {
     expect(getMobileThemePreviewColors(DEFAULT_MOBILE_THEME_ID, "light")).toEqual({

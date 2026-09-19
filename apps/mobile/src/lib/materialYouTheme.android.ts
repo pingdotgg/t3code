@@ -36,6 +36,7 @@ export function materialYouPaletteToMobileThemeVariables(
     "--color-sheet": withAlpha(palette.surfaceContainerLow, 0.98),
     "--color-sheet-solid": palette.surfaceContainerLow,
     "--color-card": palette.surfaceContainer,
+    "--color-grouped-card": palette.surfaceContainer,
     "--color-card-alt": palette.surfaceContainerHigh,
     "--color-card-translucent": withAlpha(palette.surfaceContainer, 0.8),
     "--color-thread-canvas": palette.surfaceContainerLow,
