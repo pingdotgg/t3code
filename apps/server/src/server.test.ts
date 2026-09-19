@@ -1759,6 +1759,50 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("serves static files when the platform has stat and readFile but no open", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-no-open-" });
+      const html = "<html>handleless-static-ok</html>";
+      yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), html);
+      // Mirrors the Electron asar layer: stat and readFile work, open has no result.
+      const handlelessFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        open: () => fileSystem.open(path.join(staticDir, "missing-handle-target"), { flag: "r" }),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, handlelessFileSystem),
+      );
+
+      const response = yield* HttpClient.get("/", { headers: { "accept-encoding": "identity" } });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers["content-length"], String(html.length));
+      assert.equal(yield* response.text, html);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not read static bytes for an unchanged conditional request", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-304-" });
+      yield* fileSystem.writeFileString(path.join(staticDir, "app.js"), "export const build = 1;");
+      // A handle-less platform: open fails, and a 304 must not read the file either.
+      const handlelessFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        open: () => fileSystem.open(path.join(staticDir, "missing-handle-target"), { flag: "r" }),
+        readFile: () => fileSystem.readFile(path.join(staticDir, "missing-read-target")),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, handlelessFileSystem),
+      );
+
+      const response = yield* HttpClient.get("/app.js", { headers: { "if-none-match": "*" } });
+      assert.equal(response.status, 304);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("revalidates static files without sending unchanged bodies", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
