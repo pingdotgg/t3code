@@ -44,6 +44,11 @@ const QueuedThreadCreationSchema = Schema.Struct({
   startFromOrigin: Schema.optional(Schema.Boolean),
 });
 
+const QueuedSourceProposedPlanSchema = Schema.Struct({
+  threadId: ThreadId,
+  planId: Schema.String,
+});
+
 export const QueuedThreadMessageSchema = Schema.Struct({
   schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION, 4]),
   environmentId: EnvironmentId,
@@ -56,6 +61,9 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
+  // Marks the turn as the implementation of a proposed plan, so the server can
+  // stamp the plan implemented and stop offering it as actionable.
+  sourceProposedPlan: Schema.optional(QueuedSourceProposedPlanSchema),
   // Present when the queued item creates a brand-new thread (pending task)
   // instead of appending a turn to an existing one.
   creation: Schema.optional(QueuedThreadCreationSchema),
@@ -75,6 +83,11 @@ export interface QueuedThreadCreation {
   readonly startFromOrigin?: boolean;
 }
 
+export interface QueuedSourceProposedPlan {
+  readonly threadId: ThreadId;
+  readonly planId: string;
+}
+
 export interface QueuedThreadMessage {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -86,6 +99,7 @@ export interface QueuedThreadMessage {
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
+  readonly sourceProposedPlan?: QueuedSourceProposedPlan;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }

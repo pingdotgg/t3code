@@ -140,6 +140,21 @@ describe("thread outbox", () => {
       decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
     ).toEqual(message);
   });
+
+  it("retains a proposed plan reference through a persisted offline queue round trip", () => {
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "plan-message", createdAt: "2026-09-06T12:00:00.000Z" }),
+      text: "PLEASE IMPLEMENT THIS PLAN:\n# Ship it",
+      interactionMode: "default",
+      sourceProposedPlan: {
+        threadId: ThreadId.make("thread-1"),
+        planId: "plan-9",
+      },
+    };
+    expect(
+      decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
+    ).toEqual(message);
+  });
   it.each(["read", "json", "schema"] as const)(
     "recovers usable messages without permitting cleanup after a record %s failure",
     async (failure) => {

@@ -31,6 +31,10 @@ import {
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
 import {
+  findActiveProposedPlan,
+  type ActiveProposedPlan,
+} from "@t3tools/client-runtime/proposed-plan";
+import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
   resolveProjectScripts,
@@ -355,6 +359,31 @@ function ThreadRouteContent(
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const requests = useSelectedThreadRequests();
+  // A plan is only actionable once its turn settled and nothing implemented it;
+  // pending approvals and questions outrank it for the composer slot.
+  const activeProposedPlan = useMemo(() => {
+    if (selectedThreadDetail === null || selectedThread === null) {
+      return null;
+    }
+    return findActiveProposedPlan({
+      proposedPlans: selectedThreadDetail.proposedPlans,
+      latestTurn: selectedThreadDetail.latestTurn,
+      session: selectedThreadDetail.session,
+      threadId: selectedThread.id,
+    });
+  }, [selectedThread, selectedThreadDetail]);
+  const [implementingPlanId, setImplementingPlanId] = useState<string | null>(null);
+  const onImplementProposedPlan = useCallback(
+    async (plan: ActiveProposedPlan) => {
+      setImplementingPlanId(plan.id);
+      try {
+        return await composer.onImplementProposedPlan(plan);
+      } finally {
+        setImplementingPlanId((current) => (current === plan.id ? null : current));
+      }
+    },
+    [composer.onImplementProposedPlan],
+  );
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, "thread interrupt");
   const navigation = useNavigation();
   const params = props.route.params;
@@ -1000,6 +1029,8 @@ function ThreadRouteContent(
           activePendingApproval={requests.activePendingApproval}
           respondingApprovalId={requests.respondingApprovalId}
           activePendingUserInput={requests.activePendingUserInput}
+          activeProposedPlan={activeProposedPlan}
+          implementingPlanId={implementingPlanId}
           activePendingUserInputDrafts={requests.activePendingUserInputDrafts}
           activePendingUserInputAnswers={requests.activePendingUserInputAnswers}
           respondingUserInputId={requests.respondingUserInputId}
@@ -1026,6 +1057,7 @@ function ThreadRouteContent(
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
           onSendMessage={composer.onSendMessage}
+          onImplementProposedPlan={onImplementProposedPlan}
           onReconnectEnvironment={handleReconnectEnvironment}
           onUpdateThreadModelSelection={composer.onUpdateModelSelection}
           onUpdateThreadRuntimeMode={composer.onUpdateRuntimeMode}

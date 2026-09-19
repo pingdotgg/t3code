@@ -9,6 +9,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { hasUnimplementedProposedPlan } from "@t3tools/client-runtime/proposed-plan";
 import * as Option from "effect/Option";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -82,7 +83,7 @@ function threadDetailToShell(
     latestUserMessageAt: latestUserMessageAt(thread),
     hasPendingApprovals: false,
     hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
+    hasActionableProposedPlan: hasUnimplementedProposedPlan(thread.proposedPlans),
   };
 }
 

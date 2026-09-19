@@ -1,6 +1,7 @@
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { ActiveProposedPlan } from "@t3tools/client-runtime/proposed-plan";
 import {
   appendCodexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
@@ -85,6 +86,7 @@ import type {
   ThreadFeedEntry,
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
+import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
@@ -135,6 +137,8 @@ export interface ThreadDetailScreenProps {
   readonly activePendingApproval: PendingApproval | null;
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
+  readonly activeProposedPlan: ActiveProposedPlan | null;
+  readonly implementingPlanId: string | null;
   readonly activePendingUserInputDrafts: Record<string, PendingUserInputDraftAnswer>;
   readonly activePendingUserInputAnswers: Record<string, string | ReadonlyArray<string>> | null;
   readonly respondingUserInputId: ApprovalRequestId | null;
@@ -164,6 +168,7 @@ export interface ThreadDetailScreenProps {
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
+  readonly onImplementProposedPlan: (plan: ActiveProposedPlan) => Promise<boolean>;
   readonly onReconnectEnvironment: () => void;
   readonly onUpdateThreadModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateThreadRuntimeMode: (runtimeMode: RuntimeMode) => void;
@@ -995,6 +1000,21 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     <ThreadCreationFailedCard
                       reason={props.creationState.reason}
                       onEditTask={props.creationState.onEditTask}
+                    />
+                  </Animated.View>
+                ) : null}
+                {props.activeProposedPlan &&
+                !props.activePendingApproval &&
+                !props.activePendingUserInput ? (
+                  <Animated.View
+                    className="shrink-0 px-4 pb-3"
+                    entering={FadeInDown.duration(220)}
+                    exiting={FadeOut.duration(140)}
+                  >
+                    <ProposedPlanCard
+                      plan={props.activeProposedPlan}
+                      implementing={props.implementingPlanId === props.activeProposedPlan.id}
+                      onImplement={(plan) => void props.onImplementProposedPlan(plan)}
                     />
                   </Animated.View>
                 ) : null}
