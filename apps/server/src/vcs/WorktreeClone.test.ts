@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { afterAll, assert, beforeAll, describe, it, vi } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,10 +13,18 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem has no forced-clone flag.
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 
 import { ServerConfig } from "../config.ts";
 import { makeWorktreeClone } from "./WorktreeClone.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+
+// Runner-installed Git LFS filters must not change the fixture's eligibility.
+beforeAll(() => {
+  vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+  vi.stubEnv("GIT_CONFIG_GLOBAL", NodeOS.devNull);
+});
+afterAll(() => vi.unstubAllEnvs());
 
 const supportsClonePlatform = ["darwin", "linux"].includes(HostProcessPlatform.defaultValue());
 const encodeProject = Schema.encodeSync(Schema.fromJsonString(T3ProjectFile));
