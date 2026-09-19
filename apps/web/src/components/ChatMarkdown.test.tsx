@@ -290,7 +290,7 @@ describe("ChatMarkdown streaming", () => {
       });
       const details = mounted.root.findByProps({ "data-markdown-details": "" });
       expect(details.props["data-markdown-details-open"]).toBe("true");
-      expect(writeText).toHaveBeenCalledWith("First code block\n");
+      expect(writeText).toHaveBeenCalledWith("First code block");
       expect(highlight).toHaveBeenCalledTimes(1);
 
       for (let index = 0; index < 10; index += 1) {
@@ -317,7 +317,7 @@ describe("ChatMarkdown streaming", () => {
       await act(async () => {
         copyUpdated.onClick?.({} as Parameters<NonNullable<typeof copyUpdated.onClick>>[0]);
       });
-      expect(writeText).toHaveBeenLastCalledWith("Updated code block\n");
+      expect(writeText).toHaveBeenLastCalledWith("Updated code block");
       expect(highlight).toHaveBeenCalledTimes(2);
     } finally {
       await act(async () => renderer?.unmount());
@@ -431,6 +431,39 @@ describe("hasMarkdownFilePrimaryAction", () => {
         canOpenInPanel: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("ChatMarkdown code block copying", () => {
+  async function copyCodeBlock(text: string): Promise<string | undefined> {
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} />);
+      });
+      const copy = codeButton(renderer!, "Copy code");
+      await act(async () => {
+        copy.onClick?.({} as Parameters<NonNullable<typeof copy.onClick>>[0]);
+      });
+      return writeText.mock.calls[0]?.[0];
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  }
+
+  // Pasting should leave the cursor on the command, so the last newline is
+  // dropped whether it came from fence serialization or raw HTML.
+  it("copies a command without a trailing newline to paste", async () => {
+    expect(await copyCodeBlock("```sh\nnpm install\n```")).toBe("npm install");
+    expect(await copyCodeBlock("<pre><code>npm install\n</code></pre>")).toBe("npm install");
+  });
+
+  it("keeps trailing blank lines the author wrote", async () => {
+    expect(await copyCodeBlock("```sh\nnpm install\n\n```")).toBe("npm install\n");
   });
 });
 
