@@ -3815,6 +3815,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("preserves spaces in tracked file paths", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const filePath = "local/!coop - secret_room_hint_visual/main.lua";
+        yield* writeTextFile(cwd, filePath, "initial\n");
+        yield* git(cwd, ["add", filePath]);
+        yield* git(cwd, ["commit", "-m", "add file with spaces"]);
+        yield* writeTextFile(cwd, filePath, "initial\nchanged\n");
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepEqual(
+          status.workingTree.files.map((file) => file.path),
+          [filePath],
+        );
+      }),
+    );
+
     it.effect("reports line counts for untracked files before and after staging", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

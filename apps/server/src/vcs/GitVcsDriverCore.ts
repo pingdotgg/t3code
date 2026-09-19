@@ -237,7 +237,7 @@ function parseNoIndexNumstatEntries(
   const records = stdout.split("\0");
   const entries: Array<{ path: string; insertions: number; deletions: number }> = [];
 
-  for (let index = 0; index < records.length;) {
+  for (let index = 0; index < records.length; ) {
     const header = records[index++] ?? "";
     if (header.length === 0) continue;
     const firstTab = header.indexOf("\t");
