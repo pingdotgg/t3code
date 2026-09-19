@@ -3,12 +3,14 @@ import { AppText as Text, AppTextInput } from "../../components/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useConfirmRemoveProjects } from "../projects/useConfirmRemoveProjects";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import {
@@ -19,8 +21,16 @@ import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-en
 
 export function SettingsProjectOverviewRouteScreen() {
   const insets = useSafeAreaInsets();
-  const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const navigation = useNavigation();
+  const { selectedTargets, projectGroups, selectedProjectKey, selectProject } =
+    useSettingsEnvironmentFilter();
   const group = projectGroups.find((entry) => entry.key === selectedProjectKey);
+  // Once the whole project is gone there is nothing left to show here, and
+  // the settings index should stop scoping to it.
+  const handleProjectRemoved = () => {
+    selectProject(null);
+    if (navigation.canGoBack()) navigation.goBack();
+  };
   const selectedEnvironmentIds = new Set(selectedTargets.map((entry) => entry.environmentId));
   const members =
     group?.members
@@ -47,7 +57,9 @@ export function SettingsProjectOverviewRouteScreen() {
             <ProjectOverviewContent
               key={`${selectedProjectKey}:${members.map((member) => member.id).join(",")}`}
               members={members}
+              groupMemberCount={group?.members.length ?? members.length}
               environments={selectedTargets}
+              onProjectRemoved={handleProjectRemoved}
             />
           )}
         </ScrollView>
@@ -58,16 +70,37 @@ export function SettingsProjectOverviewRouteScreen() {
 
 function ProjectOverviewContent(props: {
   readonly members: readonly EnvironmentProject[];
+  /** Every checkout in the grouped project, including ones outside the environment filter. */
+  readonly groupMemberCount: number;
   readonly environments: readonly SettingsTarget[];
+  readonly onProjectRemoved: () => void;
 }) {
   const representative = props.members[0]!;
   const displayName = deriveProjectGroupLabel({ representative, members: props.members });
   const [draftName, setDraftName] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRemoving, setIsRemoving] = useState(false);
   const updateProject = useAtomCommand(projectEnvironment.update, {
     label: "project name update",
     reportFailure: true,
   });
+  const confirmRemoveProjects = useConfirmRemoveProjects();
+  const removeMembers = (members: readonly EnvironmentProject[]) => {
+    if (isRemoving) return;
+    const isWholeGroup = members.length === props.groupMemberCount;
+    setIsRemoving(true);
+    void (async () => {
+      try {
+        const removed = await confirmRemoveProjects(members, {
+          groupTitle: displayName,
+          isWholeGroup,
+        });
+        if (removed && isWholeGroup) props.onProjectRemoved();
+      } finally {
+        setIsRemoving(false);
+      }
+    })();
+  };
   const nextName = (draftName ?? displayName).trim();
   const canSave = !isSaving && nextName.length > 0 && nextName !== displayName;
 
@@ -146,28 +179,60 @@ function ProjectOverviewContent(props: {
           return (
             <View
               key={`${member.environmentId}:${member.id}`}
-              className={index === 0 ? "gap-1 p-4" : "gap-1 border-t border-border-subtle p-4"}
+              className={
+                index === 0
+                  ? "flex-row items-center gap-3 p-4"
+                  : "flex-row items-center gap-3 border-t border-border-subtle p-4"
+              }
             >
-              <Text
-                className={
-                  Platform.OS === "android"
-                    ? "text-base text-foreground"
-                    : "text-lg text-foreground"
-                }
-              >
-                {environment?.label ?? "Environment"}
-              </Text>
-              {environment?.displayUrl ? (
-                <Text className="text-sm leading-normal text-foreground-muted">
-                  {environment.displayUrl}
+              <View className="min-w-0 flex-1 gap-1">
+                <Text
+                  className={
+                    Platform.OS === "android"
+                      ? "text-base text-foreground"
+                      : "text-lg text-foreground"
+                  }
+                >
+                  {environment?.label ?? "Environment"}
                 </Text>
+                {environment?.displayUrl ? (
+                  <Text className="text-sm leading-normal text-foreground-muted">
+                    {environment.displayUrl}
+                  </Text>
+                ) : null}
+                <Text className="text-sm leading-normal text-foreground-muted" selectable>
+                  {member.workspaceRoot}
+                </Text>
+              </View>
+              {props.groupMemberCount > 1 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove checkout ${member.workspaceRoot}`}
+                  disabled={isRemoving}
+                  onPress={() => removeMembers([member])}
+                  className="rounded-full px-3 py-2 disabled:opacity-40"
+                >
+                  <Text className="font-t3-medium text-danger-foreground">Remove</Text>
+                </Pressable>
               ) : null}
-              <Text className="text-sm leading-normal text-foreground-muted" selectable>
-                {member.workspaceRoot}
-              </Text>
             </View>
           );
         })}
+      </SettingsSection>
+
+      <SettingsSection>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Remove project ${displayName}`}
+          disabled={isRemoving}
+          onPress={() => removeMembers(props.members)}
+          className="items-center p-4 active:opacity-70 disabled:opacity-40"
+        >
+          <Text className="text-base font-t3-medium text-danger-foreground">Remove project</Text>
+        </Pressable>
+        <Text className="px-4 pb-4 text-sm leading-normal text-foreground-muted">
+          Removes the project and its threads from T3 Code. Files on disk are not touched.
+        </Text>
       </SettingsSection>
     </>
   );

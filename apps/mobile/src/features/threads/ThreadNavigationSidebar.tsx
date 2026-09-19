@@ -60,6 +60,7 @@ import { buildHomeProjectScopes, buildHomeThreadGroups } from "../home/homeThrea
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
+import { useConfirmRemoveProjects } from "../projects/useConfirmRemoveProjects";
 import {
   getConnectionAwareBrandHeaderOptions,
   WorkspaceConnectionTitle,
@@ -176,6 +177,13 @@ function ThreadNavigationSidebarPane(
     renameThread,
     regenerateThreadTitle,
   } = useThreadListActions();
+  const confirmRemoveProjects = useConfirmRemoveProjects();
+  const handleRemoveProject = useCallback(
+    (projects: ReadonlyArray<EnvironmentProject>, title: string) => {
+      void confirmRemoveProjects(projects, { groupTitle: title, isWholeGroup: true });
+    },
+    [confirmRemoveProjects],
+  );
   const threadListV2Enabled = useThreadListV2Enabled();
   const pendingTasks = usePendingNewTasks();
   const queuedThreadKeys = useQueuedThreadKeys();
@@ -1010,6 +1018,8 @@ function ThreadNavigationSidebarPane(
               // placeholder shell rather than a real project.
               newThreadTarget={item.group.newThreadTarget}
               onNewThread={props.onNewThreadInProject}
+              removableProjects={item.group.newThreadTarget === null ? null : item.group.projects}
+              onRemoveProject={handleRemoveProject}
               project={item.group.representative}
               threadCount={item.group.threads.length + item.group.pendingTasks.length}
               title={item.group.title}
@@ -1085,6 +1095,7 @@ function ThreadNavigationSidebarPane(
       queuedThreadKeys,
       confirmDeletePendingTask,
       confirmDeleteThread,
+      handleRemoveProject,
       handleSelectThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,

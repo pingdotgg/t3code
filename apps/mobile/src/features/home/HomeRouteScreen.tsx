@@ -21,6 +21,7 @@ import { useHomeThreadSelection } from "./home-thread-navigation";
 import { buildHomeProjectScopes } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
+import { useConfirmRemoveProjects } from "../projects/useConfirmRemoveProjects";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
 
 /* ─── Route screen ───────────────────────────────────────────────────── */
@@ -56,6 +57,7 @@ export function HomeRouteScreen() {
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
+  const confirmRemoveProjects = useConfirmRemoveProjects();
   const environments = useMemo(() => {
     const connectionStateByEnvironmentId = new Map(
       workspaceEnvironments.map(
@@ -250,6 +252,9 @@ export function HomeRouteScreen() {
                 title: project.title,
               },
             });
+          }}
+          onRemoveProject={(projects, title) => {
+            void confirmRemoveProjects(projects, { groupTitle: title, isWholeGroup: true });
           }}
           onStartNewTask={() => navigation.navigate("NewTaskSheet", { screen: "NewTask" })}
           onThreadSortOrderChange={setThreadSortOrder}
