@@ -9,7 +9,7 @@ import { threadHistoryCursorItemTag } from "../../orchestration-v2/threadHistory
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
+const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 

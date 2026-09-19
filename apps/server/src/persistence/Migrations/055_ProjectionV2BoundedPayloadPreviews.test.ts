@@ -7,7 +7,7 @@ import { THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES } from "../../orchestration-v2/thr
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
+const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 const insertTurnItem = (sql: SqlClient.SqlClient, turnItemId: string, payloadJson: string) =>
   sql`
