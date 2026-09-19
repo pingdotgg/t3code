@@ -172,6 +172,60 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
   return contentLength - scroll - scrollLength <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
 }
 
+export interface TimelineEndSettleInput {
+  /** Render-visible follow flag: false once the user has scrolled away. */
+  readonly liveFollowEnabled: boolean;
+  /** A turn is currently streaming. */
+  readonly isWorking: boolean;
+  /** Send-time anchored end space owns positioning (new-turn anchor mode). */
+  readonly anchorActive: boolean;
+  /** A disclosure toggle is settling (end maintenance briefly suspended). */
+  readonly disclosureSettling: boolean;
+  /** Citation positioning owns the viewport. */
+  readonly citationActive: boolean;
+  /** Thread-position restore is still in flight. */
+  readonly restoring: boolean;
+  /** The list state belongs to the currently painted rows. */
+  readonly listDataCurrent: boolean;
+  readonly isAtEnd: boolean | undefined;
+}
+
+export type TimelineEndSettleAction = "leave-end" | "report-away-from-end" | "ignore";
+
+/**
+ * What to do when content settles without firing a scroll event (late row
+ * measurement, turn completion, restore completion) while the viewport reads
+ * away from the live edge.
+ *
+ * A viewport that drifted off the end while follow was still engaged and the
+ * user never opted out is treated as a real leave-end: the caller clears the
+ * follow generation and reports away-from-end so the scroll-to-end pill can
+ * appear. Anything the user (or another positioning owner) controls only gets
+ * its end state reported — never a yank, never a programmatic scroll. This
+ * helper owns pill state only; viewport position belongs to the follow/anchor
+ * paths (#5903, #5905, #10773). Unknown or mid-transition states are ignored;
+ * the scroll-driven path owns them.
+ */
+export function resolveTimelineEndSettleAction(
+  input: TimelineEndSettleInput,
+): TimelineEndSettleAction {
+  if (input.isAtEnd !== false) {
+    return "ignore";
+  }
+  if (input.restoring || input.citationActive || !input.listDataCurrent) {
+    return "ignore";
+  }
+  if (input.anchorActive || input.disclosureSettling) {
+    // Send-time anchoring and disclosure settles own positioning for their
+    // window; later size changes re-trigger verification after they clear.
+    return "ignore";
+  }
+  if (input.liveFollowEnabled && !input.isWorking) {
+    return "leave-end";
+  }
+  return "report-away-from-end";
+}
+
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }

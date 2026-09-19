@@ -6,13 +6,25 @@ import {
   TurnId,
   type ComposerContextRecord,
 } from "@t3tools/contracts";
-import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react";
+import { act, createRef, useEffect, useLayoutEffect, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import type { TimelineEntry } from "../../session-logic";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
+
+// Shared doubles for the LegendList mock below. Populated per test; capturing
+// render output here keeps the mock inert for every test that ignores it.
+const legendListMock = vi.hoisted(() => ({
+  rows: [] as Array<{ id: string }>,
+  geometry: undefined as
+    | { isAtEnd?: boolean; contentLength?: number; scroll?: number; scrollLength?: number }
+    | undefined,
+  scrollToEndCalls: 0,
+  itemSizeChanged: undefined as (() => void) | undefined,
+}));
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -40,7 +52,19 @@ vi.mock("@legendapp/list/react", async () => {
           shouldRestorePosition?: (item: { id: string }) => boolean;
         };
     ref?: Ref<LegendListRef>;
+    onItemSizeChanged?: () => void;
   }) => {
+    const { data, onItemSizeChanged } = props;
+    // Effect, not render phase: the timeline reads these doubles from its
+    // own passive effects, which run after child effects.
+    useEffect(() => {
+      // The nested work-group list renders without an item-size handler;
+      // only the timeline list owns end verification.
+      if (onItemSizeChanged) {
+        legendListMock.rows = data;
+        legendListMock.itemSizeChanged = onItemSizeChanged;
+      }
+    }, [data, onItemSizeChanged]);
     if (props.anchoredEndSpace) {
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
     }
@@ -682,6 +706,46 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
   });
 
+  it("resolves the settled end action without yanking owned positions", async () => {
+    const { resolveTimelineEndSettleAction } = await import("./MessagesTimeline.logic");
+    const followingIdle = {
+      liveFollowEnabled: true,
+      isWorking: false,
+      anchorActive: false,
+      disclosureSettling: false,
+      citationActive: false,
+      restoring: false,
+      listDataCurrent: true,
+      isAtEnd: false,
+    };
+    // Follow engaged, nobody opted out: a real leave-end.
+    expect(resolveTimelineEndSettleAction(followingIdle)).toBe("leave-end");
+    // Streaming with follow engaged: report so the pill can appear without
+    // flashing (ChatView's guard still owns the flicker window).
+    expect(resolveTimelineEndSettleAction({ ...followingIdle, isWorking: true })).toBe(
+      "report-away-from-end",
+    );
+    // The user opted out: never yank, only report.
+    expect(resolveTimelineEndSettleAction({ ...followingIdle, liveFollowEnabled: false })).toBe(
+      "report-away-from-end",
+    );
+    // Anchor mode and disclosure settles own positioning for their window.
+    expect(resolveTimelineEndSettleAction({ ...followingIdle, anchorActive: true })).toBe("ignore");
+    expect(resolveTimelineEndSettleAction({ ...followingIdle, disclosureSettling: true })).toBe(
+      "ignore",
+    );
+    // Unknown or mid-transition states belong to the scroll-driven path.
+    expect(resolveTimelineEndSettleAction({ ...followingIdle, restoring: true })).toBe("ignore");
+    expect(resolveTimelineEndSettleAction({ ...followingIdle, citationActive: true })).toBe(
+      "ignore",
+    );
+    expect(resolveTimelineEndSettleAction({ ...followingIdle, listDataCurrent: false })).toBe(
+      "ignore",
+    );
+    expect(resolveTimelineEndSettleAction({ ...followingIdle, isAtEnd: true })).toBe("ignore");
+    expect(resolveTimelineEndSettleAction({ ...followingIdle, isAtEnd: undefined })).toBe("ignore");
+  });
+
   it("anchors the first user message using its measured height", () => {
     const onAnchorReady = vi.fn();
     const firstEntry = buildSnapShotTimelineEntry("data:image/png;base64,iVBORw0KGgo=");
@@ -995,6 +1059,289 @@ describe("MessagesTimeline", () => {
     } finally {
       act(() => renderer?.unmount());
       vi.unstubAllGlobals();
+    }
+  });
+
+  // A work entry renders without the DOM globals that message rows need
+  // under react-test-renderer (see above).
+  function buildVerifyWorkEntry() {
+    return {
+      id: "entry-verify-work",
+      kind: "work" as const,
+      createdAt: MESSAGE_CREATED_AT,
+      entry: {
+        id: "work-verify",
+        createdAt: MESSAGE_CREATED_AT,
+        toolCallId: "call-verify",
+        label: "Run lint",
+        tone: "tool" as const,
+        itemType: "command_execution" as const,
+        command: "pnpm lint",
+        toolLifecycleStatus: "completed" as const,
+      },
+    };
+  }
+
+  // Geometry stranded well past both the 40px follow band and the
+  // one-viewport maintain threshold: 2000 - 900 - 800 = 300.
+  const STRANDED_GEOMETRY = {
+    isAtEnd: false,
+    contentLength: 2000,
+    scroll: 900,
+    scrollLength: 800,
+  };
+
+  function mountTimelineForEndVerification(input: {
+    liveFollowEnabled?: boolean;
+    isWorking?: boolean;
+    threadKey?: string;
+    resetAfterMount?: boolean;
+    entries?: TimelineEntry[];
+  }) {
+    legendListMock.geometry = { ...STRANDED_GEOMETRY };
+    legendListMock.scrollToEndCalls = 0;
+    const atEndCalls: boolean[] = [];
+    const manualNavigationCalls: number[] = [];
+    const props = {
+      ...buildProps(),
+      routeThreadKey: input.threadKey ?? "env-verify:thread-1",
+      liveFollowEnabled: input.liveFollowEnabled ?? true,
+      isWorking: input.isWorking ?? false,
+      onIsAtEndChange: (isAtEnd: boolean) => {
+        atEndCalls.push(isAtEnd);
+      },
+      onManualNavigation: () => {
+        manualNavigationCalls.push(1);
+      },
+      timelineEntries: input.entries ?? [buildVerifyWorkEntry()],
+    };
+    props.listRef.current = {
+      getState: () =>
+        legendListMock.geometry === undefined
+          ? undefined
+          : {
+              ...legendListMock.geometry,
+              data: legendListMock.rows,
+              positionAtIndex: () => undefined,
+              indexByKey: () => undefined,
+              elementAtIndex: () => undefined,
+            },
+      getScrollableNode: () => null,
+      scrollToEnd: () => {
+        legendListMock.scrollToEndCalls += 1;
+      },
+      scrollToIndex: () => Promise.resolve(),
+      scrollToOffset: () => Promise.resolve(),
+    } as unknown as LegendListRef;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    // Queued frames like production rAF (async): a synchronous stub would
+    // run the callback before the frame id is assigned, corrupting the
+    // coalescing refs that mirror reportContentOverflow.
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (frame: number) => {
+      frames.delete(frame);
+    });
+    const flushFrames = () => {
+      act(() => {
+        const callbacks = [...frames.values()];
+        frames.clear();
+        callbacks.forEach((callback) => callback(0));
+      });
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<MessagesTimeline {...props} />);
+    });
+    flushFrames();
+    flushFrames();
+    // Mount settles (restore pin + initial verification may have fired over
+    // two frames: the first away reading only arms confirmation).
+    if (input.resetAfterMount ?? true) {
+      atEndCalls.length = 0;
+      manualNavigationCalls.length = 0;
+      legendListMock.scrollToEndCalls = 0;
+    }
+    return { renderer, atEndCalls, manualNavigationCalls, flushFrames, props };
+  }
+
+  function unmountVerifyRenderer(renderer: ReactTestRenderer) {
+    act(() => renderer.unmount());
+    vi.unstubAllGlobals();
+  }
+
+  // Verification owns pill state only: none of these paths may scroll
+  // (position belongs to the follow/anchor paths), hence the zero-scroll
+  // assertions alongside the pill assertions.
+  it("treats idle settling away from the live edge while following as a real leave-end", () => {
+    const { renderer, atEndCalls, manualNavigationCalls, flushFrames } =
+      mountTimelineForEndVerification({});
+    try {
+      act(() => {
+        legendListMock.itemSizeChanged?.();
+      });
+      flushFrames();
+      flushFrames();
+
+      // Same path a scroll gesture takes: follow generation clears and the
+      // pill can appear. The viewport itself is never moved.
+      expect(manualNavigationCalls).toHaveLength(1);
+      expect(atEndCalls).toEqual([false]);
+      expect(legendListMock.scrollToEndCalls).toBe(0);
+    } finally {
+      unmountVerifyRenderer(renderer);
+    }
+  });
+
+  it("reports away-from-end instead of leaving-end after the user scrolled away", () => {
+    const { renderer, atEndCalls, manualNavigationCalls, flushFrames } =
+      mountTimelineForEndVerification({
+        liveFollowEnabled: false,
+        threadKey: "env-verify:thread-2",
+      });
+    try {
+      act(() => {
+        legendListMock.itemSizeChanged?.();
+      });
+      flushFrames();
+      flushFrames();
+      expect(legendListMock.scrollToEndCalls).toBe(0);
+      expect(manualNavigationCalls).toEqual([]);
+      expect(atEndCalls).toEqual([false]);
+    } finally {
+      unmountVerifyRenderer(renderer);
+    }
+  });
+
+  it("reports away-from-end instead of leaving-end while a turn is running", () => {
+    const { renderer, atEndCalls, manualNavigationCalls, flushFrames } =
+      mountTimelineForEndVerification({
+        isWorking: true,
+        threadKey: "env-verify:thread-3",
+      });
+    try {
+      act(() => {
+        legendListMock.itemSizeChanged?.();
+      });
+      flushFrames();
+      flushFrames();
+      expect(legendListMock.scrollToEndCalls).toBe(0);
+      expect(manualNavigationCalls).toEqual([]);
+      expect(atEndCalls).toEqual([false]);
+    } finally {
+      unmountVerifyRenderer(renderer);
+    }
+  });
+
+  it("verifies after restore settles even with no size change", () => {
+    const { renderer, atEndCalls, manualNavigationCalls } = mountTimelineForEndVerification({
+      threadKey: "env-verify:thread-4",
+      resetAfterMount: false,
+    });
+    try {
+      // No size change was ever fired: the post-restore verification alone
+      // confirmed the stranded viewport over two frames and left follow.
+      expect(manualNavigationCalls).toHaveLength(1);
+      expect(atEndCalls).toEqual([false, false]);
+      // Verification never scrolls; with no remembered position the restore
+      // path pins via initialScrollAtEnd instead of scrollToEnd.
+      expect(legendListMock.scrollToEndCalls).toBe(0);
+    } finally {
+      unmountVerifyRenderer(renderer);
+    }
+  });
+
+  it("verifies when anchor suppression clears", () => {
+    const userEntry = buildUserTimelineEntry("Hello");
+    const { renderer, atEndCalls, manualNavigationCalls, flushFrames, props } =
+      mountTimelineForEndVerification({
+        threadKey: "env-verify:thread-6",
+        entries: [userEntry],
+      });
+    try {
+      // Anchor the first user message, then release it: clearing the
+      // suppression must schedule a fresh verification.
+      act(() => {
+        renderer.update(<MessagesTimeline {...props} anchorMessageId={userEntry.message.id} />);
+      });
+      flushFrames();
+      flushFrames();
+      expect(manualNavigationCalls).toEqual([]);
+      act(() => {
+        renderer.update(<MessagesTimeline {...props} anchorMessageId={null} />);
+      });
+      flushFrames();
+      flushFrames();
+      expect(manualNavigationCalls).toHaveLength(1);
+      expect(atEndCalls).toContain(false);
+      expect(legendListMock.scrollToEndCalls).toBe(0);
+    } finally {
+      unmountVerifyRenderer(renderer);
+    }
+  });
+
+  it("verifies when a running turn lands", () => {
+    const { renderer, atEndCalls, manualNavigationCalls, flushFrames, props } =
+      mountTimelineForEndVerification({
+        isWorking: true,
+        threadKey: "env-verify:thread-5",
+      });
+    try {
+      atEndCalls.length = 0;
+      manualNavigationCalls.length = 0;
+      legendListMock.scrollToEndCalls = 0;
+      act(() => {
+        renderer.update(<MessagesTimeline {...props} isWorking={false} />);
+      });
+      flushFrames();
+      flushFrames();
+      expect(manualNavigationCalls).toHaveLength(1);
+      // The update itself re-runs the scroll effect, so only the direction
+      // is asserted here, not the exact count.
+      expect(atEndCalls.length).toBeGreaterThan(0);
+      expect(atEndCalls.every((value) => value === false)).toBe(true);
+      expect(legendListMock.scrollToEndCalls).toBe(0);
+    } finally {
+      unmountVerifyRenderer(renderer);
+    }
+  });
+
+  it("hands a pending frame to the next thread instead of dropping its verification", async () => {
+    const { renderer, atEndCalls, manualNavigationCalls, flushFrames, props } =
+      mountTimelineForEndVerification({
+        threadKey: "env-verify:thread-7",
+      });
+    try {
+      // Thread A arms a verification frame that never fires before the switch.
+      act(() => {
+        legendListMock.itemSizeChanged?.();
+      });
+      // Switch threads inside the same frame window: thread B renders while
+      // thread A's frame is still pending.
+      act(() => {
+        renderer.update(<MessagesTimeline {...props} routeThreadKey="env-verify:thread-8" />);
+      });
+      // Let the restore microtask land thread B's positioning so its
+      // post-restore schedule runs (and must survive thread A's pending frame).
+      await act(async () => {});
+      // The restore pin itself may scroll; verification afterwards must not.
+      legendListMock.scrollToEndCalls = 0;
+      flushFrames();
+      flushFrames();
+
+      // Thread B confirmed the stranded viewport over two frames through the
+      // same leave-end path a scroll gesture takes. A key-blind dedupe would
+      // let thread A's pending frame swallow B's schedule and strand B with
+      // no verification at all.
+      expect(manualNavigationCalls).toHaveLength(1);
+      expect(atEndCalls).toContain(false);
+      expect(legendListMock.scrollToEndCalls).toBe(0);
+    } finally {
+      unmountVerifyRenderer(renderer);
     }
   });
 
