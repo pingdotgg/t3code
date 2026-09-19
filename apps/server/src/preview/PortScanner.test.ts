@@ -84,11 +84,13 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
   ),
 );
 
-const LSOF_TEST_PORT = 43_123;
+const LSOF_TEST_PORT = 5173;
+const FOREIGN_LISTENER_PORT = 63_261;
 
 const makeLsofScannerLayer = (input: {
   readonly pid: () => number;
   readonly fetch: typeof globalThis.fetch;
+  readonly port?: number;
 }) =>
   PortScanner.layer.pipe(
     Layer.provide(
@@ -96,7 +98,7 @@ const makeLsofScannerLayer = (input: {
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
             Effect.succeed({
-              stdout: `p${input.pid()}\ncnode\nn*:${LSOF_TEST_PORT}\n`,
+              stdout: `p${input.pid()}\ncnode\nn*:${input.port ?? LSOF_TEST_PORT}\n`,
               stderr: "",
               code: null,
               timedOut: false,
@@ -242,6 +244,54 @@ effectIt.layer(TestPortDiscoveryLive)("PortDiscovery integration (TCP probe fall
       expect(received).toContain(port);
     }),
   );
+});
+
+effectIt.effect(
+  "does not HTTP-probe a discovered listener that is not a curated port or a T3 terminal",
+  () => {
+    const requests: string[] = [];
+    const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+      requests.push(String(input));
+      return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
+    }) as typeof globalThis.fetch;
+    const layer = makeLsofScannerLayer({
+      pid: () => 9999,
+      port: FOREIGN_LISTENER_PORT,
+      fetch: fetchFn,
+    });
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(requests).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect("HTTP-probes a high-numbered listener owned by a registered T3 terminal", () => {
+  const requests: string[] = [];
+  const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+    requests.push(String(input));
+    return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
+  }) as typeof globalThis.fetch;
+  const layer = makeLsofScannerLayer({
+    pid: () => 9999,
+    port: FOREIGN_LISTENER_PORT,
+    fetch: fetchFn,
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.registerTerminalProcesses({
+      threadId: "thread-preview",
+      terminalId: "term-1",
+      processIds: [9999],
+    });
+    const servers = yield* scanner.scan();
+    expect(servers).toHaveLength(1);
+    expect(servers[0]?.port).toBe(FOREIGN_LISTENER_PORT);
+    expect(requests[0]).toBe(`http://localhost:${FOREIGN_LISTENER_PORT}/`);
+  }).pipe(Effect.provide(layer));
 });
 
 effectIt.effect("revalidates a successful HTML probe after its cache entry expires", () => {
