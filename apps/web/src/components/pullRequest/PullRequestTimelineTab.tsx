@@ -18,7 +18,7 @@ import { useState, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
+import { useSourceControlCommand } from "~/state/use-source-control-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
@@ -192,7 +192,7 @@ function ConversationCard({
 }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
+  const updateComment = useSourceControlCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
   });
 
