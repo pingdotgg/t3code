@@ -75,7 +75,11 @@ export function resolveBrowserNavigationTarget(
   return resolveEnvironmentPortTarget(environmentId, target, readEnvironmentUrl(environmentId));
 }
 
-export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl: string): string {
+export function resolveDiscoveredServerUrl(
+  environmentId: EnvironmentId,
+  rawUrl: string,
+  preferredBaseUrl?: string | null,
+): string {
   try {
     const normalizedUrl = normalizePreviewUrl(rawUrl);
     const parsed = new URL(normalizedUrl);
@@ -88,7 +92,7 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
         protocol: parsed.protocol === "https:" ? "https" : "http",
         path: `${parsed.pathname}${parsed.search}${parsed.hash}`,
       },
-      readEnvironmentUrl(environmentId),
+      preferredBaseUrl ? new URL(preferredBaseUrl) : readEnvironmentUrl(environmentId),
       rawUrl,
       parsed,
     ).resolvedUrl;
