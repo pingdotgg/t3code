@@ -39,6 +39,7 @@ const THREAD_KEYBINDING_COMMANDS = [
   "thread.steerQueuedMessage",
   "thread.previous",
   "thread.next",
+  "thread.cycleRecent",
   "thread.copyReference",
   "thread.settle",
   "thread.pin",
