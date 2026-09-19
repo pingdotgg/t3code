@@ -120,6 +120,22 @@ describe("ChatMarkdown workspace images", () => {
     ]);
   });
 
+  it("keeps a backslash Windows path intact when a segment starts with punctuation", () => {
+    const html = render(
+      String.raw`![Breeze](C:\Users\shawn\.t3\worktrees\app\build\_gallery\breeze_attack_0.png)`,
+    );
+
+    expect(testState.resources).toEqual([
+      {
+        _tag: "media-file",
+        threadId: threadRef.threadId,
+        path: "C:/Users/shawn/.t3/worktrees/app/build/_gallery/breeze_attack_0.png",
+      },
+    ]);
+    expect(html).toContain('src="https://signed.test/workspace-image.svg"');
+    expect(html).not.toContain("Image unavailable");
+  });
+
   it("loads every Windows workspace path form through a signed asset URL", () => {
     const imagePath = "C:/Users/shawn/project/.t3/workspace-image.svg";
     const html = render(

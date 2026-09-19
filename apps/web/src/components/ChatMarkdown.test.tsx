@@ -793,6 +793,25 @@ describe("ChatMarkdown Windows file links", () => {
   });
 
   it.each([true, false])(
+    "keeps backslash escapes out of dotfile paths with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="C:/Users/shawn/project"
+          environmentId={environmentId}
+          text={String.raw`[Notes](C:\Users\shawn\project\.claude\notes.md)`}
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+
+      expect(html).toContain('href="C:/Users/shawn/project/.claude/notes.md"');
+      expect(html).not.toContain("shawn.claude");
+      expect(html).toContain("chat-markdown-file-link");
+    },
+  );
+
+  it.each([true, false])(
     "distinguishes same-named backslash paths with parseRawHtml=%s",
     (parseRawHtml) => {
       const html = renderToStaticMarkup(

@@ -50,6 +50,7 @@ import {
   markdownImageSourceFragment,
 } from "@t3tools/client-runtime/markdown-images";
 import { inlineCodeFilePathCandidate } from "@t3tools/client-runtime/markdown-links";
+import { normalizeWindowsMarkdownDestinations } from "@t3tools/client-runtime/markdown-windows-paths";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
@@ -3297,13 +3298,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
 } satisfies Components;
 
 function ChatMarkdown({
-  text,
+  text: sourceText,
   className,
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
+  // Same length as the source, so task-list marker offsets still index into it.
+  const text = useMemo(() => normalizeWindowsMarkdownDestinations(sourceText), [sourceText]);
   const {
     componentState,
     handleCopy,
