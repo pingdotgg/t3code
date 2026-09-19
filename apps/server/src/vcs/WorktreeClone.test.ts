@@ -133,12 +133,47 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
       }),
     );
 
-    it.effect("leaves small-file repositories on Git's normal path", () =>
+    it.effect("clones small-file repositories without project configuration by default", () =>
       Effect.gen(function* () {
         const f = yield* fixture();
-        yield* f.git(f.cwd, ["rm", "large.bin"]);
+        yield* f.git(f.cwd, ["rm", "large.bin", "t3.json"]);
         yield* f.git(f.cwd, ["commit", "-m", "small files only"]);
+        const plan = yield* f.clone.prepare(f.cwd, "HEAD");
+        assert.isNotNull(plan);
+        assert.include(plan!.files, "source.txt");
+        yield* f.claim();
+        assert.isTrue(yield* f.clone.checkout(plan!, f.target));
+        assert.equal((yield* f.git(f.target, ["status", "--porcelain"])).stdout, "");
+      }),
+    );
+
+    it.effect("honors an explicit tracked-file cloning opt-out", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.write("t3.json", encodeProject({ worktreeCloneFiles: false }));
+        yield* f.git(f.cwd, ["add", "t3.json"]);
+        yield* f.git(f.cwd, ["commit", "-m", "disable clones"]);
         assert.equal(yield* f.clone.prepare(f.cwd, "HEAD"), null);
+      }),
+    );
+
+    it.effect("lets Git materialize tracked symlinks beside cloned regular files", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.fs.symlink("source.txt", f.path.join(f.cwd, "tracked-link"));
+        yield* f.git(f.cwd, ["add", "tracked-link"]);
+        yield* f.git(f.cwd, ["commit", "-m", "add symlink"]);
+        const plan = yield* f.clone.prepare(f.cwd, "HEAD");
+        assert.isNotNull(plan);
+        assert.notInclude(plan!.files, "tracked-link");
+        yield* f.driver.createWorktree({
+          cwd: f.cwd,
+          path: f.target,
+          refName: "main",
+          newRefName: "feature",
+        });
+        assert.equal(yield* f.fs.readLink(f.path.join(f.target, "tracked-link")), "source.txt");
+        assert.equal((yield* f.git(f.target, ["status", "--porcelain"])).stdout, "");
       }),
     );
 

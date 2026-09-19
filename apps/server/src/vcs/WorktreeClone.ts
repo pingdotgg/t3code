@@ -9,9 +9,6 @@ import type { CreateWorktreeProgress, GitVcsDriver } from "./GitVcsDriver.ts";
 
 const timeoutMs = 300_000;
 const maxOutputBytes = 16 * 1024 * 1024;
-// Cloning tiny source files costs more in process/metadata work than Git checkout.
-const minimumFileBytes = 1024 * 1024;
-const minimumCloneBytes = 16 * 1024 * 1024;
 const decodeProjectFile = Schema.decodeUnknownEffect(Schema.fromJsonString(T3ProjectFile));
 
 /** Seeds an ordinary Git worktree; Git still owns its index and final contents. */
@@ -34,8 +31,11 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
   const prepare = Effect.fn("WorktreeClone.prepare")(
     function* (cwd: string, ref: string) {
       if (!supported) return null;
-      const project = yield* decodeProjectFile(yield* fs.readFileString(path.join(cwd, "t3.json")));
-      if (!project.worktreeCloneFiles) return null;
+      const projectFile = path.join(cwd, "t3.json");
+      if (yield* fs.exists(projectFile)) {
+        const project = yield* decodeProjectFile(yield* fs.readFileString(projectFile));
+        if (project.worktreeCloneFiles === false) return null;
+      }
       const head = (yield* git(cwd, ["rev-parse", "HEAD"])).stdout.trim();
       if ((yield* git(cwd, ["rev-parse", `${ref}^{commit}`])).stdout.trim() !== head) return null;
       const root = (yield* git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();
@@ -61,27 +61,23 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
       if (yield* fs.exists(path.resolve(cwd, hook))) return null;
       const status = yield* git(cwd, ["status", "--porcelain=v1", "-uno"]);
       if (status.stdoutTruncated || status.stdout.length > 0) return null;
-      const tree = yield* git(cwd, ["ls-tree", "-rlz", "--full-tree", head]);
+      const tree = yield* git(cwd, ["ls-tree", "-rz", "--full-tree", head]);
       if (tree.stdoutTruncated) return null;
       const files: string[] = [];
       const attributes: string[] = [];
       let totalFiles = 0;
-      let cloneBytes = 0;
       for (const entry of tree.stdout.split("\0")) {
         if (!entry) continue;
-        // Let Git handle symbolic links and submodules on the ordinary path.
-        if (!entry.startsWith("100644 blob ") && !entry.startsWith("100755 blob ")) return null;
+        // Git materializes symbolic links and initializes submodules after the
+        // regular files have been cloned and verified. Never follow source links.
+        if (!entry.startsWith("100644 blob ") && !entry.startsWith("100755 blob ")) continue;
         const name = entry.slice(entry.indexOf("\t") + 1);
         if (name.split("/").some((part) => part === ".git" || part === "..")) return null;
         totalFiles += 1;
         if (path.basename(name) === ".gitattributes") attributes.push(name);
-        const size = Number(entry.slice(0, entry.indexOf("\t")).trim().split(/\s+/).at(-1));
-        if (size >= minimumFileBytes) {
-          files.push(name);
-          cloneBytes += size;
-        }
+        files.push(name);
       }
-      return cloneBytes >= minimumCloneBytes ? { cwd, head, files, attributes, totalFiles } : null;
+      return files.length > 0 ? { cwd, head, files, attributes, totalFiles } : null;
     },
     Effect.orElseSucceed(() => null),
   );
