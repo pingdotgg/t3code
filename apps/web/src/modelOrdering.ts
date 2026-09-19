@@ -55,6 +55,32 @@ export function sortModelsForProviderInstance<T extends ModelSlugItem>(
   return Arr.sort(models, Order.combineAll(orders));
 }
 
+export interface LegacyPartitionItem {
+  readonly isLegacy?: boolean | undefined;
+}
+
+/**
+ * Split an already-sorted model list into the main list and the collapsed
+ * legacy group. Favorited models stay in the main list even when they are
+ * legacy, so the favorite hoist wins over the legacy split; unfavoriting a
+ * legacy model returns it to the legacy group. `isFavorite` decides membership.
+ */
+export function partitionLegacyModels<T extends LegacyPartitionItem>(
+  models: ReadonlyArray<T>,
+  isFavorite: (model: T) => boolean,
+): { readonly current: T[]; readonly legacy: T[] } {
+  const current: T[] = [];
+  const legacy: T[] = [];
+  for (const model of models) {
+    if (model.isLegacy === true && !isFavorite(model)) {
+      legacy.push(model);
+    } else {
+      current.push(model);
+    }
+  }
+  return { current, legacy };
+}
+
 export function sortProviderModelItems<T extends ProviderModelItem>(
   items: ReadonlyArray<T>,
   options?: {
