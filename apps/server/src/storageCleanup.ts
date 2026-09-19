@@ -5,6 +5,9 @@ import type {
   ServerSettingsError,
   TerminalSummary,
   WorktreeCleanupRules,
+  StorageCleanupPreview,
+  StorageCleanupPreviewInput,
+  StorageCleanupCategory,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -19,9 +22,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
+import * as Semaphore from "effect/Semaphore";
+import { measureWorktreeBytes } from "./storageCleanupSize.ts";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ServerConfig from "./config.ts";
 import * as GitManager from "./git/GitManager.ts";
@@ -41,8 +47,27 @@ export class StorageCleanup extends Context.Service<
   {
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
     readonly drain: Effect.Effect<void>;
+    readonly revisions: Stream.Stream<number>;
+    readonly preview: (
+      input: StorageCleanupPreviewInput,
+    ) => Effect.Effect<StorageCleanupPreview, ServerSettingsError>;
   }
 >()("t3/storageCleanup") {}
+
+interface PreviewFolder {
+  projectId: ProjectId;
+  path: string;
+  category: StorageCleanupCategory;
+  bytes: number | null;
+}
+
+interface PreviewScan {
+  readonly input: StorageCleanupPreviewInput;
+  total: number;
+  checked: number;
+  unavailable: number;
+  readonly folders: PreviewFolder[];
+}
 
 const DAY_MS = 86_400_000;
 
@@ -158,13 +183,15 @@ export const make = Effect.gen(function* () {
   const containsProjectRoot = Effect.fn("StorageCleanup.containsProjectRoot")(function* (
     worktreePath: string,
     projects: ReadonlyArray<{ readonly workspaceRoot: string }>,
+    realPaths?: Map<string, string>,
   ) {
     for (const project of projects) {
       const projectPath = path.resolve(project.workspaceRoot);
       if (projectPath === worktreePath || inside(worktreePath, projectPath)) return true;
-      const realPath = yield* fs
-        .realPath(projectPath)
-        .pipe(Effect.orElseSucceed(() => projectPath));
+      const realPath =
+        realPaths?.get(projectPath) ??
+        (yield* fs.realPath(projectPath).pipe(Effect.orElseSucceed(() => projectPath)));
+      realPaths?.set(projectPath, realPath);
       if (realPath === worktreePath || inside(worktreePath, realPath)) return true;
     }
     return false;
@@ -173,6 +200,7 @@ export const make = Effect.gen(function* () {
   const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
     serverSettings: ServerSettings,
     now: number,
+    preview?: PreviewScan,
   ) {
     if (!anyWorktreePolicy(serverSettings, worktreeCleanupEnabled)) return;
     if (!(yield* fs.exists(config.worktreesDir))) return;
@@ -182,7 +210,7 @@ export const make = Effect.gen(function* () {
           (thread) => resolveWorktreeCleanup(serverSettings, thread.projectId).worktreeOnDelete,
         )
       : [];
-    if (deletedThreads.length > 0) {
+    if (deletedThreads.length > 0 && !preview) {
       // Read tombstones before taking this fence. A later deletion waits for the
       // next sweep; every captured deletion must finish stopping its resources.
       const { snapshotSequence } = yield* snapshots.getSnapshotSequence();
@@ -190,35 +218,85 @@ export const make = Effect.gen(function* () {
     }
     const snapshot = yield* readThreads();
     const root = yield* fs.realPath(config.worktreesDir);
+    const previewRealPaths = preview ? new Map<string, string>() : undefined;
+    const projectsById = new Map(snapshot.projects.map((project) => [project.id, project]));
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const groups = Map.groupBy(
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
       (thread) => path.resolve(thread.worktreePath!),
     );
     const candidates = [
-      ...[...groups.values()].flatMap((group) => (group.length === 1 ? [group[0]!] : [])),
+      ...[...groups.values()].flatMap((group) => {
+        if (!preview) return group.length === 1 ? [group[0]!] : [];
+        const candidate = preview.input.projectId
+          ? group.find((thread) => thread.projectId === preview.input.projectId)
+          : group[0];
+        return candidate ? [candidate] : [];
+      }),
       ...deletedThreads.filter((thread) => !groups.has(path.resolve(thread.worktreePath))),
     ];
-    for (const thread of candidates) {
+    const seen = new Set<string>();
+    const scopedCandidates = candidates.filter((thread) => {
+      if (!preview) return true;
+      if (preview.input.projectId && thread.projectId !== preview.input.projectId) return false;
+      const folder = path.resolve(thread.worktreePath!);
+      if (seen.has(folder)) return false;
+      seen.add(folder);
+      return true;
+    });
+    if (preview) preview.total = scopedCandidates.length;
+    for (const thread of scopedCandidates) {
+      if (preview && (yield* Clock.currentTimeMillis) - now >= 10_000) break;
       const settings = resolveWorktreeCleanup(serverSettings, thread.projectId);
-      if (!worktreeCleanupEnabled(settings)) continue;
+      if (!worktreeCleanupEnabled(settings)) {
+        if (preview) preview.checked++;
+        continue;
+      }
       const worktreePath = path.resolve(thread.worktreePath!);
       const deleted = "deletedAt" in thread;
       const project = deleted
         ? { workspaceRoot: thread.workspaceRoot }
-        : snapshot.projects.find((entry) => entry.id === thread.projectId);
-      if (
+        : projectsById.get(thread.projectId);
+      const old =
+        !deleted &&
+        settings.worktreeAfterDays !== null &&
+        storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
+      const protectedWorktree =
         project === undefined ||
         (!deleted && !storageCleanupThreadIdle(thread, now)) ||
-        hasTerminal(worktreePath)
-      )
+        hasTerminal(worktreePath) ||
+        (groups.get(worktreePath)?.length ?? 0) > 1;
+      if (
+        !preview &&
+        (protectedWorktree ||
+          (!deleted && !old && !settings.worktreeUnchanged && !settings.worktreeOnMerge))
+      ) {
         continue;
+      }
+      let previewFolder: PreviewFolder | undefined;
       yield* Effect.gen(function* () {
         if (!inside(root, worktreePath) || !(yield* fs.exists(worktreePath))) return;
         if ((yield* fs.realPath(worktreePath)) !== worktreePath) return;
-        if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects])) return;
         // A linked worktree has a .git file. Never remove a main checkout.
         if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File") return;
+        if (preview) {
+          previewFolder = {
+            projectId: thread.projectId,
+            path: worktreePath,
+            category: "kept",
+            bytes: null,
+          };
+          preview.folders.push(previewFolder);
+        }
+        if (protectedWorktree || project === undefined) return;
+        if (
+          yield* containsProjectRoot(
+            worktreePath,
+            [project, ...snapshot.projects],
+            previewRealPaths,
+          )
+        )
+          return;
         const status = yield* git.statusDetailsLocal(worktreePath);
         if (!status.isRepo || status.branch !== thread.branch || status.hasWorkingTreeChanges)
           return;
@@ -238,10 +316,7 @@ export const make = Effect.gen(function* () {
             .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
         )
           return;
-        const old =
-          !deleted &&
-          settings.worktreeAfterDays !== null &&
-          storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
+        let category: StorageCleanupCategory = deleted ? "deleted" : old ? "inactive" : "kept";
         let eligible = deleted || old;
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
@@ -250,7 +325,7 @@ export const make = Effect.gen(function* () {
           if (branch === null) return;
           const defaultRef = `refs/remotes/${remote}/${branch}`;
           const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
-          if (!refreshed.has(defaultRef)) {
+          if (!preview && !refreshed.has(defaultRef)) {
             yield* git.fetchRemoteTrackingBranch({
               cwd: repositoryCwd,
               remoteName: remote,
@@ -271,6 +346,16 @@ export const make = Effect.gen(function* () {
           });
           if (ancestor.exitCode !== 0) return;
           eligible = settings.worktreeUnchanged;
+          if (preview && eligible) {
+            // Preview uses already-synced PR metadata; opening Settings must not query every forge.
+            category =
+              !deleted &&
+              thread.pullRequests.some(
+                (pr) => pr.snapshot?.state === "merged" && pr.snapshot.headBranch === thread.branch,
+              )
+                ? "merged"
+                : "unchanged";
+          }
           if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
             const pullRequest = yield* gitManager.branchPullRequest(
               { cwd: worktreePath, branch: thread.branch },
@@ -280,6 +365,22 @@ export const make = Effect.gen(function* () {
           }
         }
         if (!eligible) return;
+        if (preview) {
+          if (
+            deleted &&
+            (yield* providers.listSessions()).some(
+              (session) =>
+                session.status !== "closed" &&
+                (session.threadId === thread.id ||
+                  (session.cwd !== undefined &&
+                    (path.resolve(session.cwd) === worktreePath ||
+                      inside(worktreePath, path.resolve(session.cwd))))),
+            )
+          )
+            return;
+          if (previewFolder) previewFolder.category = category;
+          return;
+        }
         // Re-read after Git/host calls so a queued turn, resumed session or new
         // thread sharing this path cancels the removal.
         const latestSnapshot = yield* readThreads();
@@ -353,18 +454,130 @@ export const make = Effect.gen(function* () {
         )
           return;
         yield* git.removeWorktree({ cwd: project.workspaceRoot, path: worktreePath, force: false });
+        previewCache.length = 0;
         yield* gitManager.invalidateStatus(project.workspaceRoot);
         // Preserve branch and path: ProviderCommandReactor recreates the checkout
         // from that branch when the thread is resumed.
         yield* Effect.logInfo("storage cleanup removed worktree", { threadId: thread.id });
       }).pipe(
-        (effect) => withWorkspaceLease(worktreePath, effect),
-        Effect.catch((error) =>
-          Effect.logDebug("storage cleanup skipped worktree", { threadId: thread.id, error }),
-        ),
+        (effect) =>
+          preview
+            ? effect.pipe(Effect.timeout("3 seconds"))
+            : withWorkspaceLease(worktreePath, effect),
+        Effect.catch((error) => {
+          if (preview) preview.unavailable++;
+          if (previewFolder) previewFolder.category = "unchecked";
+          return Effect.logDebug("storage cleanup skipped worktree", {
+            threadId: thread.id,
+            error,
+          });
+        }),
       );
+      if (preview) preview.checked++;
     }
   });
+
+  const revision = yield* SubscriptionRef.make(0);
+  const previewGate = yield* Semaphore.make(1);
+  const previewCache: Array<{
+    input: StorageCleanupPreviewInput;
+    settings: ServerSettings;
+    at: number;
+    result: StorageCleanupPreview;
+  }> = [];
+  const preview = Effect.fn("StorageCleanup.preview")(function* (
+    input: StorageCleanupPreviewInput,
+  ) {
+    const settings = yield* settingsService.getSettings;
+    const now = yield* Clock.currentTimeMillis;
+    let cached = previewCache.find(
+      (entry) =>
+        entry.input.projectId === input.projectId &&
+        entry.input.inactiveAfterDays === input.inactiveAfterDays &&
+        now - entry.at < 60_000 &&
+        Equal.equals(entry.settings.storageCleanup, settings.storageCleanup) &&
+        Equal.equals(entry.settings.worktreeCleanup, settings.worktreeCleanup) &&
+        sameProjectWorktreePolicies(entry.settings, settings),
+    );
+    if (!cached) {
+      // Inspect all cleanup categories without enabling any rule. Each folder is assigned
+      // once, in deleted / inactive / merged / unchanged order, so totals are additive.
+      const previewRules = (rules: WorktreeCleanupRules): WorktreeCleanupRules => ({
+        worktreeOnDelete: true,
+        worktreeAfterDays:
+          input.inactiveAfterDays === undefined
+            ? (rules.worktreeAfterDays ?? 8)
+            : (input.inactiveAfterDays ?? 8),
+        worktreeOnMerge: true,
+        worktreeUnchanged: true,
+      });
+      const overrides = Object.fromEntries(
+        Object.keys(settings.projectSettingsOverrides).map((id) => [
+          id,
+          {
+            ...settings.projectSettingsOverrides[id as ProjectId],
+            worktreeCleanup: {
+              mode: "custom" as const,
+              rules: previewRules(resolveWorktreeCleanup(settings, id as ProjectId)),
+            },
+          },
+        ]),
+      );
+      const scan: PreviewScan = { input, total: 0, checked: 0, unavailable: 0, folders: [] };
+      yield* cleanWorktrees(
+        {
+          ...settings,
+          worktreeCleanup: null,
+          storageCleanup: {
+            ...settings.storageCleanup,
+            ...previewRules(resolveWorktreeCleanup(settings, null)),
+          },
+          projectSettingsOverrides: overrides,
+        },
+        now,
+        scan,
+      ).pipe(
+        Effect.catch(() => {
+          scan.unavailable++;
+          return Effect.void;
+        }),
+      );
+      const measurementStartedAt = yield* Clock.currentTimeMillis;
+      for (const folder of scan.folders) {
+        if ((yield* Clock.currentTimeMillis) - measurementStartedAt >= 10_000) break;
+        folder.bytes = yield* measureWorktreeBytes(folder.path).pipe(
+          Effect.provideService(Path.Path, path),
+        );
+      }
+      const total = { folders: 0, measured: 0, bytes: 0 };
+      const kinds = ["deleted", "inactive", "merged", "unchanged", "kept", "unchecked"] as const;
+      const categories = kinds.map((kind) => ({ kind, folders: 0, measured: 0, bytes: 0 }));
+      const projectIds = new Set<ProjectId>();
+      for (const folder of scan.folders) {
+        const category = categories.find((entry) => entry.kind === folder.category)!;
+        projectIds.add(folder.projectId);
+        for (const summary of [total, category]) {
+          summary.folders++;
+          if (folder.bytes !== null) {
+            summary.measured++;
+            summary.bytes += folder.bytes;
+          }
+        }
+      }
+      const result: StorageCleanupPreview = {
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+        unchecked: Math.max(0, scan.total - scan.checked),
+        unavailable: scan.unavailable,
+        total,
+        categories,
+        projectCount: projectIds.size,
+      };
+      cached = { input, settings, at: now, result };
+      if (previewCache.length >= 8) previewCache.shift();
+      previewCache.push(cached);
+    }
+    return cached.result;
+  }, previewGate.withPermits(1));
 
   const cleanFiles = Effect.fn("StorageCleanup.cleanFiles")(function* (
     root: string,
@@ -424,6 +637,13 @@ export const make = Effect.gen(function* () {
           ? Effect.failCause(cause)
           : Effect.logWarning("storage cleanup failed", { cause }),
       ),
+      Effect.andThen(
+        Effect.sync(() => {
+          previewCache.length = 0;
+        }),
+      ),
+      Effect.andThen(SubscriptionRef.update(revision, (value) => value + 1)),
+      previewGate.withPermits(1),
     ),
   );
 
@@ -476,7 +696,12 @@ export const make = Effect.gen(function* () {
       ),
     );
   });
-  return { start, drain: worker.drain } satisfies StorageCleanup["Service"];
+  return {
+    start,
+    drain: worker.drain,
+    preview,
+    revisions: SubscriptionRef.changes(revision),
+  } satisfies StorageCleanup["Service"];
 });
 
 export const layer = Layer.effect(StorageCleanup, make);

@@ -1,3 +1,4 @@
+import { StorageCleanupPreview, StorageCleanupPreviewInput } from "./storageCleanup.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -367,6 +368,7 @@ export const WS_METHODS = {
   serverCommitDesktopUpdate: "server.commitDesktopUpdate",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
+  serverPreviewStorageCleanup: "server.previewStorageCleanup",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -439,6 +441,7 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
+  subscribeStorageCleanup: "subscribeStorageCleanup",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
 } as const;
 
@@ -570,6 +573,19 @@ const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUp
   payload: DesktopUpdateCommitInput,
   success: ServerSelfUpdateResult,
   error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
+});
+
+const WsServerPreviewStorageCleanupRpc = Rpc.make(WS_METHODS.serverPreviewStorageCleanup, {
+  payload: StorageCleanupPreviewInput,
+  success: StorageCleanupPreview,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+const WsSubscribeStorageCleanupRpc = Rpc.make(WS_METHODS.subscribeStorageCleanup, {
+  payload: Schema.Struct({}),
+  success: NonNegativeInt,
+  error: EnvironmentAuthorizationError,
+  stream: true,
 });
 
 const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
@@ -1402,6 +1418,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
+  WsServerPreviewStorageCleanupRpc,
+  WsSubscribeStorageCleanupRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,

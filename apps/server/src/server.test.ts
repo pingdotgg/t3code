@@ -1,3 +1,4 @@
+import * as StorageCleanup from "./storageCleanup.ts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -522,6 +523,7 @@ const buildAppUnderTest = (options?: {
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
+    storageCleanup?: Partial<StorageCleanup.StorageCleanup["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
@@ -790,6 +792,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mergeAll(
+          Layer.mock(StorageCleanup.StorageCleanup)({ ...options?.layers?.storageCleanup }),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             getProviders: Effect.succeed([]),
             refresh: () => Effect.succeed([]),
@@ -1740,6 +1743,64 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Deferred.succeed(ready, undefined);
       assert.equal((yield* Fiber.join(request)).status, 200);
       assert.isTrue(yield* Deferred.isDone(completed));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("lets read-only clients preview storage without changing cleanup rules", () =>
+    Effect.gen(function* () {
+      const input = {
+        projectId: ProjectId.make("storage-project"),
+      };
+      const preview = {
+        checkedAt: "2026-09-01T00:00:00.000Z",
+        unchecked: 0,
+        unavailable: 0,
+        total: { folders: 2, measured: 2, bytes: 1024 },
+        categories: [
+          { kind: "inactive" as const, folders: 1, measured: 1, bytes: 512 },
+          { kind: "kept" as const, folders: 1, measured: 1, bytes: 512 },
+        ],
+        projectCount: 1,
+      };
+      yield* buildAppUnderTest({
+        layers: {
+          storageCleanup: {
+            revisions: Stream.make(0, 1),
+            preview: (request) => {
+              assert.deepStrictEqual(request, input);
+              return Effect.succeed(preview);
+            },
+          },
+        },
+      });
+      const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      assert.equal(token.response.status, 200);
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+      });
+      const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+      yield* withWsRpcClient(wsUrl, (client) =>
+        Effect.gen(function* () {
+          assert.deepStrictEqual(
+            yield* client[WS_METHODS.serverPreviewStorageCleanup](input),
+            preview,
+          );
+          const revisions = yield* client[WS_METHODS.subscribeStorageCleanup]({}).pipe(
+            Stream.runCollect,
+          );
+          assert.deepStrictEqual(Array.from(revisions), [0, 1]);
+          const error = yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: { storageCleanup: { worktreeOnDelete: true } },
+          }).pipe(Effect.flip);
+          assert.equal(error._tag, "EnvironmentAuthorizationError");
+          if (error._tag === "EnvironmentAuthorizationError") {
+            assert.equal(error.requiredScope, "orchestration:operate");
+          }
+        }),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

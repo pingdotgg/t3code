@@ -58,6 +58,20 @@ Open **Settings → Storage** to enable automatic cleanup on one machine or all 
 environments. Policies are off by default and run on the server at startup, when changed, and
 hourly. Offline machines keep their existing policies.
 
+The storage summary shows space used by worktrees, broken down by cleanup category. Each folder
+is counted once, in order: deleted threads, inactive, merged, then no unique commits. Inactive
+uses the project's retention period, or 8 days when the rule is off. Protected worktrees appear
+under Other worktrees. Categories show matching storage even when their cleanup rules are off.
+Edit the rules, then choose **Save cleanup rules** to apply them. Cleanup can start as soon as you
+save. **Discard** cancels unsaved edits; existing saved rules continue running.
+Changing the selected scope or leaving Storage discards unsaved edits.
+
+The summary follows the selected machines and project scope, just like the cleanup rules.
+Offline machines and machines without storage reporting are excluded and listed separately.
+Projects on different machines count as separate checkouts. Estimates use local branch references
+and synced pull request information. Large scans may be partial; cleanup checks eligibility again
+before removing folders.
+
 Select a project to set **Automatic worktree cleanup** to **Inherit**, **Off**, or **Custom**.
 Inherit follows each machine's rules; Off keeps that project's worktrees until you remove them
 manually. Custom applies separate worktree rules to the selected project or checkout. Browser
@@ -70,7 +84,7 @@ prevent removal. Branches and thread history stay; starting another turn recreat
 Merge cleanup requires the commits to be included in the remote default branch, so squash merges
 may need the inactivity rule instead.
 
-Enable **Delete worktrees with deleted threads** to remove safe worktrees after their last
+Enable **Remove worktrees left by deleted threads** to remove safe worktrees after their last
 thread is deleted, including archived threads and worktrees left by earlier deletions. The
 server waits for sessions and terminals to stop and retries skipped worktrees after restart.
 Existing prompts for deleting a worktree manually remain available when this policy is off.

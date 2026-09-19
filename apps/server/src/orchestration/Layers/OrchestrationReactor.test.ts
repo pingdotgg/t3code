@@ -33,7 +33,7 @@ describe("OrchestrationReactor", () => {
     runtime = ManagedRuntime.make(
       Layer.effect(OrchestrationReactor, makeOrchestrationReactor).pipe(
         Layer.provideMerge(
-          Layer.succeed(StorageCleanup, {
+          Layer.mock(StorageCleanup)({
             start: () => {
               started.push("storage-cleanup");
               return Effect.void;
