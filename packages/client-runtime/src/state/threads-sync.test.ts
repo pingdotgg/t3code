@@ -1777,6 +1777,8 @@ describe("EnvironmentThreads", () => {
         completedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
         updatedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
         type: "user_message" as const,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
         messageId: "message-12" as never,
         inputIntent: "turn_start" as const,
         text: "next question",
