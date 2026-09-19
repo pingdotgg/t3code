@@ -167,6 +167,19 @@ it.each([0, 1])(
   },
 );
 
+it("renders both responsive limits refresh controls as outlined buttons", async () => {
+  await act(() => {
+    renderer = create(<UsagePage />);
+  });
+
+  const buttons = renderer.root
+    .findAllByProps({ "aria-label": "Refresh limits" })
+    .filter((node) => node.type === "button");
+
+  expect(buttons).toHaveLength(2);
+  expect(buttons.every((button) => button.props.variant === "outline")).toBe(true);
+});
+
 it("uses the current time when returning to limits from tokens", async () => {
   await act(() => {
     renderer = create(<UsagePage />);

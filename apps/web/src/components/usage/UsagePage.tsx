@@ -298,7 +298,7 @@ export function UsagePage() {
           aria-busy={isRefreshing}
           disabled={isRefreshing}
           size="icon-sm"
-          variant="ghost"
+          variant="outline"
         >
           <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
         </Button>
@@ -357,7 +357,7 @@ export function UsagePage() {
           aria-busy={isRefreshing}
           disabled={isRefreshing}
           size="icon-sm"
-          variant="ghost"
+          variant="outline"
         >
           <RefreshIcon className="size-3.5" refreshing={isRefreshing} />
         </Button>
