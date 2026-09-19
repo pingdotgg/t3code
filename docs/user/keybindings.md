@@ -84,7 +84,7 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `modelPickerOpen`, `isWeb`, and `isDesktop`. `isWeb` is true in a
+`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `isWeb`, and `isDesktop`. `isWeb` is true in a
 browser tab. `isDesktop` is true in the desktop app. Unknown keys evaluate to
 `false`.
 
