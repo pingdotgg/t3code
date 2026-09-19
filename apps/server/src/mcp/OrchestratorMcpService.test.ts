@@ -396,7 +396,14 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
-  const parentProjection = (subagents: ReadonlyArray<unknown>): OrchestrationV2ThreadProjection =>
+  const parentProjection = (
+    subagents: ReadonlyArray<unknown>,
+    modelSelection: {
+      readonly instanceId: ProviderInstanceId;
+      readonly model: string;
+      readonly options?: ReadonlyArray<{ readonly id: string; readonly value: unknown }>;
+    } = { instanceId: codexInstanceId, model: "gpt-5.4" },
+  ): OrchestrationV2ThreadProjection =>
     ({
       thread: {
         id: parentThreadId,
@@ -404,7 +411,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         title: "MCP parent",
         createdBy: "user",
         creationSource: "web",
-        modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+        modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
       },
@@ -415,7 +422,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           status: "running",
           rootNodeId: parentNodeId,
           providerInstanceId: codexInstanceId,
-          modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+          modelSelection,
         },
       ],
       contextTransfers: [],
@@ -783,5 +790,213 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
       }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
     }),
+  );
+
+  it.effect(
+    "inherits an available parent instance for driver-only targets and otherwise selects a healthy peer",
+    () =>
+      Effect.gen(function* () {
+        const codexAltInstanceId = ProviderInstanceId.make("codex-alt");
+        const driver = ProviderDriverKind.make("codex");
+        const claudeDriver = ProviderDriverKind.make("claudeAgent");
+        const parentModelSelection = {
+          instanceId: codexInstanceId,
+          model: "gpt-5.4",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        } as const;
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver,
+          providerInstanceId: codexInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Summarize the diff.",
+          title: null,
+          model: "gpt-5.4",
+          status: "running",
+          result: null,
+          startedAt: null,
+          completedAt: null,
+        };
+        const cases = [
+          {
+            name: "healthy-inherited",
+            inheritedEnabled: true,
+            peerEnabled: true,
+            explicit: false,
+            selectedInstanceId: codexInstanceId,
+            candidateDriver: driver,
+          },
+          {
+            name: "unavailable-inherited-falls-back-to-healthy-peer",
+            inheritedEnabled: false,
+            peerEnabled: true,
+            explicit: false,
+            selectedInstanceId: codexAltInstanceId,
+            candidateDriver: driver,
+          },
+          {
+            name: "no-available-peer",
+            inheritedEnabled: false,
+            peerEnabled: false,
+            explicit: false,
+            selectedInstanceId: null,
+            candidateDriver: driver,
+          },
+          {
+            name: "cross-driver-no-available-candidate",
+            inheritedEnabled: false,
+            peerEnabled: false,
+            explicit: false,
+            selectedInstanceId: null,
+            candidateDriver: claudeDriver,
+          },
+          {
+            name: "explicit-unavailable",
+            inheritedEnabled: false,
+            peerEnabled: true,
+            explicit: true,
+            selectedInstanceId: null,
+            candidateDriver: driver,
+          },
+          {
+            name: "explicit-healthy",
+            inheritedEnabled: true,
+            peerEnabled: true,
+            explicit: true,
+            selectedInstanceId: codexAltInstanceId,
+            candidateDriver: driver,
+          },
+        ] as const;
+
+        for (const testCase of cases) {
+          const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          let delegated = false;
+          const dependencies = Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService)({
+              getThreadProjection: (threadId) =>
+                Effect.succeed(
+                  threadId === parentThreadId
+                    ? parentProjection(delegated ? [task] : [], parentModelSelection)
+                    : childProjection,
+                ),
+              dispatch: (command) =>
+                Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      delegated = true;
+                    }),
+                  ),
+                  Effect.as({
+                    sequence: 1,
+                    storedEvents: [
+                      {
+                        sequence: 1,
+                        commandId: null,
+                        event: { type: "subagent.updated", payload: task },
+                      },
+                    ],
+                  } as never),
+                ),
+            }),
+            Layer.mock(ProviderRegistry)({
+              getProviders: Effect.succeed([
+                providerSnapshot({
+                  instanceId: codexInstanceId,
+                  driver,
+                  model: "gpt-5.4",
+                  enabled: testCase.inheritedEnabled,
+                }),
+                providerSnapshot({
+                  instanceId: codexAltInstanceId,
+                  driver: testCase.candidateDriver,
+                  model: "codex-alt-model",
+                  enabled: testCase.peerEnabled,
+                }),
+              ]),
+            }),
+            adapterRegistryLayer([codexInstanceId, codexAltInstanceId]),
+            Layer.mock(ScheduledTaskService)({}),
+          );
+
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const target = testCase.explicit
+              ? ({
+                  providerInstanceId:
+                    testCase.selectedInstanceId === null
+                      ? codexInstanceId
+                      : testCase.selectedInstanceId,
+                } as const)
+              : ({ driverKind: testCase.candidateDriver } as const);
+            if (testCase.selectedInstanceId === null) {
+              const error = yield* service
+                .delegateTask(scope, {
+                  task: "Summarize the diff.",
+                  target,
+                  mode: "async",
+                  clientRequestId: `delegate-select-${testCase.name}`,
+                })
+                .pipe(Effect.flip);
+              assert.equal(error.code, "provider_unavailable", testCase.name);
+              if (testCase.name === "cross-driver-no-available-candidate") {
+                assert.isTrue(error.message.includes("driver claudeAgent"), testCase.name);
+                const threadError = yield* service
+                  .createThreads(scope, {
+                    threads: [{ prompt: "Summarize the diff.", target }],
+                    clientRequestId: `delegate-threads-${testCase.name}`,
+                  })
+                  .pipe(Effect.flip);
+                assert.equal(
+                  threadError.code,
+                  "provider_unavailable",
+                  `${testCase.name}-createThreads`,
+                );
+                assert.isTrue(
+                  threadError.message.includes("driver claudeAgent"),
+                  `${testCase.name}-createThreads`,
+                );
+              }
+              assert.deepEqual(yield* Ref.get(dispatched), [], testCase.name);
+              return;
+            }
+            const result = yield* service.delegateTask(scope, {
+              task: "Summarize the diff.",
+              target,
+              mode: "async",
+              clientRequestId: `delegate-select-${testCase.name}`,
+            });
+            assert.equal(result.status, "running", testCase.name);
+            const commands = yield* Ref.get(dispatched);
+            assert.equal(commands.length, 1, testCase.name);
+            const request = commands[0] as {
+              type: string;
+              modelSelection: {
+                instanceId: string;
+                model: string;
+                options?: ReadonlyArray<{ id: string; value: unknown }>;
+              };
+            };
+            assert.equal(request.type, "delegated_task.request", testCase.name);
+            assert.equal(
+              request.modelSelection.instanceId,
+              testCase.selectedInstanceId,
+              testCase.name,
+            );
+            if (testCase.name === "healthy-inherited") {
+              assert.deepEqual(request.modelSelection, parentModelSelection, testCase.name);
+            } else {
+              assert.equal(request.modelSelection.model, "codex-alt-model", testCase.name);
+            }
+          }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+        }
+      }),
   );
 });

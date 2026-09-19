@@ -222,7 +222,10 @@ type DelegateTaskInput = {
 ```
 
 Provider, model, runtime mode, and interaction mode inherit from the parent
-when omitted. Selecting a different provider without a model uses that
+when omitted. A driver-only target inherits the parent's provider instance
+when it can run child tasks, and otherwise selects an available instance of
+that driver; an explicit `providerInstanceId` is honored exactly and fails
+when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
 
 Delegation requires an active parent run owned by the MCP credential's

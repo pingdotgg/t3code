@@ -853,13 +853,24 @@ const make = Effect.gen(function* () {
             `No V2 provider adapter is registered for driver ${requestedDriver}.`,
           );
         }
+        // Inherit the parent's instance only when it can actually serve the
+        // child; an unavailable parent yields to a healthy instance of the
+        // requested driver rather than failing the delegation.
         const inheritedCandidate = candidates.find(
-          (candidate) => candidate.instanceId === input.parent.thread.modelSelection.instanceId,
+          (candidate) =>
+            candidate.instanceId === input.parent.thread.modelSelection.instanceId &&
+            providerConstraints(candidate, true).length === 0,
         );
         const availableCandidate = candidates.find(
           (candidate) => providerConstraints(candidate, true).length === 0,
         );
         instanceId = inheritedCandidate?.instanceId ?? availableCandidate?.instanceId;
+        if (instanceId === undefined) {
+          return yield* failure(
+            "provider_unavailable",
+            `No available V2 provider instance for driver ${requestedDriver}.`,
+          );
+        }
       }
       instanceId ??= input.parent.thread.modelSelection.instanceId;
 
