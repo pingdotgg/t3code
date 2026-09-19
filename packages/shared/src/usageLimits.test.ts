@@ -234,6 +234,44 @@ describe("pools", () => {
     },
   );
 
+  it("keeps colon-containing source and account IDs distinct", () => {
+    const native = provider({
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const hubs = [
+      ["hub:team", "seat"],
+      ["hub", "team:seat"],
+    ].map(([sourceId, accountId]) => ({
+      ...source,
+      id: UsageLimitSourceId.make(sourceId!),
+      accounts: [
+        {
+          id: accountId!,
+          driver: native.driver,
+          email: "same@example.com",
+          usageLimits: { checkedAt, windows: [window] },
+        },
+      ],
+    }));
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        { ...laptop, serverConfig: { providers: [native], usageLimitSources: hubs } },
+      ],
+    ]);
+    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual([
+      "env-a:codex",
+      "hub%3Ateam:seat",
+      "hub:team%3Aseat",
+    ]);
+    expect(
+      collectProviderUsageLimits(native.instanceId, [native], hubs, now)?.accounts.map(
+        (account) => account.id,
+      ),
+    ).toEqual(["codex", "hub%3Ateam:seat", "hub:team%3Aseat"]);
+  });
+
   it("does not attach an ambiguous hub subscription or its credits to a native login", () => {
     const native = provider({
       auth: { status: "authenticated", email: "same@example.com" },

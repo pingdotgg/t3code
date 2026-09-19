@@ -57,6 +57,10 @@ function accountKey(driver: ServerProvider["driver"], email: string | undefined)
   return normalizedEmail ? `${driver}:${normalizedEmail}` : null;
 }
 
+function hubAccountKey(sourceId: string, accountId: string): string {
+  return `${encodeURIComponent(sourceId)}:${encodeURIComponent(accountId)}`;
+}
+
 /** Personal and team subscriptions may share an email, even when one quota probe fails. */
 function ambiguousHubAccountKeys(sources: UsageLimitSourceSnapshots): ReadonlySet<string> {
   const identities = new Map<string, string>();
@@ -65,7 +69,7 @@ function ambiguousHubAccountKeys(sources: UsageLimitSourceSnapshots): ReadonlySe
     for (const account of source.accounts) {
       const key = accountKey(account.driver, account.email);
       if (!key) continue;
-      const identity = `${source.id}:${account.id}`;
+      const identity = hubAccountKey(source.id, account.id);
       const previous = identities.get(key);
       if (previous !== undefined && previous !== identity) ambiguous.add(key);
       identities.set(key, identity);
@@ -211,8 +215,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
         const key = accountKey(account.driver, account.email);
-        merge(key && !ambiguous.has(key) ? key : `${source.id}:${account.id}`, {
-          key: `${source.id}:${account.id}`,
+        merge(key && !ambiguous.has(key) ? key : hubAccountKey(source.id, account.id), {
+          key: hubAccountKey(source.id, account.id),
           driver: account.driver,
           displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
           email: account.email,
@@ -644,7 +648,7 @@ export function collectProviderUsageLimits(
       const key = accountKey(account.driver, account.email);
       if (key && !ambiguous.has(key) && nativeAccounts.has(key)) continue;
       accounts.push({
-        id: `${source.id}:${account.id}`,
+        id: hubAccountKey(source.id, account.id),
         driver: account.driver,
         label: `${source.label} · ${account.id}`,
         sourceLabel: "CLI Proxy",
