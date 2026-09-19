@@ -1102,6 +1102,12 @@ export interface DesktopBridge {
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
   /**
+   * Restores and focuses the calling window from the main process. Renderer
+   * `window.focus()` cannot raise an Electron window, and on Wayland only the
+   * main process can spend a notification click's activation token.
+   */
+  revealWindow?: () => Promise<void>;
+  /**
    * The OS locale as a BCP-47 tag, which the renderer cannot read for itself:
    * the packaged app ships only the `en-US` Chromium locale pak, so
    * `navigator.language` and the default `Intl` locale are pinned to `en-US`
