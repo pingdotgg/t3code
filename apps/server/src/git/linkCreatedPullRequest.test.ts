@@ -21,6 +21,8 @@ import {
 } from "../orchestration-v2/Orchestrator.ts";
 import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { refreshPushedPullRequests } from "./refreshPushedPullRequests.ts";
+import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { createdPullRequestKey, linkCreatedPullRequest } from "./linkCreatedPullRequest.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -229,3 +231,45 @@ describe("linkCreatedPullRequest", () => {
     }),
   );
 });
+
+it.effect(
+  "refreshes PR readers after a push from a thread or project, but not a local commit",
+  () =>
+    Effect.gen(function* () {
+      const refreshed: string[] = [];
+      const dependencies = Layer.mergeAll(
+        Layer.mock(OrchestratorV2)({
+          getThreadShell: () => Effect.succeed(v2PullRequestThread(thread)),
+        }),
+        Layer.mock(ProjectionSnapshotQuery)({
+          getProjectShellsWithoutEnrichment: () => Effect.succeed([project]),
+        }),
+        Layer.mock(PullRequestService)({
+          refreshAfterTurn: (id) =>
+            Effect.sync(() => {
+              refreshed.push(id);
+            }),
+        }),
+      );
+      yield* refreshPushedPullRequests(
+        { cwd: "/worktree", threadId: THREAD_ID },
+        { push: { status: "pushed" } },
+      ).pipe(Effect.provide(dependencies));
+      yield* refreshPushedPullRequests(
+        { cwd: project.workspaceRoot },
+        { push: { status: "pushed" } },
+      ).pipe(Effect.provide(dependencies));
+      yield* refreshPushedPullRequests({ cwd: "/unrelated" }, { push: { status: "pushed" } }).pipe(
+        Effect.provide(dependencies),
+      );
+      yield* refreshPushedPullRequests(
+        { cwd: project.workspaceRoot, threadId: THREAD_ID },
+        { push: { status: "skipped_not_requested" } },
+      ).pipe(Effect.provide(dependencies));
+      yield* refreshPushedPullRequests(
+        { cwd: "/draft-worktree", projectId: PROJECT_ID },
+        { push: { status: "pushed" } },
+      ).pipe(Effect.provide(dependencies));
+      expect(refreshed).toEqual([PROJECT_ID, PROJECT_ID, PROJECT_ID]);
+    }),
+);

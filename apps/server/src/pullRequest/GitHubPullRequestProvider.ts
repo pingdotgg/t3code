@@ -363,8 +363,12 @@ export const make = Effect.gen(function* () {
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
     getChangeRequestChecks: (input) =>
-      readChecks(input).pipe(
-        Effect.map(({ state, checks }) => ({ state, checks })),
+      cli.revalidateChecks(input, readChecks(input)).pipe(
+        Effect.map(({ state, checks, headSha }) => ({
+          state,
+          checks,
+          ...(headSha == null ? {} : { headSha }),
+        })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 

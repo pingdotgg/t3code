@@ -21,6 +21,7 @@ import { ArrowUpRightIcon, FileDiffIcon, GitBranchIcon, TriangleAlertIcon } from
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
+import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
 import { cn } from "~/lib/utils";
 import { useServerConfigs } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -137,10 +138,13 @@ export function ThreadDetailsPrRow({
     key: `workspace-pr:${refreshKey}`,
     intervalMs: 10 * 60_000,
   });
-  useLiveRefresh(checksQuery.isPending || detailQuery.isPending ? null : checksQuery.refresh, {
+  usePullRequestChecksRefresh({
+    refresh: checksQuery.isPending || detailQuery.isPending ? null : checksQuery.refresh,
     enabled: open && supportsChecks && !(checksQuery.isSuccess && checksQuery.data === null),
     key: `workspace-pr-checks:${refreshKey}`,
-    intervalMs: 45_000,
+    checks: detail?.checks ?? [],
+    headSha: checksQuery.data?.headSha,
+    updatedAt: checksQuery.dataUpdatedAt,
   });
 
   const { actionPending, perform } = usePullRequestActionRunner({

@@ -1844,14 +1844,16 @@ for (const [provider, host] of [
           number: 1,
           allowStale: false,
         };
-        yield* Effect.all([service[read](reference), service[read](reference)], { concurrency: 2 });
+        const request: Effect.Effect<unknown, PullRequestService.PullRequestError> =
+          service[read](reference);
+        yield* Effect.all([request, request], { concurrency: 2 });
         assert.strictEqual(calls, 1);
         yield* TestClock.adjust("45 seconds");
         limited = true;
-        yield* Effect.flip(service[read](reference));
+        assert.strictEqual((yield* Effect.exit(request))._tag, "Failure");
         assert.strictEqual(calls, 2);
         yield* TestClock.adjust("45 seconds");
-        yield* Effect.flip(service[read](reference));
+        assert.strictEqual((yield* Effect.exit(request))._tag, "Failure");
         assert.strictEqual(calls, 2);
         yield* TestClock.adjust("75 seconds");
         limited = false;
