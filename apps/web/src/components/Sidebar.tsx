@@ -209,7 +209,11 @@ import {
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
 import {
+  bumpSnoozeGeneration,
+  readSnoozeGeneration,
+  rescheduleUndoTarget,
   resolveSnoozePresets,
+  resolveSnoozeUndo,
   snoozeWakeDescription,
   snoozeWakeLabel,
   type SnoozePreset,
@@ -3716,6 +3720,11 @@ export default function Sidebar() {
   );
   // One snooze per thread at a time — same double-dispatch guard as settle.
   const snoozingThreadKeysRef = useRef(new Set<string>());
+  /**
+   * Snooze or reschedule one thread and move forward from it when it was the
+   * open thread. Returns the outcome without toasting so batch callers can
+   * summarize; a reschedule never navigates.
+   */
   const performSnooze = useCallback(
     async (
       threadRef: ScopedThreadRef,
@@ -3729,8 +3738,11 @@ export default function Sidebar() {
       snoozingThreadKeysRef.current.add(threadKey);
       try {
         // Snoozing the open thread moves you forward, same as settle —
-        // both park the thread you're done with for now.
-        const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
+        // both park the thread you're done with for now. Rescheduling an
+        // already-snoozed thread parks nothing new, so you stay put.
+        const navigateAfterSnooze = snoozedThreadKeysRef.current.has(threadKey)
+          ? null
+          : planForwardNavigation(threadKey, opts.coSnoozingKeys);
         const result = await snoozeThread(threadRef, preset.snoozedUntil);
         if (result._tag === "Failure") {
           // Never navigate away from a thread that did not snooze.
@@ -3751,13 +3763,18 @@ export default function Sidebar() {
         ) {
           navigateAfterSnooze?.();
         }
-        return { status: "success" } as const;
+        return { status: "success", generation: bumpSnoozeGeneration(threadKey) } as const;
       } finally {
         snoozingThreadKeysRef.current.delete(threadKey);
       }
     },
     [planForwardNavigation, snoozeThread],
   );
+  /**
+   * Single-thread snooze entry point: performs the snooze, then toasts the
+   * result with an Undo that wakes a fresh snooze or restores the previous
+   * wake time of a reschedule.
+   */
   const attemptSnooze = useCallback(
     (
       threadRef: ScopedThreadRef,
@@ -3765,12 +3782,13 @@ export default function Sidebar() {
       opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
     ) => {
       void (async () => {
+        const previousWake = rescheduleUndoTarget(readThreadShell(threadRef), new Date());
         const outcome = await performSnooze(threadRef, preset, opts);
         if (outcome.status === "failure") {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to snooze thread",
+              title: `Failed to ${previousWake ? "reschedule" : "snooze"} thread`,
               description:
                 outcome.error instanceof Error ? outcome.error.message : "An error occurred.",
             }),
@@ -3779,15 +3797,55 @@ export default function Sidebar() {
         }
         if (outcome.status !== "success") return;
         // Snooze hides the row, so the toast is the only confirmation —
-        // and the Undo is the escape hatch for a mis-click.
+        // and the Undo is the escape hatch for a mis-click. Undoing a
+        // reschedule restores the previous wake time rather than waking.
+        const wakeText = snoozeWakeDescription(preset.snoozedUntil, new Date(), timestampFormat);
         toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: `Snoozed until ${snoozeWakeDescription(preset.snoozedUntil, new Date(), timestampFormat)}`,
+            title: previousWake ? `Rescheduled to ${wakeText}` : `Snoozed until ${wakeText}`,
             timeout: 5_000,
             actionProps: {
               children: "Undo",
-              onClick: () => attemptUnsnooze(threadRef),
+              onClick: () => {
+                const undo = resolveSnoozeUndo({
+                  shell: readThreadShell(threadRef),
+                  snoozedUntilSetByToast: preset.snoozedUntil,
+                  generationSetByToast: outcome.generation,
+                  currentGeneration: readSnoozeGeneration(scopedThreadKey(threadRef)),
+                  previousWake,
+                });
+                if (undo.kind === "stale") {
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "warning",
+                      title: "Snooze already changed",
+                      description: "This thread's wake time was updated since. Nothing to undo.",
+                    }),
+                  );
+                  return;
+                }
+                if (undo.kind === "wake") {
+                  attemptUnsnooze(threadRef);
+                  return;
+                }
+                void performSnooze(threadRef, { snoozedUntil: undo.snoozedUntil }).then(
+                  (undone) => {
+                    if (undone.status === "failure") {
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title: "Failed to restore snooze",
+                          description:
+                            undone.error instanceof Error
+                              ? undone.error.message
+                              : "An error occurred.",
+                        }),
+                      );
+                    }
+                  },
+                );
+              },
             },
           }),
         );
