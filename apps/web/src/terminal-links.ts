@@ -105,6 +105,15 @@ function isWindowsPathStyle(value: string): boolean {
   return isWindowsAbsolutePath(value) || /[A-Za-z]:\\/.test(value);
 }
 
+function windowsVolumeRoot(cwd: string): string | null {
+  const normalized = cwd.replaceAll("/", "\\");
+  const drive = /^([A-Za-z]:)(?:\\|$)/.exec(normalized);
+  if (drive?.[1]) return drive[1];
+  if (!normalized.startsWith("\\\\")) return null;
+  const [server, share] = normalized.slice(2).split("\\");
+  return server && share ? `\\\\${server}\\${share}` : null;
+}
+
 function joinPath(base: string, next: string, separator: "/" | "\\"): string {
   const cleanBase = base.replace(/[\\/]+$/, "");
   if (separator === "\\") {
@@ -210,6 +219,9 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
       const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
       resolvedPath = joinPath(home, path.slice(2), separator);
     }
+  } else if (isWindowsPathStyle(cwd) && /^[\\/](?![\\/])/.test(path)) {
+    const volumeRoot = windowsVolumeRoot(cwd);
+    if (volumeRoot) resolvedPath = joinPath(volumeRoot, path.replace(/^[\\/]+/, ""), "\\");
   } else if (!isAbsolutePath(path)) {
     const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
     resolvedPath = joinPath(cwd, path, separator);

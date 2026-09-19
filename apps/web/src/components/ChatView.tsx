@@ -894,6 +894,7 @@ interface PersistentThreadTerminalDrawerProps {
   closeShortcutLabel: string | undefined;
   keybindings: ResolvedKeybindingsConfig;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onAddTerminalLink?: (text: string) => void;
 }
 
 const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
@@ -908,6 +909,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   closeShortcutLabel,
   keybindings,
   onAddTerminalContext,
+  onAddTerminalLink,
 }: PersistentThreadTerminalDrawerProps) {
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
@@ -1208,6 +1210,16 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [onAddTerminalContext, visible],
   );
 
+  const handleAddTerminalLink = useCallback(
+    (text: string) => {
+      if (!visible || !onAddTerminalLink) {
+        return;
+      }
+      onAddTerminalLink(text);
+    },
+    [onAddTerminalLink, visible],
+  );
+
   if (!project || (!terminalUiState.terminalOpen && !active) || !cwd) {
     return null;
   }
@@ -1249,6 +1261,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
           onCloseTerminal={closeTerminal}
           onHeightChange={setTerminalHeight}
           onAddTerminalContext={handleAddTerminalContext}
+          onAddTerminalLink={onAddTerminalLink ? handleAddTerminalLink : undefined}
           terminalLabelsById={terminalLabelsById}
           terminalLaunchLocationsById={terminalLaunchLocationsById}
         />
@@ -1265,6 +1278,7 @@ interface PersistentThreadTerminalPanelProps {
   focusRequestId: number;
   keybindings: ResolvedKeybindingsConfig;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
+  onAddTerminalLink?: (text: string) => void;
   onSplitTerminal: () => void;
   onSplitTerminalVertical: () => void;
   onNewTerminal: () => void;
@@ -1284,6 +1298,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   focusRequestId,
   keybindings,
   onAddTerminalContext,
+  onAddTerminalLink,
   onSplitTerminal,
   onSplitTerminalVertical,
   onNewTerminal,
@@ -1333,6 +1348,15 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
           })
         : {},
     [project, worktreePath],
+  );
+  const handleAddTerminalLink = useCallback(
+    (text: string) => {
+      if (!visible || !onAddTerminalLink) {
+        return;
+      }
+      onAddTerminalLink(text);
+    },
+    [onAddTerminalLink, visible],
   );
   const terminalLabelsById = useMemo(() => {
     const labels = new Map<string, string>();
@@ -1422,6 +1446,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       onCloseTerminal={onCloseTerminal}
       onHeightChange={() => undefined}
       onAddTerminalContext={onAddTerminalContext}
+      onAddTerminalLink={onAddTerminalLink ? handleAddTerminalLink : undefined}
       terminalLabelsById={terminalLabelsById}
       terminalLaunchLocationsById={terminalLaunchLocationsById}
       keybindings={keybindings}
@@ -4022,6 +4047,18 @@ export default function ChatView(props: ChatViewProps) {
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
       composerRef.current?.addTerminalContext(selection);
+    },
+    [composerRef],
+  );
+  const addTerminalLinkToDraft = useCallback(
+    (text: string) => {
+      if (!composerRef.current?.insertTextAtEnd(`${text} `, { ensureLeadingBoundary: true })) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add to chat",
+          description: "The composer is busy; try again once it is ready.",
+        });
+      }
     },
     [composerRef],
   );
@@ -9593,6 +9630,7 @@ export default function ChatView(props: ChatViewProps) {
         focusRequestId={terminalFocusRequestId}
         keybindings={keybindings}
         onAddTerminalContext={addTerminalContextToDraft}
+        onAddTerminalLink={addTerminalLinkToDraft}
         onSplitTerminal={splitPanelTerminal}
         onSplitTerminalVertical={splitPanelTerminalVertical}
         onNewTerminal={addTerminalSurface}
@@ -10292,6 +10330,7 @@ export default function ChatView(props: ChatViewProps) {
             closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
             keybindings={keybindings}
             onAddTerminalContext={addTerminalContextToDraft}
+            onAddTerminalLink={addTerminalLinkToDraft}
           />
         ))}
       </div>
