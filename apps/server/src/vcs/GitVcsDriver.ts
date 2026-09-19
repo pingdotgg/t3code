@@ -551,29 +551,58 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         : {}),
     });
 
+  // Whether a .git entry (directory or worktree pointer file) exists at the
+  // workspace root or any ancestor — filesystem evidence that repository
+  // metadata is present even when git cannot read it.
+  const hasGitMetadataEntry = (cwd: string) =>
+    Effect.gen(function* () {
+      let directory = cwd;
+      while (true) {
+        if (yield* fileSystem.exists(path.join(directory, ".git"))) {
+          return true;
+        }
+        const parent = path.dirname(directory);
+        if (parent === directory) return false;
+        directory = parent;
+      }
+    });
+
   const detectRepository: VcsDriver.VcsDriver["Service"]["detectRepository"] = Effect.fn(
     "detectRepository",
   )(function* (cwd) {
+    // LC_ALL pins the diagnostic locale: git translates fatal messages on
+    // some installations, and the classification below matches English text.
     const insideWorkTreeResult = yield* gitCommand(
       vcsProcess,
       "GitVcsDriver.detectRepository.insideWorkTree",
       cwd,
       ["rev-parse", "--is-inside-work-tree"],
-      { allowNonZeroExit: true, timeoutMs: 5_000, maxOutputBytes: 4_096 },
+      {
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+        maxOutputBytes: 4_096,
+        env: { LC_ALL: "C" },
+      },
     );
     if (insideWorkTreeResult.exitCode !== 0) {
-      // "not a git repository" confirms no usable repo. Any other nonzero
-      // exit (unreadable config, permission denied, I/O) means detection
-      // itself failed — propagate it instead of reporting the workspace as
-      // non-Git, which callers rely on to decide that no repo state exists.
-      if (!insideWorkTreeResult.stderr.includes("not a git repository")) {
-        return yield* new VcsProcessExitError({
-          operation: "GitVcsDriver.detectRepository.insideWorkTree",
-          command: "git rev-parse",
-          cwd,
-          exitCode: insideWorkTreeResult.exitCode,
-          detail: insideWorkTreeResult.stderr.trim() || "Repository detection failed.",
-        });
+      const detectionFailure = new VcsProcessExitError({
+        operation: "GitVcsDriver.detectRepository.insideWorkTree",
+        command: "git rev-parse",
+        cwd,
+        exitCode: insideWorkTreeResult.exitCode,
+        detail: insideWorkTreeResult.stderr.trim() || "Repository detection failed.",
+      });
+      // "not a git repository" is also emitted when .git metadata exists but
+      // is unusable (unreadable HEAD, broken worktree pointer, unreachable
+      // common dir). Absence is only confirmed when no .git entry exists in
+      // the workspace ancestry — and only when that lookup itself succeeds.
+      if (
+        !insideWorkTreeResult.stderr.includes("not a git repository") ||
+        (yield* hasGitMetadataEntry(cwd).pipe(
+          Effect.catchTag("PlatformError", () => Effect.succeed(true)),
+        ))
+      ) {
+        return yield* detectionFailure;
       }
       return null;
     }
