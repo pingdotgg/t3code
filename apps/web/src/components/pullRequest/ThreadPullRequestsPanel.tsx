@@ -5,8 +5,10 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { ArrowUpRightIcon, LinkIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
+import { Schema } from "effect";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { useServerConfigs, useThreadShell } from "~/state/entities";
@@ -18,6 +20,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
 import { pullRequestListLines, type PullRequestListLine } from "./pullRequestListLines";
 import {
@@ -29,6 +32,8 @@ import {
   pullRequestChecksStatePresentation,
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
+
+const ThreadPullRequestSort = Schema.Literals(["activity", "number"]);
 
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   manual: "Linked by you",
@@ -220,10 +225,18 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
 function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const thread = useThreadShell(threadRef);
+  const [sort, setSort] = useLocalStorage(
+    "t3code:thread-pull-requests:sort",
+    "activity",
+    ThreadPullRequestSort,
+  );
   const openLinkDialog = useCallback(() => openLinkPullRequestDialog(threadRef), [threadRef]);
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: true });
   const links = useMemo(() => visibleThreadPullRequests(thread?.pullRequests ?? []), [thread]);
-  const lines = useMemo(() => pullRequestListLines(resolveThreadPullRequestChains(links)), [links]);
+  const lines = useMemo(
+    () => pullRequestListLines(resolveThreadPullRequestChains(links), sort),
+    [links, sort],
+  );
   const handleUnlink = useCallback(
     (link: ThreadPullRequestLink) => {
       void unlink({
@@ -270,6 +283,24 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center justify-end border-b border-border/60 px-2 py-1.5">
+        <ToggleGroup
+          aria-label="Sort linked pull requests"
+          variant="segmented"
+          value={[sort]}
+          onValueChange={(value) => {
+            const next = value[0];
+            if (next === "activity" || next === "number") setSort(next);
+          }}
+        >
+          <Toggle value="activity" aria-label="Sort by latest activity">
+            Activity
+          </Toggle>
+          <Toggle value="number" aria-label="Sort by highest PR number">
+            Number
+          </Toggle>
+        </ToggleGroup>
+      </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col p-1.5">
           {lines.map((line) => (
