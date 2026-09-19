@@ -1,0 +1,4 @@
+interface:
+  display_name: "PR Audit"
+  short_description: "Review PR value, bugs, and merge readiness"
+  default_prompt: "Use $pr-audit to review this pull request: assess its value and correctness, verify findings against the current head, and report blockers and evidence gaps."
