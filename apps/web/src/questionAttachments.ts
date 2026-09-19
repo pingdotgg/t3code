@@ -1,4 +1,10 @@
-import type { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type {
+  ApprovalRequestId,
+  EnvironmentId,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 import { DraftId, useComposerDraftStore } from "./composerDraftStore";
 import { releaseDraftAttachments } from "./lib/attachmentUploadQueue";
@@ -19,6 +25,24 @@ export function questionAttachmentDraftId(
   return DraftId.make(
     `${questionAttachmentDraftPrefix(environmentId, threadId)}${encodeURIComponent(JSON.stringify([requestId, questionId]))}`,
   );
+}
+
+const openQuestionDrafts = new Map<string, DraftId>();
+
+/** The question draft currently receiving attachments for a thread, so SnapShot delivery lands beside drag-drop files instead of on the hidden thread composer. */
+export function openQuestionAttachmentDraft(threadRef: ScopedThreadRef): DraftId | null {
+  return openQuestionDrafts.get(scopedThreadKey(threadRef)) ?? null;
+}
+
+export function trackOpenQuestionAttachmentDraft(
+  threadRef: ScopedThreadRef,
+  draftId: DraftId,
+): () => void {
+  const key = scopedThreadKey(threadRef);
+  openQuestionDrafts.set(key, draftId);
+  return () => {
+    if (openQuestionDrafts.get(key) === draftId) openQuestionDrafts.delete(key);
+  };
 }
 
 export const useQuestionAttachmentPreparation = create<{ counts: Record<string, number> }>(() => ({

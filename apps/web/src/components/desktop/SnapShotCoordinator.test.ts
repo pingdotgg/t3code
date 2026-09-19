@@ -1,5 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  ApprovalRequestId,
   type DesktopPendingSnapShot,
   EnvironmentId,
   ProjectId,
@@ -10,10 +11,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import type { DesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
+  questionAttachmentDraftId,
+  trackOpenQuestionAttachmentDraft,
+} from "../../questionAttachments";
+import {
   beginSnapShotAnimationWhenReady,
   deliverSnapShot,
   dismissFailedSnapShot,
   resolveExistingSnapShotTarget,
+  resolveSnapShotAttachmentTarget,
   resolveSnapShotTargetOnce,
   resolveSnapShotDeliveryTarget,
 } from "./SnapShotCoordinator";
@@ -288,6 +294,71 @@ describe("window capture target resolution", () => {
     const routeThreadRef = scopeThreadRef(environmentId, ThreadId.make("snap-shot-routed-thread"));
 
     expect(resolveExistingSnapShotTarget(routeThreadRef, routeThreadRef)).toEqual(routeThreadRef);
+  });
+});
+
+describe("open question delivery", () => {
+  it("attaches a capture to the open question draft instead of the thread draft", async () => {
+    const threadRef = scopeThreadRef(environmentId, ThreadId.make("question-thread"));
+    const questionDraft = questionAttachmentDraftId(
+      environmentId,
+      threadRef.threadId,
+      ApprovalRequestId.make("request-1"),
+      "question-1",
+    );
+    const capture = {
+      id: "12345678-1234-1234-1234-123456789abc",
+      name: "window.png",
+      mimeType: "image/png" as const,
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,AQID",
+      source: {
+        kind: "snap-shot" as const,
+        capturedAt: "2026-09-01T00:00:00.000Z",
+        appName: "Editor",
+        windowTitle: "main.ts",
+      },
+    };
+    const bridge = {
+      readSnapShot: async () => capture,
+      acknowledgeSnapShot: vi.fn(async () => undefined),
+    } as unknown as DesktopSnapShotBridge;
+    vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn() });
+    const pins = new Map<string, DraftId | null>();
+    const untrack = trackOpenQuestionAttachmentDraft(threadRef, questionDraft);
+    try {
+      const target = resolveSnapShotAttachmentTarget(pins, capture.id, threadRef);
+      expect(target).toBe(questionDraft);
+      await deliverSnapShot(bridge, capture, target);
+      const store = useComposerDraftStore.getState();
+      expect(store.getComposerDraft(questionDraft)?.images.map(({ id }) => id)).toEqual([
+        capture.id,
+      ]);
+      expect(store.getComposerDraft(threadRef)?.images ?? []).toHaveLength(0);
+    } finally {
+      untrack();
+    }
+    expect(resolveSnapShotAttachmentTarget(pins, capture.id, threadRef)).toEqual(threadRef);
+  });
+
+  it("keeps a capture on the question it was pinned to, never a newer one", () => {
+    const threadRef = scopeThreadRef(environmentId, ThreadId.make("question-thread"));
+    const requestId = ApprovalRequestId.make("request-1");
+    const first = questionAttachmentDraftId(environmentId, threadRef.threadId, requestId, "q1");
+    const second = questionAttachmentDraftId(environmentId, threadRef.threadId, requestId, "q2");
+    const pins = new Map<string, DraftId | null>();
+
+    const untrackNone = trackOpenQuestionAttachmentDraft(threadRef, first);
+    untrackNone();
+    expect(resolveSnapShotAttachmentTarget(pins, "before-question", threadRef)).toEqual(threadRef);
+    const untrackFirst = trackOpenQuestionAttachmentDraft(threadRef, first);
+    expect(resolveSnapShotAttachmentTarget(pins, "before-question", threadRef)).toEqual(threadRef);
+    expect(resolveSnapShotAttachmentTarget(pins, "during-first", threadRef)).toBe(first);
+    untrackFirst();
+    const untrackSecond = trackOpenQuestionAttachmentDraft(threadRef, second);
+    expect(resolveSnapShotAttachmentTarget(pins, "during-first", threadRef)).toEqual(threadRef);
+    expect(resolveSnapShotAttachmentTarget(pins, "during-second", threadRef)).toBe(second);
+    untrackSecond();
   });
 });
 

@@ -12,6 +12,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   questionAttachmentDraftId,
   countQuestionAttachments,
+  trackOpenQuestionAttachmentDraft,
   useQuestionAttachmentPreparation,
   changeQuestionAttachmentPreparation,
 } from "../../questionAttachments";
@@ -1568,6 +1569,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : null;
   const attachmentDraftTarget = questionAttachmentTarget ?? composerDraftTarget;
   const attachmentDraft = useComposerThreadDraft(attachmentDraftTarget);
+  // Same gate as dropped files: SnapShots only follow a question that can still take attachments.
+  const questionAcceptsSnapShots =
+    supportsQuestionAttachments &&
+    activePendingProgress?.activeQuestion?.allowCustomAnswer !== false &&
+    !activePendingIsResponding;
+  useEffect(() => {
+    if (!questionAttachmentTarget || !questionAcceptsSnapShots) return;
+    return trackOpenQuestionAttachmentDraft(routeThreadRef, questionAttachmentTarget);
+  }, [questionAcceptsSnapShots, questionAttachmentTarget, routeThreadRef]);
   const attachmentTargetKey = composerTargetKey(attachmentDraftTarget);
   // An import that finishes after a draft change must compare against the draft open *now*, not
   // the one captured in the closure that started it.
@@ -1605,8 +1615,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     getPendingSnapShotAnimations,
   );
   const pendingSnapShotIds = useMemo(
-    () => pendingSnapShotAnimationIdsForTarget(pendingSnapShotAnimations, composerDraftTarget),
-    [composerDraftTarget, pendingSnapShotAnimations],
+    () => pendingSnapShotAnimationIdsForTarget(pendingSnapShotAnimations, attachmentDraftTarget),
+    [attachmentDraftTarget, pendingSnapShotAnimations],
   );
   const pendingSnapShotIdSet = useMemo(() => new Set(pendingSnapShotIds), [pendingSnapShotIds]);
   const uncommittedSnapShotIds = pendingSnapShotIds.filter(
