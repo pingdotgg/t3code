@@ -142,7 +142,8 @@ import {
   supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
 } from "~/versionSkew";
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { canUseCloudAuth, hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { configuredHostedAppUrl } from "~/hostedPairing";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
@@ -1781,7 +1782,30 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 }
 
 function CloudLinkRow({ canManageRelay }: { readonly canManageRelay: boolean }) {
-  return hasCloudPublicConfig() ? <ConfiguredCloudLinkRow canManageRelay={canManageRelay} /> : null;
+  if (!hasCloudPublicConfig()) return null;
+  if (canUseCloudAuth()) return <ConfiguredCloudLinkRow canManageRelay={canManageRelay} />;
+
+  return (
+    <SettingsRow
+      title="T3 Connect"
+      description={
+        <>
+          Sign-in is unavailable at this address. To enable remote access, run{" "}
+          <code className="whitespace-nowrap">npx t3 connect link --headless</code> in a terminal on
+          the machine running T3, follow the sign-in instructions, then restart the server. You can
+          keep using T3 locally without signing in.
+        </>
+      }
+      control={
+        <Button
+          variant="outline"
+          render={<a href={configuredHostedAppUrl()} target="_blank" rel="noopener noreferrer" />}
+        >
+          Open T3 Connect
+        </Button>
+      }
+    />
+  );
 }
 
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
@@ -1809,7 +1833,7 @@ function CloudRemoteEnvironmentRows({
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
 }) {
-  return hasCloudPublicConfig() ? (
+  return canUseCloudAuth() ? (
     <CloudEnvironmentConnectRows
       primaryEnvironmentId={primaryEnvironmentId}
       savedEnvironments={savedEnvironments}

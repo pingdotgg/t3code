@@ -1,4 +1,7 @@
-import { relayClerkTokenOptions } from "@t3tools/shared/relayAuth";
+import {
+  clerkFrontendApiHostnameFromPublishableKey,
+  relayClerkTokenOptions,
+} from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Schema from "effect/Schema";
 
@@ -72,6 +75,29 @@ export function resolveRelayTracingConfig() {
 export function hasCloudPublicConfig(): boolean {
   const config = resolveCloudPublicConfig();
   return Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
+}
+
+/** Production Clerk browser sessions require HTTPS on the instance's domain. */
+export function canUseCloudAuth(): boolean {
+  if (!hasCloudPublicConfig()) return false;
+
+  const { clerkPublishableKey } = resolveCloudPublicConfig();
+  if (!clerkPublishableKey?.startsWith("pk_live_")) return true;
+  if (typeof window === "undefined") return false;
+  // Electron uses Clerk's native integration, which has a separate origin allowlist.
+  if (window.desktopBridge) return true;
+  if (window.location?.protocol !== "https:" || window.location.port !== "") return false;
+
+  try {
+    const domain = clerkFrontendApiHostnameFromPublishableKey(clerkPublishableKey).replace(
+      /^clerk\./u,
+      "",
+    );
+    const hostname = window.location.hostname;
+    return hostname === domain || hostname.endsWith(`.${domain}`);
+  } catch {
+    return false;
+  }
 }
 
 export function resolveRelayClerkTokenOptions() {
