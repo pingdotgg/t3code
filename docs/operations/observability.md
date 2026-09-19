@@ -2,6 +2,9 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
+For a hosted trace receiver, follow the [LangSmith setup tutorial](../user/telemetry.md#view-traces-in-langsmith).
+When testing from a worktree, use `vp run dev` in place of `npx t3` to keep state isolated.
+
 T3 Code has one server-side observability model:
 
 - pretty logs go to stdout for humans
@@ -125,11 +128,41 @@ Default Grafana login:
 
 #### 2. Export OTLP env vars
 
+Alternatively, on web or desktop, select the environment in **Settings > General >
+Diagnostics** and enter the three full URLs under **OpenTelemetry export**. Save,
+then restart that environment's server. The form shows the running endpoints
+separately from the saved values; an endpoint being configured does not prove
+that the receiver is accepting records.
+
+Endpoint configuration is resolved at server startup, in this order:
+
+1. `T3CODE_OTLP_TRACES_URL`, `T3CODE_OTLP_METRICS_URL`, or `T3CODE_OTLP_LOGS_URL`.
+2. The desktop bootstrap configuration, when present.
+3. The environment's persisted `observability` settings.
+
+Each signal is resolved independently. Clearing a saved endpoint disables its
+export only when no startup override supplies it. Remove the override and restart
+to disable that signal. Protocol, authentication headers, service name, and export
+interval remain environment-variable configuration; the form edits endpoints only.
+
+For a remote environment, configure and restart the remote server. `localhost`
+in an endpoint refers to the server's machine, not the browser or mobile device.
+Use the web or desktop settings to configure environments used by mobile clients.
+
 ```bash
 export T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces
 export T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
 export T3CODE_OTLP_LOGS_URL=http://localhost:4318/v1/logs
 export T3CODE_OTLP_SERVICE_NAME=t3-local
+```
+
+PowerShell:
+
+```powershell
+$env:T3CODE_OTLP_TRACES_URL = "http://localhost:4318/v1/traces"
+$env:T3CODE_OTLP_METRICS_URL = "http://localhost:4318/v1/metrics"
+$env:T3CODE_OTLP_LOGS_URL = "http://localhost:4318/v1/logs"
+$env:T3CODE_OTLP_SERVICE_NAME = "t3-local"
 ```
 
 Optional:
