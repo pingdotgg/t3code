@@ -1,6 +1,6 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo, useCallback } from "react";
+import { memo, useCallback, useId } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
@@ -25,6 +25,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { UsageLimitsTooltip } from "../usage/UsageLimitsTooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
@@ -107,22 +108,30 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  renderTooltip,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  renderTooltip?: (id: string) => ReactNode;
 }) {
+  const tooltipId = useId();
   return (
     <SidebarMenuItem className="shrink-0">
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+            <SidebarMenuButton
+              aria-label={label}
+              aria-describedby={renderTooltip ? tooltipId : undefined}
+              onClick={onClick}
+              size="icon"
+            >
               {icon}
             </SidebarMenuButton>
           }
         />
-        <TooltipPopup side="top">{label}</TooltipPopup>
+        {renderTooltip ? renderTooltip(tooltipId) : <TooltipPopup side="top">{label}</TooltipPopup>}
       </Tooltip>
     </SidebarMenuItem>
   );
@@ -210,6 +219,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
             onClick={handleUsageClick}
+            renderTooltip={(id) => <UsageLimitsTooltip id={id} />}
           />
         </>
       )}
