@@ -92,7 +92,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { isMacPlatform } from "../../lib/utils";
+import { isMacPlatform, randomUUID } from "../../lib/utils";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -139,6 +139,7 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -2172,6 +2173,28 @@ export function GeneralSettingsPanel() {
   const mixedBackgroundActivity = useScopedSettingsMixed(["backgroundActivity"]);
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
+  const speechPostProcessingModelSelection = resolveAppModelSelectionState(
+    {
+      ...settings,
+      textGenerationModelSelection: settings.speechPostProcessingModelSelection,
+    },
+    textGenerationProviders,
+  );
+  const speechPostProcessingModelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    textGenerationProviders,
+    speechPostProcessingModelSelection.instanceId,
+    speechPostProcessingModelSelection.model,
+  );
+  const speechPostProcessingInstanceEntry = textGenerationModelInstanceEntries.find(
+    (entry) => entry.instanceId === speechPostProcessingModelSelection.instanceId,
+  );
+  const speechPostProcessingProvider: ProviderDriverKind =
+    speechPostProcessingInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
+  const selectedSpeechPrompt =
+    settings.speechPostProcessingPrompts.find(
+      (prompt) => prompt.id === settings.speechPostProcessingSelectedPromptId,
+    ) ?? settings.speechPostProcessingPrompts[0];
   const backgroundActivityDescription =
     backgroundActivityProfileOption === "advanced"
       ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Shared policy: ${
@@ -3181,6 +3204,187 @@ export function GeneralSettingsPanel() {
                 ) : null}
               </div>
             )
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["speechPostProcessingEnabled"]}
+          {...searchableSetting("speech-post-processing")}
+          description="Polish completed voice transcripts with a provider on this project environment."
+          control={
+            <Switch
+              checked={settings.speechPostProcessingEnabled}
+              disabled={!hasServerTargets || !hasTextGenerationProvider}
+              onCheckedChange={(enabled) =>
+                updateSettings({ speechPostProcessingEnabled: enabled })
+              }
+              aria-label="Enable voice post-processing"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["speechPostProcessingModelSelection"]}
+          {...searchableSetting("speech-post-processing-model")}
+          description="Independent from the text generation model. Runs on this project environment after transcription."
+          control={
+            !hasServerTargets ? (
+              <span className="text-sm text-muted-foreground">Connect an environment first.</span>
+            ) : !hasTextGenerationProvider ? (
+              <span className="text-sm text-muted-foreground">No providers available.</span>
+            ) : (
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                <ProviderModelPicker
+                  activeInstanceId={speechPostProcessingModelSelection.instanceId}
+                  model={speechPostProcessingModelSelection.model}
+                  lockedProvider={null}
+                  instanceEntries={textGenerationModelInstanceEntries}
+                  modelOptionsByInstance={speechPostProcessingModelOptionsByInstance}
+                  triggerVariant="outline"
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  getModelDisabledReason={textGenerationModelDisabledReason}
+                  onInstanceModelChange={(instanceId, model) => {
+                    const reason = textGenerationModelDisabledReason(instanceId, model);
+                    if (reason) {
+                      toastManager.add({
+                        type: "error",
+                        title: "Voice post-processing model not saved",
+                        description: reason,
+                      });
+                      return;
+                    }
+                    updateSettings({
+                      speechPostProcessingModelSelection: createModelSelection(instanceId, model),
+                    });
+                  }}
+                />
+                {speechPostProcessingInstanceEntry ? (
+                  <TraitsPicker
+                    provider={speechPostProcessingProvider}
+                    models={speechPostProcessingInstanceEntry.models}
+                    model={speechPostProcessingModelSelection.model}
+                    prompt=""
+                    onPromptChange={() => {}}
+                    modelOptions={speechPostProcessingModelSelection.options}
+                    allowPromptInjectedEffort={false}
+                    planModeEnabled={settings.planModeEnabled}
+                    triggerVariant="outline"
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    onModelOptionsChange={(options) =>
+                      updateSettings({
+                        speechPostProcessingModelSelection: createModelSelection(
+                          speechPostProcessingModelSelection.instanceId,
+                          speechPostProcessingModelSelection.model,
+                          options,
+                        ),
+                      })
+                    }
+                  />
+                ) : null}
+              </div>
+            )
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["speechPostProcessingPrompts", "speechPostProcessingSelectedPromptId"]}
+          {...searchableSetting("speech-post-processing-prompt")}
+          description="Instructions used to clean the transcript. The transcript is supplied separately as untrusted text."
+          control={
+            selectedSpeechPrompt ? (
+              <div className="w-full max-w-xl space-y-2">
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={selectedSpeechPrompt.id}
+                    onValueChange={(id) =>
+                      id && updateSettings({ speechPostProcessingSelectedPromptId: id })
+                    }
+                  >
+                    <SelectTrigger size="sm" aria-label="Voice post-processing prompt preset">
+                      <SelectValue>{selectedSpeechPrompt.name}</SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      {settings.speechPostProcessingPrompts.map((prompt) => (
+                        <SelectItem key={prompt.id} value={prompt.id}>
+                          {prompt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const prompt = {
+                        id: randomUUID(),
+                        name: "New prompt",
+                        prompt: selectedSpeechPrompt.prompt,
+                      };
+                      updateSettings({
+                        speechPostProcessingPrompts: [
+                          ...settings.speechPostProcessingPrompts,
+                          prompt,
+                        ],
+                        speechPostProcessingSelectedPromptId: prompt.id,
+                      });
+                    }}
+                  >
+                    New
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={settings.speechPostProcessingPrompts.length <= 1}
+                    onClick={() => {
+                      const prompts = settings.speechPostProcessingPrompts.filter(
+                        (prompt) => prompt.id !== selectedSpeechPrompt.id,
+                      );
+                      updateSettings({
+                        speechPostProcessingPrompts: prompts,
+                        speechPostProcessingSelectedPromptId: prompts[0]?.id ?? "",
+                      });
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+                <Input
+                  key={`${selectedSpeechPrompt.id}:name`}
+                  defaultValue={selectedSpeechPrompt.name}
+                  maxLength={100}
+                  aria-label="Voice post-processing prompt name"
+                  onBlur={(event) =>
+                    updateSettings({
+                      speechPostProcessingPrompts: settings.speechPostProcessingPrompts.map(
+                        (prompt) =>
+                          prompt.id === selectedSpeechPrompt.id
+                            ? { ...prompt, name: event.target.value.trim() || prompt.name }
+                            : prompt,
+                      ),
+                    })
+                  }
+                />
+                <Textarea
+                  key={selectedSpeechPrompt.id}
+                  defaultValue={selectedSpeechPrompt.prompt}
+                  maxLength={10_000}
+                  aria-label="Voice post-processing prompt"
+                  onBlur={(event) =>
+                    updateSettings({
+                      speechPostProcessingPrompts: settings.speechPostProcessingPrompts.map(
+                        (prompt) =>
+                          prompt.id === selectedSpeechPrompt.id
+                            ? {
+                                ...prompt,
+                                prompt: event.target.value.trim() || prompt.prompt,
+                              }
+                            : prompt,
+                      ),
+                    })
+                  }
+                />
+              </div>
+            ) : null
           }
         />
       </SettingsSection>

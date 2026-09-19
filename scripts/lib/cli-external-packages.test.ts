@@ -49,6 +49,9 @@ describe("shouldBundleCliDependency", () => {
       "ffi-rs",
       "@yuuang/ffi-rs-win32-x64-msvc",
       "@ff-labs/fff-node",
+      "transcribe-cpp",
+      "@transcribe-cpp/win32-x64-cpu-vulkan",
+      "koffi",
       "@clerk/electron-passkeys",
       "node-addon-api",
     ]) {
@@ -71,10 +74,12 @@ describe("selectCliRuntimeExternalDependencies", () => {
         "@ff-labs/fff-node": "2.0.0",
         effect: "3.0.0",
         "node-pty": "4.0.0",
+        "transcribe-cpp": "5.0.0",
       }),
       {
         "@ff-labs/fff-node": "2.0.0",
         "node-pty": "4.0.0",
+        "transcribe-cpp": "5.0.0",
       },
     );
   });
@@ -82,7 +87,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
   it("selects every external root declared by the server", () => {
     assert.deepStrictEqual(
       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
-      ["@ff-labs/fff-node", "node-pty"],
+      ["@ff-labs/fff-node", "node-pty", "transcribe-cpp"],
     );
   });
 });

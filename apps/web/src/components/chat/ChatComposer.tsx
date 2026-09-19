@@ -312,6 +312,15 @@ import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { pendingDraftWork } from "./pendingDraftWork";
 import {
+  ComposerSpeechButton,
+  ComposerSpeechCancelButton,
+  ComposerSpeechStatus,
+  ComposerSpeechRecordingPill,
+  resolveSpeechPresentation,
+  shouldShowComposerFooter,
+} from "./ComposerSpeechButton";
+import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
+import {
   createComposerScrollGestureState,
   recordComposerScrollGestureEvent,
   shouldCollapseComposerForScrollKey,
@@ -1153,6 +1162,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 });
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  showActions?: boolean;
   compact: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
   reserveContextWindowMeter: boolean;
@@ -1194,23 +1204,25 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
-      <ComposerPrimaryActions
-        compact={props.compact}
-        pendingAction={props.pendingAction}
-        isRunning={props.isRunning}
-        showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
-        promptHasText={props.promptHasText}
-        isSendBusy={props.isSendBusy}
-        sendDisabledReason={props.sendDisabledReason}
-        isConnecting={props.isConnecting}
-        isEnvironmentUnavailable={props.isEnvironmentUnavailable}
-        isPreparingWorktree={props.isPreparingWorktree}
-        hasSendableContent={props.hasSendableContent}
-        preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
-        onPreviousPendingQuestion={props.onPreviousPendingQuestion}
-        onInterrupt={props.onInterrupt}
-        onImplementPlanInNewThread={props.onImplementPlanInNewThread}
-      />
+      {props.showActions !== false ? (
+        <ComposerPrimaryActions
+          compact={props.compact}
+          pendingAction={props.pendingAction}
+          isRunning={props.isRunning}
+          showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
+          promptHasText={props.promptHasText}
+          isSendBusy={props.isSendBusy}
+          sendDisabledReason={props.sendDisabledReason}
+          isConnecting={props.isConnecting}
+          isEnvironmentUnavailable={props.isEnvironmentUnavailable}
+          isPreparingWorktree={props.isPreparingWorktree}
+          hasSendableContent={props.hasSendableContent}
+          preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
+          onPreviousPendingQuestion={props.onPreviousPendingQuestion}
+          onInterrupt={props.onInterrupt}
+          onImplementPlanInNewThread={props.onImplementPlanInNewThread}
+        />
+      ) : null}
     </>
   );
 });
@@ -2640,15 +2652,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       attachmentTargetKey,
     ],
   );
-  const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
-    isSendBusy ||
-    isSendDisabled ||
-    isConnecting ||
-    noProviderAvailable ||
-    projectSelectionRequired ||
-    environmentUnavailable !== null ||
-    !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
@@ -3527,6 +3530,44 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
   }, [composerCursor, promptRef]);
 
+  const speechInput = useEnvironmentSpeechInput({
+    environmentId,
+    ownerKey: JSON.stringify(composerDraftTarget),
+    draftText: prompt,
+    readDraft: () => {
+      const snapshot = readComposerSnapshot();
+      return {
+        text: snapshot.value,
+        selection: { start: snapshot.expandedCursor, end: snapshot.expandedCursor },
+      };
+    },
+    commitDraft: (text, selection) => {
+      const snapshot = readComposerSnapshot();
+      const applied = applyPromptReplacement(0, snapshot.value.length, text, {
+        expectedText: snapshot.value,
+        focusEditorAfterReplace: false,
+      });
+      if (!applied) return;
+      const cursor = collapseExpandedComposerCursor(text, selection.start);
+      setComposerCursor(cursor);
+      window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
+    },
+  });
+  const speechPresentation = resolveSpeechPresentation(speechInput.state, speechInput.progress);
+  const voiceSendDisabledReason = speechInput.blocksSubmission
+    ? "Finish or discard voice input before sending"
+    : sendDisabledReason;
+  const isSubmissionDisabled = isSendDisabled || speechInput.blocksSubmission;
+  const collapsedComposerPrimaryActionDisabled =
+    phase === "running" ||
+    isSendBusy ||
+    isSubmissionDisabled ||
+    isConnecting ||
+    noProviderAvailable ||
+    projectSelectionRequired ||
+    environmentUnavailable !== null ||
+    !composerSendState.hasSendableContent;
+
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
     trigger: ComposerTrigger | null;
@@ -3719,7 +3760,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!isMobileViewport) return false;
     if (
       isSendBusy ||
-      isSendDisabled ||
+      isSubmissionDisabled ||
       isConnecting ||
       noProviderAvailable ||
       environmentUnavailable !== null ||
@@ -3739,7 +3780,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isConnecting,
     isMobileViewport,
     isSendBusy,
-    isSendDisabled,
+    isSubmissionDisabled,
     noProviderAvailable,
     phase,
     showPlanFollowUpPrompt,
@@ -3747,7 +3788,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
-      if (noProviderAvailable || isSendDisabled) {
+      if (noProviderAvailable || isSubmissionDisabled) {
         event?.preventDefault();
         return;
       }
@@ -3801,7 +3842,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingProgress,
       attachmentTargetKey,
       blurMobileComposerAfterSend,
-      isSendDisabled,
+      isSubmissionDisabled,
       noProviderAvailable,
       onSend,
       promptRef,
@@ -4681,7 +4722,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentUnavailable !== null ||
     composerSubmissionError !== null ||
     providerInputSubmissionError !== null ||
-    hasImageAttachmentAttention;
+    hasImageAttachmentAttention ||
+    speechInput.state.phase !== "idle";
   const isComposerResting = shouldUseRestingComposerLayout({
     isExistingThread: routeKind === "server" && activeThreadId !== null,
     isMobileViewport,
@@ -6241,7 +6283,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               showPlanFollowUpPrompt={false}
                               promptHasText={false}
                               isSendBusy={isSendBusy}
-                              sendDisabledReason={sendDisabledReason}
+                              sendDisabledReason={voiceSendDisabledReason}
                               isConnecting={isConnecting}
                               isEnvironmentUnavailable={
                                 environmentUnavailable !== null ||
@@ -6855,7 +6897,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isComposerApprovalState ||
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
+                      activePendingIsResponding ||
+                      speechInput.freezesEditor
                     }
                   />
                 </ComposerContextActionsContext>
@@ -6872,7 +6915,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
+                      sendDisabledReason={voiceSendDisabledReason}
                       isConnecting={isConnecting}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
@@ -6895,8 +6938,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
+            {speechInput.preview ? (
+              <div
+                aria-label="Live transcription"
+                className="mx-3 mb-3 max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed sm:mx-4"
+              >
+                <span>{speechInput.preview.committed}</span>
+                <span className="text-muted-foreground">{speechInput.preview.tentative}</span>
+              </div>
+            ) : null}
+
             {/* Bottom toolbar */}
-            {isComposerCollapsedMobile || isComposerApprovalState ? null : (
+            {!shouldShowComposerFooter(
+              isComposerCollapsedMobile,
+              isComposerApprovalState,
+              speechInput.state.phase,
+            ) ? null : (
               <div
                 data-chat-composer-footer="true"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
@@ -6904,7 +6961,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-3 pb-3 sm:px-4 sm:pb-4",
                   pendingUserInputs.length > 0 && "pt-2",
                   isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
-                  showMobilePendingAnswerActions && "hidden sm:flex",
+                  showMobilePendingAnswerActions &&
+                    speechInput.state.phase === "idle" &&
+                    "hidden sm:flex",
                   isComposerResting &&
                     "absolute bottom-px right-px z-10 h-12 w-auto gap-0 py-0 sm:gap-0 sm:py-0",
                 )}
@@ -6919,6 +6978,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   )}
                 >
                   {composerControlsInStrip ? null : composerControls}
+                  {speechInput.state.phase === "error" ? (
+                    <ComposerSpeechStatus
+                      state={speechInput.state}
+                      progress={speechInput.progress}
+                      level={speechInput.level}
+                    />
+                  ) : null}
                 </div>
 
                 {/* Right side: send / stop button */}
@@ -6967,39 +7033,75 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
-                  <ComposerFooterPrimaryActions
-                    compact={isComposerResting || isComposerPrimaryActionsCompact}
-                    activeContextWindow={
-                      settings.contextWindowMeterEnabled ? activeContextWindow : null
-                    }
-                    reserveContextWindowMeter={reserveContextWindowMeter}
-                    activeThreadModelDisplayName={activeThreadModelDisplayName}
-                    pendingAction={pendingPrimaryAction}
-                    isRunning={phase === "running"}
-                    showPlanFollowUpPrompt={
-                      pendingUserInputs.length === 0 && showPlanFollowUpPrompt
-                    }
-                    promptHasText={prompt.trim().length > 0}
-                    isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
-                    isConnecting={isConnecting}
-                    isEnvironmentUnavailable={
-                      environmentUnavailable !== null ||
-                      noProviderAvailable ||
-                      projectSelectionRequired
-                    }
-                    isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={composerSendState.hasSendableContent}
-                    preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
-                    onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                    onInterrupt={handleInterruptPrimaryAction}
-                    onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
-                    compactDisabled={
-                      compactDisabled || noProviderAvailable || isSendBusy || isConnecting
-                    }
-                    compactDisabledReason={resolvedCompactDisabledReason}
-                    {...(compactCommandAvailable ? { onCompactContext: compactThreadContext } : {})}
-                  />
+                  {speechInput.available ? (
+                    <>
+                      <ComposerSpeechButton
+                        state={speechInput.state}
+                        progress={speechInput.progress}
+                        disabled={
+                          isConnecting || projectSelectionRequired || pendingUserInputs.length > 0
+                        }
+                        onStart={() => void speechInput.start()}
+                        onCancel={() => void speechInput.cancel()}
+                      />
+                      {speechInput.state.phase === "error" ? (
+                        <ComposerSpeechCancelButton
+                          state={speechInput.state}
+                          onCancel={() => void speechInput.cancel()}
+                        />
+                      ) : null}
+                    </>
+                  ) : null}
+                  <div
+                    className={cn("contents", speechPresentation.showsConfirm && "[&>*]:-order-1")}
+                  >
+                    <ComposerFooterPrimaryActions
+                      showActions={speechPresentation.showsSend || phase === "running"}
+                      compact={isComposerResting || isComposerPrimaryActionsCompact}
+                      activeContextWindow={
+                        settings.contextWindowMeterEnabled ? activeContextWindow : null
+                      }
+                      reserveContextWindowMeter={reserveContextWindowMeter}
+                      activeThreadModelDisplayName={activeThreadModelDisplayName}
+                      pendingAction={pendingPrimaryAction}
+                      isRunning={phase === "running"}
+                      showPlanFollowUpPrompt={
+                        pendingUserInputs.length === 0 && showPlanFollowUpPrompt
+                      }
+                      promptHasText={prompt.trim().length > 0}
+                      isSendBusy={isSendBusy}
+                      sendDisabledReason={voiceSendDisabledReason}
+                      isConnecting={isConnecting}
+                      isEnvironmentUnavailable={
+                        environmentUnavailable !== null ||
+                        noProviderAvailable ||
+                        projectSelectionRequired
+                      }
+                      isPreparingWorktree={isPreparingWorktree}
+                      hasSendableContent={composerSendState.hasSendableContent}
+                      preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
+                      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                      onInterrupt={handleInterruptPrimaryAction}
+                      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                      compactDisabled={
+                        compactDisabled || noProviderAvailable || isSendBusy || isConnecting
+                      }
+                      compactDisabledReason={resolvedCompactDisabledReason}
+                      {...(compactCommandAvailable
+                        ? { onCompactContext: compactThreadContext }
+                        : {})}
+                    />
+                  </div>
+                  {speechInput.available ? (
+                    <ComposerSpeechRecordingPill
+                      state={speechInput.state}
+                      progress={speechInput.progress}
+                      level={speechInput.level}
+                      onStop={() => void speechInput.stop()}
+                      onCancel={() => void speechInput.cancel()}
+                      onSkipPostProcessing={() => speechInput.skipPostProcessing()}
+                    />
+                  ) : null}
                 </div>
               </div>
             )}

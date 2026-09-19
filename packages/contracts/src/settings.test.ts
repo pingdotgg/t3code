@@ -301,6 +301,46 @@ describe("ClientSettings diff colors", () => {
   });
 });
 
+describe("ClientSettings microphone", () => {
+  it("accepts microphone selection patches", () => {
+    expect(decodeClientSettingsPatch({ voiceMicrophone: "studio-mic" }).voiceMicrophone).toBe(
+      "studio-mic",
+    );
+  });
+
+  it("follows the primary transcription environment by default", () => {
+    expect(decodeClientSettings({}).voiceTranscriptionEnvironmentId).toBeNull();
+  });
+
+  it("accepts a transcription environment selection", () => {
+    expect(
+      decodeClientSettingsPatch({ voiceTranscriptionEnvironmentId: "environment-2" })
+        .voiceTranscriptionEnvironmentId,
+    ).toBe("environment-2");
+  });
+});
+
+describe("ServerSettings speech model", () => {
+  it("uses the recommended local transcription model by default", () => {
+    expect(DEFAULT_SERVER_SETTINGS.speechModelId).toBe(
+      "handy-computer/parakeet-unified-en-0.6b-gguf",
+    );
+  });
+
+  it("starts with no custom transcription words", () => {
+    expect(DEFAULT_SERVER_SETTINGS.speechCustomWords).toEqual([]);
+    expect(DEFAULT_SERVER_SETTINGS.speechRemoveFillerWords).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingEnabled).toBe(false);
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingModelSelection).not.toBe(
+      DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+    );
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingPrompts).toHaveLength(1);
+    expect(DEFAULT_SERVER_SETTINGS.speechPostProcessingSelectedPromptId).toBe(
+      "improve-transcription",
+    );
+  });
+});
+
 describe("ClientSettings load balancing", () => {
   it("requires opt-in when settings are new or omit load balancing", () => {
     expect(decodeClientSettings({}).loadBalancingEnabled).toBe(false);

@@ -21,6 +21,7 @@ import { applyAntigravityAcpModelSelection } from "../provider/acp/AntigravityAc
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
 import type { AcpSessionRuntime } from "../provider/acp/AcpSessionRuntime.ts";
 import type * as TextGeneration from "./TextGeneration.ts";
+import { TranscriptionPostProcessingOutput } from "./TranscriptionPostProcessing.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -405,10 +406,21 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       };
     });
 
+  const generateTranscriptionPostProcessing: TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"] =
+    Effect.fn("AntigravityTextGeneration.generateTranscriptionPostProcessing")(function* (input) {
+      return yield* runAntigravityJson({
+        operation: "generateTranscriptionPostProcessing",
+        prompt: input.prompt,
+        outputSchema: TranscriptionPostProcessingOutput,
+        modelSelection: input.modelSelection,
+      });
+    });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateTranscriptionPostProcessing,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

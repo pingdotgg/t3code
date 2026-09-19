@@ -4,6 +4,7 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
+  EnvironmentVoiceBodyLimit,
   type AuthBrowserSessionRequest,
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
@@ -72,6 +73,7 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
     HttpApiTest.groups(EnvironmentHttpApi, ["metadata", "auth"]).pipe(
       Effect.provide([
         NodeHttpServer.layerHttpServices,
+        Layer.succeed(EnvironmentVoiceBodyLimit, () => unexpectedEndpoint("voice")),
         HttpApiBuilder.group(EnvironmentHttpApi, "metadata", (handlers) =>
           handlers.handle(
             "descriptor",

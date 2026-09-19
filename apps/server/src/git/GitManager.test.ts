@@ -309,6 +309,8 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateTranscriptionPostProcessing: () =>
+      Effect.succeed({ transcription: "processed transcript" }),
     ...overrides,
   };
 
@@ -352,6 +354,17 @@ function createTextGeneration(
           (cause) =>
             new TextGenerationError({
               operation: "generateThreadTitle",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
+    generateTranscriptionPostProcessing: (input) =>
+      implementation.generateTranscriptionPostProcessing(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateTranscriptionPostProcessing",
               detail: "fake text generation failed",
               ...(cause !== undefined ? { cause } : {}),
             }),

@@ -35,6 +35,12 @@ function preparedTranscription(
   return { locale: "en-US", transcribe };
 }
 
+function preparedStreamingTranscription(
+  finish: NonNullable<PreparedVoiceTranscription["streaming"]>["finish"],
+): PreparedVoiceTranscription {
+  return { ...preparedTranscription(), streaming: { finish } };
+}
+
 function draft(overrides: Partial<VoiceDraftSnapshot> = {}): VoiceDraftSnapshot {
   return {
     ownerKey: "environment:thread",
@@ -75,6 +81,137 @@ function createHarness(
     },
   };
 }
+
+describe("streaming voice input", () => {
+  beforeEach(resetVoiceInputGlobalsForTests);
+
+  it("flushes capture before finalizing and commits once without a recording file", async () => {
+    const events: string[] = [];
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async () =>
+          preparedStreamingTranscription(async () => {
+            events.push("finish");
+            return "new text";
+          }),
+      }),
+    });
+    harness.recorder.uri = null;
+    harness.recorder.stop.mockImplementation(async () => {
+      events.push("flush");
+    });
+    await harness.controller.start();
+    expect(harness.commits).toEqual([]);
+    await harness.controller.stop();
+    expect(events).toEqual(["flush", "finish"]);
+    expect(harness.commits).toEqual([
+      { text: "hello new text", selection: { start: 14, end: 14 } },
+    ]);
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
+  it("does not commit a late final result after cancellation", async () => {
+    const started = deferred<void>();
+    const result = deferred<string>();
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async () =>
+          preparedStreamingTranscription(() => {
+            started.resolve();
+            return result.promise;
+          }),
+      }),
+    });
+    harness.recorder.uri = null;
+    await harness.controller.start();
+    const pending = harness.controller.stop();
+    await started.promise;
+    harness.controller.cancel();
+    result.resolve("late result");
+    await pending;
+    expect(harness.commits).toEqual([]);
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
+  it("closes a prepared streaming connection if microphone preparation fails", async () => {
+    let signal: AbortSignal | undefined;
+    const harness = createHarness({
+      getTranscriber: () => ({
+        prepare: async (options) => {
+          signal = options.signal;
+          return preparedStreamingTranscription(async () => "unused");
+        },
+      }),
+    });
+    harness.recorder.prepareToRecordAsync.mockRejectedValue(new Error("Microphone unavailable"));
+    await harness.controller.start();
+    expect(signal?.aborted).toBe(true);
+    expect(harness.controller.currentState.phase).toBe("error");
+  });
+});
+
+describe("voice post-processing", () => {
+  beforeEach(resetVoiceInputGlobalsForTests);
+
+  it("commits the processed transcript", async () => {
+    const phases: string[] = [];
+    const harness = createHarness({
+      postProcess: async () => "polished text",
+      onStateChange: (state) => phases.push(state.phase),
+    });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(phases).toContain("post-processing");
+    expect(harness.commits).toEqual([
+      { text: "hello polished text", selection: { start: 19, end: 19 } },
+    ]);
+  });
+
+  it("skips post-processing and commits the raw transcript", async () => {
+    const started = deferred<void>();
+    const processed = deferred<string>();
+    const harness = createHarness({
+      postProcess: async () => {
+        started.resolve();
+        return processed.promise;
+      },
+    });
+
+    await harness.controller.start();
+    const stopping = harness.controller.stop();
+    await started.promise;
+    expect(harness.controller.currentState.phase).toBe("post-processing");
+    harness.controller.skipPostProcessing();
+    await stopping;
+
+    expect(harness.commits).toEqual([
+      { text: "hello new text", selection: { start: 14, end: 14 } },
+    ]);
+    processed.resolve("late text");
+    await processed.promise;
+    expect(harness.commits).toHaveLength(1);
+  });
+
+  it("falls back to raw text and reports provider failures", async () => {
+    const onPostProcessingError = vi.fn();
+    const harness = createHarness({
+      postProcess: async () => {
+        throw new Error("provider failed");
+      },
+      onPostProcessingError,
+    });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(harness.commits).toEqual([
+      { text: "hello new text", selection: { start: 14, end: 14 } },
+    ]);
+    expect(onPostProcessingError).toHaveBeenCalledOnce();
+  });
+});
 
 describe("resolveTranscriptCommit", () => {
   it("replaces the recorded UTF-16 selection around emoji and composer tokens", () => {

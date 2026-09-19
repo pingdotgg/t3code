@@ -18,3 +18,17 @@ export {
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
+export {
+  cancelEnvironmentSpeechModelDownload,
+  downloadEnvironmentSpeechModel,
+  getEnvironmentSpeechModels,
+  getEnvironmentSpeechStatus,
+  postProcessEnvironmentTranscript,
+  updateEnvironmentSpeechCustomWords,
+  updateEnvironmentSpeechFillerWordRemoval,
+  getEnvironmentSpeechStreamUrl,
+  removeEnvironmentSpeechModel,
+  selectEnvironmentSpeechModel,
+  transcribeEnvironmentPcm,
+} from "./environment.ts";
+export { openSpeechStream } from "./stream.ts";

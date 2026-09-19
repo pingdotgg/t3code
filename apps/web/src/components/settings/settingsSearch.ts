@@ -14,6 +14,7 @@ import {
 export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
+  | "/settings/voice"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/snap-shot"
@@ -91,6 +92,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
+  "/settings/voice": "Voice",
   "/settings/archived": "Archive",
 };
 
@@ -264,6 +266,40 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project grouping",
     to: "/settings/general",
     searchTerms: ["combine matching repositories environments sidebar"],
+  },
+  {
+    id: "transcription-environment",
+    title: "Transcription environment",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["speech voice stt server machine device"],
+  },
+  {
+    id: "local-voice-input",
+    title: "Transcription models",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["speech voice stt download local whisper parakeet canary moonshine"],
+  },
+  {
+    id: "microphone",
+    title: "Microphone",
+    to: "/settings/voice",
+    desktopOnly: true,
+  },
+  {
+    id: "custom-words",
+    title: "Custom words",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["speech voice transcription vocabulary names glossary"],
+  },
+  {
+    id: "remove-filler-words",
+    title: "Remove filler words",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["voice speech transcription hesitation um uh cleanup"],
   },
   {
     id: "auto-settle-inactive-threads",
@@ -446,6 +482,27 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     scope: "project-defaults",
     searchTerms: ["generated thread titles source control content default provider"],
+  },
+  {
+    id: "speech-post-processing",
+    title: "Voice post-processing",
+    to: "/settings/general",
+    searchTerms: ["speech transcription polish clean provider"],
+    desktopOnly: true,
+  },
+  {
+    id: "speech-post-processing-model",
+    title: "Voice post-processing model",
+    to: "/settings/general",
+    searchTerms: ["speech transcription provider model"],
+    desktopOnly: true,
+  },
+  {
+    id: "speech-post-processing-prompt",
+    title: "Voice post-processing prompt",
+    to: "/settings/general",
+    searchTerms: ["speech transcription instructions cleanup"],
+    desktopOnly: true,
   },
   {
     id: "diagnostics",
@@ -799,6 +856,7 @@ const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id,
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/projects": "project",
   "/settings/general": null,
+  "/settings/voice": null,
   "/settings/appearance": null,
   "/settings/snap-shot": null,
   // Keybindings fan out to the selection; Providers shows the representative
