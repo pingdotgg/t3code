@@ -131,13 +131,14 @@ const imageProps = {
           <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
           <h2 class="platform-name">Terminal</h2>
         </div>
-        <code class="cli-line cli-line--stable">curl -fsSL https://t3.codes/install.sh | sh</code>
-        <code class="cli-line cli-line--stable">irm https://t3.codes/install.ps1 | iex</code>
-        <code class="cli-line cli-line--nightly">curl -fsSL https://t3.codes/install.sh | T3CODE_CHANNEL=nightly sh</code>
-        <code class="cli-line cli-line--nightly">$env:T3CODE_CHANNEL="nightly"; irm https://t3.codes/install.ps1 | iex</code>
+        <button type="button" class="cli-line cli-line--stable" title="Copy to clipboard">curl -fsSL https://t3.codes/install.sh | sh</button>
+        <button type="button" class="cli-line cli-line--stable" title="Copy to clipboard">irm https://t3.codes/install.ps1 | iex</button>
+        <button type="button" class="cli-line cli-line--nightly" title="Copy to clipboard">curl -fsSL https://t3.codes/install.sh | T3CODE_CHANNEL=nightly sh</button>
+        <button type="button" class="cli-line cli-line--nightly" title="Copy to clipboard">$env:T3CODE_CHANNEL="nightly"; irm https://t3.codes/install.ps1 | iex</button>
         <p class="cli-note">Or try it once without installing:</p>
-        <code class="cli-line cli-line--stable">npx t3@latest</code>
-        <code class="cli-line cli-line--nightly">npx t3@nightly</code>
+        <button type="button" class="cli-line cli-line--stable" title="Copy to clipboard">npx t3@latest</button>
+        <button type="button" class="cli-line cli-line--nightly" title="Copy to clipboard">npx t3@nightly</button>
+        <p id="cli-copy-status" class="cli-copy-status" aria-live="polite"></p>
       </section>
     </div>
 
@@ -212,6 +213,56 @@ const imageProps = {
       else url.searchParams.delete("channel");
       history.replaceState(null, "", url);
       load(channel);
+    });
+  });
+
+  const COPIED_LABEL = "Copied to clipboard";
+  const cliLines = page.querySelectorAll<HTMLButtonElement>("button.cli-line");
+  const copyStatus = document.getElementById("cli-copy-status")!;
+  let copyReset: ReturnType<typeof setTimeout> | undefined;
+
+  cliLines.forEach((button) => {
+    button.dataset.command = button.textContent?.trim() ?? "";
+  });
+
+  function announceCopy(message: string) {
+    // Polite live regions skip a repeat of the same string unless emptied first.
+    copyStatus.textContent = "";
+    queueMicrotask(() => {
+      copyStatus.textContent = message;
+    });
+  }
+
+  function restoreCliLine(button: HTMLButtonElement) {
+    button.textContent = button.dataset.command ?? "";
+    delete button.dataset.copied;
+  }
+
+  async function copyCliLine(button: HTMLButtonElement) {
+    const command = button.dataset.command ?? "";
+    if (!command) return;
+    try {
+      await navigator.clipboard.writeText(command);
+    } catch {
+      restoreCliLine(button);
+      announceCopy("Copy failed");
+      return;
+    }
+
+    cliLines.forEach(restoreCliLine);
+    button.textContent = COPIED_LABEL;
+    button.dataset.copied = "";
+    announceCopy(COPIED_LABEL);
+    clearTimeout(copyReset);
+    copyReset = setTimeout(() => {
+      restoreCliLine(button);
+      copyReset = undefined;
+    }, 1500);
+  }
+
+  cliLines.forEach((button) => {
+    button.addEventListener("click", () => {
+      void copyCliLine(button);
     });
   });
 
@@ -409,16 +460,6 @@ const imageProps = {
     display: none;
   }
 
-  /* The CLI ships on both trains; only the install command differs. */
-  .cli-line--nightly,
-  .download-page[data-channel="nightly"] .cli-line--stable {
-    display: none;
-  }
-
-  .download-page[data-channel="nightly"] .cli-line--nightly {
-    display: block;
-  }
-
   .platform-header {
     display: flex;
     align-items: center;
@@ -447,14 +488,58 @@ const imageProps = {
   }
 
   .cli-line {
+    display: inline-flex;
+    align-items: baseline;
     align-self: flex-start;
+    appearance: none;
     font-family: var(--font-mono);
     font-size: 0.85rem;
+    font-weight: 400;
     padding: 0.6rem 0.9rem;
     border-radius: 10px;
     border: 1px solid rgba(105, 111, 234, 0.35);
     background: rgba(21, 20, 67, 0.3);
     color: var(--fg);
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.45s ease, border-color 0.45s ease, transform 0.2s ease;
+  }
+
+  .cli-line:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
+    transform: translateY(-1px);
+  }
+
+  .cli-line:active {
+    transform: translateY(0);
+  }
+
+  .cli-line[data-copied] {
+    border-color: rgba(105, 111, 234, 0.7);
+    color: var(--fg-muted);
+  }
+
+  .cli-line--nightly,
+  .download-page[data-channel="nightly"] .cli-line--stable {
+    display: none;
+  }
+
+  .download-page[data-channel="nightly"] .cli-line--nightly {
+    display: inline-flex;
+  }
+
+  .cli-copy-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
   }
 
   /* ── Download cards ── */
@@ -559,7 +644,8 @@ const imageProps = {
     .card-icon img,
     .channel-thumb,
     .channel-toggle,
-    .download-card {
+    .download-card,
+    .cli-line {
       transition: none;
     }
   }
