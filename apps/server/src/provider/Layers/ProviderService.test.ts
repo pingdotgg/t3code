@@ -4904,7 +4904,7 @@ const getBinding = vi.fn((threadId: ThreadId) =>
 );
 const boundedListing = makeProviderServiceLayer({
   directory: {
-    upsert: () => Effect.void,
+    upsert: () => Effect.succeed(true),
     recordImportedTranscript: () => Effect.die("unused"),
     getProvider: () => Effect.die("ProviderService.listSessions does not use getProvider"),
     getBinding,
