@@ -127,7 +127,7 @@ export function StorageCleanupPreviewPanel({
               ) : (
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {data
-                    ? `${data.projectCount.toLocaleString()} ${environments.length > 1 ? "project checkouts" : "projects"}`
+                    ? `${data.projectCount.toLocaleString()} ${environments.length > 1 ? "project checkout" : "project"}${data.projectCount === 1 ? "" : "s"}`
                     : "Storage unavailable"}
                   {environments.length > 1 && ` · ${environments.length} machines`}
                 </p>
