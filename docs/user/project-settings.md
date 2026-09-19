@@ -49,6 +49,10 @@ checkouts and removal. Actions belong to a project: editing them creates the pro
 on each selected environment, and reset returns to the environment's shared list. A project's
 `t3.json` actions can be imported there.
 
+To separate one checkout in the sidebar, select the project, open **Project → Checkouts**, and
+choose **Keep separate** for that checkout. Choose **Use global default** to group it again
+according to your Project grouping preference. These choices apply only on this device.
+
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
