@@ -380,6 +380,21 @@ const captureTabMediaStreamWithTimeout = async (
   }
 };
 
+/** Shares the display-media grant queue with recording; the stream itself is not a recording. */
+export const captureBrowserViewStream = (tabId: string): Promise<MediaStream> =>
+  queueDisplayMediaGrant(async () => {
+    const bridge = previewBridge;
+    if (!bridge) throw new BrowserRecordingUnavailableError({ tabId });
+    const capture = prepareTabMediaCapture(tabId, 60);
+    try {
+      await bridge.browser.startStream(tabId);
+      return await captureTabMediaStreamWithTimeout(tabId, capture.capturePromise);
+    } catch (cause) {
+      capture.cancel();
+      throw cause;
+    }
+  }).result;
+
 const clearActiveRecording = (recording: ActiveRecording): void => {
   recording.releaseSurfaceActivity?.();
   recording.releaseSurfaceActivity = null;

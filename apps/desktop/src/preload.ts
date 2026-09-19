@@ -283,6 +283,28 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         colorScheme: defaults?.colorScheme,
       }),
     closeTab: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_CLOSE_TAB_CHANNEL, { tabId }),
+    browser: {
+      mount: (tabId, environmentId, profileId, initialUrl) =>
+        ipcRenderer.invoke(IpcChannels.BROWSER_MOUNT_CHANNEL, {
+          tabId,
+          environmentId,
+          profileId,
+          initialUrl,
+        }),
+      layout: (tabId, layout) =>
+        ipcRenderer.invoke(IpcChannels.BROWSER_LAYOUT_CHANNEL, { tabId, layout }),
+      input: (tabId, input) =>
+        ipcRenderer.invoke(IpcChannels.BROWSER_INPUT_CHANNEL, { tabId, input }),
+      viewport: (tabId) => ipcRenderer.invoke(IpcChannels.BROWSER_VIEWPORT_CHANNEL, { tabId }),
+      onCursorChange: (listener) => {
+        const wrapped = (_event: Electron.IpcRendererEvent, tabId: unknown, cursor: unknown) => {
+          if (typeof tabId === "string" && typeof cursor === "string") listener(tabId, cursor);
+        };
+        ipcRenderer.on(IpcChannels.BROWSER_CURSOR_CHANNEL, wrapped);
+        return () => ipcRenderer.removeListener(IpcChannels.BROWSER_CURSOR_CHANNEL, wrapped);
+      },
+      startStream: (tabId) => ipcRenderer.invoke(IpcChannels.BROWSER_STREAM_CHANNEL, { tabId }),
+    },
     registerWebview: (tabId, webContentsId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_REGISTER_WEBVIEW_CHANNEL, { tabId, webContentsId }),
     navigate: (tabId, url) =>

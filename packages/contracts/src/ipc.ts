@@ -1026,6 +1026,78 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
   profileId: Schema.optional(BrowserProfileId),
 });
 
+export const DesktopBrowserMountInputSchema = Schema.Struct({
+  ...DesktopPreviewConfigInputSchema.fields,
+  initialUrl: Schema.NullOr(Schema.String),
+  tabId: DesktopPreviewTabIdSchema,
+});
+
+const DesktopBrowserSizeSchema = Schema.Struct({
+  width: Schema.Finite.check(Schema.isGreaterThan(0)),
+  height: Schema.Finite.check(Schema.isGreaterThan(0)),
+});
+export const DesktopBrowserLayoutSchema = Schema.Struct({
+  rendering: Schema.Boolean,
+  viewport: DesktopBrowserSizeSchema,
+  clip: Schema.NullOr(
+    Schema.Struct({
+      x: Schema.Finite,
+      y: Schema.Finite,
+      ...DesktopBrowserSizeSchema.fields,
+    }),
+  ),
+  content: Schema.Struct({
+    x: Schema.Finite,
+    y: Schema.Finite,
+    scale: Schema.Finite.check(Schema.isGreaterThan(0)),
+  }),
+});
+export type DesktopBrowserLayout = typeof DesktopBrowserLayoutSchema.Type;
+export const DesktopBrowserLayoutInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  layout: DesktopBrowserLayoutSchema,
+});
+const DesktopBrowserModifiersSchema = Schema.Array(
+  Schema.Literals([
+    "shift",
+    "control",
+    "alt",
+    "meta",
+    "leftbuttondown",
+    "middlebuttondown",
+    "rightbuttondown",
+  ]),
+);
+const DesktopBrowserInputPosition = {
+  x: Schema.Finite,
+  y: Schema.Finite,
+  modifiers: DesktopBrowserModifiersSchema,
+};
+export const DesktopBrowserInputSchema = Schema.Union([
+  Schema.Struct({
+    ...DesktopBrowserInputPosition,
+    type: Schema.Literals(["mouseDown", "mouseUp"]),
+    button: Schema.Literals(["left", "middle", "right"]),
+    clickCount: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  Schema.Struct({
+    ...DesktopBrowserInputPosition,
+    type: Schema.Literals(["mouseMove", "mouseLeave"]),
+  }),
+  Schema.Struct({
+    ...DesktopBrowserInputPosition,
+    type: Schema.Literal("mouseWheel"),
+    deltaX: Schema.Finite,
+    deltaY: Schema.Finite,
+  }),
+]);
+export type DesktopBrowserInput = typeof DesktopBrowserInputSchema.Type;
+export const DesktopBrowserInputEventSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  input: Schema.NullOr(DesktopBrowserInputSchema),
+});
+export const DesktopBrowserViewportSchema = DesktopBrowserSizeSchema;
+
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   /** Omit to clear every profile; otherwise only this profile's partition. */
@@ -1230,6 +1302,19 @@ export interface DesktopBridge {
 export const DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER = "__t3DesktopPreviewRecordingCapture";
 
 export interface DesktopPreviewBridge {
+  browser: {
+    mount: (
+      tabId: string,
+      environmentId: EnvironmentId,
+      profileId: string | undefined,
+      initialUrl: string | null,
+    ) => Promise<void>;
+    layout: (tabId: string, layout: DesktopBrowserLayout) => Promise<void>;
+    input: (tabId: string, input: DesktopBrowserInput | null) => Promise<void>;
+    viewport: (tabId: string) => Promise<{ width: number; height: number }>;
+    startStream: (tabId: string) => Promise<void>;
+    onCursorChange: (listener: (tabId: string, cursor: string) => void) => () => void;
+  };
   createTab: (tabId: string, defaults?: DesktopPreviewTabDefaults) => Promise<void>;
   closeTab: (tabId: string) => Promise<void>;
   registerWebview: (tabId: string, webContentsId: number) => Promise<void>;
