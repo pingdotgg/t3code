@@ -8,10 +8,18 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { cli } from "../bin.ts";
 import {
@@ -25,7 +33,9 @@ import {
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
+  awaitEnvironmentDescriptor,
   DevServerNotProxiableError,
+  discoverPairTarget,
   resolveDirectPairingBaseUrl,
   resolveTailscaleLocalTarget,
 } from "./pair.ts";
@@ -142,6 +152,25 @@ const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A,
     },
     (server) => Effect.sync(() => server.close()),
   );
+
+const makeDiscoveryFixture = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pair-probes-" });
+  const candidates = yield* Effect.forEach(["userdata", "dev"] as const, (variant, index) =>
+    Effect.gen(function* () {
+      const state = yield* makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 10_000 + index,
+      });
+      yield* persistServerRuntimeState({
+        path: NodePath.join(baseDir, variant, "server-runtime.json"),
+        state,
+      });
+      return { variant, state };
+    }),
+  );
+  return { baseDir, candidates };
+});
 
 describe("t3 pair", () => {
   it.effect("mints a token and prints a QR pairing URL for a live server", () =>
@@ -287,5 +316,125 @@ describe("t3 pair", () => {
       );
       assert.include(rendered, "No running T3 Code server found.");
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("overlaps probes and cancels a pending lower-priority request", () =>
+    Effect.gen(function* () {
+      const { baseDir } = yield* makeDiscoveryFixture;
+      const lowerStarted = yield* Deferred.make<AbortSignal>();
+      const interrupted = yield* Ref.make(false);
+      const client = HttpClient.make((request, url, signal) =>
+        url.port === "10000"
+          ? Deferred.await(lowerStarted).pipe(
+              Effect.as(HttpClientResponse.fromWeb(request, Response.json(testDescriptor))),
+            )
+          : Deferred.succeed(lowerStarted, signal).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Ref.set(interrupted, true)),
+            ),
+      );
+      const target = yield* discoverPairTarget(baseDir).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+      expect(target.variant).toBe("userdata");
+      expect(yield* Ref.get(interrupted)).toBe(true);
+      expect((yield* Deferred.await(lowerStarted)).aborted).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("pair discovery order", () => {
+  it.effect.each([
+    { status: 200, winner: "userdata" },
+    { status: 503, winner: "dev" },
+    { status: 404, winner: "dev" },
+  ])(
+    "selects $winner when the earlier probe returns $status after the later success",
+    ({ status, winner }) =>
+      Effect.gen(function* () {
+        const { baseDir, candidates } = yield* makeDiscoveryFixture;
+        const lowerCompleted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const firstStarted = yield* Deferred.make<void>();
+        const client = HttpClient.make((request, url) =>
+          Effect.gen(function* () {
+            if (url.port === "10000") {
+              yield* Deferred.succeed(firstStarted, undefined);
+              yield* Deferred.await(lowerCompleted);
+              yield* Deferred.await(releaseFirst);
+              return HttpClientResponse.fromWeb(request, Response.json(testDescriptor, { status }));
+            }
+            yield* Deferred.await(firstStarted);
+            yield* Deferred.succeed(lowerCompleted, undefined);
+            return HttpClientResponse.fromWeb(request, Response.json(testDescriptor));
+          }),
+        );
+        const fiber = yield* discoverPairTarget(baseDir).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(lowerCompleted);
+        yield* Deferred.succeed(releaseFirst, undefined);
+        const target = yield* Fiber.join(fiber);
+        expect(target.variant).toBe(winner);
+        expect(target.state).toEqual(
+          candidates.find((candidate) => candidate.variant === winner)?.state,
+        );
+        expect(target.descriptor).toEqual(testDescriptor);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("interrupts all pending requests when discovery is cancelled", () =>
+    Effect.gen(function* () {
+      const { baseDir } = yield* makeDiscoveryFixture;
+      const started = yield* Deferred.make<void>();
+      const signals = yield* Ref.make<Array<AbortSignal>>([]);
+      const client = HttpClient.make((_request, _url, signal) =>
+        Effect.gen(function* () {
+          const pending = yield* Ref.updateAndGet(signals, (current) => [...current, signal]);
+          if (pending.length === 2) {
+            yield* Deferred.succeed(started, undefined);
+          }
+          return yield* Effect.never;
+        }),
+      );
+      const fiber = yield* discoverPairTarget(baseDir).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+      expect((yield* Ref.get(signals)).map((signal) => signal.aborted)).toEqual([true, true]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("pair tailscale probe budget", () => {
+  it.effect("retries all attempts but sleeps only between them", () =>
+    Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      const attempts = yield* Ref.make<Array<number>>([]);
+      const firstAttempt = yield* Deferred.make<void>();
+      const client = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          yield* Ref.update(attempts, (times) => [...times, now - startedAt]);
+          yield* Deferred.succeed(firstAttempt, undefined);
+          return HttpClientResponse.fromWeb(request, new Response(null, { status: 503 }));
+        }),
+      );
+      const fiber = yield* awaitEnvironmentDescriptor("http://127.0.0.1:1").pipe(
+        Effect.provide(Layer.succeed(HttpClient.HttpClient, client)),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(firstAttempt);
+      yield* TestClock.adjust(Duration.millis(3_999));
+      expect(yield* Ref.get(attempts)).toEqual([0, 1_000, 2_000, 3_000]);
+      yield* TestClock.adjust(Duration.millis(1));
+      const result = yield* Fiber.join(fiber);
+      expect(result._tag).toBe("unreachable");
+      expect(yield* Ref.get(attempts)).toEqual([0, 1_000, 2_000, 3_000, 4_000]);
+      expect((yield* Clock.currentTimeMillis) - startedAt).toBe(4_000);
+    }),
   );
 });
