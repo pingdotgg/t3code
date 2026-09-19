@@ -1584,6 +1584,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-thread-pinned={props.isPinned}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
         className={cn(
@@ -1737,12 +1738,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   return (
     <li
       data-thread-item
+      data-thread-pinned={props.isPinned}
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
         // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
-        sortable?.isDragging && "relative z-20",
+        "relative list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        sortable?.isDragging && "z-20",
       )}
     >
       <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
