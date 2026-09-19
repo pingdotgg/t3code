@@ -25,13 +25,7 @@ export function AndroidHeaderIconButton(props: {
   readonly disabled?: boolean;
   readonly selected?: boolean;
 }) {
-  return (
-    <MaterialIconButton
-      {...props}
-      tintColorClassName="accent-header-foreground"
-      variant={props.selected ? "tonal" : "standard"}
-    />
-  );
+  return <MaterialIconButton {...props} tintColorClassName="accent-header-foreground" />;
 }
 
 export function AndroidScreenHeader(props: {
