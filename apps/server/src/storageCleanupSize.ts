@@ -1,12 +1,13 @@
-// @effect-diagnostics nodeBuiltinImport:off - Effect FileSystem has no streaming directory iterator or lstat; scans must stay bounded and avoid symlinks.
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem lacks opendir and lstat; bound enumeration and do not follow symlinks.
 import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
 /** Estimate allocated bytes without following symlinks or counting externally shared hardlinks. */
-export const measureWorktreeBytes = (root: string) =>
-  Effect.tryPromise({
+export const measureWorktreeBytes = Effect.fn("measureWorktreeBytes")(function* (root: string) {
+  const path = yield* Path.Path;
+  return yield* Effect.tryPromise({
     try: async (signal) => {
       const directories = [root];
       let entries = 0;
@@ -16,7 +17,7 @@ export const measureWorktreeBytes = (root: string) =>
         for await (const entry of await NodeFSP.opendir(directory)) {
           signal.throwIfAborted();
           if (++entries > 20_000) return null;
-          const target = NodePath.join(directory, entry.name);
+          const target = path.join(directory, entry.name);
           const stat = await NodeFSP.lstat(target);
           if (stat.isDirectory()) directories.push(target);
           else if (stat.nlink === 1) bytes += stat.blocks * 512;
@@ -30,3 +31,4 @@ export const measureWorktreeBytes = (root: string) =>
     Effect.timeoutOption("1 second"),
     Effect.map(Option.getOrNull),
   );
+});

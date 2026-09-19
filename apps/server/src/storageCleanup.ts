@@ -541,7 +541,9 @@ export const make = Effect.gen(function* () {
       const measurementStartedAt = yield* Clock.currentTimeMillis;
       for (const folder of scan.folders) {
         if ((yield* Clock.currentTimeMillis) - measurementStartedAt >= 10_000) break;
-        folder.bytes = yield* measureWorktreeBytes(folder.path);
+        folder.bytes = yield* measureWorktreeBytes(folder.path).pipe(
+          Effect.provideService(Path.Path, path),
+        );
       }
       const total = { folders: 0, measured: 0, bytes: 0 };
       const kinds = ["deleted", "inactive", "merged", "unchanged", "kept", "unchecked"] as const;
