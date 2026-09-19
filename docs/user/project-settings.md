@@ -52,13 +52,15 @@ on each selected environment, and reset returns to the environment's shared list
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
-## APFS worktree copies on macOS
+## Filesystem worktree copies on macOS and Linux
 
-T3 uses APFS copies for regular tracked files in eligible clean, same-commit
+T3 uses filesystem copies for regular tracked files in eligible clean, same-commit
 worktrees. The copies share disk blocks until edited; changes remain independent.
 This saves disk space, but verification can make checkout slower than Git. Set
-`"worktreeCloneFiles": false` in `t3.json` to opt out. Unsupported checkouts and
-filesystems use Git as usual.
+`"worktreeCloneFiles": false` in `t3.json` to opt out. macOS requires APFS; Linux
+requires GNU `cp` and a filesystem with reflink support, such as Btrfs or XFS with
+reflinks enabled. The source and destination must be on the same filesystem.
+Unsupported checkouts and filesystems use Git as usual.
 
 To seed dependencies too, set `"worktreeCloneDependencies": true` in `t3.json` and
 keep a `runOnWorktreeCreate` script that installs dependencies. T3 copies ignored

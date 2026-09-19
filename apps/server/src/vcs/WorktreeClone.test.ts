@@ -9,10 +9,16 @@ import * as Schema from "effect/Schema";
 import { T3ProjectFile } from "@t3tools/contracts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem has no forced-clone flag.
+import * as NodeFSP from "node:fs/promises";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem has no forced-clone flag.
+import * as NodeFS from "node:fs";
+
 import { ServerConfig } from "../config.ts";
 import { makeWorktreeClone } from "./WorktreeClone.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
+const supportsClonePlatform = ["darwin", "linux"].includes(HostProcessPlatform.defaultValue());
 const encodeProject = Schema.encodeSync(Schema.fromJsonString(T3ProjectFile));
 
 const TestLayer = GitVcsDriver.layer.pipe(
@@ -55,9 +61,29 @@ const fixture = Effect.fn("fixture")(function* () {
   );
   yield* git(cwd, ["add", "."]);
   yield* git(cwd, ["commit", "-m", "fixture"]);
+  const supportsClones =
+    HostProcessPlatform.defaultValue() !== "linux" ||
+    (yield* Effect.promise(() =>
+      NodeFSP.copyFile(
+        path.join(cwd, "source.txt"),
+        path.join(root, "probe"),
+        NodeFS.constants.COPYFILE_FICLONE_FORCE,
+      ).then(
+        () => true,
+        (error: unknown) => {
+          if (
+            !(error instanceof Error) ||
+            !("code" in error) ||
+            !["ENOTSUP", "EOPNOTSUPP", "EXDEV"].includes(String(error.code))
+          )
+            throw error;
+          return false;
+        },
+      ),
+    ));
   const clone = yield* makeWorktreeClone(driver.execute);
   const claim = () => git(cwd, ["worktree", "add", "--no-checkout", "-b", "feature", target]);
-  return { fs, path, driver, cwd, target, git, write, clone, claim };
+  return { fs, path, driver, cwd, target, git, write, clone, claim, supportsClones };
 });
 
 it.layer(TestLayer)("Worktree cloning", (it) => {
@@ -65,7 +91,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
     Effect.gen(function* () {
       const f = yield* fixture();
       const clone = yield* makeWorktreeClone(f.driver.execute).pipe(
-        Effect.provideService(HostProcessPlatform, "linux"),
+        Effect.provideService(HostProcessPlatform, "freebsd"),
       );
       assert.equal(yield* clone.prepare(f.cwd, "HEAD"), null);
       yield* clone.warmDependencies(f.cwd, f.target);
@@ -73,7 +99,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
     }),
   );
 
-  describe.skipIf(HostProcessPlatform.defaultValue() !== "darwin")("macOS", () => {
+  describe.skipIf(!supportsClonePlatform)("supported platforms", () => {
     it.effect("retains verified clones and isolates edits without copying ignored files", () =>
       Effect.gen(function* () {
         const f = yield* fixture();
@@ -81,7 +107,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
         let clonedInode: bigint | number | undefined;
         const clone = yield* makeWorktreeClone((input) =>
           Effect.gen(function* () {
-            if (input.args[0] === "reset") {
+            if (input.args[0] === "reset" && f.supportsClones) {
               const info = yield* f.fs.stat(f.path.join(f.target, "large.bin")).pipe(Effect.orDie);
               clonedInode = info.ino._tag === "Some" ? info.ino.value : undefined;
             }
@@ -91,9 +117,10 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
         const plan = yield* clone.prepare(f.cwd, "HEAD");
         assert.isNotNull(plan);
         yield* f.claim();
-        assert.isTrue(yield* clone.checkout(plan!, f.target));
+        assert.equal(yield* clone.checkout(plan!, f.target), f.supportsClones);
         const info = yield* f.fs.stat(f.path.join(f.target, "large.bin"));
-        assert.equal(info.ino._tag === "Some" ? info.ino.value : undefined, clonedInode);
+        if (f.supportsClones)
+          assert.equal(info.ino._tag === "Some" ? info.ino.value : undefined, clonedInode);
         assert.equal((yield* f.git(f.target, ["status", "--porcelain"])).stdout, "");
         assert.equal(
           yield* f.fs.readFileString(f.path.join(f.target, "nested/a\nb.txt")),
@@ -142,7 +169,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
         assert.isNotNull(plan);
         assert.include(plan!.files, "source.txt");
         yield* f.claim();
-        assert.isTrue(yield* f.clone.checkout(plan!, f.target));
+        assert.equal(yield* f.clone.checkout(plan!, f.target), f.supportsClones);
         assert.equal((yield* f.git(f.target, ["status", "--porcelain"])).stdout, "");
       }),
     );
@@ -232,6 +259,15 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
           refName: "main",
           newRefName: "feature",
         });
+        if (!f.supportsClones) {
+          assert.isFalse(yield* f.fs.exists(f.path.join(f.target, "node_modules")));
+          assert.isFalse(yield* f.fs.exists(f.path.join(f.target, "packages/child/node_modules")));
+          assert.isFalse(
+            (yield* f.fs.readDirectory(f.target)).some((name) => name.startsWith(".t3-deps-")),
+          );
+          assert.equal((yield* f.git(f.target, ["status", "--porcelain"])).stdout, "");
+          return;
+        }
         assert.equal(
           yield* f.fs.readFileString(f.path.join(f.target, "node_modules/pkg/index.js")),
           "module.exports = 1",

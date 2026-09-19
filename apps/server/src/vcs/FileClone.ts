@@ -7,7 +7,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 export const makeFileClone = Effect.fn("makeFileClone")(function* () {
   const platform = yield* HostProcessPlatform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const supported = platform === "darwin";
+  const supported = platform === "darwin" || platform === "linux";
+  const args =
+    platform === "linux"
+      ? ["--reflink=always", "--preserve=mode,timestamps", "-R", "-P", "--"]
+      : ["-c", "-p", "-R", "-P"];
   const clone = Effect.fn("FileClone.copy")(function* (
     sources: ReadonlyArray<string>,
     destination: string,
@@ -22,7 +26,7 @@ export const makeFileClone = Effect.fn("makeFileClone")(function* () {
     }
     const code = yield* spawner
       .exitCode(
-        ChildProcess.make("/bin/cp", ["-c", "-p", "-R", "-P", ...sources, destination], {
+        ChildProcess.make("/bin/cp", [...args, ...sources, destination], {
           stdout: "ignore",
           stderr: "ignore",
         }),

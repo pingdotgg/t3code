@@ -95,7 +95,7 @@ export const T3ProjectFile = Schema.Struct({
   worktreeCloneDependencies: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        "On macOS, seed ignored node_modules in same-commit worktrees with APFS clones. Requires a runOnWorktreeCreate install script to reconcile dependencies and rebuild executable shims. Defaults to false.",
+        "On macOS and Linux, seed ignored node_modules in same-commit worktrees with filesystem clones. Requires a runOnWorktreeCreate install script to reconcile dependencies and rebuild executable shims. Defaults to false.",
     }),
   ),
   scripts: Schema.optionalKey(
