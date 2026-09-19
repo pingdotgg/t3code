@@ -42,15 +42,19 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
+  BRANCH_MENU_RAPID_TOGGLE_SUPPRESS_MS,
   deriveLocalBranchNameFromRemoteRef,
+  nativePressDetail,
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveNextBranchMenuToggleAt,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
+  shouldSuppressRapidBranchMenuToggle,
 } from "./BranchToolbar.logic";
 import {
   ThreadPullRequestBadgeControl,
@@ -540,13 +544,43 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   const branchListScrollElementRef = useRef<HTMLElement | null>(null);
   const previousBranchListScrollTopRef = useRef<number | null>(null);
-  const handleOpenChange = useCallback((open: boolean) => {
-    previousBranchListScrollTopRef.current = null;
-    setIsBranchMenuOpen(open);
-    if (!open) {
-      setBranchQuery("");
-    }
-  }, []);
+  // Last accepted trigger toggle, so the trailing press of a double-click
+  // can be told apart from a real close. A timestamp too for picks: the
+  // pending transition flips a frame later, so a double-pressed row would
+  // otherwise run the checkout twice.
+  const lastBranchMenuToggleAtRef = useRef(0);
+  const lastBranchSelectionRef = useRef<{ value: string; at: number } | null>(null);
+  const handleOpenChange = useCallback(
+    (open: boolean, eventDetails?: { reason?: string; event?: unknown; cancel?: () => void }) => {
+      if (
+        eventDetails?.reason === "trigger-press" &&
+        shouldSuppressRapidBranchMenuToggle({
+          reason: eventDetails.reason,
+          nativeDetail: nativePressDetail(eventDetails.event),
+          lastToggleAt: lastBranchMenuToggleAtRef.current,
+          now: Date.now(),
+        })
+      ) {
+        eventDetails.cancel?.();
+        return;
+      }
+      // Only trigger presses arm the suppress window. A close from any
+      // other reason disarms it, so picking an item (or pressing outside)
+      // never eats a deliberate reopen right after.
+      lastBranchMenuToggleAtRef.current = resolveNextBranchMenuToggleAt({
+        reason: eventDetails?.reason,
+        open,
+        lastToggleAt: lastBranchMenuToggleAtRef.current,
+        now: Date.now(),
+      });
+      previousBranchListScrollTopRef.current = null;
+      setIsBranchMenuOpen(open);
+      if (!open) {
+        setBranchQuery("");
+      }
+    },
+    [],
+  );
 
   useImperativeHandle(
     ref,
@@ -679,22 +713,7 @@ export function BranchToolbarBranchSelector({
   function renderPickerItem(itemValue: string, index: number) {
     if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
       return (
-        <ComboboxItem
-          hideIndicator
-          key={itemValue}
-          index={index}
-          value={itemValue}
-          className="pe-2"
-          onClick={() => {
-            if (!prReference || !onCheckoutPullRequestRequest) {
-              return;
-            }
-            setIsBranchMenuOpen(false);
-            setBranchQuery("");
-            onComposerFocusRequest?.();
-            onCheckoutPullRequestRequest(prReference);
-          }}
-        >
+        <ComboboxItem key={itemValue} index={index} value={itemValue} className="pe-2">
           <div className="flex min-w-0 items-center gap-2 py-1">
             <SourceControlIcon className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="flex min-w-0 flex-col items-start">
@@ -709,14 +728,7 @@ export function BranchToolbarBranchSelector({
     }
     if (createBranchItemValue && itemValue === createBranchItemValue) {
       return (
-        <ComboboxItem
-          hideIndicator
-          key={itemValue}
-          index={index}
-          value={itemValue}
-          className="pe-1.5"
-          onClick={() => createRef(trimmedBranchQuery)}
-        >
+        <ComboboxItem key={itemValue} index={index} value={itemValue} className="pe-1.5">
           <span className="truncate">Create new ref &quot;{newRefName}&quot;</span>
         </ComboboxItem>
       );
@@ -738,12 +750,20 @@ export function BranchToolbarBranchSelector({
             : null;
     return (
       <ComboboxItem
-        hideIndicator
         key={itemValue}
         index={index}
         value={itemValue}
         className="pe-1.5"
-        onClick={() => selectBranch(refName)}
+        onClick={() => {
+          // onValueChange stays silent when the pick equals the current
+          // value, so same-value presses (worktree-base pin, hop into an
+          // existing worktree) are handled here. Anything else flows through
+          // onValueChange; a same-value echo there is dropped by the dedup
+          // above, so this can never double-run a checkout.
+          if (itemValue === resolvedActiveBranch) {
+            selectBranch(refName);
+          }
+        }}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
       >
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
@@ -768,6 +788,45 @@ export function BranchToolbarBranchSelector({
           index: eventDetails.index,
           animated: false,
         });
+      }}
+      onValueChange={(itemValue) => {
+        if (typeof itemValue !== "string" || itemValue.length === 0) {
+          return;
+        }
+        // The second click of a double-click on a row re-fires this with the
+        // same value: isBranchActionPending only flips next render, so echo
+        // the same pick inside the double-click window. A different row is a
+        // new pick and always runs.
+        const now = Date.now();
+        const lastSelection = lastBranchSelectionRef.current;
+        if (
+          lastSelection !== null &&
+          lastSelection.value === itemValue &&
+          now - lastSelection.at < BRANCH_MENU_RAPID_TOGGLE_SUPPRESS_MS
+        ) {
+          return;
+        }
+        lastBranchSelectionRef.current = { value: itemValue, at: now };
+        // Single selection path for pointer and keyboard. The items below
+        // carry no onClick so Base UI commits the pick exactly once.
+        if (checkoutPullRequestItemValue && itemValue === checkoutPullRequestItemValue) {
+          if (!prReference || !onCheckoutPullRequestRequest) {
+            return;
+          }
+          setIsBranchMenuOpen(false);
+          setBranchQuery("");
+          onComposerFocusRequest?.();
+          onCheckoutPullRequestRequest(prReference);
+          return;
+        }
+        if (createBranchItemValue && itemValue === createBranchItemValue) {
+          createRef(trimmedBranchQuery);
+          return;
+        }
+        const refName = branchByName.get(itemValue);
+        if (refName) {
+          selectBranch(refName);
+        }
       }}
       onOpenChange={handleOpenChange}
       open={isBranchMenuOpen}
