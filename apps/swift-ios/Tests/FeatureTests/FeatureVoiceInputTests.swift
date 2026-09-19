@@ -34,9 +34,11 @@ struct FeatureVoiceInputTests {
         }
 
         let editor = try #require(await renderedEditor(in: host.view, readOnly: false))
+        await pendingFocusChangesApplied()
         #expect(editor.isFirstResponder == keyboardIsOpen)
         host.rootView = input(readOnly: true)
         #expect(await renderedEditor(in: host.view, readOnly: true) === editor)
+        await pendingFocusChangesApplied()
         #expect(editor.isFirstResponder == keyboardIsOpen)
         #expect(focused == keyboardIsOpen)
         #expect(editor.isEditable)
@@ -48,9 +50,19 @@ struct FeatureVoiceInputTests {
 
         host.rootView = input(readOnly: false)
         #expect(await renderedEditor(in: host.view, readOnly: false) === editor)
+        await pendingFocusChangesApplied()
         #expect(editor.isFirstResponder == keyboardIsOpen)
         editor.insertText(" works")
         #expect(text == "Draft works")
+    }
+
+    /// The composer changes first responder on the main-queue turn after a
+    /// view update. The main queue is FIFO, so one turn later every responder
+    /// change queued so far has run.
+    private func pendingFocusChangesApplied() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
     }
 
     private func renderedEditor(in view: UIView, readOnly: Bool) async -> FeatureComposerUITextView? {

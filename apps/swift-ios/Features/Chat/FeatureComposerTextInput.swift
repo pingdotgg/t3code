@@ -146,12 +146,27 @@ struct FeatureComposerTextInput: UIViewRepresentable {
 
         if context.coordinator.lastAppliedFocus != focused {
             context.coordinator.lastAppliedFocus = focused
-            if focused, !textView.isFirstResponder {
-                textView.becomeFirstResponderWhenAttached()
-            } else if !focused {
-                textView.cancelPendingFirstResponder()
-                if textView.isFirstResponder {
-                    textView.resignFirstResponder()
+            // A responder change re-enters SwiftUI's focus bridge, which reads
+            // the view graph this update is still evaluating. Doing it inline
+            // is an AttributeGraph cycle: SwiftUI drops the update or hangs.
+            // Apply it after the pass, unless the binding moved on meanwhile:
+            // the editing delegate writes an applied change back into it, so
+            // a stale one would otherwise overwrite the newer request.
+            let coordinator = context.coordinator
+            // Clearing the attach request is only a flag write, so it stays
+            // inline and an already queued attach cannot outrun it.
+            if !focused { textView.cancelPendingFirstResponder() }
+            // `focused` is a binding, so the block must hold the value it
+            // was scheduled for to tell a stale request from the live one.
+            let requested = focused
+            DispatchQueue.main.async { [weak textView, weak coordinator] in
+                guard let textView, coordinator?.parent.focused == requested else { return }
+                if requested, !textView.isFirstResponder {
+                    textView.becomeFirstResponderWhenAttached()
+                } else if !requested {
+                    if textView.isFirstResponder {
+                        textView.resignFirstResponder()
+                    }
                 }
             }
         }
@@ -532,7 +547,17 @@ final class FeatureComposerUITextView: FeatureInlineSkillTextView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil, wantsFirstResponderOnAttach {
+        guard window != nil, wantsFirstResponderOnAttach else { return }
+        // SwiftUI attaches this view during its update pass, so the same
+        // deferral as updateUIView applies. The request stays cancellable
+        // until it is applied, and yields to a binding that already cleared.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, window != nil, wantsFirstResponderOnAttach else { return }
+            if let coordinator = delegate as? FeatureComposerTextInput.Coordinator,
+               !coordinator.parent.focused {
+                wantsFirstResponderOnAttach = false
+                return
+            }
             wantsFirstResponderOnAttach = false
             becomeFirstResponder()
         }
