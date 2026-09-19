@@ -2335,16 +2335,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       // header height back or the material toggles a full header too late.
       reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
       // LegendList recomputes its inset-aware end distance before invoking
-      // this handler, so getState() is current. Only the actual end re-arms
-      // follow: its broader maintain-scroll threshold is large enough for a
-      // streaming chunk to pull a user back before their upward drag escapes.
-      // A live user-scroll session still wins even if the first scroll event
-      // remains inside LegendList's at-end tolerance.
+      // this handler, so getState() is current. Follow re-arms at the actual
+      // end or anywhere inside LegendList's maintain-at-end tolerance: a
+      // swipe back to the live edge usually rests a few pixels short of the
+      // exact end, in space the end inset covers, and the strict test would
+      // leave the scroll-to-end control stuck visible. A live user-scroll
+      // session still wins even if the first scroll event remains inside
+      // LegendList's at-end tolerance.
       const listState = props.listRef.current?.getState();
       if (listState) {
         transitionEndFollow({
           type: "scroll",
           isAtEnd: listState.isAtEnd,
+          nearEnd: listState.isWithinMaintainScrollAtEndThreshold,
           userScrollSessionActive: userScrollSessionRef.current,
         });
       }
@@ -2365,16 +2368,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     transitionEndFollow({ type: "user-scroll-begin" });
   }, [clearUserScrollSettle, transitionEndFollow]);
   const finishUserScroll = useCallback(
-    (releaseIsAtEnd?: boolean) => {
+    (releaseAtEnd?: boolean) => {
       clearUserScrollSettle();
       const userScrollSessionActive = userScrollSessionRef.current;
       userScrollSessionRef.current = false;
+      // With no momentum, preserve the finger-release position (at or within
+      // the re-arm tolerance of the live edge). Streaming growth during the
+      // native momentum-detection window must not turn a release at the live
+      // edge into an opt-out from follow.
+      const listState = props.listRef.current?.getState();
       transitionEndFollow({
         type: "user-scroll-end",
-        // With no momentum, preserve the finger-release position. Streaming
-        // growth during the native momentum-detection window must not turn a
-        // release at the live edge into an opt-out from follow.
-        isAtEnd: releaseIsAtEnd ?? props.listRef.current?.getState().isAtEnd ?? false,
+        isAtEnd: releaseAtEnd ?? listState?.isAtEnd ?? false,
+        nearEnd: listState?.isWithinMaintainScrollAtEndThreshold ?? false,
         userScrollSessionActive,
       });
     },
@@ -2387,8 +2393,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // mirrors the native-event handoff used by the home thread list's scroll gate.
   const handleScrollEndDrag = useCallback(() => {
     clearUserScrollSettle();
-    const releaseIsAtEnd = props.listRef.current?.getState().isAtEnd ?? false;
-    userScrollSettleTimerRef.current = setTimeout(() => finishUserScroll(releaseIsAtEnd), 160);
+    const listState = props.listRef.current?.getState();
+    const releaseAtEnd =
+      (listState?.isAtEnd ?? false) || (listState?.isWithinMaintainScrollAtEndThreshold ?? false);
+    userScrollSettleTimerRef.current = setTimeout(() => finishUserScroll(releaseAtEnd), 160);
   }, [clearUserScrollSettle, finishUserScroll, props.listRef]);
   const handleMomentumScrollBegin = useCallback(() => {
     if (userScrollSessionRef.current) {
