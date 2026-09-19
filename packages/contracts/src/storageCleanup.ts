@@ -40,3 +40,12 @@ export const StorageCleanupPreview = Schema.Struct({
   projectCount: NonNegativeInt,
 });
 export type StorageCleanupPreview = typeof StorageCleanupPreview.Type;
+
+export class StorageCleanupPreviewBusy extends Schema.TaggedError<StorageCleanupPreviewBusy>()(
+  "StorageCleanupPreviewBusy",
+  { limit: NonNegativeInt },
+) {
+  override get message() {
+    return `Storage preview is busy with ${this.limit} cached scans. Try again when a scan finishes.`;
+  }
+}

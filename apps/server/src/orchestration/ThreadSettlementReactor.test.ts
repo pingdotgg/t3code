@@ -2182,9 +2182,17 @@ describe("storage cleanup", () => {
                 true,
               );
             }
+            for (let index = 0; index < 7; index++) {
+              yield* cleanup.preview({ ...input, refreshKey: `queued-${index}` });
+            }
+            const busy = yield* cleanup
+              .preview({ ...input, refreshKey: "overflow" })
+              .pipe(Effect.flip);
+            assert.strictEqual(busy._tag, "StorageCleanupPreviewBusy");
             yield* Deferred.succeed(classificationReleased, undefined);
             yield* cleanup.drain;
-            assert.strictEqual(snapshotReads, reads, "days changes must share the running scan");
+            const readsAfterRefreshes = snapshotReads;
+            assert.strictEqual(readsAfterRefreshes, reads + 7, "only bounded refreshes are queued");
             for (const inactiveAfterDays of [1, 60, 8, 60]) {
               const result = yield* cleanup.preview({ ...input, inactiveAfterDays });
               assert.strictEqual(result.scanning, false);
@@ -2195,7 +2203,13 @@ describe("storage cleanup", () => {
               );
             }
             yield* cleanup.drain;
-            assert.strictEqual(snapshotReads, reads, "settled days changes must not queue scans");
+            assert.strictEqual(
+              snapshotReads,
+              readsAfterRefreshes,
+              "settled days changes must not queue scans",
+            );
+            const recovered = yield* settledPreview({ ...input, refreshKey: "overflow" });
+            assert.strictEqual(recovered.scanning, false);
             assert.deepStrictEqual(removals, []);
             return;
           }
@@ -2309,6 +2323,11 @@ describe("storage cleanup", () => {
               assert.strictEqual(
                 preview.categories.find((category) => category.kind === "inactive")?.folders,
                 1,
+              );
+              assert.deepStrictEqual(
+                (yield* cleanup.preview({ ...input, inactiveAfterDays: null })).categories,
+                preview.categories,
+                "disabled rules still show matching storage",
               );
               const drafted = yield* cleanup.preview({ ...input, inactiveAfterDays: 60 });
               assert.strictEqual(drafted.scanning, false);

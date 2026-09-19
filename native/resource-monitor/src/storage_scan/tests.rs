@@ -158,7 +158,12 @@ fn rejects_a_directory_replaced_by_a_symlink_between_batches() {
     let mut scan = Scan::new(root);
     // Open root, enqueue nested, then pause while its parent cursor stays open.
     scan.workers[0]
-        .step(&scan.pending, 2, Instant::now() + Duration::from_secs(1))
+        .step(
+            &scan.pending,
+            &scan.directories,
+            2,
+            Instant::now() + Duration::from_secs(1),
+        )
         .unwrap();
     fs::remove_dir(&nested).unwrap();
     std::os::unix::fs::symlink(&fixture.0, &nested).unwrap();
@@ -221,4 +226,25 @@ fn sizes_workers_to_half_available_cpus_with_a_minimum_of_two() {
     ] {
         assert_eq!(worker_count(cpus), expected);
     }
+}
+
+#[test]
+fn rejects_repeated_directory_identity_across_workers() {
+    let fixture = Fixture::new();
+    let mut scan = Scan::new(fixture.0.clone());
+    // A directory alias (including a bind mount) has the same device/inode.
+    scan.pending.get_mut().unwrap().push(fixture.0.clone());
+    assert!(
+        scan.step(BATCH_ENTRIES_PER_WORKER, Duration::from_secs(1))
+            .is_err()
+    );
+}
+
+#[test]
+fn refuses_a_different_filesystem_before_counting_it() {
+    let mut directories = Directories::default();
+    directories.visit((1, 42)).unwrap();
+    assert!(directories.visit((2, 99)).is_err());
+    assert!(!directories.visited.contains(&(2, 99)));
+    directories.visit((1, 99)).unwrap();
 }

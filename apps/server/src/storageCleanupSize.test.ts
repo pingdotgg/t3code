@@ -128,8 +128,22 @@ for (const [name, options] of [
         .measure("/worktree with spaces")
         .pipe(Stream.runCollect, Effect.result);
       assert.isTrue(Result.isFailure(result));
-      if (name === "native filesystem error" && Result.isFailure(result)) {
-        assert.strictEqual(result.failure.cause, "permission denied");
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure.path, "/worktree with spaces");
+        if (name === "native filesystem error") {
+          assert.strictEqual(result.failure.stage, "scan");
+          assert.strictEqual(result.failure.cause, "permission denied");
+          assert.notInclude(result.failure.message, "permission denied");
+        }
+        if (name === "premature EOF") {
+          assert.strictEqual(result.failure.reason, "premature-exit");
+          assert.strictEqual(result.failure.cause, undefined);
+        }
+        if (name === "nonzero exit") {
+          assert.strictEqual(result.failure.stage, "exit");
+          assert.strictEqual(result.failure.exitCode, 2);
+          assert.strictEqual(result.failure.cause, undefined);
+        }
       }
       assert.strictEqual(f.killed(), 1);
     }),
@@ -155,6 +169,7 @@ it.effect("does not fall back when the native binary is missing", () =>
       .measure("/worktree with spaces")
       .pipe(Stream.runCollect, Effect.result);
     assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) assert.strictEqual(result.failure.stage, "resolve");
     assert.strictEqual(f.spawned(), 0);
   }),
 );

@@ -5,7 +5,11 @@ import {
   ChatGptHandoffInput,
   ChatGptHandoffState,
 } from "./providerSetup.ts";
-import { StorageCleanupPreview, StorageCleanupPreviewInput } from "./storageCleanup.ts";
+import {
+  StorageCleanupPreview,
+  StorageCleanupPreviewInput,
+  StorageCleanupPreviewBusy,
+} from "./storageCleanup.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -624,7 +628,11 @@ const WsServerCommitDesktopUpdateRpc = Rpc.make(WS_METHODS.serverCommitDesktopUp
 const WsServerPreviewStorageCleanupRpc = Rpc.make(WS_METHODS.serverPreviewStorageCleanup, {
   payload: StorageCleanupPreviewInput,
   success: StorageCleanupPreview,
-  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  error: Schema.Union([
+    ServerSettingsError,
+    StorageCleanupPreviewBusy,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsSubscribeStorageCleanupRpc = Rpc.make(WS_METHODS.subscribeStorageCleanup, {

@@ -9,6 +9,7 @@ import type {
   StorageCleanupPreviewInput,
   StorageCleanupCategory,
 } from "@t3tools/contracts";
+import { StorageCleanupPreviewBusy } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -51,7 +52,7 @@ export class StorageCleanup extends Context.Service<
     readonly revisions: Stream.Stream<number>;
     readonly preview: (
       input: StorageCleanupPreviewInput,
-    ) => Effect.Effect<StorageCleanupPreview, ServerSettingsError>;
+    ) => Effect.Effect<StorageCleanupPreview, ServerSettingsError | StorageCleanupPreviewBusy>;
   }
 >()("t3/storageCleanup") {}
 
@@ -720,7 +721,7 @@ export const make = Effect.gen(function* () {
   );
   const preview = Effect.fn("StorageCleanup.preview")(function* (
     input: StorageCleanupPreviewInput,
-  ): Effect.fn.Return<StorageCleanupPreview, ServerSettingsError> {
+  ): Effect.fn.Return<StorageCleanupPreview, ServerSettingsError | StorageCleanupPreviewBusy> {
     const settings = yield* settingsService.getSettings;
     const now = yield* Clock.currentTimeMillis;
     yield* TxRef.update(observers, (state) => ({ ...state, requestedAt: now }));
@@ -734,6 +735,11 @@ export const make = Effect.gen(function* () {
         sameProjectWorktreePolicies(entry.settings, settings),
     );
     if (!entry) {
+      if (previewCache.length >= 8) {
+        const oldest = previewCache.findIndex((entry) => !entry.running);
+        if (oldest < 0) return yield* new StorageCleanupPreviewBusy({ limit: 8 });
+        previewCache.splice(oldest, 1);
+      }
       entry = {
         input,
         settings,
@@ -756,10 +762,6 @@ export const make = Effect.gen(function* () {
           onDiscovery: publishImmediately,
         },
       };
-      if (previewCache.length >= 8) {
-        const oldest = previewCache.findIndex((entry) => !entry.running);
-        if (oldest >= 0) previewCache.splice(oldest, 1);
-      }
       previewCache.push(entry);
       yield* discoveryWorker.enqueue(entry);
     }
@@ -788,6 +790,7 @@ export const make = Effect.gen(function* () {
     const projectIds = new Set<ProjectId>();
     let scanning = entry.running;
     for (const folder of entry.scan.folders) {
+      // Switching a rule off does not hide its matching storage from the preview.
       const inactiveAfterDays =
         input.inactiveAfterDays ??
         resolveWorktreeCleanup(settings, folder.projectId).worktreeAfterDays ??
