@@ -12,6 +12,8 @@ const maxOutputBytes = 16 * 1024 * 1024;
 const decodeProjectFile = Schema.decodeUnknownEffect(Schema.fromJsonString(T3ProjectFile));
 
 /** Seeds an ordinary Git worktree; Git still owns its index and final contents. */
+// The owning driver supplies its local executor so clone commands share its
+// tracing and process policy without depending on the driver being constructed.
 export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
   execute: GitVcsDriver["Service"]["execute"],
 ) {
