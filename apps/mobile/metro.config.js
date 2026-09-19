@@ -17,6 +17,7 @@ const licenseGeneratorSource = path.join(
 );
 const escapedWorkspaceRoot = workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mobileShikiRoot = path.dirname(require.resolve("shiki/package.json", { paths: [__dirname] }));
+const generatedDeviceStreamRoot = path.join(__dirname, ".generated", "device-stream");
 const resolveShikiDependencyRoot = (packageName) => {
   const entryPath = require.resolve(packageName, { paths: [mobileShikiRoot] });
   let currentDir = path.dirname(entryPath);
@@ -46,6 +47,7 @@ config.resolver = {
   extraNodeModules: {
     ...config.resolver?.extraNodeModules,
     "@t3tools/mobile-third-party-licenses": generatedLicenseModuleRoot,
+    "@t3tools/mobile-device-stream": generatedDeviceStreamRoot,
     shiki: mobileShikiRoot,
     "@shikijs/core": resolveShikiDependencyRoot("@shikijs/core"),
     "@shikijs/engine-javascript": resolveShikiDependencyRoot("@shikijs/engine-javascript"),
@@ -93,7 +95,32 @@ async function generateMobileThirdPartyLicenses() {
   ]);
 }
 
-module.exports = generateMobileThirdPartyLicenses().then(() =>
+async function prepareDeviceStream() {
+  const { generateDeviceStreamScript } = await import(
+    pathToFileURL(path.join(__dirname, "scripts", "generate-device-stream.mts")).href
+  );
+  await generateDeviceStreamScript();
+  if (process.env.NODE_ENV !== "production") {
+    let rebuild = Promise.resolve();
+    for (const [directory, files] of [
+      [path.join(__dirname, "src/features/devices"), ["device-stream.browser.ts"]],
+      [
+        path.join(workspaceRoot, "packages/client-runtime/src/device"),
+        ["stream.ts", "hubAccess.ts"],
+      ],
+    ]) {
+      // The generated module participates in Metro's normal Fast Refresh.
+      fs.watch(directory, { persistent: false }, (_event, filename) => {
+        if (filename && !files.includes(String(filename))) return;
+        rebuild = rebuild.then(generateDeviceStreamScript).catch((error) => {
+          console.error("Could not rebuild the device stream:", error);
+        });
+      });
+    }
+  }
+}
+
+module.exports = Promise.all([generateMobileThirdPartyLicenses(), prepareDeviceStream()]).then(() =>
   withUniwindConfig(config, {
     cssEntryFile: "./global.css",
     extraThemes,

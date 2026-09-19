@@ -1,3 +1,6 @@
+// @effect-diagnostics globalFetch:off globalTimers:off - This browser and WebView transport runs without an Effect runtime.
+/* oxlint-disable unicorn/prefer-add-event-listener -- Each client owns its sockets and their handlers. */
+
 /**
  * Framework-free client for expo-device-hub's per-device streams, reached
  * through the T3 proxy. One class handles both platforms because the hub
@@ -16,8 +19,7 @@
  * The decoder only runs while frames arrive and the viewer is attached; a
  * hidden panel calls `stop()` so an idle device costs nothing on the GPU.
  */
-import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
-import { withDeviceHubQuery } from "@t3tools/client-runtime/state/deviceHubAccess";
+import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
 import type { DevicePlatform } from "@t3tools/contracts";
 
 export type DeviceStreamStatus = "connecting" | "streaming" | "error";
@@ -47,6 +49,8 @@ export interface DeviceStreamTarget {
   readonly platform: DevicePlatform;
   readonly deviceId: string;
   readonly access: DeviceHubAccess;
+  /** Native iOS WebViews can use MJPEG without cross-origin fetch or secure-context support. */
+  readonly preferMjpeg?: boolean;
 }
 
 export type DeviceHardwareButton = "home" | "back" | "recents" | "power" | "appSwitcher";
@@ -280,7 +284,7 @@ export function createDeviceStreamClient(
   const httpUrl = (path: string) =>
     withDeviceHubQuery(`${access.httpBase}${vendor}${path}`, access);
   const wsUrl = (path: string) => withDeviceHubQuery(`${access.wsBase}${vendor}${path}`, access);
-  const useWebCodecs = isWebCodecsSupported();
+  const useWebCodecs = isWebCodecsSupported() && !(platform === "ios" && target.preferMjpeg);
 
   let stopped = true;
   let socket: WebSocket | null = null;
@@ -526,14 +530,20 @@ export function createDeviceStreamClient(
       }
     };
     ws.onclose = (event) => {
-      if (socket === ws) socket = null;
-      if (!stopped) {
-        events.onInputConnected(
-          false,
-          event.reason || (event.code === 1006 ? "input socket refused" : `closed ${event.code}`),
-        );
-      }
-      if (event.code === 1008 || event.code === 4401) return handleUnauthorized();
+      if (socket !== ws) return;
+      socket = null;
+      if (stopped) return;
+      events.onInputConnected(
+        false,
+        event.reason || (event.code === 1006 ? "input socket refused" : `closed ${event.code}`),
+      );
+      // A rejected HTTP upgrade surfaces as 1006, including an expired stream ticket.
+      if (
+        event.code === 1008 ||
+        event.code === 4401 ||
+        (event.code === 1006 && access.query.wsTicket)
+      )
+        return handleUnauthorized();
       scheduleRetry("input", () => void connectIosInput());
     };
     ws.onerror = () => ws.close();
@@ -580,14 +590,19 @@ export function createDeviceStreamClient(
       decode(isKey, packet.data, packet.timestamp);
     };
     ws.onclose = (event) => {
-      if (socket === ws) socket = null;
+      if (socket !== ws) return;
+      socket = null;
       closeDecoder();
-      if (!stopped) events.onInputConnected(false, event.reason || `closed ${event.code}`);
-      if (event.code === 1008 || event.code === 4401) return handleUnauthorized();
-      if (!stopped) {
-        setStatus("connecting", event.reason || undefined);
-        scheduleRetry("input", connectAndroid);
-      }
+      if (stopped) return;
+      events.onInputConnected(false, event.reason || `closed ${event.code}`);
+      if (
+        event.code === 1008 ||
+        event.code === 4401 ||
+        (event.code === 1006 && access.query.wsTicket)
+      )
+        return handleUnauthorized();
+      setStatus("connecting", event.reason || undefined);
+      scheduleRetry("input", connectAndroid);
     };
     ws.onerror = () => ws.close();
   };

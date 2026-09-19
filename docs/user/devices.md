@@ -55,8 +55,13 @@ back from the device after a change.
 When an agent opens a device, it floats over the chat in web and desktop clients
 connected to the thread, the same way an agent-driven browser does. Turn off
 **Auto-show floating preview** in **Settings → Integrations → Browser** to open a
-right-panel tab instead. Mobile clients show device activity in the thread
-timeline. Agents drive the device through the `agent-device` command line. T3
+right-panel tab instead. In the mobile app, open the agent's thread and tap the
+device button above the composer to watch the live screen and control it.
+If the thread has several devices open, choose one in the viewer. Closing the
+viewer stops streaming and leaves the device available to the agent. Device
+activity also appears in the thread timeline.
+
+Agents drive the device through the `agent-device` command line. T3
 Code installs and starts it only after **Agent device access** is enabled. iOS
 taps build a small test runner on first use, which takes a couple of minutes
 once per server. Restart an existing agent session after granting access so it
