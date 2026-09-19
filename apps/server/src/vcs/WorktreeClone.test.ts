@@ -273,6 +273,31 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
       }),
     );
 
+    it.effect("uses Git for filters activated only in the destination worktree", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.write(".gitattributes", "source.txt filter=conditional\n");
+        yield* f.git(f.cwd, ["add", ".gitattributes"]);
+        yield* f.git(f.cwd, ["commit", "-m", "attributes"]);
+        const config = f.path.join(f.cwd, ".git", "worktree-filters");
+        yield* f.git(f.cwd, [
+          "config",
+          "--file",
+          config,
+          "filter.conditional.smudge",
+          "sed s/original/target/",
+        ]);
+        yield* f.git(f.cwd, ["config", "includeIf.gitdir:**/worktrees/**.path", config]);
+        yield* f.driver.createWorktree({
+          cwd: f.cwd,
+          path: f.target,
+          refName: "main",
+          newRefName: "feature",
+        });
+        assert.equal(yield* f.fs.readFileString(f.path.join(f.target, "source.txt")), "target\n");
+      }),
+    );
+
     it.effect("seeds opted-in dependencies and relative links but rebuilds caches and shims", () =>
       Effect.gen(function* () {
         const f = yield* fixture();
