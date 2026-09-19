@@ -42,6 +42,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
+import { PanelTab } from "~/components/ui/panel-tab";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
@@ -1674,15 +1675,7 @@ export default function ThreadTerminalDrawer({
                             isActive && closeShortcutLabel ? ` (${closeShortcutLabel})` : ""
                           }`;
                           return (
-                            <div
-                              key={terminalId}
-                              className={cn(
-                                "group/tab flex h-6 w-full items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
-                                isActive
-                                  ? "bg-accent text-foreground"
-                                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                              )}
-                            >
+                            <PanelTab key={terminalId} active={isActive} className="w-full">
                               <PanelTabCloseButton
                                 label={closeTerminalLabel}
                                 onClick={() => confirmCloseTerminal(terminalId)}
@@ -1697,7 +1690,7 @@ export default function ThreadTerminalDrawer({
                               >
                                 <span className="truncate">{terminalLabel}</span>
                               </button>
-                            </div>
+                            </PanelTab>
                           );
                         })}
                       </div>

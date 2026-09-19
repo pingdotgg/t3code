@@ -28,6 +28,7 @@ import {
   useRightPanelStore,
 } from "../rightPanelStore";
 import {
+  type PreviewMiniPlayerSource,
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
@@ -129,6 +130,17 @@ describe("agent browser close confirmation", () => {
 });
 
 describe("floating browser preview", () => {
+  const isMiniPlayerVisible = (
+    source: PreviewMiniPlayerSource | null,
+    renderedRightPanelSurface: RightPanelSurface | null,
+    rightPanelSurfaceVisible = true,
+  ) =>
+    shouldRenderPreviewMiniPlayer({
+      source,
+      renderedRightPanelSurface,
+      rightPanelSurfaceVisible,
+    });
+
   it("keeps agent preview intent when a user selects its browser tab and then switches away", () => {
     useRightPanelStore.setState({ byThreadKey: {}, userActionRevisionByThreadKey: {} });
     usePreviewMiniPlayerStore.setState({ byThreadKey: {} });
@@ -142,7 +154,7 @@ describe("floating browser preview", () => {
       ref,
     );
     const isFloating = () =>
-      shouldRenderPreviewMiniPlayer(
+      isMiniPlayerVisible(
         selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, ref)
           ?.source ?? null,
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref),
@@ -162,22 +174,25 @@ describe("floating browser preview", () => {
 
   it("only hides the duplicate while the same browser is rendered in the panel", () => {
     const tab = { kind: "browser", tabId: "tab-1" } as const;
-    expect(shouldRenderPreviewMiniPlayer(null, null)).toBe(false);
+    expect(isMiniPlayerVisible(null, null, false)).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer(tab, {
+      isMiniPlayerVisible(tab, {
         id: "browser:one",
         kind: "preview",
         resourceId: "tab-1",
       }),
     ).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer(tab, {
+      isMiniPlayerVisible(tab, {
         id: "browser:two",
         kind: "preview",
         resourceId: "tab-2",
       }),
     ).toBe(true);
-    expect(shouldRenderPreviewMiniPlayer(tab, { id: "diff", kind: "diff" })).toBe(true);
+    expect(isMiniPlayerVisible(tab, { id: "diff", kind: "diff" })).toBe(true);
+    expect(
+      isMiniPlayerVisible(tab, { id: "browser:one", kind: "preview", resourceId: "tab-1" }, false),
+    ).toBe(true);
   });
 
   it("only hides a floating device while that device is rendered in the panel", () => {
@@ -195,22 +210,22 @@ describe("floating browser preview", () => {
       name: "Pixel",
     } as const;
     expect(
-      shouldRenderPreviewMiniPlayer(pixel, {
+      isMiniPlayerVisible(pixel, {
         id: "device:nucbox:emulator-5580",
         kind: "device",
         target,
       }),
     ).toBe(false);
     expect(
-      shouldRenderPreviewMiniPlayer(pixel, {
+      isMiniPlayerVisible(pixel, {
         id: "device:nucbox:emulator-5554",
         kind: "device",
         target: { ...target, deviceId: "emulator-5554" },
       }),
     ).toBe(true);
-    expect(shouldRenderPreviewMiniPlayer(pixel, { id: "device", kind: "device" })).toBe(true);
+    expect(isMiniPlayerVisible(pixel, { id: "device", kind: "device" })).toBe(true);
     expect(
-      shouldRenderPreviewMiniPlayer(pixel, {
+      isMiniPlayerVisible(pixel, {
         id: "browser:one",
         kind: "preview",
         resourceId: "emulator-5580",
