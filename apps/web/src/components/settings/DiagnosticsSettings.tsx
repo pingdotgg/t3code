@@ -1,4 +1,6 @@
 import { ProcessSignalActions } from "./ProcessSignalActions";
+import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
+import { environmentSession } from "../../state/session";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
@@ -30,7 +32,6 @@ import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { shellEnvironment } from "../../state/shell";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -739,6 +740,15 @@ export function DiagnosticsSettingsPanel() {
   const observability = environment?.serverConfig?.observability;
   const availableEditors = environment?.serverConfig?.availableEditors;
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const session = useEnvironmentQuery(
+    environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
+  );
+  const diagnosticsAccess = resolveUsageAccess({
+    connectionPhase: environment?.connection.phase ?? "available",
+    session: session.data,
+    hasSessionError: session.error !== null,
+  });
+  const canReadDiagnostics = diagnosticsAccess.canReadDiagnostics;
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
@@ -748,7 +758,7 @@ export function DiagnosticsSettingsPanel() {
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
     RESOURCE_HISTORY_WINDOWS[1];
   const { data, error, isPending, refresh } = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.traceDiagnostics({ environmentId, input: {} }),
   );
@@ -758,7 +768,7 @@ export function DiagnosticsSettingsPanel() {
     isPending: isProcessPending,
     refresh: refreshProcesses,
   } = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.processDiagnostics({ environmentId, input: {} }),
   );
@@ -768,7 +778,7 @@ export function DiagnosticsSettingsPanel() {
     isPending: isResourcePending,
     refresh: refreshResources,
   } = useEnvironmentQuery(
-    environmentId === null
+    environmentId === null || !canReadDiagnostics
       ? null
       : serverEnvironment.processResourceHistory({
           environmentId,
@@ -926,6 +936,20 @@ export function DiagnosticsSettingsPanel() {
   const traceDiagnosticsPartialFailure = data
     ? Option.getOrElse(data.partialFailure, () => false)
     : false;
+
+  if (!canReadDiagnostics) {
+    return (
+      <SettingsPageContainer>
+        <p className="text-sm text-muted-foreground">
+          {environmentId === null
+            ? "Connect an environment to see diagnostics."
+            : diagnosticsAccess.isPending
+              ? "Checking diagnostics access…"
+              : diagnosticsAccess.error}
+        </p>
+      </SettingsPageContainer>
+    );
+  }
 
   return (
     <SettingsPageContainer width="expanded" className="gap-10">
