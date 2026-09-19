@@ -41,6 +41,20 @@ export function combineStorageUsage(
   }
   return {
     checkedAt,
+    ...(summaries.some((summary) => summary.scanning !== undefined)
+      ? { scanning: summaries.some((summary) => summary.scanning) }
+      : {}),
+    ...(summaries.every((summary) => summary.progress !== undefined)
+      ? {
+          progress: summaries.reduce(
+            (combined, summary) => ({
+              completed: combined.completed + summary.progress!.completed,
+              total: combined.total + summary.progress!.total,
+            }),
+            { completed: 0, total: 0 },
+          ),
+        }
+      : {}),
     unchecked,
     unavailable,
     total,

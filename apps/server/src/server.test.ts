@@ -1777,9 +1777,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const input = {
         projectId: ProjectId.make("storage-project"),
+        refreshKey: "storage-refresh",
       };
       const preview = {
         checkedAt: "2026-09-01T00:00:00.000Z",
+        scanning: true,
         unchecked: 0,
         unavailable: 0,
         total: { folders: 2, measured: 2, bytes: 1024 },

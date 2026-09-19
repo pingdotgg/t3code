@@ -915,6 +915,7 @@ export function createServerEnvironmentAtoms<R, E>(
   const storageCleanupRevisions = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
     label: "environment-data:server:storage-cleanup-revisions",
     tag: WS_METHODS.subscribeStorageCleanup,
+    idleTtlMs: 0,
   });
   const storageRevisionAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) =>
@@ -1037,7 +1038,8 @@ export function createServerEnvironmentAtoms<R, E>(
     storageUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:storage-usage",
       tag: WS_METHODS.serverPreviewStorageCleanup,
-      staleTimeMs: 60_000,
+      idleTtlMs: 0,
+      staleTimeMs: 0,
       refreshTrigger: ({ environmentId }) => storageRevisionAtom(environmentId),
     }),
     traceDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {

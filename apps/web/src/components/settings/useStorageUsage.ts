@@ -1,16 +1,17 @@
-import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useContext, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { serverEnvironment } from "../../state/server";
+import { randomUUID } from "../../lib/utils";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { combineStorageUsage } from "./storageUsage";
 
 /** Each selected server owns its scan and cache. A failed server never hides successful results. */
 export function useStorageUsage(inactiveAfterDays?: number | null) {
   const { targets, environments, connectedEnvironments } = useSettingsScope();
-  const registry = useContext(RegistryContext);
+  const [refreshKey, setRefreshKey] = useState<string>();
   const queries = useMemo(() => {
     const supported = new Set(
       connectedEnvironments
@@ -28,11 +29,12 @@ export function useStorageUsage(inactiveAfterDays?: number | null) {
           environmentId: target.environmentId,
           input: {
             projectId: target.projectId,
+            ...(refreshKey ? { refreshKey } : {}),
             ...(inactiveAfterDays === undefined ? {} : { inactiveAfterDays }),
           },
         }),
       }));
-  }, [targets, connectedEnvironments, inactiveAfterDays]);
+  }, [targets, connectedEnvironments, inactiveAfterDays, refreshKey]);
   const resultsAtom = useMemo(
     () => Atom.make((get) => queries.map(({ atom }) => get(atom))),
     [queries],
@@ -107,7 +109,7 @@ export function useStorageUsage(inactiveAfterDays?: number | null) {
     failed,
     canRefresh: queries.length > 0,
     refresh: () => {
-      for (const { atom } of queries) registry.refresh(atom);
+      setRefreshKey(randomUUID());
     },
   };
 }
