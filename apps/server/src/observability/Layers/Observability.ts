@@ -21,6 +21,7 @@ export const ObservabilityLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const serializationLayer = otlpSerializationLayer(config.otlpProtocol);
+    const resource = ServerConfig.otlpResource(config);
     const attribution = yield* ResourceAttribution.ResourceAttribution;
 
     const traceReferencesLayer = Layer.mergeAll(
@@ -52,13 +53,7 @@ export const ObservabilityLive = Layer.unwrap(
                 url: config.otlpTracesUrl,
                 exportInterval: `${config.otlpExportIntervalMs} millis`,
                 headers: config.otlpHeaders,
-                resource: {
-                  serviceName: config.otlpServiceName,
-                  attributes: {
-                    "service.runtime": "t3-server",
-                    "service.mode": config.mode,
-                  },
-                },
+                resource,
               });
 
         const tracer = yield* makeLocalFileTracer({
@@ -84,13 +79,7 @@ export const ObservabilityLive = Layer.unwrap(
             url: config.otlpMetricsUrl,
             exportInterval: `${config.otlpExportIntervalMs} millis`,
             headers: config.otlpHeaders,
-            resource: {
-              serviceName: config.otlpServiceName,
-              attributes: {
-                "service.runtime": "t3-server",
-                "service.mode": config.mode,
-              },
-            },
+            resource,
           }).pipe(Layer.provideMerge(serializationLayer));
 
     return Layer.mergeAll(ServerLoggerLive, traceReferencesLayer, tracerLayer, metricsLayer);

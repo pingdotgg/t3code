@@ -203,11 +203,17 @@ export const SnippetRulesProvider = () =>
     }),
 
     delete: Effect.fn(function* ({ output }) {
-      // `deleteRule` removes the zone's entire rule list; deleting an
-      // already-empty list succeeds, making this naturally idempotent.
+      // An empty zone's DELETE can return "requested zone not found" even
+      // though the zone exists. Observe first so repeated deletes converge.
+      if ((yield* listObservedRules(output.zoneId)).length === 0) return;
       yield* snippets
         .deleteRule({ zoneId: output.zoneId })
-        .pipe(Effect.catchTag("SnippetRulesNotFound", () => Effect.void));
+        .pipe(
+          Effect.catchTag(
+            ["SnippetRulesNotFound", "SnippetZoneNotFound"],
+            () => Effect.void,
+          ),
+        );
     }),
   });
 

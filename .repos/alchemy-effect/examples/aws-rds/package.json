@@ -16,10 +16,10 @@
   },
   "dependencies": {
     "@distilled.cloud/aws": "workspace:*",
-    "@effect/platform-node": "catalog:effect",
-    "@types/pg": "catalog:database",
+    "@effect/platform-node": "catalog:",
+    "@types/pg": "catalog:",
     "alchemy": "workspace:*",
-    "effect": "catalog:effect",
-    "pg": "catalog:database"
+    "effect": "catalog:",
+    "pg": "catalog:"
   }
 }

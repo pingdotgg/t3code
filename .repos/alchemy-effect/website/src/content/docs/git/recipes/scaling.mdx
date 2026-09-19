@@ -1,0 +1,120 @@
+---
+title: Scaling
+description: Reads scale like a CDN and writes scale like git. The shape, the per-repository limits, the measured numbers, and a worked example of pushing something large and swapping the hasher.
+---
+
+The examples use `Authentication` from
+[Getting Started](/git/getting-started): the application's request middleware.
+
+Every repository is its own Durable Object, so the service's capacity
+is the sum of its repositories. Within one repository the two
+directions scale differently, and the difference is git's, not the
+host's.
+
+**Reads scale out.** A full clone streams a precomputed bundle from
+the blob store through the Worker. The repository's Durable Object
+plans the clone and never touches a pack byte, so concurrent clones
+scale with Workers and object storage. Incremental fetches are small
+by construction and run against a commit graph in SQLite.
+
+**Writes serialize on the ref.** A push is a compare-and-swap on a
+ref, and git's own semantics say two pushes to one branch cannot both
+win. One Durable Object per repository is that serialization point.
+Receiving, hashing, and staging the pack happen in the Worker and fan
+out to the [hasher](/git/blocks/hasher).
+
+| Dimension | Per repository | Bound by |
+| --- | --- | --- |
+| Clone bandwidth | edge line rate | bundle bytes live in the blob store |
+| Clone rate | thousands per second | the advertisement is cached, the Durable Object is called once per push |
+| Incremental fetch | milliseconds for recent tips | the commit graph in SQLite |
+| Push rate | 5–20 per second | a ref is a serialization point in git's own semantics |
+| Repository size | unbounded | packs live in the blob store |
+| Push size | unbounded | the body streams to the blob store as it arrives |
+
+## Where the limits are
+
+**Push rate to one branch** is inherent. Across branches and across
+repositories there is no shared limit.
+
+**The registry** is one object handling creates, deletes, and name
+lookups for the whole service. Lookups are cached at the Worker for a
+minute, and [D1](/git/blocks/registry) replicates them.
+
+**First-byte latency** for a repository's Durable Object is one
+datacenter's distance. Cached advertisements hide most of it, and
+clone bytes come from the blob store rather than the object.
+
+**Very large histories.** Computing which objects a fetch needs walks
+the commit graph. For repositories with tens of millions of objects
+that walk wants reachability bitmaps, which the service does not have
+yet.
+
+## A large push, and the hasher
+
+Push a repository with a 40 MiB history to the host from
+[Getting Started](/git/getting-started) and
+read the timing the repository reports:
+
+```sh
+curl -s -u "x:$GIT_SECRET" "$HOST/api/v1/repos/acme/big" | jq .lastPush
+```
+
+Ingest dominates. Every object was inflated and hashed on the one
+thread that received the body. Swap the hasher and deploy:
+
+```diff lang="typescript"
++import * as GitHasher from "alchemy/Git/Hasher";
+
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryDurableObject),
+-  Layer.provide(Git.HasherInline),
++  Layer.provide(GitHasher.HasherWorkerLoader()),
+  Layer.provide(Git.BlobStoreR2(GitObjects)),
+);
+```
+
+Four dynamically loaded Workers now hash four 4 MiB chunks at once,
+each in its own isolate. Push again, read `lastPush` again. Nothing
+else about the host changed.
+
+One client, the same edge, a fresh repository on each host. The
+delta-heavy pack is 40 MiB and 15.6k objects, the whole-blob pack is
+44 MiB:
+
+| | 40 MiB deltas | 44 MiB blobs | incremental |
+| --- | --- | --- | --- |
+| GitHub | 3.3 s | 4.6 s | 1.2 s |
+| `HasherInline` | 9.9–13.5 s | 8.8 s | 0.2–0.4 s |
+| `HasherWorkerLoader` | 5.9 s best, 6.5 s median | 4.8 s best, 6.4 s median | 0.2–0.4 s |
+| `HasherLambda` | 6.8–7.9 s | 6.3–6.7 s | 0.3–0.8 s |
+
+Incremental pushes are the same on every hasher, so the choice only
+matters for pushes of tens of megabytes. `HasherLambda` runs every
+chunk at once on a 3 GB function and needs an AWS account in the
+stack. [Hasher](/git/blocks/hasher) has the push path and each
+implementation. [Bytes in S3, hashing on Lambda](/git/recipes/cloudflare-aws)
+is the two-cloud stack.
+
+## Clones
+
+The same 36 MiB, 15.6k-object repository, one client, the same edge:
+
+| Path | Throughput |
+| --- | --- |
+| a real `git clone` from a bundle | 32.7 MiB/s typical, 80 MiB/s best (0.69 s end to end) |
+| raw bundle, four concurrent streams | 93 MiB/s aggregate |
+| dynamic fetch, time to first byte | 0.43–0.56 s |
+| dynamic fetch, transfer | 7–10 MiB/s |
+
+The bundle path is the client's line rate. Compaction is what keeps it
+that way: on a real repository of 13,699 objects, cloning back took
+19.5 s before compaction and 3.4 s after.
+[Repository](/git/blocks/repositories) has the clone path.
+
+The largest real push measured is the alchemy monorepo: 44,051 objects
+in a 67 MiB thin pack, cloned back byte-identical under
+`git fsck --strict`.
