@@ -23,12 +23,11 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, FlatList, Platform, Pressable, View } from "react-native";
+import { ActivityIndicator, FlatList, Platform, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { cn } from "../../lib/cn";
-import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { MaterialFloatingActionButton } from "../../components/MaterialFloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
@@ -213,19 +212,6 @@ function deriveEmptyState(props: {
     detail: "Create a task to start a new coding session in one of your connected projects.",
     loading: false,
   };
-}
-
-/** Destructive action for the "No threads in <project>" empty state. */
-function RemoveScopedProjectButton(props: { readonly onPress: () => void }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      className="rounded-full bg-subtle px-5 py-3 active:opacity-70"
-      onPress={props.onPress}
-    >
-      <Text className="text-sm font-t3-bold text-danger-foreground">Remove project</Text>
-    </Pressable>
-  );
 }
 
 function HomeTopContentSpacer() {
@@ -1185,13 +1171,6 @@ export function HomeScreen(props: HomeScreenProps) {
         title={`No threads in ${selectedProjectScope.title}`}
         detail="Choose another project or create a new task."
         variant={Platform.OS === "android" ? "plain" : undefined}
-        action={
-          <RemoveScopedProjectButton
-            onPress={() =>
-              props.onRemoveProject(selectedProjectScope.projects, selectedProjectScope.title)
-            }
-          />
-        }
       />
     ) : selectedEnvironmentLabel ? (
       <EmptyState
@@ -1221,13 +1200,6 @@ export function HomeScreen(props: HomeScreenProps) {
         title={`No threads in ${v2ScopedProjectGroup.title}`}
         detail="Choose another project or create a new task."
         variant={Platform.OS === "android" ? "plain" : undefined}
-        action={
-          <RemoveScopedProjectButton
-            onPress={() =>
-              props.onRemoveProject(v2ScopedProjectGroup.projects, v2ScopedProjectGroup.title)
-            }
-          />
-        }
       />
     ) : (
       listEmpty

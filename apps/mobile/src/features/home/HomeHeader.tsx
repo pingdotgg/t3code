@@ -148,15 +148,6 @@ export function HomeHeader(props: HomeHeaderProps) {
                     <NativeHeaderToolbar.Label>{project.label}</NativeHeaderToolbar.Label>
                   </NativeHeaderToolbar.MenuAction>
                 ))}
-                {props.selectedProjectKey !== null && props.onRemoveSelectedProject ? (
-                  <NativeHeaderToolbar.MenuAction
-                    destructive
-                    icon="trash"
-                    onPress={props.onRemoveSelectedProject}
-                  >
-                    <NativeHeaderToolbar.Label>Remove project…</NativeHeaderToolbar.Label>
-                  </NativeHeaderToolbar.MenuAction>
-                ) : null}
               </NativeHeaderToolbar.Menu>
             ) : null}
 
