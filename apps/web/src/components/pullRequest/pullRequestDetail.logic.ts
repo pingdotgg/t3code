@@ -140,12 +140,192 @@ export function pullRequestCheckoutCommand(
   }
 }
 
-/** Activity changes only when the same host resource reports a newer revision. */
+/**
+ * Activity changes only when the same host resource reports a newer revision. Compared as
+ * instants rather than text, so one revision written `Z` and `.000Z` (or with an offset) is
+ * not a change; unparseable text falls back to the text, like the service's own compare.
+ */
 export function shouldRefreshPullRequestActivity(
   previous: { readonly key: string; readonly updatedAt: string } | null,
   next: { readonly key: string; readonly updatedAt: string },
 ): boolean {
-  return previous !== null && previous.key === next.key && previous.updatedAt !== next.updatedAt;
+  if (previous === null || previous.key !== next.key) return false;
+  const prevAt = Date.parse(previous.updatedAt);
+  const nextAt = Date.parse(next.updatedAt);
+  if (Number.isNaN(prevAt) || Number.isNaN(nextAt)) return previous.updatedAt !== next.updatedAt;
+  return prevAt !== nextAt;
+}
+
+/** The newest conversation instant an activity read carries, or null where it carries none. */
+export function newestPullRequestActivityAt(
+  activity: {
+    readonly comments: ReadonlyArray<{ readonly createdAt: string }>;
+    readonly commits: ReadonlyArray<{ readonly committedDate: string }>;
+    readonly reviewThreads: ReadonlyArray<{
+      readonly comments: ReadonlyArray<{ readonly createdAt: string }>;
+    }>;
+  } | null,
+): string | null {
+  if (activity === null) return null;
+  let newest: string | null = null;
+  let newestAt = Number.NEGATIVE_INFINITY;
+  const consider = (iso: string) => {
+    const at = Date.parse(iso);
+    if (Number.isNaN(at) || at <= newestAt) return;
+    newest = iso;
+    newestAt = at;
+  };
+  for (const comment of activity.comments) consider(comment.createdAt);
+  for (const commit of activity.commits) consider(commit.committedDate);
+  for (const thread of activity.reviewThreads)
+    for (const comment of thread.comments) consider(comment.createdAt);
+  return newest;
+}
+
+/**
+ * Whether a mount activity read that resolved before the first live detail predates it.
+ * False where either side carries no parseable instant — nothing can then be said to be
+ * stale, so the mount walk stands and the dedup holds.
+ */
+export function isPullRequestActivityStale(
+  activity: Parameters<typeof newestPullRequestActivityAt>[0],
+  liveUpdatedAt: string,
+): boolean {
+  const newest = newestPullRequestActivityAt(activity);
+  if (newest === null) return false;
+  const newestAt = Date.parse(newest);
+  const liveAt = Date.parse(liveUpdatedAt);
+  if (Number.isNaN(newestAt) || Number.isNaN(liveAt)) return false;
+  return newestAt < liveAt;
+}
+
+/**
+ * Whether a shared list/sidebar summary observed a newer revision than the activity
+ * baseline. Directional on purpose: an older observed summary is not a reason to walk
+ * again, which is what a plain inequality would say. Unparseable text is not newer,
+ * following newestPullRequestSummary's instant ordering.
+ */
+export function isPullRequestSharedSummaryNewer(
+  previous: { readonly key: string; readonly updatedAt: string } | null,
+  key: string,
+  sharedUpdatedAt: string | null,
+): boolean {
+  if (previous === null || sharedUpdatedAt === null || previous.key !== key) return false;
+  const prevAt = Date.parse(previous.updatedAt);
+  const sharedAt = Date.parse(sharedUpdatedAt);
+  if (Number.isNaN(prevAt) || Number.isNaN(sharedAt)) return false;
+  return sharedAt > prevAt;
+}
+export interface PullRequestActivityRevision {
+  readonly key: string;
+  readonly updatedAt: string;
+}
+
+export interface PullRequestActivityRefreshDecision {
+  readonly refresh: boolean;
+  readonly nextPrev: PullRequestActivityRevision;
+  readonly nextShared: PullRequestActivityRevision | null;
+  readonly nextMount: PullRequestMountValidation | null;
+}
+
+/** The newest mount conversation instant already covered, so equal-or-older mounts walk nothing. */
+export interface PullRequestMountValidation {
+  readonly key: string;
+  readonly newestAt: number;
+}
+
+/**
+ * One pure step of the detail panel's activity effect: whether this run walks, and the
+ * baselines its next run compares against. A new scope (first live arrival, or a
+ * pull-request switch where the previous baseline names another key) walks only where the
+ * mounted activity predates live or a shared summary is already newer than the incoming
+ * live revision, and otherwise just baselines. A steady run walks where live itself moved,
+ * where a shared summary moved past both the live baseline and what was already seen,
+ * or where a late-resolving mount read arrives stale against live (the mount query and
+ * the live query race; the first live arrival may baseline before the mount data lands,
+ * and without this the panel would display stale content until the next live change).
+ *
+ * The mount walk fires once per mount content, not once per run: the re-read it triggers
+ * comes back equally stale on metadata-only revisions (no new conversation), and walking
+ * on that would loop forever — every walk also bumps the diff refresh token. Only a
+ * mount newer than everything already validated walks again.
+ */
+export function decidePullRequestActivityRefresh(
+  previous: PullRequestActivityRevision | null,
+  previousShared: PullRequestActivityRevision | null,
+  next: PullRequestActivityRevision,
+  key: string,
+  mountActivity: Parameters<typeof isPullRequestActivityStale>[0],
+  sharedAt: string | null,
+  previousMount: PullRequestMountValidation | null,
+): PullRequestActivityRefreshDecision {
+  // Which mount content this run may still learn from: anything at or below the validated
+  // instant was already covered by an earlier walk (or arrived with nothing new), so only
+  // a strictly newer mount can trigger the staleness walk below.
+  const mountNewest = newestPullRequestActivityAt(mountActivity);
+  const mountNewestAt = mountNewest === null ? null : Date.parse(mountNewest);
+  const validatedAt =
+    previousMount !== null && previousMount.key === key ? previousMount.newestAt : null;
+  const mountIsNew =
+    mountNewestAt !== null &&
+    !Number.isNaN(mountNewestAt) &&
+    (validatedAt === null || mountNewestAt > validatedAt);
+  const nextMount: PullRequestMountValidation | null =
+    mountNewestAt === null || Number.isNaN(mountNewestAt)
+      ? validatedAt === null
+        ? null
+        : { key, newestAt: validatedAt }
+      : {
+          key,
+          newestAt: validatedAt === null ? mountNewestAt : Math.max(validatedAt, mountNewestAt),
+        };
+  const isNewScope = previous === null || previous.key !== key;
+  let refresh: boolean;
+  if (isNewScope) {
+    refresh =
+      (mountIsNew && isPullRequestActivityStale(mountActivity, next.updatedAt)) ||
+      isPullRequestSharedSummaryNewer(next, key, sharedAt);
+  } else {
+    refresh =
+      shouldRefreshPullRequestActivity(previous, next) ||
+      (mountIsNew && isPullRequestActivityStale(mountActivity, next.updatedAt)) ||
+      (isPullRequestSharedSummaryNewer(previous, key, sharedAt) &&
+        (previousShared === null ||
+          previousShared.key !== key ||
+          isPullRequestSharedSummaryNewer(previousShared, key, sharedAt)));
+  }
+  // Baseline stays on live: advancing past it to the shared instant made the next run
+  // read live as older-than-baseline (a text/instant inequality either way) and walk again.
+  // The shared baseline is max-seen, never last-seen: storing an invalid or regressed
+  // instant would poison it — an invalid baseline suppresses the next valid update (the
+  // seen-compare returns false), and a regressed one lets an already-seen instant walk
+  // again on oscillation. Preserve until a parseable instant advances the baseline.
+  let nextShared: PullRequestActivityRevision | null;
+  if (sharedAt === null) {
+    nextShared = isNewScope ? null : previousShared;
+  } else {
+    const sharedAtMs = Date.parse(sharedAt);
+    if (Number.isNaN(sharedAtMs)) {
+      nextShared = isNewScope ? null : previousShared;
+    } else if (isNewScope) {
+      nextShared = { key, updatedAt: sharedAt };
+    } else if (
+      previousShared === null ||
+      previousShared.key !== key ||
+      Number.isNaN(Date.parse(previousShared.updatedAt)) ||
+      sharedAtMs > Date.parse(previousShared.updatedAt)
+    ) {
+      nextShared = { key, updatedAt: sharedAt };
+    } else {
+      nextShared = previousShared;
+    }
+  }
+  return {
+    refresh,
+    nextPrev: next,
+    nextShared,
+    nextMount,
+  };
 }
 /** Appends fetched pages without replacing fresher comments already in the activity response. */
 export function mergePullRequestThreadComments<T extends { readonly id: string }>(
