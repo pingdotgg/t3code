@@ -391,13 +391,10 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       : ({ ok: true, windowsEntryPath, linuxAppRoot: mountedAppRoot.value } as const);
   });
 
-  // Set once a staged runtime has been ruled out by the probe, and carried
-  // through the mounted attempt: if the mounted tree works the cache is the
-  // broken part and gets invalidated, and if the mounted tree returns its own
-  // fatal verdict the cached reason is the more actionable one to report.
-  // A transient mounted failure is neither — it rules nothing out, so it stays
-  // retryable and the staged verdict waits for an attempt that can answer.
-  let stagedFailure: { readonly runtimeId: string; readonly reason: string } | undefined;
+  // Preserve the archive's failure if the mounted fallback also fails. Only
+  // a runtime that was installed and then failed its probe can be invalidated
+  // after a successful fallback; installation failures carry no cache id.
+  let stagedFailure: { readonly runtimeId?: string; readonly reason: string } | undefined;
   const failedStaged = (failure: { readonly reason: string }) =>
     ({
       _tag: "Failed",
@@ -428,6 +425,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       );
       stagedFailure = { runtimeId: input.runtimeArchive.runtimeId, reason: stagedProbe.reason };
     } else {
+      stagedFailure = { reason: runtime.reason };
       yield* Effect.logWarning(
         "Could not stage the WSL runtime; launching from the mounted server tree instead.",
         { reason: runtime.reason },
@@ -460,7 +458,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   // The mounted tree runs what the cache could not, so the cache is the broken
   // copy: revoke its ready marker so the next launch reinstalls it instead of
   // reusing a tree that has already been proven unloadable.
-  if (stagedFailure) {
+  if (stagedFailure?.runtimeId) {
     yield* wslEnv.invalidateRuntime(runningDistro, stagedFailure.runtimeId);
   }
 

@@ -492,11 +492,16 @@ describe("DesktopBackendConfiguration", () => {
 
   it.effect("resolveWsl falls back to the mounted runtime when archive staging fails", () => {
     const observedNodePtyRoots: string[] = [];
+    const invalidatedRuntimeIds: string[] = [];
     return withPackagedWslHarness(
       {
         archiveHash: "b".repeat(64),
         wsl: () => ({
           prepareRuntime: () => ({ ok: false, reason: "archive is corrupt" }),
+          invalidateRuntime: (_distro, runtimeId) =>
+            Effect.sync(() => {
+              invalidatedRuntimeIds.push(runtimeId);
+            }),
           ensureNodePty: (_distro, root) => {
             observedNodePtyRoots.push(root);
             return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
@@ -509,6 +514,7 @@ describe("DesktopBackendConfiguration", () => {
           const config = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
 
           assert.deepEqual(observedNodePtyRoots, [mountedAppRoot]);
+          assert.deepEqual(invalidatedRuntimeIds, []);
           assert.equal(config.entryPath, mountedEntryPath);
           assert.include(config.args, "/usr/bin/node");
           assert.include(config.args, `${mountedAppRoot}/apps/server/dist/bin.mjs`);
@@ -560,6 +566,39 @@ describe("DesktopBackendConfiguration", () => {
         }),
     );
   });
+
+  it.effect(
+    "resolveWsl preserves the installation error when the fallback lacks Linux binaries",
+    () => {
+      return withPackagedWslHarness(
+        {
+          archiveHash: "b".repeat(64),
+          wsl: () => ({
+            prepareRuntime: () => ({
+              ok: false,
+              reason:
+                "t3: error while loading shared libraries: libatomic.so.1: cannot open shared object file",
+            }),
+            ensureNodePty: () => ({
+              ok: false,
+              reason: "the packaged Linux node-pty binary was not included",
+              fatal: true,
+            }),
+          }),
+        },
+        () =>
+          Effect.gen(function* () {
+            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+            const config = yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+            const failure = Option.getOrThrow(config.preflightFailure);
+
+            assert.isTrue(failure.fatal);
+            assert.include(failure.reason, "libatomic.so.1");
+            assert.notInclude(failure.reason, "node-pty");
+          }),
+      );
+    },
+  );
 
   it.effect("resolveWsl keeps the staged runtime when the mounted tree fails too", () => {
     const stagedAppRoot = "/home/test/.t3/wsl-runtime/cache";
