@@ -39,6 +39,7 @@ export class AgentActivityPublisher extends Context.Service<
       readonly environmentPublicKey: string;
       readonly threadId: string;
       readonly state: RelayAgentActivityState | null;
+      readonly replay?: boolean;
     }) => Effect.Effect<RelayPublishResponse, AgentActivityPublishError>;
     readonly replayForLiveActivityRegistration: (input: {
       readonly userId: string;
@@ -58,6 +59,7 @@ export const make = Effect.gen(function* () {
     readonly deliveryUser: EnvironmentLinks.AgentAwarenessDeliveryUserRecord;
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
+    readonly replay?: boolean;
   }) {
     const activeStates = input.deliveryUser.liveActivitiesEnabled
       ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
@@ -84,7 +86,13 @@ export const make = Effect.gen(function* () {
       targets,
       Effect.fnUntraced(function* (target) {
         if (target.platform === "android") {
-          return [yield* fcmDeliveries.enqueue({ target, state: input.state })];
+          return [
+            yield* fcmDeliveries.enqueue({
+              target,
+              state: input.state,
+              ...(input.replay ? { replay: true } : {}),
+            }),
+          ];
         }
         return yield* Effect.all(
           [
@@ -92,8 +100,9 @@ export const make = Effect.gen(function* () {
               target,
               aggregate: liveActivityAggregate,
               nowMs: input.nowMs,
+              ...(input.replay ? { replay: true } : {}),
             }),
-            notificationOnlyAggregate === null
+            input.replay || notificationOnlyAggregate === null
               ? Effect.succeed(null)
               : apnsDeliveries.sendPushNotificationForTarget({
                   target,
@@ -178,6 +187,7 @@ export const make = Effect.gen(function* () {
             deliveryUser,
             state: input.state,
             nowMs: now.epochMilliseconds,
+            ...(input.replay ? { replay: true } : {}),
           }),
         { concurrency: 4 },
       );

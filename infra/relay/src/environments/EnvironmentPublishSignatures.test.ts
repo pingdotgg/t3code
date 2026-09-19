@@ -102,6 +102,25 @@ function layer(replay?: Partial<DpopProofs.DpopProofReplay["Service"]>) {
 }
 
 describe("EnvironmentPublishSignatures", () => {
+  it.effect("rejects an unsigned change to the startup replay flag", () =>
+    Effect.gen(function* () {
+      const signatures = yield* EnvironmentPublishSignatures.EnvironmentPublishSignatures;
+      const request = yield* freshRequest;
+      const result = yield* signatures
+        .verify({
+          environmentId: state.environmentId,
+          environmentPublicKey: keyPair.publicKey,
+          threadId: state.threadId,
+          request: { ...request, replay: true },
+        })
+        .pipe(Effect.result);
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "EnvironmentPublishSignatureInvalid", stage: "validate_claims" },
+      });
+    }).pipe(Effect.provide(layer())),
+  );
+
   it.effect("verifies activity JWTs and scopes replay storage to the environment key", () => {
     let replayThumbprint: string | null = null;
     return Effect.gen(function* () {

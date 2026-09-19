@@ -218,12 +218,14 @@ export const RelayAgentActivityPublishProofPayload = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
   state: Schema.NullOr(RelayAgentActivityState),
+  replay: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityPublishProofPayload =
   typeof RelayAgentActivityPublishProofPayload.Type;
 export type RelayAgentActivityPublishProof = string;
 
 export const RelayAgentActivityPublishRequest = Schema.Struct({
+  replay: Schema.optional(Schema.Boolean),
   state: Schema.NullOr(RelayAgentActivityState).annotate({
     description: "Current agent-awareness state, or null to remove the published state.",
   }),

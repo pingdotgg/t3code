@@ -322,6 +322,26 @@ describe("Android delivery routing", () => {
     });
   }
 
+  it.effect.each([false, true])(
+    "startup replay stays silent with notification-only mode %s",
+    (notificationOnly) => {
+      const h = harness();
+      h.current.state = { ...state, phase: "waiting_for_input" };
+      h.current.target.last_aggregate_json = encodeJson(aggregateFor([state]));
+      if (notificationOnly) h.current.notificationOnlyEnvironments = [state.environmentId];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries;
+        yield* delivery.process({ ...h.job, state: h.current.state, replay: true });
+        expect(h.sent.every((message) => !message.alert)).toBe(true);
+        h.current.state = { ...state, phase: "running" };
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        h.current.state = { ...state, phase: "waiting_for_input" };
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
   it.effect("registration replay establishes a baseline without alerting", () => {
     const h = harness();
     h.current.state = { ...state, phase: "waiting_for_approval" };

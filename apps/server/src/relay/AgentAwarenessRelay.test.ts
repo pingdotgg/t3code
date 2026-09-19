@@ -12,21 +12,29 @@ import type {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { RelayAgentActivityPublishRequest } from "@t3tools/contracts/relay";
 import type {
   RelayAgentActivityPublishProofPayload,
   RelayAgentActivityState,
 } from "@t3tools/contracts/relay";
 import { CommandId, ProviderInstanceId } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
-import { RELAY_ACTIVITY_PUBLISH_TYP, verifyRelayJwt } from "@t3tools/shared/relayJwt";
+import {
+  decodeRelayJwt,
+  RELAY_ACTIVITY_PUBLISH_TYP,
+  verifyRelayJwt,
+} from "@t3tools/shared/relayJwt";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -58,6 +66,8 @@ const state: RelayAgentActivityState = {
   updatedAt: "2026-05-25T00:00:00.000Z",
   deepLink: "/threads/env/thread",
 };
+
+const decodePublishRequest = Schema.decodeUnknownSync(RelayAgentActivityPublishRequest);
 
 const encodeSecret = (value: string): Uint8Array => new TextEncoder().encode(value);
 
@@ -232,7 +242,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         type: "thread.settled",
         payload: { threadId: "thread-1" as ThreadId },
       } as unknown as OrchestrationEvent),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("deduplicates awareness state updates whose only change is their event timestamp", () => {
@@ -349,46 +359,48 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     } satisfies Omit<OrchestrationThreadShell, "id">;
 
     expect(
-      AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
-        environmentId,
-        projects: [
-          {
-            id: projectId,
-            title: "T3 Code",
-          },
-        ],
-        threads: [
-          {
-            ...baseThread,
-            id: activeThreadId,
-            latestTurn: {
-              turnId: "turn-1" as TurnId,
-              state: "running",
-              requestedAt: now,
-              startedAt: now,
-              completedAt: null,
-              assistantMessageId: null,
+      Array.from(
+        AgentAwarenessRelay.resolveAgentAwarenessRelayActiveStates({
+          environmentId,
+          projects: [
+            {
+              id: projectId,
+              title: "T3 Code",
             },
-          },
-          {
-            ...baseThread,
-            id: idleThreadId,
-          },
-          {
-            ...baseThread,
-            id: "thread-missing-project" as ThreadId,
-            projectId: "missing-project" as ProjectId,
-            latestTurn: {
-              turnId: "turn-2" as TurnId,
-              state: "running",
-              requestedAt: now,
-              startedAt: now,
-              completedAt: null,
-              assistantMessageId: null,
+          ],
+          threads: [
+            {
+              ...baseThread,
+              id: activeThreadId,
+              latestTurn: {
+                turnId: "turn-1" as TurnId,
+                state: "running",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: null,
+                assistantMessageId: null,
+              },
             },
-          },
-        ],
-      }),
+            {
+              ...baseThread,
+              id: idleThreadId,
+            },
+            {
+              ...baseThread,
+              id: "thread-missing-project" as ThreadId,
+              projectId: "missing-project" as ProjectId,
+              latestTurn: {
+                turnId: "turn-2" as TurnId,
+                state: "running",
+                requestedAt: now,
+                startedAt: now,
+                completedAt: null,
+                assistantMessageId: null,
+              },
+            },
+          ],
+        }).keys(),
+      ),
     ).toEqual([activeThreadId]);
   });
 
@@ -621,15 +633,23 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ),
   );
 
-  it.effect("publishes agent activity to the relay transport URL, not the relay issuer", () =>
+  const sources = [
+    "event",
+    "running",
+    "waiting_for_input",
+    "completed",
+    "failed",
+    "changed",
+    "transient-null",
+  ] as const;
+  it.effect.each(sources)("publishes %s with silent startup replay", (source) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const originalFetch = globalThis.fetch;
         const events = yield* Queue.unbounded<OrchestrationEvent>();
-        let resolveFetchSeen: (url: URL) => void = () => {};
-        const fetchSeen = new Promise<URL>((resolve) => {
-          resolveFetchSeen = resolve;
-        });
+        const requests = yield* Queue.unbounded<{
+          url: URL;
+          payload: RelayAgentActivityPublishRequest;
+        }>();
         const userSpans: Array<string> = [];
         const productSpans: Array<string> = [];
         const collectingTracer = (spans: Array<string>) =>
@@ -661,7 +681,8 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           updatedAt: now,
         } satisfies OrchestrationProjectShell;
 
-        const thread = {
+        let shellReads = 0;
+        let thread: OrchestrationThreadShell = {
           id: threadId,
           projectId,
           title: "Run remote agent",
@@ -673,10 +694,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           pullRequests: [],
           latestTurn: {
             turnId: "turn-1" as TurnId,
-            state: "running",
+            state: source === "completed" ? "completed" : source === "failed" ? "error" : "running",
             requestedAt: now,
             startedAt: now,
-            completedAt: null,
+            completedAt: source === "completed" || source === "failed" ? now : null,
             assistantMessageId: null,
           },
           createdAt: now,
@@ -686,18 +707,19 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           settledAt: null,
           session: {
             threadId,
-            status: "running",
+            status: source === "completed" ? "ready" : source === "failed" ? "error" : "running",
             providerName: "Codex",
             runtimeMode: "full-access",
-            activeTurnId: "turn-1" as TurnId,
+            activeTurnId:
+              source === "completed" || source === "failed" ? null : ("turn-1" as TurnId),
             lastError: null,
             updatedAt: now,
           },
           latestUserMessageAt: now,
           hasPendingApprovals: false,
-          hasPendingUserInput: false,
+          hasPendingUserInput: source === "waiting_for_input",
           hasActionableProposedPlan: false,
-        } satisfies OrchestrationThreadShell;
+        };
 
         const descriptor = {
           environmentId,
@@ -712,20 +734,12 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           },
         } satisfies ExecutionEnvironmentDescriptor;
 
-        globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
-          const url = new URL(
-            typeof input === "string" || input instanceof URL
-              ? input
-              : (input as unknown as { readonly url: string }).url,
-          );
-          resolveFetchSeen(url);
-          return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
-        }) as unknown as typeof fetch;
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            globalThis.fetch = originalFetch;
-          }),
-        );
+        const fetch: typeof globalThis.fetch = async (input, init) => {
+          const request = new Request(input, init);
+          const payload = decodePublishRequest(await request.json());
+          Queue.offerUnsafe(requests, { url: new URL(request.url), payload });
+          return Response.json({ ok: true, deliveries: [] });
+        };
 
         const layer = Layer.mergeAll(
           Layer.succeed(ServerSecretStore.ServerSecretStore, secrets.store),
@@ -750,7 +764,13 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
                 threads: [thread],
                 updatedAt: now,
               } satisfies OrchestrationShellSnapshot),
-            getThreadShellById: () => Effect.succeed(Option.some(thread)),
+            getThreadShellById: () =>
+              Effect.sync(() => {
+                if (source === "transient-null" && shellReads++ === 0) return Option.none();
+                return Option.some(
+                  source === "changed" ? { ...thread, hasPendingUserInput: true } : thread,
+                );
+              }),
             getProjectShellById: () => Effect.succeed(Option.some(project)),
           } as unknown as ProjectionSnapshotQueryShape),
         );
@@ -762,26 +782,47 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           yield* secrets.setString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "relay-credential");
           yield* secrets.setString(PUBLISH_AGENT_ACTIVITY_SECRET, "true");
           yield* relay.start();
-          yield* Queue.offer(events, {
-            type: "thread.activity-appended",
-            sequence: 1,
-            eventId: "evt-1",
-            commandId: CommandId.make("cmd-1"),
-            aggregateKind: "thread",
-            aggregateId: threadId,
-            actor: { kind: "server" },
-            metadata: {},
-            payload: {
-              threadId,
-              activity: {
-                kind: "approval.requested",
+          if (source === "event") {
+            yield* Queue.offer(events, {
+              type: "thread.activity-appended",
+              sequence: 1,
+              eventId: "evt-1",
+              commandId: CommandId.make("cmd-1"),
+              aggregateKind: "thread",
+              aggregateId: threadId,
+              actor: { kind: "server" },
+              metadata: {},
+              payload: {
+                threadId,
+                activity: {
+                  kind: "approval.requested",
+                },
               },
-            },
-            occurredAt: now,
-          } as unknown as OrchestrationEvent);
-
-          const url = yield* Effect.promise(() => fetchSeen).pipe(Effect.timeout("2 seconds"));
+              occurredAt: now,
+            } as unknown as OrchestrationEvent);
+          } else {
+            yield* TestClock.adjust("1 second");
+            yield* TestClock.adjust("5 seconds");
+          }
+          const { url, payload } = yield* Queue.take(requests);
           expect(url.origin).toBe("https://transport.example.test");
+          if (source !== "event") {
+            expect(payload.state).not.toBeNull();
+            if (source === "changed") {
+              expect(payload.state?.phase).toBe("waiting_for_input");
+              expect(payload).not.toMatchObject({ replay: true });
+            } else {
+              expect(payload).toMatchObject({ replay: true });
+              expect(decodeRelayJwt(payload.proof)).toMatchObject({ replay: true });
+            }
+            thread = { ...thread, hasPendingUserInput: false, hasPendingApprovals: true };
+            yield* relay.publishThread(threadId);
+            const live = yield* Queue.take(requests);
+            expect(live.payload.state?.phase).toBe("waiting_for_approval");
+            expect(live.payload).not.toMatchObject({ replay: true });
+          } else {
+            expect(payload).not.toMatchObject({ replay: true });
+          }
           expect(productSpans).toContain("makePublishProof");
           expect(userSpans).not.toContain("makePublishProof");
         }).pipe(
@@ -791,6 +832,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
               Layer.provideMerge(NodeServices.layer),
             ),
           ),
+          Effect.provideService(FetchHttpClient.Fetch, fetch),
           Effect.provideService(RelayClientTracer, Option.some(collectingTracer(productSpans))),
           Effect.withTracer(collectingTracer(userSpans)),
         );
