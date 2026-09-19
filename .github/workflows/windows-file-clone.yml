@@ -1,0 +1,59 @@
+name: Windows file clones
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - apps/server/src/vcs/FileClone.ts
+      - apps/server/src/vcs/WindowsFileClone*
+      - .github/workflows/windows-file-clone.yml
+
+permissions:
+  contents: read
+
+jobs:
+  clone:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+      - run: vp install
+      - name: Create disposable ReFS test volume
+        shell: pwsh
+        run: |
+          $letter = 90..82 | ForEach-Object { [char]$_ } | Where-Object { -not (Test-Path "$($_):\") } | Select-Object -First 1
+          if (-not $letter) { throw 'No unused drive letter for disposable test volume' }
+          $vhd = Join-Path $env:RUNNER_TEMP 't3-clone-test.vhd'
+          @"
+          create vdisk file="$vhd" maximum=2048 type=expandable
+          select vdisk file="$vhd"
+          attach vdisk
+          create partition primary
+          format fs=refs quick label=T3CloneTest
+          assign letter=$letter
+          "@ | Set-Content (Join-Path $env:RUNNER_TEMP 't3-clone-diskpart.txt')
+          diskpart /s (Join-Path $env:RUNNER_TEMP 't3-clone-diskpart.txt')
+          if ((Get-Volume -DriveLetter $letter).FileSystem -ne 'ReFS') { throw 'Runner could not provision ReFS; clone proof unavailable' }
+          fsutil fsinfo refsinfo "$($letter):"
+          "T3_TEST_REFS_ROOT=$($letter):\" >> $env:GITHUB_ENV
+          "T3_TEST_NTFS_ROOT=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+      - name: Verify native clones and unsupported fallback
+        working-directory: apps/server
+        run: vp test run src/vcs/WindowsFileClone.test.ts
+      - name: Detach disposable volume
+        if: always()
+        shell: pwsh
+        run: |
+          $vhd = Join-Path $env:RUNNER_TEMP 't3-clone-test.vhd'
+          if (Test-Path $vhd) {
+            @"
+          select vdisk file="$vhd"
+          detach vdisk
+          "@ | Set-Content (Join-Path $env:RUNNER_TEMP 't3-clone-detach.txt')
+            diskpart /s (Join-Path $env:RUNNER_TEMP 't3-clone-detach.txt')
+          }
