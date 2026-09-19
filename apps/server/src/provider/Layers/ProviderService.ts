@@ -1270,17 +1270,44 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
       yield* prepareMcpSession(input.binding.threadId, bindingInstanceId);
-      const resumed = yield* adapter
-        .startSession({
-          threadId: input.binding.threadId,
-          provider: input.binding.provider,
-          providerInstanceId: bindingInstanceId,
-          ...(persistedCwd ? { cwd: persistedCwd } : {}),
-          ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
-          ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
-          runtimeMode: input.binding.runtimeMode ?? "full-access",
-        })
-        .pipe(Effect.onError(() => clearMcpSession(input.binding.threadId)));
+      const startSessionAttempt = (cursor?: unknown) =>
+        Effect.suspend(() =>
+          adapter.startSession({
+            threadId: input.binding.threadId,
+            provider: input.binding.provider,
+            providerInstanceId: bindingInstanceId,
+            ...(persistedCwd ? { cwd: persistedCwd } : {}),
+            ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+            ...(cursor ? { resumeCursor: cursor } : {}),
+            runtimeMode: input.binding.runtimeMode ?? "full-access",
+          }),
+        );
+
+      // A clean provider close (websocket 1000, "Failed to rebuild agent") is
+      // classified to ProviderAdapterSessionClosedError at the adapter boundary
+      // (see mapAcpToAdapterError). Retry the resume once to ride out a transient
+      // rebuild and keep the resume cursor, then drop to a fresh session so a
+      // stale cursor never fails the turn outright. Clear the MCP session only
+      // when the whole recovery fails, so a successful retry or fallback keeps
+      // the endpoint and tools prepared above.
+      const resumeClosed = (error: ProviderAdapterError) =>
+        error._tag === "ProviderAdapterSessionClosedError";
+      const { session: resumed, strategy } = yield* startSessionAttempt(
+        input.binding.resumeCursor,
+      ).pipe(
+        Effect.retry({ times: 1, while: resumeClosed }),
+        Effect.map((session) => ({ session, strategy: "resume-thread" as const })),
+        Effect.catchTag("ProviderAdapterSessionClosedError", (error) =>
+          Effect.logWarning(
+            `Provider session resume closed on agent rebuild for thread '${input.binding.threadId}'; falling back to fresh session.`,
+            { error },
+          ).pipe(
+            Effect.andThen(startSessionAttempt(undefined)),
+            Effect.map((session) => ({ session, strategy: "fresh-session-fallback" as const })),
+          ),
+        ),
+        Effect.onError(() => clearMcpSession(input.binding.threadId)),
+      );
       if (resumed.provider !== adapter.provider) {
         yield* clearMcpSession(input.binding.threadId);
         return yield* toValidationError(
@@ -1295,7 +1322,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       );
       yield* analytics.record("provider.session.recovered", {
         provider: resumed.provider,
-        strategy: "resume-thread",
+        strategy,
         hasResumeCursor: resumed.resumeCursor !== undefined,
       });
       return { adapter, session: resumed } as const;

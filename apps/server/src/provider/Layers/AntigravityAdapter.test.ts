@@ -31,6 +31,7 @@ import {
   parseSessionUpdateEvent,
   type AcpToolCallState,
 } from "../acp/AcpRuntimeModel.ts";
+import { ANTIGRAVITY_STREAM_DISCONNECTED_MESSAGE } from "../acp/AcpAdapterSupport.ts";
 import { makeAntigravityAdapter, type AntigravityAdapterOptions } from "./AntigravityAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -208,7 +209,9 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
       yield* Queue.offer(cancellations, prompt.index);
       if (options?.holdCancel) yield* Deferred.await(cancelRelease);
       yield* Deferred.succeed(prompt.result, { stopReason: "cancelled" });
-      yield* Deferred.await(prompt.result);
+      // Best-effort like a real cancel: if the prompt already settled (for
+      // example it failed with a disconnect), do not adopt that outcome here.
+      yield* Deferred.await(prompt.result).pipe(Effect.ignore);
       yield* drainEvents;
       calls.push(`drained:${prompt.index}`);
     }),
@@ -1207,6 +1210,115 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         Exit.isFailure(yield* h.adapter.sendTurn({ threadId, input: "Hello" }).pipe(Effect.exit)),
       ).toBe(true);
     }),
+  );
+
+  it.effect("cleans up session when prompt encounters clean websocket close", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const promptFiber = yield* h.adapter
+        .sendTurn({ threadId, input: "Hello" })
+        .pipe(Effect.forkChild);
+      const prompt = yield* h.nextPrompt;
+      yield* Deferred.fail(
+        prompt.result,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: "received 1000 (OK); then sent 1000 (OK)",
+        }),
+      );
+      const result = yield* Fiber.await(promptFiber);
+      expect(Exit.isFailure(result)).toBe(true);
+      const turnEnd = yield* h.waitForEvent((event) => event.type === "turn.completed");
+      expect(turnEnd.payload.state).toBe("failed");
+      const exited = yield* h.waitForEvent((event) => event.type === "session.exited");
+      expect(exited.payload.exitKind).toBe("error");
+      expect(yield* h.adapter.hasSession(threadId)).toBe(false);
+    }),
+  );
+
+  it.effect("keeps a superseding turn alive when the superseded prompt hits a clean close", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ holdCancel: true });
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const first = yield* h.adapter
+        .sendTurn({ threadId, input: "First prompt" })
+        .pipe(Effect.forkChild);
+      const firstPrompt = yield* h.nextPrompt;
+      // The second turn steers, bumping context.generation and holding at the
+      // native cancel, so the first turn no longer owns the context.
+      const second = yield* h.adapter
+        .sendTurn({
+          threadId,
+          input: "Steer the turn",
+          modelSelection: { instanceId, model: nativeAlternative },
+        })
+        .pipe(Effect.forkChild);
+      expect(yield* h.nextCancellation).toBe(1);
+      // The superseded prompt now fails with a clean websocket close. A
+      // generation-unaware teardown would stop the shared context here and kill
+      // the steering turn instead of leaving it to run.
+      yield* Deferred.fail(
+        firstPrompt.result,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: "received 1000 (OK); then sent 1000 (OK)",
+        }),
+      );
+      yield* Deferred.succeed(h.cancelRelease, undefined);
+      const replacement = yield* h.nextPrompt;
+      expect(replacement.content).toEqual([
+        { type: "text", text: "Steer the turn" },
+        {
+          type: "text",
+          text: expect.stringContaining(`Antigravity harness, as ${nativeAlternative}`),
+        },
+      ]);
+      yield* Deferred.succeed(replacement.result, { stopReason: "end_turn" });
+      const [firstExit, secondExit] = yield* Effect.all([Fiber.await(first), Fiber.await(second)], {
+        concurrency: "unbounded",
+      });
+      expect(Exit.isFailure(firstExit)).toBe(true);
+      expect(Exit.isSuccess(secondExit)).toBe(true);
+      expect(yield* h.adapter.hasSession(threadId)).toBe(true);
+    }),
+  );
+
+  it.effect(
+    "replaces a dropped streamGenerateContent transport error with a readable message and cleans up session",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+        const sending = yield* h.adapter
+          .sendTurn({ threadId, input: "Keep going" })
+          .pipe(Effect.flip, Effect.forkChild);
+        const prompt = yield* h.nextPrompt;
+        yield* Deferred.fail(
+          prompt.result,
+          AcpErrors.AcpRequestError.internalError(
+            'model unreachable: doRequest: error sending request: Post "http://127.0.0.1:1/v1beta1/projects/redacted/locations/us/publishers/google/models/gemini-3.8-flash-high:streamGenerateContent?alt=sse": EOF',
+          ),
+        );
+        const failure = yield* Fiber.join(sending);
+        expect(failure._tag).toBe("ProviderAdapterRequestError");
+        expect(failure.message).toContain(ANTIGRAVITY_STREAM_DISCONNECTED_MESSAGE);
+        expect(failure.message).not.toContain("doRequest");
+        expect(failure.message).not.toContain("EOF");
+        expect(yield* h.adapter.hasSession(threadId)).toBe(false);
+      }),
   );
 
   it.effect("reports hidden login requests as sign-in required and clears account metadata", () =>
