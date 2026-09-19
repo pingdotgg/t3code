@@ -19,11 +19,15 @@ we may close it without merging it, or never review it.
 
 <!-- Explain the problem being solved and why this approach is the right one. -->
 
+## Owning Context
+
+<!-- Link the bug issue, Ideas discussion, or stacked PR when one exists. For maintainer-directed work without a public link, state that without adding private routing details. -->
+
 ## UI Changes
 
 <!-- If this PR changes UI, include clear before/after screenshots.
-     If the change involves motion or interaction, include a short video.
-     Delete this section if not applicable. -->
+     If the change involves motion or interaction, include a labelled "Video:" link.
+     If neither applies, keep this section and state "No visual or interaction changes." -->
 
 ## Checklist
 
