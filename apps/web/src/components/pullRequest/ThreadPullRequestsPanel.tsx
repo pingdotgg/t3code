@@ -21,11 +21,16 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
 import { pullRequestListLines, type PullRequestListLine } from "./pullRequestListLines";
 import {
-  PullRequestActorAvatar,
-  PullRequestConflictGlyph,
+  PULL_REQUEST_ROW_CLASS,
+  PULL_REQUEST_ROW_NUMBER_CLASS,
+  PullRequestRowAuthor,
+  PullRequestRowBranches,
+  PullRequestRowGlyph,
+  PullRequestRowLines,
+} from "./PullRequestListRow";
+import {
   PullRequestDiffStat,
   PullRequestApprovalGlyph,
-  PullRequestStateGlyph,
   pullRequestChecksStatePresentation,
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
@@ -72,7 +77,7 @@ function LinkRow({
   const snapshot = link.snapshot;
   return (
     <div
-      className="group/pr-row flex items-center gap-2 rounded-md py-1 pr-1 hover:bg-accent/60"
+      className={cn(PULL_REQUEST_ROW_CLASS, "hover:bg-accent/60")}
       // Each layer steps in under the one it targets. The step is capped: beyond a few layers
       // the indent only says "still in the stack", which the connector line already does, and
       // a sixteen-layer stack would otherwise stair-step off the right edge.
@@ -85,91 +90,91 @@ function LinkRow({
           className="size-4 shrink-0 text-muted-foreground"
         />
       ) : (
-        <span className="flex shrink-0 items-center gap-1">
-          <PullRequestStateGlyph state={snapshot.state} isDraft={snapshot.isDraft} />
-          <PullRequestConflictGlyph
-            state={snapshot.state}
-            isDraft={snapshot.isDraft}
-            baseBranch={snapshot.baseBranch}
-            {...(snapshot.mergeability ? { mergeability: snapshot.mergeability } : {})}
-          />
-        </span>
+        <PullRequestRowGlyph
+          state={snapshot.state}
+          isDraft={snapshot.isDraft}
+          mergeability={snapshot.mergeability}
+          baseBranch={snapshot.baseBranch}
+        />
       )}
       <a
         href={link.url}
         onClick={(event) => openPrLink(event, link.url, threadRef)}
-        className="min-w-0 flex-1"
+        className="flex min-w-0 flex-1"
       >
-        <span className="flex min-w-0 items-center gap-1.5">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground" />
-              }
-            >
-              #{link.number}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {SOURCE_LABELS[link.source]} · {formatRelativeTimeLabel(link.linkedAt)}
-            </TooltipPopup>
-          </Tooltip>
-          <span className="min-w-0 flex-1 truncate text-sm">
-            {snapshot?.title ?? link.repository}
-          </span>
-          {/* Match the full PR list: review verdict, checks, then diff counts.
-              Each is absent rather than neutral when the
-              host said nothing, so a row without them reads as unknown, not as fine. */}
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px]">
-            {snapshot?.state === "open" &&
-            (snapshot.reviewDecision === "approved" ||
-              snapshot.reviewDecision === "changes-requested") ? (
-              snapshot.reviewDecision === "approved" ? (
-                <PullRequestApprovalGlyph />
-              ) : (
-                <span className="text-amber-600/90 dark:text-amber-400/80">Changes requested</span>
-              )
-            ) : null}
-            {snapshot?.checksState ? <ChecksGlyph state={snapshot.checksState} /> : null}
-            <PullRequestDiffStat
-              additions={snapshot?.additions ?? 0}
-              deletions={snapshot?.deletions ?? 0}
-              className="font-mono"
-            />
-          </span>
-        </span>
-        <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-          {stack ? (
+        <PullRequestRowLines
+          number={
             <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex shrink-0 items-center gap-0.5 text-foreground/70" />
-                }
-              >
-                <PullRequestGlyph.stack aria-hidden className="size-3" />
-                {stack.size}
+              <TooltipTrigger render={<span className={PULL_REQUEST_ROW_NUMBER_CLASS} />}>
+                #{link.number}
               </TooltipTrigger>
               <TooltipPopup>
-                {stack.kind === "native"
-                  ? `GitHub stack of ${stack.size}: merging a layer lands the ones below it.`
-                  : `${stack.size} pull requests chained by base branch.`}
+                {SOURCE_LABELS[link.source]} · {formatRelativeTimeLabel(link.linkedAt)}
               </TooltipPopup>
             </Tooltip>
-          ) : null}
-          {snapshot?.author ? (
-            <span className="inline-flex shrink-0 items-center gap-1">
-              <PullRequestActorAvatar actor={snapshot.author} className="size-3.5" />
-              <span className="max-w-28 truncate">{snapshot.author.login}</span>
-            </span>
-          ) : null}
-          <span className="truncate font-mono">
-            {snapshot !== null
-              ? `${snapshot.headBranch} → ${snapshot.baseBranch}`
-              : `${link.host}/${link.repository}`}
-          </span>
-          {snapshot?.updatedAt ? (
-            <span className="ml-auto shrink-0">{formatRelativeTimeLabel(snapshot.updatedAt)}</span>
-          ) : null}
-        </span>
+          }
+          title={snapshot?.title ?? link.repository}
+          // Match the full PR list: review verdict, checks, then diff counts. Each is absent
+          // rather than neutral when the host said nothing, so a row without them reads as
+          // unknown, not as fine.
+          status={
+            <>
+              {snapshot?.state === "open" &&
+              (snapshot.reviewDecision === "approved" ||
+                snapshot.reviewDecision === "changes-requested") ? (
+                snapshot.reviewDecision === "approved" ? (
+                  <PullRequestApprovalGlyph />
+                ) : (
+                  <span className="text-amber-600/90 dark:text-amber-400/80">
+                    Changes requested
+                  </span>
+                )
+              ) : null}
+              {snapshot?.checksState ? <ChecksGlyph state={snapshot.checksState} /> : null}
+              <PullRequestDiffStat
+                additions={snapshot?.additions ?? 0}
+                deletions={snapshot?.deletions ?? 0}
+                className="font-mono"
+              />
+            </>
+          }
+          meta={
+            <>
+              {stack ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className="inline-flex shrink-0 items-center gap-0.5 text-foreground/70" />
+                    }
+                  >
+                    <PullRequestGlyph.stack aria-hidden className="size-3" />
+                    {stack.size}
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {stack.kind === "native"
+                      ? `GitHub stack of ${stack.size}: merging a layer lands the ones below it.`
+                      : `${stack.size} pull requests chained by base branch.`}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+              {snapshot?.author ? (
+                <PullRequestRowAuthor
+                  actor={snapshot.author}
+                  className="shrink-0"
+                  labelClassName="max-w-28"
+                />
+              ) : null}
+              {snapshot !== null ? (
+                <PullRequestRowBranches head={snapshot.headBranch} base={snapshot.baseBranch} />
+              ) : (
+                <span className="truncate font-mono">
+                  {link.host}/{link.repository}
+                </span>
+              )}
+            </>
+          }
+          updatedAt={snapshot?.updatedAt}
+        />
       </a>
       <Menu>
         <MenuTrigger
