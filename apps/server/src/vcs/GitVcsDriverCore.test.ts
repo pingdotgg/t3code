@@ -28,6 +28,7 @@ import {
   type ReviewDiffFileContentsInput,
 } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { gitCommandDuration } from "../observability/Metrics.ts";
 import {
   makeGitVcsDriverCore,
@@ -43,6 +44,7 @@ const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
 });
 const TestLayer = GitVcsDriver.layer.pipe(
   Layer.provide(ServerConfigLayer),
+  Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -2166,6 +2168,37 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("places default worktrees under the configured directory", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const worktreesRoot = yield* makeTmpDir("git-configured-worktrees-");
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* settings.updateSettings({ worktreesDirectory: worktreesRoot });
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "feature/configured-root",
+        });
+
+        const worktreePath = path.join(
+          worktreesRoot,
+          path.basename(cwd),
+          "feature-configured-root",
+        );
+        assert.equal(
+          yield* git(worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"]),
+          "feature/configured-root",
+        );
+        assert.isTrue(yield* fs.exists(path.join(worktreePath, "README.md")));
+      }),
+    );
+
     it.effect("uses parallel checkout without skipping filters or hooks", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

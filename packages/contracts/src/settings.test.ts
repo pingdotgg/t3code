@@ -797,6 +797,17 @@ describe("ServerSettings worktree defaults", () => {
       decodeServerSettingsPatch({ newWorktreesStartFromOrigin: false }).newWorktreesStartFromOrigin,
     ).toBe(false);
   });
+
+  it("defaults worktrees directory to empty so the environment data dir wins", () => {
+    expect(decodeServerSettings({}).worktreesDirectory).toBe("");
+  });
+
+  it("accepts a worktrees directory update", () => {
+    expect(
+      decodeServerSettingsPatch({ worktreesDirectory: "D:\\dev\\t3\\worktrees" })
+        .worktreesDirectory,
+    ).toBe("D:\\dev\\t3\\worktrees");
+  });
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {
@@ -860,6 +871,7 @@ describe("ServerSettingsPatch string normalization", () => {
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({
       addProjectBaseDirectory: "  ~/Development  ",
+      worktreesDirectory: "  D:\\dev\\t3\\worktrees  ",
       textGenerationModelSelection: { model: "  gpt-5.4-mini  " },
       observability: {
         otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
@@ -881,6 +893,7 @@ describe("ServerSettingsPatch string normalization", () => {
     });
 
     expect(patch.addProjectBaseDirectory).toBe("~/Development");
+    expect(patch.worktreesDirectory).toBe("D:\\dev\\t3\\worktrees");
     expect(patch.textGenerationModelSelection?.model).toBe("gpt-5.4-mini");
     expect(patch.observability?.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
     expect(patch.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
@@ -902,6 +915,7 @@ describe("ServerSettingsPatch string normalization", () => {
     const encoded = encodeServerSettings({
       ...defaultSettings,
       addProjectBaseDirectory: "  ~/Development  ",
+      worktreesDirectory: "  ~/t3-worktrees  ",
       providers: {
         ...defaultSettings.providers,
         codex: {
@@ -913,6 +927,7 @@ describe("ServerSettingsPatch string normalization", () => {
     });
 
     expect(encoded.addProjectBaseDirectory).toBe("~/Development");
+    expect(encoded.worktreesDirectory).toBe("~/t3-worktrees");
     expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
     expect(encoded.providers?.codex?.launchArgs).toBe("--strict-config");
   });
