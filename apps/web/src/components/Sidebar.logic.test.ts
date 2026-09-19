@@ -12,6 +12,7 @@ import {
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
+  formatSidebarThreadAccessibleStatus,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
@@ -69,6 +70,32 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("formatSidebarThreadAccessibleStatus", () => {
+  it("summarizes every active state for the card description", () => {
+    expect(
+      formatSidebarThreadAccessibleStatus({
+        hasUnsentDraft: true,
+        isPinned: true,
+        isRegeneratingTitle: true,
+        statusLabel: "Working",
+        terminalLabel: "2 terminal processes running",
+      }),
+    ).toBe("Unsent draft, Pinned, Regenerating title, Working, 2 terminal processes running");
+  });
+
+  it("omits the description when the card has no active state", () => {
+    expect(
+      formatSidebarThreadAccessibleStatus({
+        hasUnsentDraft: false,
+        isPinned: false,
+        isRegeneratingTitle: false,
+        statusLabel: null,
+        terminalLabel: null,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("animateSidebarLayoutChanges", () => {
   const baseArgs: Parameters<AnimateLayoutChanges>[0] = {
