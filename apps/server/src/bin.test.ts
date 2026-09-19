@@ -10,7 +10,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   EnvironmentOrchestrationHttpApi,
+  EventId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
@@ -18,12 +21,17 @@ import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Stdio from "effect/Stdio";
+import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import * as CliError from "effect/unstable/cli/CliError";
+import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
@@ -38,9 +46,11 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { OrchestrationCommandInvariantError } from "./orchestration/Errors.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { writeProviderStatusCache } from "./provider/providerStatusCache.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import {
   makePersistedServerRuntimeState,
@@ -361,9 +371,25 @@ it.layer(NodeServices.layer)("project lookup with unavailable workspaces", (it) 
   );
 });
 
-const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Effect<A, E, R>) =>
+type EngineDispatch = OrchestrationEngine.OrchestrationEngineService["Service"]["dispatch"];
+
+const withLiveProjectCliServer = <A, E, R>(
+  baseDir: string,
+  run: () => Effect.Effect<A, E, R>,
+  wrapDispatch?: (dispatch: EngineDispatch) => EngineDispatch,
+) =>
   Effect.gen(function* () {
     const config = yield* makeCliTestServerConfig(baseDir);
+    const dispatchOverrideLayer =
+      wrapDispatch === undefined
+        ? Layer.empty
+        : Layer.effect(
+            OrchestrationEngine.OrchestrationEngineService,
+            Effect.map(OrchestrationEngine.OrchestrationEngineService, (engine) => ({
+              ...engine,
+              dispatch: wrapDispatch(engine.dispatch),
+            })),
+          );
     const routesLayer = HttpApiBuilder.layer(ProjectCliHttpApi).pipe(
       Layer.provide(
         orchestrationHttpApiLayer.pipe(
@@ -373,6 +399,7 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
               discard: () => Effect.void,
             }),
           ),
+          Layer.provide(dispatchOverrideLayer),
         ),
       ),
       Layer.provide(environmentAuthenticatedAuthLayer),
@@ -863,6 +890,417 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         assert.fail(`Expected UnrecognizedOption, got ${String(optionError?._tag)}`);
       }
       assert.equal(optionError.option, "--dev-url");
+    }),
+  );
+});
+
+const makeCachedProvider = (
+  instanceId: string,
+  models: ReadonlyArray<{ readonly slug: string; readonly isDefault?: boolean }>,
+): ServerProvider => ({
+  instanceId: ProviderInstanceId.make(instanceId),
+  driver: ProviderDriverKind.make(instanceId),
+  enabled: true,
+  installed: true,
+  version: null,
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-09-18T00:00:00.000Z",
+  models: models.map((model) => ({
+    slug: model.slug,
+    name: model.slug,
+    isCustom: false,
+    capabilities: null,
+    ...(model.isDefault ? { isDefault: true } : {}),
+  })),
+  slashCommands: [],
+  skills: [],
+});
+
+const withThreadStartFixture = <A, E, R>(
+  run: (input: {
+    readonly baseDir: string;
+    readonly workspaceRoot: string;
+  }) => Effect.Effect<A, E, R>,
+  wrapDispatch?: (dispatch: EngineDispatch) => EngineDispatch,
+) =>
+  Effect.gen(function* () {
+    const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-thread-state-"));
+    const workspaceRoot = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), "t3-cli-thread-workspace-"),
+    );
+    yield* runCliWithRuntime(["project", "add", workspaceRoot, "--base-dir", baseDir]);
+    const project = (yield* readPersistedSnapshot(baseDir)).projects.find(
+      (candidate) => candidate.workspaceRoot === workspaceRoot,
+    );
+    assert.isDefined(project);
+    const config = yield* makeCliTestServerConfig(baseDir);
+    yield* writeProviderStatusCache({
+      filePath: NodePath.join(config.providerStatusCacheDir, "claudeAgent.json"),
+      provider: makeCachedProvider("claudeAgent", [
+        { slug: "claude-fable-5-1", isDefault: true },
+        { slug: "claude-opus-5" },
+      ]),
+    });
+    yield* writeProviderStatusCache({
+      filePath: NodePath.join(config.providerStatusCacheDir, "codex.json"),
+      provider: makeCachedProvider("codex", [{ slug: "gpt-5.6-sol", isDefault: true }]),
+    });
+    NodeFS.writeFileSync(
+      config.settingsPath,
+      `{
+        "defaultRuntimeMode": "approval-required",
+        "defaultModelSelection": { "instanceId": "claudeAgent", "model": "claude-fable-5-1" },
+        "projectSettingsFolded": true,
+        "projectSettingsOverrides": {
+          "${project!.id}": {
+            "defaultModelSelection": { "instanceId": "claudeAgent", "model": "claude-opus-5" }
+          }
+        }
+      }`,
+    );
+    return yield* withLiveProjectCliServer(
+      baseDir,
+      () => run({ baseDir, workspaceRoot }),
+      wrapDispatch,
+    );
+  });
+
+const readProjectThreads = (workspaceRoot: string) =>
+  Effect.gen(function* () {
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const snapshot = yield* projectionSnapshotQuery.getSnapshot();
+    const project = snapshot.projects.find(
+      (candidate) => candidate.workspaceRoot === workspaceRoot,
+    );
+    return snapshot.threads.filter((thread) => thread.projectId === project?.id);
+  });
+
+it.layer(NodeServices.layer)("thread start", (it) => {
+  it.effect("starts a thread with the prompt on the provider that offers the model", () =>
+    withThreadStartFixture(({ baseDir, workspaceRoot }) =>
+      Effect.gen(function* () {
+        const { output } = yield* captureStdout(
+          runCli([
+            "thread",
+            "start",
+            workspaceRoot,
+            "Fix the flaky test",
+            "--model",
+            "claude-fable-5-1",
+            "--json",
+            "--base-dir",
+            baseDir,
+          ]),
+        );
+
+        const [thread, ...others] = yield* readProjectThreads(workspaceRoot);
+        assert.isDefined(thread);
+        assert.lengthOf(others, 0);
+        assert.deepEqual(thread!.modelSelection, {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-fable-5-1",
+        });
+        assert.equal(thread!.runtimeMode, "approval-required");
+        assert.equal(thread!.title, "Fix the flaky test");
+        assert.deepEqual(
+          thread!.messages.map((message) => [message.role, message.text]),
+          [["user", "Fix the flaky test"]],
+        );
+        assert.include(output, `"threadId":"${thread!.id}"`);
+      }),
+    ),
+  );
+
+  it.effect("reads the prompt from stdin and uses the project default model", () =>
+    withThreadStartFixture(({ baseDir, workspaceRoot }) =>
+      Effect.gen(function* () {
+        yield* runCli([
+          "thread",
+          "start",
+          workspaceRoot,
+          "-",
+          "--title",
+          "Release prep",
+          "--base-dir",
+          baseDir,
+        ]).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              CliRuntimeLayer,
+              Stdio.layerTest({
+                stdin: Stream.make(new TextEncoder().encode("Review the diff\nthen ship it\n")),
+              }),
+            ),
+          ),
+        );
+
+        const [thread] = yield* readProjectThreads(workspaceRoot);
+        assert.isDefined(thread);
+        assert.deepEqual(thread!.modelSelection, {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5",
+        });
+        assert.equal(thread!.title, "Release prep");
+        assert.equal(thread!.messages[0]?.text, "Review the diff\nthen ship it");
+      }),
+    ),
+  );
+
+  it.effect("uses the provider default model when only a provider is given", () =>
+    withThreadStartFixture(({ baseDir, workspaceRoot }) =>
+      Effect.gen(function* () {
+        yield* runCliWithRuntime([
+          "thread",
+          "start",
+          workspaceRoot,
+          "Fix the flaky test",
+          "--provider",
+          "codex",
+          "--base-dir",
+          baseDir,
+        ]);
+
+        const [thread] = yield* readProjectThreads(workspaceRoot);
+        assert.deepEqual(thread?.modelSelection, {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.6-sol",
+        });
+      }),
+    ),
+  );
+
+  it.effect("rejects unknown models and providers and lists the available ones", () =>
+    withThreadStartFixture(({ baseDir, workspaceRoot }) =>
+      Effect.gen(function* () {
+        const start = (flag: string, value: string) =>
+          runCliWithRuntime([
+            "thread",
+            "start",
+            workspaceRoot,
+            "Fix the flaky test",
+            flag,
+            value,
+            "--base-dir",
+            baseDir,
+          ]).pipe(Effect.flip);
+
+        const modelError = yield* start("--model", "claude-opus-9");
+        assert.include(modelError.message, "Model 'claude-opus-9' not found.");
+        assert.include(modelError.message, "claudeAgent/claude-opus-5");
+
+        const providerError = yield* start("--provider", "claude");
+        assert.equal(
+          providerError.message,
+          "Provider 'claude' not found. Available: claudeAgent, codex.",
+        );
+        assert.lengthOf(yield* readProjectThreads(workspaceRoot), 0);
+      }),
+    ),
+  );
+});
+
+it.layer(NodeServices.layer)("thread send", (it) => {
+  it.effect("sends a prompt to an existing thread and keeps its modes", () =>
+    withThreadStartFixture(({ baseDir, workspaceRoot }) =>
+      Effect.gen(function* () {
+        yield* runCliWithRuntime([
+          "thread",
+          "start",
+          workspaceRoot,
+          "Fix the flaky test",
+          "--base-dir",
+          baseDir,
+        ]);
+        const [created] = yield* readProjectThreads(workspaceRoot);
+        const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+        yield* engine.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make("cmd-cli-send-runtime-mode"),
+          threadId: created!.id,
+          runtimeMode: "auto-accept-edits",
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+
+        const { output } = yield* captureStdout(
+          runCli([
+            "thread",
+            "send",
+            created!.id,
+            "Now add a regression test",
+            "--json",
+            "--base-dir",
+            baseDir,
+          ]),
+        );
+
+        const [thread] = yield* readProjectThreads(workspaceRoot);
+        assert.equal(thread!.runtimeMode, "auto-accept-edits");
+        assert.deepEqual(thread!.modelSelection, created!.modelSelection);
+        assert.sameMembers(
+          thread!.messages.map((message) => message.text),
+          ["Fix the flaky test", "Now add a regression test"],
+        );
+        assert.include(output, `"threadId":"${created!.id}"`);
+      }),
+    ),
+  );
+
+  it.effect("sends right away with --now while the agent is working", () =>
+    withThreadStartFixture(({ baseDir, workspaceRoot }) =>
+      Effect.gen(function* () {
+        yield* runCliWithRuntime([
+          "thread",
+          "start",
+          workspaceRoot,
+          "Fix the flaky test",
+          "--base-dir",
+          baseDir,
+        ]);
+        const [created] = yield* readProjectThreads(workspaceRoot);
+        const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+        const now = DateTime.formatIso(yield* DateTime.now);
+        yield* engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-cli-send-now-running"),
+          threadId: created!.id,
+          session: {
+            threadId: created!.id,
+            status: "running",
+            providerName: "claudeAgent",
+            runtimeMode: created!.runtimeMode,
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+
+        yield* runCliWithRuntime([
+          "thread",
+          "send",
+          created!.id,
+          "Change of plan",
+          "--now",
+          "--base-dir",
+          baseDir,
+        ]);
+
+        const [thread] = yield* readProjectThreads(workspaceRoot);
+        assert.include(
+          thread!.messages.map((message) => message.text),
+          "Change of plan",
+        );
+      }),
+    ),
+  );
+
+  it.effect("refuses threads awaiting approval and unknown threads", () =>
+    withThreadStartFixture(({ baseDir, workspaceRoot }) =>
+      Effect.gen(function* () {
+        yield* runCliWithRuntime([
+          "thread",
+          "start",
+          workspaceRoot,
+          "Fix the flaky test",
+          "--base-dir",
+          baseDir,
+        ]);
+        const [created] = yield* readProjectThreads(workspaceRoot);
+        const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+        const now = DateTime.formatIso(yield* DateTime.now);
+        yield* engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-cli-send-approval"),
+          threadId: created!.id,
+          activity: {
+            id: EventId.make("activity-cli-send-approval"),
+            tone: "approval",
+            kind: "approval.requested",
+            summary: "Run command",
+            payload: { requestId: "req-cli-send" },
+            turnId: null,
+            createdAt: now,
+          },
+          createdAt: now,
+        });
+
+        const send = (threadId: string) =>
+          runCliWithRuntime(["thread", "send", threadId, "Keep going", "--base-dir", baseDir]).pipe(
+            Effect.flip,
+          );
+
+        assert.equal(
+          (yield* send(created!.id)).message,
+          "Thread awaits approval or answer. Resolve in T3 Code.",
+        );
+        assert.equal((yield* send("thread-missing")).message, "Thread 'thread-missing' not found.");
+        const [thread] = yield* readProjectThreads(workspaceRoot);
+        assert.lengthOf(thread!.messages, 1);
+      }),
+    ),
+  );
+});
+
+it.layer(NodeServices.layer)("thread start rollback", (it) => {
+  const startArgs = (baseDir: string, workspaceRoot: string) => [
+    "thread",
+    "start",
+    workspaceRoot,
+    "Fix the flaky test",
+    "--base-dir",
+    baseDir,
+  ];
+
+  it.effect("deletes the new thread when the server rejects the turn", () =>
+    withThreadStartFixture(
+      ({ baseDir, workspaceRoot }) =>
+        Effect.gen(function* () {
+          yield* runCliWithRuntime(startArgs(baseDir, workspaceRoot)).pipe(Effect.flip);
+
+          const threads = yield* readProjectThreads(workspaceRoot);
+          assert.lengthOf(
+            threads.filter((thread) => thread.deletedAt === null),
+            0,
+          );
+        }),
+      (dispatch) => (command, options) =>
+        command.type === "thread.turn.start"
+          ? Effect.fail(
+              new OrchestrationCommandInvariantError({
+                commandType: command.type,
+                detail: "Rejected by test.",
+              }),
+            )
+          : dispatch(command, options),
+    ),
+  );
+
+  it.effect("keeps the thread when the turn outcome is unknown", () =>
+    Effect.gen(function* () {
+      const turnAccepted = yield* Deferred.make<void>();
+      yield* withThreadStartFixture(
+        ({ baseDir, workspaceRoot }) =>
+          Effect.gen(function* () {
+            const starting = yield* Effect.forkChild(
+              runCliWithRuntime(startArgs(baseDir, workspaceRoot)).pipe(Effect.flip),
+            );
+            yield* Deferred.await(turnAccepted);
+            yield* TestClock.adjust("10 seconds");
+            yield* Fiber.join(starting);
+
+            const [thread] = yield* readProjectThreads(workspaceRoot);
+            assert.isNull(thread?.deletedAt);
+            assert.equal(thread?.messages[0]?.text, "Fix the flaky test");
+          }),
+        (dispatch) => (command, options) =>
+          command.type === "thread.turn.start"
+            ? dispatch(command, options).pipe(
+                Effect.tap(() => Deferred.succeed(turnAccepted, undefined)),
+                Effect.andThen(Effect.never),
+              )
+            : dispatch(command, options),
+      );
     }),
   );
 });
