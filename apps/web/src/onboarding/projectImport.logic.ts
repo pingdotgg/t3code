@@ -135,6 +135,23 @@ export function resolveOnboardingLandingProject<T>(
   return undefined;
 }
 
+/**
+ * Splits a scan path into the folder name and the directory above it (with
+ * its trailing separator), so a picker row can keep the name visible and let
+ * the shared prefix truncate. Handles both separators because candidates
+ * come from any environment.
+ */
+export function splitOnboardingProjectPath(path: string): {
+  readonly name: string;
+  readonly parent: string;
+} {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (trimmed.length === 0) return { name: path, parent: "" };
+  if (separatorIndex < 0) return { name: trimmed, parent: "" };
+  return { name: trimmed.slice(separatorIndex + 1), parent: trimmed.slice(0, separatorIndex + 1) };
+}
+
 /** Paths identify projects only within the computer that owns them. */
 export function onboardingProjectKey(environmentId: EnvironmentId, path: string): string {
   return JSON.stringify([environmentId, path]);
