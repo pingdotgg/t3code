@@ -1,5 +1,6 @@
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import * as Schema from "effect/Schema";
 
 import * as AcpSchema from "./_generated/schema.gen.ts";
 import { AGENT_METHODS, CLIENT_METHODS } from "./_generated/meta.gen.ts";
@@ -100,6 +101,20 @@ const ElicitationRpc = Rpc.make(CLIENT_METHODS.session_elicitation, {
   error: AcpSchema.Error,
 });
 
+// The pinned v0.11.3 schema predates the SDK's method name and flat response.
+// Keep its RPC for existing peers and translate the SDK alias at the boundary.
+const CreateElicitationRpc = Rpc.make("elicitation/create", {
+  payload: Schema.Unknown,
+  success: Schema.Struct({
+    action: Schema.Literals(["accept", "decline", "cancel"]),
+    content: Schema.optionalKey(
+      Schema.NullOr(Schema.Record(Schema.String, AcpSchema.ElicitationContentValue)),
+    ),
+    _meta: AcpSchema.ElicitationResponse.fields._meta,
+  }),
+  error: AcpSchema.Error,
+});
+
 const CreateTerminalRpc = Rpc.make(CLIENT_METHODS.terminal_create, {
   payload: AcpSchema.CreateTerminalRequest,
   success: AcpSchema.CreateTerminalResponse,
@@ -150,6 +165,7 @@ export const ClientRpcs = RpcGroup.make(
   WriteTextFileRpc,
   RequestPermissionRpc,
   ElicitationRpc,
+  CreateElicitationRpc,
   CreateTerminalRpc,
   TerminalOutputRpc,
   ReleaseTerminalRpc,
