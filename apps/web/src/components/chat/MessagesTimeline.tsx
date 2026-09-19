@@ -1008,7 +1008,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onContentOverflowChange(measureContentOverflow());
     });
   }, [measureContentOverflow, onContentOverflowChange]);
-  useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   // Content can settle without firing a scroll event: late row measurement
   // (markdown/images hydrating after a thread switch or a streamed turn),
   // turn completion, and restore completion all grow contentSize while
@@ -1030,11 +1029,26 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       verifyEndFrameRef.current = null;
     }
   }, []);
-  useEffect(() => cancelVerifyEndFrame, [cancelVerifyEndFrame]);
+  useEffect(
+    () => () => {
+      cancelContentOverflowFrame();
+      cancelVerifyEndFrame();
+    },
+    [cancelContentOverflowFrame, cancelVerifyEndFrame],
+  );
   const scheduleSettledEndVerification = useCallback(() => {
     if (verifyEndFrameRef.current !== null) return;
+    // The list stays mounted across thread switches; listIdentityRef flips
+    // during render, so a frame scheduled for one thread must never verify
+    // the next. Guard at fire time instead of cancelling in an effect: the
+    // stale frame self-drops and a fresh schedule in the same commit survives.
+    const scheduledKey = listIdentityRef.current;
     verifyEndFrameRef.current = requestAnimationFrame(() => {
       verifyEndFrameRef.current = null;
+      if (listIdentityRef.current !== scheduledKey) {
+        unconfirmedLeaveRef.current = false;
+        return;
+      }
       verifyLatestRef.current();
     });
   }, []);
@@ -1095,16 +1109,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     reportContentOverflow();
     scheduleSettledEndVerification();
   }, [reportContentOverflow, scheduleSettledEndVerification]);
-  // A frame scheduled for one thread must never verify the next: drop any
-  // pending confirmation when the thread changes. Declared before the
-  // scheduling effects so a fresh schedule in the same commit survives.
-  const verifiedThreadKeyRef = useRef(listIdentityKey);
-  useEffect(() => {
-    if (verifiedThreadKeyRef.current === listIdentityKey) return;
-    verifiedThreadKeyRef.current = listIdentityKey;
-    unconfirmedLeaveRef.current = false;
-    cancelVerifyEndFrame();
-  });
   // A turn landing can strand a following viewport with no further size
   // change to react to; re-check once the turn settles.
   const wasWorkingRef = useRef(isWorking);
