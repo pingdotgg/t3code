@@ -549,18 +549,52 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
+  const fileSystem = yield* FileSystem.FileSystem;
+  const targetExists = yield* fileSystem.exists(input.cwd).pipe(Effect.orElseSucceed(() => false));
+  const cleanTarget = targetExists
+    ? input.cwd
+    : Option.match(parseTargetPathAndPosition(input.cwd), {
+        onNone: () => input.cwd,
+        onSome: (pos) => pos.path,
+      });
+
   if (input.reveal === true) {
-    return yield* resolveFileManagerRevealLaunch(input.cwd, platform, env, command);
+    return yield* resolveFileManagerRevealLaunch(cleanTarget, platform, env, command);
   }
+
+  const isExplorer =
+    platform === "win32" ||
+    (command === "explorer.exe" && shouldUseWindowsHostFromWsl(platform, env));
+
+  if (isExplorer) {
+    const isFile = yield* fileSystem.stat(cleanTarget).pipe(
+      Effect.map((info) => info.type === "File"),
+      Effect.orElseSucceed(() => false),
+    );
+    if (isFile) {
+      const hasPowerShell =
+        platform === "win32"
+          ? yield* isCommandAvailable(resolvePowerShellPath(env), { env })
+          : yield* isCommandAvailable(WSL_POWERSHELL_COMMAND, { env });
+      if (hasPowerShell) {
+        return yield* resolveFileManagerRevealLaunch(cleanTarget, platform, env, command);
+      }
+    }
+  }
+
+  const target =
+    platform === "win32" || (command === "explorer.exe" && env.WSL_DISTRO_NAME === undefined)
+      ? normalizeWindowsFileManagerPath(cleanTarget)
+      : cleanTarget;
 
   return {
     editor: editorDef.id,
-    target: input.cwd,
+    target: cleanTarget,
     command,
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
-        ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
-        : [input.cwd],
+        ? [resolveWslFileManagerPath(cleanTarget, env.WSL_DISTRO_NAME)]
+        : [target],
   };
 });
 
