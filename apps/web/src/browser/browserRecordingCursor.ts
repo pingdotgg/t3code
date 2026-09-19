@@ -197,6 +197,14 @@ export const attachRecordingCursorCompositor = async (input: {
   readonly frameRate: number;
 }): Promise<RecordingCursorCompositor | null> => {
   let video: HTMLVideoElement | null = null;
+  let startupStage = "read capture track settings";
+  const fallback = (reason: string): null => {
+    console.warn(
+      `[browser recording] Cursor compositor unavailable: ${reason}; using raw capture.`,
+    );
+    if (video) video.srcObject = null;
+    return null;
+  };
   try {
     const settings = input.stream.getVideoTracks()[0]?.getSettings();
     const canvasWidth = settings?.width;
@@ -207,19 +215,23 @@ export const attachRecordingCursorCompositor = async (input: {
       !isPositiveFinite(canvasWidth) ||
       !isPositiveFinite(canvasHeight)
     ) {
-      return null;
+      return fallback("missing or invalid capture track dimensions");
     }
+    startupStage = "create video element";
     video = document.createElement("video");
-    if (typeof video.requestVideoFrameCallback !== "function") return null;
+    if (typeof video.requestVideoFrameCallback !== "function") {
+      return fallback("requestVideoFrameCallback is unsupported");
+    }
     const element = video;
     element.muted = true;
     element.srcObject = input.stream;
 
+    startupStage = "create canvas";
     const canvas = document.createElement("canvas");
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
     const context = canvas.getContext("2d", { alpha: false });
-    if (!context) return null;
+    if (!context) return fallback("2D canvas context is unavailable");
 
     let disposed = false;
     let frameHandle: number | null = null;
@@ -273,7 +285,6 @@ export const attachRecordingCursorCompositor = async (input: {
         scheduleNextFrame();
       });
     };
-    scheduleNextFrame();
 
     const scheduleAnimation = (): void => {
       animationDeadline = Math.max(
@@ -291,7 +302,7 @@ export const attachRecordingCursorCompositor = async (input: {
       };
       animationTimer = window.setTimeout(tick, interval);
     };
-    let failed = false;
+    let failureReason: string | null = null;
     let output: MediaStream | null = null;
     // Shared by dispose, the startup-failure path, and the catch below.
     let teardown: (() => void) | null = null;
@@ -313,26 +324,30 @@ export const attachRecordingCursorCompositor = async (input: {
     };
 
     try {
+      startupStage = "requestVideoFrameCallback";
+      scheduleNextFrame();
+      startupStage = "video play()";
       // play() resolves only once a frame arrives; guest frames can be slow to
       // start, so bound the wait and fall back to the raw stream instead of
       // stalling recording startup.
-      void element.play().catch(() => {
+      void element.play().catch((cause) => {
         if (resolveFirstFrame === null) return;
-        failed = true;
+        failureReason = `video play() rejected: ${String(cause)}`;
         resolveFirstFrame();
         resolveFirstFrame = null;
       });
       const timeoutId = window.setTimeout(() => {
         // Timed out waiting for the first frame: fall back to the raw stream
         // rather than hand the recorder a canvas that may never paint.
-        failed = true;
+        failureReason = "first captured frame timed out";
         resolveFirstFrame?.();
         resolveFirstFrame = null;
       }, FIRST_FRAME_TIMEOUT_MS);
       await firstFrame;
       window.clearTimeout(timeoutId);
-      if (failed) return null;
+      if (failureReason) return fallback(failureReason);
 
+      startupStage = "captureStream()";
       output = canvas.captureStream(input.frameRate);
       return {
         stream: output,
@@ -340,10 +355,9 @@ export const attachRecordingCursorCompositor = async (input: {
       };
     } finally {
       // A captureStream throw leaves the loop and subscription with no owner.
-      if (failed || output === null) teardown();
+      if (failureReason || output === null) teardown();
     }
-  } catch {
-    if (video) video.srcObject = null;
-    return null;
+  } catch (cause) {
+    return fallback(`${startupStage} threw: ${String(cause)}`);
   }
 };
