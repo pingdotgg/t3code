@@ -701,6 +701,29 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("retries instead of blocking while the cloud session has not loaded", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [Response.json(DESCRIPTOR), accessToken("loaded-token")],
+      });
+      yield* Ref.set(harness.session, Option.none());
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const pending = yield* remote
+          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.flip);
+        expect(pending).toMatchObject({
+          _tag: "ConnectionTransientError",
+          reason: "session-pending",
+        });
+        yield* Ref.set(harness.session, Option.some({ accountId: "account-1" }));
+        const loaded = yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
+        expect(loaded.httpAuthorization.accessToken).toBe("loaded-token");
+      }).pipe(Effect.provide(harness.layer));
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+    }),
+  );
+
   it.effect("does not return or persist credentials after logout during renewal", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
@@ -822,8 +845,8 @@ describe("RemoteEnvironmentAuthorization", () => {
           .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
           .pipe(Effect.flip);
         expect(signedOut).toMatchObject({
-          _tag: "ConnectionBlockedError",
-          reason: "authentication",
+          _tag: "ConnectionTransientError",
+          reason: "session-pending",
         });
         yield* Ref.set(harness.session, Option.some({ accountId: "account-1" }));
         const signedIn = yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
