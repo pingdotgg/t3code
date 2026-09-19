@@ -57,3 +57,25 @@ it.effect("includes root and nested directory allocations even without files", (
     expect(yield* measureWorktreeBytes(root)).toBe(expected);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("counts internally linked files once while excluding files with outside links", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cleanup-size-" });
+    const worktree = path.join(root, "worktree");
+    yield* fs.makeDirectory(worktree);
+    const local = path.join(worktree, "local");
+    const shared = path.join(worktree, "shared");
+    yield* fs.writeFile(local, new Uint8Array(8192));
+    yield* fs.link(local, path.join(worktree, "local-link"));
+    yield* fs.writeFile(shared, new Uint8Array(16384));
+    yield* fs.link(shared, path.join(worktree, "shared-link"));
+    yield* fs.link(shared, path.join(root, "outside-link"));
+    const expected = yield* Effect.promise(
+      async () =>
+        ((await NodeFSP.lstat(worktree)).blocks + (await NodeFSP.lstat(local)).blocks) * 512,
+    );
+    expect(yield* measureWorktreeBytes(worktree)).toBe(expected);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
