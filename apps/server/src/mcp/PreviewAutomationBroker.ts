@@ -352,6 +352,10 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     completeStream = false,
   ) {
     yield* SynchronizedRef.modifyEffect(state, (current) => {
+      // Retired generations were already closed by their replacement or eviction.
+      if (current.clients.get(clientId)?.queue !== queue) {
+        return Effect.succeed([undefined, current] as const);
+      }
       const removed = removeConnectionFromState(current, clientId, queue);
       return closeConnection(queue, removed.disconnected, completeStream).pipe(
         Effect.as([undefined, removed.state] as const),
