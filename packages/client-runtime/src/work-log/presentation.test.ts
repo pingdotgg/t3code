@@ -422,6 +422,31 @@ describe("browser group summaries", () => {
   });
 });
 
+describe("task group summaries", () => {
+  const agentTask: WorkLogPresentationEntry = {
+    label: "Started agent",
+    taskId: "task-1",
+    tone: "tool",
+  };
+  // A foreground Bash call Claude promoted to a local_bash task: same row
+  // shape as a subagent, stamped background by the server.
+  const backgroundTask: WorkLogPresentationEntry = {
+    label: "Run the test suite",
+    taskId: "task-2",
+    isBackgroundTask: true,
+    tone: "tool",
+  };
+
+  it("keeps agent chrome for subagent lifecycle rows", () => {
+    expect(toolGroupSummaryKind([agentTask])).toBe("agent-tool");
+  });
+
+  it("does not present a background task as an agent", () => {
+    expect(toolGroupSummaryKind([backgroundTask])).toBe("tone-tool");
+    expect(toolGroupSummaryKind([backgroundTask, backgroundTask])).toBe("tone-tool");
+  });
+});
+
 describe("command work-log details", () => {
   it("extracts Claude result blocks and projected output", () => {
     expect(
