@@ -476,7 +476,7 @@ function startAnnotation(): void {
   const editor = document.createElement("div");
   editor.setAttribute(OVERLAY_ATTRIBUTE, "");
   editor.className =
-    "pointer-events-auto fixed hidden max-h-[calc(100vh-16px)] w-[min(360px,calc(100vw-16px))] flex-col overflow-hidden rounded-xl border border-border bg-popover/96 text-popover-foreground shadow-2xl backdrop-blur-xl";
+    "pointer-events-auto fixed hidden max-h-[calc(100vh-16px)] w-[min(360px,calc(100vw-16px))] flex-col overflow-hidden rounded-xl border border-primary/60 bg-popover/96 text-popover-foreground shadow-2xl backdrop-blur-xl";
   editor.style.zIndex = String(CHROME_LAYER_Z_INDEX);
   root.appendChild(editor);
 

@@ -29,7 +29,17 @@ const compilerInput = [
   annotationSource.replace('@import "tailwindcss";', "@tailwind utilities;"),
 ].join("\n");
 const compiler = await compile(compilerInput, { base: appRoot });
-const css = compiler.build([...candidates]);
+// Tailwind registers its `--tw-*` defaults with `@property`, which browsers
+// ignore inside a shadow tree, and only emits the `*` fallback for engines
+// that lack `@property`. The overlay lives in a shadow root, so lift that
+// fallback out of its `@supports` guard: without it `border`, `shadow-*`
+// and `ring-*` silently render nothing.
+const css = compiler
+  .build([...candidates])
+  .replace(/(@layer properties \{\n)  @supports [^\n]*\{\n([\s\S]*?)\n  \}\n(\})/, "$1$2\n$3");
+if (css.includes("@supports ((-webkit-hyphens")) {
+  throw new Error("Tailwind @property fallback was not unwrapped; update the pattern above.");
+}
 const encodedCss = `'${css
   .replaceAll("\\", "\\\\")
   .replaceAll("'", "\\'")
