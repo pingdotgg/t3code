@@ -18,6 +18,8 @@ export interface CreateAdvertisedEndpointInput {
   readonly source: AdvertisedEndpointSource;
   readonly status?: AdvertisedEndpointStatus;
   readonly isDefault?: boolean;
+  /** Network interface this endpoint's address belongs to (LAN endpoints only). */
+  readonly interfaceName?: string;
   readonly description?: string;
 }
 
@@ -73,6 +75,7 @@ export function createAdvertisedEndpoint(input: CreateAdvertisedEndpointInput): 
     source: input.source,
     status: input.status ?? "available",
     ...(input.isDefault === undefined ? {} : { isDefault: input.isDefault }),
+    ...(input.interfaceName === undefined ? {} : { interfaceName: input.interfaceName }),
     ...(input.description === undefined ? {} : { description: input.description }),
   };
 }

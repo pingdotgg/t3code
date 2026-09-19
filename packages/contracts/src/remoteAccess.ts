@@ -63,6 +63,8 @@ export const AdvertisedEndpoint = Schema.Struct({
   source: AdvertisedEndpointSource,
   status: AdvertisedEndpointStatus,
   isDefault: Schema.optional(Schema.Boolean),
+  /** Network interface this endpoint's address belongs to (LAN endpoints only). */
+  interfaceName: Schema.optional(Schema.String),
   description: Schema.optional(TrimmedNonEmptyString),
 });
 export type AdvertisedEndpoint = typeof AdvertisedEndpoint.Type;
