@@ -63,6 +63,13 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "unknown thread",
   "does not exist",
   "no rollout found",
+  // The provider-side history itself is unreadable (e.g. a corrupt local
+  // thread store: "failed to list thread history ... database disk image
+  // is malformed"). Resuming is impossible, but a fresh thread can still
+  // continue from T3's own persisted conversation history.
+  "failed to list thread history",
+  "thread-store internal error",
+  "database disk image is malformed",
 ];
 // `thread/resume` fans out to `list_turns` inside the Codex app-server
 // (openai/codex#37754). Version-skewed daemons answer `-32601` with

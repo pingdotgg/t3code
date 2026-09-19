@@ -878,6 +878,19 @@ describe("isRecoverableThreadResumeError", () => {
     );
   });
 
+  it("matches unreadable provider thread history", () => {
+    NodeAssert.equal(
+      isRecoverableThreadResumeError(
+        new CodexErrors.CodexAppServerRequestError({
+          code: -32603,
+          errorMessage:
+            "failed to list thread history: thread-store internal error: failed to access thread history: error returned from database: (code: 11) database disk image is malformed",
+        }),
+      ),
+      true,
+    );
+  });
+
   it("ignores non-recoverable resume errors", () => {
     NodeAssert.equal(
       isRecoverableThreadResumeError(
