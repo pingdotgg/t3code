@@ -3,7 +3,9 @@ import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
-import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
+import { selfConsistentPastedPullRequestNumber } from "@t3tools/shared/composerContextReferences";
+import { LoaderCircleIcon, MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
+import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "~/composerDraftStore";
@@ -18,7 +20,9 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import {
   fileContextReference,
   imageContextReference,
+  isPendingPullRequestReferenceContext,
   isPullRequestSummaryContext,
+  pendingPullRequestReferenceNumber,
   pullRequestContextDisplayState,
   pullRequestContextKindLabel,
   previewAnnotationContextId,
@@ -328,6 +332,34 @@ function UnresolvedContextChip(props: { label: string }) {
   );
 }
 
+/**
+ * A pasted PR reference while its summary loads. Neutral dark chip (never a
+ * state tone, so it can't read as open/merged/closed) with a soft-white
+ * spinner in the same fixed-size icon slot the loaded chip uses.
+ */
+function PendingPullRequestChip(props: { number: number }) {
+  return (
+    <ContextChipShell
+      icon={
+        <LoaderCircleIcon
+          ref={observeVisibleAnimation}
+          className={cn(
+            COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+            "size-3.5 opacity-80 motion-safe:visible-animate-spin",
+          )}
+          aria-hidden
+        />
+      }
+      label={`#${props.number}`}
+      className={COMPOSER_INLINE_CHIP_CLASS_NAME}
+      labelClassName={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}
+      aria-label={`Resolving pull request #${props.number}`}
+      tooltip={`Resolving PR #${props.number}…`}
+      tooltipClassName="max-w-80 leading-tight"
+    />
+  );
+}
+
 interface ComposerContextRenderContext {
   label: string;
 }
@@ -378,6 +410,11 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
       render: (entry, context, definition) => {
         if (entry.kind !== "review-comment") {
           return <UnresolvedContextChip label={context.label} />;
+        }
+        if (isPendingPullRequestReferenceContext(entry.record)) {
+          return (
+            <PendingPullRequestChip number={pendingPullRequestReferenceNumber(entry.record)} />
+          );
         }
         const isPullRequest = isPullRequestSummaryContext(entry.record);
         const pullRequestState = pullRequestContextDisplayState(entry.record) ?? "unknown";
@@ -459,6 +496,13 @@ export function ComposerContextReferenceChip(props: {
   label: string;
 }): ReactElement {
   const records = use(ComposerContextRecordsContext);
+  // A pasted `pr-reference` link has no draft record until the resolver creates
+  // one. Show the loader immediately instead of flashing "unavailable".
+  // Malformed links (label disagrees with the ref) fall through to unresolved.
+  if (props.kind === "review-comment" && records.get(props.contextId) === undefined) {
+    const pastedNumber = selfConsistentPastedPullRequestNumber(props.label, props.contextId);
+    if (pastedNumber !== null) return <PendingPullRequestChip number={pastedNumber} />;
+  }
   return composerContextPresentationRegistry.render(props.kind, records.get(props.contextId), {
     label: props.label,
   });

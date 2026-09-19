@@ -8,8 +8,11 @@ import {
   formatComposerContextReference,
   parseComposerContextHref,
   projectComposerContextForProvider,
+  pullRequestNumberFromPastedContextId,
   replaceComposerContextReferences,
+  rewritePastedPullRequestMarkers,
   sanitizeComposerContextLabel,
+  selfConsistentPastedPullRequestNumber,
 } from "./composerContextReferences.ts";
 
 const ctx = (value: string) => value as ComposerContextId;
@@ -261,5 +264,62 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="terminal" id="ctx_t" unavailable="true"/>');
     expect(projected).not.toContain("another payload");
     expect(projected).not.toContain("boom");
+  });
+});
+
+describe("pasted pull-request references", () => {
+  it("extracts the number from a folded pr-reference context id", () => {
+    expect(
+      pullRequestNumberFromPastedContextId("review-comment_pr-reference-11420-c3ac9552f23277bd"),
+    ).toBe(11420);
+    expect(pullRequestNumberFromPastedContextId("review-comment_ctx_1")).toBeNull();
+    expect(
+      pullRequestNumberFromPastedContextId("review-comment_pr-reference-0-abcdef12"),
+    ).toBeNull();
+  });
+
+  it.each([
+    "prefix_review-comment_pr-reference-11420-c3ac9552f23277bd",
+    "review-comment_pr-reference-11420-c3ac9552f23277bd_suffix",
+    "review-comment_pr-reference-11420-c3ac9552f23277bdz",
+  ])("rejects a noncanonical PR reference ID: %s", (contextId) => {
+    expect(pullRequestNumberFromPastedContextId(contextId)).toBeNull();
+    expect(selfConsistentPastedPullRequestNumber("#11420", contextId)).toBeNull();
+    const marker = `[Review comment: #11420; ref=${contextId}]`;
+    expect(rewritePastedPullRequestMarkers(marker)).toBe(marker);
+  });
+
+  it("rewrites provider markers into canonical links", () => {
+    const pasted =
+      "See [Review comment: #11420; ref=review-comment_pr-reference-11420-c3ac9552f23277bd] please";
+    const rewritten = rewritePastedPullRequestMarkers(pasted);
+    expect(rewritten).toBe(
+      "See [#11420](t3-context://v1/review-comment/review-comment_pr-reference-11420-c3ac9552f23277bd) please",
+    );
+    expect(collectComposerContextReferences(rewritten)).toHaveLength(1);
+  });
+
+  it("leaves prose and non-PR markers alone", () => {
+    expect(rewritePastedPullRequestMarkers("plain prose")).toBe("plain prose");
+    const image = "[Image: shot.png; ref=image_abc]";
+    expect(rewritePastedPullRequestMarkers(image)).toBe(image);
+  });
+
+  it("leaves malformed markers (label disagrees with the ref) as plain text", () => {
+    const malformed =
+      "[Review comment: #11410; ref=review-comment_pr-reference-11430-c3ac9552f23277bd]";
+    expect(rewritePastedPullRequestMarkers(malformed)).toBe(malformed);
+    expect(
+      selfConsistentPastedPullRequestNumber(
+        "#11410",
+        "review-comment_pr-reference-11430-c3ac9552f23277bd",
+      ),
+    ).toBeNull();
+    expect(
+      selfConsistentPastedPullRequestNumber(
+        "#11430",
+        "review-comment_pr-reference-11430-c3ac9552f23277bd",
+      ),
+    ).toBe(11430);
   });
 });

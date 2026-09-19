@@ -9,6 +9,7 @@ import {
   collectComposerContextReferences,
   formatComposerContextReference,
   replaceComposerContextReferences,
+  rewritePastedPullRequestMarkers,
 } from "@t3tools/shared/composerContextReferences";
 /** Clipboard records referenced by the copied text, including dependent screenshots. */
 export function readPastedComposerContext(
@@ -48,12 +49,16 @@ export function importPastedComposerText(
   ) => ReadonlyMap<string, string>,
 ): string {
   const pastedText = clipboardData.getData("text/plain");
+  // Plain-text provider markers (`[Review comment: ...; ref=...]`) never parse
+  // back on their own. Rewrite pasted `pr-reference` markers into canonical
+  // links first so they become chips; the resolver upgrades them in place.
+  const pastedWithPullRequests = rewritePastedPullRequestMarkers(pastedText);
   const fragment = importContextFragment ? readPastedComposerContext(clipboardData) : null;
   const rewrittenIds =
     fragment && fragment.records.length > 0 ? importContextFragment!(fragment) : null;
   const text =
     rewrittenIds && rewrittenIds.size > 0
-      ? replaceComposerContextReferences(pastedText, (occurrence) => {
+      ? replaceComposerContextReferences(pastedWithPullRequests, (occurrence) => {
           const nextId = rewrittenIds.get(occurrence.contextId);
           return nextId
             ? formatComposerContextReference({
@@ -63,6 +68,6 @@ export function importPastedComposerText(
               })
             : occurrence.source;
         })
-      : pastedText;
+      : pastedWithPullRequests;
   return text;
 }
