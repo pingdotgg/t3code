@@ -1517,7 +1517,15 @@ export const make = Effect.gen(function* () {
           ],
           { concurrency: 2 },
         );
-        return { oldContents, newContents };
+        // Echo the revisions actually read so the caller can invalidate its memo when the
+        // comparison moved under it. A root commit's new file has no parent: `baseRef` is
+        // the empty jq field there, and the echo stays absent rather than naming nothing.
+        return {
+          oldContents,
+          newContents,
+          ...(baseRef.length > 0 ? { baseSha: baseRef } : {}),
+          headSha: headRef,
+        };
       });
 
   const readLegacyDetail = (

@@ -2560,9 +2560,40 @@ layer("GitHubPullRequestCli.layer", (it) => {
         newPath: "src/root.ts",
       });
 
-      expect(contents).toEqual({ oldContents: "", newContents: "root contents\n" });
+      expect(contents).toEqual({
+        oldContents: "",
+        newContents: "root contents\n",
+        // No parent to echo: a root commit's new file leaves `baseSha` absent.
+        headSha: "a1b2c3d",
+      });
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       expect(callAt(1).args.join(" ")).toContain("contents/src/root.ts?ref=a1b2c3d");
+    }),
+  );
+
+  it.effect("echoes the revisions the host actually read", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("a1b2c3d\tb1c2d3e\n")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("before\n")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("after\n")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const contents = yield* cli.getPullRequestDiffFileContents({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        changeType: "change",
+        oldPath: "src/a.ts",
+        newPath: "src/a.ts",
+      });
+
+      expect(contents).toEqual({
+        oldContents: "before\n",
+        newContents: "after\n",
+        baseSha: "a1b2c3d",
+        headSha: "b1c2d3e",
+      });
     }),
   );
 

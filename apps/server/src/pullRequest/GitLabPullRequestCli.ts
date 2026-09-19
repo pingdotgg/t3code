@@ -1295,7 +1295,14 @@ export const make = Effect.gen(function* () {
           ],
           { concurrency: 2 },
         );
-        return { oldContents, newContents };
+        // Echo the revisions actually read (see PullRequestDiffFileContentsResult). A root
+        // commit's new file has no parent (`baseSha === ""`), which stays absent.
+        return {
+          oldContents,
+          newContents,
+          ...(refs.baseSha.length > 0 ? { baseSha: refs.baseSha } : {}),
+          headSha: refs.headSha,
+        };
       }),
 
     getProjectMergeCapabilities: (input) =>

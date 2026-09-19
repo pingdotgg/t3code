@@ -979,6 +979,15 @@ export type PullRequestDiffFileContentsInput = typeof PullRequestDiffFileContent
 export const PullRequestDiffFileContentsResult = Schema.Struct({
   oldContents: Schema.String,
   newContents: Schema.String,
+  /**
+   * The revisions the host actually read, echoed so the caller can tell whether its
+   * cached comparison still names the same code. Optional so older servers (and hosts
+   * that cannot report revisions) keep answering contents alone: absent means "unknown",
+   * never "unchanged". A root commit's new file has no parent, so `baseSha` stays absent
+   * there rather than claiming an empty revision.
+   */
+  baseSha: Schema.optional(TrimmedNonEmptyString),
+  headSha: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestDiffFileContentsResult = typeof PullRequestDiffFileContentsResult.Type;
 
