@@ -1245,14 +1245,33 @@ it.effect(
       };
       assert.isNull(yield* driver.detectRepository(cwd));
       // The diagnostic locale is pinned so translated fatals cannot evade the
-      // signature match.
+      // signature match, and ambient Git bindings are scrubbed so discovery
+      // always reflects the workspace itself.
       assert.equal(observedEnv?.LC_ALL, "C");
+      assert.isUndefined(observedEnv?.GIT_DIR);
+      assert.isUndefined(observedEnv?.GIT_WORK_TREE);
+      assert.isUndefined(observedEnv?.GIT_COMMON_DIR);
       // The same fatal with .git metadata present means the repository is
       // broken (unreadable HEAD, broken worktree pointer), not absent.
       yield* fileSystem.makeDirectory(`${cwd}/.git`, { recursive: true });
       const brokenError = yield* driver.detectRepository(cwd).pipe(Effect.flip);
       assert.equal(brokenError._tag, "VcsProcessExitError");
       yield* fileSystem.remove(`${cwd}/.git`, { recursive: true });
+      // A dangling .git symlink is still metadata: exists() resolves its
+      // missing target, but the entry itself must count as evidence.
+      yield* fileSystem.symlink(`${cwd}/missing-target`, `${cwd}/.git`);
+      const danglingError = yield* driver.detectRepository(cwd).pipe(Effect.flip);
+      assert.equal(danglingError._tag, "VcsProcessExitError");
+      yield* fileSystem.remove(`${cwd}/.git`);
+      // Git resolves discovery from the physical path, so metadata on the
+      // resolved ancestry — not the lexical one — counts.
+      const real = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-detect-real-" });
+      const link = `${cwd}/linked-workspace`;
+      yield* fileSystem.makeDirectory(`${real}/.git`, { recursive: true });
+      yield* fileSystem.symlink(real, link);
+      const linkedError = yield* driver.detectRepository(link).pipe(Effect.flip);
+      assert.equal(linkedError._tag, "VcsProcessExitError");
+      yield* fileSystem.remove(`${real}/.git`, { recursive: true });
       // Other fatals (unreadable config, permission denied, I/O) mean detection
       // itself failed — they must propagate rather than report the workspace as
       // non-Git, which callers rely on to decide that no repo state exists.
