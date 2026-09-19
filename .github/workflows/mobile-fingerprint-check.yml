@@ -43,7 +43,19 @@ jobs:
 
       - id: changes
         name: Detect native fingerprint inputs
-        run: bash .github/scripts/mobile-fingerprint-changes.sh
+        run: |
+          base_sha=$(git rev-parse HEAD^1)
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          paths=$(git diff --no-renames --name-only "$base_sha" HEAD -- \
+            apps/mobile/ packages/client-runtime/ packages/contracts/ packages/shared/ \
+            assets/ scripts/ patches/ package.json pnpm-lock.yaml pnpm-workspace.yaml \
+            .github/workflows/mobile-fingerprint-check.yml)
+          if [[ -n "$paths" ]]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No native fingerprint inputs changed; clearing any stale native change label." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Setup Vite+
         if: steps.changes.outputs.relevant == 'true'
