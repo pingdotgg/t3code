@@ -309,6 +309,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     // The attempt's own resource references: cleanup touches only what this
     // attempt acquired, never a newer attempt's assignments.
     let myMic: VoiceMicController | undefined;
+    let myClient: VoiceLiveClient | undefined;
     state.starting = true;
     state.error = null;
     state.navigationStatus = null;
@@ -359,7 +360,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
         ...(myMic !== undefined ? { audioTrack: myMic.track } : {}),
         ...(deps.now !== undefined ? { now: deps.now } : {}),
       };
-      const myClient = (deps.createClient ?? createVoiceLiveClient)(options);
+      myClient = (deps.createClient ?? createVoiceLiveClient)(options);
       client = myClient;
       unsubscribeClient?.();
       unsubscribeClient = myClient.onEvent(handleEvent);
@@ -385,6 +386,10 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
         }
         return;
       }
+      // start() rejected after the client minted a broker session: close this
+      // exact client so the peer connection and broker session do not linger
+      // until a later connect overwrites the reference.
+      void myClient?.close().catch(() => {});
       state.error = toVoiceToolError(cause);
       setPhase("error");
       mic?.stop();
