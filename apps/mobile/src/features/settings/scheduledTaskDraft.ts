@@ -1,9 +1,11 @@
 import type {
   ModelSelection,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ServerConfig,
   ProjectId,
   RuntimeMode,
   ScheduledTask,
+  ScheduledTaskUpdateInput,
   ScheduledTaskUpsertSchedule,
 } from "@t3tools/contracts";
 
@@ -178,4 +180,169 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         : true,
     runtimeMode: task.runtimeMode,
   };
+}
+
+function modelSelectionKey(selection: ModelSelection): string {
+  return JSON.stringify([
+    selection.instanceId,
+    selection.model,
+    [...(selection.options ?? [])]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((option) => [option.id, option.value]),
+  ]);
+}
+
+function workspaceStrategyFromDraft(
+  draft: Pick<ScheduledTaskDraft, "workspace" | "baseRef" | "checkoutPath" | "startFromOrigin">,
+  base: OrchestrationV2ThreadLaunchWorkspaceStrategy | null = null,
+): OrchestrationV2ThreadLaunchWorkspaceStrategy {
+  // `base` carries the fields the editor cannot express — including a
+  // server-assigned branch — so they survive a save that only touched
+  // expressible fields.
+  const preservedBranch = base?.branch !== undefined ? { branch: base.branch } : {};
+  if (draft.workspace === "root") {
+    return base?.type === "root" ? base : { type: "root", ...preservedBranch };
+  }
+  if (draft.workspace === "existing_worktree") {
+    const worktreePath = draft.checkoutPath.trim();
+    return base?.type === "existing_worktree"
+      ? { ...base, worktreePath }
+      : { type: "existing_worktree", worktreePath, ...preservedBranch };
+  }
+  const baseRef = draft.baseRef.trim() || "main";
+  return base?.type === "worktree"
+    ? { ...base, baseRef, startFromOrigin: draft.startFromOrigin }
+    : { type: "worktree", baseRef, startFromOrigin: draft.startFromOrigin, ...preservedBranch };
+}
+
+// Mirrors the server's isSameSchedule: order and duplicates are irrelevant and
+// an empty/omitted weekday mask means the same as all seven days — daily.
+function weekdayKey(weekdays: ReadonlyArray<number> | undefined): string {
+  const unique = [...new Set(weekdays ?? [])].sort((x, y) => x - y);
+  if (unique.length === 0 || unique.length === 7) return "daily";
+  return unique.join(",");
+}
+
+function sameSchedule(a: ScheduledTaskUpsertSchedule, b: ScheduledTaskUpsertSchedule): boolean {
+  if (a.type === "interval") {
+    return b.type === "interval" && a.everyMs === b.everyMs;
+  }
+  return (
+    b.type === "fixed_time" &&
+    a.timeOfDay === b.timeOfDay &&
+    weekdayKey(a.weekdays) === weekdayKey(b.weekdays)
+  );
+}
+
+function sameWorkspaceStrategy(
+  a: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  b: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+): boolean {
+  if (a.type !== b.type) return false;
+  if (a.type === "worktree" && b.type === "worktree") {
+    return a.baseRef === b.baseRef && a.startFromOrigin === b.startFromOrigin;
+  }
+  if (a.type === "existing_worktree" && b.type === "existing_worktree") {
+    return a.worktreePath === b.worktreePath;
+  }
+  return true;
+}
+
+// The update RPC replaces the whole strategy object, so an edit patch is
+// built on the task's live strategy rather than the open-time baseline:
+// only sub-fields the draft changed are overlaid, and a concurrent write to
+// an unedited field — including ones the editor cannot express, like a
+// server-assigned branch — survives the save.
+function workspaceStrategyEdit(
+  live: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  draft: ScheduledTaskDraft,
+  baseline: ScheduledTaskDraft,
+): OrchestrationV2ThreadLaunchWorkspaceStrategy {
+  const next = workspaceStrategyFromDraft(draft, live);
+  if (next.type === "worktree" && live.type === "worktree") {
+    return {
+      ...live,
+      baseRef: draft.baseRef.trim() !== baseline.baseRef.trim() ? next.baseRef : live.baseRef,
+      startFromOrigin:
+        draft.startFromOrigin !== baseline.startFromOrigin
+          ? next.startFromOrigin
+          : live.startFromOrigin,
+    };
+  }
+  if (next.type === "existing_worktree" && live.type === "existing_worktree") {
+    return {
+      ...live,
+      worktreePath:
+        draft.checkoutPath.trim() !== baseline.checkoutPath.trim()
+          ? next.worktreePath
+          : live.worktreePath,
+    };
+  }
+  return next;
+}
+
+/**
+ * Partial update carrying only the fields the user changed since the editor
+ * opened, scoped to the task's current project. The baseline is reconstructed
+ * from the task as it was when the editor opened — not the live row — so a
+ * concurrent edit landing mid-session is never read as a change the user
+ * made. In particular `enabled` is sent only when the user toggled it, so a
+ * stale save cannot overwrite an archive pause and resume unattended
+ * execution without an explicit re-enable. Returns null when nothing changed
+ * so callers can skip the round trip entirely.
+ */
+export function buildScheduledTaskUpdateInput(
+  draft: ScheduledTaskDraft,
+  live: ScheduledTask,
+): ScheduledTaskUpdateInput | null {
+  if (draft.task === null) return null;
+  const baseline = editDraft(draft.task);
+  const patch: {
+    -readonly [
+      K in Exclude<keyof ScheduledTaskUpdateInput, "id" | "projectId">
+    ]?: ScheduledTaskUpdateInput[K];
+  } = {};
+  const title = draft.title.trim();
+  if (title !== baseline.title.trim()) patch.title = title as ScheduledTaskUpdateInput["title"];
+  const prompt = draft.prompt.trim();
+  if (prompt !== baseline.prompt.trim()) {
+    patch.prompt = prompt as ScheduledTaskUpdateInput["prompt"];
+  }
+  if (draft.enabled !== baseline.enabled) patch.enabled = draft.enabled;
+  const schedule = scheduleFromDraft(draft.schedule);
+  const baselineSchedule = scheduleFromDraft(baseline.schedule);
+  if (
+    schedule !== null &&
+    (baselineSchedule === null || !sameSchedule(schedule, baselineSchedule))
+  ) {
+    patch.schedule = schedule;
+  }
+  const workspaceStrategy = workspaceStrategyFromDraft(draft);
+  if (!sameWorkspaceStrategy(workspaceStrategy, workspaceStrategyFromDraft(baseline))) {
+    patch.workspaceStrategy = workspaceStrategyEdit(live.workspaceStrategy, draft, baseline);
+  }
+  if (
+    draft.modelSelection !== null &&
+    (baseline.modelSelection === null ||
+      modelSelectionKey(draft.modelSelection) !== modelSelectionKey(baseline.modelSelection))
+  ) {
+    patch.modelSelection = draft.modelSelection;
+  }
+  if (draft.projectId !== null && draft.projectId !== baseline.projectId) {
+    patch.nextProjectId = draft.projectId;
+  }
+  // A binding cannot survive a real project move — the thread stays in the
+  // old project and the server rejects the mismatched pair. The form has no
+  // thread picker, so it can only ever detach, and it does so only when the
+  // patch itself re-homes the task: a binding another client committed
+  // mid-session (move + rebind) survives a stale save.
+  if (
+    patch.nextProjectId !== undefined &&
+    patch.nextProjectId !== live.projectId &&
+    live.threadId !== null
+  ) {
+    patch.threadId = null;
+  }
+  if (Object.keys(patch).length === 0) return null;
+  return { id: live.id, projectId: live.projectId, ...patch };
 }
