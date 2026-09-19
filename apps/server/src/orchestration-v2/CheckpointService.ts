@@ -287,8 +287,11 @@ export const layer: Layer.Layer<
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       Effect.flatMap(getWorkspaceSemaphore(cwd), (semaphore) => semaphore.withPermits(1)(effect));
 
-    const isGitCheckpointable = (cwd: string) =>
-      checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
+    // A false here must mean a confirmed non-Git workspace. Detection failures
+    // (process errors, timeouts) propagate so callers retry instead of treating
+    // them as "no repository", which could strand a previously captured
+    // baseline ref with no cleanup path.
+    const isGitCheckpointable = (cwd: string) => checkpointStore.isGitRepository(cwd);
 
     const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
 
@@ -612,9 +615,10 @@ export const layer: Layer.Layer<
         withWorkspaceLock(
           input.scope.cwd,
           Effect.gen(function* () {
-            // Mirrors captureBaseline: a workspace without a Git repository
-            // never stored a start ref, and resolving a driver for one here
-            // would fail this cleanup into an endless outbox retry.
+            // A confirmed non-Git workspace never stored a start ref, so skip
+            // without resolving a driver for one. Detection failures still
+            // propagate: an earlier baseline may exist, and the outbox retries
+            // until it is deleted.
             if (!(yield* isGitCheckpointable(input.scope.cwd))) {
               return;
             }
