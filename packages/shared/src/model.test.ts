@@ -14,6 +14,7 @@ import {
   toCustomModelSetting,
   getProviderOptionBooleanSelectionValue,
   getProviderOptionStringSelectionValue,
+  stripLeadingModelQualifier,
 } from "./model.ts";
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
@@ -242,5 +243,18 @@ describe("readCustomModelEntries", () => {
       name: "X",
       capabilities,
     });
+  });
+});
+
+describe("model display normalization", () => {
+  it("removes a repeated provider qualifier", () => {
+    expect(stripLeadingModelQualifier("OpenAI: GPT-5.4", "OpenAI")).toBe("GPT-5.4");
+    expect(stripLeadingModelQualifier("GitHub Copilot / Claude Haiku", "github copilot")).toBe(
+      "Claude Haiku",
+    );
+  });
+
+  it("preserves names without the provider qualifier", () => {
+    expect(stripLeadingModelQualifier("GPT-5.4", "OpenAI")).toBe("GPT-5.4");
   });
 });

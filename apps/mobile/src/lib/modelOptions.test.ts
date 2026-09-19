@@ -47,7 +47,7 @@ describe("mobile model options", () => {
         providerKey: "codex",
         providerLabel: "Codex",
         models: [
-          { key: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol", subtitle: "", isLegacy: false },
+          { key: "codex:gpt-5.6-sol", label: "GPT-5.6 Sol", subtitle: "Codex", isLegacy: false },
           { key: "codex:gpt-5.4", label: "GPT-5.4", isLegacy: true },
         ],
       },
@@ -71,7 +71,7 @@ describe("mobile model options", () => {
           auth: { status: "authenticated" },
           models: sources.map((source) => ({
             slug: `${source.id}/claude-fable-5`,
-            name: "Claude Fable 5",
+            name: `${source.label}: Claude Fable 5`,
             subProvider: source.label,
             isCustom: false,
             capabilities: null,
@@ -89,8 +89,8 @@ describe("mobile model options", () => {
     expect(options).toMatchObject(
       sources.map((source) => ({
         key: `opencode_work:${source.id}/claude-fable-5`,
-        label: "Claude Fable 5",
-        subtitle: source.label,
+        label: `Claude Fable 5 · ${source.label}`,
+        subtitle: "OpenCode Work",
         providerLabel: "OpenCode Work",
         selection: {
           instanceId: "opencode_work",
@@ -254,8 +254,8 @@ describe("mobile model options", () => {
       const [option] = buildModelOptions(unavailableConfig, selection);
       expect(option).toMatchObject({
         key: `google_work:${selection.model}`,
-        label: model.name,
-        subtitle: "Google",
+        label: `${model.name} · Google`,
+        subtitle: "Google Work",
         providerKey: "google_work",
         providerLabel: "Google Work",
         providerDriver: "antigravity",
@@ -282,6 +282,7 @@ describe("mobile model options", () => {
       const missing = options.find((option) => option.selection.model === selection.model);
       expect(missing).toMatchObject({
         label: selection.model,
+        subtitle: "Google Work",
         providerLabel: "Google Work",
         providerDriver: "antigravity",
         isUnavailable: true,

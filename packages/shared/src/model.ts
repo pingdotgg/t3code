@@ -19,6 +19,23 @@ export interface SelectableModelOption {
   aliases?: ReadonlyArray<string> | undefined;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function stripLeadingModelQualifier(
+  value: string,
+  qualifier: string | null | undefined,
+): string {
+  const trimmedQualifier = qualifier?.trim();
+  if (!trimmedQualifier) {
+    return value;
+  }
+
+  const pattern = new RegExp(`^${escapeRegExp(trimmedQualifier)}(?:\\s*[.:/-]\\s*|\\s+)`, "iu");
+  return value.replace(pattern, "").trim() || value;
+}
+
 export function createModelCapabilities(input: {
   optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
 }): ModelCapabilities {

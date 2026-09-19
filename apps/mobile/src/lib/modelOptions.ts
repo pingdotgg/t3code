@@ -6,6 +6,7 @@ import type {
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  stripLeadingModelQualifier,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -37,6 +38,15 @@ function providerDisplayLabel(provider: {
   if (provider.driver === "codex") return "Codex";
   if (provider.driver === "claudeAgent") return "Claude";
   return provider.instanceId;
+}
+
+function modelDisplayLabel(model: {
+  readonly name: string;
+  readonly subProvider?: string | undefined;
+}): string {
+  const subProvider = model.subProvider?.trim();
+  const modelName = stripLeadingModelQualifier(model.name, subProvider);
+  return subProvider ? `${modelName} · ${subProvider}` : modelName;
 }
 
 function normalizeSelectionOptions(
@@ -168,8 +178,8 @@ export function buildModelOptions(
       const key = `${provider.instanceId}:${model.slug}`;
       options.set(key, {
         key,
-        label: model.name,
-        subtitle: model.subProvider ?? "",
+        label: modelDisplayLabel(model),
+        subtitle: providerLabel,
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
@@ -215,8 +225,8 @@ export function buildModelOptions(
       });
       options.set(key, {
         key,
-        label: model?.name ?? fallbackModelSelection.model,
-        subtitle: model?.subProvider ?? "",
+        label: model ? modelDisplayLabel(model) : fallbackModelSelection.model,
+        subtitle: providerLabel,
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,
         providerDriver,
