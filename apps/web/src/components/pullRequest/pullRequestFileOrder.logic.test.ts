@@ -1,6 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
+import { buildFileDiffRenderKey, getRenderablePatch } from "../../lib/diffRendering";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 
 /** Only the path and the patch's own lines matter here; the viewer fills the rest in. */
@@ -160,5 +161,48 @@ describe("orderDiffFiles", () => {
       file("yarn.lock"),
     ];
     expect(order(files)).toEqual(order(files.toReversed()));
+  });
+
+  it("keeps both blocks of a file that turns into a symlink", () => {
+    // Git writes the type change as a deletion and an addition of the same path.
+    const patch = [
+      "diff --git a/src/b.ts b/src/b.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/src/b.ts",
+      "@@ -0,0 +1 @@",
+      "+export const b = 1;",
+      "diff --git a/AGENTS.md b/AGENTS.md",
+      "deleted file mode 100644",
+      "--- a/AGENTS.md",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-duplicated instructions",
+      "diff --git a/AGENTS.md b/AGENTS.md",
+      "new file mode 120000",
+      "--- /dev/null",
+      "+++ b/AGENTS.md",
+      "@@ -0,0 +1 @@",
+      "+CLAUDE.md",
+    ].join("\n");
+    const parsed = getRenderablePatch(patch, "type-change-order");
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+
+    const ordered = orderDiffFiles(parsed.files);
+    expect(ordered.map((entry) => `${entry.name}:${entry.type}`)).toEqual([
+      "AGENTS.md:deleted",
+      "AGENTS.md:new",
+      "src/b.ts:new",
+    ]);
+    expect(new Set(ordered.map(buildFileDiffRenderKey)).size).toBe(ordered.length);
+  });
+
+  it("reads the imports of every block a path owns", () => {
+    const rewritten = [
+      { ...file("src/a.ts"), deletionLines: ['import { b } from "./b";'] } as FileDiffMetadata,
+      file("src/a.ts", ["export const a = 1;"]),
+    ];
+    expect(order([...rewritten, file("src/b.ts")])).toEqual(["src/b.ts", "src/a.ts", "src/a.ts"]);
   });
 });

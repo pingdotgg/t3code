@@ -144,13 +144,19 @@ function testedBaseName(path: string): string {
 
 /**
  * Diff files in reading order: source in dependency order, then the tests that cover it, then
- * whatever a tool wrote.
+ * whatever a tool wrote. A path can own several blocks: Git writes a file turning into a symlink
+ * as a deletion followed by an addition of the same path. They travel together, in patch order.
  */
 export function orderDiffFiles(
   files: ReadonlyArray<FileDiffMetadata>,
 ): ReadonlyArray<FileDiffMetadata> {
-  const byPath = new Map<string, FileDiffMetadata>();
-  for (const file of files) byPath.set(resolveFileDiffPath(file), file);
+  const byPath = new Map<string, Array<FileDiffMetadata>>();
+  for (const file of files) {
+    const path = resolveFileDiffPath(file);
+    const blocks = byPath.get(path);
+    if (blocks) blocks.push(file);
+    else byPath.set(path, [file]);
+  }
   const tiers = new Map<string, DiffFileTier>();
   for (const path of byPath.keys()) tiers.set(path, diffFileTier(path));
 
@@ -168,11 +174,10 @@ export function orderDiffFiles(
 
   const imports = new Map<string, ReadonlySet<string>>();
   for (const path of sourcePaths) {
-    const file = byPath.get(path)!;
-    imports.set(
-      path,
-      importedPaths(path, [...file.additionLines, ...file.deletionLines], byModulePath, byBaseName),
-    );
+    const lines = byPath
+      .get(path)!
+      .flatMap((block) => [...block.additionLines, ...block.deletionLines]);
+    imports.set(path, importedPaths(path, lines, byModulePath, byBaseName));
   }
   const orderedSource = orderByImports(sourcePaths, imports);
 
@@ -193,5 +198,7 @@ export function orderDiffFiles(
     .filter((path) => tiers.get(path) === "generated")
     .sort((left, right) => left.localeCompare(right));
 
-  return [...orderedSource, ...orderedTests, ...orderedGenerated].map((path) => byPath.get(path)!);
+  return [...orderedSource, ...orderedTests, ...orderedGenerated].flatMap((path) =>
+    byPath.get(path)!,
+  );
 }
