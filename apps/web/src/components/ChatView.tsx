@@ -323,7 +323,6 @@ import {
 } from "../lib/composerContextRecords";
 import {
   isQueuedMessageDue,
-  latestCompletedToolActivityId,
   type QueuedComposerMessage,
   useQueuedMessages,
   useQueuedMessageStore,
@@ -7234,7 +7233,6 @@ export default function ChatView(props: ChatViewProps) {
         previewAnnotations: [],
         reviewComments: [],
         submissionIntent: "foreground",
-        queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
         // Restoration is not a send. The user decides when the overflow goes.
         holdUntilUserAction: true,
         createdAt: new Date().toISOString(),
@@ -7644,7 +7642,6 @@ export default function ChatView(props: ChatViewProps) {
         previewAnnotations: [...composerPreviewAnnotations],
         reviewComments: [...composerReviewComments],
         submissionIntent,
-        queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
         createdAt: new Date().toISOString(),
       });
       promptRef.current = "";
@@ -7788,13 +7785,7 @@ export default function ChatView(props: ChatViewProps) {
     // later retry. From here on a failure hands it back to the composer.
     if (queuedMessage) {
       const taken = activeThreadKey
-        ? useQueuedMessageStore
-            .getState()
-            .take(
-              activeThreadKey,
-              queuedMessage.id,
-              latestCompletedToolActivityId(threadActivities),
-            )
+        ? useQueuedMessageStore.getState().remove(activeThreadKey, queuedMessage.id)
         : null;
       if (!taken) {
         sendInFlightRef.current = false;
@@ -8600,17 +8591,12 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
-  // Sends the oldest queued message once it is due: a tool call finished
-  // after it was queued, or the turn ended. Only one leaves per boundary; the
-  // take inside onSend re-anchors the rest.
+  // Sends the oldest queued message after the turn ends. The send-in-flight
+  // and phase guards hold the rest until that message's turn ends too.
   const sendQueuedMessage = useEffectEvent((message: QueuedComposerMessage) => {
     void onSend(undefined, message.submissionIntent, undefined, message);
   });
   const nextQueuedMessage = queuedMessages[0] ?? null;
-  const latestToolActivityId = useMemo(
-    () => (nextQueuedMessage ? latestCompletedToolActivityId(threadActivities) : null),
-    [nextQueuedMessage, threadActivities],
-  );
   // Approvals and questions block the agent; a steer landing on top of them
   // would answer nothing and confuse the turn, so the queue holds until the
   // user resolves them.
@@ -8630,16 +8616,9 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (!nextQueuedMessage || isSendBusy || queueBlockedByPendingRequest || queueSendGate) return;
     if (sendInFlightRef.current) return;
-    if (!isQueuedMessageDue({ message: nextQueuedMessage, phase, latestToolActivityId })) return;
+    if (!isQueuedMessageDue({ message: nextQueuedMessage, phase })) return;
     sendQueuedMessage(nextQueuedMessage);
-  }, [
-    isSendBusy,
-    latestToolActivityId,
-    nextQueuedMessage,
-    phase,
-    queueBlockedByPendingRequest,
-    queueSendGate,
-  ]);
+  }, [isSendBusy, nextQueuedMessage, phase, queueBlockedByPendingRequest, queueSendGate]);
 
   // The row handlers are read from refs at call-time so their identity stays
   // stable and does not bust TimelineRowCtx on every ChatView render.

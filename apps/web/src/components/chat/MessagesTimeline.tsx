@@ -1769,7 +1769,7 @@ function QueuedMessageTimelineRow({
   const statusLabel = queuedMessage.holdUntilUserAction
     ? "Waits for Send now"
     : row.isNext
-      ? "Sends after the next tool call or when the turn ends"
+      ? "Sends when the turn ends"
       : "Sends after the messages above it";
   return (
     <div className="flex flex-col items-end" data-queued-message-id={queuedMessage.id}>
