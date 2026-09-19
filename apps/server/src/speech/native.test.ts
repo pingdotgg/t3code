@@ -2,13 +2,13 @@ import { expect, it } from "vite-plus/test";
 import { loadNativeSpeechModel } from "./native.ts";
 
 const fixture = (transcribe: string) =>
-  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false }, transcribe: ${transcribe} }) };`)}`;
+  `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false }, supports: () => false, transcribe: ${transcribe} }) };`)}`;
 
 const fixtureWithUnrelatedIpcMessage = () =>
   `data:text/javascript,${encodeURIComponent(`
     process.send?.({ type: "unrelated-control-message" });
     export const TranscribeModel = {
-      load: async () => ({ capabilities: { supportsStreaming: false }, transcribe: async () => ({ text: "hello" }) }),
+      load: async () => ({ capabilities: { supportsStreaming: false }, supports: () => false, transcribe: async () => ({ text: "hello" }) }),
     };
   `)}`;
 
@@ -63,6 +63,7 @@ const streamingFixture = (feed: string) =>
   `data:text/javascript,${encodeURIComponent(`
   export const TranscribeModel = { load: async () => ({
     capabilities: { supportsStreaming: true },
+    supports: () => false,
     createSession: () => ({
       dispose() {},
       stream: async () => ({

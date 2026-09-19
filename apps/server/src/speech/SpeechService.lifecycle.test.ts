@@ -21,7 +21,7 @@ const native = vi.hoisted(() => ({
   })),
   finish: vi.fn(async () => "hello"),
   dispose: vi.fn(),
-  transcribe: vi.fn(async () => ({ text: "hello" })),
+  transcribe: vi.fn(async (_pcm: Float32Array, _options?: unknown) => ({ text: "hello" })),
 }));
 const loadNative = vi.hoisted(() =>
   vi.fn(

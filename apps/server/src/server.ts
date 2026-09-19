@@ -817,7 +817,6 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(SpeechService.layer.pipe(Layer.provide(layerServerSettings))),
-  Layer.provide(TextGeneration.layer),
   Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),

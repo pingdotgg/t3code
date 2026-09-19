@@ -13,6 +13,7 @@ import {
 import { SpeechStreamEvent } from "@t3tools/contracts";
 import type { SpeechService, SpeechStream } from "./SpeechService.ts";
 import { runSpeechSocket } from "./stream.ts";
+import type * as NetAddress from "effect/unstable/net/NetAddress";
 
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamEvent));
 
@@ -56,8 +57,9 @@ const withServer = Effect.fn("test.speech.withServer")(function* (
   );
   yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }));
   const server = yield* HttpServer.HttpServer;
-  if (server.address._tag !== "TcpAddress") throw new Error("Expected a TCP server.");
-  const url = `ws://127.0.0.1:${server.address.port}/ws/voice`;
+  const address = server.address as NetAddress.InetAddress;
+  const host = address._tag === "InetAddressV6" ? "[::1]" : "127.0.0.1";
+  const url = `ws://${host}:${address.port}/ws/voice`;
   yield* Effect.promise(() => run(url));
 });
 

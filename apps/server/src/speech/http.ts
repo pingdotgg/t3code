@@ -4,8 +4,9 @@ import {
   EnvironmentVoiceBodyLimit,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import * as ByteSize from "effect/ByteSize";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
@@ -29,7 +30,7 @@ const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
     return yield* effect.pipe(
       Effect.provideService(
         HttpServerRequest.MaxBodySize,
-        FileSystem.Size(SpeechService.MAX_SPEECH_BYTES),
+        ByteSize.bytes(SpeechService.MAX_SPEECH_BYTES),
       ),
     );
   }),
@@ -152,8 +153,8 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           const settingsService = yield* ServerSettings.ServerSettingsService;
           const textGeneration = yield* TextGeneration.TextGeneration;
           const fileSystem = yield* FileSystem.FileSystem;
-          const settings = yield* settingsService.getSettings;
           const text = yield* Effect.gen(function* () {
+            const settings = yield* settingsService.getSettings;
             const cwd = yield* fileSystem.makeTempDirectoryScoped({
               prefix: "t3-voice-post-processing-",
             });
