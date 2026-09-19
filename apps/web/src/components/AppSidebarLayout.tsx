@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -189,10 +190,20 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const sidebarProviderStyle = {
     "--sidebar-width": `${sidebarWidth}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
-    ...(isMacosDesktop && !isWindowFullscreen
-      ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
-      : {}),
   } as CSSProperties;
+  // The traffic-light inset lives on the document root rather than on the
+  // provider: the zoomed-in sidebar renders as a sheet through a portal
+  // outside this subtree, and its header trigger has to see the same token
+  // as the floating control. Layout effect so the first paint already has it.
+  const reserveMacosWindowControls = isMacosDesktop && !isWindowFullscreen;
+  useLayoutEffect(() => {
+    if (!reserveMacosWindowControls) return;
+    const root = document.documentElement;
+    root.style.setProperty("--workspace-controls-left", MACOS_TRAFFIC_LIGHTS_LEFT_INSET);
+    return () => {
+      root.style.removeProperty("--workspace-controls-left");
+    };
+  }, [reserveMacosWindowControls]);
 
   useEffect(() => {
     if (!isMacosDesktop) return;
