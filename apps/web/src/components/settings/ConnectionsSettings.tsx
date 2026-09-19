@@ -35,6 +35,7 @@ import {
   AuthFilesystemWriteScope,
   AuthStandardClientScopes,
   AuthTerminalOperateScope,
+  AuthTerminalReadScope,
   type AuthClientSession,
   type AuthEnvironmentScope,
   type AuthGrantScope,
@@ -67,6 +68,7 @@ import {
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
+  togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
@@ -254,6 +256,11 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthDiagnosticsReadScope,
     title: "View diagnostics and usage",
     description: "Read process diagnostics, resource history, and usage totals.",
+  },
+  {
+    scope: AuthTerminalReadScope,
+    title: "View terminals",
+    description: "Read existing terminal output and status.",
   },
   {
     scope: AuthTerminalOperateScope,
@@ -1154,9 +1161,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
   }, [delegatableScopes, onPairingLinkCreated, pairingLabel, primaryEnvironmentId, selectedScopes]);
 
   const togglePairingScope = useCallback((scope: AuthGrantScope, checked: boolean) => {
-    setPairingScopes((current) =>
-      checked ? [...current, scope] : current.filter((currentScope) => currentScope !== scope),
-    );
+    setPairingScopes((current) => togglePairingScopeSelection(current, scope, checked));
   }, []);
 
   return (
@@ -1229,6 +1234,7 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
                           AuthOrchestrationReadScope,
                           AuthFilesystemReadScope,
                           AuthDiagnosticsReadScope,
+                          AuthTerminalReadScope,
                         ].filter((scope) => delegatableScopes.includes(scope)),
                       )
                     }

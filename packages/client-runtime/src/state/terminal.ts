@@ -37,6 +37,15 @@ export function createTerminalEnvironmentAtoms<R, E>(
   }) => JSON.stringify([environmentId, input.threadId, input.terminalId ?? null]);
   const lifecycleConcurrency = { mode: "serial" as const, key: terminalThreadKey };
   return {
+    observe: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:terminal:observe",
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalObserve>) =>
+        Stream.suspend(() =>
+          subscribe(WS_METHODS.terminalObserve, input).pipe(
+            Stream.scan(nextTerminalAttachSeedState(), applyTerminalAttachStreamEvent),
+          ),
+        ),
+    }),
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) =>
