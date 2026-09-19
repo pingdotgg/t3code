@@ -12,18 +12,25 @@ const layerWithDb = (db: RelayDb.RelayDb["Service"]) =>
   ManagedEndpointAllocations.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, db)));
 
 describe("ManagedEndpointAllocations", () => {
-  it.effect("clears endpoint readiness only when the recorded tunnel changes", () => {
+  it.effect("clears endpoint readiness and recovery only when the recorded tunnel changes", () => {
     let updated:
       | {
           readonly tunnelId: string;
           readonly readyAt: unknown;
+          readonly recoveryEnabledAt: unknown;
+          readonly recoveryEnvironmentPublicKey: unknown;
         }
       | undefined;
     const fakeDb = {
       update: (table: unknown) => {
         expect(table).toBe(relayManagedEndpointAllocations);
         return {
-          set: (values: { readonly tunnelId: string; readonly readyAt: unknown }) => {
+          set: (values: {
+            readonly tunnelId: string;
+            readonly readyAt: unknown;
+            readonly recoveryEnabledAt: unknown;
+            readonly recoveryEnvironmentPublicKey: unknown;
+          }) => {
             updated = values;
             return {
               where: () => ({
@@ -51,6 +58,16 @@ describe("ManagedEndpointAllocations", () => {
         'case when "relay_managed_endpoint_allocations"."tunnel_id" = $1 then "relay_managed_endpoint_allocations"."ready_at" else null end',
       );
       expect(query.params).toEqual(["replacement-tunnel"]);
+      for (const [column, value] of [
+        ["recovery_enabled_at", updated?.recoveryEnabledAt],
+        ["recovery_environment_public_key", updated?.recoveryEnvironmentPublicKey],
+      ] as const) {
+        const recoveryQuery = new PgDialect().sqlToQuery(value as never);
+        expect(recoveryQuery.sql).toBe(
+          `case when "relay_managed_endpoint_allocations"."tunnel_id" = $1 then "relay_managed_endpoint_allocations"."${column}" else null end`,
+        );
+        expect(recoveryQuery.params).toEqual(["replacement-tunnel"]);
+      }
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });
 
