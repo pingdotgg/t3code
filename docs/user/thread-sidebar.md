@@ -114,6 +114,10 @@ The linked pull request participates in automatic settlement.
 
 ## Find and reference work
 
+Choose **Mark unread** from a thread's menu to revisit a completed response later.
+On web and desktop, assign a shortcut to `thread.markUnread` in **Settings → Keybindings**
+to mark the open thread unread. Reopening the thread marks it read again.
+
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
 across connected environments. Message search starts after two characters and
 includes your messages and final agent responses.
