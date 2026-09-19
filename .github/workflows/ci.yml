@@ -86,6 +86,16 @@ jobs:
             !/.repos/
           sparse-checkout-cone-mode: false
 
+      # Blacksmith boots GitHub's Ubuntu runner image (gcc is usually present),
+      # but ACP process-tree live tests compile a small pthread fixture with `cc`
+      # and soft-skip when it is missing. Install build-essential so that path
+      # always runs in CI instead of silently no-oping.
+      - name: Install C toolchain for process-tree fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential
+          command -v cc
+
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
@@ -149,7 +159,7 @@ jobs:
           T3CODE_TRANSFER_BUDGET_RESULT_PATH: ${{ runner.temp }}/thread-transfer-result.json
         run: vp run --filter t3 test --shard ${{ matrix.shard }}/${{ strategy.job-total }}
 
-      # src/server.test.ts writes the budget report, so exactly one shard
+      # integration/transferBudgetV2.integration.test.ts writes the report; exactly one shard
       # produces these files. Gating the upload on their presence keeps a
       # single `thread-transfer-results` artifact per run, which is the name
       # thread-transfer-report.yml resolves.
@@ -180,6 +190,17 @@ jobs:
           path: ${{ runner.temp }}/thread-transfer-result.json
           if-no-files-found: ignore
           retention-days: 30
+
+  transfer-report:
+    name: Transfer report artifact
+    needs: test_server
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require transfer measurements
+        uses: actions/download-artifact@v8
+        with:
+          name: thread-transfer-results
+          path: ${{ runner.temp }}/thread-transfer
 
   # Split out of Check and Test: both paid ~7-9s to install a Rust toolchain
   # for checks that take under 3s, on the critical path of every PR.

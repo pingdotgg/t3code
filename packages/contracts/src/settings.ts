@@ -18,12 +18,9 @@ import {
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   ProviderOptionSelections,
 } from "./model.ts";
-import {
-  DEFAULT_RUNTIME_MODE,
-  ModelSelection,
-  ProjectScript,
-  RuntimeMode,
-} from "./orchestration.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { ProjectScript } from "./project.ts";
+import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -391,6 +388,9 @@ export const ClientSettingsSchema = Schema.Struct({
   onboardingCompletedAt: Schema.NullOr(Schema.String).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  persistComposerContextStrip: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
   // on a custom provider instance (e.g. "Codex Personal · gpt-5") without
@@ -683,23 +683,13 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    binaryPath: makeBinaryPathSetting("cursor-agent").pipe(
-      Schema.annotateKey({
-        title: "Binary path",
-        description: "Path to the Cursor agent binary.",
-        providerSettingsForm: { placeholder: "cursor-agent", clearWhenEmpty: "omit" },
-      }),
+    // Keep V1's CLI configuration when V2 rewrites the shared settings file.
+    // V2's Cursor SDK does not use these fields.
+    binaryPath: Schema.optionalKey(TrimmedString).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
-    apiEndpoint: TrimmedString.pipe(
-      Schema.withDecodingDefault(Effect.succeed("")),
-      Schema.annotateKey({
-        title: "API endpoint",
-        description: "Override the Cursor API endpoint for this instance.",
-        providerSettingsForm: {
-          placeholder: "https://...",
-          clearWhenEmpty: "omit",
-        },
-      }),
+    apiEndpoint: Schema.optionalKey(TrimmedString).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
@@ -707,7 +697,7 @@ export const CursorSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: ["binaryPath", "apiEndpoint"],
+    order: [],
   },
 );
 export type CursorSettings = typeof CursorSettings.Type;
@@ -818,6 +808,89 @@ export const AntigravitySettings = makeProviderSettingsSchema(
   { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
+
+export const PiSettings = makeProviderSettingsSchema(
+  {
+    // Disabled by default while Pi support is Early Access.
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    binaryPath: makeBinaryPathSetting("pi").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the Pi coding agent binary.",
+        providerSettingsForm: { placeholder: "pi", clearWhenEmpty: "omit" },
+      }),
+    ),
+    launchArgs: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Launch arguments",
+        description: "Additional CLI arguments passed to pi --mode rpc on session start.",
+        providerSettingsForm: { clearWhenEmpty: "omit" },
+      }),
+    ),
+    customModels: Schema.Array(CustomModelSetting).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["binaryPath", "launchArgs"],
+  },
+);
+export type PiSettings = typeof PiSettings.Type;
+
+export const AcpRegistryDistributionPreference = Schema.Literals(["auto", "binary", "npx", "uvx"]);
+export type AcpRegistryDistributionPreference = typeof AcpRegistryDistributionPreference.Type;
+
+export const AcpRegistrySettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    agentId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Registry agent ID",
+        description: "Agent identifier from the official ACP Registry, for example 'devin'.",
+        providerSettingsForm: { placeholder: "devin", clearWhenEmpty: "persist" },
+      }),
+    ),
+    commandPath: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Executable override",
+        description:
+          "Optional local executable to use instead of installing the registry distribution. Registry arguments and environment are still applied.",
+        providerSettingsForm: { placeholder: "Registry default", clearWhenEmpty: "omit" },
+      }),
+    ),
+    authMethodId: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Authentication method",
+        description:
+          "Optional ACP authentication method ID. By default, the first agent-managed method is selected.",
+        providerSettingsForm: { placeholder: "auto", clearWhenEmpty: "omit" },
+      }),
+    ),
+    distribution: AcpRegistryDistributionPreference.pipe(
+      Schema.withDecodingDefault(Effect.succeed("auto")),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["agentId", "commandPath", "authMethodId"],
+  },
+);
+export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
 
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
@@ -954,20 +1027,19 @@ export const BackgroundActivitySettings = Schema.Struct({
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
 /**
+ * How assistant text reaches clients while a turn runs.
+ * - `turn`: hold the whole message until the turn finishes or pauses.
+ * - `paragraph`: deliver each finished paragraph or closed code block.
+ */
+export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
+export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
+
+/**
  * Server settings a project may override. Every other server setting is
  * environment-wide: providers, keybindings, observability, device hosts,
  * background activity, theme. UI, search and the write planner derive
  * eligibility from this list, so adding a key here is the whole opt-in.
  */
-/**
- * How assistant text reaches clients while a turn runs.
- * - `turn`: hold the whole message until the turn finishes or pauses.
- * - `paragraph`: deliver each finished paragraph or closed code block.
- * - `token`: forward every provider delta. Legacy, kept for compatibility.
- */
-export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph", "token"]);
-export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
-
 const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
@@ -1054,10 +1126,6 @@ export const ServerSettings = Schema.Struct({
       Effect.succeed(Schema.decodeUnknownSync(StorageCleanupSettings)({})),
     ),
   ),
-  // How assistant text reaches clients during a turn. Deliberately a fresh
-  // key (was `enableLegacyTokenStreaming`, before that
-  // `enableAssistantStreaming`): decoding drops the old key, so everyone,
-  // including prior token-streaming opt-ins, resets to the paragraph default.
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
@@ -1217,6 +1285,7 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    pi: PiSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     antigravity: AntigravitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -1290,6 +1359,7 @@ export const resolveProviderInstanceEnabled = (
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
+  "create-provider-instance",
   "read-file",
   "read-provider-history",
   "read-project-settings",
@@ -1309,7 +1379,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
-    cause: Schema.Defect(),
+    // Validation failures (e.g. a create colliding with an existing
+    // instance) originate without an upstream defect.
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -1363,8 +1435,6 @@ const ClaudeSettingsPatch = Schema.Struct({
 
 const CursorSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(TrimmedString),
-  apiEndpoint: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
@@ -1381,6 +1451,13 @@ const AntigravitySettingsPatch = Schema.Struct({
   gcpProject: Schema.optionalKey(TrimmedString),
   gcpLocation: Schema.optionalKey(TrimmedString),
   binaryPath: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
+});
+
+const PiSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  launchArgs: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
@@ -1491,6 +1568,7 @@ export const ServerSettingsPatch = Schema.Struct({
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
+      pi: Schema.optionalKey(PiSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
       antigravity: Schema.optionalKey(AntigravitySettingsPatch),
     }),
@@ -1548,6 +1626,7 @@ export const ClientSettingsPatch = Schema.Struct({
   fontFamilySans: Schema.optionalKey(FontFamilyPreference),
   fontFamilyTerminal: Schema.optionalKey(FontFamilyPreference),
   fontSmoothing: Schema.optionalKey(Schema.Boolean),
+  persistComposerContextStrip: Schema.optionalKey(Schema.Boolean),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

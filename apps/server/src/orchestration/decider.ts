@@ -253,7 +253,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           defaultModelSelection: null,
           faviconPath: null,
           projectIcon: null,
-          scripts: [],
+          scripts: command.scripts ?? [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -392,7 +392,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
-          ...(command.historyImport === true ? { metadata: { historyImport: true } } : {}),
         })),
         type: "thread.created",
         payload: {
@@ -1912,8 +1911,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return [unsettledEvent, sessionSetEvent];
     }
 
-    case "thread.message.assistant.delta":
-    case "thread.message.reasoning.delta": {
+    case "thread.message.assistant.delta": {
       if (isImportedAgentSessionMessageId(command.messageId)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -1936,7 +1934,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.messageId,
-          role: command.type === "thread.message.reasoning.delta" ? "reasoning" : "assistant",
+          role: "assistant",
           text: command.delta,
           turnId: command.turnId ?? null,
           streaming: true,
@@ -1946,8 +1944,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
-    case "thread.message.assistant.complete":
-    case "thread.message.reasoning.complete": {
+    case "thread.message.assistant.complete": {
       if (isImportedAgentSessionMessageId(command.messageId)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -1970,7 +1967,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           messageId: command.messageId,
-          role: command.type === "thread.message.reasoning.complete" ? "reasoning" : "assistant",
+          role: "assistant",
           text: "",
           turnId: command.turnId ?? null,
           streaming: false,
@@ -2015,7 +2012,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             aggregateId: command.threadId,
             occurredAt: message.createdAt,
             commandId: command.commandId,
-            metadata: { historyImport: true },
           })),
           type: "thread.message-sent",
           payload: {
@@ -2041,7 +2037,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           aggregateId: command.threadId,
           occurredAt: settledAt,
           commandId: command.commandId,
-          metadata: { historyImport: true },
         })),
         type: "thread.settled",
         payload: {

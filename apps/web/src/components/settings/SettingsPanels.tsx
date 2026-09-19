@@ -14,6 +14,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -96,15 +97,6 @@ import { isMacPlatform } from "../../lib/utils";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
@@ -181,14 +173,11 @@ const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, s
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
   paragraph: "Show finished paragraphs",
-  token: "Token by token (legacy)",
 };
 
 const RESPONSE_STREAMING_MODE_DESCRIPTIONS: Record<ResponseStreamingMode, string> = {
   turn: "Text appears once the agent finishes its turn.",
   paragraph: "Each paragraph or code block appears as soon as it is complete.",
-  token:
-    "Every token repaints the answer as it arrives. Slower and harder to read. Thinking traces still arrive a paragraph at a time.",
 };
 
 const TIMESTAMP_FORMAT_LABELS = {
@@ -668,6 +657,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.glassOpacity,
       settings.panelAnimationDurationMs,
       settings.responseStreamingMode,
+      settings.persistComposerContextStrip,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
@@ -754,6 +744,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
@@ -822,44 +813,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     changedSettingLabels,
     restoreDefaults,
   };
-}
-
-/**
- * Gate in front of the legacy token-by-token mode. The primary action steers
- * the user to paragraph streaming; the legacy path is the quiet option.
- */
-function TokenStreamingWarningDialog({
-  open,
-  onOpenChange,
-  onConfirm,
-  onUseParagraphs,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onConfirm: () => void;
-  onUseParagraphs: () => void;
-}) {
-  return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogPopup className="max-w-lg">
-        <AlertDialogHeader>
-          <AlertDialogTitle>Token by token is a worse experience</AlertDialogTitle>
-          <AlertDialogDescription>
-            Token streaming repaints the message on every delta. It is slower, harder to read, and
-            costs more CPU on every connected device. This mode stays only for backwards
-            compatibility. Use paragraph streaming instead.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <Button variant="ghost-muted" className="sm:mr-auto" onClick={onConfirm}>
-            Use token by token
-          </Button>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button onClick={onUseParagraphs}>Use paragraphs</Button>
-        </AlertDialogFooter>
-      </AlertDialogPopup>
-    </AlertDialog>
-  );
 }
 
 function BackgroundActivityAdvancedDialog({
@@ -1333,6 +1286,31 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          {...searchableSetting("word-wrap")}
+          description="Wrap long lines in code blocks, tables, diffs, and file previews by default."
+          resetAction={
+            settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? (
+              <SettingResetButton
+                label="word wrapping"
+                onClick={() =>
+                  updateSettings({
+                    wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.wordWrap}
+              onCheckedChange={(checked) => updateSettings({ wordWrap: Boolean(checked) })}
+              aria-label="Wrap code, tables, diffs, and file previews by default"
+            />
+          }
+        />
+
         <SettingsRow
           {...searchableSetting("diff-color-scheme")}
           description="Choose colors for additions and deletions, including change counts."
@@ -1377,6 +1355,34 @@ export function AppearanceSettingsPanel() {
                 </SelectPopup>
               </Select>
             </div>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("composer-context")}
+          description="Keep branch and worktree controls below the composer after a thread starts."
+          resetAction={
+            settings.persistComposerContextStrip !==
+            DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip ? (
+              <SettingResetButton
+                label="composer context"
+                onClick={() =>
+                  updateSettings({
+                    persistComposerContextStrip:
+                      DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.persistComposerContextStrip}
+              onCheckedChange={(checked) =>
+                updateSettings({ persistComposerContextStrip: Boolean(checked) })
+              }
+              aria-label="Keep composer context visible in active threads"
+            />
           }
         />
       </SettingsSection>
@@ -2114,7 +2120,6 @@ export function GeneralSettingsPanel() {
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
-  const [tokenStreamingWarningOpen, setTokenStreamingWarningOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -2381,52 +2386,30 @@ export function GeneralSettingsPanel() {
             ) : null
           }
           control={
-            <>
-              <Select
-                value={mixedResponseStreamingMode ? null : settings.responseStreamingMode}
-                onValueChange={(value) => {
-                  if (value === "token") {
-                    // The legacy path needs an explicit confirmation.
-                    setTokenStreamingWarningOpen(true);
-                    return;
+            <Select
+              value={mixedResponseStreamingMode ? null : settings.responseStreamingMode}
+              onValueChange={(value) => {
+                if (value === "turn" || value === "paragraph") {
+                  updateSettings({ responseStreamingMode: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Response streaming">
+                <SelectValue>
+                  {(value: ResponseStreamingMode | null) =>
+                    value === null ? "Mixed" : RESPONSE_STREAMING_MODE_LABELS[value]
                   }
-                  if (value === "turn" || value === "paragraph") {
-                    updateSettings({ responseStreamingMode: value });
-                  }
-                }}
-              >
-                <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Response streaming">
-                  <SelectValue>
-                    {(value: ResponseStreamingMode | null) =>
-                      value === null ? "Mixed" : RESPONSE_STREAMING_MODE_LABELS[value]
-                    }
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="turn">
-                    {RESPONSE_STREAMING_MODE_LABELS.turn}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="paragraph">
-                    {RESPONSE_STREAMING_MODE_LABELS.paragraph}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="token">
-                    {RESPONSE_STREAMING_MODE_LABELS.token}
-                  </SelectItem>
-                </SelectPopup>
-              </Select>
-              <TokenStreamingWarningDialog
-                open={tokenStreamingWarningOpen}
-                onOpenChange={setTokenStreamingWarningOpen}
-                onConfirm={() => {
-                  updateSettings({ responseStreamingMode: "token" });
-                  setTokenStreamingWarningOpen(false);
-                }}
-                onUseParagraphs={() => {
-                  updateSettings({ responseStreamingMode: "paragraph" });
-                  setTokenStreamingWarningOpen(false);
-                }}
-              />
-            </>
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="turn">
+                  {RESPONSE_STREAMING_MODE_LABELS.turn}
+                </SelectItem>
+                <SelectItem hideIndicator value="paragraph">
+                  {RESPONSE_STREAMING_MODE_LABELS.paragraph}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
         <SettingsRow
@@ -3264,10 +3247,7 @@ export function ArchivedThreadsPanel() {
       ),
     );
     const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => ({
-        ...thread,
-        environmentId,
-      })),
+      snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
     );
 
     const archivedProjects = Array.from(projectsByEnvironmentAndId.values());

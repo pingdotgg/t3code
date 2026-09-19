@@ -19,6 +19,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/integrations"
+  | "/settings/scheduled-tasks"
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -88,6 +89,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
   "/settings/integrations": "Integrations",
+  "/settings/scheduled-tasks": "Scheduled Tasks",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
@@ -258,6 +260,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Word wrap",
     to: "/settings/appearance",
     searchTerms: ["long lines code blocks tables diffs file previews"],
+  },
+  {
+    id: "composer-context",
+    title: "Composer context",
+    to: "/settings/appearance",
   },
   {
     id: "project-grouping",
@@ -809,6 +816,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
+  "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };
 

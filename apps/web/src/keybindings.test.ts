@@ -651,6 +651,13 @@ describe("chat/editor shortcuts", () => {
         platform: "Linux",
       }),
     );
+    assert.isFalse(
+      isOpenFavoriteEditorShortcut(
+        event({ key: "o", metaKey: true, repeat: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+    );
   });
 
   it("matches commandPalette.toggle shortcut outside terminal focus", () => {
@@ -667,6 +674,38 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: true },
       }),
       "commandPalette.toggle",
+    );
+  });
+
+  it("resolves a user-configured thread panel shortcut without assigning a default", () => {
+    const bindings = compile([
+      { shortcut: modShortcut("b", { shiftKey: true }), command: "threadPanel.toggle" },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "b", metaKey: true, shiftKey: true }), bindings, {
+        platform: "MacIntel",
+      }),
+      "threadPanel.toggle",
+    );
+  });
+
+  it("matches themeEditor.toggle on macOS and Windows", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "t", metaKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel" },
+      ),
+      "themeEditor.toggle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "t", ctrlKey: true, altKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "Win32" },
+      ),
+      "themeEditor.toggle",
     );
   });
 
@@ -701,25 +740,6 @@ describe("chat/editor shortcuts", () => {
         context: { terminalFocus: true },
       }),
       "projectSearch.toggle",
-    );
-  });
-
-  it("matches themeEditor.toggle on macOS and Windows", () => {
-    assert.strictEqual(
-      resolveShortcutCommand(
-        event({ key: "t", metaKey: true, altKey: true, shiftKey: true }),
-        DEFAULT_BINDINGS,
-        { platform: "MacIntel" },
-      ),
-      "themeEditor.toggle",
-    );
-    assert.strictEqual(
-      resolveShortcutCommand(
-        event({ key: "t", ctrlKey: true, altKey: true, shiftKey: true }),
-        DEFAULT_BINDINGS,
-        { platform: "Win32" },
-      ),
-      "themeEditor.toggle",
     );
   });
 
@@ -1198,6 +1218,31 @@ describe("composer and pull request shortcuts", () => {
     ["k", "pullRequest.copyNumber"],
     ["Enter", "thread.steerQueuedMessage"],
   ] as const;
+
+  for (const platform of ["MacIntel", "Win32", "Linux"]) {
+    it(`separates queued steering and background start on ${platform}`, () => {
+      const modifier = {
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      };
+      const queuedKey = event({ key: "Enter", shiftKey: true, ...modifier });
+      const backgroundKey = event({ key: "Enter", altKey: true, ...modifier });
+      assert.strictEqual(
+        resolveShortcutCommand(queuedKey, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: false, draftThreadRoute: false },
+        }),
+        "thread.steerQueuedMessage",
+      );
+      assert.strictEqual(
+        resolveShortcutCommand(backgroundKey, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: false, draftThreadRoute: true, composerFocus: true },
+        }),
+        "composer.sendBackground",
+      );
+    });
+  }
 
   for (const platform of ["MacIntel", "Win32", "Linux"]) {
     it.each(shortcuts)(
