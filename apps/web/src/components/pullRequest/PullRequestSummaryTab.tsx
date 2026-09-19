@@ -14,7 +14,7 @@ import {
   TagIcon,
   UsersIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -491,30 +491,60 @@ export function PullRequestSummaryTab({
   // A comment that already lives on a review thread is that thread: the thread carries the line
   // and side the bare comment has lost, and a resolved one is finished work nobody should be
   // invited to fix again — the same call the whole-review hand-off makes.
-  const threadByCommentId = new Map(
-    detail.reviewThreads.flatMap((thread) =>
-      thread.comments.map((comment) => [comment.id, thread] as const),
-    ),
+  const threadByCommentId = useMemo(
+    () =>
+      new Map(
+        detail.reviewThreads.flatMap((thread) =>
+          thread.comments.map((comment) => [comment.id, thread] as const),
+        ),
+      ),
+    [detail.reviewThreads],
   );
 
-  const activeComments: PullRequestComment[] = [];
-  const finishedComments: PullRequestComment[] = [];
-  const botComments: PullRequestComment[] = [];
-  for (const comment of detail.comments) {
-    const finished =
-      threadByCommentId.get(comment.id)?.isResolved ||
-      pullRequestReviewOutcome(comment.reviewState) === "dismissed";
-    const bot = comment.author?.isBot === true || comment.author?.login.endsWith("[bot]");
-    (finished ? finishedComments : bot ? botComments : activeComments).push(comment);
-  }
+  // Partitioned keyed by the conversation: the panel re-renders every mounted tab on tab
+  // switches, handoffs and draft-store updates, and each of those re-scanned every comment.
+  const { activeComments, finishedComments, botComments } = useMemo(() => {
+    const active: PullRequestComment[] = [];
+    const finished: PullRequestComment[] = [];
+    const bots: PullRequestComment[] = [];
+    for (const comment of detail.comments) {
+      const isFinished =
+        threadByCommentId.get(comment.id)?.isResolved ||
+        pullRequestReviewOutcome(comment.reviewState) === "dismissed";
+      const isBot = comment.author?.isBot === true || comment.author?.login.endsWith("[bot]");
+      (isFinished ? finished : isBot ? bots : active).push(comment);
+    }
+    return { activeComments: active, finishedComments: finished, botComments: bots };
+  }, [detail.comments, threadByCommentId]);
   // Windowed by recency regardless of display order: expanding always reaches further back in
   // time, whether the newest comment currently reads first or last.
-  const recentComments = activeComments.slice(Math.max(0, activeComments.length - shownComments));
+  //
+  // Memoized keyed by the conversation: the panel re-renders every mounted tab on tab
+  // switches, handoffs and draft-store updates, and each of those re-sliced, re-sorted and
+  // re-scanned every comment.
+  const recentComments = useMemo(
+    () => activeComments.slice(Math.max(0, activeComments.length - shownComments)),
+    [activeComments, shownComments],
+  );
   const hiddenCommentCount = activeComments.length - recentComments.length;
-  const recentBotComments = botComments.slice(Math.max(0, botComments.length - shownBotComments));
+  const recentBotComments = useMemo(
+    () => botComments.slice(Math.max(0, botComments.length - shownBotComments)),
+    [botComments, shownBotComments],
+  );
   const hiddenBotCommentCount = botComments.length - recentBotComments.length;
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
-  const visibleComments = orderPullRequestComments(recentComments, commentOrder);
+  const visibleComments = useMemo(
+    () => orderPullRequestComments(recentComments, commentOrder),
+    [commentOrder, recentComments],
+  );
+  const visibleBotComments = useMemo(
+    () => orderPullRequestComments(recentBotComments, commentOrder),
+    [commentOrder, recentBotComments],
+  );
+  const orderedFinishedComments = useMemo(
+    () => orderPullRequestComments(finishedComments, commentOrder),
+    [commentOrder, finishedComments],
+  );
   const showOldestCommentsButton =
     hiddenCommentCount > 0 ? (
       <Button
@@ -528,41 +558,51 @@ export function PullRequestSummaryTab({
       </Button>
     ) : null;
   // Read from the whole conversation, not the window shown below it: a verdict older than the
-  // visible comments still stands.
-  const reviewOutcomes = latestPullRequestReviewOutcomes(detail.comments, detail.commits);
+  // visible comments still stands. Memoized with the window above: same panel re-render story.
+  const reviewOutcomes = useMemo(
+    () => latestPullRequestReviewOutcomes(detail.comments, detail.commits),
+    [detail.commits, detail.comments],
+  );
   // Hosts do not promise one casing for a login across two fields of the same response, and
   // none of them lets `Octocat` and `octocat` be two people — so matching on the literal string
   // would show one reviewer twice and drop the verdict off both.
-  const outcomeByLogin = new Map(
-    reviewOutcomes.flatMap((entry) =>
-      entry.actor ? [[reviewerKey(entry.actor.login), entry] as const] : [],
-    ),
+  const outcomeByLogin = useMemo(
+    () =>
+      new Map(
+        reviewOutcomes.flatMap((entry) =>
+          entry.actor ? [[reviewerKey(entry.actor.login), entry] as const] : [],
+        ),
+      ),
+    [reviewOutcomes],
   );
   // Everyone whose face belongs on this row: the people a review was asked of, then anyone who
   // ruled without being on that list. A host drops a reviewer from the requested set once they
   // have reviewed, and their verdict is the thing this row now exists to show.
-  const reviewerEntries = [
-    ...detail.reviewers.map((actor) => ({
-      key: actor.login,
-      actor,
-      outcome: outcomeByLogin.get(reviewerKey(actor.login))?.outcome ?? null,
-      stale: outcomeByLogin.get(reviewerKey(actor.login))?.stale ?? false,
-    })),
-    ...reviewOutcomes
-      .filter(
-        (entry) =>
-          !detail.reviewers.some(
-            (actor) =>
-              entry.actor !== null && reviewerKey(actor.login) === reviewerKey(entry.actor.login),
-          ),
-      )
-      .map((entry) => ({
-        key: entry.key,
-        actor: entry.actor,
-        outcome: entry.outcome,
-        stale: entry.stale,
+  const reviewerEntries = useMemo(
+    () => [
+      ...detail.reviewers.map((actor) => ({
+        key: actor.login,
+        actor,
+        outcome: outcomeByLogin.get(reviewerKey(actor.login))?.outcome ?? null,
+        stale: outcomeByLogin.get(reviewerKey(actor.login))?.stale ?? false,
       })),
-  ];
+      ...reviewOutcomes
+        .filter(
+          (entry) =>
+            !detail.reviewers.some(
+              (actor) =>
+                entry.actor !== null && reviewerKey(actor.login) === reviewerKey(entry.actor.login),
+            ),
+        )
+        .map((entry) => ({
+          key: entry.key,
+          actor: entry.actor,
+          outcome: entry.outcome,
+          stale: entry.stale,
+        })),
+    ],
+    [detail.reviewers, outcomeByLogin, reviewOutcomes],
+  );
 
   const openLink = useOpenLink(threadRef);
   const openCheck = (url: string) => {
@@ -981,11 +1021,7 @@ export function PullRequestSummaryTab({
                     }}
                   >
                     <div className="space-y-3 pt-2">
-                      {openedBotGroup === detail.url
-                        ? orderPullRequestComments(recentBotComments, commentOrder).map(
-                            renderComment,
-                          )
-                        : null}
+                      {openedBotGroup === detail.url ? visibleBotComments.map(renderComment) : null}
                       {hiddenBotCommentCount > 0 ? (
                         <Button
                           size="sm"
@@ -1023,7 +1059,7 @@ export function PullRequestSummaryTab({
                     detail={detail}
                   >
                     <div className="space-y-2 pt-2">
-                      {orderPullRequestComments(finishedComments, commentOrder).map((comment) => {
+                      {orderedFinishedComments.map((comment) => {
                         const thread = threadByCommentId.get(comment.id);
                         return (
                           <CollapsedComment

@@ -21,6 +21,7 @@ import {
   buildPullRequestReferenceContext,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
+  countStandingApprovals,
   groupPullRequestTimelineConversations,
   handoffPrompt,
   handoffReviewComments,
@@ -466,6 +467,80 @@ describe("review verdicts", () => {
         },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("standing approval count", () => {
+  const commits = [
+    { oid: "c0ffee", messageHeadline: "later work", committedDate: "2026-07-05T00:00:00Z" },
+  ];
+  const review = (
+    id: string,
+    login: string,
+    reviewState: string,
+    createdAt: string,
+  ): PullRequestComment => ({
+    id,
+    kind: "review",
+    author: { login, name: null, avatarUrl: null },
+    body: "",
+    createdAt,
+    url: null,
+    path: null,
+    reviewState,
+  });
+
+  it("counts an approval that still stands against the newest commit", () => {
+    expect(
+      countStandingApprovals([review("r1", "bilal", "APPROVED", "2026-07-06T00:00:00Z")], commits),
+    ).toBe(1);
+  });
+
+  it("ignores an approval the branch has since moved past", () => {
+    expect(
+      countStandingApprovals([review("r1", "bilal", "APPROVED", "2026-07-01T00:00:00Z")], commits),
+    ).toBe(0);
+  });
+
+  it("counts nothing but current approvals", () => {
+    expect(
+      countStandingApprovals(
+        [
+          review("r1", "bilal", "CHANGES_REQUESTED", "2026-07-06T00:00:00Z"),
+          review("r2", "octocat", "DISMISSED", "2026-07-06T00:00:00Z"),
+          review("r3", "ada", "COMMENTED", "2026-07-06T00:00:00Z"),
+        ],
+        commits,
+      ),
+    ).toBe(0);
+  });
+
+  it("does not count an approval a later request for changes superseded", () => {
+    expect(
+      countStandingApprovals(
+        [
+          review("r1", "bilal", "APPROVED", "2026-07-06T00:00:00Z"),
+          review("r2", "bilal", "CHANGES_REQUESTED", "2026-07-07T00:00:00Z"),
+        ],
+        commits,
+      ),
+    ).toBe(0);
+  });
+
+  it("counts nothing from a conversation this page only holds the recent end of", () => {
+    expect(
+      countStandingApprovals(
+        [review("r1", "bilal", "APPROVED", "2026-07-06T00:00:00Z")],
+        commits,
+        true,
+      ),
+    ).toBe(0);
+  });
+
+  it("counts a current approval where the caller has no commits to measure staleness by", () => {
+    expect(
+      countStandingApprovals([review("r1", "bilal", "APPROVED", "2026-07-01T00:00:00Z")]),
+    ).toBe(1);
   });
 });
 

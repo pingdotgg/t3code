@@ -132,9 +132,9 @@ import {
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildResolveConflictsPrompt,
+  countStandingApprovals,
   handoffPrompt,
   handoffReviewComments,
-  latestPullRequestReviewOutcomes,
   isStackedPullRequestBase,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
@@ -1502,12 +1502,16 @@ export function PullRequestDetailPanel({
   // Not counted at all from a conversation this page only holds the recent end of: an approval
   // older than the window would be missing, and "1" beside a tick is read as the whole answer.
   // The Summary tab's row can say it may be short; a bare number cannot, so it stays away.
-  const approvalCount =
-    detail && !detail.commentsTruncated
-      ? latestPullRequestReviewOutcomes(detail.comments, detail.commits).filter(
-          (entry) => entry.outcome === "approved" && !entry.stale,
-        ).length
-      : 0;
+  // Keyed by the conversation rather than recomputed inline: the panel re-renders on tab
+  // switches, handoffs and draft-store updates that leave the conversation alone, and each
+  // of those rescanned every comment for a verdict.
+  const approvalCount = useMemo(
+    () =>
+      detail
+        ? countStandingApprovals(detail.comments, detail.commits, detail.commentsTruncated)
+        : 0,
+    [detail?.comments, detail?.commits, detail?.commentsTruncated],
+  );
 
   // The list already has the pull request's identity and summary. Keep them on screen
   // and let the richer detail read replace the remaining placeholders in place.
