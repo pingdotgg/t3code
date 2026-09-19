@@ -10,18 +10,21 @@ import {
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
+  WS_METHODS,
+  WsRpcGroup,
   type PreviewAutomationHost,
   type PreviewAutomationRequest,
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import * as RpcTest from "effect/unstable/rpc/RpcTest";
 
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 
@@ -1118,7 +1121,19 @@ it.effect("evicts an unanswered host and lets later calls use a healthy runtime"
       const otherReceived = yield* Deferred.make<void>();
       const otherCompleted = yield* Deferred.make<void>();
       const oldTab = PreviewTabId.make("tab-on-frozen-host");
-      const events = yield* broker.connect(makeHost());
+      const group = RpcGroup.make(
+        ...Array.from(WsRpcGroup.requests.values()).filter(
+          (rpc) => rpc._tag === WS_METHODS.previewAutomationConnect,
+        ),
+      );
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          group.toLayer({
+            [WS_METHODS.previewAutomationConnect]: (host) => Stream.unwrap(broker.connect(host)),
+          }),
+        ),
+      );
+      const events = client[WS_METHODS.previewAutomationConnect](makeHost());
       const consumer = yield* Stream.runForEach(events, (event) => {
         if (event.type === "connected") return Deferred.succeed(connected, event.connectionId);
         const request = { ...event.request, connectionId: event.connectionId };
@@ -1183,10 +1198,7 @@ it.effect("evicts an unanswered host and lets later calls use a healthy runtime"
         _tag: "PreviewAutomationClientDisconnectedError",
       });
       const consumerExit = yield* Fiber.await(consumer);
-      expect(Exit.isFailure(consumerExit)).toBe(true);
-      if (Exit.isFailure(consumerExit)) {
-        expect(Cause.hasInterruptsOnly(consumerExit.cause)).toBe(true);
-      }
+      expect(Exit.isSuccess(consumerExit)).toBe(true);
 
       // Late traffic from the evicted connection cannot restore its assignment.
       yield* broker.respond({

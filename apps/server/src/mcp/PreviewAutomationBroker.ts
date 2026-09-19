@@ -26,6 +26,7 @@ import {
   type PreviewAutomationStreamEvent,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import type * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -73,7 +74,7 @@ interface ClientConnection {
   readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
   readonly focused: boolean;
   readonly focusOrder: number;
-  readonly queue: Queue.Queue<PreviewAutomationStreamEvent>;
+  readonly queue: Queue.Queue<PreviewAutomationStreamEvent, Cause.Done>;
 }
 
 interface PendingRequest {
@@ -326,6 +327,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const closeConnection = Effect.fn("PreviewAutomationBroker.closeConnection")(function* (
     queue: ClientConnection["queue"],
     disconnected: ReadonlyArray<PendingRequest>,
+    completeStream = false,
   ) {
     yield* Effect.forEach(
       disconnected,
@@ -333,25 +335,34 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         Deferred.fail(deferred, new PreviewAutomationClientDisconnectedError(context)),
       { discard: true },
     );
-    yield* Queue.shutdown(queue);
+    if (completeStream) {
+      // Discard this generation's commands and complete the RPC stream so a
+      // responsive desktop can re-register after a timeout eviction.
+      yield* Queue.clear(queue);
+      yield* Queue.end(queue);
+    } else {
+      // Replaced registrations must not reconnect and displace their successor.
+      yield* Queue.shutdown(queue);
+    }
   });
 
   const disconnect = Effect.fn("PreviewAutomationBroker.disconnect")(function* (
     clientId: string,
     queue: ClientConnection["queue"],
+    completeStream = false,
   ) {
     const disconnected = yield* SynchronizedRef.modify(state, (current) => {
       const removed = removeConnectionFromState(current, clientId, queue);
       return [removed.disconnected, removed.state] as const;
     });
-    yield* closeConnection(queue, disconnected);
+    yield* closeConnection(queue, disconnected, completeStream);
   });
 
   const acquireConnection = Effect.fn("PreviewAutomationBroker.acquireConnection")(function* (
     host: PreviewAutomationHost,
   ) {
     const clientId = host.clientId;
-    const queue = yield* Queue.unbounded<PreviewAutomationStreamEvent>();
+    const queue = yield* Queue.unbounded<PreviewAutomationStreamEvent, Cause.Done>();
     const connectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     yield* Queue.offer(queue, { type: "connected", connectionId });
     const connection: ClientConnection = {
@@ -579,7 +590,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           Effect.gen(function* () {
             // An unanswered request invalidates this connection. Do not replay
             // actions: the client may have applied them before becoming unreachable.
-            yield* disconnect(connection.clientId, connection.queue);
+            yield* disconnect(connection.clientId, connection.queue, true);
             return yield* new PreviewAutomationTimeoutError(requestContext);
           }),
         onSome: (value) => Effect.succeed(value as A),
