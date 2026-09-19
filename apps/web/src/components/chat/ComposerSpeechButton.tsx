@@ -279,11 +279,11 @@ export function ComposerSpeechRecordingPill(props: {
       {props.state.phase === "post-processing" ? (
         <Button
           type="button"
-          size="sm"
+          size="sm-pill"
           variant="ghost"
           onPointerDown={(event) => event.preventDefault()}
           onClick={props.onSkipPostProcessing}
-          className="shrink-0 rounded-full px-2.5"
+          className="shrink-0"
         >
           Skip
         </Button>
