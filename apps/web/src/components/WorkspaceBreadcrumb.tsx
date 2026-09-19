@@ -26,6 +26,27 @@ interface WorkspaceBreadcrumbItemProps {
   readonly current?: boolean;
 }
 
+export function WorkspaceBreadcrumbText({
+  children,
+  className,
+}: {
+  readonly children: ReactNode;
+  readonly className?: string;
+}) {
+  return (
+    <span
+      // Center the capital letters with adjacent icons, not the font's leading.
+      // Padding preserves accents and descenders when a label is truncated.
+      className={cn(
+        "block min-w-0 truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-[0.5em]",
+        className,
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 export function WorkspaceBreadcrumbItem({
   children,
   className,
@@ -45,10 +66,16 @@ export function WorkspaceBreadcrumbItem({
   );
 }
 
-export function WorkspaceBreadcrumbSeparator({ className }: { readonly className?: string }) {
+export function WorkspaceBreadcrumbSeparator({
+  className,
+  children = "/",
+}: {
+  readonly className?: string;
+  readonly children?: ReactNode;
+}) {
   return (
     <li aria-hidden="true" className={cn("flex shrink-0 items-center text-icon-muted", className)}>
-      /
+      {children}
     </li>
   );
 }
