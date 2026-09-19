@@ -14,7 +14,8 @@ import {
   type PickedThemeFile,
 } from "@t3tools/contracts";
 import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@t3tools/shared/filePreview";
-import { isCommandAvailable } from "@t3tools/shared/shell";
+import { resolveEditorCommand } from "@t3tools/shared/editor";
+import * as HostProcess from "@t3tools/shared/hostProcess";
 import * as NodeOS from "node:os";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -333,20 +334,13 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL,
   payload: Schema.Undefined,
   result: Schema.Array(EditorId),
-  // Probes THIS machine (where the renderer runs) for remote-capable editor
-  // CLIs, unlike the server's probe which walks the environment host's PATH.
-  // A Finder-launched app can miss PATH entries; an empty result makes the
-  // renderer fall back to VS Code only, so that fails soft.
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
     const available: Array<EditorId> = [];
+    const env = yield* HostProcess.HostProcessEnvironment;
     for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
-      const commands = EDITORS.find((editor) => editor.id === editorId)?.commands;
-      if (!commands) continue;
-      for (const command of commands) {
-        if (yield* isCommandAvailable(command, { env: process.env })) {
-          available.push(editorId);
-          break;
-        }
+      const editor = EDITORS.find((editor) => editor.id === editorId);
+      if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
+        available.push(editorId);
       }
     }
     return available;
