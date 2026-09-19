@@ -1220,6 +1220,16 @@ export interface DesktopBridge {
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
   };
   /**
+   * Present when the desktop shell collects `t3code://pair` deep links. The
+   * main process queues them; the renderer drains the queue on mount and
+   * whenever it is told a new link is available, so a link that arrives while
+   * the renderer is loading or reloading waits instead of being lost.
+   */
+  pairingLink?: {
+    takePending: () => Promise<ReadonlyArray<string>>;
+    onAvailable: (listener: () => void) => () => void;
+  };
+  /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the
    * Electron desktop build; web builds have `preview === undefined`.
    */

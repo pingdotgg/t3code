@@ -275,6 +275,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
+  pairingLink: {
+    takePending: () => ipcRenderer.invoke(IpcChannels.TAKE_PAIRING_LINKS_CHANNEL),
+    onAvailable: (listener) => {
+      const wrappedListener = () => {
+        listener();
+      };
+      ipcRenderer.on(IpcChannels.PAIRING_LINK_AVAILABLE_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(IpcChannels.PAIRING_LINK_AVAILABLE_CHANNEL, wrappedListener);
+      };
+    },
+  },
   preview: {
     createTab: (tabId, defaults) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, {
