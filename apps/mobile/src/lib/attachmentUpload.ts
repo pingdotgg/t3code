@@ -254,6 +254,12 @@ async function composerImageAttachmentDataUrl(
   }
 }
 
+/**
+ * Longest one transfer may run. The outbox sends one message at a time, so a
+ * transfer that never settles would hold every queued message behind it.
+ */
+export const ATTACHMENT_UPLOAD_TIMEOUT_MS = 180_000;
+
 async function uploadFileBytes(
   attachment: DraftComposerAttachment,
   url: string,
@@ -273,6 +279,14 @@ async function uploadFileBytes(
     fileUri === undefined
       ? new File(Paths.cache, `t3-upload-${uuidv4()}`)
       : new File(resolveOwnedComposerAttachmentFileUri(fileUri, Paths.document.uri) ?? fileUri);
+  const transfer = new AbortController();
+  const cancelTransfer = () => transfer.abort();
+  signal.addEventListener("abort", cancelTransfer, { once: true });
+  const timedOut = Promise.withResolvers<never>();
+  const timer = setTimeout(() => {
+    transfer.abort();
+    timedOut.reject(new Error(`'${attachment.name}' took too long to upload. Try a smaller file.`));
+  }, ATTACHMENT_UPLOAD_TIMEOUT_MS);
   try {
     if (fileUri === undefined && inlineDataUrl !== undefined) {
       file.create();
@@ -280,11 +294,11 @@ async function uploadFileBytes(
         encoding: "base64",
       });
     }
-    const result = await file.upload(url, {
+    const upload = file.upload(url, {
       httpMethod: "POST",
       uploadType: UploadType.BINARY_CONTENT,
       headers: { "Content-Type": composerAttachmentWireMimeType(attachment) },
-      signal,
+      signal: transfer.signal,
       ...(onProgress
         ? {
             onProgress: ({ bytesSent, totalBytes }) => {
@@ -293,10 +307,17 @@ async function uploadFileBytes(
           }
         : {}),
     });
+    // Raced, not just aborted: the bound must hold even if the native task
+    // never reports the cancellation. The abort also ends the transfer on
+    // iOS, whose background session otherwise replays a failed one on its own.
+    upload.catch(() => undefined);
+    const result = await Promise.race([upload, timedOut.promise]);
     if (result.status < 200 || result.status >= 300) {
       throw new Error(`Upload failed for '${attachment.name}' (${result.status}).`);
     }
   } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", cancelTransfer);
     if (fileUri === undefined && file.exists) file.delete();
   }
 }
