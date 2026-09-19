@@ -47,6 +47,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  ImportIcon,
   LinkIcon,
   MessageSquareIcon,
   MonitorIcon,
@@ -2037,6 +2038,28 @@ function OpenCommandPaletteDialog(props: {
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/settings" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:import-projects",
+    searchTerms: [
+      "import",
+      "migrate",
+      "claude code",
+      "codex",
+      "conversations",
+      "sessions",
+      "history",
+      "welcome",
+      "setup",
+      "onboarding",
+    ],
+    title: "Import projects and conversations",
+    icon: <ImportIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/welcome" });
     },
   });
 

@@ -1,7 +1,10 @@
 # Welcome wizard
 
 T3 Code shows a setup flow when you open a new installation or connect to the
-hosted app for the first time. Existing workspaces skip this flow.
+hosted app for the first time. Existing workspaces skip this flow. To open it
+again, for example to import conversations from a computer you added later,
+select **Import projects and conversations** in the command palette, or use the
+import link on the empty workspace screen.
 
 ## Connect your computers
 
