@@ -344,21 +344,68 @@ export function serializeTableElementToMarkdown(table: Element): string {
   return serializeTable(table).trim();
 }
 
+/** Rows of the table's own cells; nested tables and empty rows are skipped. */
+function tableRows(table: Element): Element[][] {
+  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
+  return rows
+    .map((row) =>
+      [...row.children].filter((cell) => cell.tagName === "TH" || cell.tagName === "TD"),
+    )
+    .filter((cells) => cells.length > 0);
+}
+
+function cellText(cell: Element): string {
+  return (cell.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
 function csvCell(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return /[",\n]/.test(normalized) ? `"${normalized.replaceAll('"', '""')}"` : normalized;
+  return /[",\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
 }
 
 export function serializeTableElementToCsv(table: Element): string {
-  const rows = [...table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr, :scope > tr")];
-  const lines: string[] = [];
-  for (const row of rows) {
-    const cells = [...row.children].filter(
-      (cell) => cell.tagName === "TH" || cell.tagName === "TD",
-    );
-    if (cells.length === 0) continue;
-    lines.push(cells.map((cell) => csvCell(cell.textContent ?? "")).join(","));
+  return tableRows(table)
+    .map((cells) => cells.map((cell) => csvCell(cellText(cell))).join(","))
+    .join("\n");
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function htmlTableCell(cell: Element, tag: "th" | "td"): string {
+  const align = (cell as HTMLElement).style?.textAlign ?? cell.getAttribute("align") ?? "";
+  const attributes = align === "center" || align === "right" ? ` style="text-align:${align}"` : "";
+  return `<${tag}${attributes}>${escapeHtml(cellText(cell))}</${tag}>`;
+}
+
+/**
+ * Plain `<table>` markup keeping the header/body split and column alignment,
+ * without the app's chrome or class names, so it pastes as a real table into
+ * mail clients, wikis, and HTML editors.
+ */
+export function serializeTableElementToHtml(table: Element): string {
+  const rows = tableRows(table);
+  const firstRow = rows[0];
+  if (!firstRow) return "";
+  const hasHeader = firstRow.every((cell) => cell.tagName === "TH");
+  const bodyRows = hasHeader ? rows.slice(1) : rows;
+  const lines = ["<table>"];
+  if (hasHeader) {
+    const header = firstRow.map((cell) => htmlTableCell(cell, "th")).join("");
+    lines.push("  <thead>", `    <tr>${header}</tr>`, "  </thead>");
   }
+  if (bodyRows.length > 0) {
+    lines.push("  <tbody>");
+    for (const cells of bodyRows) {
+      lines.push(`    <tr>${cells.map((cell) => htmlTableCell(cell, "td")).join("")}</tr>`);
+    }
+    lines.push("  </tbody>");
+  }
+  lines.push("</table>");
   return lines.join("\n");
 }
 
