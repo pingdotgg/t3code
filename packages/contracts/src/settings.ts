@@ -39,6 +39,7 @@ import {
   type ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { DictationReplacement, DictationSettings, DEFAULT_DICTATION_SETTINGS } from "./voice.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -1048,6 +1049,9 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const ServerSettings = Schema.Struct({
+  dictation: DictationSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DICTATION_SETTINGS)),
+  ),
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
     Schema.withDecodingDefault(
@@ -1392,7 +1396,17 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 
+const DictationSettingsPatch = Schema.Struct({
+  autoPolish: Schema.optionalKey(Schema.Boolean),
+  spokenCommands: Schema.optionalKey(Schema.Boolean),
+  removeFillers: Schema.optionalKey(Schema.Boolean),
+  replacements: Schema.optionalKey(
+    Schema.Array(DictationReplacement).check(Schema.isMaxLength(200)),
+  ),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
+  dictation: Schema.optionalKey(DictationSettingsPatch),
   worktreeCleanup: Schema.optionalKey(
     Schema.NullOr(
       Schema.Union([

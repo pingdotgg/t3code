@@ -53,6 +53,16 @@ import {
   RelayEnvironmentMintResponse,
   RelayLinkProofRequest,
 } from "./relay.ts";
+import {
+  VoiceFinishRequest,
+  VoicePolishRequest,
+  VoiceFinishResponse,
+  VoiceStartRequest,
+  VoiceStartResponse,
+  VoiceStopRequest,
+  VoiceAvailabilityQuery,
+  VoiceAvailabilityResponse,
+} from "./voice.ts";
 
 const OptionalBearerHeaders = Schema.Struct({
   authorization: Schema.optionalKey(Schema.String),
@@ -615,9 +625,59 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+const EnvironmentVoiceErrors = [
+  EnvironmentHttpBadRequestError,
+  EnvironmentHttpForbiddenError,
+  EnvironmentHttpInternalServerError,
+  EnvironmentScopeRequiredError,
+];
+
+export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.post("polish", "/api/voice/polish", {
+      headers: OptionalBearerHeaders,
+      payload: VoicePolishRequest,
+      success: VoiceFinishResponse,
+      error: EnvironmentVoiceErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("availability", "/api/voice/availability", {
+      headers: OptionalBearerHeaders,
+      payload: VoiceAvailabilityQuery,
+      success: VoiceAvailabilityResponse,
+      error: EnvironmentVoiceErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("start", "/api/voice/start", {
+      headers: OptionalBearerHeaders,
+      payload: VoiceStartRequest,
+      success: VoiceStartResponse,
+      error: EnvironmentVoiceErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("finish", "/api/voice/finish", {
+      headers: OptionalBearerHeaders,
+      payload: VoiceFinishRequest,
+      success: VoiceFinishResponse,
+      error: EnvironmentVoiceErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("stop", "/api/voice/stop", {
+      headers: OptionalBearerHeaders,
+      payload: VoiceStopRequest,
+      success: Schema.Void,
+      error: EnvironmentVoiceErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
+  .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi) {}

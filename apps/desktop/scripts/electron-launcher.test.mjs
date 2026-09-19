@@ -105,6 +105,10 @@ describe("electron development launcher", () => {
 
   it("declares why the macOS app needs protected access", () => {
     const values = resolveMacBundleInfoPlistStrings("T3 Code (Dev) Launcher");
+    assert.equal(
+      values.NSMicrophoneUsageDescription,
+      "T3 Code uses your microphone when you dictate a message.",
+    );
 
     assert.equal(
       values.NSScreenCaptureUsageDescription,

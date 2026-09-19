@@ -4,6 +4,45 @@ For one account, use the default Codex provider with your normal Codex login.
 [Provider setup](./install.md#providers) covers installation, Settings > Providers,
 and custom binaries or environment variables.
 
+## Dictate a draft
+
+On web and desktop, select a Codex provider and use the microphone in the
+composer. Dictation uses that provider's ChatGPT login and sends your audio to
+OpenAI. It requires a Codex CLI version with experimental realtime support
+(tested with 0.154.0); API-key accounts are not supported.
+
+Words appear directly in your editable draft as they are transcribed. Move the
+cursor or select text to put the next words there; you can also type corrections
+while speaking. Say "question mark", "period", "full stop", "comma", or
+"exclamation mark" to insert punctuation. Stop waits briefly for the last words;
+cancel stops immediately and keeps text already inserted. You can switch apps
+while speaking. Nothing is sent as a chat message automatically.
+Recordings finish after five minutes. Keep T3 open and the computer awake;
+closing the thread or losing the connection interrupts dictation.
+
+Say "new line" or "new paragraph" to break up your draft, "bullet point" for a
+bullet, and "number one", "number two", etc. for numbered items. "Scratch that"
+removes the last sentence in the current dictated insertion; it does not undo
+text you typed or earlier insertions after moving the cursor. "Um" and "uh" are
+removed locally when hesitation cleanup is enabled. Other words, including
+"actually", are kept as spoken.
+
+In **Settings > General > Dictation**, select an environment to turn these
+commands or hesitation cleanup off, or manage custom word replacements and
+snippets. A custom word maps a misheard phrase to its preferred spelling; a
+snippet expands a spoken shortcut into saved text. These settings are shared
+by clients connected to that environment.
+
+Open the arrow beside the microphone to choose **Dictation only** (the default)
+or **Polish after dictation**. With polish on, grammar cleanup runs in the
+background after Stop and applies automatically if the draft is unchanged.
+Use **Undo polish** in the microphone menu to restore the original. You can keep typing, dictating,
+or sending immediately; a late result cannot overwrite your edits. Turn
+polish off from the same menu or **Settings > General > Dictation**.
+
+Polish uses a separate Codex request and may take a few seconds; dictation
+never waits for it.
+
 ## Use multiple accounts
 
 A shared Codex home with a shadow home lets work and personal accounts continue

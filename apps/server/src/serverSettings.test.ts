@@ -78,6 +78,75 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect(
+    "preserves omitted dictation preferences and persists explicit replacement deletion",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const original = {
+          autoPolish: true,
+          spokenCommands: true,
+          removeFillers: false,
+          replacements: [{ kind: "word" as const, phrase: "tea three", replacement: "T3" }],
+        };
+        yield* service.updateSettings({ dictation: original });
+        yield* service.updateSettings(
+          yield* decodeSettingsPatch({ dictation: { spokenCommands: false } }),
+        );
+        const expected = { ...original, spokenCommands: false };
+        assert.deepEqual((yield* service.getSettings).dictation, expected);
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const decodePersisted = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
+        assert.deepEqual(
+          (yield* decodePersisted(yield* fs.readFileString(config.settingsPath))).dictation,
+          expected,
+        );
+        yield* service.updateSettings(yield* decodeSettingsPatch({ dictation: {} }));
+        assert.deepEqual((yield* service.getSettings).dictation, expected);
+        yield* service.updateSettings(
+          yield* decodeSettingsPatch({ dictation: { replacements: [] } }),
+        );
+        assert.deepEqual(
+          (yield* decodePersisted(yield* fs.readFileString(config.settingsPath))).dictation,
+          { ...expected, replacements: [] },
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists dictation phrases and supports editing and deleting them", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const dictation = {
+        ...DEFAULT_SERVER_SETTINGS.dictation,
+        autoPolish: true,
+        replacements: [
+          { kind: "snippet" as const, phrase: "my checklist", replacement: "1. Test\n2. Review" },
+        ],
+      };
+      yield* service.updateSettings({ dictation });
+      assert.deepEqual((yield* service.getSettings).dictation, dictation);
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const decodePersisted = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
+      assert.deepEqual(
+        (yield* decodePersisted(yield* fs.readFileString(config.settingsPath))).dictation,
+        dictation,
+      );
+      const edited = {
+        ...dictation,
+        replacements: [
+          { kind: "word" as const, phrase: "whisper flow", replacement: "Wispr Flow" },
+        ],
+      };
+      yield* service.updateSettings({ dictation: edited });
+      assert.deepEqual((yield* service.getSettings).dictation, edited);
+      yield* service.updateSettings({ dictation: { ...edited, replacements: [] } });
+      assert.deepEqual((yield* service.getSettings).dictation.replacements, []);
+      const saved = yield* decodePersisted(yield* fs.readFileString(config.settingsPath));
+      assert.deepEqual(saved.dictation.replacements, []);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
   it.effect("preserves context when reading a provider environment secret fails", () => {
     const platformCause = PlatformError.systemError({
       _tag: "PermissionDenied",

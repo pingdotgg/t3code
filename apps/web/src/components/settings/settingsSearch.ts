@@ -128,6 +128,16 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "dictation",
+    title: "Dictation",
+    to: "/settings/general",
+    targetId: "dictation",
+    scope: "environment",
+    searchTerms: [
+      "voice microphone punctuation dictionary custom words snippets filler scratch that AI polish",
+    ],
+  },
+  {
     id: "storage-worktrees",
     title: "Worktree cleanup",
     to: "/settings/storage",

@@ -1297,6 +1297,8 @@ ${associatedDomains}
     </array>
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
@@ -2690,6 +2692,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
       extendInfo: {
+        NSMicrophoneUsageDescription: "T3 Code uses your microphone when you dictate a message.",
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
       },
