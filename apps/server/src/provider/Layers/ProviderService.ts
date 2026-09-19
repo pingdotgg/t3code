@@ -86,7 +86,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-const isModelSelection = Schema.is(ModelSelection);
+const decodeModelSelectionOption = Schema.decodeUnknownOption(ModelSelection);
 const encodePromptJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 interface SnapShotPromptAccessibilityNode {
@@ -412,7 +412,7 @@ function readPersistedModelSelection(
     return undefined;
   }
   const raw = "modelSelection" in runtimePayload ? runtimePayload.modelSelection : undefined;
-  return isModelSelection(raw) ? raw : undefined;
+  return Option.getOrUndefined(decodeModelSelectionOption(raw));
 }
 
 function readPersistedCwd(
