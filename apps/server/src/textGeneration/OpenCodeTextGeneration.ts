@@ -38,6 +38,8 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
 
 type OpenCodeTextGenerationOperation = typeof OpenCodeTextGenerationOperation.Type;
 
+const OPEN_CODE_TEXT_GENERATION_WAIT_TIMEOUT = "30 seconds";
+
 const openCodeTextGenerationErrorContext = {
   operation: OpenCodeTextGenerationOperation,
   cwd: Schema.String,
@@ -120,6 +122,15 @@ interface OpenCodeTextPart {
   readonly text: string;
 }
 
+interface OpenCodeAssistantMessage {
+  readonly info: {
+    readonly role: "assistant";
+    readonly time?: { readonly completed?: unknown } | undefined;
+    readonly error?: unknown;
+  };
+  readonly parts?: ReadonlyArray<unknown> | undefined;
+}
+
 function getOpenCodePromptFailure(error: unknown): OpenCodePromptFailure | null {
   if (!error || typeof error !== "object") {
     return null;
@@ -168,6 +179,21 @@ function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): str
     .map((part) => part.text)
     .join("")
     .trim();
+}
+
+function getOpenCodeAssistantMessage(
+  messages: ReadonlyArray<unknown> | undefined,
+): OpenCodeAssistantMessage | undefined {
+  return messages?.findLast(
+    (message): message is OpenCodeAssistantMessage =>
+      message !== null &&
+      typeof message === "object" &&
+      "info" in message &&
+      message.info !== null &&
+      typeof message.info === "object" &&
+      "role" in message.info &&
+      message.info.role === "assistant",
+  );
 }
 
 export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration")(function* (
@@ -240,9 +266,9 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           modelId: parsedModel.modelID,
         };
 
-        const result = yield* Effect.tryPromise({
+        yield* Effect.tryPromise({
           try: () =>
-            client.session.prompt({
+            client.session.promptAsync({
               sessionID: session.data.id,
               model: parsedModel,
               ...(selectedAgent ? { agent: selectedAgent } : {}),
@@ -255,7 +281,63 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               cause,
             }),
         });
-        const promptFailure = getOpenCodePromptFailure(result.data?.info?.error);
+
+        const result = yield* Effect.gen(function* () {
+          let idleStatusConfirmations = 0;
+          while (true) {
+            const messages = yield* Effect.tryPromise({
+              try: () => client.session.messages({ sessionID: session.data.id }),
+              catch: (cause) =>
+                new OpenCodeTextGenerationPromptRequestError({
+                  ...promptContext,
+                  cause,
+                }),
+            });
+            const assistantMessage = getOpenCodeAssistantMessage(messages.data);
+            if (assistantMessage) {
+              if (
+                assistantMessage.info.error !== undefined ||
+                assistantMessage.info.time?.completed !== undefined
+              ) {
+                return assistantMessage;
+              }
+
+              const statuses = yield* Effect.tryPromise({
+                try: () => client.session.status(),
+                catch: (cause) =>
+                  new OpenCodeTextGenerationPromptRequestError({
+                    ...promptContext,
+                    cause,
+                  }),
+              });
+              const status = statuses.data?.[session.data.id];
+              const isIdle =
+                statuses.data !== undefined && (status === undefined || status.type === "idle");
+              if (isIdle) {
+                idleStatusConfirmations += 1;
+                if (idleStatusConfirmations >= 2) {
+                  return assistantMessage;
+                }
+              } else {
+                idleStatusConfirmations = 0;
+              }
+            }
+
+            yield* Effect.sleep("50 millis");
+          }
+        }).pipe(
+          Effect.timeout(OPEN_CODE_TEXT_GENERATION_WAIT_TIMEOUT),
+          Effect.catchTag("TimeoutError", () =>
+            Effect.fail(
+              new OpenCodeTextGenerationEmptyOutputError({
+                ...promptContext,
+                responsePartCount: 0,
+                textPartCount: 0,
+              }),
+            ),
+          ),
+        );
+        const promptFailure = getOpenCodePromptFailure(result.info.error);
         if (promptFailure) {
           return yield* new OpenCodeTextGenerationPromptResponseError({
             ...promptContext,
@@ -263,7 +345,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             providerMessage: promptFailure.message,
           });
         }
-        const responseParts = result.data?.parts ?? [];
+        const responseParts = result.parts ?? [];
         const rawText = getOpenCodeTextResponse(responseParts);
         if (rawText.length === 0) {
           return yield* new OpenCodeTextGenerationEmptyOutputError({
@@ -295,7 +377,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           Effect.fail(
             new TextGenerationError({
               operation: cause.operation,
-              detail: "OpenCode session.prompt request failed.",
+              detail: OpenCodeRuntime.openCodeRuntimeErrorDetail(cause.cause),
               cause,
             }),
           ),
