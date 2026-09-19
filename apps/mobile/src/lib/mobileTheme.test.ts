@@ -9,6 +9,7 @@ import {
   getThemeColorsForAppearance,
 } from "@t3tools/shared/themePalettes";
 import { readDefaultMobileThemeVariables } from "./mobileTheme.test-support";
+import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 
 import {
   createMobileThemePairPatch,
@@ -170,6 +171,15 @@ describe("mobile themes", () => {
         contrastRatio(variables["--color-grouped-card"], variables["--color-sheet-solid"]),
       ).toBeGreaterThanOrEqual(1.06);
       expect(variables["--color-grouped-card"]).not.toBe(variables["--color-card"]);
+      const ios = getMobileThemeRuntimeVariables("t3-code", appearance, "ios");
+      const sidebar = flattenThemeColor(ios["--color-drawer"], ios["--color-screen"]);
+      expect(contrastRatio(sidebar, ios["--color-screen"])).toBeGreaterThanOrEqual(1.06);
+      for (const role of [
+        "--color-drawer-foreground",
+        "--color-drawer-foreground-muted",
+      ] as const) {
+        expect(contrastRatio(ios[role], sidebar)).toBeGreaterThanOrEqual(4.5);
+      }
     },
   );
 

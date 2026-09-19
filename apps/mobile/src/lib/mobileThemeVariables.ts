@@ -39,6 +39,10 @@ export function getMobileThemeRuntimeVariables(
       "--color-header": frame,
       "--color-header-foreground": variables["--color-drawer-foreground"],
       "--color-drawer": frame,
+      "--color-drawer-foreground-muted":
+        appearance === "light"
+          ? variables["--color-foreground-muted"]
+          : variables["--color-drawer-foreground-muted"],
       "--color-thread-hover":
         appearance === "dark"
           ? variables["--color-grouped-card"]

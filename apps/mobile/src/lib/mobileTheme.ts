@@ -361,8 +361,8 @@ export function getMobileThemeVariables(
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
-  // Mobile settings groups use tonal fills where desktop uses outlined cards.
-  // Keep the regular card and composer roles on their shared desktop surfaces.
+  // Mobile settings groups and fallback materials use tonal fills where desktop
+  // uses outlined cards. Regular cards retain their shared desktop surface.
   const groupedCard =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? appearance === "light"
