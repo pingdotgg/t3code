@@ -42,11 +42,10 @@ export function PullRequestLinkPreview({
         })
       : null,
   );
-  const readDetail = useAtomQueryRunner(pullRequestEnvironment.detail, {
+  const readPreview = useAtomQueryRunner(pullRequestEnvironment.preview, {
     reportFailure: false,
     reportDefect: false,
   });
-
   const trigger = confirmBeforeOpen
     ? cloneElement(link, {
         onClick: (event) => {
@@ -56,7 +55,7 @@ export function PullRequestLinkPreview({
           if (resolvingClick) return;
           setOpen(false);
           setResolvingClick(true);
-          void readDetail({ environmentId: target.environmentId, input: target.input })
+          void readPreview(target)
             .then(async (result) => {
               if (isAtomCommandInterrupted(result)) return;
               if (result._tag === "Success" && onOpenPullRequest(result.value.url)) return;
@@ -84,36 +83,38 @@ export function PullRequestLinkPreview({
   return (
     <PreviewCard open={open} onOpenChange={setOpen}>
       <PreviewCardTrigger render={trigger} delay={350} closeDelay={120} />
-      <PreviewCardPopup align="center" className="w-80 max-w-[calc(100vw-2rem)] p-3">
-        {detail === null ? (
-          <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">
-            {detailQuery.isPending ? "Loading pull request details…" : originalUrl}
-          </p>
-        ) : (
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-              <span className="min-w-0 truncate">{detail.repository}</span>
-              <span className="shrink-0">#{detail.number}</span>
-              <span aria-hidden>·</span>
-              {state === null ? null : (
-                <span className="inline-flex shrink-0 items-center gap-1">
-                  <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
-                  {state.label}
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
-              {detail.title}
+      {detail !== null || detailQuery.error !== null ? (
+        <PreviewCardPopup align="center" className="w-80 max-w-[calc(100vw-2rem)] p-3">
+          {detail === null ? (
+            <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">
+              {originalUrl}
             </p>
-            <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <PullRequestActorAvatar actor={detail.author} className="size-4" />
-              <span className="min-w-0 truncate">{authorLabel}</span>
-              <span aria-hidden>·</span>
-              <span className="shrink-0">opened {formatRelativeTimeLabel(detail.createdAt)}</span>
+          ) : (
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className="min-w-0 truncate">{detail.repository}</span>
+                <span className="shrink-0">#{detail.number}</span>
+                <span aria-hidden>·</span>
+                {state === null ? null : (
+                  <span className="inline-flex shrink-0 items-center gap-1">
+                    <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
+                    {state.label}
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
+                {detail.title}
+              </p>
+              <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <PullRequestActorAvatar actor={detail.author} className="size-4" />
+                <span className="min-w-0 truncate">{authorLabel}</span>
+                <span aria-hidden>·</span>
+                <span className="shrink-0">opened {formatRelativeTimeLabel(detail.createdAt)}</span>
+              </div>
             </div>
-          </div>
-        )}
-      </PreviewCardPopup>
+          )}
+        </PreviewCardPopup>
+      ) : null}
     </PreviewCard>
   );
 }

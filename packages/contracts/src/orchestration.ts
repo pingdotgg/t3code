@@ -141,6 +141,7 @@ export const ProviderRequestKind = Schema.Literals([
   "file-read",
   "file-change",
   "mcp-elicitation",
+  "permission",
 ]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const ProviderApprovalDecision = Schema.Literals([
@@ -2207,26 +2208,6 @@ export const ProviderSessionRuntimeStatus = Schema.Literals([
   "error",
 ]);
 export type ProviderSessionRuntimeStatus = typeof ProviderSessionRuntimeStatus.Type;
-
-const ProjectionThreadTurnStatus = Schema.Literals([
-  "running",
-  "completed",
-  "interrupted",
-  "error",
-]);
-export type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
-
-const ProjectionCheckpointRow = Schema.Struct({
-  threadId: ThreadId,
-  turnId: TurnId,
-  checkpointTurnCount: NonNegativeInt,
-  checkpointRef: CheckpointRef,
-  status: OrchestrationCheckpointStatus,
-  files: Schema.Array(OrchestrationCheckpointFile),
-  assistantMessageId: Schema.NullOr(MessageId),
-  completedAt: IsoDateTime,
-});
-export type ProjectionCheckpointRow = typeof ProjectionCheckpointRow.Type;
 
 export const ProjectionPendingApprovalStatus = Schema.Literals(["pending", "resolved"]);
 export type ProjectionPendingApprovalStatus = typeof ProjectionPendingApprovalStatus.Type;

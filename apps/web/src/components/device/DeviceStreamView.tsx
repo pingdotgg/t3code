@@ -11,7 +11,7 @@ import {
   type DeviceScreenSize,
   type DeviceStreamClient,
   type DeviceStreamStatus,
-} from "./deviceStream";
+} from "@t3tools/client-runtime/device/stream";
 
 const AX_POLL_INTERVAL_MS = 2_000;
 

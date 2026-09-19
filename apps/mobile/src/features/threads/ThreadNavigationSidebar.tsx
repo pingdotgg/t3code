@@ -152,7 +152,7 @@ function ThreadNavigationSidebarPane(
   props: ThreadNavigationSidebarProps & { readonly nativeChrome: boolean },
 ) {
   const { themeVariables: materialTheme } = useAppearancePreferences();
-  const screenColor = materialTheme["--color-screen"];
+  const drawerColor = materialTheme["--color-drawer"];
 
   const insets = useSafeAreaInsets();
   const projects = useProjects();
@@ -935,7 +935,7 @@ function ThreadNavigationSidebarPane(
                 }),
               )}
               searchQuery={props.searchQuery}
-              pane={Platform.OS === "android" ? "screen" : "sidebar"}
+              pane="sidebar"
               selected={
                 scopedThreadKey(thread.environmentId, thread.id) === props.selectedThreadKey
               }
@@ -976,7 +976,7 @@ function ThreadNavigationSidebarPane(
               disabled={!shelfPreferencesLoaded}
               expanded={item.expanded}
               onToggle={toggleSnoozedShelf}
-              pane={Platform.OS === "android" ? "screen" : "sidebar"}
+              pane="sidebar"
             />
           );
         case "v2-settled-shelf":
@@ -986,17 +986,21 @@ function ThreadNavigationSidebarPane(
               disabled={!shelfPreferencesLoaded}
               expanded={item.expanded}
               onToggle={toggleSettledShelf}
-              pane={Platform.OS === "android" ? "screen" : "sidebar"}
+              pane="sidebar"
             />
           );
         case "v2-show-more":
           return (
-            <ThreadListV2ShowMoreRow hiddenCount={item.hiddenCount} onPress={showMoreSettled} />
+            <ThreadListV2ShowMoreRow
+              pane="sidebar"
+              hiddenCount={item.hiddenCount}
+              onPress={showMoreSettled}
+            />
           );
         case "header":
           return (
             <ThreadListGroupHeader
-              variant={Platform.OS === "android" ? "compact" : "sidebar"}
+              variant="sidebar"
               collapsed={item.collapsed}
               isFirst={item.isFirst}
               groupKey={item.group.key}
@@ -1014,7 +1018,7 @@ function ThreadNavigationSidebarPane(
         case "pending-task":
           return (
             <PendingTaskListRow
-              variant={Platform.OS === "android" ? "compact" : "sidebar"}
+              variant="sidebar"
               pendingTask={item.pendingTask}
               environmentLabel={
                 savedConnectionsById[item.pendingTask.environmentId]?.environmentLabel ?? null
@@ -1064,7 +1068,7 @@ function ThreadNavigationSidebarPane(
         case "show-more":
           return (
             <ThreadListShowMoreRow
-              variant={Platform.OS === "android" ? "compact" : "sidebar"}
+              variant="sidebar"
               hiddenCount={item.hiddenCount}
               canShowLess={item.canShowLess}
               groupKey={item.groupKey}
@@ -1168,8 +1172,8 @@ function ThreadNavigationSidebarPane(
     <Text
       className={
         Platform.OS === "android"
-          ? "px-4 py-4 text-center text-sm text-foreground-muted"
-          : "px-2 py-4 text-sm text-foreground-muted"
+          ? "px-4 py-4 text-center text-sm text-drawer-foreground-muted"
+          : "px-2 py-4 text-sm text-drawer-foreground-muted"
       }
     >
       {catalogState.isLoadingConnections
@@ -1277,7 +1281,7 @@ function ThreadNavigationSidebarPane(
                 marginTop: stickyHeaderHeight,
                 marginHorizontal: 4,
                 paddingBottom: insets.bottom,
-                backgroundColor: screenColor,
+                backgroundColor: drawerColor,
                 borderTopLeftRadius: 28,
                 borderTopRightRadius: 28,
                 overflow: "hidden",
@@ -1374,7 +1378,7 @@ function ThreadNavigationSidebarPane(
             <SymbolView
               name="magnifyingglass"
               size={15}
-              tintColorClassName="accent-foreground-muted"
+              tintColorClassName="accent-drawer-foreground-muted"
               type="monochrome"
             />
             <TextInput
@@ -1390,7 +1394,7 @@ function ThreadNavigationSidebarPane(
               cursorColorClassName={undefined}
               selectionHandleColorClassName={undefined}
               returnKeyType="search"
-              className="h-[34px] flex-1 px-0 py-0 font-sans text-base text-foreground"
+              className="h-[34px] flex-1 px-0 py-0 font-sans text-base text-drawer-foreground"
               value={props.searchQuery}
             />
           </View>
