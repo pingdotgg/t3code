@@ -37,7 +37,11 @@ import {
   makeCursorAdapterV2,
   nestedToolCallFromEnvelope,
 } from "./CursorAdapterV2.ts";
-import { isCursorCancellationError, loggedCursorAgentOptions } from "./CursorAgentSdk.ts";
+import {
+  CursorAgentSdkRunnerError,
+  isCursorCancellationError,
+  loggedCursorAgentOptions,
+} from "./CursorAgentSdk.ts";
 
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
@@ -815,7 +819,15 @@ describe("CursorAdapterV2", () => {
             Effect.succeed({
               agentId: "native-cursor-close",
               listMessages: Effect.succeed([]),
-              close: Effect.die("cursor session close failed"),
+              // A typed runner failure is what `Effect.ignore` used to
+              // swallow — a defect would propagate through it either way, so
+              // only the error channel distinguishes the fixed behavior.
+              close: Effect.fail(
+                new CursorAgentSdkRunnerError({
+                  method: "agent.close",
+                  cause: new Error("cursor session close failed"),
+                }),
+              ),
               send: () => Effect.die("unused in close test"),
             }),
         },

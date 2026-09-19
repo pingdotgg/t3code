@@ -2539,42 +2539,45 @@ export const layerWithOptions = (
             // adapter call: it can suspend waiting on the idle fiber, and the
             // attach lock must not be held across that wait (an open already
             // holding threadLifecycle would deadlock on it). The attach's own
-            // gates re-check ownership after the suspend.
-            observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
-              Effect.andThen(
-                attachThreadOrReject(
-                  {
-                    providerSessionId,
-                    threadId: input.threadId,
-                    providerInstanceId: runtime.instanceId,
-                    driver: runtime.driver,
-                    expectedRuntime: runtime,
-                  },
-                  // The adapter call returns once the turn is started — most
-                  // adapters fork the turn's lifetime into the session scope —
-                  // so the admission record spans only the acquisition window
-                  // (Cursor's openAgent/runner.open, ACP session activate+prompt
-                  // submit). Only in-band turn calls get the bounded drain —
-                  // abandoning an acquire-then-return call could strand a
-                  // resource the scope close already finished checking for.
-                  () =>
-                    runResourceCreatingAdapterOp({
+            // gates re-check ownership after the suspend. The unwind covers
+            // every non-success exit — interruption while queued on the attach
+            // lock must not leave the session pinned busy forever.
+            Effect.onExit(
+              observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
+                Effect.andThen(
+                  attachThreadOrReject(
+                    {
                       providerSessionId,
-                      expectedRuntime: runtime,
+                      threadId: input.threadId,
+                      providerInstanceId: runtime.instanceId,
                       driver: runtime.driver,
-                      operation: runtime.startTurn(input),
-                      drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
-                        ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
-                        : undefined,
-                      requiredThreadId: input.threadId,
-                    }),
+                      expectedRuntime: runtime,
+                    },
+                    // The adapter call returns once the turn is started — most
+                    // adapters fork the turn's lifetime into the session scope —
+                    // so the admission record spans only the acquisition window
+                    // (Cursor's openAgent/runner.open, ACP session activate+prompt
+                    // submit). Only in-band turn calls get the bounded drain —
+                    // abandoning an acquire-then-return call could strand a
+                    // resource the scope close already finished checking for.
+                    () =>
+                      runResourceCreatingAdapterOp({
+                        providerSessionId,
+                        expectedRuntime: runtime,
+                        driver: runtime.driver,
+                        operation: runtime.startTurn(input),
+                        drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
+                          ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
+                          : undefined,
+                        requiredThreadId: input.threadId,
+                      }),
+                  ),
                 ),
               ),
-              Effect.catch((error) =>
-                observeActivity(providerSessionId, markIdle(providerSessionId, runtime)).pipe(
-                  Effect.andThen(Effect.fail(error)),
-                ),
-              ),
+              (exit) =>
+                Exit.isSuccess(exit)
+                  ? Effect.void
+                  : observeActivity(providerSessionId, markIdle(providerSessionId, runtime)),
             ),
           steerTurn: (input) =>
             requireLiveRuntime({
@@ -2642,38 +2645,40 @@ export const layerWithOptions = (
             : {
                 compactThread: (input: Parameters<NonNullable<typeof runtime.compactThread>>[0]) =>
                   // Same markBusy-before-attach ordering as startTurn: the
-                  // wait on the idle fiber must not run under the attach lock.
-                  observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
-                    Effect.andThen(
-                      attachThreadOrReject(
-                        {
-                          providerSessionId,
-                          threadId: input.threadId,
-                          providerInstanceId: runtime.instanceId,
-                          driver: runtime.driver,
-                          expectedRuntime: runtime,
-                        },
-                        // Compaction delegates to the same acquire-then-start
-                        // path as startTurn, so it shares the admission record
-                        // and the same driver-keyed drain policy.
-                        () =>
-                          runResourceCreatingAdapterOp({
+                  // wait on the idle fiber must not run under the attach lock,
+                  // and the unwind covers interruption the same way.
+                  Effect.onExit(
+                    observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
+                      Effect.andThen(
+                        attachThreadOrReject(
+                          {
                             providerSessionId,
-                            expectedRuntime: runtime,
+                            threadId: input.threadId,
+                            providerInstanceId: runtime.instanceId,
                             driver: runtime.driver,
-                            operation: runtime.compactThread!(input),
-                            drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
-                              ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
-                              : undefined,
-                            requiredThreadId: input.threadId,
-                          }),
+                            expectedRuntime: runtime,
+                          },
+                          // Compaction delegates to the same acquire-then-start
+                          // path as startTurn, so it shares the admission record
+                          // and the same driver-keyed drain policy.
+                          () =>
+                            runResourceCreatingAdapterOp({
+                              providerSessionId,
+                              expectedRuntime: runtime,
+                              driver: runtime.driver,
+                              operation: runtime.compactThread!(input),
+                              drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
+                                ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
+                                : undefined,
+                              requiredThreadId: input.threadId,
+                            }),
+                        ),
                       ),
                     ),
-                    Effect.catch((error) =>
-                      observeActivity(providerSessionId, markIdle(providerSessionId, runtime)).pipe(
-                        Effect.andThen(Effect.fail(error)),
-                      ),
-                    ),
+                    (exit) =>
+                      Exit.isSuccess(exit)
+                        ? Effect.void
+                        : observeActivity(providerSessionId, markIdle(providerSessionId, runtime)),
                   ),
               }),
           readThreadSnapshot: (input) =>

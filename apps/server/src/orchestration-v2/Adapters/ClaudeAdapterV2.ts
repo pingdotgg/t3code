@@ -5848,9 +5848,15 @@ export function makeClaudeAdapterV2(
                 providerThreadId: turnInput.providerThread.id,
                 providerTurnId: turnInput.providerTurnId,
               });
-              yield* Ref.update(queryContext, (current) =>
-                current?.query === existing.query ? null : current,
-              );
+              // A failed close means the query's CLI may still be alive:
+              // dropping its context here would let the session finalizer
+              // report a clean close over it. Keep the failed query tracked
+              // so the scope close retries the close and propagates.
+              if (Exit.isSuccess(closeExit)) {
+                yield* Ref.update(queryContext, (current) =>
+                  current?.query === existing.query ? null : current,
+                );
+              }
               yield* finalizeActiveTurn({
                 context: currentTurn,
                 status: "interrupted",
