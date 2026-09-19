@@ -24,6 +24,8 @@ worktree**, each background submission creates its own worktree.
 
 Pin a thread from its menu to keep it above your active work.
 
+On web and desktop, unpinning offers Undo for five seconds to restore the thread's pinned position.
+
 On web and desktop, you can also drag files from your computer onto any thread row:
 the thread opens and the files are attached in its composer, ready for
 your next message. The same per-message file limits apply as when attaching

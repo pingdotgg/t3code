@@ -4,11 +4,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import {
-  isAtomCommandInterrupted,
-  settlePromise,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -43,7 +39,8 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
-import * as ThreadPinAction from "./threadPinAction";
+import * as ThreadUndo from "./threadUndo";
+import { showUndoToast } from "./showUndoToast";
 import { useAtomCommand } from "../state/use-atom-command";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
@@ -578,7 +575,7 @@ export function useThreadActions() {
       const orderKey = readEnvironmentSupportsPinReorder(target.environmentId)
         ? (opts.orderKey ?? topOfPinnedRunOrderKey())
         : undefined;
-      ThreadPinAction.invalidate(scopedThreadKey(target));
+      ThreadUndo.invalidate("pin", scopedThreadKey(target));
       return pinThreadMutation({
         environmentId: target.environmentId,
         input: {
@@ -604,45 +601,18 @@ export function useThreadActions() {
       }
       const thread = readThreadShell(target);
       const orderKey = thread?.pinOrderKey ?? undefined;
-      const action = ThreadPinAction.begin(scopedThreadKey(target));
+      const action = ThreadUndo.begin("pin", scopedThreadKey(target));
       const result = await unpinThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
       if (result._tag === "Success" && action.isCurrent()) {
-        let undoStarted = false;
-        // Reuses the app's Base UI toast action: https://base-ui.com/react/components/toast
-        const toastId = toastManager.add({
-          ...stackedThreadToast({
-            type: "success",
-            title: "Thread unpinned",
-            description: thread?.title,
-            timeout: 5_000,
-            actionProps: {
-              children: "Undo",
-              onClick: () => {
-                if (undoStarted || !action.isCurrent()) return;
-                undoStarted = true;
-                toastManager.close(toastId);
-                void pinThread(target, orderKey === undefined ? {} : { orderKey }).then(
-                  (undone) => {
-                    if (undone._tag === "Failure" && !isAtomCommandInterrupted(undone)) {
-                      const error = squashAtomCommandFailure(undone);
-                      toastManager.add(
-                        stackedThreadToast({
-                          type: "error",
-                          title: "Failed to undo unpin",
-                          description:
-                            error instanceof Error ? error.message : "An error occurred.",
-                        }),
-                      );
-                    }
-                  },
-                );
-              },
-            },
-          }),
-          onClose: action.finish,
+        showUndoToast({
+          title: "Thread unpinned",
+          description: thread?.title,
+          claim: action,
+          undo: () => pinThread(target, orderKey === undefined ? {} : { orderKey }),
+          failureTitle: "Failed to undo unpin",
         });
       } else {
         action.finish();
@@ -687,7 +657,7 @@ export function useThreadActions() {
           ),
         );
       }
-      ThreadPinAction.invalidate(scopedThreadKey(target));
+      ThreadUndo.invalidate("pin", scopedThreadKey(target));
       return reorderPinnedThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId, orderKey },
