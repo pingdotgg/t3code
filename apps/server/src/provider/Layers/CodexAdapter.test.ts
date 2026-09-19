@@ -23,6 +23,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -2652,6 +2653,56 @@ const scopedLifecycleLayer = it.layer(
 );
 
 scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
+  it.effect(
+    "releases a stalled startup so the next session can start",
+    () =>
+      Effect.gen(function* () {
+        const starting = yield* Deferred.make<void>();
+        const runtimeFactory = makeScopedRuntimeFactory();
+        const stalledThreadId = asThreadId("thread-stalled-startup");
+        const nextThreadId = asThreadId("thread-after-stalled-startup");
+        const adapter = yield* makeCodexAdapter(decodeCodexSettings({}), {
+          makeRuntime: (options) =>
+            runtimeFactory.factory(options).pipe(
+              Effect.map((runtime) => {
+                if (options.threadId === stalledThreadId) {
+                  runtime.start = () =>
+                    Deferred.succeed(starting, undefined).pipe(Effect.andThen(Effect.never));
+                }
+                return runtime;
+              }),
+            ),
+        });
+        const recovery = yield* Effect.gen(function* () {
+          const failed = yield* adapter
+            .startSession({ threadId: stalledThreadId, runtimeMode: "full-access" })
+            .pipe(Effect.result);
+          const started = yield* adapter.startSession({
+            threadId: nextThreadId,
+            runtimeMode: "full-access",
+          });
+          return { failed, started };
+        }).pipe(Effect.forkChild);
+
+        yield* Deferred.await(starting);
+        yield* TestClock.adjust("30 seconds");
+        const { failed, started } = yield* Fiber.join(recovery);
+
+        NodeAssert.equal(failed._tag, "Failure");
+        NodeAssert.equal(failed.failure._tag, "ProviderAdapterProcessError");
+        NodeAssert.match(
+          failed.failure.message,
+          /Codex session startup timed out after 30 seconds/,
+        );
+        NodeAssert.deepStrictEqual(runtimeFactory.releasedThreadIds, [stalledThreadId]);
+        NodeAssert.equal(yield* adapter.hasSession(stalledThreadId), false);
+        NodeAssert.equal(started.threadId, nextThreadId);
+        NodeAssert.equal(started.status, "ready");
+        yield* adapter.stopSession(nextThreadId);
+      }),
+    { timeout: 5_000 },
+  );
+
   it.effect("closes the externally owned session scope on stopSession", () =>
     Effect.gen(function* () {
       scopedLifecycleRuntimeFactory.releasedThreadIds.length = 0;

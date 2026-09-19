@@ -2470,6 +2470,19 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 cause,
               }),
           ),
+          // A stalled handshake must release the shared provider command worker.
+          Effect.timeoutOrElse({
+            duration: "30 seconds",
+            orElse: () =>
+              Effect.fail(
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  detail:
+                    "Codex session startup timed out after 30 seconds. Try starting the session again.",
+                }),
+              ),
+          }),
           Effect.onError(() =>
             runtime.close.pipe(
               Effect.andThen(Effect.ignore(Scope.close(sessionScope, Exit.void))),
