@@ -12,19 +12,19 @@ import * as Scope from "effect/Scope";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import * as Socket from "effect/unstable/socket/Socket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import { SpeechService, type SpeechStream } from "./SpeechService.ts";
+import * as SpeechService from "./SpeechService.ts";
 
 const decodeCommand = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamCommand));
 
 /** One socket owns one stream. Each audio frame is acknowledged after inference finishes. */
 export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   socket: Socket.Socket,
-  speech: Pick<SpeechService["Service"], "startStream">,
+  speech: Pick<SpeechService.SpeechService["Service"], "startStream">,
 ) {
   const scope = yield* Scope.Scope;
   const writer = yield* socket.writer;
   const send = (event: SpeechStreamEvent) => writer.write(JSON.stringify(event));
-  let stream: SpeechStream | undefined;
+  let stream: SpeechService.SpeechStream | undefined;
   let busy = true;
   let ended = false;
   const fail = (message: string) =>
@@ -94,7 +94,7 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
 export const speechStreamRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
-    const speech = yield* SpeechService;
+    const speech = yield* SpeechService.SpeechService;
     return HttpRouter.add(
       "GET",
       SPEECH_STREAM_PATH,

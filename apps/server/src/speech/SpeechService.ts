@@ -186,8 +186,11 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const selectedModel = async () => {
-    const settings = await Effect.runPromise(serverSettings.getSettings);
+  type SettingsSnapshot = Effect.Success<
+    ServerSettings.ServerSettingsService["Service"]["getSettings"]
+  >;
+
+  const selectedModel = (settings: SettingsSnapshot) => {
     return getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
   };
 
@@ -221,8 +224,11 @@ export const make = Effect.gen(function* () {
     }
   };
 
-  const loadModel = async (signal = lifetime.signal, backend: "auto" | "cpu" = "auto") => {
-    const definition = await selectedModel();
+  const loadModel = async (
+    definition: ReturnType<typeof selectedModel>,
+    signal = lifetime.signal,
+    backend: "auto" | "cpu" = "auto",
+  ) => {
     if (
       model &&
       loadedModelId === definition.id &&
@@ -262,6 +268,19 @@ export const make = Effect.gen(function* () {
       catch: (cause) => new SpeechOperationError({ operation, cause }),
     });
 
+  const readSettings = (operation: string) =>
+    serverSettings.getSettings.pipe(
+      Effect.mapError((cause) => new SpeechOperationError({ operation, cause })),
+    );
+
+  const writeSettings = (
+    operation: string,
+    patch: Parameters<ServerSettings.ServerSettingsService["Service"]["updateSettings"]>[0],
+  ) =>
+    serverSettings
+      .updateSettings(patch)
+      .pipe(Effect.mapError((cause) => new SpeechOperationError({ operation, cause })));
+
   const exclusive = <A>(operation: string, run: () => Promise<A>) =>
     Effect.tryPromise({
       try: async () => {
@@ -278,11 +297,9 @@ export const make = Effect.gen(function* () {
         isSpeechError(cause) ? cause : new SpeechOperationError({ operation, cause }),
     });
 
-  const currentStatus = async (): Promise<EnvironmentSpeechStatus> => {
+  const currentStatus = async (settings: SettingsSnapshot): Promise<EnvironmentSpeechStatus> => {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
-    const settings = await Effect.runPromise(serverSettings.getSettings);
-    const definition =
-      getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
+    const definition = selectedModel(settings);
     return {
       supported: true,
       state:
@@ -300,8 +317,8 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  const listModels = async () => {
-    const selected = await selectedModel();
+  const listModels = async (settings: SettingsSnapshot) => {
+    const selected = selectedModel(settings);
     return {
       models: await Promise.all(
         SPEECH_MODELS.map(async (definition) => {
@@ -332,6 +349,16 @@ export const make = Effect.gen(function* () {
     };
   };
 
+  const freshStatus = (operation: string) =>
+    readSettings(operation).pipe(
+      Effect.flatMap((settings) => attempt(operation, () => currentStatus(settings))),
+    );
+
+  const statusEffect = freshStatus("status");
+  const modelsEffect = readSettings("model listing").pipe(
+    Effect.flatMap((settings) => attempt("model listing", () => listModels(settings))),
+  );
+
   return SpeechService.of({
     startStream: Effect.gen(function* () {
       const operation = "streaming transcription";
@@ -345,9 +372,7 @@ export const make = Effect.gen(function* () {
       const signal = AbortSignal.any([controller.signal, lifetime.signal]);
       let finished = false;
       let loaded: LoadedModel | undefined;
-      const settings = yield* attempt("custom words loading", () =>
-        Effect.runPromise(serverSettings.getSettings),
-      );
+      const settings = yield* readSettings("custom words loading");
       const customWords = normalizeSpeechCustomWords(settings.speechCustomWords);
       const removeFillerWords = settings.speechRemoveFillerWords;
       const definition =
@@ -371,7 +396,7 @@ export const make = Effect.gen(function* () {
       );
       const preparation = yield* attempt(operation, async () => {
         const startedAt = performance.now();
-        const prepared = await loadModel(signal);
+        const prepared = await loadModel(definition, signal);
         if (!prepared.supportsStreaming)
           throw new Error("The selected model does not support streaming.");
         await prepared.begin();
@@ -431,7 +456,7 @@ export const make = Effect.gen(function* () {
                 loadedModelId = undefined;
                 loading = undefined;
               }
-              streamModel = await loadModel(signal, "cpu");
+              streamModel = await loadModel(definition, signal, "cpu");
               loaded = streamModel;
               await streamModel.begin();
               let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
@@ -467,14 +492,13 @@ export const make = Effect.gen(function* () {
         ),
       };
     }),
-    status: attempt("status", currentStatus),
-    models: attempt("model listing", listModels),
+    status: statusEffect,
+    models: modelsEffect,
     downloadModel: (modelId) =>
       exclusive("model download", async () => {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
         await download(modelId);
-        return currentStatus();
-      }),
+      }).pipe(Effect.andThen(freshStatus("model download"))),
     selectModel: (modelId) =>
       exclusive("model selection", async () => {
         if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
@@ -482,98 +506,101 @@ export const make = Effect.gen(function* () {
         model = undefined;
         loadedModelId = undefined;
         loading = undefined;
-        await Effect.runPromise(serverSettings.updateSettings({ speechModelId: modelId }));
-        return currentStatus();
-      }),
-    cancelDownload: (modelId) =>
-      attempt("model download cancellation", async () => {
-        if (downloading?.modelId === modelId) downloading.controller.abort();
-        return currentStatus();
-      }),
-    updateCustomWords: (words) =>
-      exclusive("custom words update", async () => {
-        const customWords = normalizeSpeechCustomWords(words);
-        await Effect.runPromise(serverSettings.updateSettings({ speechCustomWords: customWords }));
-        return currentStatus();
-      }),
-    updateFillerWordRemoval: (enabled) =>
-      exclusive("filler word removal update", async () => {
-        await Effect.runPromise(
-          serverSettings.updateSettings({ speechRemoveFillerWords: enabled }),
-        );
-        return currentStatus();
-      }),
-    transcribe: (pcmBytes) =>
-      exclusive("transcription", async () => {
-        if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
-        const pcm = decodeSpeechPcm(pcmBytes);
-        if (pcm.length === 0)
-          return { text: "", backend: "none", prepareDurationMs: 0, inferenceDurationMs: 0 };
-        activeTranscriptions += 1;
-        try {
-          const prepareStartedAt = performance.now();
-          const loaded = await loadModel().catch((cause) => {
-            throw new SpeechOperationError({ operation: "model preparation", cause });
-          });
-          const prepareDurationMs = performance.now() - prepareStartedAt;
-          const inferenceStartedAt = performance.now();
-          let inferenceModel = loaded;
-          const settings = await Effect.runPromise(serverSettings.getSettings);
-          const customWords = normalizeSpeechCustomWords(settings.speechCustomWords);
-          const removeFillerWords = settings.speechRemoveFillerWords;
-          const definition =
-            getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
-          const fillerWordLanguage =
-            definition.languages.length === 1 ? definition.languages[0] : undefined;
-          const options = {
-            timestamps: "none" as const,
-            ...(customWords.length > 0 && loaded.supportsInitialPrompt
-              ? {
-                  family: {
-                    kind: "whisper" as const,
-                    initialPrompt: customWords.join(", "),
-                  },
-                }
-              : {}),
-          };
-          let result: Awaited<ReturnType<LoadedModel["transcribe"]>>;
-          try {
-            result = await inferenceModel.transcribe(pcm, options);
-          } catch (cause) {
-            if (model === inferenceModel) {
-              model = undefined;
-              loadedModelId = undefined;
-              loading = undefined;
-            }
-            if (inferenceModel.backend.toLowerCase() === "cpu")
-              throw new SpeechOperationError({ operation: "inference", cause });
-            await inferenceModel.dispose();
-            inferenceModel = await loadModel(lifetime.signal, "cpu");
-            result = await inferenceModel.transcribe(pcm, options).catch((fallbackCause) => {
-              if (model === inferenceModel) {
-                model = undefined;
-                loadedModelId = undefined;
-                loading = undefined;
-              }
-              throw new SpeechOperationError({ operation: "inference", cause: fallbackCause });
-            });
-          }
-          const corrected = loaded.supportsInitialPrompt
-            ? result.text
-            : applySpeechCustomWords(result.text, customWords);
-          return {
-            text: (removeFillerWords
-              ? removeSpeechFillerWords(corrected, fillerWordLanguage)
-              : corrected
-            ).trim(),
-            backend: inferenceModel.backend,
-            prepareDurationMs,
-            inferenceDurationMs: performance.now() - inferenceStartedAt,
-          };
-        } finally {
-          activeTranscriptions -= 1;
-        }
       }).pipe(
+        Effect.andThen(writeSettings("model selection", { speechModelId: modelId })),
+        Effect.andThen(freshStatus("model selection")),
+      ),
+    cancelDownload: (modelId) =>
+      Effect.sync(() => {
+        if (downloading?.modelId === modelId) downloading.controller.abort();
+      }).pipe(Effect.andThen(freshStatus("model download cancellation"))),
+    updateCustomWords: (words) => {
+      const customWords = normalizeSpeechCustomWords(words);
+      return exclusive("custom words update", async () => {}).pipe(
+        Effect.andThen(writeSettings("custom words update", { speechCustomWords: customWords })),
+        Effect.andThen(freshStatus("custom words update")),
+      );
+    },
+    updateFillerWordRemoval: (enabled) =>
+      exclusive("filler word removal update", async () => {}).pipe(
+        Effect.andThen(
+          writeSettings("filler word removal update", { speechRemoveFillerWords: enabled }),
+        ),
+        Effect.andThen(freshStatus("filler word removal update")),
+      ),
+    transcribe: (pcmBytes) =>
+      readSettings("transcription").pipe(
+        Effect.flatMap((settings) =>
+          exclusive("transcription", async () => {
+            if (unsupportedReason)
+              throw new SpeechUnsupportedPlatformError({ platform, architecture });
+            const pcm = decodeSpeechPcm(pcmBytes);
+            if (pcm.length === 0)
+              return { text: "", backend: "none", prepareDurationMs: 0, inferenceDurationMs: 0 };
+            activeTranscriptions += 1;
+            try {
+              const definition = selectedModel(settings);
+              const prepareStartedAt = performance.now();
+              const loaded = await loadModel(definition).catch((cause) => {
+                throw new SpeechOperationError({ operation: "model preparation", cause });
+              });
+              const prepareDurationMs = performance.now() - prepareStartedAt;
+              const inferenceStartedAt = performance.now();
+              let inferenceModel = loaded;
+              const customWords = normalizeSpeechCustomWords(settings.speechCustomWords);
+              const removeFillerWords = settings.speechRemoveFillerWords;
+              const fillerWordLanguage =
+                definition.languages.length === 1 ? definition.languages[0] : undefined;
+              const options = {
+                timestamps: "none" as const,
+                ...(customWords.length > 0 && loaded.supportsInitialPrompt
+                  ? {
+                      family: {
+                        kind: "whisper" as const,
+                        initialPrompt: customWords.join(", "),
+                      },
+                    }
+                  : {}),
+              };
+              let result: Awaited<ReturnType<LoadedModel["transcribe"]>>;
+              try {
+                result = await inferenceModel.transcribe(pcm, options);
+              } catch (cause) {
+                if (model === inferenceModel) {
+                  model = undefined;
+                  loadedModelId = undefined;
+                  loading = undefined;
+                }
+                if (inferenceModel.backend.toLowerCase() === "cpu")
+                  throw new SpeechOperationError({ operation: "inference", cause });
+                await inferenceModel.dispose();
+                inferenceModel = await loadModel(definition, lifetime.signal, "cpu");
+                result = await inferenceModel.transcribe(pcm, options).catch((fallbackCause) => {
+                  if (model === inferenceModel) {
+                    model = undefined;
+                    loadedModelId = undefined;
+                    loading = undefined;
+                  }
+                  throw new SpeechOperationError({ operation: "inference", cause: fallbackCause });
+                });
+              }
+              const corrected = loaded.supportsInitialPrompt
+                ? result.text
+                : applySpeechCustomWords(result.text, customWords);
+              return {
+                text: (removeFillerWords
+                  ? removeSpeechFillerWords(corrected, fillerWordLanguage)
+                  : corrected
+                ).trim(),
+                backend: inferenceModel.backend,
+                prepareDurationMs,
+                inferenceDurationMs: performance.now() - inferenceStartedAt,
+              };
+            } finally {
+              activeTranscriptions -= 1;
+            }
+          }),
+        ),
         Effect.tap(({ backend, prepareDurationMs, inferenceDurationMs }) =>
           Effect.logInfo("Speech transcription completed", {
             backend,
@@ -584,35 +611,41 @@ export const make = Effect.gen(function* () {
         Effect.map(({ text }) => text),
       ),
     removeModel: (modelId) =>
-      exclusive("model removal", async () => {
-        const definition = getSpeechModel(modelId);
-        if (!definition) throw new SpeechModelNotFoundError({ modelId });
-        const selected = await selectedModel();
-        await loading?.catch(() => undefined);
-        if (loadedModelId === modelId) {
-          await model?.dispose();
-          model = undefined;
-          loadedModelId = undefined;
-          loading = undefined;
-        }
-        await removeSpeechModel(modelDirectory, definition);
-        if (selected.id === modelId) {
-          const candidates = await Promise.all(
-            SPEECH_MODELS.filter((candidate) => candidate.id !== modelId).map(
-              async (candidate) => ({
-                candidate,
-                ready: await isSpeechModelReady(modelDirectory, candidate),
-              }),
-            ),
-          );
-          const replacement = candidates.find(({ ready }) => ready)?.candidate;
-          if (replacement)
-            await Effect.runPromise(
-              serverSettings.updateSettings({ speechModelId: replacement.id }),
+      readSettings("model removal").pipe(
+        Effect.flatMap((settings) =>
+          exclusive("model removal", async () => {
+            const definition = getSpeechModel(modelId);
+            if (!definition) throw new SpeechModelNotFoundError({ modelId });
+            const selected = selectedModel(settings);
+            await loading?.catch(() => undefined);
+            if (loadedModelId === modelId) {
+              await model?.dispose();
+              model = undefined;
+              loadedModelId = undefined;
+              loading = undefined;
+            }
+            await removeSpeechModel(modelDirectory, definition);
+            if (selected.id !== modelId) return undefined;
+            const candidates = await Promise.all(
+              SPEECH_MODELS.filter((candidate) => candidate.id !== modelId).map(
+                async (candidate) => ({
+                  candidate,
+                  ready: await isSpeechModelReady(modelDirectory, candidate),
+                }),
+              ),
             );
-        }
-        return currentStatus();
-      }),
+            return candidates.find(({ ready }) => ready)?.candidate.id;
+          }).pipe(
+            Effect.flatMap((replacementId) =>
+              replacementId
+                ? writeSettings("model removal", { speechModelId: replacementId }).pipe(
+                    Effect.andThen(freshStatus("model removal")),
+                  )
+                : freshStatus("model removal"),
+            ),
+          ),
+        ),
+      ),
   });
 });
 
