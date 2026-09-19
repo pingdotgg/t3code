@@ -52,7 +52,7 @@ export function DaysNumberField({
         <NumberFieldInput
           aria-label={label}
           size={new Intl.NumberFormat().format(draft ?? value).length}
-          className="field-sizing-content w-auto min-w-[1ch] grow-0 text-right in-data-[size=sm]:px-1"
+          className="field-sizing-content w-auto min-w-[1ch] grow-0 text-right"
         />
         <span aria-hidden="true" className="self-center pr-2 text-xs">
           days
