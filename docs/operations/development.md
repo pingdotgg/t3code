@@ -15,6 +15,18 @@ a new browser.
 
 Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
 
+### Nix
+
+A `flake.nix` at the repo root provides a dev shell with the toolchain matching CI
+(Node 24, pnpm, Rust stable, and the Linux desktop build prerequisites). With Nix and
+flakes enabled:
+
+```sh
+nix develop
+```
+
+Install the `vp` task runner once (it is not in nixpkgs); the shell prints the command if it is missing. After installing it, exit and re-enter `nix develop`, then `vp i` and `vp run dev` work as above. Regenerate `flake.lock` with `nix flake lock` when bumping the pinned nixpkgs revision.
+
 ## Choosing a dev process
 
 Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron client.
