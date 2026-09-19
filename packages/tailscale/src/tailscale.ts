@@ -145,10 +145,16 @@ export interface TailscaleStatus {
 const collectStdout = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
     Stream.decodeText(),
+    // Join chunked output: folding with `acc + chunk` is O(n²) on large
+    // `status --json` payloads (every peer/route ships, only Self is read).
     Stream.runFold(
-      () => "",
-      (acc, chunk) => acc + chunk,
+      () => [] as Array<string>,
+      (acc, chunk) => {
+        acc.push(chunk);
+        return acc;
+      },
     ),
+    Effect.map((chunks) => chunks.join("")),
   );
 
 const collectStderr = collectStdout;
@@ -245,14 +251,13 @@ export const readTailscaleStatus = Effect.gen(function* () {
       Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
     );
     if (exitCode !== 0) {
+      const stderrDiagnostic = stderrDiagnosticOf(stderr);
       return yield* new TailscaleCommandExitError({
         ...commandContext,
         exitCode,
         stdoutLength: stdout.length,
         stderrLength: stderr.length,
-        ...(stderrDiagnosticOf(stderr) !== undefined
-          ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
-          : {}),
+        ...(stderrDiagnostic !== undefined ? { stderrDiagnostic } : {}),
       });
     }
     return yield* parseTailscaleStatus(stdout);
@@ -313,13 +318,12 @@ const runTailscaleCommand = (
         Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
       );
       if (exitCode !== 0) {
+        const stderrDiagnostic = stderrDiagnosticOf(stderr);
         return yield* new TailscaleCommandExitError({
           ...commandContext,
           exitCode,
           stderrLength: stderr.length,
-          ...(stderrDiagnosticOf(stderr) !== undefined
-            ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
-            : {}),
+          ...(stderrDiagnostic !== undefined ? { stderrDiagnostic } : {}),
         });
       }
     }).pipe(

@@ -67,7 +67,12 @@ function assertCarriesNoSecret(error: object, secret: string): void {
 const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
 const tailscaleStatusWithSingleIpJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
 
-function mockHandle(result: { stdout?: string; stderr?: string; code?: number }) {
+function mockHandle(result: {
+  stdout?: string;
+  stdoutChunks?: ReadonlyArray<string>;
+  stderr?: string;
+  code?: number;
+}) {
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(1),
     exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.code ?? 0)),
@@ -75,7 +80,10 @@ function mockHandle(result: { stdout?: string; stderr?: string; code?: number })
     kill: () => Effect.void,
     unref: Effect.succeed(Effect.void),
     stdin: Sink.drain,
-    stdout: Stream.make(encoder.encode(result.stdout ?? "")),
+    stdout:
+      result.stdoutChunks !== undefined
+        ? Stream.make(...result.stdoutChunks.map((chunk) => encoder.encode(chunk)))
+        : Stream.make(encoder.encode(result.stdout ?? "")),
     stderr: Stream.make(encoder.encode(result.stderr ?? "")),
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -112,7 +120,7 @@ function mockSpawnerLayer(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
-  ) => { stdout?: string; stderr?: string; code?: number },
+  ) => { stdout?: string; stdoutChunks?: ReadonlyArray<string>; stderr?: string; code?: number },
 ) {
   return spawnerLayer(
     ChildProcessSpawner.make((command) => {
@@ -181,8 +189,14 @@ describe("tailscale", () => {
     const layer = mockSpawnerLayer((command, args) => {
       assert.equal(command, "tailscale");
       assert.deepEqual(args, ["status", "--json"]);
+      // Emit the JSON payload across multiple stdout chunks so the test
+      // exercises collectStdout's accumulation and joining behavior.
+      const splitAt = Math.floor(tailscaleStatusWithSingleIpJson.length / 2);
       return {
-        stdout: tailscaleStatusWithSingleIpJson,
+        stdoutChunks: [
+          tailscaleStatusWithSingleIpJson.slice(0, splitAt),
+          tailscaleStatusWithSingleIpJson.slice(splitAt),
+        ],
       };
     });
 
