@@ -5160,6 +5160,155 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  for (const previousState of ["completed", "failed", "interrupted"] as const) {
+    for (const liveStatus of ["busy", "idle", "unknown"] as const) {
+      it.effect(
+        `checks live status after ${previousState} before ${liveStatus} recovery`,
+        () =>
+          Effect.gen(function* () {
+            const adapter = yield* OpenCodeAdapter;
+            const threadId = asThreadId(`thread-adopt-${previousState}-${liveStatus}`);
+            const sessionID = "http://127.0.0.1:9999/session";
+            const enqueue = makeOpenCodeEventQueue();
+            yield* adapter.startSession({
+              provider: ProviderDriverKind.make("opencode"),
+              threadId,
+              runtimeMode: "full-access",
+            });
+            const turn = yield* adapter.sendTurn({
+              threadId,
+              input: "Read the synthetic fixture",
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("opencode"),
+                "opencode/kimi-k3",
+              ),
+            });
+            const settled = yield* adapter.streamEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.threadId === threadId &&
+                  (event.type === "turn.completed" || event.type === "turn.aborted"),
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            if (previousState === "interrupted") {
+              yield* adapter.interruptTurn(threadId, turn.turnId);
+            } else {
+              enqueue(
+                previousState === "failed"
+                  ? {
+                      type: "session.error",
+                      properties: {
+                        sessionID,
+                        error: { name: "UnknownError", data: { message: "Synthetic failure" } },
+                      },
+                    }
+                  : { type: "session.status", properties: { sessionID, status: { type: "idle" } } },
+              );
+            }
+            yield* Fiber.join(settled);
+            runtimeMock.state.sessionStatusImplementation = async () => ({
+              data: liveStatus === "unknown" ? null : { [sessionID]: { type: liveStatus } },
+            });
+            const recovered = yield* adapter.streamEvents.pipe(
+              Stream.filter((event) => event.threadId === threadId),
+              Stream.takeUntil((event) => event.type === "thread.state.changed"),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            for (let index = 0; index < 2; index += 1) {
+              enqueue({
+                type: "session.status",
+                properties: { sessionID, status: { type: "busy" } },
+              });
+            }
+            enqueue({ type: "session.compacted", properties: { sessionID } });
+            const events = yield* Fiber.join(recovered);
+            const starts = events.filter((event) => event.type === "turn.started");
+            const shouldAdopt = liveStatus === "busy" && previousState !== "interrupted";
+            NodeAssert.equal(starts.length, shouldAdopt ? 1 : 0);
+            const session = (yield* adapter.listSessions()).find(
+              (entry) => entry.threadId === threadId,
+            );
+            if (shouldAdopt) {
+              NodeAssert.equal(session?.status, "running");
+              NodeAssert.ok(session?.activeTurnId);
+              NodeAssert.notEqual(session.activeTurnId, turn.turnId);
+              NodeAssert.equal(starts[0]?.turnId, session.activeTurnId);
+              const stopped = yield* adapter.streamEvents.pipe(
+                Stream.filter(
+                  (event) =>
+                    event.threadId === threadId &&
+                    event.type ===
+                      (previousState === "completed" ? "turn.completed" : "turn.aborted"),
+                ),
+                Stream.runHead,
+                Effect.forkChild,
+              );
+              if (previousState === "completed") {
+                enqueue({
+                  type: "session.status",
+                  properties: { sessionID, status: { type: "idle" } },
+                });
+              } else {
+                yield* adapter.interruptTurn(threadId, session.activeTurnId);
+              }
+              NodeAssert.equal(
+                Option.getOrThrow(yield* Fiber.join(stopped)).turnId,
+                session.activeTurnId,
+              );
+            } else {
+              NodeAssert.equal(session?.activeTurnId, undefined);
+              NodeAssert.equal(session?.status, previousState === "failed" ? "error" : "ready");
+            }
+            yield* adapter.stopSession(threadId);
+          }),
+      );
+    }
+  }
+
+  it.effect("keeps Stop active during the busy status request", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-stop-during-busy-recovery");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const enqueue = makeOpenCodeEventQueue();
+      const requested = promiseWithResolvers<void>();
+      const statusResponse = promiseWithResolvers<unknown>();
+      runtimeMock.state.sessionStatusImplementation = () => {
+        requested.resolve(undefined);
+        return statusResponse.promise;
+      };
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "busy" } } });
+      yield* Effect.promise(() => requested.promise);
+      yield* adapter.interruptTurn(threadId);
+      statusResponse.resolve({ data: { [sessionID]: { type: "busy" } } });
+      enqueue({ type: "session.compacted", properties: { sessionID } });
+      const events = yield* Fiber.join(eventsFiber);
+      NodeAssert.equal(
+        events.some((event) => event.type === "turn.started"),
+        false,
+      );
+      const session = (yield* adapter.listSessions()).find((entry) => entry.threadId === threadId);
+      NodeAssert.equal(session?.activeTurnId, undefined);
+      NodeAssert.equal(session?.status, "ready");
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, [sessionID]);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("ignores late busy and idle status after an interrupted turn", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
