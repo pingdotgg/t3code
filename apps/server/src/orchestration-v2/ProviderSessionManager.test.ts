@@ -6005,8 +6005,11 @@ it.effect(
       // is free to run into any release/reacquire gap the bookkeeping leaves
       // open. The adapter call must always observe the thread's credential
       // claim and the teardown must land only after the call — the ordering
-      // one continuous [session, thread] lock hold guarantees.
-      for (let offset = 1; offset <= 60; offset += 1) {
+      // one continuous [session, thread] lock hold guarantees. The sweep
+      // reaches well past the bookkeeping-to-admission boundary (~op 505 on
+      // the unfused implementation — credential issuance dominates the
+      // ~440 ops between the park point and the lock release).
+      for (let offset = 1; offset <= 520; offset += 1) {
         const state = yield* Ref.make(emptyState);
         const issuing = yield* Deferred.make<void>();
         const issueGate = yield* Deferred.make<void>();
@@ -6077,13 +6080,17 @@ it.effect(
             );
           yield* stepper.step(detaching, 10_000);
 
-          // Resume issuance, then hold the attach at the swept op count: if
-          // bookkeeping released the lock before the adapter call reacquired
-          // it, the parked detach wakes first and strips the attachment and
-          // its credential claim before the call is admitted.
+          // Arm the hold *before* opening the gate: on this synchronous
+          // scheduler the waiter's resume runs inline inside
+          // Deferred.succeed, so a target installed afterwards never sees
+          // the resume. If bookkeeping released the lock before the adapter
+          // call reacquired it, the parked detach wakes first while the
+          // attach is held and strips the attachment and its credential
+          // claim before the call is admitted.
+          stepper.aim(attaching, gatedAt + offset);
           yield* Deferred.succeed(issueGate, undefined);
-          yield* stepper.step(attaching, gatedAt + offset);
           yield* stepper.step(detaching, 10_000);
+          yield* stepper.step(attaching, 10_000);
           yield* stepper.drain;
 
           const attachExit = yield* Fiber.join(attaching);
@@ -6259,6 +6266,115 @@ it.effect(
               }),
           }),
         ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not steal a running turn's busy mark when an early interrupt lands",
+  () =>
+    Effect.gen(function* () {
+      // The unwind must only release a mark this call actually took. Sweeping
+      // the armed op puts the interrupt at every point around the markBusy
+      // increment — before it, the interrupted call owns no mark and the
+      // running turn's count must keep the session busy.
+      const sawInterrupt = yield* Ref.make(false);
+      for (let offset = 1; offset <= 16; offset += 1) {
+        const state = yield* Ref.make(emptyState);
+        yield* Effect.gen(function* () {
+          const manager = yield* ProviderSessionManagerV2;
+          const idAllocator = yield* IdAllocatorV2;
+          const projectionStore = yield* ProjectionStoreV2;
+          const stepper = makeSteppingScheduler();
+          const threadId = ThreadId.make(`thread-busy-steal-${offset}`);
+          const session = yield* makeThreadSessionFixture(threadId);
+          const providerSessionId = yield* session.allocate;
+          const runtime = yield* session.open(providerSessionId);
+          const now = yield* DateTime.now;
+          const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
+          const providerThread = makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+          });
+          const turnInput = (ordinal: number) =>
+            Effect.gen(function* () {
+              const runId = idAllocator.derive.run({ threadId, ordinal });
+              return {
+                appThread,
+                threadId,
+                runId,
+                runOrdinal: ordinal,
+                providerTurnOrdinal: ordinal,
+                attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+                rootNodeId: idAllocator.derive.rootNode({ runId }),
+                providerThread,
+                message: {
+                  createdBy: "user",
+                  creationSource: "web",
+                  messageId: yield* idAllocator.allocate.message({ threadId, ordinal }),
+                  text: "keep the session busy",
+                  attachments: [],
+                },
+                modelSelection,
+                runtimePolicy,
+              } satisfies ProviderAdapterV2TurnInput;
+            });
+
+          // Turn A takes a mark and no terminal turn event ever arrives, so
+          // the session holds busyCount=1 for the rest of the test.
+          yield* runtime.startTurn(yield* turnInput(1));
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+
+          // Turn B is held at the swept op and then interrupted — before its
+          // own increment it owns no mark, so the unwind must leave turn A's
+          // count alone.
+          // The hold must be armed after the fork: while the forkDetach is
+          // evaluated under provideService the test fiber itself consults the
+          // stepper, and an armed hold would park it in `held` forever.
+          const turning = yield* runtime
+            .startTurn(yield* turnInput(2))
+            .pipe(
+              Effect.exit,
+              Effect.forkDetach,
+              Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+            );
+          stepper.holdSpawnedAt(offset);
+          yield* stepper.drain;
+          // interruptUnsafe only signals — Fiber.interrupt would wait for an
+          // exit the parked stepper cannot produce while the test fiber
+          // blocks.
+          yield* Effect.sync(() => turning.interruptUnsafe());
+          stepper.resumeSpawned();
+          yield* stepper.drain;
+          const turnExit = yield* Fiber.await(turning);
+          if (turnExit._tag === "Failure") {
+            yield* Ref.set(sawInterrupt, true);
+          }
+
+          yield* TestClock.adjust("1 second");
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+          yield* Effect.yieldNow;
+          assert.isTrue(
+            Option.isSome(yield* manager.get(providerSessionId)),
+            `interrupted startTurn stole the running turn's busy mark (offset ${offset})`,
+          );
+          assert.equal((yield* Ref.get(state)).closeCount, 0, `close at offset ${offset}`);
+        }).pipe(
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 1_000,
+            }),
+          ),
+        );
+      }
+      assert.isTrue(
+        yield* Ref.get(sawInterrupt),
+        "no swept offset interrupted the startTurn mid-flight",
       );
     }),
 );
