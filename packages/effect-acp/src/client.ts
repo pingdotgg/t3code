@@ -14,7 +14,7 @@ import * as AcpError from "./errors.ts";
 import * as AcpProtocol from "./protocol.ts";
 import * as AcpRpcs from "./rpc.ts";
 import * as AcpSchema from "./compat.ts";
-import type * as AcpSchemaV1 from "./_generated/schema-v1.gen.ts";
+import * as AcpSchemaV1 from "./_generated/schema-v1.gen.ts";
 import * as AcpSchemaV2 from "./_generated/schema.gen.ts";
 import { AGENT_METHODS, CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import {
@@ -24,6 +24,10 @@ import {
   runHandler,
 } from "./_internal/shared.ts";
 import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
+
+const decodeElicitationRequest = Schema.decodeUnknownEffect(
+  Schema.Union([AcpSchemaV2.CreateElicitationRequest, AcpSchemaV1.CreateElicitationRequest]),
+);
 
 export interface AcpClientOptions {
   readonly logIncoming?: boolean;
@@ -996,11 +1000,21 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
           })),
         ),
       [CLIENT_METHODS.elicitation_create]: (payload, { requestId }) =>
-        runHandler(
-          coreHandlers.elicitation,
-          payload,
-          CLIENT_METHODS.elicitation_create,
-          requestContext(requestId, CLIENT_METHODS.elicitation_create),
+        decodeElicitationRequest(payload).pipe(
+          Effect.mapError((cause) =>
+            AcpError.AcpRequestError.invalidExtensionPayload(
+              CLIENT_METHODS.elicitation_create,
+              cause,
+            ).toProtocolError(),
+          ),
+          Effect.flatMap((request) =>
+            runHandler(
+              coreHandlers.elicitation,
+              request,
+              CLIENT_METHODS.elicitation_create,
+              requestContext(requestId, CLIENT_METHODS.elicitation_create),
+            ),
+          ),
         ),
       [CLIENT_METHODS.mcp_connect]: (payload, { requestId }) =>
         runHandler(
