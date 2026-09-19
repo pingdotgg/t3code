@@ -188,6 +188,7 @@ function harness() {
                 label: "Desktop",
                 environmentPublicKey: "key",
                 linkedAt: state.updatedAt,
+                updatedAt: state.updatedAt,
                 endpoint: {
                   httpBaseUrl: "https://env.test",
                   wsBaseUrl: "wss://env.test",
