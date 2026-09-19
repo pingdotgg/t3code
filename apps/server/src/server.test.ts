@@ -1759,6 +1759,45 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("serves URL-encoded static filenames exactly once", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-encoded-" });
+      yield* fs.writeFileString(path.join(staticDir, "index.html"), "fallback");
+      for (const name of [
+        "a space.js",
+        "日本語.js",
+        "literal%20.js",
+        "hash#name.js",
+        "..config.js",
+      ]) {
+        yield* fs.writeFileString(path.join(staticDir, name), `// ${name}`);
+      }
+      yield* buildAppUnderTest({ config: { staticDir } });
+      for (const name of [
+        "a space.js",
+        "日本語.js",
+        "literal%20.js",
+        "hash#name.js",
+        "..config.js",
+      ]) {
+        const encodedName = encodeURIComponent(name).replaceAll(".", "%2e");
+        const response = yield* HttpClient.get(`/${encodedName}`);
+        assert.equal(response.status, 200);
+        assert.equal(yield* response.text, `// ${name}`);
+        const head = yield* HttpClient.head(`/${encodedName}`, {
+          headers: { "accept-encoding": "identity" },
+        });
+        assert.equal(head.status, 200);
+        assert.equal(head.headers["content-length"], String(Buffer.byteLength(`// ${name}`)));
+      }
+      for (const target of ["/%invalid.js", "/%2e%2e%2fsecret.txt", "/%00.js"]) {
+        assert.include([400, 404], (yield* HttpClient.get(target)).status, target);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("revalidates static files without sending unchanged bodies", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
