@@ -39,11 +39,12 @@ export const makeProviderAuthService = Effect.gen(function* () {
   ) {
     yield* providerSessions.closeInstance(instanceId).pipe(
       Effect.mapError(
-        () =>
+        (cause) =>
           new ProviderSetupError({
             instanceId,
             operation: "stopSessions",
             detail: "Could not stop all sessions for this provider. Try again.",
+            cause,
           }),
       ),
     );
