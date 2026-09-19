@@ -93,6 +93,18 @@ export const T3ProjectFile = Schema.Struct({
         'How new worktrees populate git submodules: "recursive" (the default) initializes nested submodules too, "top-level" initializes only those declared by this repository, and "none" leaves every submodule empty for a setup script to handle. A project or environment setting in T3 Code overrides this.',
     }),
   ),
+  worktreeCloneFiles: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "On macOS, use APFS clones for large tracked files in eligible clean, same-commit worktrees. Saves disk space but verification can be slower than Git checkout. Defaults to false.",
+    }),
+  ),
+  worktreeCloneDependencies: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "On macOS, seed ignored node_modules in same-commit worktrees with APFS clones. Requires a runOnWorktreeCreate install script to reconcile dependencies and rebuild executable shims. Defaults to false.",
+    }),
+  ),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({

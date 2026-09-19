@@ -62,6 +62,21 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+## APFS worktree copies on macOS
+
+Set `"worktreeCloneFiles": true` in `t3.json` to use APFS copies for large tracked
+files in eligible clean, same-commit worktrees. The copies share disk blocks until
+edited; changes remain independent. This saves disk space, but verification can
+make checkout slower than Git. It is off by default; other checkouts use Git as usual.
+
+To seed dependencies too, set `"worktreeCloneDependencies": true` in `t3.json` and
+keep a `runOnWorktreeCreate` script that installs dependencies. T3 copies ignored
+`node_modules` directories when the source and new worktree are clean and at the
+same commit. Setup still runs to reconcile dependencies and rebuild executable
+shims; path-sensitive caches and non-portable symlinks are not reused. Set the
+option to `false` or remove it to disable dependency copying. This runs on the
+machine hosting the environment, including when you connect remotely.
+
 ## Storage cleanup
 
 Open **Settings → Storage** to enable automatic cleanup on one machine or all connected

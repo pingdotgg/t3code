@@ -10,6 +10,8 @@ describe("T3ProjectFile", () => {
     const decoded = decode({
       $schema: "https://t3.codes/schema/t3.json",
       iconPath: "assets/logo.svg",
+      worktreeCloneFiles: true,
+      worktreeCloneDependencies: true,
       scripts: [
         {
           name: "Dev",
@@ -25,6 +27,8 @@ describe("T3ProjectFile", () => {
     });
 
     expect(decoded.iconPath).toBe("assets/logo.svg");
+    expect(decoded.worktreeCloneDependencies).toBe(true);
+    expect(decoded.worktreeCloneFiles).toBe(true);
     expect(decoded.scripts).toHaveLength(3);
     expect(decoded.scripts?.[1]).toEqual({ name: "Test", command: "pnpm test" });
     expect(decoded.scripts?.[2]?.async).toBe(false);
