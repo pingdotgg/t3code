@@ -153,22 +153,6 @@
   ],
   "packageOverrides": [
     {
-      "name": "@react-native/normalize-colors",
-      "version": "0.74.89",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
-      }
-    },
-    {
-      "name": "tr46",
-      "version": "0.0.3",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": ["Copyright (c) Sebastian Mayr"]
-      }
-    },
-    {
       "license": "MIT",
       "name": "@react-grab/cli",
       "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli",

@@ -13,7 +13,7 @@ import { deviceEnvironment, refreshDeviceHubAccess, useDeviceHubAccess } from ".
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import DeviceStreamDOM, { type DeviceStreamRef } from "./device-stream-dom";
+import { DeviceStreamWebView, type DeviceStreamRef } from "./DeviceStreamWebView";
 import {
   selectedThreadDevicePreview,
   threadDevicePreviews,
@@ -269,7 +269,7 @@ function OpenDevicePreview({
     return () => void onInputConnected(false);
   }, [environmentId, onInputConnected]);
   return access ? (
-    <DeviceStreamDOM
+    <DeviceStreamWebView
       ref={streamRef}
       access={access}
       platform={session.platform}
@@ -282,16 +282,6 @@ function OpenDevicePreview({
       }}
       onUnauthorized={onUnauthorized}
       onInputConnected={onInputConnected}
-      dom={{
-        useExpoDOMWebView: false,
-        scrollEnabled: false,
-        bounces: false,
-        style: { flex: 1, backgroundColor: themeVariables["--color-sheet-solid"] },
-        containerStyle: { flex: 1 },
-        mixedContentMode: "always",
-        allowUniversalAccessFromFileURLs: true,
-        contentInsetAdjustmentBehavior: "never",
-      }}
     />
   ) : (
     <View className="flex-1 items-center justify-center gap-4 px-6">
