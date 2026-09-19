@@ -235,8 +235,8 @@ describe("pull request detail decoding", () => {
   it("maps check-run status and commit-status state onto one vocabulary", () => {
     const detail = expectSuccess(decodePullRequestDetailJson(detailJson));
     expect(detail.checks.map((check) => [check.name, check.status])).toEqual([
-      ["build", "pending"],
       ["test", "failure"],
+      ["build", "pending"],
       ["ci/legacy", "success"],
     ]);
   });

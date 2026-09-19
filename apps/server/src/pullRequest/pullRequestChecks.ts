@@ -19,8 +19,9 @@ function isAtLeastAsNew(candidate: string | null, kept: string | null): boolean 
  * one before it, and a run that never said when it happened loses to one that did. A tie goes to
  * whichever came last, because a host lists a re-run after the run it repeats.
  *
- * The order is the host's own, held at the place each check first appeared, so a re-run landing
- * mid-read replaces a row where it stands instead of reshuffling the list under the reader.
+ * Failed and cancelled checks come first so the reason for a failing rollup is immediately visible.
+ * Within that group and the remaining checks, the order is the host's own, held at the place each
+ * check first appeared. A re-run landing mid-read replaces a row where it stands.
  *
  * Two checks that survive under the same name are then genuinely different ones, since they came
  * from different workflows — each is shown as `workflow / name`, the way GitHub writes it itself.
@@ -46,10 +47,15 @@ export function dedupeChecks(
   for (const entry of survivors) {
     countsByName.set(entry.check.name, (countsByName.get(entry.check.name) ?? 0) + 1);
   }
-  return survivors.map((entry) => {
+  const checks = survivors.map((entry) => {
     const workflowName = entry.workflowName ?? "";
     return workflowName.length > 0 && (countsByName.get(entry.check.name) ?? 0) > 1
       ? { ...entry.check, name: `${workflowName} / ${entry.check.name}` }
       : entry.check;
+  });
+  return checks.toSorted((left, right) => {
+    const leftFailed = left.status === "failure" || left.status === "cancelled";
+    const rightFailed = right.status === "failure" || right.status === "cancelled";
+    return Number(rightFailed) - Number(leftFailed);
   });
 }
