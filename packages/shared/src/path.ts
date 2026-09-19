@@ -10,6 +10,18 @@ export function isWindowsAbsolutePath(value: string): boolean {
   return isUncPath(value) || isWindowsDrivePath(value);
 }
 
+/**
+ * The level above every drive root on a Windows environment, where the drive
+ * list lives. Windows has no real path for it, so T3 addresses it with a bare
+ * backslash. Deliberately not `/`: on posix that is a real directory, and
+ * keeping the two apart lets the path helpers stay platform-free.
+ */
+export const WINDOWS_DRIVE_LIST_PATH = "\\";
+
+export function isWindowsDriveListPath(value: string): boolean {
+  return value === WINDOWS_DRIVE_LIST_PATH;
+}
+
 export function isExplicitRelativePath(value: string): boolean {
   return (
     value === "." ||
