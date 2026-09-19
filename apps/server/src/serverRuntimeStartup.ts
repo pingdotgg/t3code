@@ -375,18 +375,25 @@ export const startEffectWorkerWithRelay = Effect.fn(
   readonly startRelay: Effect.Effect<void, never, RelayContext>;
   readonly workerFiberRef: Ref.Ref<Fiber.Fiber<void, never> | null>;
 }) {
-  // The worker is detached from the scope and bound by this bounded-interrupt
-  // finalizer instead: forkScoped's own finalizer waits on the worker's exit
-  // unboundedly, and it is registered after the teardown finalizer, so a
+  // The worker is detached from the scope and bound by the bounded-interrupt
+  // finalizer below instead: forkScoped's own finalizer waits on the worker's
+  // exit unboundedly, and it is registered after the teardown finalizer, so a
   // stalled worker would pin scope close before providerSessions.shutdown.
-  const workerFiber = yield* forkParkedFiber(input.runWorker, { detached: true });
-  yield* Ref.set(input.workerFiberRef, workerFiber);
-  yield* Effect.addFinalizer(() =>
-    Ref.getAndSet(input.workerFiberRef, null).pipe(
-      Effect.flatMap((ownedWorkerFiber) =>
-        ownedWorkerFiber === null ? Effect.void : interruptEffectWorker(ownedWorkerFiber),
-      ),
-    ),
+  // Fork, ownership record, and finalizer registration run uninterruptibly —
+  // an interrupt between them would leave a detached worker nobody owns,
+  // parked at activation and free to run against a closed runtime.
+  yield* Effect.uninterruptible(
+    Effect.gen(function* () {
+      const workerFiber = yield* forkParkedFiber(input.runWorker, { detached: true });
+      yield* Ref.set(input.workerFiberRef, workerFiber);
+      yield* Effect.addFinalizer(() =>
+        Ref.getAndSet(input.workerFiberRef, null).pipe(
+          Effect.flatMap((ownedWorkerFiber) =>
+            ownedWorkerFiber === null ? Effect.void : interruptEffectWorker(ownedWorkerFiber),
+          ),
+        ),
+      );
+    }),
   );
   yield* input.startRelay.pipe(
     Effect.onExit((exit) => {

@@ -10,13 +10,68 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
+import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import { TestClock } from "effect/testing";
 
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 
+import * as ServerActivation from "./serverActivation.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+
+// Stepping scheduler (mirrors ProviderSessionManager.test.ts): counts op
+// boundaries per fiber and can hold the first spawned fiber reaching an armed
+// offset, parking its resume task until `resumeSpawned` requeues it. Used to
+// land an interrupt inside an otherwise unschedulable fork/record gap.
+function makeSteppingScheduler() {
+  const tasks: Array<() => void> = [];
+  const counts = new Map<Fiber.Fiber<unknown, unknown>, number>();
+  const targets = new Map<Fiber.Fiber<unknown, unknown>, number>();
+  const held = new Map<Fiber.Fiber<unknown, unknown>, () => void>();
+  let spawnedTarget: number | undefined;
+  let capture: Fiber.Fiber<unknown, unknown> | undefined;
+  const scheduler: Scheduler.Scheduler = {
+    executionMode: "sync",
+    shouldYield: (fiber) => {
+      const count = (counts.get(fiber) ?? 0) + 1;
+      counts.set(fiber, count);
+      if (targets.has(fiber)) return count === targets.get(fiber);
+      if (spawnedTarget === undefined || count !== spawnedTarget) return false;
+      spawnedTarget = undefined;
+      capture = fiber;
+      return true;
+    },
+    makeDispatcher: () => ({
+      scheduleTask: (task) => {
+        if (capture !== undefined) {
+          held.set(capture, task);
+          capture = undefined;
+          return;
+        }
+        tasks.push(task);
+      },
+      flush: () => {
+        while (tasks.length > 0) tasks.shift()!();
+      },
+    }),
+  };
+  const drain = Effect.gen(function* () {
+    for (let round = 0; round < 64; round++) {
+      while (tasks.length > 0) tasks.shift()!();
+      yield* Effect.yieldNow;
+      if (tasks.length === 0) return;
+    }
+  });
+  const holdSpawnedAt = (ops: number) => {
+    spawnedTarget = ops;
+  };
+  const resumeSpawned = () => {
+    for (const task of held.values()) tasks.push(task);
+    held.clear();
+  };
+  return { scheduler, drain, holdSpawnedAt, resumeSpawned };
+}
 
 it("uses the canonical Codex model for auto-bootstrap", () => {
   assert.deepEqual(ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(), {
@@ -124,6 +179,53 @@ it.effect("scope close reaches teardown past a stalled uninterruptible worker", 
     }
     yield* Fiber.join(closing);
     assert.isTrue(yield* Ref.get(teardownRan));
+  }),
+);
+
+it.effect("does not orphan a worker interrupted while it parks at activation", () =>
+  Effect.gen(function* () {
+    // Sweep the hold offset so the interrupt lands at every scheduling point
+    // around the detached fork and the ownership record. Offsets that hold the
+    // start fiber between the fork and `Ref.set` would orphan the worker on a
+    // non-atomic sequence — the worker is released at the activation gate and
+    // would then run against the closed scope.
+    for (let offset = 1; offset <= 96; offset++) {
+      const stepper = makeSteppingScheduler();
+      const scope = yield* Scope.make();
+      const workerFiberRef = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+      const gate = yield* Deferred.make<void>();
+      const workerRan = yield* Ref.make(false);
+
+      const start = yield* ServerRuntimeStartup.startEffectWorkerWithRelay({
+        runWorker: Ref.set(workerRan, true),
+        startRelay: Effect.never,
+        workerFiberRef,
+      }).pipe(
+        Effect.provideService(Scope.Scope, scope),
+        Effect.provideService(ServerActivation.ServerActivation, Deferred.await(gate)),
+        Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+        Effect.forkDetach,
+      );
+      // Armed after the fork so the test fiber itself is never captured.
+      stepper.holdSpawnedAt(offset);
+      yield* stepper.drain;
+
+      yield* Effect.sync(() => start.interruptUnsafe());
+      stepper.resumeSpawned();
+      yield* stepper.drain;
+
+      const closing = yield* Scope.close(scope, Exit.void).pipe(Effect.forkDetach);
+      while (closing.pollUnsafe() === undefined) {
+        yield* stepper.drain;
+        yield* Effect.yieldNow;
+      }
+      yield* Fiber.join(closing);
+
+      yield* Deferred.succeed(gate, undefined);
+      yield* stepper.drain;
+      yield* Effect.yieldNow;
+      assert.isFalse(yield* Ref.get(workerRan));
+    }
   }),
 );
 
