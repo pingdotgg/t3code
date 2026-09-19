@@ -972,8 +972,12 @@ export const make = (options?: StartupOptions) =>
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
       yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
 
-      yield* Effect.logDebug("startup phase: syncing clean projects");
-      yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);
+      // Parked like the other background roots: a status check fetches every
+      // enabled project's remote, and holding command readiness for that kept
+      // the desktop window closed for as long as the network took. Waiting for
+      // activation also keeps a trial server from pulling before it commits.
+      yield* Effect.logDebug("startup phase: parking the clean project sync at activation");
+      yield* forkParked(runStartupPhase("projects.auto-pull", syncAutoPullProjects));
 
       const welcomeBase = yield* resolveWelcomeBase;
       const environment = yield* serverEnvironment.getDescriptor;
