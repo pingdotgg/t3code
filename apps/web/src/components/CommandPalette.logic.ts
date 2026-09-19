@@ -461,7 +461,7 @@ export function buildBrowseGroups(input: {
   upIcon: ReactNode;
   directoryIcon: ReactNode;
   browseUp: () => void | Promise<void>;
-  browseTo: (name: string) => void | Promise<void>;
+  browseTo: (name: string, fullPath: string) => void | Promise<void>;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
 
@@ -485,10 +485,11 @@ export function buildBrowseGroups(input: {
       value: `browse:${entry.fullPath}`,
       searchTerms: [input.browseQuery, entry.fullPath, entry.name],
       title: entry.name,
+      description: entry.fullPath,
       icon: input.directoryIcon,
       keepOpen: true,
       run: async () => {
-        await input.browseTo(entry.name);
+        await input.browseTo(entry.name, entry.fullPath);
       },
     });
   }
@@ -510,7 +511,9 @@ export function filterPinnedBrowseEntries(input: {
   const { visibleEntries } = filterFilesystemBrowseEntries(input.browseEntries, visibleFilterQuery);
   const exactEntry =
     input.filterQuery.length > 0
-      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ?? null)
+      ? (input.browseEntries.find(
+          (entry) => !entry.searchMatch && namesMatch(entry.name, input.filterQuery),
+        ) ?? null)
       : null;
   return { visibleEntries, exactEntry };
 }

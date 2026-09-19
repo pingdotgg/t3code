@@ -734,6 +734,269 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("browse", () => {
+    it.effect("bounds directory reads for ambiguous compact queries", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir();
+        for (let index = 0; index < 140; index += 1) {
+          yield* writeTextFile(cwd, `workspace-${index}/makespace/index.ts`);
+        }
+        vi.mocked(NodeFSP.readdir).mockClear();
+        const result = yield* workspaceEntries.browse({
+          cwd,
+          partialPath: "./wormak",
+          fuzzy: true,
+        });
+        expect(result.entries.length).toBeGreaterThan(0);
+        expect(vi.mocked(NodeFSP.readdir).mock.calls.length).toBeLessThanOrEqual(128);
+      }),
+    );
+
+    it.effect("matches compact queries across folder names and returns each path once", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "wor/unrelated/index.ts");
+        yield* writeTextFile(cwd, "Workspace/makespace/index.ts");
+        const result = yield* workspaceEntries.browse({
+          cwd,
+          partialPath: "./wormak",
+          fuzzy: true,
+        });
+        expect(result.entries).toEqual([
+          {
+            name: "makespace",
+            fullPath: path.join(cwd, "Workspace/makespace"),
+            searchMatch: { query: "wormak", score: expect.any(Number) },
+          },
+        ]);
+      }),
+    );
+
+    it.effect("matches compact queries over three levels and tolerates fragment typos", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "Workspace/projects/makespace/index.ts");
+        for (const query of ["worprjmak", "worprjmkaes"]) {
+          const result = yield* workspaceEntries.browse({
+            cwd,
+            partialPath: `./${query}`,
+            fuzzy: true,
+          });
+          expect(result.entries).toEqual([
+            {
+              name: "makespace",
+              fullPath: path.join(cwd, "Workspace/projects/makespace"),
+              searchMatch: { query, score: expect.any(Number) },
+            },
+          ]);
+        }
+      }),
+    );
+
+    it.effect("retains literal folder names without searching their descendants", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "wormak/index.ts");
+        yield* writeTextFile(cwd, "Workspace/makespace/index.ts");
+        vi.mocked(NodeFSP.readdir).mockClear();
+        expect(
+          (yield* workspaceEntries.browse({ cwd, partialPath: "./wormak", fuzzy: true })).entries,
+        ).toEqual([{ name: "wormak", fullPath: path.join(cwd, "wormak") }]);
+        expect(NodeFSP.readdir).toHaveBeenCalledTimes(1);
+      }),
+    );
+
+    it.effect("keeps compact searches out of hidden and nonmatching subtrees", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, ".Workspace/makespace/index.ts");
+        yield* writeTextFile(cwd, "Archive/Workspace/makespace/index.ts");
+        vi.mocked(NodeFSP.readdir).mockClear();
+        expect(
+          (yield* workspaceEntries.browse({ cwd, partialPath: "./wormak", fuzzy: true })).entries,
+        ).toEqual([]);
+        expect(vi.mocked(NodeFSP.readdir).mock.calls.map(([directory]) => directory)).toEqual([
+          cwd,
+        ]);
+      }),
+    );
+
+    it.effect("does not widen a relative search beyond its requested root", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "wor/unrelated/index.ts");
+        vi.mocked(NodeFSP.readdir).mockClear();
+        expect(
+          (yield* workspaceEntries.browse({ cwd, partialPath: "./wor/zzzzz", fuzzy: true }))
+            .entries,
+        ).toEqual([]);
+        expect(
+          vi
+            .mocked(NodeFSP.readdir)
+            .mock.calls.some(([directory]) => directory === path.dirname(cwd)),
+        ).toBe(false);
+        expect(NodeFSP.readdir).toHaveBeenCalledTimes(2);
+      }),
+    );
+
+    it.effect("continues through fuzzy parents when an exact abbreviation is a dead end", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "wor/unrelated/index.ts");
+        yield* writeTextFile(cwd, "Workspace/makespace/index.ts");
+        const result = yield* workspaceEntries.browse({
+          cwd,
+          partialPath: "./wor/mak",
+          fuzzy: true,
+        });
+        expect(result.entries).toEqual([
+          { name: "makespace", fullPath: path.join(cwd, "Workspace/makespace") },
+        ]);
+      }),
+    );
+
+    it.effect("backs up past an existing parent when a later abbreviated level has no match", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "wor/projects/unrelated/index.ts");
+        yield* writeTextFile(cwd, "Workspace/projects/makespace/index.ts");
+        const result = yield* workspaceEntries.browse({
+          cwd,
+          partialPath: "./wor/prj/mak",
+          fuzzy: true,
+        });
+        expect(result.entries).toEqual([
+          { name: "makespace", fullPath: path.join(cwd, "Workspace/projects/makespace") },
+        ]);
+      }),
+    );
+
+    it.effect("keeps empty exact directories and exact paths with matching children", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir();
+        yield* fileSystem.makeDirectory(path.join(cwd, "wor"));
+        yield* writeTextFile(cwd, "Workspace/makespace/index.ts");
+        expect(yield* workspaceEntries.browse({ cwd, partialPath: "./wor/", fuzzy: true })).toEqual(
+          { parentPath: path.join(cwd, "wor"), entries: [] },
+        );
+        yield* writeTextFile(cwd, "wor/makers/index.ts");
+        vi.mocked(NodeFSP.readdir).mockClear();
+        expect(
+          (yield* workspaceEntries.browse({ cwd, partialPath: "./wor/mak", fuzzy: true })).entries,
+        ).toEqual([{ name: "makers", fullPath: path.join(cwd, "wor/makers") }]);
+        expect(NodeFSP.readdir).toHaveBeenCalledTimes(1);
+      }),
+    );
+
+    it.effect("resolves abbreviations and typos across multiple parent directories", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "Workspace/projects/t3code/index.ts");
+        yield* writeTextFile(cwd, "Downloads/unrelated/index.ts");
+
+        for (const partialPath of ["./wrk/prj/t3cd", "./workspcae/projcts/t3cdoe"]) {
+          const result = yield* workspaceEntries.browse({ cwd, partialPath, fuzzy: true });
+          expect(result).toEqual({
+            parentPath: path.join(cwd, "Workspace/projects"),
+            entries: [{ name: "t3code", fullPath: path.join(cwd, "Workspace/projects/t3code") }],
+          });
+        }
+        expect(
+          vi
+            .mocked(NodeFSP.readdir)
+            .mock.calls.some(([directory]) => directory === path.join(cwd, "Downloads")),
+        ).toBe(false);
+      }),
+    );
+
+    it.effect("preserves equally named results from ambiguous parent directories", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "work/t3code/index.ts");
+        yield* writeTextFile(cwd, "Workspace/t3code/index.ts");
+        const result = yield* workspaceEntries.browse({
+          cwd,
+          partialPath: "./wrk/t3",
+          fuzzy: true,
+        });
+        expect(result.entries).toEqual([
+          { name: "t3code", fullPath: path.join(cwd, "work/t3code") },
+          { name: "t3code", fullPath: path.join(cwd, "Workspace/t3code") },
+        ]);
+      }),
+    );
+
+    it.effect("keeps exact directories on the single-listing path", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir();
+        yield* writeTextFile(cwd, "work/t3code/index.ts");
+        yield* writeTextFile(cwd, "Workspace/another/index.ts");
+        vi.mocked(NodeFSP.readdir).mockClear();
+        const result = yield* workspaceEntries.browse({ cwd, partialPath: "./work/", fuzzy: true });
+        expect(result.entries).toEqual([
+          { name: "t3code", fullPath: path.join(cwd, "work/t3code") },
+        ]);
+        expect(NodeFSP.readdir).toHaveBeenCalledTimes(1);
+      }),
+    );
+
+    it.effect(
+      "requires an explicit dot to traverse hidden folders and preserves exact-path errors",
+      () =>
+        Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir();
+          yield* writeTextFile(cwd, ".config/projects/index.ts");
+          expect(
+            (yield* workspaceEntries.browse({ cwd, partialPath: "./cfg/", fuzzy: true })).entries,
+          ).toEqual([]);
+          expect(
+            (yield* workspaceEntries.browse({ cwd, partialPath: "./.cfg/", fuzzy: true })).entries,
+          ).toEqual([{ name: "projects", fullPath: path.join(cwd, ".config/projects") }]);
+          const error = yield* workspaceEntries
+            .browse({ cwd, partialPath: "./cfg/" })
+            .pipe(Effect.flip);
+          expect(error._tag).toBe("WorkspaceEntriesReadDirectoryError");
+        }),
+    );
+
+    it.effect("bounds ambiguous searches instead of scanning every matching subtree", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir();
+        for (let index = 0; index < 40; index += 1) {
+          yield* writeTextFile(cwd, `workspace-${index}/project/index.ts`);
+        }
+        vi.mocked(NodeFSP.readdir).mockClear();
+        const result = yield* workspaceEntries.browse({ cwd, partialPath: "./wrk/", fuzzy: true });
+        expect(result.entries).toHaveLength(20);
+        expect(NodeFSP.readdir).toHaveBeenCalledTimes(22);
+      }),
+    );
+
     it.effect("returns matching directories and excludes files", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
