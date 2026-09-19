@@ -99,7 +99,7 @@ effectIt.live("rejects oversized chunked audio without invoking transcription", 
         ).rejects.toMatchObject({ cause: { code: "UND_ERR_SOCKET" } }),
       );
       expect(transcribe).not.toHaveBeenCalled();
-    }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest), Effect.provide(dependencies));
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeHttpServer.layerTest, dependencies)));
   }),
 );
 
