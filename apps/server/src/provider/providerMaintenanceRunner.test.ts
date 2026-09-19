@@ -21,6 +21,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
+import { compareMuseVersions } from "./museMaintenance.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import {
   makeProviderMaintenanceCapabilities,
@@ -632,6 +633,57 @@ describe("providerMaintenanceRunner", () => {
         ),
       ),
   );
+
+  it.effect("reports an unchanged Muse release when its native updater exits successfully", () => {
+    const museDriver = ProviderDriverKind.make("muse");
+    const museInstanceId = ProviderInstanceId.make("muse");
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    return Effect.gen(function* () {
+      const { registry, updateStatesRef } = yield* makeRegistry({
+        ...baseProvider,
+        driver: museDriver,
+        instanceId: museInstanceId,
+        version: "1.1.1-R9.1",
+      });
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider, options) =>
+          Effect.succeed({
+            ...makeProviderMaintenanceCapabilities({
+              provider,
+              packageName: null,
+              updateExecutable: "/fake/muse",
+              updateArgs: ["--version"],
+              updateLockKey: "muse:/fake/muse",
+              ...(options?.fresh ? { latestVersion: "1.1.1-R10.1" } : {}),
+            }),
+            compareVersions: compareMuseVersions,
+          }),
+      });
+
+      const result = yield* updater.updateProvider(museDriver);
+
+      assert.deepStrictEqual(calls, [{ command: "/fake/muse", args: ["--version"] }]);
+      assert.strictEqual(result.providers[0]?.version, "1.1.1-R9.1");
+      assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
+      assert.include(result.providers[0]?.updateState?.message ?? "", "still detects");
+      assert.deepStrictEqual(
+        (yield* Ref.get(updateStatesRef)).map((state) => state.status),
+        ["queued", "running", "unchanged"],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "muse 1.1.1-R9.1", code: 0 };
+          }),
+        ),
+      ),
+    );
+  });
 
   it.effect("prevents concurrent updates for the same provider", () => {
     const startedLatch: { resolve: () => void } = { resolve: () => {} };
