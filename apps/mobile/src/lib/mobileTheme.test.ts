@@ -127,6 +127,8 @@ describe("mobile themes", () => {
         ["--color-primary-text", "--color-card"],
         ["--color-primary-text", "--color-card-alt"],
         ["--color-primary-text", "--color-sheet-solid"],
+        ["--color-foreground", "--color-sheet-solid"],
+        ["--color-foreground-muted", "--color-sheet-solid"],
         ["--color-primary-text", "--color-grouped-card"],
         ["--color-foreground", "--color-grouped-card"],
         ["--color-foreground-muted", "--color-grouped-card"],

@@ -90,9 +90,9 @@ export function start(configuration: DeviceStreamConfiguration) {
   Object.assign(retry.style, {
     padding: "12px 24px",
     borderRadius: "20px",
-    border: "0",
+    border: `1px solid ${colors.buttonBorder}`,
     background: colors.buttonBackground,
-    color: colors.foreground,
+    color: colors.buttonForeground,
     font: "inherit",
     display: "none",
   });
