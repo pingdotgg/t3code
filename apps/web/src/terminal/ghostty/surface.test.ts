@@ -39,7 +39,7 @@ vi.mock("./vendor/ghostty-write-pty.wasm?url&no-inline", async () => ({
   default: (await import("./vendor/ghostty-write-pty.wasm?inline")).default,
 }));
 
-describe("GhosttyTerminalSurface visibility", () => {
+describe("GhosttyTerminalSurface", () => {
   const surfaces = new Set<GhosttyTerminalSurface>();
 
   // Keep the real surface, renderer, and WASM core. Only browser layout and
@@ -208,6 +208,68 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("debounces changing columns and flushes the final narrowed or widened grid at drag end", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn();
+    const surface = await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    expect(onResize).toHaveBeenLastCalledWith(20, 6);
+    onResize.mockClear();
+
+    for (const [width, cols] of [
+      [88, 10],
+      [248, 30],
+    ] as const) {
+      harness.mount.clientWidth = width;
+      harness.resize();
+      expect(surface.cols).toBe(cols);
+      expect(onResize).not.toHaveBeenCalled();
+      // The observer may already have fitted this exact grid before release.
+      surface.fit();
+      surface.flushResize();
+      expect(onResize).toHaveBeenCalledExactlyOnceWith(cols, 6);
+      surface.flushResize();
+      vi.advanceTimersByTime(150);
+      expect(onResize).toHaveBeenCalledTimes(1);
+      onResize.mockClear();
+    }
+  });
+
+  it("fits a final pointer-up width that the observer has not delivered yet", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn();
+    const surface = await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    onResize.mockClear();
+    harness.mount.clientWidth = 88;
+    surface.fit();
+    surface.flushResize();
+    expect(onResize).toHaveBeenCalledExactlyOnceWith(10, 6);
+    harness.resize();
+    vi.advanceTimersByTime(150);
+    expect(onResize).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles observer-only resizes and does not send again after disposal", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn();
+    const surface = await harness.create({ onResize });
+    harness.mount.clientWidth = 88;
+    harness.resize();
+    vi.advanceTimersByTime(149);
+    expect(onResize).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onResize).toHaveBeenCalledExactlyOnceWith(10, 6);
+    harness.mount.clientWidth = 248;
+    harness.resize();
+    surface.dispose();
+    expect(onResize).toHaveBeenLastCalledWith(30, 6);
+    onResize.mockClear();
+    surface.flushResize();
+    vi.advanceTimersByTime(150);
+    expect(onResize).not.toHaveBeenCalled();
   });
 
   it("stops hidden snapshots and paint while preserving live VT replies and the next cursor", async () => {

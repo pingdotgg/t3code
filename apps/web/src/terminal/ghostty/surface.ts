@@ -914,10 +914,15 @@ export class GhosttyTerminalSurface {
   private notifyResize(): void {
     this.resizeNotified = true;
     if (this.resizeNotifyTimer !== null) window.clearTimeout(this.resizeNotifyTimer);
-    this.resizeNotifyTimer = window.setTimeout(() => {
-      this.resizeNotifyTimer = null;
-      if (!this.disposed) this.options.onResize(this.cols, this.rows);
-    }, 150);
+    this.resizeNotifyTimer = window.setTimeout(() => this.flushResize(), 150);
+  }
+
+  /** Send the final grid at drag end without waiting for the resize debounce. */
+  flushResize(): void {
+    if (this.disposed || this.resizeNotifyTimer === null) return;
+    window.clearTimeout(this.resizeNotifyTimer);
+    this.resizeNotifyTimer = null;
+    this.options.onResize(this.cols, this.rows);
   }
 
   focus(): void {

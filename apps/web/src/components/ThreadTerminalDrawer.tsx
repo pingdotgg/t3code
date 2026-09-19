@@ -32,6 +32,7 @@ import {
   type ReactNode,
   type SetStateAction,
   useCallback,
+  useContext,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -82,6 +83,7 @@ import { serverEnvironment } from "../state/server";
 import { previewEnvironment } from "../state/preview";
 import { terminalEnvironment } from "../state/terminal";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { PreviewPanelResizeEpochContext } from "./preview/PreviewPanelShell";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import {
@@ -351,6 +353,7 @@ export function TerminalViewport({
   drawerHeight,
   keybindings,
 }: TerminalViewportProps) {
+  const panelResizeEpoch = useContext(PreviewPanelResizeEpochContext);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const visibleRef = useRef(visible);
@@ -977,6 +980,15 @@ export function TerminalViewport({
       window.cancelAnimationFrame(frame);
     };
   }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
+
+  useLayoutEffect(() => {
+    if (panelResizeEpoch === 0 && resizeEpoch === 0) return;
+    const terminal = terminalRef.current;
+    if (!terminal || !visibleRef.current) return;
+    // Drag-end epochs run after the final DOM width commits, before paint.
+    // Flush even if ResizeObserver has already fitted the local grid.
+    if (terminal.fit()) terminal.flushResize();
+  }, [panelResizeEpoch, resizeEpoch]);
   return (
     <div
       ref={containerRef}

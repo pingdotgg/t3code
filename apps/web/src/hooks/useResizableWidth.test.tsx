@@ -103,6 +103,7 @@ describe("panel resize cleanup", () => {
       });
       await act(() => frame?.(0));
       expect(result.width).toBe(450);
+      expect(result.resizeEpoch).toBe(0);
       // Queue another move to check that interruption cancels pending work too.
       await act(() => result.handlers.onPointerMove(pointer(25)));
       expect(style.cursor).toBe("col-resize");
@@ -119,8 +120,10 @@ describe("panel resize cleanup", () => {
       expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
       if (reason === "unmount") {
         expect(setItem).not.toHaveBeenCalled();
+        expect(result.resizeEpoch).toBe(0);
       } else {
         expect(result.width).toBe(475);
+        expect(result.resizeEpoch).toBe(1);
         expect(setItem).toHaveBeenCalledExactlyOnceWith("test-panel-width", "475");
       }
     },
@@ -136,6 +139,7 @@ describe("panel resize cleanup", () => {
         result.handlers.onPointerUp(pointer(edge === "left" ? 25 : 175));
       });
       expect(result.width).toBe(475);
+      expect(result.resizeEpoch).toBe(1);
       expect(setItem).toHaveBeenCalledExactlyOnceWith("test-panel-width", "475");
       expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
     },
@@ -188,6 +192,7 @@ describe("panel resize cleanup", () => {
     });
     expect(result.width).toBe(450);
     expect(setItem).toHaveBeenCalledExactlyOnceWith("test-panel-width", "450");
+    expect(result.resizeEpoch).toBe(1);
     expect(style.cursor).toBe("");
     expect(captured).toBe(false);
   });
@@ -237,6 +242,7 @@ describe("panel width storage changes", () => {
     });
     expect(result.width).toBe(650);
     expect(setItem).not.toHaveBeenCalled();
+    expect(result.resizeEpoch).toBe(0);
     await act(() => renderer.update(<Panel />));
     expect(result.width).toBe(400);
   });
