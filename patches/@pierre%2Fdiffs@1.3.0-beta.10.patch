@@ -1,7 +1,8 @@
 diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedFile.d.ts
+index 990c155809f78d62ff20f74516fee83e3079c4b0..9cb548f06944f4c2b5a70c5d0644344c0886344b 100644
 --- a/dist/components/VirtualizedFile.d.ts
 +++ b/dist/components/VirtualizedFile.d.ts
-@@ -42,7 +42,7 @@ declare class VirtualizedFile<LAnnotation = undefined> extends File<LAnnotation> {
+@@ -41,7 +41,7 @@ declare class VirtualizedFile<LAnnotation = undefined> extends File<LAnnotation>
    private computeApproximateSize;
    setVisibility(visible: boolean): void;
    rerender(): void;
@@ -11,17 +12,10 @@ diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedF
      fileContainer,
      file,
 diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFile.js
+index 101e31d3909c8ca0885d73beb93547934943184a..7a53162eb9cf6bef9b1e7d590596dcb6edae912e 100644
 --- a/dist/components/VirtualizedFile.js
 +++ b/dist/components/VirtualizedFile.js
-@@ -20,6 +20,7 @@
- 	cache = {
- 		heights: /* @__PURE__ */ new Map(),
- 		checkpoints: [],
-+		codeWidth: void 0,
- 		fileAnnotationHeight: 0
- 	};
- 	isVisible = false;
-@@ -31,6 +32,8 @@
+@@ -31,6 +31,8 @@ var VirtualizedFile = class extends File {
  		super(options, workerManager, isContainerManaged);
  		this.virtualizer = virtualizer;
  		this.metrics = metrics;
@@ -30,7 +24,7 @@ diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFil
  	}
  	setMetrics(metrics, force = false) {
  		if (!force && areObjectsEqual(this.metrics, metrics)) return;
-@@ -70,10 +73,12 @@
+@@ -70,10 +72,14 @@ var VirtualizedFile = class extends File {
  		if (this.isAdvancedMode()) throw new Error("VirtualizedFile.setThemeType cannot be used inside CodeView. Update CodeView options instead.");
  		super.setThemeType(themeType);
  	}
@@ -40,27 +34,23 @@ diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFil
 -		this.cache.fileAnnotationHeight = 0;
 -		if (this.cache.heights.size > 0) this.cache.heights.clear();
 +		if (startLine === 0) this.cache.fileAnnotationHeight = 0;
-+		// Dropping unchanged wrapped rows moves the viewport before they can be remeasured.
++		// Rows before the change keep their measurements as estimates: dropping them
++		// shrinks the file under the viewport and the browser clamps the scroll position
++		// before the rows can be remeasured. Rendered rows are remeasured on reconcile.
 +		if (startLine === 0) this.cache.heights.clear();
 +		else for (const lineIndex of this.cache.heights.keys()) if (lineIndex >= startLine) this.cache.heights.delete(lineIndex);
  		if (this.cache.checkpoints.length > 0) this.cache.checkpoints.length = 0;
  		if (this.renderRange != null && resetRenderRange) this.renderRange = void 0;
  		if (recompute && this.isSimpleMode()) this.computeApproximateSize();
-@@ -91,6 +96,13 @@
+@@ -91,6 +97,7 @@ var VirtualizedFile = class extends File {
  		if (this.code == null) return hasHeightChange;
  		const content = this.code.children[1];
  		if (!(content instanceof HTMLElement)) return hasHeightChange;
-+		const codeWidth = this.code.getBoundingClientRect().width;
-+		if (!(codeWidth > 0)) return hasHeightChange;
-+		if (this.cache.codeWidth != null && this.cache.codeWidth !== codeWidth) {
-+			this.resetLayoutCache(false, false);
-+			hasHeightChange = true;
-+		}
-+		this.cache.codeWidth = codeWidth;
++		if (!(this.code.getBoundingClientRect().width > 0)) return hasHeightChange;
  		const hasFileAnnotations = includesFileAnnotations(this.lineAnnotations);
  		if (this.renderRange != null && hasFileAnnotations && shouldRenderFileAnnotations(this.renderRange)) {
  			const nextFileAnnotationHeight = measureFileAnnotationHeight(content) ?? 0;
-@@ -287,11 +299,11 @@
+@@ -287,11 +294,11 @@ var VirtualizedFile = class extends File {
  		this.forceRenderOverride = true;
  		this.virtualizer.instanceChanged(this, false);
  	}
@@ -75,7 +65,7 @@ diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFil
  			const windowSpecs = this.virtualizer.getWindowSpecs();
  			const renderRange = this.computeRenderRangeFromWindow(this.file, this.top ?? 0, windowSpecs);
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index ff78e2a..f9df318 100644
+index ff78e2ae0e20aa83124f758d193e978170c98a87..7d7b92062e09a72063e982a56cb9b9dc509527f4 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
 @@ -146,14 +146,11 @@ var Editor = class {
@@ -104,21 +94,26 @@ index ff78e2a..f9df318 100644
  				const gutterRow = resolveGutterTarget(e.composedPath()[0]);
  				if (gutterRow?.dataset.lineType === "change-deletion") {
  					const code = gutterRow.closest("[data-code]");
-@@ -1522,6 +1520,12 @@ var Editor = class {
+@@ -1510,6 +1508,8 @@ var Editor = class {
+ 			if (lineNumber === void 0 || lineType === "change-deletion") continue;
+ 			if (lineNumber - 1 < change.lineCount) break;
+ 			child.remove();
++			// A redo re-creates this row, so the cached element must not outlive it.
++			this.#lineElementsCache.delete(lineNumber - 1);
+ 		}
+ 		const didLineCountChange = change.lineDelta !== 0;
+ 		if (didLineCountChange) {
+@@ -1522,7 +1522,8 @@ var Editor = class {
  			if (gutterEl !== void 0) gutterEl.style.gridRow = "span " + gridRow;
  		}
  		fileInstance.updateRenderCache(dirtyLines, tokenizer.themeType, !didLineCountChange, didLineCountChange);
-+		if (fileInstance.file !== void 0) fileInstance.file.contents = textDocument.getText();
 -		if (didLineCountChange) fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer);
-+		if (didLineCountChange) {
-+			const previousLineCount = change.lineCount - change.lineDelta;
-+			// A wider or narrower line-number gutter can rewrap unchanged rows.
-+			const layoutStartLine = String(previousLineCount).length === String(change.lineCount).length ? change.startLine : 0;
-+			fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer, layoutStartLine);
-+		}
++		if (fileInstance.file !== void 0) fileInstance.file.contents = textDocument.getText();
++		if (didLineCountChange) fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer, change.startLine);
  		if (this.#isDiff && (this.#diffSyle === "unified" || didLineCountChange)) this.#resetCache();
  		if (newLineAnnotations !== void 0) {
-@@ -1788,6 +1787,7 @@ var Editor = class {
+ 			this.#lineAnnotations = newLineAnnotations;
+@@ -1788,6 +1789,7 @@ var Editor = class {
  		}
  	}
  	#setSelectedLinesSafe(range, lineNumberOnly = false) {
@@ -127,9 +122,10 @@ index ff78e2a..f9df318 100644
  			this.#fileInstance?.setSelectedLines(range, {
  				notify: false,
 diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
+index 202b6e558df52cfaee123c0131c7061c53cc4559..eedaa5804ab3f2a77b5526707412b1fb9d9f8b22 100644
 --- a/dist/managers/ResizeManager.d.ts
 +++ b/dist/managers/ResizeManager.d.ts
-@@ -5,6 +5,8 @@
+@@ -5,6 +5,8 @@ interface ResizeManagerSetupOptions {
    columnVariables?: ResizeManagerColumnVariableMode;
  }
  declare class ResizeManager {
@@ -139,9 +135,10 @@ diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
    private static managersByElement;
    private static getResizeObserver;
 diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
+index 9724cb1e344af1ac8763b592f671a9ceb63f1a76..14145d832900e7a9734786dbb6223d03424f7cb6 100644
 --- a/dist/managers/ResizeManager.js
 +++ b/dist/managers/ResizeManager.js
-@@ -19,6 +19,7 @@
+@@ -19,6 +19,7 @@ var ResizeManager = class ResizeManager {
  		for (const [manager, managerEntries] of entriesByManager) manager.handleResizeEntries(managerEntries);
  	}
  	observedNodes = /* @__PURE__ */ new Map();
@@ -149,7 +146,7 @@ diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
  	setup(pre, { disableAnnotations, columnVariables = "apply" }) {
  		const annotationUpdates = /* @__PURE__ */ new Set();
  		const applyColumnVariables = columnVariables === "apply";
-@@ -212,6 +213,7 @@
+@@ -212,6 +213,7 @@ var ResizeManager = class ResizeManager {
  		this.applyAnnotationUpdates(annotationUpdates);
  		annotationUpdates.clear();
  		this.applyColumnUpdates(codeUpdates);
@@ -158,7 +155,7 @@ diff --git a/dist/managers/ResizeManager.js b/dist/managers/ResizeManager.js
  	}
  	applyAnnotationUpdates(annotationUpdates) {
 diff --git a/dist/react/utils/useFileInstance.js b/dist/react/utils/useFileInstance.js
-index e9f62f5..af82a46 100644
+index e9f62f56eed9b634b613d2955647224e5af2b8a2..a33006b0fc00db4b68f1c6cb4c7cdfeac886ad24 100644
 --- a/dist/react/utils/useFileInstance.js
 +++ b/dist/react/utils/useFileInstance.js
 @@ -91,10 +91,7 @@ function mergeFileOptions({ options, controlledSelection, contentEditable, hasCu
@@ -174,9 +171,10 @@ index e9f62f5..af82a46 100644
  	return merged;
  }
 diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
+index 00706ab9402a30f2512616a2a580bdd099577ab9..95c3efc1fb4522c9f072752a86ff41ca53ef43a2 100644
 --- a/dist/renderers/FileRenderer.js
 +++ b/dist/renderers/FileRenderer.js
-@@ -107,10 +107,10 @@
+@@ -107,10 +107,10 @@ var FileRenderer = class {
  			result: massiveFile ? void 0 : cache?.result,
  			renderRange: void 0
  		};
@@ -188,7 +186,7 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  			this.initializeHighlighter();
  		}
  	}
-@@ -163,6 +163,8 @@
+@@ -158,6 +158,8 @@ var FileRenderer = class {
  		if (this.renderCache == null) return;
  		const { file, result } = this.renderCache;
  		if (result == null) return;
@@ -197,7 +195,7 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  		const lineCache = this.lineCache != null && isLineCacheForFile(this.lineCache, file) ? this.lineCache : void 0;
  		for (const [line, tokens] of dirtyLines) {
  			if (lineCache != null && line < lineCache.lines.length) {
-@@ -268,6 +270,7 @@
+@@ -268,6 +270,7 @@ var FileRenderer = class {
  		const forcePlainText = !hasContent || isFilePlainText(file) || isFileMassive(lines.length, this.getTokenizeMaxLength());
  		const newContent = !areFilesEqual(file, this.renderCache.file);
  		const newRenderRange = !areRenderRangesEqual(this.renderCache.renderRange, renderRange);
@@ -205,7 +203,7 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  		if (this.workerManager?.isWorkingPool() === true) {
  			if (forcePlainText || this.renderCache.result == null || !this.renderCache.highlighted && (newContent || newRenderRange)) {
  				this.renderCache.file = file;
-@@ -278,7 +281,6 @@
+@@ -278,7 +281,6 @@ var FileRenderer = class {
  			}
  			if (!forcePlainText && hasContent && (!this.renderCache.highlighted || forceHighlight)) this.workerManager.highlightFileAST(this, file);
  		} else {
@@ -214,7 +212,7 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  			const hasLangs = this.highlighter != null && areLanguagesAttached(this.computedLang);
  			const canHighlight = !forcePlainText && hasLangs;
 diff --git a/package.json b/package.json
-index ff61c90..1e170e5 100644
+index ff61c904594e4ea4bf101c620ec4b500133014e3..213b06a8161996dd921cbcff164a27aebeedcd8a 100644
 --- a/package.json
 +++ b/package.json
 @@ -55,6 +55,18 @@
