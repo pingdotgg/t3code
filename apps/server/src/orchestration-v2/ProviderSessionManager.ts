@@ -3798,7 +3798,10 @@ export const layerWithOptions = (
                   }
                   if (currentEntry?.supportsMultipleProviderThreads === true) {
                     const projection = yield* Effect.option(
-                      projectionStore.getThreadRecords(input.threadId, ["providerThreads", "providerTurns"]),
+                      projectionStore.getThreadRecords(input.threadId, [
+                        "providerThreads",
+                        "providerTurns",
+                      ]),
                     );
                     if (Option.isSome(projection)) {
                       const providerThreads = new Map(

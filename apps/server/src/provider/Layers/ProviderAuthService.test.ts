@@ -216,7 +216,6 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
                 );
               }
               closedInstances.push(id);
-
             }),
         }),
       ),
@@ -330,7 +329,10 @@ describe("ProviderAuthService", () => {
         });
         yield* service.logout({ instanceId });
         assert.deepStrictEqual(closedInstances, [instanceId, otherInstanceId]);
-        assert.isBelow(actions.indexOf(`close-instance:${otherInstanceId}`), actions.indexOf("invalidate-shared"));
+        assert.isBelow(
+          actions.indexOf(`close-instance:${otherInstanceId}`),
+          actions.indexOf("invalidate-shared"),
+        );
         assert.isBelow(actions.indexOf("invalidate-shared"), actions.indexOf("native-logout"));
       }),
   );
@@ -797,9 +799,12 @@ it.effect.each([
       const continueDrain = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
         sharedCredentials: true,
-        beforeStop: (id) => id === otherInstanceId ? Deferred.succeed(draining, undefined).pipe(
-          Effect.andThen(Deferred.await(continueDrain)),
-        ) : Effect.void,
+        beforeStop: (id) =>
+          id === otherInstanceId
+            ? Deferred.succeed(draining, undefined).pipe(
+                Effect.andThen(Deferred.await(continueDrain)),
+              )
+            : Effect.void,
       });
       const logout = yield* harness.service.logout({ instanceId }).pipe(Effect.forkChild);
       yield* Deferred.await(draining);

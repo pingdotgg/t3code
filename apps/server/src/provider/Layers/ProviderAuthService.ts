@@ -1,7 +1,4 @@
-import {
-  ProviderSetupError,
-  type ProviderInstanceId,
-} from "@t3tools/contracts";
+import { ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -62,17 +59,19 @@ export const makeProviderAuthService = Effect.gen(function* () {
               !binding ||
               current?.auth?.credentialBinding?.key !== binding.key ||
               current.auth.credentialBinding.owner !== binding.owner
-            ) return;
+            )
+              return;
           }
           yield* providerSessions.closeInstance(affectedId);
         }).pipe(
-          Effect.mapError((cause) =>
-            new ProviderSetupError({
-              instanceId,
-              operation: "stopSessions",
-              detail: "Could not stop all sessions for this provider. Try again.",
-              cause,
-            }),
+          Effect.mapError(
+            (cause) =>
+              new ProviderSetupError({
+                instanceId,
+                operation: "stopSessions",
+                detail: "Could not stop all sessions for this provider. Try again.",
+                cause,
+              }),
           ),
         ),
       { discard: true },
