@@ -1,7 +1,6 @@
 import {
   ProviderSetupError,
   type ProviderInstanceId,
-  type ProviderSessionId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,13 +8,11 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import { ProviderSessionManagerV2 } from "../../orchestration-v2/ProviderSessionManager.ts";
-import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAuthService from "../Services/ProviderAuthService.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 
 export const makeProviderAuthService = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry;
-  const projections = yield* ProjectionStoreV2;
   const providerSessions = yield* ProviderSessionManagerV2;
   const credentialChanges = yield* Semaphore.make(1);
 
@@ -36,15 +33,13 @@ export const makeProviderAuthService = Effect.gen(function* () {
     return instance.auth;
   });
 
-  // Native sessions may still belong to the previous provider after the
-  // selected model changes. Read session bindings, not the selected model,
-  // when invalidating credentials for sign-in or sign-out.
+  // The manager tracks resources that projections cannot: in-flight opens and
+  // pending cleanup still own credentials even when their session is in error.
+  // Close each current shared owner before invalidating its auth controller.
   const stopSessions = Effect.fn("ProviderAuthService.stopSessions")(function* (
     instanceId: ProviderInstanceId,
     binding: ProviderAuthService.ProviderAuthController["credentialBinding"],
   ) {
-    const failure = (detail: string) =>
-      new ProviderSetupError({ instanceId, operation: "stopSessions", detail });
     const affectedIds = new Set([
       instanceId,
       ...(binding === undefined
@@ -57,49 +52,27 @@ export const makeProviderAuthService = Effect.gen(function* () {
             )
             .map((instance) => instance.instanceId)),
     ]);
-    const threadIds = yield* projections
-      .getRecoveryThreadIds("runtime")
-      .pipe(
-        Effect.mapError(() => failure("Could not read the provider's active sessions. Try again.")),
-      );
-    const released = new Set<ProviderSessionId>();
     yield* Effect.forEach(
-      threadIds,
-      (threadId) =>
-        projections.getThreadRecords(threadId, ["providerSessions"]).pipe(
-          Effect.flatMap((projection) =>
-            Effect.forEach(
-              projection.providerSessions.filter(
-                (session) =>
-                  affectedIds.has(session.providerInstanceId) &&
-                  session.status !== "stopped" &&
-                  session.status !== "error" &&
-                  !released.has(session.id),
-              ),
-              (session) =>
-                Effect.gen(function* () {
-                  if (session.providerInstanceId !== instanceId) {
-                    const current = yield* registry.getInstance(session.providerInstanceId);
-                    if (
-                      !binding ||
-                      current?.auth?.credentialBinding?.key !== binding.key ||
-                      current.auth.credentialBinding.owner !== binding.owner
-                    )
-                      return;
-                  }
-                  yield* providerSessions
-                    .release({
-                      providerSessionId: session.id,
-                      reason: "manual_shutdown",
-                      detail: "Provider sign-in changed.",
-                    })
-                    .pipe(Effect.tap(() => Effect.sync(() => released.add(session.id))));
-                }),
-              { discard: true },
-            ),
-          ),
-          Effect.mapError(() =>
-            failure("Could not stop all sessions for this provider. Try again."),
+      affectedIds,
+      (affectedId) =>
+        Effect.gen(function* () {
+          if (affectedId !== instanceId) {
+            const current = yield* registry.getInstance(affectedId);
+            if (
+              !binding ||
+              current?.auth?.credentialBinding?.key !== binding.key ||
+              current.auth.credentialBinding.owner !== binding.owner
+            ) return;
+          }
+          yield* providerSessions.closeInstance(affectedId);
+        }).pipe(
+          Effect.mapError((cause) =>
+            new ProviderSetupError({
+              instanceId,
+              operation: "stopSessions",
+              detail: "Could not stop all sessions for this provider. Try again.",
+              cause,
+            }),
           ),
         ),
       { discard: true },
