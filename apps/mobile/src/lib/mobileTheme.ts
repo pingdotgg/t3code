@@ -191,22 +191,21 @@ function contrastRatio(
   );
 }
 
-/** Preserve the action hue while giving text 4.5:1 contrast on its surface. */
-function readableActionText(accent: string, surface: string): string {
+/** Preserve the action hue while giving text 4.5:1 contrast on every supplied surface. */
+function readableActionText(accent: string, surface: string | ReadonlyArray<string>): string {
   const accentChannels = rgbChannels(accent);
-  const surfaceChannels = rgbChannels(surface);
-  if (
-    !accentChannels ||
-    !surfaceChannels ||
-    contrastRatio(accentChannels, surfaceChannels) >= 4.5
-  ) {
+  const surfaceChannels = (typeof surface === "string" ? [surface] : surface)
+    .map(rgbChannels)
+    .filter((channels) => channels !== null);
+  const minimumContrast = (channels: readonly [number, number, number]) =>
+    Math.min(...surfaceChannels.map((surface) => contrastRatio(channels, surface)));
+  if (!accentChannels || surfaceChannels.length === 0 || minimumContrast(accentChannels) >= 4.5) {
     return accent;
   }
 
   const black = [0, 0, 0] as const;
   const white = [255, 255, 255] as const;
-  const target =
-    contrastRatio(black, surfaceChannels) >= contrastRatio(white, surfaceChannels) ? black : white;
+  const target = minimumContrast(black) >= minimumContrast(white) ? black : white;
   let readable: readonly [number, number, number] = target;
   let lowerAmount = 0;
   let upperAmount = 1;
@@ -217,7 +216,7 @@ function readableActionText(accent: string, surface: string): string {
       Math.round(accentChannels[1] + (target[1] - accentChannels[1]) * amount),
       Math.round(accentChannels[2] + (target[2] - accentChannels[2]) * amount),
     ];
-    if (contrastRatio(candidate, surfaceChannels) >= 4.5) {
+    if (minimumContrast(candidate) >= 4.5) {
       readable = candidate;
       upperAmount = amount;
     } else {
@@ -269,7 +268,12 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-inline-skill-foreground": c.accentSurfaceForeground,
     "--color-primary": c.messageAction,
     "--color-primary-foreground": c.messageActionForeground,
-    "--color-primary-text": readableActionText(c.messageAction, c.canvas),
+    "--color-primary-text": readableActionText(c.messageAction, [
+      c.canvas,
+      c.surface,
+      c.surfaceRaised,
+      c.chrome,
+    ]),
     "--color-primary-shadow": "#000000",
     "--color-secondary": c.secondary,
     "--color-secondary-foreground": c.secondaryForeground,
