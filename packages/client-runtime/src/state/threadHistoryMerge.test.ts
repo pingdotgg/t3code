@@ -106,6 +106,66 @@ describe("threadHistoryMerge", () => {
     expect(merged.visibleTurnItems).toEqual([]);
   });
 
+  it("does not resurrect an unloaded row whose run rolled back while the page was in flight", () => {
+    // The page was fetched while run-9 was running. Before the response
+    // merges, a live run.updated marks it rolled_back — the cursor does not
+    // change, so the page still reaches mergeOlderHistoryIntoProjection.
+    const runId = "run-9" as never;
+    const recent = row(5);
+    const pageItem = {
+      ...row(3).item,
+      runId,
+    };
+    const pageRow: OrchestrationV2ProjectedTurnItem = {
+      position: 0,
+      visibility: "local",
+      sourceThreadId: v2ThreadId,
+      sourceItemId: pageItem.id,
+      item: pageItem,
+    };
+    const makeRun = (status: "running" | "rolled_back") => ({
+      id: runId,
+      threadId: v2ThreadId,
+      ordinal: 9,
+      providerInstanceId: "codex" as never,
+      modelSelection: { instanceId: "codex" as never, model: "gpt-5" },
+      providerThreadId: null,
+      userMessageId: "message-9" as never,
+      rootNodeId: null,
+      activeAttemptId: null,
+      status,
+      requestedAt: NOW,
+      startedAt: NOW,
+      completedAt: status === "rolled_back" ? NOW : null,
+      checkpointId: null,
+      contextHandoffId: null,
+    });
+    const projection = {
+      ...v2Projection,
+      runs: [makeRun("running")],
+      turnItems: [recent.item],
+      visibleTurnItems: [{ ...recent, position: 0 }],
+    };
+
+    // Still running: the page row merges normally.
+    const liveMerged = mergeOlderHistoryIntoProjection(projection, [pageRow]);
+    expect(liveMerged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual([
+      "item-3",
+      "item-5",
+    ]);
+
+    // Rolled back mid-flight: the page copy must not resurrect it.
+    const rewound = {
+      ...projection,
+      runs: [makeRun("rolled_back")],
+    };
+    const staleMerged = mergeOlderHistoryIntoProjection(rewound, [pageRow]);
+    expect(staleMerged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual([
+      "item-5",
+    ]);
+    expect(staleMerged.turnItems.map((item) => String(item.id))).toEqual(["item-5"]);
+  });
+
   it("marks history expanded after a successful page", () => {
     const next = applyHistoryPageMeta(
       {
