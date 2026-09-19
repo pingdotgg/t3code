@@ -1,7 +1,6 @@
 import defaultThemeVariables from "../../generated-uniwind-default-theme-variables.json";
 import {
   DEFAULT_MOBILE_THEME_ID,
-  flattenThemeColor,
   getMobileThemeVariables,
   themeColorWithAlpha,
   type MobileThemeAppearance,
@@ -27,27 +26,20 @@ export function getMobileThemeRuntimeVariables(
   const variables = usesDefaultPalette
     ? defaults[appearance]
     : getMobileThemeVariables(themeId, appearance);
-  // Desktop separates its near-white default surfaces with a divider. Android's
-  // rounded panes and the iPad sidebar use the same neutral mobile chrome.
-  // Named palettes keep their sidebar frame; system colors replace it later.
+  // Android's frame surrounds the sidebar and chat panes. Light iPad sidebars
+  // reuse that stronger tonal fill; dark sidebars retain the shared black pane
+  // beneath the near-black chat canvas. System colors replace these roles later.
   const frame = themeColorWithAlpha(
     variables[usesDefaultPalette ? "--color-row-hover" : "--color-drawer"],
     1,
   );
-  if (platform === "ios" && usesDefaultPalette) {
+  if (platform === "ios" && usesDefaultPalette && appearance === "light") {
     return {
       ...variables,
       "--color-header": frame,
       "--color-header-foreground": variables["--color-drawer-foreground"],
       "--color-drawer": frame,
-      "--color-drawer-foreground-muted":
-        appearance === "light"
-          ? variables["--color-foreground-muted"]
-          : variables["--color-drawer-foreground-muted"],
-      "--color-thread-hover":
-        appearance === "dark"
-          ? flattenThemeColor(themeColorWithAlpha(variables["--color-thread-selected"], 0.5), frame)
-          : variables["--color-thread-hover"],
+      "--color-drawer-foreground-muted": variables["--color-foreground-muted"],
     };
   }
   if (platform !== "android") return variables;

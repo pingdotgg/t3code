@@ -175,14 +175,24 @@ describe("mobile themes", () => {
         contrastRatio(variables["--color-grouped-card"], variables["--color-sheet-solid"]),
       ).toBeGreaterThanOrEqual(1.06);
       expect(variables["--color-grouped-card"]).not.toBe(variables["--color-card"]);
-      const ios = getMobileThemeRuntimeVariables("t3-code", appearance, "ios");
-      const sidebar = flattenThemeColor(ios["--color-drawer"], ios["--color-screen"]);
-      expect(contrastRatio(sidebar, ios["--color-screen"])).toBeGreaterThanOrEqual(1.06);
-      for (const role of [
-        "--color-drawer-foreground",
-        "--color-drawer-foreground-muted",
-      ] as const) {
-        expect(contrastRatio(ios[role], sidebar)).toBeGreaterThanOrEqual(4.5);
+      for (const platform of ["ios", "android"]) {
+        const runtime = getMobileThemeRuntimeVariables("t3-code", appearance, platform);
+        const sidebar = flattenThemeColor(runtime["--color-drawer"], runtime["--color-screen"]);
+        const chrome = flattenThemeColor(
+          runtime[platform === "android" ? "--color-header" : "--color-drawer"],
+          runtime["--color-screen"],
+        );
+        expect(relativeLuminance(sidebar)).toBeLessThan(
+          relativeLuminance(runtime["--color-thread-canvas"]),
+        );
+        expect(contrastRatio(chrome, runtime["--color-screen"])).toBeGreaterThanOrEqual(1.06);
+        const foregroundRoles =
+          platform === "android"
+            ? (["--color-header-foreground", "--color-foreground-muted"] as const)
+            : (["--color-drawer-foreground", "--color-drawer-foreground-muted"] as const);
+        for (const role of foregroundRoles) {
+          expect(contrastRatio(runtime[role], chrome)).toBeGreaterThanOrEqual(4.5);
+        }
       }
     },
   );

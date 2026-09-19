@@ -65,15 +65,24 @@ describe("mobile theme runtime variables", () => {
   );
 
   it.each(["t3-code", "material-you"] as const)(
-    "shares %s chrome between the iPad sidebar and Android frame",
+    "adapts %s iPad chrome without reversing the dark desktop hierarchy",
     (themeId) => {
       for (const appearance of ["light", "dark"] as const) {
         const ios = getMobileThemeRuntimeVariables(themeId, appearance, "ios");
         const android = getMobileThemeRuntimeVariables(themeId, appearance, "android");
-        expect(ios["--color-drawer"]).toBe(android["--color-header"]);
-        expect(ios["--color-header"]).toBe(android["--color-header"]);
-        expect(ios["--color-header-foreground"]).toBe(ios["--color-drawer-foreground"]);
-        expect(themeColorWithAlpha(ios["--color-thread-hover"], 1)).not.toBe(ios["--color-drawer"]);
+        if (appearance === "light") {
+          expect(ios["--color-drawer"]).toBe(android["--color-header"]);
+          expect(ios["--color-header"]).toBe(android["--color-header"]);
+          expect(ios["--color-header-foreground"]).toBe(ios["--color-drawer-foreground"]);
+        } else {
+          expect(ios).toEqual(getMobileThemeVariables("t3-code", appearance));
+          expect(ios["--color-drawer"]).toBe(android["--color-drawer"]);
+          expect(ios["--color-drawer"]).toBe("#000000");
+          expect(ios["--color-thread-canvas"]).toBe("#0a0a0a");
+        }
+        expect(themeColorWithAlpha(ios["--color-thread-hover"], 1)).not.toBe(
+          themeColorWithAlpha(ios["--color-drawer"], 1),
+        );
         expect(themeColorWithAlpha(ios["--color-thread-hover"], 1)).not.toBe(
           themeColorWithAlpha(ios["--color-thread-selected"], 1),
         );
