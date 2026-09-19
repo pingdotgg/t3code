@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -842,10 +843,8 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-// The handler probe carries its own timeout because the editor scan's outer
-// timeout in server.getConfig degrades to an EMPTY editor list: a wedged
-// xdg-mime must cost only the file manager, never the other editors. Runs on
-// the live clock so the probe's real timeout fires.
+// A wedged xdg-mime must cost only the file manager and still let discovery
+// complete. Runs on the live clock so the probe's real timeout fires.
 it.live.skipIf(windowsHost)("a stalled handler probe drops only the file manager", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -921,6 +920,106 @@ it.effect("discovers editors through the service API", () =>
     assert.equal(editors.includes("file-manager"), true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+for (const finishBeforeTimeout of [false, true]) {
+  it.effect(
+    finishBeforeTimeout
+      ? "lets Windows discovery finish after five seconds without waiting for ten"
+      : "retains Windows editors at ten seconds and retries incomplete discovery",
+    () =>
+      Effect.gen(function* () {
+        const probeStarted = yield* Deferred.make<void>();
+        const releaseProbe = yield* Deferred.make<void>();
+        const probeInterrupted = yield* Deferred.make<void>();
+        let stall = true;
+        const fileSystem = FileSystem.layerNoop({
+          stat: (filePath) =>
+            Effect.gen(function* () {
+              if (filePath.endsWith("code-insiders.COM") && stall) {
+                yield* Deferred.succeed(probeStarted, undefined);
+                yield* Deferred.await(releaseProbe).pipe(
+                  Effect.onInterrupt(() => Deferred.succeed(probeInterrupted, undefined)),
+                );
+              }
+              return {
+                type: /(?:cursor|code|explorer)\.COM$/.test(filePath) ? "File" : "Directory",
+              } as FileSystem.File.Info;
+            }),
+        });
+        const launcher = yield* ExternalLauncher.make.pipe(
+          Effect.provide(Layer.merge(NodeServices.layer, fileSystem)),
+        );
+        const response = yield* launcher.resolveAvailableEditors().pipe(Effect.forkChild);
+        yield* Deferred.await(probeStarted);
+        yield* TestClock.adjust("5 seconds");
+        assert.isUndefined(response.pollUnsafe());
+
+        if (finishBeforeTimeout) {
+          yield* TestClock.adjust("1 second");
+          yield* Deferred.succeed(releaseProbe, undefined);
+          assert.deepEqual(yield* Fiber.join(response), ["cursor", "vscode", "file-manager"]);
+        } else {
+          yield* TestClock.adjust("5 seconds");
+          assert.deepEqual(yield* Fiber.join(response), ["cursor", "vscode"]);
+          yield* Deferred.await(probeInterrupted);
+          // Retry immediately, while a wrongly cached partial result would still be fresh.
+          stall = false;
+          assert.deepEqual(yield* launcher.resolveAvailableEditors(), [
+            "cursor",
+            "vscode",
+            "file-manager",
+          ]);
+        }
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({
+              env: {
+                PATH: `C:\\t3-editor-discovery-timeout-${finishBeforeTimeout}`,
+                PATHEXT: ".COM",
+              },
+            }),
+          ),
+        ),
+      ),
+  );
+}
+
+for (const platform of ["win32", "darwin", "linux"] as const) {
+  it.effect(`bounds a scan stalled before finding any editor on ${platform}`, () =>
+    Effect.gen(function* () {
+      const probeStarted = yield* Deferred.make<void>();
+      const probeInterrupted = yield* Deferred.make<void>();
+      const launcher = yield* ExternalLauncher.make.pipe(
+        Effect.provide(
+          Layer.merge(
+            NodeServices.layer,
+            FileSystem.layerNoop({
+              stat: () =>
+                Deferred.succeed(probeStarted, undefined).pipe(
+                  Effect.andThen(Effect.never),
+                  Effect.onInterrupt(() => Deferred.succeed(probeInterrupted, undefined)),
+                ),
+            }),
+          ),
+        ),
+      );
+      const response = yield* launcher.resolveAvailableEditors().pipe(Effect.forkChild);
+      yield* Deferred.await(probeStarted);
+      yield* TestClock.adjust(platform === "win32" ? "10 seconds" : "5 seconds");
+      assert.deepEqual(yield* Fiber.join(response), []);
+      yield* Deferred.await(probeInterrupted);
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, platform),
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { PATH: `/t3-editor-stalled-${platform}`, PATHEXT: ".COM" } }),
+        ),
+      ),
+    ),
+  );
+}
 
 it.effect("memoizes editor discovery and refreshes after the cache window", () => {
   let statCalls = 0;

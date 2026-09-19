@@ -262,9 +262,8 @@ function fileManagerCommandForPlatform(
 // advertising the file manager on Linux.
 //
 // The probe carries its own timeout well inside the scan timeout
-// `server.getConfig` applies to editor discovery: that outer timeout degrades
-// to an empty editor list, so a hung `xdg-mime` (broken D-Bus or desktop
-// session) must cost only the file manager, not every discovered editor.
+// editor discovery applies: a hung `xdg-mime` (broken D-Bus or desktop
+// session) must not prevent the scan from completing and being cached.
 const LINUX_DIRECTORY_HANDLER_PROBE_TIMEOUT = "2 seconds";
 
 const hasUsableLinuxDirectoryHandler = Effect.fn("externalLauncher.hasUsableLinuxDirectoryHandler")(
@@ -421,27 +420,31 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): Effect.fn.Return<
-  ReadonlyArray<EditorId>,
+  { readonly editors: ReadonlyArray<EditorId>; readonly complete: boolean },
   never,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   const available: EditorId[] = [];
 
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
+  // Keep the results outside the timed scan so a slow later probe cannot
+  // discard editors already found. Windows probes each PATHEXT candidate.
+  const completed = yield* Effect.gen(function* () {
+    for (const editor of EDITORS) {
+      if (editor.commands === null) {
+        if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
+          available.push(editor.id);
+        }
+        continue;
+      }
+
+      const command = yield* resolveAvailableCommand(editor.commands, env);
+      if (Option.isSome(command)) {
         available.push(editor.id);
       }
-      continue;
     }
+  }).pipe(Effect.timeoutOption(platform === "win32" ? "10 seconds" : "5 seconds"));
 
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
-  }
-
-  return available;
+  return { editors: available, complete: Option.isSome(completed) };
 });
 
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
@@ -473,11 +476,10 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
 //
 // This deliberately does not use `Effect.cachedWithTTL`: that memoizes the
 // first caller's Exit whatever it is, including an interrupt. Callers run this
-// on the connection fiber under a timeout (`resolveAvailableEditorsForConfig`),
-// so one client disconnecting mid-scan would cache the interrupt and replay it
-// to every later connect for the whole TTL, breaking `server.getConfig`
-// permanently. Storing only on success means an interrupted scan leaves the
-// cache untouched and the next connect simply rescans.
+// on the connection fiber, so one client disconnecting mid-scan would cache
+// the interrupt and replay it to every later connect for the whole TTL, breaking
+// `server.getConfig`. Cache only completed scans: interruption and timeout both leave
+// the cache untouched so the next connect can retry incomplete discovery.
 // Expiry uses the monotonic clock (Clock.currentTimeNanos), matching the
 // command-resolution cache in @t3tools/shared/shell, so a backward wall-clock
 // adjustment cannot keep an expired entry alive.
@@ -775,16 +777,18 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(entry) && entry.value.expiresAtNanos > nowNanos) {
       return entry.value.editors;
     }
-    const editors = yield* provideCommandResolutionServices(resolveAvailableEditors()).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-    yield* Ref.set(
-      editorDiscoveryCache,
-      Option.some({
-        editors,
-        expiresAtNanos: nowNanos + EDITOR_DISCOVERY_CACHE_TTL_NANOS,
-      }),
-    );
+    const { editors, complete } = yield* provideCommandResolutionServices(
+      resolveAvailableEditors(),
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+    if (complete) {
+      yield* Ref.set(
+        editorDiscoveryCache,
+        Option.some({
+          editors,
+          expiresAtNanos: nowNanos + EDITOR_DISCOVERY_CACHE_TTL_NANOS,
+        }),
+      );
+    }
     return editors;
   });
 

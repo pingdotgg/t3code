@@ -112,7 +112,7 @@ import * as DeviceService from "./device/DeviceService.ts";
 import { HTTP_ROUTER_CONFIG, makeRoutesLayer } from "./server.ts";
 import {
   isThreadDetailEvent,
-  resolveAvailableEditorsForConfig,
+  resolveRemoteOpenTargetsForConfig,
   resolveFileManagerRevealKindForConfig,
 } from "./ws.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
@@ -523,6 +523,7 @@ const buildAppUnderTest = (options?: {
     antigravityInstallation?: Partial<AntigravityInstallation["Service"]>;
     serverSettings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
     externalLauncher?: Partial<ExternalLauncher.ExternalLauncher["Service"]>;
+    remoteOpenTargets?: Partial<RemoteOpenTargets.RemoteOpenTargets["Service"]>;
     vcsDriver?: Partial<VcsDriver.VcsDriver["Service"]>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistry["Service"]>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
@@ -851,6 +852,7 @@ const buildAppUnderTest = (options?: {
           }),
           Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
             resolveTargets: () => Effect.succeed([]),
+            ...options?.layers?.remoteOpenTargets,
           }),
         ),
       ),
@@ -4965,10 +4967,57 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("does not block server config when editor discovery never resolves", () =>
+  it.effect("runs config discovery concurrently within the Windows editor budget", () =>
+    Effect.gen(function* () {
+      const editorsStarted = yield* Deferred.make<void>();
+      const revealStarted = yield* Deferred.make<void>();
+      const targetsStarted = yield* Deferred.make<void>();
+      yield* buildAppUnderTest({
+        layers: {
+          externalLauncher: {
+            resolveAvailableEditors: () =>
+              Deferred.succeed(editorsStarted, undefined).pipe(
+                Effect.andThen(Effect.sleep("10 seconds")),
+                Effect.as(["vscode"] as const),
+              ),
+            resolveFileManagerRevealKind: () =>
+              Deferred.succeed(revealStarted, undefined).pipe(
+                Effect.andThen(Effect.sleep("5 seconds")),
+                Effect.as("file-explorer" as const),
+              ),
+          },
+          remoteOpenTargets: {
+            resolveTargets: () =>
+              Deferred.succeed(targetsStarted, undefined).pipe(Effect.andThen(Effect.never)),
+          },
+        },
+      });
+
+      const { cookie } = yield* bootstrapBrowserSession();
+      const wsUrl = appendSessionCookieToWsUrl(
+        yield* getWsServerUrl("/ws", { authenticated: false }),
+        cookie?.split(";")[0] ?? "",
+      );
+      const responseFiber = yield* withWsRpcClient(wsUrl, (client) =>
+        client[WS_METHODS.serverGetConfig]({}),
+      ).pipe(Effect.scoped, Effect.forkChild);
+      yield* Deferred.await(editorsStarted);
+      yield* Deferred.await(revealStarted);
+      yield* Deferred.await(targetsStarted);
+      yield* TestClock.adjust("10 seconds");
+
+      const response = yield* Fiber.join(responseFiber);
+      assert.deepEqual(response.availableEditors, ["vscode"]);
+      assert.deepEqual(response.remoteOpenTargets, []);
+      assert.isUndefined(response.shellRevealInFileManager);
+      assert.isUndefined(response.shellRevealInFileManagerKind);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("does not block server config when remote open target discovery never resolves", () =>
     Effect.gen(function* () {
       const discoveryInterrupted = yield* Deferred.make<void>();
-      const responseFiber = yield* resolveAvailableEditorsForConfig(
+      const responseFiber = yield* resolveRemoteOpenTargetsForConfig(
         Effect.never.pipe(
           Effect.onInterrupt(() => Deferred.succeed(discoveryInterrupted, undefined)),
         ),
@@ -4976,9 +5025,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       yield* TestClock.adjust(Duration.seconds(5));
 
-      const availableEditors = yield* Fiber.join(responseFiber);
+      const remoteOpenTargets = yield* Fiber.join(responseFiber);
       yield* Deferred.await(discoveryInterrupted);
-      assert.deepEqual(availableEditors, []);
+      assert.deepEqual(remoteOpenTargets, []);
     }),
   );
 
