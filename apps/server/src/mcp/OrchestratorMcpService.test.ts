@@ -910,7 +910,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               getProviders: Effect.succeed([
                 providerSnapshot({
                   instanceId: codexInstanceId,
-                  driver: testCase.candidateDriver,
+                  driver,
                   model: "gpt-5.4",
                   enabled: testCase.inheritedEnabled,
                 }),
@@ -948,6 +948,21 @@ describe("OrchestratorMcpService provider resolution", () => {
               assert.equal(error.code, "provider_unavailable", testCase.name);
               if (testCase.name === "cross-driver-no-available-candidate") {
                 assert.isTrue(error.message.includes("driver claudeAgent"), testCase.name);
+                const threadError = yield* service
+                  .createThreads(scope, {
+                    threads: [{ prompt: "Summarize the diff.", target }],
+                    clientRequestId: `delegate-threads-${testCase.name}`,
+                  })
+                  .pipe(Effect.flip);
+                assert.equal(
+                  threadError.code,
+                  "provider_unavailable",
+                  `${testCase.name}-createThreads`,
+                );
+                assert.isTrue(
+                  threadError.message.includes("driver claudeAgent"),
+                  `${testCase.name}-createThreads`,
+                );
               }
               assert.deepEqual(yield* Ref.get(dispatched), [], testCase.name);
               return;
