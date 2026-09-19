@@ -166,7 +166,7 @@ describe("mergeUsage", () => {
     }
   });
 
-  it("excludes an environment reporting an older contract version", () => {
+  it("identifies an environment reporting an older contract version", () => {
     const merged = mergeUsage(
       [
         environment(
@@ -186,7 +186,38 @@ describe("mergeUsage", () => {
     );
 
     expect(merged.costUsd).toBe(10);
-    expect(merged.staleEnvironments).toEqual(["env-b"]);
+    expect(merged.contractMismatches).toEqual([
+      {
+        environmentId: "env-b",
+        direction: "serverBehind",
+        contractVersion: USAGE_CONTRACT_VERSION - 2,
+      },
+    ]);
+  });
+
+  it("identifies an environment reporting a newer contract version", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket()],
+            [{ provider: "claude", hostId: "mac", homePath: "/a" }],
+            USAGE_CONTRACT_VERSION + 1,
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(0);
+    expect(merged.contractMismatches).toEqual([
+      {
+        environmentId: "env-a",
+        direction: "clientBehind",
+        contractVersion: USAGE_CONTRACT_VERSION + 1,
+      },
+    ]);
   });
 
   it("keeps the previous compatible contract version so additive provider expansions still merge", () => {
@@ -212,7 +243,7 @@ describe("mergeUsage", () => {
     );
 
     expect(merged.costUsd).toBe(14);
-    expect(merged.staleEnvironments).toEqual([]);
+    expect(merged.contractMismatches).toEqual([]);
   });
 
   it("derives provider shares and cost quality", () => {
