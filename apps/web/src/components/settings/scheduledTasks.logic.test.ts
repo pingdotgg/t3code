@@ -286,7 +286,7 @@ describe("moveDetachesThreadBinding", () => {
   it("unbinds in the same patch when a bound task moves projects", () => {
     const opened = taskToDraft(bound);
     const moved = { ...opened, projectId: "project:two" };
-    expect(moveDetachesThreadBinding(moved, opened)).toBe(true);
+    expect(moveDetachesThreadBinding(moved, opened, bound)).toBe(true);
     const patch = buildPatch(moved, bound, opened);
     expect(patch).toEqual({
       id: bound.id,
@@ -299,7 +299,7 @@ describe("moveDetachesThreadBinding", () => {
   it("keeps the binding when the project is unchanged", () => {
     const opened = taskToDraft(bound);
     const renamed = { ...opened, title: "Renamed" };
-    expect(moveDetachesThreadBinding(renamed, opened)).toBe(false);
+    expect(moveDetachesThreadBinding(renamed, opened, bound)).toBe(false);
     const patch = buildPatch(renamed, bound, opened);
     expect(patch).toEqual({
       id: bound.id,
@@ -309,10 +309,26 @@ describe("moveDetachesThreadBinding", () => {
     expect(patch).not.toHaveProperty("threadId");
   });
 
+  it("warns when another client bound the task after the dialog opened", () => {
+    const opened = taskToDraft(task);
+    const moved = { ...opened, projectId: "project:two" };
+    expect(moveDetachesThreadBinding(moved, opened, bound)).toBe(true);
+    expect(buildPatch(moved, bound, opened)).toMatchObject({ threadId: null });
+  });
+
+  it("writes the one-minute minimum over a legacy sub-minute interval", () => {
+    const legacy: ScheduledTask = { ...task, schedule: { type: "interval", everyMs: 30_000 } };
+    expect(buildPatch(taskToDraft(legacy), legacy)).toEqual({
+      id: legacy.id,
+      projectId: legacy.projectId,
+      schedule: { type: "interval", everyMs: 60_000 },
+    });
+  });
+
   it("never detaches for an unbound task", () => {
     const opened = taskToDraft(task);
     const moved = { ...opened, projectId: "project:two" };
-    expect(moveDetachesThreadBinding(moved, opened)).toBe(false);
+    expect(moveDetachesThreadBinding(moved, opened, task)).toBe(false);
     const patch = buildPatch(moved, task, opened);
     expect(patch).not.toHaveProperty("threadId");
   });

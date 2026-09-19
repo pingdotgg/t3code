@@ -531,6 +531,10 @@ function ScheduledTaskEditorDialog({
     draft.editingId !== null &&
     tasksQuery.data !== null &&
     !tasksQuery.data.tasks.some((entry) => entry.id === draft.editingId);
+  const liveEditingTask =
+    draft.editingId === null
+      ? undefined
+      : tasksQuery.data?.tasks.find((entry) => entry.id === draft.editingId);
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
 
@@ -736,7 +740,8 @@ function ScheduledTaskEditorDialog({
               <Field
                 label="Project"
                 hint={
-                  moveDetachesThreadBinding(draft, baselineDraft)
+                  liveEditingTask !== undefined &&
+                  moveDetachesThreadBinding(draft, baselineDraft, liveEditingTask)
                     ? "detaches the thread binding"
                     : undefined
                 }

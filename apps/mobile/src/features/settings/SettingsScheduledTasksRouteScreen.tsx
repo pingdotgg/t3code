@@ -615,8 +615,12 @@ function TaskForm({
       // path: a stale editor can never overwrite fields another client
       // changed, and a delete racing the save is a typed not-found, not a
       // resurrection. `taskMissing` already guarantees the task is in the
-      // live list.
-      const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
+      // live list once it has loaded; before that, the snapshot the editor
+      // opened with is the best known row.
+      const liveTask =
+        tasks.data === null
+          ? draft.task
+          : tasks.data.tasks.find((task) => task.id === draft.task?.id);
       if (liveTask === undefined) {
         setSaving(false);
         submissionPending.current = false;

@@ -361,6 +361,15 @@ describe("buildScheduledTaskUpdateInput", () => {
     });
   });
 
+  it("writes the one-minute minimum over a legacy sub-minute interval", () => {
+    const legacy: ScheduledTask = { ...task, schedule: { type: "interval", everyMs: 30_000 } };
+    expect(buildScheduledTaskUpdateInput(editDraft(legacy), legacy)).toEqual({
+      id: legacy.id,
+      projectId: legacy.projectId,
+      schedule: { type: "interval", everyMs: 60_000 },
+    });
+  });
+
   it("patches the editable runtime mode", () => {
     const draft = { ...editDraft(task), runtimeMode: "auto" as const };
     expect(buildScheduledTaskUpdateInput(draft, task)).toEqual({

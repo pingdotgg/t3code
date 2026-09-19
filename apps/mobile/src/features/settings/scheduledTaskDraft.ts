@@ -247,7 +247,16 @@ export function buildScheduledTaskUpdateInput(
   if (draft.enabled !== baseline.enabled) patch.enabled = draft.enabled;
   const schedule = scheduleFromDraft(draft.schedule);
   const baselineSchedule = scheduleFromDraft(baseline.schedule);
-  if (schedule !== null && baselineSchedule !== null && !sameSchedule(schedule, baselineSchedule)) {
+  // Sub-minute intervals predate the one-minute minimum. The draft shows them
+  // as one minute, so they never look dirty; saving must still write the
+  // normalized schedule.
+  const legacySubMinute =
+    liveTask.schedule.type === "interval" && liveTask.schedule.everyMs < 60_000;
+  if (
+    schedule !== null &&
+    baselineSchedule !== null &&
+    (!sameSchedule(schedule, baselineSchedule) || legacySubMinute)
+  ) {
     patch.schedule = schedule;
   }
   if (draft.runtimeMode !== baseline.runtimeMode) patch.runtimeMode = draft.runtimeMode;

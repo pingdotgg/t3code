@@ -34,9 +34,26 @@ export function workspaceStrategyFromDraft(
 
 // The dialog has no thread picker, so a bound task's only expressible
 // project move is unbind-and-move — the thread cannot follow across
-// projects. The Project field surfaces this as a hint before saving.
-export function moveDetachesThreadBinding(draft: DraftState, baseline: DraftState): boolean {
-  return draft.threadId !== "" && draft.projectId !== baseline.projectId;
+// projects. The Project field surfaces this as a hint before saving. It reads
+// the live task, like the save does, so a binding another client committed
+// while the dialog was open is warned about too.
+export function moveDetachesThreadBinding(
+  draft: DraftState,
+  baseline: DraftState,
+  task: ScheduledTask,
+): boolean {
+  return (
+    task.threadId !== null &&
+    draft.projectId !== baseline.projectId &&
+    draft.projectId !== task.projectId
+  );
+}
+
+// Sub-minute intervals predate the one-minute minimum. The draft shows them
+// as one minute, so they never look dirty; saving must still write the
+// normalized schedule.
+function isLegacySubMinuteInterval(schedule: ScheduledTaskSchedule): boolean {
+  return schedule.type === "interval" && schedule.everyMs < 60_000;
 }
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
@@ -117,7 +134,12 @@ export function buildScheduledTaskUpdateInput(
   }
   if (draft.enabled !== baseline.enabled) patch.enabled = draft.enabled;
   const schedule = scheduleFromDraft(draft);
-  if (!sameSchedule(schedule, scheduleFromDraft(baseline))) patch.schedule = schedule;
+  if (
+    !sameSchedule(schedule, scheduleFromDraft(baseline)) ||
+    isLegacySubMinuteInterval(task.schedule)
+  ) {
+    patch.schedule = schedule;
+  }
   const baselineStrategy = workspaceStrategyFromDraft(baseline);
   if (!sameWorkspaceStrategy(workspaceStrategy, baselineStrategy)) {
     if (workspaceStrategy.type !== baselineStrategy.type) {
