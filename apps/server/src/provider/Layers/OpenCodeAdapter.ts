@@ -3530,7 +3530,18 @@ export function makeOpenCodeAdapter(
               ? { resumeCursor: context.session.resumeCursor }
               : {}),
           };
-        }),
+        }).pipe(
+          // stopSession waits on submissionSettled; an interrupted sendTurn
+          // must not leave it pending.
+          Effect.ensuring(
+            Effect.suspend(() => {
+              const admission = context.promptAdmission;
+              return admission
+                ? Deferred.succeed(admission.submissionSettled, undefined).pipe(Effect.ignore)
+                : Effect.void;
+            }),
+          ),
+        ),
       );
     });
 
