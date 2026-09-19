@@ -27,6 +27,7 @@ import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
+  FilesystemDriveList,
 } from "./filesystem.ts";
 import {
   AgentSessionImportInput,
@@ -288,6 +289,7 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  subscribeFilesystemDrives: "filesystem.subscribeDrives",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
@@ -956,6 +958,13 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+const WsSubscribeFilesystemDrivesRpc = Rpc.make(WS_METHODS.subscribeFilesystemDrives, {
+  payload: Schema.Struct({}),
+  success: FilesystemDriveList,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
@@ -1460,6 +1469,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsSubscribeFilesystemDrivesRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,

@@ -102,6 +102,7 @@ import IconTool from "@tabler/icons-react-native/IconTool";
 import IconTrash from "@tabler/icons-react-native/IconTrash";
 import IconTypography from "@tabler/icons-react-native/IconTypography";
 import IconUpload from "@tabler/icons-react-native/IconUpload";
+import IconUsb from "@tabler/icons-react-native/IconUsb";
 import IconUserCircle from "@tabler/icons-react-native/IconUserCircle";
 import IconWifiOff from "@tabler/icons-react-native/IconWifiOff";
 import IconWorld from "@tabler/icons-react-native/IconWorld";
@@ -156,6 +157,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "ellipsis.circle": IconDotsCircleHorizontal,
   "exclamationmark.triangle": IconAlertTriangle,
   "exclamationmark.circle": IconAlertCircle,
+  externaldrive: IconUsb,
+  "externaldrive.connected.to.line.below": IconServer,
   eye: IconEye,
   folder: IconFolder,
   "folder.badge.plus": IconFolderPlus,

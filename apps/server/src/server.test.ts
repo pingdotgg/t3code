@@ -159,6 +159,7 @@ import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as DriveDiscovery from "./workspace/DriveDiscovery.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -718,6 +719,7 @@ const buildAppUnderTest = (options?: {
         Layer.provide(T3ProjectFileLoader.layer),
       ),
       NativeAppIconResolver.layer,
+      Layer.mock(DriveDiscovery.DriveDiscovery)({ changes: Stream.empty }),
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(
       Layer.provideMerge(vcsDriverRegistryLayer),

@@ -21,6 +21,25 @@ export const FilesystemBrowseResult = Schema.Struct({
 });
 export type FilesystemBrowseResult = typeof FilesystemBrowseResult.Type;
 
+export const FilesystemDriveKind = Schema.Literals(["system", "fixed", "removable", "network"]);
+export type FilesystemDriveKind = typeof FilesystemDriveKind.Type;
+
+export const FilesystemDrive = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  kind: FilesystemDriveKind,
+  totalBytes: Schema.NullOr(Schema.Number),
+  freeBytes: Schema.NullOr(Schema.Number),
+  writable: Schema.optional(Schema.Boolean),
+});
+export type FilesystemDrive = typeof FilesystemDrive.Type;
+
+export const FilesystemDriveList = Schema.Struct({
+  drives: Schema.Array(FilesystemDrive),
+  scannedAt: Schema.String,
+});
+export type FilesystemDriveList = typeof FilesystemDriveList.Type;
+
 export const FilesystemBrowseFailure = Schema.Literals([
   "windows_path_unsupported",
   "current_project_required",

@@ -3,8 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
+  describeDrive,
   filterFilesystemBrowseEntries,
+  formatDriveBytes,
   getFilesystemBrowsePath,
+  shouldSkipDrivePicker,
 } from "./filesystem.ts";
 
 describe("filesystem browse model", () => {
@@ -66,5 +69,62 @@ describe("browse navigation", () => {
     expect(canPreloadBrowsePath("offline")).toBe(false);
     expect(canPreloadBrowsePath("reconnecting")).toBe(false);
     expect(canPreloadBrowsePath(null)).toBe(false);
+  });
+
+  it("describes drives with free space when known", () => {
+    expect(formatDriveBytes(0)).toBe("0 B");
+    expect(formatDriveBytes(512)).toBe("512 B");
+    expect(formatDriveBytes(1_500_000)).toBe("1.5 MB");
+    expect(formatDriveBytes(412_000_000_000)).toBe("412 GB");
+    expect(formatDriveBytes(2_000_000_000_000)).toBe("2.0 TB");
+    expect(
+      describeDrive({
+        path: "/Volumes/External",
+        label: "External",
+        kind: "fixed",
+        totalBytes: 2_000_000_000_000,
+        freeBytes: 412_000_000_000,
+      }),
+    ).toBe("412 GB free of 2.0 TB · /Volumes/External");
+    expect(
+      describeDrive({
+        path: "D:\\",
+        label: "Data (D:)",
+        kind: "fixed",
+        totalBytes: null,
+        freeBytes: null,
+      }),
+    ).toBe("D:\\");
+    expect(
+      describeDrive({
+        path: "/mnt/data",
+        label: "data",
+        kind: "fixed",
+        totalBytes: 2_000_000_000_000,
+        freeBytes: 412_000_000_000,
+        writable: false,
+      }),
+    ).toBe("412 GB free of 2.0 TB · /mnt/data · not writable");
+  });
+
+  it("skips the drive picker only when there is no extra volume", () => {
+    const system = {
+      path: "/",
+      label: "System",
+      kind: "system" as const,
+      totalBytes: null,
+      freeBytes: null,
+    };
+    const extra = {
+      path: "D:\\",
+      label: "Data (D:)",
+      kind: "fixed" as const,
+      totalBytes: null,
+      freeBytes: null,
+    };
+    expect(shouldSkipDrivePicker([])).toBe(true);
+    expect(shouldSkipDrivePicker([system])).toBe(true);
+    expect(shouldSkipDrivePicker([extra])).toBe(false);
+    expect(shouldSkipDrivePicker([system, extra])).toBe(false);
   });
 });
