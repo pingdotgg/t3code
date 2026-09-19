@@ -28,9 +28,15 @@ export function usePreviewPanelInlineSize(
     readonly enabled?: boolean | undefined;
     readonly widthStorageKey?: string | undefined;
     readonly defaultWidth?: number | undefined;
+    /** Use the caller's existing row measurement instead of observing the panel's parent. */
+    readonly containerWidth?: number | undefined;
   } = {},
 ): PreviewPanelInlineSize {
-  const maxWidth = useViewportClampedMaxWidth(hostRef, options.enabled ?? true);
+  const maxWidth = useViewportClampedMaxWidth(
+    hostRef,
+    options.enabled ?? true,
+    options.containerWidth,
+  );
   return useResizableWidth({
     storageKey: options.widthStorageKey ?? PREVIEW_PANEL_WIDTH_STORAGE_KEY,
     defaultWidth: options.defaultWidth ?? PREVIEW_PANEL_DEFAULT_WIDTH,
@@ -48,9 +54,10 @@ export function usePreviewPanelInlineSize(
 function useViewportClampedMaxWidth(
   hostRef: RefObject<HTMLElement | null> | undefined,
   enabled: boolean,
+  containerWidth?: number,
 ): number {
   const [vw, setVw] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
-  const [containerWidth, setContainerWidth] = useState<number | undefined>(undefined);
+  const [measuredContainerWidth, setContainerWidth] = useState<number | undefined>(undefined);
   useEffect(() => {
     if (typeof window === "undefined") return;
     let frame = 0;
@@ -86,7 +93,7 @@ function useViewportClampedMaxWidth(
       observer.disconnect();
     };
   }, [hostRef, enabled]);
-  return getPreviewPanelMaxWidth(vw, containerWidth);
+  return getPreviewPanelMaxWidth(vw, containerWidth ?? measuredContainerWidth);
 }
 export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {
   const fractionCap = Math.floor(viewportWidth * PREVIEW_PANEL_MAX_WIDTH_FRACTION);

@@ -1,20 +1,12 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Preview from "../../../preview/Manager.ts";
-import * as ServerSettings from "../../../serverSettings.ts";
 import { requireMcpCapability } from "../../McpInvocationContext.ts";
 import { unavailable } from "../../threadAccess.ts";
 import { PreviewControlsToolkit } from "./tools.ts";
 
 const access = Effect.gen(function* () {
+  // The preview capability already reflects the calling project's access setting.
   const scope = yield* requireMcpCapability("preview");
-  const settings = yield* ServerSettings.ServerSettingsService;
-  const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
-  if (!current.enableAgentBrowserAccess)
-    return yield* new OrchestratorMcpFailure({
-      code: "capability_denied",
-      message: "Agent browser access is disabled.",
-    });
   return { scope, manager: yield* Preview.PreviewManager };
 });
 export const PreviewControlsHandlersLive = PreviewControlsToolkit.toLayer({
