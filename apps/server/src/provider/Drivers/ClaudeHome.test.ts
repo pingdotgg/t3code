@@ -48,7 +48,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       const message = claudeSignedOutMessage({ configDir, cwd: "/synthetic/project" });
       expect(message).toContain(`CLAUDE_CONFIG_DIR set to "${configDir}"`);
       expect(message).not.toContain("CLAUDE_CONFIG_DIR=");
-      expect(message).toContain("then start a new thread");
+      expect(message).toContain("then send the message again");
     });
 
     it.effect("separates capability probes by cwd", () =>
