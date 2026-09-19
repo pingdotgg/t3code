@@ -245,6 +245,26 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
       }),
     );
 
+    it.effect("preserves checkout hooks configured through core.hooksPath", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        const hooks = f.path.join(f.cwd, "custom-hooks");
+        yield* f.fs.makeDirectory(hooks);
+        const hook = f.path.join(hooks, "post-checkout");
+        yield* f.fs.writeFileString(hook, "#!/bin/sh\nprintf hook-ran > hook-marker\n");
+        yield* f.fs.chmod(hook, 0o755);
+        yield* f.git(f.cwd, ["config", "core.hooksPath", hooks]);
+        assert.equal(yield* f.clone.prepare(f.cwd, "HEAD"), null);
+        yield* f.driver.createWorktree({
+          cwd: f.cwd,
+          path: f.target,
+          refName: "main",
+          newRefName: "feature",
+        });
+        assert.equal(yield* f.fs.readFileString(f.path.join(f.target, "hook-marker")), "hook-ran");
+      }),
+    );
+
     it.effect("seeds opted-in dependencies and relative links but rebuilds caches and shims", () =>
       Effect.gen(function* () {
         const f = yield* fixture();
