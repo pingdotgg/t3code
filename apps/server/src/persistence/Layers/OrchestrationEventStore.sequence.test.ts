@@ -267,7 +267,9 @@ it.effect("uses indexed high-water lookups for populated history without OR scan
     }
   }).pipe(
     Effect.provide(
-      OrchestrationEventStoreLive.pipe(Layer.provideMerge(NodeSqliteClient.layerMemory())),
+      OrchestrationEventStoreLive.pipe(
+        Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+      ),
     ),
   ),
 );

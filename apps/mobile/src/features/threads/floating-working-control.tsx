@@ -25,6 +25,7 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ControlPill } from "../../components/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { DevicePreviewButton } from "../devices/device-preview-button";
 import type { FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
 
@@ -64,6 +65,7 @@ export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTRO
 export function FloatingWorkingControl(props: {
   readonly colorScheme: "light" | "dark";
   readonly status: FloatingWorkingStatus | null;
+  readonly devicePreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly showScrollToEnd: boolean;
   readonly onScrollToEnd: () => void;
   readonly agents: SubagentPillSegment | null;
@@ -76,6 +78,8 @@ export function FloatingWorkingControl(props: {
   const [queueWidth, setQueueWidth] = useState(0);
   const [agentsWidth, setAgentsWidth] = useState(0);
   const hasQueue = props.queuedCount > 0;
+  const hasDevicePreview = props.devicePreview !== null;
+  const [deviceWidth, setDeviceWidth] = useState(0);
   const agents = props.agents;
   const hasAgents = agents !== null;
   // Segments keep their measured width; only the status label absorbs the
@@ -86,7 +90,8 @@ export function FloatingWorkingControl(props: {
       CONTROL_HEIGHT -
       32 -
       (hasQueue ? queueWidth : 0) -
-      (hasAgents ? agentsWidth : 0),
+      (hasAgents ? agentsWidth : 0) -
+      (hasDevicePreview ? deviceWidth : 0),
   );
   const separationProgress = useSharedValue(props.showScrollToEnd ? 1 : 0);
 
@@ -119,7 +124,7 @@ export function FloatingWorkingControl(props: {
   // Forget the width while no label is shown so the next one appears at its
   // own size instead of animating from the previous label's.
   const hasStatus = props.status !== null;
-  const hasCapsule = hasStatus || hasQueue || hasAgents;
+  const hasCapsule = hasStatus || hasQueue || hasAgents || hasDevicePreview;
   useEffect(() => {
     if (!hasStatus) {
       measuredWidthRef.current = null;
@@ -131,14 +136,17 @@ export function FloatingWorkingControl(props: {
   }));
   // Zero until the first measurement lands, so the capsule never paints around
   // a label it has not sized to yet.
-  const capsuleSizerStyle = useAnimatedStyle(() => ({ width: capsuleWidth.value ?? 0 }));
+  const capsuleSizerStyle = useAnimatedStyle(() => ({
+    width: capsuleWidth.value ?? 0,
+  }));
 
   if (!hasCapsule && !props.showScrollToEnd) {
     return null;
   }
 
   // The queue, agents, and reconnect labels have separate tap targets.
-  const statusInteractive = props.status?.kind === "connection" || hasQueue || hasAgents;
+  const statusInteractive = props.status?.kind === "connection";
+  const capsuleInteractive = statusInteractive || hasQueue || hasAgents || hasDevicePreview;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
   const statusContent =
@@ -149,7 +157,7 @@ export function FloatingWorkingControl(props: {
       >
         <Animated.View className="h-11" style={capsuleSizerStyle} />
         <View
-          pointerEvents="box-none"
+          pointerEvents={statusInteractive ? "box-none" : "none"}
           className="absolute h-11 items-center justify-center"
           style={{ width: labelWidth }}
         >
@@ -169,6 +177,18 @@ export function FloatingWorkingControl(props: {
   const capsuleContent = (
     <View className="flex-row items-center">
       {statusContent}
+      {props.devicePreview !== null ? (
+        <View
+          className="h-11 flex-row items-center"
+          onLayout={(event) => setDeviceWidth(event.nativeEvent.layout.width)}
+        >
+          {hasStatus ? <View className="h-4 w-px bg-border" /> : null}
+          <DevicePreviewButton
+            {...props.devicePreview}
+            compact={hasStatus || hasAgents || hasQueue}
+          />
+        </View>
+      ) : null}
       {agents !== null ? (
         <Pressable
           accessibilityRole="button"
@@ -178,7 +198,7 @@ export function FloatingWorkingControl(props: {
           onLayout={(event) => setAgentsWidth(event.nativeEvent.layout.width)}
           className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
         >
-          {hasStatus ? <View className="mr-1 h-4 w-px bg-border" /> : null}
+          {hasStatus || hasDevicePreview ? <View className="mr-1 h-4 w-px bg-border" /> : null}
           <SymbolView name="person.2" size={13} tintColorClassName="accent-foreground-muted" />
           <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
             {agents.label}
@@ -195,7 +215,9 @@ export function FloatingWorkingControl(props: {
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
-          {hasStatus || hasAgents ? <View className="mr-1 h-4 w-px bg-border" /> : null}
+          {hasStatus || hasDevicePreview || hasAgents ? (
+            <View className="mr-1 h-4 w-px bg-border" />
+          ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground-muted" />
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>
             {props.queuedCount} queued
@@ -223,8 +245,8 @@ export function FloatingWorkingControl(props: {
           <AnimatedGlassView
             colorScheme={props.colorScheme}
             glassEffectStyle="regular"
-            isInteractive={statusInteractive}
-            pointerEvents={statusInteractive ? "box-none" : "none"}
+            isInteractive={capsuleInteractive}
+            pointerEvents={capsuleInteractive ? "box-none" : "none"}
             className="h-11 items-center justify-center overflow-hidden rounded-full"
             style={capsuleStyle}
           >
@@ -249,8 +271,8 @@ export function FloatingWorkingControl(props: {
       ) : hasCapsule ? (
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
-            pointerEvents={statusInteractive ? "box-none" : "none"}
-            className="h-11 items-center justify-center overflow-hidden rounded-full border border-border bg-card shadow-md shadow-black/10"
+            pointerEvents={capsuleInteractive ? "box-none" : "none"}
+            className="h-11 items-center justify-center overflow-hidden rounded-full border border-border bg-glass-fallback shadow-md shadow-black/10"
             style={capsuleStyle}
           >
             {capsuleContent}
@@ -265,7 +287,7 @@ export function FloatingWorkingControl(props: {
             <ControlPill
               accessibilityLabel="Scroll to end"
               activateOnPressIn
-              className="h-11 w-11 border border-border bg-card shadow-md shadow-black/10"
+              className="h-11 w-11 border border-border bg-glass-fallback shadow-md shadow-black/10"
               disabled={!props.showScrollToEnd}
               icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
               onPress={props.onScrollToEnd}
@@ -285,7 +307,7 @@ export function FloatingWorkingControl(props: {
         <ControlPill
           accessibilityLabel="Scroll to end"
           activateOnPressIn
-          className="h-11 w-11 border border-border bg-card shadow-md shadow-black/10"
+          className="h-11 w-11 border border-border bg-glass-fallback shadow-md shadow-black/10"
           icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
           onPress={props.onScrollToEnd}
         />

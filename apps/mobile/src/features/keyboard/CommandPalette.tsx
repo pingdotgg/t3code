@@ -20,6 +20,7 @@ import { GlassSurface } from "../../components/GlassSurface";
 import { RowPressable } from "../../components/RowPressable";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { cn } from "../../lib/cn";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
@@ -27,6 +28,7 @@ import { useThreadSearch } from "../../state/queries";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
 import {
   filterCommandPaletteItems,
@@ -74,35 +76,53 @@ function PaletteRow(props: {
   readonly searchQuery: string;
   readonly onSelect: () => void;
 }) {
+  const foregroundClassName = props.selected
+    ? "text-thread-selected-foreground"
+    : "text-foreground";
+  const mutedForegroundClassName = props.selected
+    ? "text-thread-selected-foreground-muted"
+    : "text-foreground-muted";
   return (
     <RowPressable
       accessibilityRole="button"
+      interactionOpacity={props.selected ? 0 : 1}
       accessibilityState={{ selected: props.selected }}
       onPress={props.onSelect}
       className={
         props.selected
-          ? "mx-2 flex-row items-center gap-3 rounded-xl bg-primary/10 px-3"
+          ? "mx-2 flex-row items-center gap-3 rounded-xl bg-thread-selected px-3"
           : "mx-2 flex-row items-center gap-3 rounded-xl px-3"
       }
       style={{ height: ROW_HEIGHT }}
     >
       <View className="w-7 items-center">
-        <SymbolView name={itemIcon(props.item)} size={20} tintColorClassName="accent-icon" />
+        <SymbolView
+          name={itemIcon(props.item)}
+          size={20}
+          tintColorClassName={props.selected ? "accent-thread-selected-foreground" : "accent-icon"}
+        />
       </View>
       <View className="flex-1">
-        <Text numberOfLines={1} className="text-base">
+        <Text numberOfLines={1} className={cn("text-base", foregroundClassName)}>
           {props.item.title}
         </Text>
         {props.searchMatch ? (
-          <ThreadSearchMatchExcerpt match={props.searchMatch} query={props.searchQuery} compact />
+          <ThreadSearchMatchExcerpt
+            match={props.searchMatch}
+            query={props.searchQuery}
+            selected={props.selected}
+            compact
+          />
         ) : props.item.detail ? (
-          <Text numberOfLines={1} className="text-sm text-foreground-muted">
+          <Text numberOfLines={1} className={cn("text-sm", mutedForegroundClassName)}>
             {props.item.detail}
           </Text>
         ) : null}
       </View>
       {props.index < 9 ? (
-        <NativeText className="w-8 shrink-0 text-right text-sm tabular-nums text-foreground-muted">
+        <NativeText
+          className={cn("w-8 shrink-0 text-right text-sm tabular-nums", mutedForegroundClassName)}
+        >
           ⌘{props.index + 1}
         </NativeText>
       ) : null}
@@ -117,6 +137,7 @@ export function CommandPalette(props: {
   readonly onCommand: (command: HardwareKeyboardCommand) => void;
 }) {
   const navigation = useNavigation();
+  const { themeVariables } = useAppearancePreferences();
   const { selectThread } = useAdaptiveWorkspaceLayout();
   const runCommand = props.onCommand;
   const projects = useProjects();
@@ -403,14 +424,15 @@ export function CommandPalette(props: {
             className="flex-1 items-center justify-center p-4"
           >
             <Pressable
-              className="absolute inset-0 bg-black/15"
+              className="absolute inset-0 bg-backdrop"
               accessibilityLabel="Close command palette"
               onPress={() => close()}
             />
             <GlassSurface
               accessibilityViewIsModal
-              className="bg-sheet/70"
+              className="bg-sheet"
               tintColorClassName="accent-sheet/20"
+              fallbackColor={themeVariables["--color-sheet"]}
               style={{
                 width: Math.min(600, width - 32),
                 height: Math.min(520, height - 80),

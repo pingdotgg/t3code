@@ -5,17 +5,15 @@ import * as NodePath from "node:path";
 import tailwindColors from "tailwindcss/colors";
 import { BUILT_IN_THEME_IDS, type BuiltInThemeId } from "@t3tools/shared/themePalettes";
 
-import clerkTheme from "../clerk-theme.json" with { type: "json" };
 import {
+  createMobileThemeVariables,
+  getMobileThemeColors,
   getMobileThemeVariables,
-  MOBILE_THEME_VARIABLE_NAMES,
-  themeColorWithAlpha,
+  DEFAULT_MOBILE_THEME_ID,
   type MobileThemeAppearance,
-  type MobileThemeVariables,
 } from "../src/lib/mobileTheme.ts";
 
 const APPEARANCES = ["light", "dark"] as const;
-const GLOBAL_CSS_PATH = NodePath.resolve(import.meta.dirname, "../global.css");
 const GENERATED_CSS_PATH = NodePath.resolve(import.meta.dirname, "../generated-uniwind-themes.css");
 const GENERATED_NAMES_PATH = NodePath.resolve(
   import.meta.dirname,
@@ -25,6 +23,7 @@ const GENERATED_DEFAULT_VARIABLES_PATH = NodePath.resolve(
   import.meta.dirname,
   "../generated-uniwind-default-theme-variables.json",
 );
+const GENERATED_CLERK_THEME_PATH = NodePath.resolve(import.meta.dirname, "../clerk-theme.json");
 
 type TailwindColorFamily = keyof typeof tailwindColors;
 type TailwindColorShade = 50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 | 900 | 950;
@@ -175,13 +174,38 @@ const variablesFor = (themeId: BuiltInThemeId, appearance: MobileThemeAppearance
 
 // Clerk's native screens use one build-time palette per appearance. Custom
 // profile pages must match it even when the rest of the app uses a named theme.
+const clerkColorsFor = (appearance: MobileThemeAppearance) => {
+  // Native authentication uses plain cards, rather than tonal settings groups.
+  const variables = createMobileThemeVariables(
+    getMobileThemeColors(DEFAULT_MOBILE_THEME_ID, appearance),
+    appearance,
+  );
+  return {
+    primary: variables["--color-primary"],
+    background: variables["--color-sheet-solid"],
+    input: variables["--color-input"],
+    danger: variables["--color-danger-foreground"],
+    success: appearance === "dark" ? "#34d399" : "#059669",
+    warning: variables["--color-warning-foreground"],
+    foreground: variables["--color-foreground"],
+    mutedForeground: variables["--color-foreground-muted"],
+    primaryForeground: variables["--color-primary-foreground"],
+    inputForeground: variables["--color-foreground"],
+    neutral: variables["--color-secondary"],
+    border: variables["--color-border"],
+    ring: variables["--color-focus"],
+    muted: variables["--color-subtle"],
+    shadow: variables["--color-primary-shadow"],
+  };
+};
+
 const clerkVariablesFor = (appearance: MobileThemeAppearance) => {
-  const colors = appearance === "dark" ? clerkTheme.darkColors : clerkTheme.colors;
+  const colors = clerkColorsFor(appearance);
   return {
     "--color-clerk-page": colors.background.toLowerCase(),
     "--color-clerk-foreground": colors.foreground.toLowerCase(),
     "--color-clerk-foreground-muted": colors.mutedForeground.toLowerCase(),
-    "--color-clerk-border": themeColorWithAlpha(colors.border, 0.06),
+    "--color-clerk-border": colors.border,
     "--color-clerk-danger": colors.danger.toLowerCase(),
   };
 };
@@ -197,6 +221,7 @@ export const renderUniwindThemesCSS = () => {
   const variants = [
     ...APPEARANCES.map((appearance) =>
       renderVariant(appearance, {
+        ...getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, appearance),
         ...adaptiveVariablesFor(appearance),
         ...clerkVariablesFor(appearance),
       }),
@@ -218,50 +243,27 @@ export const renderUniwindThemesCSS = () => {
   ].join("\n");
 };
 
-const readVariantBody = (css: string, appearance: MobileThemeAppearance): string => {
-  const marker = `@variant ${appearance} {`;
-  const markerIndex = css.indexOf(marker);
-  if (markerIndex === -1) throw new Error(`Could not find ${marker} in global.css.`);
-
-  const openingBraceIndex = css.indexOf("{", markerIndex);
-  let depth = 0;
-  for (let index = openingBraceIndex; index < css.length; index += 1) {
-    if (css[index] === "{") depth += 1;
-    if (css[index] !== "}") continue;
-    depth -= 1;
-    if (depth === 0) return css.slice(openingBraceIndex + 1, index);
-  }
-  throw new Error(`Could not find the end of ${marker} in global.css.`);
-};
-
-export const readDefaultThemeVariables = (css: string) =>
-  Object.fromEntries(
-    APPEARANCES.map((appearance) => {
-      const body = readVariantBody(css, appearance);
-      const variables = Object.fromEntries(
-        MOBILE_THEME_VARIABLE_NAMES.map((name) => {
-          const match = new RegExp(`^\\s*${name}:\\s*([^;]+);`, "mu").exec(body);
-          if (!match?.[1]) {
-            throw new Error(`Default ${appearance} theme is missing ${name}.`);
-          }
-          return [name, match[1].trim()];
-        }),
-      ) as MobileThemeVariables;
-      return [appearance, variables];
-    }),
-  ) as Readonly<Record<MobileThemeAppearance, MobileThemeVariables>>;
-
-export const renderDefaultThemeVariablesJSON = (css: string) =>
-  `${JSON.stringify(readDefaultThemeVariables(css), null, 2)}\n`;
+export const renderDefaultThemeVariablesJSON = () =>
+  `${JSON.stringify(
+    Object.fromEntries(
+      APPEARANCES.map((appearance) => [
+        appearance,
+        getMobileThemeVariables(DEFAULT_MOBILE_THEME_ID, appearance),
+      ]),
+    ),
+    null,
+    2,
+  )}\n`;
 
 export const getGeneratedUniwindThemeOutputs = (): ReadonlyArray<
   readonly [filename: string, contents: string]
 > => [
   [GENERATED_CSS_PATH, renderUniwindThemesCSS()],
   [GENERATED_NAMES_PATH, `${JSON.stringify(customThemeNames, null, 2)}\n`],
+  [GENERATED_DEFAULT_VARIABLES_PATH, renderDefaultThemeVariablesJSON()],
   [
-    GENERATED_DEFAULT_VARIABLES_PATH,
-    renderDefaultThemeVariablesJSON(NodeFS.readFileSync(GLOBAL_CSS_PATH, "utf8")),
+    GENERATED_CLERK_THEME_PATH,
+    `${JSON.stringify({ colors: clerkColorsFor("light"), darkColors: clerkColorsFor("dark"), design: { borderRadius: 18 } }, null, 2)}\n`,
   ],
 ];
 

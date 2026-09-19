@@ -10,7 +10,6 @@ import {
   resolveDefaultProviderModelSelection,
   resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
-  resolveProviderDriverKindForInstanceSelection,
 } from "./providerInstances";
 
 function provider(input: {
@@ -435,44 +434,6 @@ describe("resolveSelectableProviderInstance", () => {
     expect(resolveSelectableProviderInstance(providers, disabled)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unavailable)).toBeUndefined();
     expect(resolveSelectableProviderInstance(providers, unknown)).toBeUndefined();
-  });
-});
-
-describe("resolveProviderDriverKindForInstanceSelection", () => {
-  it("maps custom provider instance ids back to their driver kind", () => {
-    const providers = [
-      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
-      provider({
-        provider: ProviderDriverKind.make("claudeAgent"),
-        instanceId: "claude_openrouter",
-        displayName: "Claude OpenRouter",
-      }),
-    ];
-    const entries = deriveProviderInstanceEntries(providers);
-
-    expect(
-      resolveProviderDriverKindForInstanceSelection(
-        entries,
-        providers,
-        ProviderInstanceId.make("claude_openrouter"),
-      ),
-    ).toBe("claudeAgent");
-  });
-
-  it("does not guess a provider kind when the instance selection is unknown", () => {
-    const providers = [
-      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex", enabled: false }),
-      provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
-    ];
-    const entries = deriveProviderInstanceEntries(providers);
-
-    expect(
-      resolveProviderDriverKindForInstanceSelection(
-        entries,
-        providers,
-        ProviderInstanceId.make("removed_instance"),
-      ),
-    ).toBeUndefined();
   });
 });
 

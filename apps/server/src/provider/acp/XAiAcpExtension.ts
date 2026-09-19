@@ -1107,10 +1107,6 @@ interface XAiAskUserQuestionCancelledResponse {
   readonly outcome: "cancelled";
 }
 
-export type XAiAskUserQuestionResponse =
-  | XAiAskUserQuestionAcceptedResponse
-  | XAiAskUserQuestionCancelledResponse;
-
 interface NormalizedXAiAnswer {
   readonly questionText: string;
   readonly selectedLabels: ReadonlyArray<string>;

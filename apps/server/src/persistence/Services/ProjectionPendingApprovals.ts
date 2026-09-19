@@ -39,11 +39,6 @@ export const GetProjectionPendingApprovalInput = Schema.Struct({
 });
 export type GetProjectionPendingApprovalInput = typeof GetProjectionPendingApprovalInput.Type;
 
-export const DeleteProjectionPendingApprovalInput = Schema.Struct({
-  requestId: ApprovalRequestId,
-});
-export type DeleteProjectionPendingApprovalInput = typeof DeleteProjectionPendingApprovalInput.Type;
-
 /**
  * ProjectionPendingApprovalRepositoryShape - Service API for pending approvals.
  */
@@ -77,13 +72,6 @@ export interface ProjectionPendingApprovalRepositoryShape {
   readonly getByRequestId: (
     input: GetProjectionPendingApprovalInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingApproval>, ProjectionRepositoryError>;
-
-  /**
-   * Delete a pending approval row by request id.
-   */
-  readonly deleteByRequestId: (
-    input: DeleteProjectionPendingApprovalInput,
-  ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
    * Delete every pending approval row for a thread.

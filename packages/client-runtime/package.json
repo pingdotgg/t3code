@@ -11,6 +11,14 @@
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
     },
+    "./device/stream": {
+      "types": "./src/device/stream.ts",
+      "default": "./src/device/stream.ts"
+    },
+    "./device/hub-access": {
+      "types": "./src/device/hubAccess.ts",
+      "default": "./src/device/hubAccess.ts"
+    },
     "./worktree-setup": {
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"

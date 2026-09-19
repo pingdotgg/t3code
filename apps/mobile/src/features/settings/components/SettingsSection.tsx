@@ -24,7 +24,7 @@ export function SettingsSection(props: {
             <Text
               className={
                 Platform.OS === "android"
-                  ? "shrink text-sm font-t3-medium text-primary"
+                  ? "shrink text-sm font-t3-medium text-primary-text"
                   : "shrink text-sm font-t3-medium text-foreground-muted"
               }
             >
@@ -37,8 +37,8 @@ export function SettingsSection(props: {
       <View
         className={
           Platform.OS === "android"
-            ? "overflow-hidden rounded-[28px] bg-card"
-            : "overflow-hidden rounded-[24px] border-continuous bg-card"
+            ? "overflow-hidden rounded-[28px] bg-grouped-card"
+            : "overflow-hidden rounded-[24px] border-continuous bg-grouped-card"
         }
       >
         {props.children}

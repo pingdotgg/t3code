@@ -51,7 +51,7 @@ describe("V2 preview upgrade", () => {
         VALUES ('github', 'github.com', 'owner/repo', 1, 'viewer', 'file.ts', 'revision', '2026-09-17')
       `;
       assert.strictEqual((yield* sql`SELECT * FROM pull_request_files_viewed`).length, 1);
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("rolls back schema and ledger together on failure and can retry", () =>
@@ -75,7 +75,7 @@ describe("V2 preview upgrade", () => {
       assert.strictEqual((yield* sql`SELECT * FROM orchestration_v2_legacy_imports`).length, 1);
       yield* sql`DROP TRIGGER fail_preview_upgrade`;
       assert.deepStrictEqual(yield* runMigrations(), [[53, "PullRequestFilesViewed"]]);
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("refuses unexpected later migrations without modifying their history", () =>
@@ -89,6 +89,6 @@ describe("V2 preview upgrade", () => {
         yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
         history,
       );
-    }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

@@ -189,11 +189,9 @@ export function ComposerContextSheet(props: {
       onRequestClose={props.onClose}
     >
       <View
-        style={{
-          flex: 1,
-          justifyContent: "flex-end",
-          backgroundColor: Platform.OS === "android" ? "#00000066" : undefined,
-        }}
+        className={
+          Platform.OS === "android" ? "flex-1 justify-end bg-backdrop" : "flex-1 justify-end"
+        }
       >
         {Platform.OS === "android" ? (
           <Pressable

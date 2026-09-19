@@ -129,7 +129,7 @@ function SectionTitle(props: { readonly children: string }) {
     <Text
       className={
         Platform.OS === "android"
-          ? "px-4 text-sm font-t3-medium text-primary"
+          ? "px-4 text-sm font-t3-medium text-primary-text"
           : "px-1 text-2xs font-t3-bold tracking-[0.7px] uppercase text-foreground-muted"
       }
     >
