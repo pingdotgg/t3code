@@ -1076,8 +1076,12 @@ export const make = Effect.gen(function* () {
   const decodeRoutingIdentity = Schema.decodeUnknownEffect(
     Schema.fromJsonString(
       Schema.Struct({
-        id: PositiveInt,
-        login: TrimmedNonEmptyString,
+        data: Schema.Struct({
+          viewer: Schema.Struct({
+            id: PositiveInt,
+            login: TrimmedNonEmptyString,
+          }),
+        }),
       }),
     ),
   );
@@ -1119,10 +1123,17 @@ export const make = Effect.gen(function* () {
               if (cached !== undefined && now - cached.at < 10 * 60_000)
                 return { ...credential, ...cached.value };
               // Pin this read so an auth switch cannot poison its cache entry.
+              // REST GET /user refuses GitHub App installation tokens; the GraphQL viewer
+              // answers both those and user tokens with the same login. The read goes
+              // through the budget like every other GraphQL call, so the response stays
+              // unfiltered for observe to learn the rate-limit snapshot.
+              const document = yield* graphQlBudget.query(host, "{viewer{id:databaseId,login}}", {
+                allowReserve: true,
+              });
               const response = yield* github
                 .execute({
                   cwd: input.cwd,
-                  args: ["api", "user", "--hostname", host],
+                  args: ["api", "graphql", "--hostname", host, "-f", `query=${document}`],
                   env: {
                     GH_HOST: host,
                     GH_TOKEN: token,
@@ -1133,10 +1144,14 @@ export const make = Effect.gen(function* () {
                   },
                 })
                 .pipe(Effect.mapError(unavailable));
+              yield* graphQlBudget.observe(host, response.stdout);
               const identity = yield* decodeRoutingIdentity(response.stdout).pipe(
                 Effect.mapError(unavailable),
               );
-              const value = { accountId: String(identity.id), viewer: identity.login };
+              const value = {
+                accountId: String(identity.data.viewer.id),
+                viewer: identity.data.viewer.login,
+              };
               if (routingIdentities.size >= 128)
                 routingIdentities.delete(routingIdentities.keys().next().value!);
               routingIdentities.set(key, { at: now, value });

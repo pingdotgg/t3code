@@ -240,7 +240,8 @@ it.effect(
             Effect.sync(() => {
               commands.push(input);
               if (input.args[0] === "auth") return output(activeToken);
-              if (input.args[0] === "api") return output('{"id":123,"login":"same-account"}');
+              if (input.args[0] === "api")
+                return output('{"data":{"viewer":{"id":123,"login":"same-account"}}}');
               return output("");
             }),
         }),
@@ -403,7 +404,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
       mockedExecute.mockImplementation((input) =>
         input.args[0] === "auth"
           ? Effect.succeed(output("shared-credential"))
-          : Effect.yieldNow.pipe(Effect.as(output('{"id":123,"login":"viewer"}'))),
+          : Effect.yieldNow.pipe(
+              Effect.as(output('{"data":{"viewer":{"id":123,"login":"viewer"}}}')),
+            ),
       );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
       const results = yield* Effect.all(
@@ -437,7 +440,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
               yield* Deferred.succeed(firstStarted, undefined);
               return yield* Effect.never;
             }
-            return output('{"id":123,"login":"viewer"}');
+            return output('{"data":{"viewer":{"id":123,"login":"viewer"}}}');
           }),
         );
         const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
@@ -2754,9 +2757,37 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads the viewer login through the GraphQL viewer", () =>
+    Effect.gen(function* () {
+      // REST GET /user refuses GitHub App installation tokens; the GraphQL viewer answers them.
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("app-installation-credential")))
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"id":789,"login":"acme-app[bot]"}}}')),
+        );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const login = yield* cli.getViewerLogin({ cwd: "/w", host: "github.app-viewer.test" });
+
+      assert.strictEqual(login, "acme-app[bot]");
+      expect(callAt(0).args).toEqual(["auth", "token", "--hostname", "github.app-viewer.test"]);
+      expect(callAt(1).args.slice(0, 5)).toEqual([
+        "api",
+        "graphql",
+        "--hostname",
+        "github.app-viewer.test",
+        "-f",
+      ]);
+      expect(callAt(1).args.at(-1)).toContain("query={viewer{id:databaseId,login}");
+      expect(callAt(1).args.at(-1)).toContain("rateLimit { cost limit remaining resetAt }");
+    }),
+  );
+
   it.effect("fails when the authenticated account has no login", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("no-login-credential")))
+        .mockReturnValueOnce(Effect.succeed(output('{"data":{"viewer":{"id":123,"login":"  "}}}')));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w", host: "github.com" }));
@@ -2769,14 +2800,23 @@ layer("GitHubPullRequestCli.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output("enterprise-test-credential")))
-        .mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"enterprise-user"}')));
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"id":456,"login":"enterprise-user"}}}')),
+        );
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       const login = yield* cli.getViewerLogin({ cwd: "/w", host: "github.acme.com" });
 
       expect(login).toBe("enterprise-user");
       expect(callAt(0).args).toEqual(["auth", "token", "--hostname", "github.acme.com"]);
-      expect(callAt(1).args).toEqual(["api", "user", "--hostname", "github.acme.com"]);
+      expect(callAt(1).args.slice(0, 5)).toEqual([
+        "api",
+        "graphql",
+        "--hostname",
+        "github.acme.com",
+        "-f",
+      ]);
+      expect(callAt(1).args.at(-1)).toContain("query={viewer{id:databaseId,login}");
     }),
   );
 
@@ -2786,7 +2826,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
       const input = { cwd: "/w", host: "github.identity-cache.test" };
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output("test-credential-a")))
-        .mockReturnValueOnce(Effect.succeed(output('{"id":123,"login":"maria-rcks"}')));
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"id":123,"login":"maria-rcks"}}}')),
+        );
       expect(yield* cli.getRoutingIdentity(input)).toEqual({
         accountId: "123",
         viewer: "maria-rcks",
@@ -2824,11 +2866,36 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       mockedExecute
         .mockReturnValueOnce(Effect.succeed(output("test-credential-b")))
-        .mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"maria-rcks"}')));
+        .mockReturnValueOnce(
+          Effect.succeed(output('{"data":{"viewer":{"id":456,"login":"maria-rcks"}}}')),
+        );
       expect(yield* cli.getRoutingIdentity(input)).toEqual({
         accountId: "456",
         viewer: "maria-rcks",
       });
+    }),
+  );
+
+  it.effect("fails the viewer read when the identity lookup is refused", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("refused-credential")))
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GitHubCli.GitHubCliCommandError({
+              command: "gh",
+              cwd: "/w",
+              cause: new Error("HTTP 403"),
+            }),
+          ),
+        );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.getViewerLogin({ cwd: "/w", host: "github.viewer-refused.test" }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubViewerLoginUnavailableError");
     }),
   );
 
