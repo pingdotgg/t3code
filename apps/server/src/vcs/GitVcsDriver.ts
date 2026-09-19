@@ -36,6 +36,7 @@ import {
   PATCH_RENDER_PREFIX_ARGS,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
+import * as GitMetadataFastPath from "./GitMetadataFastPath.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -461,20 +462,22 @@ function parseGitRemoteVerboseOutput(
   return remotes;
 }
 
-const gitCommand = (
+interface GitCommandOptions {
+  readonly stdin?: string;
+  readonly env?: NodeJS.ProcessEnv;
+  readonly allowNonZeroExit?: boolean;
+  readonly timeoutMs?: number;
+  readonly maxOutputBytes?: number;
+  readonly outputMode?: VcsProcess.VcsProcessInput["outputMode"];
+  readonly appendTruncationMarker?: boolean;
+}
+
+const spawnGitCommand = (
   process: VcsProcess.VcsProcess["Service"],
   operation: string,
   cwd: string,
   args: ReadonlyArray<string>,
-  options?: {
-    readonly stdin?: string;
-    readonly env?: NodeJS.ProcessEnv;
-    readonly allowNonZeroExit?: boolean;
-    readonly timeoutMs?: number;
-    readonly maxOutputBytes?: number;
-    readonly outputMode?: VcsProcess.VcsProcessInput["outputMode"];
-    readonly appendTruncationMarker?: boolean;
-  },
+  options?: GitCommandOptions,
 ) =>
   process.run({
     operation,
@@ -494,6 +497,38 @@ const gitCommand = (
       ? { appendTruncationMarker: options.appendTruncationMarker }
       : {}),
   });
+
+const gitCommand = (
+  process: VcsProcess.VcsProcess["Service"],
+  operation: string,
+  cwd: string,
+  args: ReadonlyArray<string>,
+  options?: GitCommandOptions,
+) =>
+  Effect.promise(() =>
+    options?.stdin === undefined
+      ? GitMetadataFastPath.tryAnswerGitCommand({
+          cwd,
+          args,
+          env: options?.env,
+          timeoutMs: options?.timeoutMs,
+          maxOutputBytes: options?.maxOutputBytes,
+        })
+      : Promise.resolve(null),
+  ).pipe(
+    Effect.flatMap((answer) =>
+      // A failing exit code without allowNonZeroExit needs git's own error details.
+      answer !== null && (answer.exitCode === 0 || options?.allowNonZeroExit)
+        ? Effect.succeed({
+            exitCode: ChildProcessSpawner.ExitCode(answer.exitCode),
+            stdout: answer.stdout,
+            stderr: answer.stderr,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          } satisfies VcsProcess.VcsProcessOutput)
+        : spawnGitCommand(process, operation, cwd, args, options),
+    ),
+  );
 
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;

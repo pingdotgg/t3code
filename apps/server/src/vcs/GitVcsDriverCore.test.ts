@@ -338,6 +338,75 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("answers metadata from the repository files and leaves failures to git", () => {
+  const spawned: Array<ReadonlyArray<string>> = [];
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (!ChildProcess.isStandardCommand(command)) {
+        return assert.fail("expected a standard Git command");
+      }
+      spawned.push(command.args);
+      return makeNonRepositoryHandle();
+    }),
+  );
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(
+      Layer.merge(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    // The suite pins git config through GIT_CONFIG_*, which the file reader treats as an override.
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const pinned = Object.entries(process.env).filter(([key]) => key.startsWith("GIT_CONFIG_"));
+        for (const [key] of pinned) delete process.env[key];
+        return pinned;
+      }),
+      (pinned) =>
+        Effect.sync(() => {
+          for (const [key, value] of pinned) process.env[key] = value;
+        }),
+    );
+    const cwd = yield* makeTmpDir();
+    yield* writeTextFile(cwd, ".git/HEAD", "ref: refs/heads/main\n");
+    yield* writeTextFile(cwd, ".git/objects/.keep", "");
+    yield* writeTextFile(cwd, ".git/refs/heads/.keep", "");
+    yield* writeTextFile(
+      cwd,
+      ".git/config",
+      '[core]\n\trepositoryformatversion = 0\n[remote "origin"]\n\turl = https://example.com/origin.git\n',
+    );
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const execute = (args: ReadonlyArray<string>, allowNonZeroExit: boolean) =>
+      driver.execute({ operation: "GitVcsDriver.test.fastPath", cwd, args, allowNonZeroExit });
+
+    const url = yield* execute(["remote", "get-url", "origin"], false);
+    assert.strictEqual(url.stdout, "https://example.com/origin.git\n");
+
+    const missingRef = ["show-ref", "--verify", "--quiet", "refs/heads/missing"];
+    const tolerated = yield* execute(missingRef, true);
+    assert.strictEqual(Number(tolerated.exitCode), 1);
+    assert.deepStrictEqual(spawned, []);
+
+    // Without allowNonZeroExit the caller gets git's own failure, not a synthesized one.
+    const failed = yield* execute(missingRef, false).pipe(Effect.result);
+    assert.isTrue(Result.isFailure(failed));
+    assert.deepStrictEqual(spawned, [missingRef]);
+
+    // An answer over the caller's output cap is git's to truncate or reject.
+    const getUrl = ["remote", "get-url", "origin"];
+    yield* driver
+      .execute({ operation: "GitVcsDriver.test.fastPath", cwd, args: getUrl, maxOutputBytes: 8 })
+      .pipe(Effect.result);
+    assert.deepStrictEqual(spawned, [missingRef, getUrl]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("invalidates origin remote cache when a driver mutation adds origin", () =>
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -386,6 +455,20 @@ it.effect("re-reads origin remote status after cache TTL expiry and bypassed inv
 it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      // The spawner below sequences the snapshot by watching the `git remote`
+      // process, so remote names must come from git here, not from the config file.
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const previous = process.env.T3CODE_GIT_FAST_PATH;
+          process.env.T3CODE_GIT_FAST_PATH = "0";
+          return previous;
+        }),
+        (previous) =>
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env.T3CODE_GIT_FAST_PATH;
+            else process.env.T3CODE_GIT_FAST_PATH = previous;
+          }),
+      );
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
       const spawnedArgs = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([]);
       const firstWorktreeScanStarted = yield* Deferred.make<void>();
