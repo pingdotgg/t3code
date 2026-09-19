@@ -1,6 +1,7 @@
 import {
   CommandId,
   MessageId,
+  ProjectId,
   ScheduledTask,
   ScheduledTaskError,
   ScheduledTaskId,
@@ -12,6 +13,7 @@ import {
   type ScheduledTaskRunNowInput,
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
+  type ScheduledTaskUpdateInput,
   type ScheduledTaskUpsertInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -22,12 +24,14 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlError from "effect/unstable/sql/SqlError";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -44,6 +48,16 @@ const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
 const decodeModelSelectionJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.modelSelection),
 );
+const encodeScheduleJson = Schema.encodeEffect(
+  Schema.fromJsonString(ScheduledTask.fields.schedule),
+);
+const encodeWorkspaceStrategyJson = Schema.encodeEffect(
+  Schema.fromJsonString(ScheduledTask.fields.workspaceStrategy),
+);
+const encodeModelSelectionJson = Schema.encodeEffect(
+  Schema.fromJsonString(ScheduledTask.fields.modelSelection),
+);
+const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
 interface ScheduledTaskRow {
   readonly task_id: string;
@@ -77,6 +91,19 @@ export class ScheduledTaskService extends Context.Service<
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
+    /**
+     * Atomic partial update: writes only the provided fields, and only while
+     * the task still exists in `input.projectId`. Returns `Option.none()` when
+     * no such task exists — the update can never insert a row, so an edit
+     * racing a delete loses instead of resurrecting the task.
+     *
+     * A `threadId`/`nextProjectId` patch fails when the merged pair would bind
+     * the task to a thread outside its project, since such a task could never
+     * dispatch. Unbind explicitly with `threadId: null` to move a bound task.
+     */
+    readonly update: (
+      input: ScheduledTaskUpdateInput,
+    ) => Effect.Effect<Option.Option<ScheduledTaskMutationResult>, ScheduledTaskError>;
     /** Partial update flipping only the enabled flag; never touches other fields. */
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
@@ -124,6 +151,31 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
 }
+
+// The CLI writes to the same database from another process. Under WAL, a
+// commit from that connection between a transaction's read and its write
+// fails the transaction with SQLITE_BUSY_SNAPSHOT, which busy_timeout never
+// waits on. Bun reports contention as `code`/`errno`, which the vendored
+// classifier marks retryable; node:sqlite reports `errcode`, which it cannot
+// see, so also accept a native code in the SQLITE_BUSY (5) / SQLITE_LOCKED (6)
+// families.
+const isContendedWriteError = (cause: unknown): boolean => {
+  if (isScheduledTaskError(cause)) return isContendedWriteError(cause.cause);
+  if (!SqlError.isSqlError(cause)) return false;
+  if (cause.reason.isRetryable) return true;
+  const native = cause.reason.cause;
+  for (const key of ["errcode", "errno", "code"] as const) {
+    if (Predicate.hasProperty(native, key) && typeof native[key] === "number") {
+      const base = native[key] & 0xff;
+      if (base === 5 || base === 6) return true;
+    }
+  }
+  return false;
+};
+
+/** Re-runs a transaction on a fresh snapshot when another connection's commit contended it. */
+const retryContended = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(Effect.retry({ times: 2, while: isContendedWriteError }));
 
 const decodeRow = (row: ScheduledTaskRow) =>
   Effect.gen(function* () {
@@ -294,6 +346,32 @@ export const layer = Layer.effect(
       return task;
     });
 
+    // Side-effect-free mirror of the dispatch rule in getProjectThread: the
+    // bound thread must be a live v2 thread in the task's project, otherwise
+    // the task can never fire.
+    const requireThreadInProject = Effect.fn("ScheduledTaskService.requireThreadInProject")(
+      function* (taskId: ScheduledTaskId, projectId: ProjectId, threadId: ThreadId) {
+        const counts = yield* sql<{ matched: number }>`
+          SELECT COUNT(*) AS matched
+          FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId}
+            AND project_id = ${projectId}
+            AND deleted_at IS NULL
+            AND archived_at IS NULL
+        `.pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not validate the schedule task's thread binding.", { taskId, cause }),
+          ),
+        );
+        if ((counts[0]?.matched ?? 0) === 0) {
+          return yield* taskError(
+            "The task's thread binding is not a live thread in the task's project; unbind it or rebind to a thread in the project.",
+            { taskId },
+          );
+        }
+      },
+    );
+
     // Run-state columns (last_run_*, run_count) are intentionally absent from
     // the conflict clause: they are owned by the run transitions below, and a
     // concurrent settings save must not overwrite an in-flight increment.
@@ -432,18 +510,27 @@ export const layer = Layer.effect(
         // Compute the next occurrence from the current row so a schedule
         // edited while the run was in flight is honoured; fall back to the
         // run's snapshot only if the re-read itself fails.
-        const reread = yield* Effect.result(findTask(task.id));
-        if (Result.isSuccess(reread) && reread.success === null) return; // deleted — nothing to release
-        const source = Result.isSuccess(reread) && reread.success !== null ? reread.success : task;
-        yield* sql`
-          UPDATE scheduled_tasks
-          SET last_run_status = 'failed',
-              last_run_error = ${message},
-              next_run_at = ${nextRunAt(source, now)},
-              updated_at = ${iso(now)},
-              run_count = run_count + 1
-          WHERE task_id = ${task.id} AND last_run_status = 'running'
-        `;
+        // Re-read and write in one transaction so an edit cannot land between
+        // them and have its next_run_at overwritten by the older schedule.
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const reread = yield* Effect.result(findTask(task.id));
+              if (Result.isSuccess(reread) && reread.success === null) return; // deleted — nothing to release
+              const source =
+                Result.isSuccess(reread) && reread.success !== null ? reread.success : task;
+              yield* sql`
+              UPDATE scheduled_tasks
+              SET last_run_status = 'failed',
+                  last_run_error = ${message},
+                  next_run_at = ${nextRunAt(source, now)},
+                  updated_at = ${iso(now)},
+                  run_count = run_count + 1
+              WHERE task_id = ${task.id} AND last_run_status = 'running'
+            `;
+            }),
+          )
+          .pipe(retryContended);
         yield* notifyChanged;
       }).pipe(
         Effect.catch((cause) =>
@@ -475,11 +562,40 @@ export const layer = Layer.effect(
         const startedAt = yield* localNow;
         const startedAtIso = iso(startedAt);
 
-        // The in-memory snapshot may be stale: re-read before touching run
-        // state. The task may have been deleted, paused, or postponed since
-        // the poll loaded it — none of those may fire.
-        const active = yield* findTask(task.id);
-        if (active === null) {
+        // The in-memory snapshot may be stale: re-read and mark running in one
+        // transaction, so a pause, postpone, or delete committed since the
+        // poll loaded the task wins instead of firing.
+        const marked = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const active = yield* findTask(task.id);
+              if (active === null) return null;
+              // A next_run_at corrupted between the poll read and this re-read
+              // must not defect the poll; an unparseable value is treated as
+              // not due.
+              const parsedNextRunAt =
+                active.nextRunAt === null ? Option.none() : DateTime.make(active.nextRunAt);
+              if (
+                trigger === "scheduled" &&
+                (!active.enabled ||
+                  Option.isNone(parsedNextRunAt) ||
+                  DateTime.toEpochMillis(parsedNextRunAt.value) > DateTime.toEpochMillis(startedAt))
+              ) {
+                return { task: active, running: false } as const;
+              }
+              yield* markRunning(active.id, startedAtIso);
+              return { task: active, running: true } as const;
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              isScheduledTaskError(cause)
+                ? cause
+                : taskError("Could not mark schedule task as running.", { taskId: task.id, cause }),
+            ),
+            retryContended,
+          );
+        if (marked === null) {
           // A manual run on a just-deleted task must fail loudly, not report
           // a successful run that never dispatched.
           if (trigger === "manual") {
@@ -487,20 +603,8 @@ export const layer = Layer.effect(
           }
           return task;
         }
-        // A next_run_at corrupted between the poll read and this re-read must
-        // not defect the poll; an unparseable value is treated as not due.
-        const parsedNextRunAt =
-          active.nextRunAt === null ? Option.none() : DateTime.make(active.nextRunAt);
-        if (
-          trigger === "scheduled" &&
-          (!active.enabled ||
-            Option.isNone(parsedNextRunAt) ||
-            DateTime.toEpochMillis(parsedNextRunAt.value) > DateTime.toEpochMillis(startedAt))
-        ) {
-          return active;
-        }
-
-        yield* markRunning(active.id, startedAtIso);
+        if (!marked.running) return marked.task;
+        const active = marked.task;
         yield* notifyChanged;
 
         const fireKey = `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`;
@@ -555,8 +659,39 @@ export const layer = Layer.effect(
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
         const lastRunError = runSucceeded ? null : errorMessage(result.cause);
         // Re-read the task so the next run is computed from the schedule as it
-        // is *now* (the user may have edited or deleted it while we ran).
-        const current = yield* findTask(task.id);
+        // is *now* (the user may have edited or deleted it while we ran). The
+        // re-read and the write share one transaction so an edit cannot land
+        // between them and have its next_run_at overwritten.
+        const current = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const current = yield* findTask(task.id);
+              if (current !== null) {
+                // startedAtIso in the guard ensures this writes only to the row
+                // this run marked as running — a task deleted mid-run and
+                // recreated with the same id (idempotent commandId replay) must
+                // not be stamped.
+                yield* markCompleted({
+                  id: task.id,
+                  completedAtIso: iso(completedAt),
+                  nextRunAtIso: nextRunAt(current, completedAt),
+                  status: lastRunStatus,
+                  error: lastRunError,
+                  startedAtIso,
+                });
+              }
+              return current;
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              isScheduledTaskError(cause)
+                ? cause
+                : taskError("Could not record schedule task run.", { taskId: task.id, cause }),
+            ),
+            retryContended,
+          );
+        if (current !== null) yield* notifyChanged;
         const scheduleSource = current ?? task;
         const completed: ScheduledTask = {
           ...scheduleSource,
@@ -567,20 +702,6 @@ export const layer = Layer.effect(
           lastRunError,
           runCount: scheduleSource.runCount + 1,
         };
-        if (current !== null) {
-          // startedAtIso in the guard ensures this writes only to the row this
-          // run marked as running — a task deleted mid-run and recreated with
-          // the same id (idempotent commandId replay) must not be stamped.
-          yield* markCompleted({
-            id: task.id,
-            completedAtIso: completed.updatedAt,
-            nextRunAtIso: completed.nextRunAt,
-            status: lastRunStatus,
-            error: lastRunError,
-            startedAtIso,
-          });
-          yield* notifyChanged;
-        }
         return completed;
       }).pipe(
         Effect.onError((cause) => releaseStuckRun(task, errorMessage(cause))),
@@ -610,7 +731,7 @@ export const layer = Layer.effect(
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
             updated_at = ${iso(now)}
-        WHERE task_id = ${task.id}
+        WHERE task_id = ${task.id} AND next_run_at = ${task.nextRunAt}
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not reschedule missed schedule task run.", { taskId: task.id, cause }),
@@ -722,7 +843,8 @@ export const layer = Layer.effect(
         }),
       );
 
-    const upsert: ScheduledTaskService["Service"]["upsert"] = (input) =>
+    /** Reads the previous row and writes the merged one; run inside a transaction. */
+    const upsertTask = (input: ScheduledTaskUpsertInput) =>
       Effect.gen(function* () {
         const now = yield* localNow;
         const uuid =
@@ -773,38 +895,156 @@ export const layer = Layer.effect(
           lastRunError: existingTask?.lastRunError ?? null,
           runCount: existingTask?.runCount ?? 0,
         };
+        if (task.threadId !== null) {
+          yield* requireThreadInProject(task.id, task.projectId, task.threadId);
+        }
         yield* saveTask(task, input.requireExisting === true);
+        return task;
+      });
+
+    // One transaction, so a write landing between the read of the previous
+    // row and the full-row save cannot be overwritten or a delete undone.
+    const upsert: ScheduledTaskService["Service"]["upsert"] = (input) =>
+      Effect.gen(function* () {
+        const task = yield* retryContended(sql.withTransaction(upsertTask(input))).pipe(
+          Effect.mapError((cause) =>
+            isScheduledTaskError(cause)
+              ? cause
+              : taskError("Could not save schedule task.", { cause }),
+          ),
+        );
         yield* notifyChanged;
         return { task };
       });
 
-    const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = (input) =>
+    // The read and the write share one transaction, and the client's single
+    // connection serializes transactions, so concurrent disjoint edits each
+    // keep their own columns and a racing delete surfaces as `none`.
+    const update: ScheduledTaskService["Service"]["update"] = (input) =>
       Effect.gen(function* () {
-        const existing = yield* loadTask(input.id);
-        if (existing.enabled === input.enabled) return { task: existing };
-        const now = yield* localNow;
-        const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
-        // RETURNING so a task deleted between the load and this UPDATE is a
-        // visible not-found error, not a false success.
-        const updated = yield* sql<{ task_id: string }>`
-          UPDATE scheduled_tasks
-          SET enabled = ${input.enabled ? 1 : 0},
-              next_run_at = ${next},
-              updated_at = ${iso(now)}
-          WHERE task_id = ${input.id}
-          RETURNING task_id
-        `.pipe(
+        const task = yield* retryContended(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              const existing = yield* findTask(input.id);
+              if (existing === null || existing.projectId !== input.projectId) return null;
+              // A task in a project that does not exist saves fine and then
+              // fails every run at launch, so reject the move up front.
+              if (input.nextProjectId !== undefined && input.nextProjectId !== existing.projectId) {
+                const projects = yield* sql<{ matched: number }>`
+                  SELECT COUNT(*) AS matched
+                  FROM projection_projects
+                  WHERE project_id = ${input.nextProjectId} AND deleted_at IS NULL
+                `;
+                if ((projects[0]?.matched ?? 0) === 0) {
+                  return yield* taskError("The destination project does not exist.", {
+                    taskId: input.id,
+                  });
+                }
+              }
+              // The patch merges with whatever is already committed, so the
+              // resulting (project, thread) pair must still be dispatchable.
+              if (input.threadId !== undefined || input.nextProjectId !== undefined) {
+                const threadId = input.threadId === undefined ? existing.threadId : input.threadId;
+                if (threadId !== null) {
+                  yield* requireThreadInProject(
+                    input.id,
+                    input.nextProjectId ?? existing.projectId,
+                    threadId,
+                  );
+                }
+              }
+              const patch: Record<string, unknown> = {};
+              if (input.title !== undefined) patch.title = input.title;
+              if (input.prompt !== undefined) patch.prompt = input.prompt;
+              if (input.enabled !== undefined) patch.enabled = input.enabled ? 1 : 0;
+              if (input.schedule !== undefined) {
+                patch.schedule_json = yield* encodeScheduleJson(input.schedule);
+              }
+              if (input.threadId !== undefined) patch.thread_id = input.threadId;
+              if (input.workspaceStrategy !== undefined) {
+                patch.workspace_strategy_json = yield* encodeWorkspaceStrategyJson(
+                  input.workspaceStrategy,
+                );
+              }
+              if (input.modelSelection !== undefined) {
+                patch.model_selection_json = yield* encodeModelSelectionJson(input.modelSelection);
+              }
+              if (input.runtimeMode !== undefined) patch.runtime_mode = input.runtimeMode;
+              if (input.nextProjectId !== undefined) patch.project_id = input.nextProjectId;
+              if (Object.keys(patch).length === 0) return existing;
+              const now = yield* localNow;
+              // Mirror the upsert rule: only a real schedule/enabled change
+              // restarts the run clock — other edits retain the pending due time.
+              const enabled = input.enabled ?? existing.enabled;
+              const schedule = input.schedule ?? existing.schedule;
+              if (enabled !== existing.enabled || !isSameSchedule(existing.schedule, schedule)) {
+                patch.next_run_at = nextRunAt({ enabled, schedule }, now);
+              }
+              patch.updated_at = iso(now);
+              const written = yield* sql<ScheduledTaskRow>`
+                UPDATE scheduled_tasks
+                SET ${sql.update(patch)}
+                WHERE task_id = ${input.id} AND project_id = ${input.projectId}
+                RETURNING *
+              `;
+              const row = written[0];
+              return row === undefined ? null : yield* decodeRow(row);
+            }),
+          ),
+        ).pipe(
           Effect.mapError((cause) =>
-            taskError("Could not update schedule task.", { taskId: input.id, cause }),
+            isScheduledTaskError(cause)
+              ? cause
+              : taskError("Could not update schedule task.", { taskId: input.id, cause }),
           ),
         );
-        if (updated.length === 0) {
-          return yield* taskError("Schedule task not found.", { taskId: input.id });
-        }
+        if (task === null) return Option.none();
         yield* notifyChanged;
-        return {
-          task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
-        };
+        return Option.some({ task });
+      });
+
+    const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = (input) =>
+      Effect.gen(function* () {
+        // Read and write share one transaction: the recomputed next_run_at can
+        // never be based on a schedule a concurrent edit has already replaced.
+        const outcome = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const existing = yield* loadTask(input.id);
+              if (existing.enabled === input.enabled) {
+                return { task: existing, changed: false } as const;
+              }
+              const now = yield* localNow;
+              const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+              // RETURNING so a task deleted between the load and this UPDATE is
+              // a visible not-found error, not a false success.
+              const updated = yield* sql<{ task_id: string }>`
+                UPDATE scheduled_tasks
+                SET enabled = ${input.enabled ? 1 : 0},
+                    next_run_at = ${next},
+                    updated_at = ${iso(now)}
+                WHERE task_id = ${input.id}
+                RETURNING task_id
+              `;
+              if (updated.length === 0) {
+                return yield* taskError("Schedule task not found.", { taskId: input.id });
+              }
+              return {
+                task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
+                changed: true,
+              } as const;
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              isScheduledTaskError(cause)
+                ? cause
+                : taskError("Could not update schedule task.", { taskId: input.id, cause }),
+            ),
+            retryContended,
+          );
+        if (outcome.changed) yield* notifyChanged;
+        return { task: outcome.task };
       });
 
     const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
@@ -825,6 +1065,7 @@ export const layer = Layer.effect(
       list,
       subscribeList,
       upsert,
+      update,
       setEnabled,
       delete: deleteTask,
       runNow,

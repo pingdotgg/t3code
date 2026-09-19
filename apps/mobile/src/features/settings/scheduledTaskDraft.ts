@@ -1,9 +1,11 @@
 import type {
   ModelSelection,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ServerConfig,
   ProjectId,
   RuntimeMode,
   ScheduledTask,
+  ScheduledTaskUpdateInput,
   ScheduledTaskUpsertSchedule,
 } from "@t3tools/contracts";
 
@@ -178,4 +180,137 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         : true,
     runtimeMode: task.runtimeMode,
   };
+}
+
+function sameSchedule(a: ScheduledTaskUpsertSchedule, b: ScheduledTaskUpsertSchedule): boolean {
+  if (a.type === "interval") {
+    return b.type === "interval" && a.everyMs === b.everyMs;
+  }
+  if (b.type !== "fixed_time") return false;
+  const key = (weekdays: ReadonlyArray<number> | undefined) => {
+    const unique = [...new Set(weekdays ?? [])].sort((x, y) => x - y);
+    return unique.length === 0 || unique.length === 7 ? "daily" : unique.join(",");
+  };
+  return a.timeOfDay === b.timeOfDay && key(a.weekdays) === key(b.weekdays);
+}
+
+function sameModelSelection(a: ModelSelection | null, b: ModelSelection | null): boolean {
+  if (a === null || b === null) return a === b;
+  const key = (selection: ModelSelection) =>
+    JSON.stringify([
+      selection.instanceId,
+      selection.model,
+      [...(selection.options ?? [])]
+        .sort((x, y) => x.id.localeCompare(y.id))
+        .map((option) => [option.id, option.value]),
+    ]);
+  return key(a) === key(b);
+}
+
+function workspaceStrategyFromDraft(
+  draft: ScheduledTaskDraft,
+): OrchestrationV2ThreadLaunchWorkspaceStrategy {
+  if (draft.workspace === "root") return { type: "root" };
+  if (draft.workspace === "existing_worktree") {
+    return { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() };
+  }
+  return {
+    type: "worktree",
+    baseRef: draft.baseRef.trim() || "main",
+    startFromOrigin: draft.startFromOrigin,
+  };
+}
+
+/**
+ * Dirty-field patch for an existing task, scoped to its live project. The
+ * baseline is the task snapshot the editor opened with (`draft.task`), so a
+ * concurrent commit landing mid-session is never read as a change the user
+ * made — and `projectId` tracks the live row, so a save still targets the
+ * task wherever it currently lives. Returns null when nothing changed.
+ */
+export function buildScheduledTaskUpdateInput(
+  draft: ScheduledTaskDraft,
+  liveTask: ScheduledTask,
+): ScheduledTaskUpdateInput | null {
+  const opening = draft.task;
+  if (opening === null) return null;
+  const baseline = editDraft(opening);
+  const patch: {
+    -readonly [
+      K in Exclude<keyof ScheduledTaskUpdateInput, "id" | "projectId">
+    ]?: ScheduledTaskUpdateInput[K];
+  } = {};
+  const title = draft.title.trim();
+  if (title !== baseline.title.trim()) patch.title = title;
+  const prompt = draft.prompt.trim();
+  if (prompt !== baseline.prompt.trim()) patch.prompt = prompt;
+  if (draft.enabled !== baseline.enabled) patch.enabled = draft.enabled;
+  const schedule = scheduleFromDraft(draft.schedule);
+  const baselineSchedule = scheduleFromDraft(baseline.schedule);
+  // Sub-minute intervals predate the one-minute minimum. The draft shows them
+  // as one minute, so they never look dirty; saving must still write the
+  // normalized schedule.
+  const legacySubMinute =
+    liveTask.schedule.type === "interval" && liveTask.schedule.everyMs < 60_000;
+  if (
+    schedule !== null &&
+    baselineSchedule !== null &&
+    (!sameSchedule(schedule, baselineSchedule) || legacySubMinute)
+  ) {
+    patch.schedule = schedule;
+  }
+  if (draft.runtimeMode !== baseline.runtimeMode) patch.runtimeMode = draft.runtimeMode;
+  if (
+    draft.modelSelection !== null &&
+    !sameModelSelection(draft.modelSelection, baseline.modelSelection)
+  ) {
+    patch.modelSelection = draft.modelSelection;
+  }
+  const workspaceStrategy = workspaceStrategyFromDraft(draft);
+  const baselineStrategy = workspaceStrategyFromDraft(baseline);
+  if (JSON.stringify(workspaceStrategy) !== JSON.stringify(baselineStrategy)) {
+    if (workspaceStrategy.type !== baselineStrategy.type) {
+      patch.workspaceStrategy = workspaceStrategy;
+    } else if (
+      workspaceStrategy.type === "worktree" &&
+      baselineStrategy.type === "worktree" &&
+      liveTask.workspaceStrategy.type === "worktree"
+    ) {
+      // Overlay only the controls the user changed onto the live strategy —
+      // a concurrent edit to an untouched control survives a stale save.
+      patch.workspaceStrategy = {
+        ...liveTask.workspaceStrategy,
+        ...(workspaceStrategy.baseRef !== baselineStrategy.baseRef
+          ? { baseRef: workspaceStrategy.baseRef }
+          : {}),
+        ...(workspaceStrategy.startFromOrigin !== baselineStrategy.startFromOrigin
+          ? { startFromOrigin: workspaceStrategy.startFromOrigin }
+          : {}),
+      };
+    } else if (
+      workspaceStrategy.type === "existing_worktree" &&
+      baselineStrategy.type === "existing_worktree" &&
+      liveTask.workspaceStrategy.type === "existing_worktree"
+    ) {
+      patch.workspaceStrategy = {
+        ...liveTask.workspaceStrategy,
+        ...(workspaceStrategy.worktreePath !== baselineStrategy.worktreePath
+          ? { worktreePath: workspaceStrategy.worktreePath }
+          : {}),
+      };
+    }
+    // A live kind the draft no longer matches means a concurrent editor
+    // switched it — drop the stale control edit rather than revert that.
+  }
+  if (draft.projectId !== null && draft.projectId !== baseline.projectId) {
+    patch.nextProjectId = draft.projectId;
+    // A binding cannot follow a real re-home — the thread stays in the old
+    // project — so a patch that moves the task detaches it; a stale save
+    // landing where the task already lives keeps a concurrent rebind.
+    if (draft.projectId !== liveTask.projectId && liveTask.threadId !== null) {
+      patch.threadId = null;
+    }
+  }
+  if (Object.keys(patch).length === 0) return null;
+  return { id: liveTask.id, projectId: liveTask.projectId, ...patch };
 }
