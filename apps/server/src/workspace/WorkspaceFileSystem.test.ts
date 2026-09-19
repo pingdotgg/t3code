@@ -1,5 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off - FileSystem cannot create a FIFO.
+// @effect-diagnostics nodeBuiltinImport:off - tests inject short reads and create a FIFO.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
@@ -7,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -16,6 +18,11 @@ import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFSP>();
+  return { ...actual, open: vi.fn(actual.open) };
+});
 
 const ProjectLayer = WorkspaceFileSystem.layer.pipe(
   Layer.provide(WorkspacePaths.layer),
@@ -58,6 +65,93 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 
 it.layer(TestLayer, { excludeTestServices: true })("WorkspaceFileSystemLive", (it) => {
   describe("readFile", () => {
+    it.effect("fills the preview across short reads before decoding UTF-8", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const contents = "a\u{1F680}b\nmore contents\n";
+        yield* writeTextFile(cwd, "short.txt", contents);
+        const actual = yield* Effect.promise(() =>
+          vi.importActual<typeof NodeFSP>("node:fs/promises"),
+        );
+        vi.mocked(NodeFSP.open).mockImplementationOnce(async (...args) => {
+          const handle = await actual.open(...args);
+          return {
+            stat: handle.stat.bind(handle),
+            close: handle.close.bind(handle),
+            read: (buffer: Buffer, offset: number, length: number, position: number) =>
+              handle.read(buffer, offset, Math.min(length, 2), position),
+          } as unknown as NodeFSP.FileHandle;
+        });
+
+        expect(yield* workspaceFileSystem.readFile({ cwd, relativePath: "short.txt" })).toEqual({
+          relativePath: "short.txt",
+          contents,
+          byteLength: Buffer.byteLength(contents),
+          truncated: false,
+        });
+      }),
+    );
+
+    it.effect("marks a preview incomplete when EOF arrives before the stat size", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "shrinking.txt", "before truncate");
+        const actual = yield* Effect.promise(() =>
+          vi.importActual<typeof NodeFSP>("node:fs/promises"),
+        );
+        vi.mocked(NodeFSP.open).mockImplementationOnce(async (...args) => {
+          const handle = await actual.open(...args);
+          return {
+            stat: async () => {
+              const stat = await handle.stat();
+              await actual.truncate(args[0], 3);
+              return stat;
+            },
+            close: handle.close.bind(handle),
+            read: handle.read.bind(handle),
+          } as unknown as NodeFSP.FileHandle;
+        });
+
+        expect(yield* workspaceFileSystem.readFile({ cwd, relativePath: "shrinking.txt" })).toEqual(
+          {
+            relativePath: "shrinking.txt",
+            contents: "bef",
+            byteLength: 15,
+            truncated: true,
+          },
+        );
+      }),
+    );
+
+    it.effect("keeps the one-megabyte preview limit across short reads", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const limit = 1024 * 1024;
+        yield* writeTextFile(cwd, "large.txt", "a".repeat(limit + 1));
+        const actual = yield* Effect.promise(() =>
+          vi.importActual<typeof NodeFSP>("node:fs/promises"),
+        );
+        vi.mocked(NodeFSP.open).mockImplementationOnce(async (...args) => {
+          const handle = await actual.open(...args);
+          return {
+            stat: handle.stat.bind(handle),
+            close: handle.close.bind(handle),
+            read: (buffer: Buffer, offset: number, length: number, position: number) =>
+              handle.read(buffer, offset, Math.min(length, 64 * 1024), position),
+          } as unknown as NodeFSP.FileHandle;
+        });
+
+        const result = yield* workspaceFileSystem.readFile({ cwd, relativePath: "large.txt" });
+        expect(result.contents).toHaveLength(limit);
+        expect(result.contents).toBe("a".repeat(limit));
+        expect(result.byteLength).toBe(limit + 1);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
     it.effect("reads UTF-8 files relative to the workspace root", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
