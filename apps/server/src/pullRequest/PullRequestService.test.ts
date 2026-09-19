@@ -5382,7 +5382,7 @@ it.effect("keeps the diff cached across a file being ticked off", () =>
     yield* service.diff(reference);
     yield* service.filesViewed(reference);
 
-    // The press forgets only the reader's own ticks: a diff of any size survives it.
+    // The press forgets only the reader's own ticks; cached diffs survive it.
     assert.strictEqual(diffReads, 1);
     assert.strictEqual(viewedReads, 2);
 
@@ -5394,6 +5394,72 @@ it.effect("keeps the diff cached across a file being ticked off", () =>
     ]);
     assert.strictEqual(diffReads, 1);
     assert.strictEqual(viewedReads, 3);
+  }),
+);
+
+it.effect("returns large diff slices intact without retaining them in either cache", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const patch = "\u{1f4bb}".repeat(140_000);
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getDiff: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return { patch, truncated: false, nextCursor: "2" };
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    for (const input of [
+      reference,
+      { ...reference, cursor: "2" },
+      { ...reference, commit: "a".repeat(40) },
+    ]) {
+      const before = reads;
+      assert.deepStrictEqual(yield* service.diff(input), {
+        patch,
+        truncated: false,
+        nextCursor: "2",
+      });
+      assert.deepStrictEqual(yield* service.diff(input), {
+        patch,
+        truncated: false,
+        nextCursor: "2",
+      });
+      assert.strictEqual(reads, before + 2);
+    }
+  }),
+);
+
+it.effect("caches a small replacement after releasing a large diff", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const largePatch = "x".repeat(300_000);
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getDiff: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return {
+                patch: reads === 1 ? largePatch : "@@ small replacement",
+                truncated: false,
+                nextCursor: null,
+              };
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    assert.strictEqual((yield* service.diff(reference)).patch, largePatch);
+    assert.strictEqual((yield* service.diff(reference)).patch, "@@ small replacement");
+    assert.strictEqual((yield* service.diff(reference)).patch, "@@ small replacement");
+    assert.strictEqual(reads, 2);
   }),
 );
 
