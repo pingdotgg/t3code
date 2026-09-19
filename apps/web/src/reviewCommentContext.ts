@@ -2,6 +2,8 @@ import type { FileDiffMetadata, SelectedLineRange, SelectionSide } from "@pierre
 import { PullRequestContextMetadata, type PullRequestReviewPosition } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { isLineInFileDiff } from "./components/pullRequest/pullRequestDiff.logic";
+
 const ReviewCommentSelectionSchema = Schema.Struct({
   start: Schema.Number,
   side: Schema.Literals(["additions", "deletions"]),
@@ -331,7 +333,10 @@ function findDiffReviewLineIndex(
     : findOnSide(selectedSide === "left" ? "right" : "left");
 }
 
-/** Resolve the host-facing coordinates of a line selected in the diff viewer. */
+/**
+ * Resolve the host-facing coordinates of a line selected in the diff viewer, or null when the
+ * host cannot anchor a comment there.
+ */
 export function resolveDiffReviewPosition(
   fileDiff: FileDiffMetadata,
   lineNumber: number,
@@ -351,7 +356,11 @@ export function resolveDiffReviewPosition(
     case "delete":
       return line.oldLineNumber === null ? null : { kind: "deleted", oldLine: line.oldLineNumber };
     case "context":
-      return line.oldLineNumber === null || line.newLineNumber === null
+      // An expanded file also shows the gaps between hunks, and GitHub rejects a whole review
+      // over one comment anchored there.
+      return line.oldLineNumber === null ||
+        line.newLineNumber === null ||
+        !isLineInFileDiff(fileDiff, "right", line.newLineNumber)
         ? null
         : {
             kind: "context",
