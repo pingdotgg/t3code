@@ -42,6 +42,8 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
+import * as ThreadUndo from "./threadUndo";
+import { showUndoToast } from "./showUndoToast";
 import { useAtomCommand } from "../state/use-atom-command";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
@@ -582,6 +584,7 @@ export function useThreadActions() {
       const orderKey = readEnvironmentSupportsPinReorder(target.environmentId)
         ? (opts.orderKey ?? topOfPinnedRunOrderKey())
         : undefined;
+      ThreadUndo.invalidate("pin", scopedThreadKey(target));
       return pinThreadMutation({
         environmentId: target.environmentId,
         input: {
@@ -605,12 +608,27 @@ export function useThreadActions() {
           ),
         );
       }
-      return unpinThreadMutation({
+      const thread = readThreadShell(target);
+      const orderKey = thread?.pinOrderKey ?? undefined;
+      const action = ThreadUndo.begin("pin", scopedThreadKey(target));
+      const result = await unpinThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
+      if (result._tag === "Success" && action.isCurrent()) {
+        showUndoToast({
+          title: "Thread unpinned",
+          description: thread?.title,
+          claim: action,
+          undo: () => pinThread(target, orderKey === undefined ? {} : { orderKey }),
+          failureTitle: "Failed to undo unpin",
+        });
+      } else {
+        action.finish();
+      }
+      return result;
     },
-    [unpinThreadMutation],
+    [pinThread, unpinThreadMutation],
   );
 
   const confirmAndUnpinThread = useCallback(
@@ -648,6 +666,7 @@ export function useThreadActions() {
           ),
         );
       }
+      ThreadUndo.invalidate("pin", scopedThreadKey(target));
       return reorderPinnedThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId, orderKey },
