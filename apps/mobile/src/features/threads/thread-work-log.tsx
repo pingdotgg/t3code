@@ -882,7 +882,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
+          className="ml-7 border-l border-border pb-1 pl-3 pt-0.5"
         >
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory
@@ -1037,7 +1037,7 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
           props.onToggle();
         }}
         onLongPress={props.onCopy}
-        className="rounded-xl border border-adaptive-neutral-200-a80-white-a8 bg-card px-2.5 py-2 active:bg-subtle"
+        className="rounded-xl border border-border-subtle bg-card px-2.5 py-2 active:bg-subtle"
       >
         <View className="flex-row items-center gap-2">
           <View className="h-6 w-6 shrink-0 items-center justify-center">
@@ -1094,7 +1094,7 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
             entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
             exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
             layout={WORK_LOG_LAYOUT_TRANSITION}
-            className="ml-8 mt-1.5 gap-1.5 border-l border-adaptive-neutral-300-a60-white-a12 pl-3"
+            className="ml-8 mt-1.5 gap-1.5 border-l border-border pl-3"
           >
             {summary.members.map((member) => (
               <View key={member.title} className="gap-px">

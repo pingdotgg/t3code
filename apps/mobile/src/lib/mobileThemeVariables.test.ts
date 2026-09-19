@@ -5,7 +5,7 @@ import { getMobileThemeVariables, MOBILE_THEME_IDS, themeColorWithAlpha } from "
 import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 
 describe("mobile theme runtime variables", () => {
-  it("derives the standard runtime palette from global.css", () => {
+  it("matches the standard runtime palette to the generated stylesheet", () => {
     expect(getMobileThemeRuntimeVariables("t3-code", "light", "ios")).toEqual(
       readDefaultMobileThemeVariables("light"),
     );
@@ -31,14 +31,8 @@ describe("mobile theme runtime variables", () => {
         const android = getMobileThemeRuntimeVariables(themeId, appearance, "android");
         expect(android).toEqual({
           ...ios,
-          "--color-header": themeColorWithAlpha(
-            ios[
-              themeId === "t3-code" || themeId === "material-you"
-                ? "--color-card"
-                : "--color-drawer"
-            ],
-            1,
-          ),
+          "--color-header": themeColorWithAlpha(ios["--color-drawer"], 1),
+          "--color-header-foreground": ios["--color-drawer-foreground"],
         });
         expect(android["--color-header"]).toMatch(/^rgba\(\d+, \d+, \d+, 1\)$/);
       }
@@ -49,7 +43,7 @@ describe("mobile theme runtime variables", () => {
     "keeps the %s default dark frame distinct from the rounded settings body",
     (themeId) => {
       const variables = getMobileThemeRuntimeVariables(themeId, "dark", "android");
-      expect(variables["--color-header"]).toBe("rgba(23, 23, 23, 1)");
+      expect(variables["--color-header"]).toBe("rgba(0, 0, 0, 1)");
       expect(variables["--color-header"]).not.toBe(
         themeColorWithAlpha(variables["--color-sheet-solid"], 1),
       );

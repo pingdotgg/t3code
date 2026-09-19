@@ -14,8 +14,8 @@ const defaults = defaultThemeVariables as Readonly<
 
 /**
  * Complete palette for native and third-party APIs that cannot consume a
- * Uniwind className. The standard palette is generated from global.css; custom
- * palettes share the same source that generates their registered CSS themes.
+ * Uniwind className. Every palette shares the source that generates its
+ * registered CSS theme.
  */
 export function getMobileThemeRuntimeVariables(
   themeId: MobileThemeId,
@@ -28,14 +28,11 @@ export function getMobileThemeRuntimeVariables(
     : getMobileThemeVariables(themeId, appearance);
   if (platform !== "android") return variables;
 
-  // Rounded panes share one opaque frame. The default dark drawer matches the
-  // settings body, so use its card tone to keep the rounded edge visible.
-  // System colors replace this with their own surfaceContainerHigh afterwards.
+  // Rounded panes share the sidebar's opaque frame. System colors replace
+  // this with their own surfaceContainerHigh afterwards.
   return {
     ...variables,
-    "--color-header": themeColorWithAlpha(
-      variables[usesDefaultPalette ? "--color-card" : "--color-drawer"],
-      1,
-    ),
+    "--color-header": themeColorWithAlpha(variables["--color-drawer"], 1),
+    "--color-header-foreground": variables["--color-drawer-foreground"],
   };
 }

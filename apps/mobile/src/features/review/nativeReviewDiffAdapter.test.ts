@@ -261,7 +261,7 @@ describe("createNativeReviewDiffTheme", () => {
       const variables = {
         ...appTheme("material-you", appearance),
         "--color-screen": "#101214FF",
-        "--color-sheet": "#20222480",
+        "--color-md-code-bg": "#20222480",
         "--color-md-code-text": "#E3E2E6FF",
         "--color-foreground-muted": "#C7C5D080",
         "--color-border": "#44464F80",
@@ -273,7 +273,7 @@ describe("createNativeReviewDiffTheme", () => {
       expect(theme.text).toBe("#e3e2e6");
       expect(theme.mutedText).toBe("#707076");
       expect(theme.border).toBe("#2e3036");
-      expect(theme.hunkText).toBe("#a8c7fa");
+      expect(theme.hunkText).toBe(theme.mutedText);
       for (const color of Object.values(theme)) {
         expect(color).toMatch(/^#[\da-f]{6}$/i);
       }

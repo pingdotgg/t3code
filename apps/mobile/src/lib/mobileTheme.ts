@@ -1,10 +1,11 @@
 import {
   BUILT_IN_THEMES,
   T3_CHAT_THEME,
+  T3_CODE_LIGHT_THEME_COLORS,
+  T3_CODE_DARK_THEME_COLORS,
   getThemeColorsForAppearance,
   MOBILE_DEFAULT_THEME_ID,
   MOBILE_THEME_IDS as SHARED_MOBILE_THEME_IDS,
-  type BuiltInThemeId,
   type MobileThemeId as SharedMobileThemeId,
   type ThemeAppearance,
   type ThemeColors,
@@ -138,7 +139,7 @@ function withAlpha(color: string, alpha: number): string {
 }
 
 function rgbChannels(color: string): readonly [number, number, number] | null {
-  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(color);
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})(?:[\da-f]{2})?$/i.exec(color);
   if (!match) return null;
   const [, red = "0", green = "0", blue = "0"] = match;
   return [Number.parseInt(red, 16), Number.parseInt(green, 16), Number.parseInt(blue, 16)];
@@ -150,6 +151,14 @@ function rgbChannels(color: string): readonly [number, number, number] | null {
  * colour asked for — so a translucent role like `--color-border` has to be flattened first.
  */
 export function flattenThemeColor(color: string, surface: string): string {
+  const alphaHex = /^#([\da-f]{6})([\da-f]{2})$/i.exec(color);
+  if (alphaHex) {
+    const channels = rgbChannels(color)!;
+    return flattenThemeColor(
+      `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${Number.parseInt(alphaHex[2]!, 16) / 255})`,
+      surface,
+    );
+  }
   const match = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?\s*\)$/i.exec(
     color.trim(),
   );
@@ -182,8 +191,8 @@ function contrastRatio(
   );
 }
 
-/** Preserve the theme's action hue while making it readable as skill text on a message bubble. */
-function readableMessageAccent(accent: string, surface: string): string {
+/** Preserve the action hue while giving text 4.5:1 contrast on its surface. */
+function readableActionText(accent: string, surface: string): string {
   const accentChannels = rgbChannels(accent);
   const surfaceChannels = rgbChannels(surface);
   if (
@@ -233,24 +242,24 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-screen": c.canvas,
     "--color-sheet": withAlpha(c.chrome, 0.98),
     "--color-sheet-solid": c.chrome,
-    "--color-card": c.surfaceRaised,
-    "--color-card-alt": c.surface,
-    "--color-card-translucent": withAlpha(c.surfaceRaised, 0.8),
-    "--color-thread-canvas": c.surface,
-    "--color-thread-selected": c.surfaceRaised,
-    "--color-thread-selected-foreground": c.text,
-    "--color-thread-selected-foreground-muted": c.textMuted,
-    "--color-composer-panel": themeColorWithAlpha(c.surface, appearance === "dark" ? 0.92 : 0.88),
-    "--color-composer-surface": themeColorWithAlpha(
-      c.surfaceRaised,
-      appearance === "dark" ? 0.9 : 0.94,
-    ),
+    "--color-card": c.surface,
+    "--color-card-alt": c.surfaceRaised,
+    "--color-card-translucent": withAlpha(c.surface, 0.8),
+    "--color-thread-canvas": c.canvas,
+    "--color-thread-selected": c.sidebarRowActive,
+    "--color-thread-selected-foreground": c.sidebarForeground,
+    "--color-thread-selected-foreground-muted": c.sidebarMutedForeground,
+    "--color-thread-hover": c.sidebarRowHover,
+    "--color-row-hover": c.toolbarControlHover,
+    "--color-composer-panel": themeColorWithAlpha(c.canvas, appearance === "dark" ? 0.92 : 0.88),
+    "--color-composer-surface": themeColorWithAlpha(c.surface, appearance === "dark" ? 0.9 : 0.94),
     "--color-composer-border": themeColorWithAlpha(c.border, appearance === "dark" ? 0.46 : 0.54),
     "--color-foreground": c.text,
     "--color-foreground-secondary": c.textMuted,
     "--color-foreground-muted": c.mutedForeground,
     "--color-foreground-tertiary": c.secondaryLabel,
     "--color-border": c.border,
+    "--color-focus": c.focus,
     "--color-border-subtle": withAlpha(c.border, 0.7),
     "--color-separator": withAlpha(c.border, 0.55),
     "--color-subtle": c.muted,
@@ -258,14 +267,15 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-inline-skill-background": c.accentSurface,
     "--color-inline-skill-border": withAlpha(c.accent, 0.42),
     "--color-inline-skill-foreground": c.accentSurfaceForeground,
-    "--color-primary": c.accent,
-    "--color-primary-foreground": c.accentForeground,
+    "--color-primary": c.messageAction,
+    "--color-primary-foreground": c.messageActionForeground,
+    "--color-primary-text": readableActionText(c.messageAction, c.canvas),
     "--color-primary-shadow": "#000000",
     "--color-secondary": c.secondary,
     "--color-secondary-foreground": c.secondaryForeground,
     "--color-secondary-border": c.border,
-    "--color-switch-active-track": c.accent,
-    "--color-switch-active-thumb": c.accentForeground,
+    "--color-switch-active-track": c.messageAction,
+    "--color-switch-active-thumb": c.messageActionForeground,
     "--color-switch-inactive-track": c.secondary,
     "--color-switch-inactive-thumb": c.mutedForeground,
     "--color-warning": c.warningSurface,
@@ -274,7 +284,9 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-danger": c.errorSurface,
     "--color-danger-border": withAlpha(c.error, 0.32),
     "--color-danger-foreground": c.errorForeground,
-    "--color-input": c.surfaceRaised,
+    "--color-update": c.updateSurface,
+    "--color-update-foreground": c.updateForeground,
+    "--color-input": c.surface,
     "--color-input-border": c.input,
     "--color-sidebar-search": c.sidebarControlSurface,
     "--color-placeholder": c.placeholder,
@@ -282,13 +294,14 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-icon-muted": c.iconMuted,
     "--color-icon-subtle": c.secondaryLabel,
     "--color-header": withAlpha(c.toolbar, 0.97),
+    "--color-header-foreground": c.toolbarForeground,
     "--color-header-border": c.toolbarBorder,
     "--color-glass-surface": withAlpha(c.surfaceOverlay, 0.74),
     "--color-glass-tint": withAlpha(c.surfaceOverlay, 0.22),
     "--color-status-bar": c.canvas,
     "--color-md-body": c.text,
-    "--color-md-strong": c.toolbarForeground,
-    "--color-md-link": c.accent,
+    "--color-md-strong": c.text,
+    "--color-md-link": readableActionText(c.messageAction, c.canvas),
     "--color-md-blockquote-border": c.border,
     "--color-md-blockquote-bg": c.muted,
     "--color-md-code-bg": c.codeBackground,
@@ -301,12 +314,12 @@ export function createMobileThemeVariables(colors: ThemeColors, appearance: Mobi
     "--color-user-bubble": c.messageSurface,
     "--color-user-bubble-foreground": c.messageForeground,
     "--color-user-bubble-foreground-muted": withAlpha(c.messageForeground, 0.78),
-    "--color-user-bubble-skill-foreground": readableMessageAccent(
-      c.messageAction,
-      c.messageSurface,
-    ),
+    "--color-user-bubble-skill-foreground": readableActionText(c.messageAction, c.messageSurface),
     "--color-backdrop": withAlpha("#000000", appearance === "dark" ? 0.48 : 0.22),
-    "--color-drawer": withAlpha(c.sidebar, 0.99),
+    "--color-drawer": c.sidebar,
+    "--color-drawer-foreground": c.sidebarForeground,
+    "--color-drawer-foreground-muted": c.sidebarMutedForeground,
+    "--color-drawer-border": c.sidebarBorder,
     "--color-drawer-shadow": withAlpha("#000000", appearance === "dark" ? 0.32 : 0.12),
     "--color-dot-separator": withAlpha(c.textMuted, 0.35),
     "--color-wordmark": c.text,
@@ -318,13 +331,23 @@ export const MOBILE_THEME_VARIABLE_NAMES = Object.keys(
   createMobileThemeVariables(T3_CHAT_THEME.colors, "light"),
 ) as ReadonlyArray<MobileThemeVariable>;
 
+export function getMobileThemeColors(
+  themeId: SharedMobileThemeId,
+  appearance: MobileThemeAppearance,
+): ThemeColors {
+  if (themeId === DEFAULT_MOBILE_THEME_ID) {
+    return appearance === "dark" ? T3_CODE_DARK_THEME_COLORS : T3_CODE_LIGHT_THEME_COLORS;
+  }
+  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
+  return getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
+}
+
 export function getMobileThemeVariables(
-  themeId: BuiltInThemeId,
+  themeId: SharedMobileThemeId,
   appearance: MobileThemeAppearance,
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
-  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
-  const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
+  const colors = getMobileThemeColors(themeId, appearance);
   const baseVariables = createMobileThemeVariables(colors, appearance);
 
   // The complete base record guarantees that optional overrides cannot leave a token undefined.

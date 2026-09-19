@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES, T3_CHAT_THEME } from "@t3tools/shared/themePalettes";
+import {
+  BUILT_IN_THEME_IDS,
+  BUILT_IN_THEMES,
+  T3_CHAT_THEME,
+  T3_CODE_LIGHT_THEME_COLORS,
+  T3_CODE_DARK_THEME_COLORS,
+  MOBILE_THEME_IDS,
+  getThemeColorsForAppearance,
+} from "@t3tools/shared/themePalettes";
 import { readDefaultMobileThemeVariables } from "./mobileTheme.test-support";
 
 import {
@@ -66,12 +74,69 @@ describe("mobile themes", () => {
     }
   });
 
-  it("preserves the existing mobile palette as the default", () => {
-    expect(readDefaultMobileThemeVariables("light")["--color-screen"]).toBe("#f2f2f7");
-    expect(readDefaultMobileThemeVariables("dark")["--color-screen"]).toBe("#0a0a0a");
-    expect(readDefaultMobileThemeVariables("light")["--color-user-bubble-skill-foreground"]).toBe(
-      "#2563eb",
-    );
+  it.each(MOBILE_THEME_IDS)("uses the web color roles for %s in both appearances", (themeId) => {
+    for (const appearance of ["light", "dark"] as const) {
+      const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
+      const colors = theme
+        ? getThemeColorsForAppearance(theme, appearance)!
+        : appearance === "dark"
+          ? T3_CODE_DARK_THEME_COLORS
+          : T3_CODE_LIGHT_THEME_COLORS;
+      const variables =
+        themeId === DEFAULT_MOBILE_THEME_ID
+          ? readDefaultMobileThemeVariables(appearance)
+          : getMobileThemeVariables(themeId, appearance);
+      expect(variables["--color-screen"]).toBe(themeColorToNativeColor(colors.canvas));
+      expect(variables["--color-thread-canvas"]).toBe(variables["--color-screen"]);
+      expect(variables["--color-drawer"]).toBe(themeColorToNativeColor(colors.sidebar));
+      expect(variables["--color-thread-hover"]).toBe(
+        themeColorToNativeColor(colors.sidebarRowHover),
+      );
+      expect(variables["--color-card"]).toBe(themeColorToNativeColor(colors.surface));
+      expect(variables["--color-composer-surface"]).toBe(
+        themeColorWithAlpha(
+          themeColorToNativeColor(colors.surface),
+          appearance === "dark" ? 0.9 : 0.94,
+        ),
+      );
+      expect(variables["--color-thread-selected"]).toBe(
+        themeColorToNativeColor(colors.sidebarRowActive),
+      );
+      expect(variables["--color-thread-selected-foreground"]).toBe(
+        themeColorToNativeColor(colors.sidebarForeground),
+      );
+      expect(variables["--color-primary"]).toBe(themeColorToNativeColor(colors.messageAction));
+      expect(variables["--color-user-bubble"]).toBe(themeColorToNativeColor(colors.messageSurface));
+      expect(
+        contrastRatio(variables["--color-foreground"], variables["--color-screen"]),
+      ).toBeGreaterThanOrEqual(4.5);
+      for (const [foreground, surface] of [
+        ["--color-drawer-foreground", "--color-drawer"],
+        ["--color-drawer-foreground-muted", "--color-drawer"],
+        ["--color-drawer-foreground", "--color-thread-hover"],
+        ["--color-primary-foreground", "--color-primary"],
+        ["--color-primary-text", "--color-screen"],
+        ["--color-secondary-foreground", "--color-secondary"],
+        ["--color-user-bubble-foreground", "--color-user-bubble"],
+        ["--color-warning-foreground", "--color-warning"],
+        ["--color-danger-foreground", "--color-danger"],
+        ["--color-md-body", "--color-screen"],
+        ["--color-md-strong", "--color-screen"],
+        ["--color-md-link", "--color-screen"],
+        ["--color-md-code-text", "--color-md-code-bg"],
+      ] as const) {
+        expect(
+          contrastRatio(variables[foreground], variables[surface]),
+          `${appearance}: ${foreground} on ${surface}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(
+        contrastRatio(
+          variables["--color-thread-selected-foreground"],
+          variables["--color-thread-selected"],
+        ),
+      ).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it("applies palette overrides on top of the selected built-in theme", () => {
@@ -153,7 +218,6 @@ describe("mobile themes", () => {
 
   it("maps semantic palette roles onto every mobile color variable", () => {
     const variables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
-    expect(Object.keys(variables)).toHaveLength(75);
     expect(variables["--color-sheet-solid"]).toBe(
       themeColorToNativeColor(T3_CHAT_THEME.colors.chrome),
     );
@@ -219,8 +283,6 @@ describe("mobile themes", () => {
     }
   });
 
-  // The default palette lives in global.css rather than BUILT_IN_THEMES, so the loops above
-  // never reached it; it kept an unreadable hardcoded bubble until this covered it.
   it("keeps the default user bubble readable in both appearances", () => {
     for (const appearance of ["light", "dark"] as const) {
       const variables = readDefaultMobileThemeVariables(appearance);
