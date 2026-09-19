@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
-import type { AuthEnvironmentScope, AuthSessionState, EnvironmentId } from "@t3tools/contracts";
+import {
+  type AuthEnvironmentScope,
+  type AuthSessionState,
+  type EnvironmentId,
+  sessionGrantsScope,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
@@ -17,11 +22,7 @@ function sessionHasScope(
   scope: AuthEnvironmentScope,
 ): boolean {
   const session = Option.getOrNull(AsyncResult.value(result));
-  return (
-    result._tag !== "Failure" &&
-    session?.authenticated === true &&
-    session.scopes?.includes(scope) === true
-  );
+  return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
 /** Uses the selected environment's grant, including cached scopes during a refresh. */

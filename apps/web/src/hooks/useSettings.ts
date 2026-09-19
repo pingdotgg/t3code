@@ -18,6 +18,7 @@ import {
   type EnvironmentId,
   ServerSettings,
   type ServerSettingsPatch,
+  sessionGrantsScope,
 } from "@t3tools/contracts";
 import {
   type ClientSettingsPatch,
@@ -430,7 +431,7 @@ function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<E
           }
           const session =
             result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result));
-          return session?.authenticated && session.scopes?.includes(AuthSettingsWriteScope)
+          return session !== null && sessionGrantsScope(session, AuthSettingsWriteScope)
             ? [environment.environmentId]
             : [];
         }),

@@ -1,5 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthAdministrativeScopes, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  authScopeResponse,
+  AuthAdministrativeScopes,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -102,6 +106,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const authenticated = yield* serverAuth.authenticateHttpRequest(request);
       expect(devExchange.cookieName).toMatch(/^t3_dev_session_/);
       expect(devExchange.expireNormalCookie).toBe(true);
+      expect(devExchange.response).toMatchObject(authScopeResponse(AuthAdministrativeScopes));
       expect(authenticated.scopes).toEqual(["orchestration:read"]);
     }).pipe(
       Effect.provide(
@@ -241,7 +246,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
       expect(
         (yield* serverAuth.createBrowserSession(recovery.credential, requestMetadata)).response,
-      ).toMatchObject({ authenticated: true, scopes: AuthAdministrativeScopes });
+      ).toMatchObject({ authenticated: true, ...authScopeResponse(AuthAdministrativeScopes) });
     }).pipe(
       Effect.provide(
         makeEnvironmentAuthLayer({
@@ -355,7 +360,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const error = yield* serverAuth
         .exchangeBootstrapCredentialForAccessToken(
           pairingCredential.credential,
-          ["orchestration:read", "access:write"],
+          ["access:write"],
           requestMetadata,
         )
         .pipe(Effect.flip);
@@ -393,7 +398,10 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
 
   it.effect.each([
     { label: "omits scope", requestedScopes: undefined },
-    { label: "requests no scopes", requestedScopes: [] },
+    {
+      label: "requests unsupported permissions alongside a granted one",
+      requestedScopes: ["orchestration:read", "access:write"] as const,
+    },
   ])("inherits a constrained pairing grant when token exchange $label", ({ requestedScopes }) =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

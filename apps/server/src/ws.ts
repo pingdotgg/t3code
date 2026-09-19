@@ -19,6 +19,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
   DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
+  authScopeRequiredResponse,
+  authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
@@ -392,7 +394,7 @@ function toAuthAccessStreamEvent(
         version: 1,
         revision,
         type: "pairingLinkUpserted",
-        payload: change.pairingLink,
+        payload: { ...change.pairingLink, ...authScopeResponse(change.pairingLink.scopes) },
       };
     case "pairingLinkRemoved":
       return {
@@ -408,6 +410,7 @@ function toAuthAccessStreamEvent(
         type: "clientUpserted",
         payload: {
           ...change.clientSession,
+          ...authScopeResponse(change.clientSession.scopes),
           current: change.clientSession.sessionId === currentSessionId,
         },
       };
@@ -673,7 +676,7 @@ const makeWsRpcLayer = (
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
           message: `The authenticated token is missing required scope: ${requiredScope}.`,
-          requiredScope,
+          ...authScopeRequiredResponse(requiredScope),
         });
       const authorizeEffect = <A, E, R>(
         requiredScope: AuthEnvironmentScope,

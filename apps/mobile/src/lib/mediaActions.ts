@@ -7,6 +7,8 @@ import {
   type AuthSessionState,
   type EnvironmentId,
   type ThreadId,
+  sessionGrantsScope,
+  type SessionGrantInput,
 } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "@t3tools/mobile-markdown-text/links";
 import * as Option from "effect/Option";
@@ -41,11 +43,8 @@ export type MediaActionsSource = {
 );
 
 /** An explicit action may ask the server while its grant is still unresolved. */
-function allowsHostMedia(session: Pick<AuthSessionState, "authenticated" | "scopes"> | null) {
-  return (
-    session === null ||
-    (session.authenticated && session.scopes?.includes(AuthFilesystemReadScope) === true)
-  );
+function allowsHostMedia(session: SessionGrantInput | null) {
+  return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
 }
 
 function canReadHostMedia(environmentId: EnvironmentId | null): boolean {

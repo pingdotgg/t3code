@@ -13,6 +13,7 @@ import {
   EnvironmentId,
   type ScopedThreadRef,
   ThreadId,
+  sessionGrantsScope,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
@@ -394,8 +395,7 @@ export function useThreadActions() {
         if (permissionFailure) return permissionFailure;
         canDeleteWorktree =
           sessionResult._tag === "Success" &&
-          sessionResult.value.authenticated &&
-          sessionResult.value.scopes?.includes(AuthSourceControlWriteScope) === true;
+          sessionGrantsScope(sessionResult.value, AuthSourceControlWriteScope);
       }
       let shouldDeleteWorktree = false;
       const environmentSettings = appAtomRegistry

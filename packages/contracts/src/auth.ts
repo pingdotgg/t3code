@@ -3,6 +3,7 @@ import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 
 import {
   AuthSessionId,
+  ForwardCompatibleArray,
   ClientSurface,
   ClientWebDeployment,
   TrimmedNonEmptyString,
@@ -126,6 +127,70 @@ export type AuthGrantScope = typeof AuthGrantScope.Type;
 export const AuthGrantScopes = Schema.Array(AuthGrantScope);
 export type AuthGrantScopes = typeof AuthGrantScopes.Type;
 
+// Frozen wire vocabulary for clients released before granular permissions.
+const legacyScopes = new Set<AuthEnvironmentScope>([
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthReviewWriteScope,
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
+]);
+
+/** Format public auth metadata without changing the server's authorization grant. */
+export function authScopeResponse(scopes: ReadonlyArray<AuthEnvironmentScope>) {
+  return { scopes: scopes.filter((scope) => legacyScopes.has(scope)), permissions: scopes };
+}
+
+const authScopeResponseFields = {
+  scopes: AuthEnvironmentScopes,
+  permissions: Schema.optionalKey(ForwardCompatibleArray(AuthEnvironmentScope)),
+};
+
+// Only clients talking to an old server use these parent checks. Servers never
+// expand stored grants, and an explicitly empty permissions array grants nothing.
+const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>> = {
+  [AuthFilesystemReadScope]: AuthOrchestrationReadScope,
+  [AuthDiagnosticsReadScope]: AuthOrchestrationReadScope,
+  [AuthSettingsWriteScope]: AuthOrchestrationOperateScope,
+  [AuthProvidersManageScope]: AuthOrchestrationOperateScope,
+  [AuthEnvironmentMaintainScope]: AuthOrchestrationOperateScope,
+  [AuthPreviewOperateScope]: AuthOrchestrationOperateScope,
+  [AuthSourceControlWriteScope]: AuthOrchestrationOperateScope,
+  [AuthFilesystemWriteScope]: AuthOrchestrationOperateScope,
+  [AuthTerminalReadScope]: AuthTerminalOperateScope,
+};
+
+/** Keep permission denials decodable by clients with the original scope enum. */
+export function authScopeRequiredResponse(requiredPermission: AuthEnvironmentScope) {
+  return {
+    requiredScope: legacyParents[requiredPermission] ?? requiredPermission,
+    requiredPermission,
+  };
+}
+
+export interface SessionGrantInput {
+  readonly authenticated: boolean;
+  readonly scopes?: ReadonlyArray<AuthEnvironmentScope> | undefined;
+  readonly permissions?: ReadonlyArray<AuthEnvironmentScope> | undefined;
+  readonly auth?: { readonly serverUpdateScope?: string | undefined } | undefined;
+}
+
+export function sessionGrantsScope(
+  session: SessionGrantInput,
+  scope: AuthEnvironmentScope,
+): boolean {
+  if (!session.authenticated) return false;
+  if (session.permissions !== undefined) return session.permissions.includes(scope);
+  if (session.scopes?.includes(scope)) return true;
+  // Also recognize servers from the first granular-scope release.
+  if (session.auth?.serverUpdateScope !== undefined) return false;
+  const parent = legacyParents[scope];
+  return parent !== undefined && session.scopes?.includes(parent) === true;
+}
+
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -191,7 +256,7 @@ export type AuthBrowserSessionRequest = typeof AuthBrowserSessionRequest.Type;
 
 export const AuthBrowserSessionResult = Schema.Struct({
   authenticated: Schema.Literal(true),
-  scopes: AuthEnvironmentScopes,
+  ...authScopeResponseFields,
   sessionMethod: ServerAuthSessionMethod,
   expiresAt: Schema.DateTimeUtc,
 });
@@ -257,7 +322,7 @@ export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Typ
 // Read models contain metadata only. Credentials are returned by creation alone.
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
-  scopes: AuthEnvironmentScopes,
+  ...authScopeResponseFields,
   subject: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: Schema.DateTimeUtc,
@@ -278,7 +343,7 @@ export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
-  scopes: AuthEnvironmentScopes,
+  ...authScopeResponseFields,
   method: ServerAuthSessionMethod,
   client: AuthClientMetadata,
   issuedAt: Schema.DateTimeUtc,
@@ -335,6 +400,7 @@ export class EnvironmentAuthorizationError extends Schema.TaggedError<Environmen
   {
     message: Schema.String,
     requiredScope: AuthEnvironmentScope,
+    requiredPermission: Schema.optionalKey(Schema.String),
   },
 ) {}
 
@@ -385,6 +451,7 @@ export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
   auth: ServerAuthDescriptor,
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  permissions: authScopeResponseFields.permissions,
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
