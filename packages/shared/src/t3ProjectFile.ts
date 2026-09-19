@@ -16,7 +16,7 @@ const decodeT3ProjectFile = Schema.decodeExit(T3ProjectFileFromJson);
 /**
  * Decode raw `t3.json` contents, treating invalid or malformed files as
  * absent. Clients use this to read optional defaults (scripts, thread env
- * mode) without surfacing decode errors to the user.
+ * mode, worktree submodule init) without surfacing decode errors to the user.
  */
 export function parseT3ProjectFile(contents: string): T3ProjectFile | null {
   const decoded = decodeT3ProjectFile(contents);

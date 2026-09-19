@@ -20,6 +20,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  T3_PROJECT_FILE_NAME,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffFileStat,
@@ -30,6 +31,7 @@ import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import {
@@ -3093,9 +3095,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // them. Best-effort: the objects are usually already in the parent's
     // `.git/modules`, but a first-ever clone needs the network, and failing to
     // populate a submodule must not roll back the caller's thread.
-    const hasSubmodules = yield* fileSystem
-      .exists(path.join(worktreePath, ".gitmodules"))
-      .pipe(Effect.orElseSucceed(() => false));
+    // A t3.json with initSubmodulesOnWorktreeCreate: false skips this so a
+    // runOnWorktreeCreate script can initialize a subset instead.
+    const projectFile = yield* fileSystem
+      .readFileString(path.join(worktreePath, T3_PROJECT_FILE_NAME))
+      .pipe(
+        Effect.map(parseT3ProjectFile),
+        Effect.orElseSucceed(() => null),
+      );
+    const initSubmodules = projectFile?.initSubmodulesOnWorktreeCreate !== false;
+    const hasSubmodules = initSubmodules
+      ? yield* fileSystem
+          .exists(path.join(worktreePath, ".gitmodules"))
+          .pipe(Effect.orElseSucceed(() => false))
+      : false;
     if (hasSubmodules) {
       if (progress?.onSubmodulesStarted) {
         yield* progress.onSubmodulesStarted();

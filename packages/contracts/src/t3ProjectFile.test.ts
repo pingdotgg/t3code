@@ -60,4 +60,15 @@ describe("T3ProjectFile", () => {
     expect(decode({ defaultThreadEnvMode: "local" }).defaultThreadEnvMode).toBe("local");
     expect(() => decode({ defaultThreadEnvMode: "remote" })).toThrow();
   });
+
+  it("decodes initSubmodulesOnWorktreeCreate", () => {
+    expect(decode({}).initSubmodulesOnWorktreeCreate).toBeUndefined();
+    expect(decode({ initSubmodulesOnWorktreeCreate: true }).initSubmodulesOnWorktreeCreate).toBe(
+      true,
+    );
+    expect(decode({ initSubmodulesOnWorktreeCreate: false }).initSubmodulesOnWorktreeCreate).toBe(
+      false,
+    );
+    expect(() => decode({ initSubmodulesOnWorktreeCreate: "false" })).toThrow();
+  });
 });

@@ -86,6 +86,12 @@ export const T3ProjectFile = Schema.Struct({
         'Where new threads start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in T3 Code overrides this; when neither is set, the global default applies.',
     }),
   ),
+  initSubmodulesOnWorktreeCreate: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When true or omitted, T3 Code runs `git submodule update --init --recursive` after creating a worktree. Set false to skip that step and initialize submodules from a runOnWorktreeCreate script instead.",
+    }),
+  ),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({
