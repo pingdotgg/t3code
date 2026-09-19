@@ -177,8 +177,12 @@ function ProjectDetail({
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   const projectNameEditedRef = useRef(false);
 
-  const faviconPath = representative.faviconPath ?? null;
-  const projectIcon = representative.projectIcon ?? null;
+  // The icon row must read the group snapshot — the same record the sidebar
+  // renders — not a locally re-selected member. Re-selecting here (connected
+  // first) diverges from the sidebar's snapshot whenever members disagree on
+  // title, faviconPath, or projectIcon.
+  const faviconPath = group.faviconPath ?? null;
+  const projectIcon = group.projectIcon ?? null;
   const pickProjectFavicon =
     typeof window !== "undefined" &&
     group.memberProjects.every(
@@ -455,7 +459,7 @@ function ProjectDetail({
             }
             control={
               <div className="flex items-center gap-2">
-                <ProjectFavicon project={representative} className="size-6" />
+                <ProjectFavicon project={group} className="size-6" />
                 <Button
                   size="sm"
                   variant="outline"

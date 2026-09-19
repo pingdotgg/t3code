@@ -25,6 +25,7 @@ import {
   type ComposerControlSize,
 } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
+import { useTerminalFocus } from "../../hooks/useTerminalFocus";
 import { shortcutLabelForCommand } from "../../keybindings";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
@@ -63,6 +64,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
   const size = props.size ?? "sm";
+  // The modelPicker.toggle binding is `!terminalFocus`, so the shortcut is
+  // unavailable while the embedded terminal has focus. Hide the hint there
+  // instead of advertising a shortcut that would type into the terminal.
+  const terminalFocused = useTerminalFocus();
 
   // Resolve the active instance entry by exact routing key. The composer
   // resolves fallbacks before rendering this component; if the selected
@@ -157,9 +162,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     setIsMenuOpen(false);
   };
 
-  const shortcutLabel = props.keybindings
-    ? shortcutLabelForCommand(props.keybindings, "modelPicker.toggle")
-    : null;
+  const shortcutLabel =
+    !terminalFocused && props.keybindings
+      ? shortcutLabelForCommand(props.keybindings, "modelPicker.toggle")
+      : null;
   const selectedEntries = props.selectedModels?.map((selection) => {
     const entry = props.instanceEntries.find(
       (candidate) => candidate.instanceId === selection.instanceId,

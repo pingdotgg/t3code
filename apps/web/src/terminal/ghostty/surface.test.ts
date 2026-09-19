@@ -17,6 +17,7 @@ import {
   primeTerminalCopyInput,
   resolveTerminalMouseData,
   resolveTerminalMouseTrackingState,
+  resolveTerminalSelectionAutoscroll,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   terminalGridCellAt,
@@ -990,6 +991,75 @@ describe("terminalWheelArrowData", () => {
     expect(terminalWheelArrowData(3, false)).toBe("\u001b[B\u001b[B\u001b[B");
     expect(terminalWheelArrowData(-1, true)).toBe("\u001bOA");
     expect(terminalWheelArrowData(0, true)).toBe("");
+  });
+});
+
+describe("resolveTerminalSelectionAutoscroll", () => {
+  it("arms the bottom cell row because the docked edge blocks out-of-bounds drags", () => {
+    expect(
+      resolveTerminalSelectionAutoscroll({
+        clientY: 199,
+        top: 0,
+        bottom: 200,
+        cellHeight: 16,
+      }),
+    ).toBe(1);
+    expect(
+      resolveTerminalSelectionAutoscroll({
+        clientY: 150,
+        top: 0,
+        bottom: 200,
+        cellHeight: 16,
+      }),
+    ).toBe(0);
+  });
+
+  it("keeps a strict top boundary so first-row selections don't scroll up", () => {
+    expect(
+      resolveTerminalSelectionAutoscroll({
+        clientY: 5,
+        top: 0,
+        bottom: 200,
+        cellHeight: 16,
+      }),
+    ).toBe(0);
+    expect(
+      resolveTerminalSelectionAutoscroll({
+        clientY: 0,
+        top: 0,
+        bottom: 200,
+        cellHeight: 16,
+      }),
+    ).toBe(0);
+    expect(
+      resolveTerminalSelectionAutoscroll({
+        clientY: -1,
+        top: 0,
+        bottom: 200,
+        cellHeight: 16,
+      }),
+    ).toBe(-1);
+  });
+
+  it("caps the bottom zone at half the canvas so short terminals can't invert direction", () => {
+    // A 10px-tall canvas with a 16px cell. Uncapped, the bottom zone would
+    // start above the canvas top, so dragging at the top would scroll down.
+    expect(
+      resolveTerminalSelectionAutoscroll({
+        clientY: 6,
+        top: 0,
+        bottom: 10,
+        cellHeight: 16,
+      }),
+    ).toBe(1);
+    expect(
+      resolveTerminalSelectionAutoscroll({
+        clientY: 4,
+        top: 0,
+        bottom: 10,
+        cellHeight: 16,
+      }),
+    ).toBe(0);
   });
 });
 

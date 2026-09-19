@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -870,6 +870,7 @@ describe("rightPanelStore", () => {
       isOpen: false,
       activeSurfaceId: null,
       surfaces: [],
+      proactiveDismissed: true,
     });
   });
 
@@ -891,6 +892,7 @@ describe("rightPanelStore", () => {
       isOpen: false,
       activeSurfaceId: null,
       surfaces: [],
+      proactiveDismissed: true,
     });
   });
 
@@ -940,6 +942,7 @@ describe("rightPanelStore", () => {
       isOpen: false,
       activeSurfaceId: null,
       surfaces: [],
+      proactiveDismissed: true,
     });
   });
 
@@ -954,5 +957,20 @@ describe("rightPanelStore", () => {
         (surface) => surface.id,
       ),
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
+  });
+
+  it("keeps the dismissal marker after the final surface closes", () => {
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().closeSurface(refA, "terminal:term-1");
+
+    // The empty entry survives pruning so the dismissal is not forgotten.
+    expect(useRightPanelStore.getState().byThreadKey).toEqual({
+      [scopedThreadKey(refA)]: {
+        isOpen: false,
+        activeSurfaceId: null,
+        surfaces: [],
+        proactiveDismissed: true,
+      },
+    });
   });
 });
