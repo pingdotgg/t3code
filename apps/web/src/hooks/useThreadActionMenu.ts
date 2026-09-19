@@ -7,11 +7,16 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { exhaustedUntil } from "@t3tools/shared/usageLimits";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
-import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
+import {
+  resolveSnoozePresets,
+  snoozePresetExpired,
+  snoozeWakeDescription,
+} from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
   type ThreadActionMenuId,
@@ -24,6 +29,7 @@ import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
+  readThreadProviderSnapshot,
   readThreadShell,
   useProjects,
 } from "../state/entities";
@@ -137,7 +143,10 @@ export function useThreadActionMenu(input: {
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
-        const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const providerSnapshot = readThreadProviderSnapshot(threadRef);
+        const snoozePresets = resolveSnoozePresets(now, timestampFormat, {
+          limitsResetAt: exhaustedUntil(providerSnapshot?.usageLimits, now.getTime()),
+        });
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           // The chat header has no project-scoped thread list behind the
@@ -160,7 +169,7 @@ export function useThreadActionMenu(input: {
             action === "snooze:custom"
               ? await requestCustomSnooze()
               : snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
-          if (!preset) return;
+          if (!preset || snoozePresetExpired(preset)) return;
           const result = await snoozeThread(threadRef, preset.snoozedUntil);
           if (result._tag === "Failure") {
             if (!isAtomCommandInterrupted(result)) {
