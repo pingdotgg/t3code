@@ -6000,15 +6000,151 @@ it.effect(
   "ProviderSessionManagerV2 keeps the attach lock through the adapter call when a detach queues",
   () =>
     Effect.gen(function* () {
+      // Every op offset past the credential-issuance gate gets its own fresh
+      // manager: the attach is suspended exactly there, and the queued detach
+      // is free to run into any release/reacquire gap the bookkeeping leaves
+      // open. The adapter call must always observe the thread's credential
+      // claim and the teardown must land only after the call — the ordering
+      // one continuous [session, thread] lock hold guarantees.
+      for (let offset = 1; offset <= 60; offset += 1) {
+        const state = yield* Ref.make(emptyState);
+        const issuing = yield* Deferred.make<void>();
+        const issueGate = yield* Deferred.make<void>();
+        const pauseIssue = yield* Ref.make(false);
+        const adapterCalls = yield* Ref.make(0);
+        const callsWithClaim = yield* Ref.make(0);
+        const allocatorSlot = yield* Ref.make<IdAllocatorV2Shape | undefined>(undefined);
+        const sessionIdSlot = yield* Ref.make<ProviderSessionId | undefined>(undefined);
+        const sharedThreadId = ThreadId.make(`thread-detach-gap-shared-${offset}`);
+        const mcpRegistryLayer = Layer.effect(
+          McpSessionRegistry.McpSessionRegistry,
+          Effect.gen(function* () {
+            const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+            return McpSessionRegistry.McpSessionRegistry.of({
+              ...delegate,
+              issue: (input) =>
+                Ref.get(pauseIssue).pipe(
+                  Effect.flatMap((pause) =>
+                    pause
+                      ? Deferred.succeed(issuing, undefined).pipe(
+                          Effect.andThen(Deferred.await(issueGate)),
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.andThen(delegate.issue(input)),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(TestMcpRegistryLayer));
+        yield* Effect.gen(function* () {
+          const manager = yield* ProviderSessionManagerV2;
+          yield* Ref.set(allocatorSlot, yield* IdAllocatorV2);
+          const stepper = makeSteppingScheduler();
+          const ownerThreadId = ThreadId.make(`thread-detach-gap-owner-${offset}`);
+          const owner = yield* makeThreadSessionFixture(ownerThreadId);
+          yield* makeThreadSessionFixture(sharedThreadId);
+          const providerSessionId = yield* owner.allocate;
+          yield* Ref.set(sessionIdSlot, providerSessionId);
+          const runtime = yield* owner.open(providerSessionId);
+          // Arm the gate only after the owner's open — its own issuance must
+          // pass straight through.
+          yield* Ref.set(pauseIssue, true);
+
+          // The shared thread's attach suspends inside credential issuance
+          // with the [session, thread] lock held and its provisional
+          // attachment already recorded, so the terminal detach queues on
+          // that lock.
+          const attaching = yield* runtime
+            .ensureThread({ threadId: sharedThreadId, modelSelection, runtimePolicy })
+            .pipe(
+              Effect.exit,
+              Effect.forkDetach,
+              Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+            );
+          yield* stepper.step(attaching, 10_000);
+          assert.isTrue(
+            yield* Deferred.isDone(issuing),
+            `attach never reached credential issuance (offset ${offset})`,
+          );
+          const gatedAt = stepper.counts.get(attaching) ?? 0;
+
+          const detaching = yield* manager
+            .detach({ providerSessionId, threadId: sharedThreadId, revokeMcpCredential: true })
+            .pipe(
+              Effect.exit,
+              Effect.forkDetach,
+              Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+            );
+          yield* stepper.step(detaching, 10_000);
+
+          // Resume issuance, then hold the attach at the swept op count: if
+          // bookkeeping released the lock before the adapter call reacquired
+          // it, the parked detach wakes first and strips the attachment and
+          // its credential claim before the call is admitted.
+          yield* Deferred.succeed(issueGate, undefined);
+          yield* stepper.step(attaching, gatedAt + offset);
+          yield* stepper.step(detaching, 10_000);
+          yield* stepper.drain;
+
+          const attachExit = yield* Fiber.join(attaching);
+          assert.equal(
+            attachExit._tag,
+            "Success",
+            `attach failed at op offset ${offset}: ${
+              attachExit._tag === "Failure" ? Cause.pretty(attachExit.cause) : "no cause"
+            }`,
+          );
+          assert.equal(yield* Ref.get(adapterCalls), 1, `op count at offset ${offset}`);
+          assert.equal(
+            yield* Ref.get(callsWithClaim),
+            1,
+            `adapter call ran after the detach stripped the credential claim (offset ${offset})`,
+          );
+          const detachExit = yield* Fiber.join(detaching);
+          assert.equal(detachExit._tag, "Success", `detach outcome at offset ${offset}`);
+          // The queued detach then tears the attachment down: the thread's
+          // credential is revoked and its config slot cleared.
+          assert.isUndefined(McpProviderSession.readMcpProviderSession(sharedThreadId));
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(issueGate, undefined)),
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 3_600_000,
+              mcpRegistryLayer,
+              ensureThread: (threadInput) =>
+                Effect.gen(function* () {
+                  yield* Ref.update(adapterCalls, (count) => count + 1);
+                  if (
+                    McpProviderSession.readMcpProviderSession(threadInput.threadId) !== undefined
+                  ) {
+                    yield* Ref.update(callsWithClaim, (count) => count + 1);
+                  }
+                  return makeProviderThread({
+                    idAllocator: (yield* Ref.get(allocatorSlot))!,
+                    threadId: threadInput.threadId,
+                    providerSessionId: (yield* Ref.get(sessionIdSlot))!,
+                    now: yield* DateTime.now,
+                  });
+                }),
+            }),
+          ),
+        );
+      }
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 unwinds a queued startTurn's busy mark when the caller is interrupted",
+  () =>
+    Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const issuing = yield* Deferred.make<void>();
       const issueGate = yield* Deferred.make<void>();
       const pauseIssue = yield* Ref.make(false);
-      const adapterCalls = yield* Ref.make(0);
-      const callsWithClaim = yield* Ref.make(0);
+      const sharedThreadId = ThreadId.make("thread-busy-unwind-shared");
       const allocatorSlot = yield* Ref.make<IdAllocatorV2Shape | undefined>(undefined);
       const sessionIdSlot = yield* Ref.make<ProviderSessionId | undefined>(undefined);
-      const sharedThreadId = ThreadId.make("thread-detach-gap-shared");
       const mcpRegistryLayer = Layer.effect(
         McpSessionRegistry.McpSessionRegistry,
         Effect.gen(function* () {
@@ -6031,54 +6167,89 @@ it.effect(
       ).pipe(Layer.provide(TestMcpRegistryLayer));
       yield* Effect.gen(function* () {
         const manager = yield* ProviderSessionManagerV2;
-        yield* Ref.set(allocatorSlot, yield* IdAllocatorV2);
-        const ownerThreadId = ThreadId.make("thread-detach-gap-owner");
+        const idAllocator = yield* IdAllocatorV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const ownerThreadId = ThreadId.make("thread-busy-unwind-owner");
         const owner = yield* makeThreadSessionFixture(ownerThreadId);
         yield* makeThreadSessionFixture(sharedThreadId);
         const providerSessionId = yield* owner.allocate;
+        yield* Ref.set(allocatorSlot, idAllocator);
         yield* Ref.set(sessionIdSlot, providerSessionId);
         const runtime = yield* owner.open(providerSessionId);
         yield* Ref.set(pauseIssue, true);
-        // The shared thread's attach suspends inside credential issuance with
-        // the [session, thread] lock held and its provisional attachment
-        // already recorded, so the terminal detach queues on that lock.
+
+        // The shared thread's attach parks inside credential issuance with
+        // the [session, thread] lock held, so the queued startTurn marks the
+        // session busy and then waits on that lock.
         const attaching = yield* runtime
           .ensureThread({ threadId: sharedThreadId, modelSelection, runtimePolicy })
           .pipe(Effect.exit, Effect.forkChild);
         yield* Deferred.await(issuing);
-        const detaching = yield* manager
-          .detach({ providerSessionId, threadId: sharedThreadId, revokeMcpCredential: true })
+        const sharedAppThread = (yield* projectionStore.getThreadProjection(sharedThreadId)).thread;
+        const sharedRunId = idAllocator.derive.run({ threadId: sharedThreadId, ordinal: 1 });
+        const turning = yield* runtime
+          .startTurn({
+            appThread: sharedAppThread,
+            threadId: sharedThreadId,
+            runId: sharedRunId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId: sharedRunId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId: sharedRunId }),
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId: sharedThreadId,
+              providerSessionId,
+              now,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({
+                threadId: sharedThreadId,
+                ordinal: 1,
+              }),
+              text: "queued behind the attach",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
           .pipe(Effect.exit, Effect.forkChild);
-        // The queued detach cannot strip the attachment between the attach's
-        // bookkeeping and the adapter call: one lock hold spans both, so the
-        // adapter runs while the credential claim still exists and the
-        // teardown only lands after the call completes.
-        yield* Effect.forEach(Array.from({ length: 12 }), () => Effect.yieldNow, {
+        // Let the turn reach the lock wait behind the in-flight attach.
+        yield* Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, {
           discard: true,
         });
+        yield* Fiber.interrupt(turning);
+        const turnExit = yield* Fiber.await(turning);
+        assert.equal(turnExit._tag, "Failure");
+
         yield* Deferred.succeed(issueGate, undefined);
         const attachExit = yield* Fiber.join(attaching);
         assert.equal(attachExit._tag, "Success");
-        assert.equal(yield* Ref.get(adapterCalls), 1);
-        assert.equal(yield* Ref.get(callsWithClaim), 1);
-        const detachExit = yield* Fiber.join(detaching);
-        assert.equal(detachExit._tag, "Success");
-        // The queued detach then tears the attachment down: the thread's
-        // credential is revoked and its config slot cleared.
-        assert.isUndefined(McpProviderSession.readMcpProviderSession(sharedThreadId));
+
+        // markBusy incremented before the attach wait; without an unwind for
+        // interruption the count would pin the session busy forever and the
+        // idle release below would never fire.
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.isTrue(
+          Option.isNone(yield* manager.get(providerSessionId)),
+          "interrupted queued startTurn left the session pinned busy",
+        );
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
       }).pipe(
         Effect.ensuring(Deferred.succeed(issueGate, undefined)),
         Effect.provide(
           makeTestLayer({
             state,
-            idleTimeoutMs: 3_600_000,
+            idleTimeoutMs: 1_000,
             mcpRegistryLayer,
             ensureThread: (threadInput) =>
               Effect.gen(function* () {
-                yield* Ref.update(adapterCalls, (count) => count + 1);
-                if (McpProviderSession.readMcpProviderSession(threadInput.threadId) !== undefined) {
-                  yield* Ref.update(callsWithClaim, (count) => count + 1);
-                }
                 return makeProviderThread({
                   idAllocator: (yield* Ref.get(allocatorSlot))!,
                   threadId: threadInput.threadId,
