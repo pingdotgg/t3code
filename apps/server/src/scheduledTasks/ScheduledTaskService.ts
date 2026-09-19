@@ -1,6 +1,7 @@
 import {
   CommandId,
   MessageId,
+  ProjectId,
   ScheduledTask,
   ScheduledTaskError,
   ScheduledTaskId,
@@ -53,6 +54,9 @@ const encodeScheduleJson = Schema.encodeEffect(
 const encodeWorkspaceStrategyJson = Schema.encodeEffect(
   Schema.fromJsonString(ScheduledTask.fields.workspaceStrategy),
 );
+const encodeModelSelectionJson = Schema.encodeEffect(
+  Schema.fromJsonString(ScheduledTask.fields.modelSelection),
+);
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
 interface ScheduledTaskRow {
@@ -92,6 +96,10 @@ export class ScheduledTaskService extends Context.Service<
      * the task still exists in `input.projectId`. Returns `Option.none()` when
      * no such task exists — the update can never insert a row, so an edit
      * racing a delete loses instead of resurrecting the task.
+     *
+     * A `threadId`/`nextProjectId` patch fails when the merged pair would bind
+     * the task to a thread outside its project, since such a task could never
+     * dispatch. Unbind explicitly with `threadId: null` to move a bound task.
      */
     readonly update: (
       input: ScheduledTaskUpdateInput,
@@ -337,6 +345,32 @@ export const layer = Layer.effect(
       }
       return task;
     });
+
+    // Side-effect-free mirror of the dispatch rule in getProjectThread: the
+    // bound thread must be a live v2 thread in the task's project, otherwise
+    // the task can never fire.
+    const requireThreadInProject = Effect.fn("ScheduledTaskService.requireThreadInProject")(
+      function* (taskId: ScheduledTaskId, projectId: ProjectId, threadId: ThreadId) {
+        const counts = yield* sql<{ matched: number }>`
+          SELECT COUNT(*) AS matched
+          FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId}
+            AND project_id = ${projectId}
+            AND deleted_at IS NULL
+            AND archived_at IS NULL
+        `.pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not validate the schedule task's thread binding.", { taskId, cause }),
+          ),
+        );
+        if ((counts[0]?.matched ?? 0) === 0) {
+          return yield* taskError(
+            "The task's thread binding is not a live thread in the task's project; unbind it or rebind to a thread in the project.",
+            { taskId },
+          );
+        }
+      },
+    );
 
     // Run-state columns (last_run_*, run_count) are intentionally absent from
     // the conflict clause: they are owned by the run transitions below, and a
@@ -861,6 +895,9 @@ export const layer = Layer.effect(
           lastRunError: existingTask?.lastRunError ?? null,
           runCount: existingTask?.runCount ?? 0,
         };
+        if (task.threadId !== null) {
+          yield* requireThreadInProject(task.id, task.projectId, task.threadId);
+        }
         yield* saveTask(task, input.requireExisting === true);
         return task;
       });
@@ -890,6 +927,18 @@ export const layer = Layer.effect(
             Effect.gen(function* () {
               const existing = yield* findTask(input.id);
               if (existing === null || existing.projectId !== input.projectId) return null;
+              // The patch merges with whatever is already committed, so the
+              // resulting (project, thread) pair must still be dispatchable.
+              if (input.threadId !== undefined || input.nextProjectId !== undefined) {
+                const threadId = input.threadId === undefined ? existing.threadId : input.threadId;
+                if (threadId !== null) {
+                  yield* requireThreadInProject(
+                    input.id,
+                    input.nextProjectId ?? existing.projectId,
+                    threadId,
+                  );
+                }
+              }
               const patch: Record<string, unknown> = {};
               if (input.title !== undefined) patch.title = input.title;
               if (input.prompt !== undefined) patch.prompt = input.prompt;
@@ -903,6 +952,11 @@ export const layer = Layer.effect(
                   input.workspaceStrategy,
                 );
               }
+              if (input.modelSelection !== undefined) {
+                patch.model_selection_json = yield* encodeModelSelectionJson(input.modelSelection);
+              }
+              if (input.runtimeMode !== undefined) patch.runtime_mode = input.runtimeMode;
+              if (input.nextProjectId !== undefined) patch.project_id = input.nextProjectId;
               if (Object.keys(patch).length === 0) return existing;
               const now = yield* localNow;
               // Mirror the upsert rule: only a real schedule/enabled change

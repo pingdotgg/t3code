@@ -158,6 +158,10 @@ export const ScheduledTaskUpdateInput = Schema.Struct({
   schedule: Schema.optional(ScheduledTaskUpsertSchedule),
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
   workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: Schema.optional(RuntimeMode),
+  /** Moves the task to another project; `projectId` stays the lookup scope. */
+  nextProjectId: Schema.optional(ProjectId),
 });
 export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
 

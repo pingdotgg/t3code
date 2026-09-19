@@ -16,6 +16,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlError from "effect/unstable/sql/SqlError";
 
@@ -1015,4 +1016,182 @@ it.effect("a contended completion write retries instead of stranding the task", 
       sqlProbe = null;
     }
   }).pipe(Effect.provide(gatedDispatchLayer)),
+);
+
+// Only `boundThreadId` (v2) exists as a live binding target, inside
+// `updateProjectId`. `v1ThreadId` exists only in the legacy projection —
+// shell reconciliation runs before writes are served, so a thread without a
+// v2 row can never dispatch and must be rejected. `deletedThreadId` has a
+// deleted v2 row shadowing a live v1 row — v2 is the sole authority.
+const boundThreadId = ThreadId.make("thread:in-project");
+const v1ThreadId = ThreadId.make("thread:v1-only");
+const deletedThreadId = ThreadId.make("thread:deleted");
+const archivedThreadId = ThreadId.make("thread:archived");
+
+const seedProjectThreads = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const now = "2026-09-14T00:00:00.000Z";
+  yield* sql`
+    INSERT INTO orchestration_v2_projection_threads
+      (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+       created_at, updated_at, payload_json)
+    VALUES
+      (${boundThreadId}, ${updateProjectId}, 'bound', 'codex', 'full-access', 'default',
+       ${now}, ${now}, '{}'),
+      (${deletedThreadId}, ${updateProjectId}, 'deleted', 'codex', 'full-access', 'default',
+       ${now}, ${now}, '{}'),
+      (${archivedThreadId}, ${updateProjectId}, 'archived', 'codex', 'full-access', 'default',
+       ${now}, ${now}, '{}')
+  `;
+  yield* sql`
+    UPDATE orchestration_v2_projection_threads
+    SET deleted_at = ${now}
+    WHERE thread_id = ${deletedThreadId}
+  `;
+  yield* sql`
+    UPDATE orchestration_v2_projection_threads
+    SET archived_at = ${now}
+    WHERE thread_id = ${archivedThreadId}
+  `;
+  // v1-only rows must NOT satisfy the check — dispatch reads only the v2
+  // projection, so one of them shadows the deleted v2 row to prove the v1
+  // table is never consulted.
+  yield* sql`
+    INSERT INTO projection_threads
+      (thread_id, project_id, title, created_at, updated_at)
+    VALUES
+      (${v1ThreadId}, ${updateProjectId}, 'v1', ${now}, ${now}),
+      (${deletedThreadId}, ${updateProjectId}, 'v1 shadow', ${now}, ${now})
+  `;
+});
+
+it.effect("update patches runtimeMode without disturbing other fields", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const seeded = yield* seedTask;
+    const result = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      runtimeMode: "auto",
+    });
+    assert.isTrue(Option.isSome(result));
+    const after = yield* findSeeded;
+    assert.isDefined(after);
+    assert.equal(after!.runtimeMode, "auto");
+    assert.equal(after!.title, seeded.title);
+    assert.equal(after!.enabled, true);
+    assert.equal(after!.nextRunAt, seeded.nextRunAt);
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update applies model selection and project moves patch-style", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const seeded = yield* seedTask;
+    const moved = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "opus-5" },
+      nextProjectId: otherProjectId,
+      title: "moved",
+    });
+    const movedTask = Option.getOrThrow(moved).task;
+    assert.equal(movedTask.title, "moved");
+    assert.deepEqual(movedTask.modelSelection, {
+      instanceId: ProviderInstanceId.make("claude"),
+      model: "opus-5",
+    });
+    assert.equal(movedTask.projectId, otherProjectId);
+    // Untouched fields — including the pending due time — survive the move.
+    assert.equal(movedTask.prompt, seeded.prompt);
+    assert.equal(movedTask.nextRunAt, seeded.nextRunAt);
+
+    // After the move, the old project scope can no longer see or edit it.
+    const staleScope = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      title: "should not land",
+    });
+    assert.isTrue(Option.isNone(staleScope));
+    const newScope = yield* tasks.update({
+      id: updateTaskId,
+      projectId: otherProjectId,
+      prompt: "new scope works",
+    });
+    assert.isTrue(Option.isSome(newScope));
+  }).pipe(Effect.provide(updateTestLayer)),
+);
+
+it.effect("update keeps a project move and a thread binding consistent", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* seedTask;
+    yield* seedProjectThreads;
+    // Binding to a v2 thread that lives in the task's project works.
+    const bound = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      threadId: boundThreadId,
+    });
+    assert.isTrue(Option.isSome(bound));
+    // A v1-only thread cannot be bound: the v2 projection is the only
+    // authority dispatch reads, and it has no row for this thread.
+    const boundV1 = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, threadId: v1ThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(boundV1)) assert.fail("expected a typed conflict");
+    assert.equal(boundV1.failure._tag, "ScheduledTaskError");
+    // A deleted v2 row still wins over a live v1 row for the same thread.
+    const deleted = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, threadId: deletedThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(deleted)) assert.fail("expected a typed conflict");
+    assert.equal(deleted.failure._tag, "ScheduledTaskError");
+    // An archived thread is rejected the same way: sendToThread refuses
+    // archived targets, so a bound task would save as runnable and then fail
+    // every dispatch.
+    const archived = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, threadId: archivedThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(archived)) assert.fail("expected a typed conflict");
+    assert.equal(archived.failure._tag, "ScheduledTaskError");
+    // The contested merge: a move patch landing on top of the committed
+    // binding cannot keep a thread from the old project — the merged pair
+    // would fail every dispatch, so it is a typed conflict instead.
+    const moved = yield* tasks
+      .update({ id: updateTaskId, projectId: updateProjectId, nextProjectId: otherProjectId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(moved)) assert.fail("expected a typed conflict");
+    assert.equal(moved.failure._tag, "ScheduledTaskError");
+    const kept = yield* findSeeded;
+    assert.equal(kept?.projectId, updateProjectId);
+    assert.equal(kept?.threadId, boundThreadId);
+    // The explicit escape hatch: unbind and move in the same patch.
+    const unbound = yield* tasks.update({
+      id: updateTaskId,
+      projectId: updateProjectId,
+      nextProjectId: otherProjectId,
+      threadId: null,
+    });
+    const movedTask = Option.getOrThrow(unbound).task;
+    assert.isNull(movedTask.threadId);
+    assert.equal(movedTask.projectId, otherProjectId);
+    // The reverse interleaving: after the move, binding a thread from the old
+    // project conflicts too.
+    const relink = yield* tasks
+      .update({ id: updateTaskId, projectId: otherProjectId, threadId: boundThreadId })
+      .pipe(Effect.result);
+    if (Result.isSuccess(relink)) assert.fail("expected a typed conflict");
+    assert.equal(relink.failure._tag, "ScheduledTaskError");
+    // And binding a thread that does not exist in the project at all.
+    const missing = yield* tasks
+      .update({
+        id: updateTaskId,
+        projectId: otherProjectId,
+        threadId: ThreadId.make("thread:nowhere"),
+      })
+      .pipe(Effect.result);
+    if (Result.isSuccess(missing)) assert.fail("expected a typed conflict");
+    assert.equal(missing.failure._tag, "ScheduledTaskError");
+  }).pipe(Effect.provide(updateTestLayerWithSql)),
 );
