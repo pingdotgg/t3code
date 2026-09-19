@@ -182,7 +182,7 @@ export const make = Effect.gen(function* () {
               }),
             ),
       ),
-      Effect.withSpan("ServerSecretStore.get"),
+      Effect.withTracerEnabled(false),
     );
 
   const set: ServerSecretStore["Service"]["set"] = (name, value) => {
