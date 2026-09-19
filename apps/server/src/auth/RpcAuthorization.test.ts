@@ -3,6 +3,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
+  AuthPreviewOperateScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   WS_METHODS,
@@ -85,6 +86,29 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsSetFilesViewed)).toBe(
       AuthSourceControlWriteScope,
     );
+  });
+
+  it("separates preview control from observation", () => {
+    for (const method of [
+      WS_METHODS.previewOpen,
+      WS_METHODS.previewNavigate,
+      WS_METHODS.previewResize,
+      WS_METHODS.previewRefresh,
+      WS_METHODS.previewClose,
+      WS_METHODS.previewReportStatus,
+      WS_METHODS.previewAutomationConnect,
+      WS_METHODS.previewAutomationRespond,
+      WS_METHODS.previewAutomationFocusHost,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthPreviewOperateScope);
+    }
+    for (const method of [
+      WS_METHODS.previewList,
+      WS_METHODS.subscribePreviewEvents,
+      WS_METHODS.subscribeDiscoveredLocalServers,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
   });
 
   it("rejects unknown RPC method names", () => {
