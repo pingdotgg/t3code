@@ -22,6 +22,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import {
   DEFAULT_DELEGATION_INSTRUCTIONS,
+  evictStaleClosedSessions,
   OPENAI_API_KEY_SECRET_NAME,
   VoiceLiveBroker,
   VoiceLiveBrokerLive,
@@ -938,5 +939,26 @@ describe("voice settings", () => {
           expect(secrets[OPENAI_API_KEY_SECRET_NAME]).toBeUndefined();
         }),
       ),
+  );
+});
+
+describe("voice broker session retention", () => {
+  it.effect("evicts closed sessions after the accounting window", () =>
+    Effect.gen(function* () {
+      const now = 1_800_000_000_000;
+      const map = new Map<string, import("./broker.ts").RetainedVoiceSession>([
+        ["stale-closed", { status: "closed", closedAt: now - 61 * 60 * 1000 }],
+        ["recent-closed", { status: "closed", closedAt: now - 30 * 1000 }],
+        ["open", { status: "open" }],
+        ["closed-no-timestamp", { status: "closed" }],
+      ]);
+      const remaining = evictStaleClosedSessions(map, now);
+      expect(remaining.has("stale-closed")).toBe(false);
+      expect(remaining.has("recent-closed")).toBe(true);
+      expect(remaining.has("open")).toBe(true);
+      // A closed record without a timestamp predates retention tracking; treat
+      // it as stale and drop it at the next sweep.
+      expect(remaining.has("closed-no-timestamp")).toBe(false);
+    }),
   );
 });

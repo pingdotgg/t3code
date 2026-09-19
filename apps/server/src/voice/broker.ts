@@ -329,11 +329,30 @@ const upstreamFailureError = (status: number, detail: string): VoiceBrokerError 
 // Service
 // ---------------------------------------------------------------------------
 
-interface RetainedVoiceSession {
+export interface RetainedVoiceSession {
   readonly status: "open" | "closed";
   readonly clientDelegation?: boolean;
   readonly lastUsage?: VoiceSessionUsage;
+  /** Epoch ms when the session closed; drives retention eviction. */
+  readonly closedAt?: number;
 }
+
+/** Closed sessions stay readable for post-close accounting (usage reads),
+    then drop out so the process-wide map stays bounded. */
+const CLOSED_SESSION_RETENTION_MS = 60 * 60 * 1000;
+
+export const evictStaleClosedSessions = (
+  map: Map<string, RetainedVoiceSession>,
+  now: number,
+): Map<string, RetainedVoiceSession> => {
+  const cutoff = now - CLOSED_SESSION_RETENTION_MS;
+  for (const [id, session] of map) {
+    if (session.status === "closed" && (session.closedAt ?? 0) <= cutoff) {
+      map.delete(id);
+    }
+  }
+  return map;
+};
 
 export class VoiceLiveBroker extends Context.Service<
   VoiceLiveBroker,
@@ -368,7 +387,14 @@ export class VoiceLiveBroker extends Context.Service<
 >()("t3/voice/broker/VoiceLiveBroker") {}
 
 const makeBroker = Effect.gen(function* () {
-  const httpClient = yield* HttpClient.HttpClient;
+  const resolvedHttpClient = yield* HttpClient.HttpClient;
+  // The fetch client carries no default timeout: wrap it once so a stalled
+  // OpenAI request fails with a TimeoutError instead of pending forever. Both
+  // endpoint handlers map any request error to their upstreamFailureError
+  // messages, so the timeout inherits that treatment.
+  const httpClient = resolvedHttpClient.pipe(
+    HttpClient.transform((effect) => Effect.timeout(effect, "30 seconds")),
+  );
   const secrets = yield* ServerSecretStore;
   const sessions = yield* Ref.make(new Map<string, RetainedVoiceSession>());
 
@@ -530,8 +556,10 @@ const makeBroker = Effect.gen(function* () {
       });
     }
     const sessionId = VoiceSessionId.make(decoded.value.session.id);
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     yield* Ref.update(sessions, (map) => {
       const next = new Map(map);
+      evictStaleClosedSessions(next, nowMs);
       next.set(sessionId, { status: "open", clientDelegation: input.clientDelegation === true });
       return next;
     });
@@ -622,9 +650,11 @@ const makeBroker = Effect.gen(function* () {
   ) {
     const retained = yield* requireSession(input.sessionId);
     if (retained.status === "open") {
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
       yield* Ref.update(sessions, (map) => {
         const next = new Map(map);
-        next.set(input.sessionId, { ...retained, status: "closed" });
+        evictStaleClosedSessions(next, nowMs);
+        next.set(input.sessionId, { ...retained, status: "closed", closedAt: nowMs });
         return next;
       });
     }
