@@ -842,12 +842,12 @@ function RenderedMarkdownSurface({
   relativePath,
   contents,
   threadRef,
+  composerDraftTarget,
   readOnly,
   onPendingChange,
 }: Omit<
   EditableFileSurfaceProps,
   | "resolvedTheme"
-  | "composerDraftTarget"
   | "revealLine"
   | "revealRequestId"
   | "wordWrap"
@@ -870,6 +870,7 @@ function RenderedMarkdownSurface({
         cwd={cwd}
         relativePath={relativePath}
         threadRef={threadRef}
+        composerDraftTarget={composerDraftTarget}
         onTaskListChange={
           readOnly
             ? undefined
@@ -1245,6 +1246,7 @@ export default function FilePreviewPanel({
                 cwd={cwd}
                 relativePath={relativePath}
                 threadRef={threadRef}
+                composerDraftTarget={composerDraftTarget}
                 contents={file.data.contents}
                 readOnly={isHostFile}
                 onPendingChange={onPendingChange}

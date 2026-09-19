@@ -466,7 +466,13 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
     ...defaultSchema.attributes,
-    "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
+    "*": [
+      // Source line spans are stamped by callers that need to map a rendered
+      // selection back to the file it came from; see `markdownSourceLines`.
+      ...(defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
+      "dataMdStartLine",
+      "dataMdEndLine",
+    ],
     code: [...(defaultSchema.attributes?.code ?? []), "dataCodeMeta", "dataInlineCode"],
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
