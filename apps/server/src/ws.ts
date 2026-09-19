@@ -1,3 +1,4 @@
+import * as StorageCleanup from "./storageCleanup.ts";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -662,6 +663,7 @@ const makeWsRpcLayer = (
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
+      const storageCleanup = yield* StorageCleanup.StorageCleanup;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
       const relayClient = yield* RelayClient.RelayClient;
@@ -2524,6 +2526,14 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.subscribeStorageCleanup]: () =>
+          observeRpcStream(WS_METHODS.subscribeStorageCleanup, storageCleanup.revisions, {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.serverPreviewStorageCleanup]: (input) =>
+          observeRpcEffect(WS_METHODS.serverPreviewStorageCleanup, storageCleanup.preview(input), {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverGetSettings]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetSettings,
