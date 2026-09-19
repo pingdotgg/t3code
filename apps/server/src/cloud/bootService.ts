@@ -19,6 +19,7 @@ import * as Schema from "effect/Schema";
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { stableNodeExecutablePath } from "../stableNodeExecutablePath.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,
@@ -92,7 +93,10 @@ export interface BootServicePlan {
 }
 
 /** Pure renderer: service units cannot rely on the user's shell or PATH. */
-export function renderBootServiceUnit(plan: BootServicePlan): string {
+export function renderBootServiceUnit(
+  plan: BootServicePlan,
+  options: { readonly environmentPath: string },
+): string {
   // The user manager has no reliable network-online target; server networking retries itself.
   return [
     "[Unit]",
@@ -105,6 +109,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
+    `Environment=PATH=${quoteSystemdValue(options.environmentPath)}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
@@ -235,6 +240,7 @@ export interface BootServiceManager {
 function systemdManager(input: {
   readonly path: Path.Path;
   readonly homeDir: string;
+  readonly environmentPath: string;
 }): BootServiceManager {
   const unitPath = input.path.join(
     input.homeDir,
@@ -246,7 +252,8 @@ function systemdManager(input: {
   return {
     kind: "systemd",
     unitPath,
-    render: renderBootServiceUnit,
+    render: (plan) =>
+      renderBootServiceUnit(plan, { environmentPath: input.environmentPath }),
     stop: [
       {
         step: "stopping the installed service",
@@ -391,7 +398,11 @@ function selectBootServiceManager(input: {
     return undefined;
   }
   if (input.platform === "linux") {
-    return systemdManager({ path: input.path, homeDir: input.homeDir });
+    return systemdManager({
+      path: input.path,
+      homeDir: input.homeDir,
+      environmentPath: input.environmentPath,
+    });
   }
   if (input.platform === "darwin" && input.uid !== undefined) {
     return launchdManager({
@@ -548,6 +559,8 @@ export class BootService extends Context.Service<
 
 export interface BootServiceHost {
   readonly execPath: string;
+  /** Original invocation path (`process.argv0`); kept only when it resolves to execPath. */
+  readonly argv0?: string;
 }
 
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
@@ -569,7 +582,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
-  const host = input.host ?? { execPath: hostExecPath };
+  const host = input.host ?? { execPath: hostExecPath, argv0: process.argv0 };
+  // argv0 is used only when it resolves to the same Node as execPath.
+  const nodePath = stableNodeExecutablePath(host.execPath, host.argv0);
   const xmlSafeInstallerDirectories = installerPath.split(":").filter(
     (directory) =>
       directory.length > 0 &&
@@ -581,7 +596,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const environmentPath = Array.from(
     new Set([
       ...xmlSafeInstallerDirectories,
-      path.dirname(host.execPath),
+      path.dirname(nodePath),
       "/opt/homebrew/bin",
       "/usr/local/bin",
       "/usr/bin",
