@@ -28,6 +28,7 @@ import {
   type SshAuthOptions,
   SshPasswordPrompt,
   isSshAuthFailure,
+  isSshPasswordRetryable,
 } from "./auth.ts";
 import {
   baseSshArgs,
@@ -1435,7 +1436,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         cause: input.error,
       });
       const promptService = yield* SshPasswordPrompt;
-      if (!promptService.isAvailable) {
+      if (!promptService.isAvailable || !isSshPasswordRetryable(input.error)) {
         return yield* input.error;
       }
       if (input.authSecret !== null) {
