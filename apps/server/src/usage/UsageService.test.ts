@@ -6,12 +6,13 @@ import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessHostname } from "@t3tools/shared/hostProcess";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import {
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
+  USAGE_CONTRACT_VERSION,
   UsageDay,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
@@ -112,6 +113,72 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  for (const [firstId, secondId, expectedTokens] of [
+    [" stable-host ", "stable-host", 15],
+    ["first-host", "second-host", 30],
+  ] as const) {
+    it.live(
+      `merges usage across changed container hostnames with host IDs ${firstId}/${secondId}`,
+      () =>
+        Effect.gen(function* () {
+          const { transcript, settings, home } = yield* setup;
+          yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+          const environments = [];
+          for (const [index, hostId] of [firstId, secondId].entries()) {
+            const service = yield* UsageService.make.pipe(
+              Effect.provideService(HostProcessHostname, `container-${index}`),
+              Effect.provide(
+                serviceLayers({
+                  prefix: "usage-host-id-test",
+                  home,
+                  settings,
+                  environment: { T3CODE_HOST_ID: hostId },
+                }),
+              ),
+            );
+            const summary = yield* service.readSummary(WINDOW);
+            assert.isTrue(
+              summary.sources.every((source) => source.fingerprint.hostId === hostId.trim()),
+            );
+            environments.push({
+              environmentId: EnvironmentId.make(`env-${index}`),
+              label: `env-${index}`,
+              summary,
+            });
+          }
+          const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+          assert.equal(merged.totalTokens, expectedTokens);
+          assert.equal(merged.duplicateSources.length, firstId.trim() === secondId ? 1 : 0);
+        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
+
+  for (const hostId of [undefined, "", "   "]) {
+    it.live(`uses the machine hostname when the host ID is ${JSON.stringify(hostId)}`, () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(HostProcessHostname, "workstation"),
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-host-fallback-test",
+              home,
+              settings,
+              environment: { T3CODE_HOST_ID: hostId },
+            }),
+          ),
+        );
+        const summary = yield* service.readSummary(WINDOW);
+        assert.equal(
+          summary.sources.find((source) => source.fingerprint.provider === "claude")?.fingerprint
+            .hostId,
+          "workstation",
+        );
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    );
+  }
+
   it.live("reads configured and disabled accounts once across shared and aliased homes", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
