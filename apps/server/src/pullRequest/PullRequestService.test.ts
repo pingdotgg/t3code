@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
-import * as Persistence from "effect/unstable/persistence/Persistence";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -19,8 +19,12 @@ import type {
 import { PullRequestOperationError } from "@t3tools/contracts";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
+import { ForgejoCli } from "../sourceControl/ForgejoCli.ts";
+import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -29,6 +33,10 @@ import {
 import { PullRequestProviderRegistry, fromProviders } from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
+import {
+  FILE_REVISIONS_CACHE_CAPACITY,
+  MAX_FILE_REVISION_PATHS,
+} from "./pullRequestViewedFiles.ts";
 
 function project(input: {
   readonly id: string;
@@ -108,6 +116,215 @@ function hostedChangeRequest(body: string, additions = 1) {
   };
 }
 
+it.effect("caches narrow previews and invalidates them after refresh or mutation", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getViewer: () => Effect.die("preview must not read the viewer"),
+          getChangeRequestPreview: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return changeRequest(1, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const previews = yield* Effect.all([service.preview(ref), service.preview(ref)], {
+      concurrency: 2,
+    });
+    assert.deepStrictEqual(previews[0], {
+      ...ref,
+      title: "Change request 1",
+      url: "https://host/pull/1",
+      author: { login: "octocat", name: null, avatarUrl: null },
+      state: "open",
+      isDraft: false,
+      createdAt: "2026-07-01T00:00:00Z",
+    });
+    assert.strictEqual(reads, 1);
+    yield* service.invalidate({ reference: ref });
+    yield* service.preview(ref);
+    assert.strictEqual(reads, 2);
+    yield* service.runAction({ ...ref, action: "close" });
+    yield* service.preview(ref);
+    assert.strictEqual(reads, 3);
+    yield* service.refreshAfterTurn(ref.projectId);
+    yield* service.preview(ref);
+    assert.strictEqual(reads, 4);
+    const error = yield* Effect.flip(service.preview({ ...ref, repository: "another/repo" }));
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.strictEqual(reads, 4);
+  }),
+);
+
+it.effect("keeps cached previews available and pauses uncached previews until quota resets", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const retryAt = Date.parse("2099-08-13T14:00:00Z");
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestPreview: ({ number }) =>
+            Effect.gen(function* () {
+              reads++;
+              if (reads === 2)
+                return yield* new PullRequestProviderError({
+                  provider: "github",
+                  operation: "getChangeRequestPreview",
+                  reason: "rate-limited",
+                  detail: "GitHub requests are paused until the rate limit resets.",
+                  retryAt,
+                });
+              return changeRequest(number, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.preview(ref);
+    const limited = yield* Effect.flip(service.preview({ ...ref, number: 2 }));
+    assert.instanceOf(limited, PullRequestOperationError);
+    if (limited._tag !== "PullRequestOperationError") return;
+    assert.include(limited.detail, "paused");
+    assert.strictEqual((yield* service.preview(ref)).number, 1);
+    for (const number of [2, 3, 4]) {
+      const paused = yield* Effect.flip(service.preview({ ...ref, number }));
+      assert.instanceOf(paused, PullRequestOperationError);
+      if (paused._tag !== "PullRequestOperationError") return;
+      assert.include(paused.detail, "paused");
+    }
+    assert.strictEqual(reads, 2);
+    yield* TestClock.setTime(retryAt);
+    assert.strictEqual((yield* service.preview({ ...ref, number: 2 })).number, 2);
+    assert.strictEqual(reads, 3);
+  }),
+);
+
+it.effect("reuses only unexpired detail for previews", () =>
+  Effect.gen(function* () {
+    let previewReads = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+          getChangeRequestPreview: () =>
+            Effect.sync(() => {
+              previewReads++;
+              return {
+                ...changeRequest(1, "2026-07-02T00:00:00Z"),
+                title: "Updated title",
+                state: "closed" as const,
+              };
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.detail(ref);
+    assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
+    assert.strictEqual(previewReads, 0);
+    yield* TestClock.adjust("16 seconds");
+    const preview = yield* service.preview(ref);
+    assert.strictEqual(preview.title, "Updated title");
+    assert.strictEqual(preview.state, "closed");
+    assert.strictEqual(previewReads, 1);
+  }),
+);
+
+it.effect("does not wait for an in-flight detail read to display a preview", () =>
+  Effect.gen(function* () {
+    const detailStarted = yield* Deferred.make<void>();
+    const releaseDetail = yield* Deferred.make<void>();
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () =>
+            Deferred.succeed(detailStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseDetail)),
+              Effect.as(hostedChangeRequest("Description")),
+            ),
+          getChangeRequestPreview: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const detail = yield* Effect.forkChild(service.detail(ref));
+    yield* Deferred.await(detailStarted);
+    assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
+    yield* Deferred.succeed(releaseDetail, undefined);
+    yield* Fiber.join(detail);
+  }),
+);
+
+it.effect("keeps previews warm when another project finishes a turn", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
+        project({ id: "p2", title: "docs", workspaceRoot: "/d", repository: "acme/docs" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestPreview: (input) =>
+            Effect.sync(() => {
+              reads.push(input.repository);
+              return changeRequest(1, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const web = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const docs = { projectId: "p2" as ProjectId, repository: "acme/docs", number: 1 };
+    yield* service.preview(web);
+    yield* service.preview(docs);
+    yield* service.preview({ ...web, host: "github.com" });
+    assert.deepStrictEqual(reads, ["acme/web", "acme/docs"]);
+    yield* service.refreshAfterTurn(web.projectId);
+    yield* service.preview(web);
+    yield* service.preview(docs);
+    assert.deepStrictEqual(reads, ["acme/web", "acme/docs", "acme/web"]);
+  }),
+);
+
+it.effect("uses full detail for hosts without a narrow preview", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/w",
+          repository: "acme/web",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitlab", {
+          getChangeRequest: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return hostedChangeRequest("Description");
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const preview = yield* service.preview(ref);
+    assert.strictEqual(preview.title, "Change request 1");
+    assert.strictEqual(reads, 1);
+    assert.ok(!("body" in preview));
+  }),
+);
+
 function unusable(provider: SourceControlProviderKind, reason: "missing-tool" | "unauthenticated") {
   return new PullRequestProviderError({
     provider,
@@ -185,11 +402,14 @@ function makeService(input: {
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
 }) {
-  return PullRequestService.make.pipe(
-    Effect.provide(
+  // Built into the test's own scope rather than provided call by call: the marks store owns a
+  // database, and `Effect.provide` would close it the moment the service was handed back.
+  return Effect.flatMap(
+    Layer.build(
       Layer.mergeAll(
         Layer.succeed(PullRequestProviderRegistry, fromProviders(input.providers)),
         Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+          resolveLink: () => undefined,
           resolveHandle:
             input.resolveHandle ?? (() => Effect.die("Unexpected provider refinement")),
         }),
@@ -202,13 +422,16 @@ function makeService(input: {
             Effect.succeed(Option.fromNullishOr(input.projects.find((p) => p.id === projectId))),
         }),
         SourceControlRateLimit.layer,
+        // The real store over a database of its own, so the environment-kept marks are exercised
+        // through the SQL that holds them rather than through a stand-in that agrees with itself.
+        PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistenceMemory)),
         Layer.effect(PullRequestReadCache.PullRequestReadCache, PullRequestReadCache.make).pipe(
-          Layer.provide(Persistence.layerKvs),
           Layer.provide(KeyValueStore.layerMemory),
           Layer.provide(NodeServices.layer),
         ),
       ),
     ),
+    (context) => Effect.provideContext(PullRequestService.make, context),
   );
 }
 
@@ -1094,8 +1317,13 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
 
       // Queueing succeeds while the host still reports an open PR.
       yield* service.runAction({ ...reference, action: "merge" });
+      const queuedRefresh = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
       confirmationFails = true;
       yield* service.runAction({ ...reference, action: "merge" });
+      assert.isAbove(
+        Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes)),
+        queuedRefresh,
+      );
       confirmationFails = false;
       state = "merged";
       yield* TestClock.setTime(Date.parse(mergedAt));
@@ -1110,6 +1338,53 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
         ...reference,
         mergedAt,
       });
+    }),
+  ),
+);
+
+it.effect("refreshes every reader before a queued merge confirmation finishes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const confirmationStarted = yield* Deferred.make<void>();
+      const confirm = yield* Deferred.make<void>();
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getChangeRequestSummary: () =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(confirmationStarted, undefined);
+                yield* Deferred.await(confirm);
+                return changeRequest(1, "2026-09-16T00:00:00.000Z");
+              }),
+          }),
+        ],
+      });
+      const merges = yield* service.subscribeMerges;
+      const observedMerge = yield* Stream.runHead(merges).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const readers = yield* Effect.forEach([0, 1], () =>
+        Stream.runHead(service.subscribeRefreshes).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        ),
+      );
+      const action = yield* service
+        .runAction({ ...reference, action: "merge" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(confirmationStarted);
+      const revisions = yield* Effect.forEach(readers, (reader) =>
+        Fiber.join(reader).pipe(Effect.map(Option.getOrThrow)),
+      );
+      assert.isAbove(revisions[0]!, 0);
+      assert.strictEqual(revisions[0], revisions[1]);
+      assert.isUndefined(action.pollUnsafe());
+      yield* Deferred.succeed(confirm, undefined);
+      yield* Fiber.join(action);
+      assert.isUndefined(observedMerge.pollUnsafe());
     }),
   ),
 );
@@ -1774,6 +2049,13 @@ it.effect("routes explicit Forgejo HTTP authorities through SSH checkouts after 
         state: "open",
       });
       assert.strictEqual(listed.viewers["code.example:3000"], "bilal");
+      const preview = yield* service.preview({
+        projectId: "ssh" as ProjectId,
+        host: "code.example:3000",
+        repository: "team/repo",
+        number: 42,
+      });
+      assert.strictEqual(preview.number, 42);
       const detail = yield* service.detail({
         projectId: "ssh" as ProjectId,
         host: "code.example:3000",
@@ -2379,10 +2661,16 @@ it.effect("invalidates the cached activity after reacting, like the other mutati
       ],
     });
 
+    yield* service.refreshAfterTurn(reference.projectId);
+    const previousRefresh = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
     yield* service.activity(reference);
     assert.strictEqual(activityCalls, 1);
 
     yield* service.setReaction({ ...reference, content: "heart", reacted: true });
+    assert.isAbove(
+      Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes)),
+      previousRefresh,
+    );
     yield* service.activity(reference);
 
     assert.strictEqual(activityCalls, 2);
@@ -3116,6 +3404,107 @@ it.effect("a listing narrowed to some projects is its own cache entry", () =>
   }),
 );
 
+it.effect("keeps unrelated PRs warm after a mutation, explicit refresh, and project turn", () =>
+  Effect.gen(function* () {
+    const calls: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: (input) =>
+            Effect.sync(() => {
+              calls.push(`${input.repository}/${input.number}`);
+              return { ...hostedChangeRequest("body"), number: input.number };
+            }),
+        }),
+      ],
+    });
+    const refs = [
+      { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 },
+      { projectId: "p1" as ProjectId, repository: "acme/web", number: 2 },
+      { projectId: "p2" as ProjectId, repository: "acme/docs", number: 3 },
+    ];
+    const readAll = Effect.forEach(refs, (ref) => service.summary({ ...ref, allowStale: false }));
+    yield* readAll;
+    yield* service.invalidate({ reference: { ...refs[0]!, host: "github.com" } });
+    yield* readAll;
+    assert.deepStrictEqual(calls, ["acme/web/1", "acme/web/2", "acme/docs/3", "acme/web/1"]);
+    yield* service.comment({ ...refs[0]!, body: "hello" });
+    yield* readAll;
+    assert.deepStrictEqual(calls.slice(4), ["acme/web/1"]);
+    yield* service.refreshAfterTurn("p1" as ProjectId);
+    yield* readAll;
+    assert.deepStrictEqual(calls.slice(5), ["acme/web/1", "acme/web/2"]);
+  }),
+);
+
+it.effect(
+  "keeps matching PR numbers on different hosts separate and refreshes the serving project",
+  () =>
+    Effect.gen(function* () {
+      const hosts: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "public", workspaceRoot: "/a", repository: "acme/web" }),
+          project({
+            id: "p2",
+            title: "enterprise",
+            workspaceRoot: "/b",
+            repository: "acme/web",
+            host: "enterprise.test",
+          }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getChangeRequest: (input) =>
+              Effect.sync(() => {
+                hosts.push(input.host);
+                return hostedChangeRequest("body");
+              }),
+          }),
+        ],
+      });
+      const own = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const other = { ...own, host: "enterprise.test" };
+      const readBoth = Effect.all([service.summary(own), service.summary(other)]);
+      yield* readBoth;
+      yield* service.invalidate({ reference: { ...own, host: "github.com" } });
+      yield* readBoth;
+      assert.deepStrictEqual(hosts, ["github.com", "enterprise.test", "github.com"]);
+      yield* service.invalidate({ reference: own });
+      yield* readBoth;
+      assert.deepStrictEqual(hosts.slice(3), ["github.com"]);
+      yield* service.refreshAfterTurn("p2" as ProjectId);
+      yield* readBoth;
+      assert.deepStrictEqual(hosts.slice(4), ["enterprise.test"]);
+    }),
+);
+
+it.effect("does not revive old summaries when project epochs are evicted", () =>
+  Effect.gen(function* () {
+    let title = "old";
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () => Effect.succeed({ ...hostedChangeRequest("body"), title }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    assert.strictEqual((yield* service.summary(ref))?.title, "old");
+    title = "new";
+    yield* service.refreshAfterTurn(ref.projectId);
+    assert.strictEqual((yield* service.summary(ref))?.title, "new");
+    for (let index = 0; index < 2048; index++)
+      yield* service.refreshAfterTurn(`project-${index}` as ProjectId);
+    assert.strictEqual((yield* service.summary(ref))?.title, "new");
+  }),
+);
+
 it.effect("explicit and turn invalidations make the next listing ask the host again", () =>
   Effect.gen(function* () {
     let hostCalls = 0;
@@ -3147,7 +3536,7 @@ it.effect("explicit and turn invalidations make the next listing ask the host ag
     yield* service.invalidate({ reference });
     yield* service.list({ state: "open" });
     assert.strictEqual(hostCalls, 2);
-    yield* service.refreshAfterTurn;
+    yield* service.refreshAfterTurn("p1" as ProjectId);
     const refresh = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
     yield* service.list({ state: "open" });
     assert.isAbove(refresh, 0);
@@ -3155,31 +3544,106 @@ it.effect("explicit and turn invalidations make the next listing ask the host ag
   }),
 );
 
-it.effect("a mutation makes the next listing ask the host again, with no client asking", () =>
-  Effect.gen(function* () {
-    let hostCalls = 0;
-    const service = yield* makeService({
-      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
-      providers: [
-        fakeProvider("github", {
-          listChangeRequests: () => {
-            hostCalls += 1;
-            return Effect.succeed({ items: [], truncated: false, continues: false });
-          },
-        }),
-      ],
-    });
+it.effect("close and reopen notify subscribed readers after invalidating their cached state", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let hostCalls = 0;
+      let state: "open" | "closed" = "open";
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getChangeRequestSummary: () =>
+              Effect.succeed({ ...changeRequest(1, "2026-09-16T00:00:00.000Z"), state }),
+            runAction: (input) =>
+              Effect.sync(() => {
+                state = input.action === "close" ? "closed" : "open";
+              }),
+            listChangeRequests: () => {
+              hostCalls += 1;
+              return Effect.succeed({ items: [], truncated: false, continues: false });
+            },
+          }),
+        ],
+      });
 
-    yield* service.list({ state: "open" });
-    yield* service.runAction({
-      projectId: "p1" as ProjectId,
-      repository: "acme/web",
-      number: 1,
-      action: "close",
-    });
-    yield* service.list({ state: "open" });
-    assert.strictEqual(hostCalls, 2);
-  }),
+      yield* service.refreshAfterTurn(reference.projectId);
+      yield* service.list({ state: "open" });
+      assert.strictEqual((yield* service.summary(reference)).state, "open");
+      for (const action of ["close", "reopen"] as const) {
+        const refreshed = yield* service.subscribeRefreshes.pipe(
+          Stream.drop(1),
+          Stream.take(1),
+          Stream.mapEffect(() =>
+            Effect.gen(function* () {
+              yield* service.list({ state: "open" });
+              return yield* service.summary(reference);
+            }),
+          ),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* service.runAction({ ...reference, action });
+        assert.strictEqual(
+          Option.getOrThrow(yield* Fiber.join(refreshed)).state,
+          action === "close" ? "closed" : "open",
+        );
+      }
+      assert.strictEqual(hostCalls, 3);
+    }),
+  ),
+);
+
+it.effect("explicit invalidation refreshes origin readers after a routed host mutation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let state: "open" | "closed" = "open";
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakeProvider("github", {
+            getChangeRequestSummary: () =>
+              Effect.succeed({ ...changeRequest(1, "2026-09-16T00:00:00.000Z"), state }),
+          }),
+        ],
+      });
+      yield* service.refreshAfterTurn(reference.projectId);
+      let revision = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
+      // The sync reactor invalidates before reading; it must not notify itself again.
+      yield* service.invalidate({ reference });
+      assert.strictEqual(
+        Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes)),
+        revision,
+      );
+      assert.strictEqual((yield* service.summary(reference)).state, "open");
+
+      for (const nextState of ["closed", "open"] as const) {
+        const refreshed = yield* service.subscribeRefreshes.pipe(
+          Stream.drop(1),
+          Stream.take(1),
+          Stream.mapEffect((nextRevision) =>
+            service
+              .summary(reference)
+              .pipe(Effect.map((summary) => ({ revision: nextRevision, state: summary.state }))),
+          ),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        state = nextState;
+        yield* service.invalidate({ reference }, { notifyReaders: true });
+        const result = Option.getOrThrow(yield* Fiber.join(refreshed));
+        assert.strictEqual(result.state, nextState);
+        assert.isAbove(result.revision, revision);
+        revision = result.revision;
+      }
+    }),
+  ),
 );
 
 it.effect("does not cache a failed listing", () =>
@@ -3550,7 +4014,7 @@ it.effect(
       yield* service.listStats({ refs: [ref(1), ref(2), ref(3)] });
       assert.deepStrictEqual(asked, [[1, 2], [3], [2], [1, 2, 3]]);
 
-      yield* service.refreshAfterTurn;
+      yield* service.refreshAfterTurn("p1" as ProjectId);
       yield* service.listStats({ refs: [ref(1)] });
       assert.deepStrictEqual(asked, [[1, 2], [3], [2], [1, 2, 3], [1]]);
 
@@ -3767,9 +4231,9 @@ it.effect("shares linked summaries and reuses them for display without asking th
   }),
 );
 
-it.effect("keeps routed summaries and details separate when the GitHub account changes", () =>
+it.effect("keeps routed reads separate when the GitHub account changes", () =>
   Effect.gen(function* () {
-    for (const operation of ["summary", "detail"] as const) {
+    for (const operation of ["summary", "detail", "diff", "filesViewed"] as const) {
       let failing = false;
       let calls = 0;
       const read = () =>
@@ -3784,16 +4248,35 @@ it.effect("keeps routed summaries and details separate when the GitHub account c
           project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
         ],
         providers: [
-          fakeProvider("github", { getChangeRequestSummary: read, getChangeRequest: read }),
+          fakeProvider("github", {
+            capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+            getFilesViewed: () =>
+              read().pipe(
+                Effect.as({
+                  files: [{ path: "private.ts", state: "viewed" as const }],
+                  truncated: false,
+                }),
+              ),
+            getChangeRequestSummary: read,
+            getChangeRequest: read,
+            getDiff: () =>
+              read().pipe(
+                Effect.as({ patch: "private patch", truncated: false, nextCursor: null }),
+              ),
+          }),
         ],
       });
+      const readOperation = (input: Parameters<typeof service.diff>[0]) =>
+        Effect.gen(function* () {
+          yield* service[operation](input);
+        });
       const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
-      yield* service[operation]({ ...reference, expectedAccountId: "101" });
+      yield* readOperation({ ...reference, expectedAccountId: "101" });
       failing = true;
 
       for (const allowStale of [false, true]) {
         const error = yield* Effect.flip(
-          service[operation]({ ...reference, expectedAccountId: "202", allowStale }),
+          readOperation({ ...reference, expectedAccountId: "202", allowStale }),
         );
         assert.strictEqual(error._tag, "PullRequestOperationError");
       }
@@ -3804,7 +4287,7 @@ it.effect("keeps routed summaries and details separate when the GitHub account c
 
 it.effect("isolates routed caches for two credentials belonging to the same account", () =>
   Effect.gen(function* () {
-    for (const operation of ["summary", "detail"] as const) {
+    for (const operation of ["summary", "detail", "diff", "preview", "filesViewed"] as const) {
       let credential = "broad";
       let calls = 0;
       const read = () =>
@@ -3820,6 +4303,14 @@ it.effect("isolates routed caches for two credentials belonging to the same acco
         ],
         providers: [
           fakeProvider("github", {
+            capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+            getFilesViewed: () =>
+              read().pipe(
+                Effect.as({
+                  files: [{ path: "private.ts", state: "viewed" as const }],
+                  truncated: false,
+                }),
+              ),
             withVerifiedCredential: (_, use) =>
               Effect.suspend(() =>
                 use({
@@ -3830,9 +4321,18 @@ it.effect("isolates routed caches for two credentials belonging to the same acco
               ),
             getChangeRequest: read,
             getChangeRequestSummary: read,
+            getDiff: () =>
+              read().pipe(
+                Effect.as({ patch: "private patch", truncated: false, nextCursor: null }),
+              ),
+            getChangeRequestPreview: read,
           }),
         ],
       });
+      const readOperation = (input: Parameters<typeof service.diff>[0]) =>
+        Effect.gen(function* () {
+          yield* service[operation](input);
+        });
       const reference = {
         projectId: "p1" as ProjectId,
         repository: "acme/web",
@@ -3840,14 +4340,11 @@ it.effect("isolates routed caches for two credentials belonging to the same acco
         host: "github.com",
         expectedAccountId: "101",
       };
-      yield* service.withRoutingCredential(reference, service[operation](reference));
+      yield* service.withRoutingCredential(reference, readOperation(reference));
       credential = "restricted";
       for (const allowStale of [false, true]) {
         const error = yield* Effect.flip(
-          service.withRoutingCredential(
-            reference,
-            service[operation]({ ...reference, allowStale }),
-          ),
+          service.withRoutingCredential(reference, readOperation({ ...reference, allowStale })),
         );
         assert.strictEqual(error._tag, "PullRequestOperationError");
       }
@@ -4353,90 +4850,104 @@ it.effect('resolves an author filter of "me" to the viewer before narrowing a ho
   }),
 );
 
-it.effect("authorizes stack rebases independently of whether the selected layer is behind", () =>
-  Effect.gen(function* () {
-    let taken = 0;
-    let summaryReads = 0;
-    let mutationFails = false;
-    let stackRebase = true;
-    let stackActions = true;
-    const capabilities = {
-      diff: true,
-      comment: true,
-      actions: ["update-branch"] as const,
-      mergeMethods: ["merge"] as const,
-      updateMethods: ["rebase"] as const,
-      get stackActions() {
-        return stackActions;
-      },
-      search: true,
-      reactions: true,
-      review: FULL_REVIEW,
-      reviewers: FULL_REVIEWERS,
-    };
-    const service = yield* makeService({
-      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
-      providers: [
-        fakeProvider("github", {
-          capabilities,
-          getViewerPermissions: () =>
-            Effect.succeed({
-              actions: [],
-              stackRebase,
-              comment: true,
-              resolve: false,
-              verdicts: [],
-              requestReviewers: false,
+for (const crossHost of [false, true]) {
+  it.effect(
+    `authorizes stack rebases and refreshes sibling layers (cross-host: ${crossHost})`,
+    () =>
+      Effect.gen(function* () {
+        let taken = 0;
+        let summaryReads = 0;
+        let mutationFails = false;
+        let stackRebase = true;
+        let stackActions = true;
+        const capabilities = {
+          diff: true,
+          comment: true,
+          actions: ["update-branch"] as const,
+          mergeMethods: ["merge"] as const,
+          updateMethods: ["rebase"] as const,
+          get stackActions() {
+            return stackActions;
+          },
+          search: true,
+          reactions: true,
+          review: FULL_REVIEW,
+          reviewers: FULL_REVIEWERS,
+        };
+        const service = yield* makeService({
+          projects: [
+            project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+            project({
+              id: "p2",
+              title: "enterprise",
+              workspaceRoot: "/b",
+              repository: "acme/web",
+              host: "enterprise.test",
             }),
-          getChangeRequestSummary: () =>
-            Effect.sync(() => {
-              summaryReads++;
-              return changeRequest(8, "2026-07-01T00:00:00Z");
+          ],
+          providers: [
+            fakeProvider("github", {
+              capabilities,
+              getViewerPermissions: () =>
+                Effect.succeed({
+                  actions: [],
+                  stackRebase,
+                  comment: true,
+                  resolve: false,
+                  verdicts: [],
+                  requestReviewers: false,
+                }),
+              getChangeRequestSummary: () =>
+                Effect.sync(() => {
+                  summaryReads++;
+                  return changeRequest(8, "2026-07-01T00:00:00Z");
+                }),
+              runAction: () =>
+                Effect.gen(function* () {
+                  taken++;
+                  if (mutationFails) return yield* requestFailed;
+                }),
             }),
-          runAction: () =>
-            Effect.gen(function* () {
-              taken++;
-              if (mutationFails) return yield* requestFailed;
-            }),
-        }),
-      ],
-    });
-    const input = {
-      projectId: "p1" as ProjectId,
-      repository: "acme/web",
-      number: 3,
-      action: "update-branch" as const,
-      updateMethod: "rebase" as const,
-      stackNumber: 50,
-      expectedStackHeads: [{ number: 3, headSha: "ccc" }],
-    };
-    yield* service.runAction(input);
-    assert.strictEqual(taken, 1);
-    const unrelated = { ...input, number: 8 };
-    yield* service.summary(unrelated);
-    assert.strictEqual(summaryReads, 1);
-    stackRebase = false;
-    assert.strictEqual(
-      (yield* Effect.flip(service.runAction(input)))._tag,
-      "PullRequestOperationError",
-    );
-    stackRebase = true;
-    stackActions = false;
-    assert.strictEqual(
-      (yield* Effect.flip(service.runAction(input)))._tag,
-      "PullRequestOperationError",
-    );
-    assert.strictEqual(taken, 1);
-    yield* service.summary(unrelated);
-    assert.strictEqual(summaryReads, 1);
-    stackActions = true;
-    mutationFails = true;
-    yield* Effect.flip(service.runAction(input));
-    assert.strictEqual(taken, 2);
-    yield* service.summary(unrelated);
-    assert.strictEqual(summaryReads, 2);
-  }),
-);
+          ],
+        });
+        const input = {
+          ...(crossHost ? { host: "enterprise.test" } : {}),
+          projectId: "p1" as ProjectId,
+          repository: "acme/web",
+          number: 3,
+          action: "update-branch" as const,
+          updateMethod: "rebase" as const,
+          stackNumber: 50,
+          expectedStackHeads: [{ number: 3, headSha: "ccc" }],
+        };
+        yield* service.runAction(input);
+        assert.strictEqual(taken, 1);
+        const unrelated = { ...input, number: 8 };
+        yield* service.summary(unrelated);
+        assert.strictEqual(summaryReads, 1);
+        stackRebase = false;
+        assert.strictEqual(
+          (yield* Effect.flip(service.runAction(input)))._tag,
+          "PullRequestOperationError",
+        );
+        stackRebase = true;
+        stackActions = false;
+        assert.strictEqual(
+          (yield* Effect.flip(service.runAction(input)))._tag,
+          "PullRequestOperationError",
+        );
+        assert.strictEqual(taken, 1);
+        yield* service.summary(unrelated);
+        assert.strictEqual(summaryReads, 1);
+        stackActions = true;
+        mutationFails = true;
+        yield* Effect.flip(service.runAction(input));
+        assert.strictEqual(taken, 2);
+        yield* service.summary(unrelated);
+        assert.strictEqual(summaryReads, 2);
+      }),
+  );
+}
 
 it.effect("refuses a way of updating a branch that the host or the viewer does not allow", () =>
   Effect.gen(function* () {
@@ -4772,7 +5283,7 @@ it.effect("forgets the cached detail after a rewrite or terminal turn", () =>
     yield* service.detail(reference);
     assert.strictEqual(coreCalls, 2);
 
-    yield* service.refreshAfterTurn;
+    yield* service.refreshAfterTurn("p1" as ProjectId);
     yield* service.detail(reference);
     assert.strictEqual(coreCalls, 3);
   }),
@@ -4823,6 +5334,1459 @@ it.effect("names the signed-in account in the detail, and says nothing where the
 
     assert.strictEqual(named.viewer, "bilal");
     assert.strictEqual(unnamed.viewer, undefined);
+  }),
+);
+
+it.effect("keeps the diff cached across a file being ticked off", () =>
+  Effect.gen(function* () {
+    let diffReads = 0;
+    let viewedReads = 0;
+    let state: "viewed" | "dismissed" = "viewed";
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["merge"],
+            mergeMethods: ["merge"],
+            search: true,
+            reactions: true,
+            viewedFiles: "host",
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getDiff: () => {
+            diffReads += 1;
+            return Effect.succeed({ patch: "@@", truncated: false, nextCursor: null });
+          },
+          getFilesViewed: () => {
+            viewedReads += 1;
+            return Effect.succeed({
+              files: [{ path: "src/a.ts", state }],
+              truncated: false,
+            });
+          },
+          setFilesViewed: () => Effect.void,
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 };
+
+    yield* service.diff(reference);
+    yield* service.filesViewed(reference);
+    yield* service.setFilesViewed({ ...reference, files: [{ path: "src/a.ts", viewed: false }] });
+    yield* service.diff(reference);
+    yield* service.filesViewed(reference);
+
+    // The press forgets only the reader's own ticks; cached diffs survive it.
+    assert.strictEqual(diffReads, 1);
+    assert.strictEqual(viewedReads, 2);
+
+    state = "dismissed";
+    yield* service.invalidate({ reference, filesViewedOnly: true });
+    yield* service.diff(reference);
+    assert.deepStrictEqual((yield* service.filesViewed(reference)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
+    assert.strictEqual(diffReads, 1);
+    assert.strictEqual(viewedReads, 3);
+  }),
+);
+
+it.effect("returns large diff slices intact without retaining them in either cache", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const patch = "\u{1f4bb}".repeat(140_000);
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getDiff: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return { patch, truncated: false, nextCursor: "2" };
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    for (const input of [
+      reference,
+      { ...reference, cursor: "2" },
+      { ...reference, commit: "a".repeat(40) },
+    ]) {
+      const before = reads;
+      assert.deepStrictEqual(yield* service.diff(input), {
+        patch,
+        truncated: false,
+        nextCursor: "2",
+      });
+      assert.deepStrictEqual(yield* service.diff(input), {
+        patch,
+        truncated: false,
+        nextCursor: "2",
+      });
+      assert.strictEqual(reads, before + 2);
+    }
+  }),
+);
+
+it.effect("caches a small replacement after releasing a large diff", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const largePatch = "x".repeat(300_000);
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getDiff: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return {
+                patch: reads === 1 ? largePatch : "@@ small replacement",
+                truncated: false,
+                nextCursor: null,
+              };
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    assert.strictEqual((yield* service.diff(reference)).patch, largePatch);
+    assert.strictEqual((yield* service.diff(reference)).patch, "@@ small replacement");
+    assert.strictEqual((yield* service.diff(reference)).patch, "@@ small replacement");
+    assert.strictEqual(reads, 2);
+  }),
+);
+
+const environmentViewedProvider = (
+  revisions: Map<string, string>,
+  asked: Array<ReadonlyArray<string>>,
+  unreadable: ReadonlySet<string> = new Set(),
+) =>
+  fakeProvider("gitlab", {
+    capabilities: {
+      diff: true,
+      comment: true,
+      actions: ["merge"],
+      mergeMethods: ["merge"],
+      search: true,
+      reactions: true,
+      viewedFiles: "environment",
+      review: FULL_REVIEW,
+      reviewers: FULL_REVIEWERS,
+    },
+    getFilesViewed: () => Effect.die("the host keeps no marks of its own"),
+    setFilesViewed: () => Effect.die("the host keeps no marks of its own"),
+    // A merge confirms itself against the host before it says the change request landed.
+    getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+    getFileRevisions: (input) => {
+      asked.push(input.paths);
+      return Effect.succeed({
+        // A path the host looked at and did not find is at the empty version, which is what a
+        // file the change request deletes is at. One it could not look at is left out entirely.
+        revisions: new Map(
+          input.paths.flatMap((path) =>
+            unreadable.has(path) ? [] : [[path, revisions.get(path) ?? ""] as const],
+          ),
+        ),
+      });
+    },
+  });
+
+const environmentViewedService = (
+  revisions: Map<string, string>,
+  asked: Array<ReadonlyArray<string>>,
+  unreadable: ReadonlySet<string> = new Set(),
+) =>
+  makeService({
+    projects: [
+      project({
+        id: "p1",
+        title: "on gitlab",
+        workspaceRoot: "/a",
+        repository: "group/project",
+        provider: "gitlab",
+      }),
+    ],
+    providers: [environmentViewedProvider(revisions, asked, unreadable)],
+  });
+
+const GITLAB_REFERENCE = {
+  projectId: "p1" as ProjectId,
+  repository: "group/project",
+  number: 1,
+};
+
+it.effect("tracks Forgejo viewed files through its diff and refuses truncated baselines", () =>
+  Effect.gen(function* () {
+    let alpha = "b485fe5";
+    let truncated = false;
+    let diffReads = 0;
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli)({
+          api: (input) => {
+            assert.strictEqual(input.host, "forge.example:3000");
+            const viewer = input.path === "user";
+            if (!viewer) {
+              assert.strictEqual(input.repository, "reviewer/project");
+              assert.strictEqual(input.path, "repos/reviewer/project/pulls/1.diff");
+              diffReads++;
+            }
+            return Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: viewer
+                ? JSON.stringify({ login: "reviewer" })
+                : truncated
+                  ? `diff --git a/alpha.ts b/alpha.ts\nindex eb2d7c5..${alpha} 100644\n`
+                  : [
+                      "diff --git a/alpha.ts b/alpha.ts",
+                      `index eb2d7c5..${alpha} 100644`,
+                      "diff --git a/beta.ts b/beta.ts",
+                      "index b39e8b3..5851425 100644",
+                      'diff --git "a/caf\\303\\251 notes.txt" "b/caf\\303\\251 notes.txt"',
+                      "index ffd99ce..6dd9855 100644",
+                      "diff --git a/deleted.txt b/deleted.txt",
+                      "deleted file mode 100644",
+                      "index 233f5c6..0000000",
+                      "diff --git a/old.txt b/renamed.txt",
+                      "similarity index 100%",
+                      "rename from old.txt",
+                      "rename to renamed.txt",
+                      "",
+                    ].join("\n"),
+              stderr: "",
+              stdoutTruncated: !viewer && truncated,
+              stderrTruncated: false,
+            });
+          },
+        }),
+      ),
+    );
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "forgejo",
+          title: "on forgejo",
+          workspaceRoot: "/forgejo",
+          repository: "reviewer/project",
+          provider: "forgejo",
+          host: "forge.example:3000",
+          remoteUrl: "http://forge.example:3000/reviewer/project.git",
+        }),
+      ],
+      providers: [provider],
+    });
+    const reference = {
+      projectId: "forgejo" as ProjectId,
+      repository: "reviewer/project",
+      host: "forge.example:3000",
+      number: 1,
+    };
+    const paths = ["alpha.ts", "beta.ts", "café notes.txt", "deleted.txt", "renamed.txt"];
+    yield* service.setFilesViewed({
+      ...reference,
+      files: paths.map((path) => ({ path, viewed: true })),
+    });
+    assert.deepStrictEqual(
+      new Map((yield* service.filesViewed(reference)).files.map((file) => [file.path, file.state])),
+      new Map(paths.map((path) => [path, "viewed"])),
+    );
+    assert.strictEqual(diffReads, 1);
+
+    alpha = "aabbccd";
+    yield* service.invalidate({ reference });
+    assert.deepStrictEqual(
+      new Map((yield* service.filesViewed(reference)).files.map((file) => [file.path, file.state])),
+      new Map(paths.map((path) => [path, path === "alpha.ts" ? "dismissed" : "viewed"])),
+    );
+    yield* service.setFilesViewed({
+      ...reference,
+      files: [{ path: "beta.ts", viewed: false }],
+    });
+    assert.isFalse(
+      (yield* service.filesViewed(reference)).files.some((file) => file.path === "beta.ts"),
+    );
+
+    truncated = true;
+    yield* service.invalidate({ reference });
+    yield* service.setFilesViewed({
+      ...reference,
+      files: [{ path: "beta.ts", viewed: true }],
+    });
+    truncated = false;
+    yield* service.invalidate({ reference });
+    // A partial response must not stamp an empty revision and then dismiss the mark on recovery.
+    assert.deepStrictEqual(
+      (yield* service.filesViewed(reference)).files.find((file) => file.path === "beta.ts"),
+      { path: "beta.ts", state: "viewed" },
+    );
+  }),
+);
+
+it.effect("keeps hosted Forgejo marks with their repository instead of the serving checkout", () =>
+  Effect.gen(function* () {
+    const projects = [
+      project({
+        id: "p1",
+        title: "first repository",
+        workspaceRoot: "/first",
+        repository: "reviewer/first",
+        provider: "forgejo",
+        host: "forge.example",
+        remoteUrl: "https://forge.example:3000/reviewer/first.git",
+      }),
+    ];
+    const service = yield* makeService({
+      projects,
+      providers: [
+        { ...environmentViewedProvider(new Map([["same.ts", "blob"]]), []), kind: "forgejo" },
+      ],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({
+          context: {
+            ...context!,
+            provider: { kind: "forgejo", name: "Forgejo", baseUrl: "https://forge.example:3000" },
+          },
+          provider: undefined as never,
+        }),
+    });
+    const first = {
+      projectId: "p1" as ProjectId,
+      host: "forge.example:3000",
+      repository: "reviewer/first",
+      number: 1,
+    };
+    const second = { ...first, repository: "reviewer/second" };
+    const files = [{ path: "same.ts", viewed: true }];
+    yield* service.setFilesViewed({ ...first, files });
+    assert.deepStrictEqual((yield* service.filesViewed(second)).files, []);
+    yield* service.setFilesViewed({ ...second, files });
+    yield* service.setFilesViewed({ ...first, files: [{ path: "same.ts", viewed: false }] });
+    assert.deepStrictEqual((yield* service.filesViewed(second)).files, [
+      { path: "same.ts", state: "viewed" },
+    ]);
+
+    projects.push(
+      project({
+        id: "p2",
+        title: "second repository",
+        workspaceRoot: "/second",
+        repository: "reviewer/second",
+        provider: "forgejo",
+        host: "forge.example",
+        remoteUrl: "https://forge.example:3000/reviewer/second.git",
+      }),
+    );
+    assert.deepStrictEqual(
+      (yield* service.filesViewed({ ...second, projectId: "p2" as ProjectId })).files,
+      [{ path: "same.ts", state: "viewed" }],
+    );
+    projects.push(
+      project({
+        id: "ssh",
+        title: "second repository over SSH",
+        workspaceRoot: "/ssh",
+        repository: "reviewer/second",
+        provider: "forgejo",
+        host: "ssh.forge.example",
+        remoteUrl: "git@ssh.forge.example:reviewer/second.git",
+      }),
+    );
+    assert.deepStrictEqual(
+      (yield* service.filesViewed({ ...second, projectId: "ssh" as ProjectId })).files,
+      [{ path: "same.ts", state: "viewed" }],
+    );
+  }),
+);
+
+it.effect("keeps viewed files itself for a host that keeps none of its own", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const service = yield* environmentViewedService(
+      new Map([
+        ["src/a.ts", "blob-a"],
+        ["src/b.ts", "blob-b"],
+      ]),
+      asked,
+    );
+
+    // Nothing marked is nothing to ask the host about.
+    const empty = yield* service.filesViewed(GITLAB_REFERENCE);
+    assert.deepStrictEqual(empty, { files: [], truncated: false });
+    assert.deepStrictEqual(asked, []);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [
+        { path: "src/a.ts", viewed: true },
+        { path: "src/b.ts", viewed: true },
+      ],
+    });
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(
+      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
+      [
+        { path: "src/a.ts", state: "viewed" },
+        { path: "src/b.ts", state: "viewed" },
+      ],
+    );
+    assert.strictEqual(marked.truncated, false);
+    // The marked paths alone, so the cost follows how much has been read rather than PR size,
+    // and the read after the press is answered from what the press already heard.
+    assert.deepStrictEqual(
+      asked.map((paths) => [...paths].toSorted()),
+      [["src/a.ts", "src/b.ts"]],
+    );
+  }),
+);
+
+it.effect("holds what a whole-change answer carried, so the next tick reads nothing", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const head = new Map([
+      ["src/a.ts", "blob-a"],
+      ["src/b.ts", "blob-b"],
+    ]);
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(head, []),
+          // A host with no per-file version reads the whole change to answer for one file, which
+          // is what Bitbucket's patch is, and says as much.
+          getFileRevisions: (input) => {
+            asked.push(input.paths);
+            return Effect.succeed({ revisions: head, complete: true });
+          },
+        },
+      ],
+    });
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    // A path nothing has asked about before, which is what every tick after the first names. Its
+    // version came back with the first answer, so there is nothing left to read it for.
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
+
+    assert.deepStrictEqual(asked, [["src/a.ts"]]);
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+    assert.deepStrictEqual(
+      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
+      [
+        { path: "src/a.ts", state: "viewed" },
+        { path: "src/b.ts", state: "viewed" },
+      ],
+    );
+
+    // Still only as fresh as the read it came from: past that window the press reads again rather
+    // than stamping a mark with a version the head may have moved off.
+    yield* TestClock.adjust("2 minutes");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
+    assert.deepStrictEqual(asked, [["src/a.ts"], ["src/b.ts"]]);
+  }),
+);
+
+it.effect("reads the marks without asking the host what the head has every time", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const service = yield* environmentViewedService(new Map([["src/a.ts", "blob-a"]]), asked);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    // Past the marks' own cache, so this read reaches the point where the host would be asked.
+    yield* TestClock.adjust("20 seconds");
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(marked.files, [{ path: "src/a.ts", state: "viewed" }]);
+    assert.deepStrictEqual(asked, [["src/a.ts"]]);
+  }),
+);
+
+it.effect("answers the marks from what it last heard while it asks the host again", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const revisions = new Map([["src/a.ts", "blob-a"]]);
+    const service = yield* environmentViewedService(revisions, asked);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    revisions.set("src/a.ts", "blob-a-again");
+    yield* TestClock.adjust("90 seconds");
+    const held = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    // The push is not in this answer, because waiting for the host is the thing being avoided.
+    assert.deepStrictEqual(held.files, [{ path: "src/a.ts", state: "viewed" }]);
+    assert.strictEqual(asked.length, 2);
+
+    yield* TestClock.adjust("20 seconds");
+    const caught = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(caught.files, [{ path: "src/a.ts", state: "dismissed" }]);
+    // The refresh behind the previous answer is the one that heard about the push.
+    assert.strictEqual(asked.length, 2);
+  }),
+);
+
+it.effect("asks the host about a file it has not been asked about before", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const service = yield* environmentViewedService(
+      new Map([
+        ["src/a.ts", "blob-a"],
+        ["src/b.ts", "blob-b"],
+      ]),
+      asked,
+    );
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    yield* TestClock.adjust("20 seconds");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
+    yield* TestClock.adjust("20 seconds");
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(
+      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
+      [
+        { path: "src/a.ts", state: "viewed" },
+        { path: "src/b.ts", state: "viewed" },
+      ],
+    );
+    // The second press paid for its own file; the read that follows was already covered.
+    assert.deepStrictEqual(asked, [["src/a.ts"], ["src/b.ts"]]);
+  }),
+);
+
+it.effect("does not let a press about one file keep another file's version alive", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const revisions = new Map([
+      ["src/a.ts", "blob-a"],
+      ["src/b.ts", "blob-b"],
+    ]);
+    const service = yield* environmentViewedService(revisions, asked);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    yield* TestClock.adjust("40 seconds");
+    // This press asks about its own file and carries the other one forward untouched. Counting
+    // the whole scope as heard from would put the first file's version back inside the window it
+    // had almost aged out of, and a reader working down a long diff renews it press after press.
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
+    assert.deepStrictEqual(asked, [["src/a.ts"], ["src/b.ts"]]);
+
+    revisions.set("src/a.ts", "blob-a-again");
+    yield* TestClock.adjust("30 seconds");
+    yield* service.filesViewed(GITLAB_REFERENCE);
+    assert.strictEqual(asked.length, 3);
+
+    yield* TestClock.adjust("20 seconds");
+    const caught = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(
+      [...caught.files].toSorted((left, right) => left.path.localeCompare(right.path)),
+      [
+        { path: "src/a.ts", state: "dismissed" },
+        { path: "src/b.ts", state: "viewed" },
+      ],
+    );
+  }),
+);
+
+it.effect("reports a file pushed to since it was cleared as changed", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([
+      ["src/a.ts", "blob-a"],
+      ["src/b.ts", "blob-b"],
+    ]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [
+        { path: "src/a.ts", viewed: true },
+        { path: "src/b.ts", viewed: true },
+      ],
+    });
+    revisions.set("src/a.ts", "blob-a-again");
+    // A push is not something the marks can hear about, so the reader asks to be re-answered.
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(
+      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
+      [
+        { path: "src/a.ts", state: "dismissed" },
+        { path: "src/b.ts", state: "viewed" },
+      ],
+    );
+  }),
+);
+
+it.effect("clears a mark again when the file is put back", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const service = yield* environmentViewedService(new Map([["src/a.ts", "blob-a"]]), asked);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: false }],
+    });
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(marked.files, []);
+    // Unticking asks the host nothing: the row is going away whatever the head has.
+    assert.deepStrictEqual(asked, [["src/a.ts"]]);
+  }),
+);
+
+it.effect("keeps a deleted file cleared, which the head has no version of at all", () =>
+  Effect.gen(function* () {
+    const service = yield* environmentViewedService(new Map(), []);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/gone.ts", viewed: true }],
+    });
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(marked.files, [{ path: "src/gone.ts", state: "viewed" }]);
+  }),
+);
+
+it.effect("leaves a mark alone when the host could not say what the head has of it", () =>
+  Effect.gen(function* () {
+    // A host answers for as much of a long change as it can read in one go. Reading the rest as
+    // deleted would clear every file past the cut over a version nobody ever looked at.
+    const revisions = new Map([
+      ["src/a.ts", "blob-a"],
+      ["src/past-the-cut.ts", "blob-b"],
+    ]);
+    const service = yield* environmentViewedService(
+      revisions,
+      [],
+      new Set(["src/past-the-cut.ts"]),
+    );
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [
+        { path: "src/a.ts", viewed: true },
+        { path: "src/past-the-cut.ts", viewed: true },
+      ],
+    });
+    revisions.set("src/a.ts", "blob-a-again");
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(
+      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
+      [
+        { path: "src/a.ts", state: "dismissed" },
+        { path: "src/past-the-cut.ts", state: "viewed" },
+      ],
+    );
+  }),
+);
+
+it.effect("keeps a file cleared that the press could not learn a version for", () =>
+  Effect.gen(function* () {
+    // The press is the only moment a mark is given something to be measured against, and a host
+    // reading as much of a long change as it can manage does not always reach the file being
+    // ticked. Storing the empty version there reads as the head having nothing of the file, so the
+    // first read that does reach it reports the reader's own press back to them as work to do.
+    const revisions = new Map([["src/past-the-cut.ts", "blob-b"]]);
+    const unreadable = new Set(["src/past-the-cut.ts"]);
+    const service = yield* environmentViewedService(revisions, [], unreadable);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/past-the-cut.ts", viewed: true }],
+    });
+    unreadable.delete("src/past-the-cut.ts");
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/past-the-cut.ts", state: "viewed" },
+    ]);
+  }),
+);
+
+it.effect("keeps the version it last heard when a later read of the head stops short", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const revisions = new Map([["src/a.ts", "blob-a"]]);
+    const unreadable = new Set<string>();
+    const service = yield* environmentViewedService(revisions, asked, unreadable);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    revisions.set("src/a.ts", "blob-a-again");
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
+
+    // The read behind the next answer has to stop before this file. Forgetting the version it was
+    // last seen at would put the badge the reader has already been shown back to cleared, over an
+    // answer that said nothing about the file either way.
+    unreadable.add("src/a.ts");
+    yield* TestClock.adjust("90 seconds");
+    yield* service.filesViewed(GITLAB_REFERENCE);
+    yield* TestClock.adjust("20 seconds");
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
+  }),
+);
+
+it.effect("re-asks what the head has of a marked file after a whole-workspace refresh", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "blob-a"]]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    // A push nobody told this environment about. No single reference has moved, so the held
+    // answer goes only because the refresh is the reader asking for all of it to be read again.
+    revisions.set("src/a.ts", "blob-a-again");
+    yield* service.invalidate({});
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
+  }),
+);
+
+it.effect("forgets what the head had of a marked file once a mutation moves the head", () =>
+  Effect.gen(function* () {
+    const revisions = new Map([["src/a.ts", "blob-a"]]);
+    const service = yield* environmentViewedService(revisions, []);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    // Merging moves the head under the mark, and nobody asks for the refresh: the mutation is
+    // the thing that knows, so it drops what it was holding rather than waiting to be told.
+    revisions.set("src/a.ts", "blob-a-again");
+    yield* service.runAction({ ...GITLAB_REFERENCE, action: "merge" });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "dismissed" },
+    ]);
+  }),
+);
+
+it.effect("still reports its own marks when the host will not say what the head has", () =>
+  Effect.gen(function* () {
+    let answering = true;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitlab", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["merge"],
+            mergeMethods: ["merge"],
+            search: true,
+            reactions: true,
+            viewedFiles: "environment",
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getFilesViewed: () => Effect.die("the host keeps no marks of its own"),
+          setFilesViewed: () => Effect.die("the host keeps no marks of its own"),
+          getFileRevisions: (input) =>
+            answering
+              ? Effect.succeed({
+                  revisions: new Map(input.paths.map((path) => [path, "blob-a"] as const)),
+                })
+              : Effect.fail(requestFailed),
+        }),
+      ],
+    });
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    answering = false;
+    yield* service.invalidate({ reference: GITLAB_REFERENCE });
+
+    // The rows are this environment's own. A rate limit or a signed-out CLI costs them the
+    // staleness they would have carried, not the reader's whole record of what they have read.
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+  }),
+);
+
+it.effect("finishes two presses on one file in the order they were made", () =>
+  Effect.gen(function* () {
+    // A tick asks the host what it has of the file before it stores anything, and an untick asks
+    // nothing at all, so the second press would otherwise land first and be overwritten by the
+    // first one finishing behind it.
+    const held = yield* Deferred.make<void>();
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitlab", {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["merge"],
+            mergeMethods: ["merge"],
+            search: true,
+            reactions: true,
+            viewedFiles: "environment",
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getFilesViewed: () => Effect.die("the host keeps no marks of its own"),
+          setFilesViewed: () => Effect.die("the host keeps no marks of its own"),
+          getFileRevisions: (input) =>
+            Deferred.await(held).pipe(
+              Effect.as({ revisions: new Map(input.paths.map((path) => [path, "blob-a"])) }),
+            ),
+        }),
+      ],
+    });
+
+    const tick = service
+      .setFilesViewed({
+        ...GITLAB_REFERENCE,
+        files: [{ path: "src/a.ts", viewed: true }],
+      })
+      .pipe(Effect.runFork);
+    // Far enough for the tick to be waiting on the host rather than still on its way there.
+    yield* TestClock.adjust("1 second");
+    const untick = service
+      .setFilesViewed({
+        ...GITLAB_REFERENCE,
+        files: [{ path: "src/a.ts", viewed: false }],
+      })
+      .pipe(Effect.runFork);
+    yield* TestClock.adjust("1 second");
+    yield* Deferred.succeed(held, undefined);
+    yield* Fiber.join(tick);
+    yield* Fiber.join(untick);
+
+    // The untick came second and stands: the file is open again.
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+    assert.deepStrictEqual(marked.files, []);
+  }),
+);
+
+/** Azure, whose selector is a bare repository name, backed by this environment's own marks. */
+const azureViewedService = (projects: ReadonlyArray<OrchestrationProjectShell>) =>
+  makeService({
+    projects,
+    providers: [
+      fakeProvider("azure-devops", {
+        capabilities: {
+          diff: true,
+          comment: true,
+          actions: ["merge"],
+          mergeMethods: ["merge"],
+          search: true,
+          reactions: true,
+          viewedFiles: "environment",
+          review: FULL_REVIEW,
+          reviewers: FULL_REVIEWERS,
+        },
+        getFilesViewed: () => Effect.die("the host keeps no marks of this environment's own"),
+        setFilesViewed: () => Effect.die("the host keeps no marks of this environment's own"),
+        getFileRevisions: (input) =>
+          Effect.succeed({ revisions: new Map(input.paths.map((path) => [path, "blob-a"])) }),
+      }),
+    ],
+  });
+
+const AZURE_PAIR = [
+  project({
+    id: "p1",
+    title: "platform web",
+    workspaceRoot: "/a",
+    repository: "acme/platform/_git/web",
+    provider: "azure-devops",
+    host: "dev.azure.com",
+  }),
+  project({
+    id: "p2",
+    title: "other web",
+    workspaceRoot: "/b",
+    repository: "acme/other/_git/web",
+    provider: "azure-devops",
+    host: "dev.azure.com",
+  }),
+];
+
+const AZURE_PLATFORM = { projectId: "p1" as ProjectId, repository: "web", number: 1 };
+const AZURE_OTHER = { projectId: "p2" as ProjectId, repository: "web", number: 1 };
+
+it.effect("keeps the marks of two Azure repositories of the same name apart", () =>
+  Effect.gen(function* () {
+    // Azure addresses a repository by its bare name, which is unique inside one of its projects
+    // and not across an organisation. Two `web` repositories would otherwise share one row.
+    const service = yield* azureViewedService(AZURE_PAIR);
+
+    yield* service.setFilesViewed({
+      ...AZURE_PLATFORM,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+
+    assert.deepStrictEqual((yield* service.filesViewed(AZURE_PLATFORM)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+    assert.deepStrictEqual((yield* service.filesViewed(AZURE_OTHER)).files, []);
+  }),
+);
+
+it.effect("keeps environment marks apart from another change request's", () =>
+  Effect.gen(function* () {
+    const service = yield* environmentViewedService(new Map([["src/a.ts", "blob-a"]]), []);
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    const other = yield* service.filesViewed({ ...GITLAB_REFERENCE, number: 2 });
+
+    assert.deepStrictEqual(other.files, []);
+  }),
+);
+
+it.effect("bounds the paths one change request's held revisions carry", () =>
+  Effect.gen(function* () {
+    // The cache's count bounds how many change requests are held, not what any one of them holds:
+    // a reader ticking a wide change request renews the same entry on every press and adds a path
+    // to it each time. A press carries at most half the cap, so going one past it takes three.
+    const asked: Array<ReadonlyArray<string>> = [];
+    const service = yield* environmentViewedService(new Map(), asked);
+    const batch = (prefix: string, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        path: `${prefix}/${String(index).padStart(4, "0")}.ts`,
+        viewed: true,
+      }));
+    const press = (prefix: string, count: number) =>
+      service.setFilesViewed({ ...GITLAB_REFERENCE, files: batch(prefix, count) });
+
+    yield* press("a", MAX_FILE_REVISION_PATHS / 2);
+    yield* press("b", MAX_FILE_REVISION_PATHS / 2);
+    yield* press("c", 1);
+    const pressed = asked.length;
+
+    // The marks a read carries come first by path, so this one covers the earliest batch, which
+    // is where the paths asked about longest ago are. Held short of them the entry no longer
+    // answers the read, and the host is asked rather than the reader being told a version that
+    // nothing holds any more.
+    yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.strictEqual(asked.length, pressed + 1);
+    assert.ok(asked.at(-1)?.includes("a/0000.ts"));
+  }),
+);
+
+it.effect("keeps the marked paths when a whole-change answer is wider than the cap", () =>
+  Effect.gen(function* () {
+    // A host with no per-file version answers with the whole change, which on a wide review
+    // carries more paths than one entry holds. What the trim reaches has to be the paths the
+    // answer threw in rather than the ones the reader ticked: a mark stored with no baseline
+    // reports viewed however far the head moves off it.
+    const head = new Map<string, string>(
+      Array.from(
+        { length: MAX_FILE_REVISION_PATHS + 178 },
+        (_, index) =>
+          [`src/f${String(index).padStart(4, "0")}.ts`, `blob-${String(index)}`] as const,
+      ),
+    );
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(head, []),
+          getFileRevisions: () => Effect.succeed({ revisions: head, complete: true }),
+        },
+      ],
+    });
+    const ticked = ["src/f0000.ts", "src/f0500.ts"];
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: ticked.map((path) => ({ path, viewed: true })),
+    });
+    for (const path of ticked) head.set(path, "blob-moved");
+    // Past the stale window, so the read is answered by the host rather than from what the press
+    // heard.
+    yield* TestClock.adjust("11 minutes");
+    const marked = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    assert.deepStrictEqual(
+      [...marked.files].toSorted((left, right) => left.path.localeCompare(right.path)),
+      [
+        { path: "src/f0000.ts", state: "dismissed" },
+        { path: "src/f0500.ts", state: "dismissed" },
+      ],
+    );
+  }),
+);
+
+it.effect("keeps the change request being ticked through, not the one pressed first", () =>
+  Effect.gen(function* () {
+    // Ordered by insertion alone a hit does not renew its entry, so the review a reader is
+    // working down is the first thing dropped once a cache's worth of other change requests have
+    // been pressed, and the next press on it pays a host read for a version already held.
+    const asked: Array<ReadonlyArray<string>> = [];
+    const service = yield* environmentViewedService(new Map([["src/a.ts", "blob-a"]]), asked);
+    const press = (number: number) =>
+      service.setFilesViewed({
+        ...GITLAB_REFERENCE,
+        number,
+        files: [{ path: "src/a.ts", viewed: true }],
+      });
+
+    yield* press(1);
+    // A cache's worth of other change requests, with the open one pressed in between each.
+    for (let filled = 0; filled < FILE_REVISIONS_CACHE_CAPACITY; filled += 1) {
+      yield* press(2 + filled);
+      yield* press(1);
+    }
+
+    assert.strictEqual(asked.length, 1 + FILE_REVISIONS_CACHE_CAPACITY);
+  }),
+);
+
+/** The environment-backed fixture with its own answer to who the reader is. */
+const environmentViewedServiceWithViewer = (
+  revisions: Map<string, string>,
+  getViewer: PullRequestProviderApi["getViewer"],
+) =>
+  makeService({
+    projects: [
+      project({
+        id: "p1",
+        title: "on gitlab",
+        workspaceRoot: "/a",
+        repository: "group/project",
+        provider: "gitlab",
+      }),
+    ],
+    providers: [{ ...environmentViewedProvider(revisions, []), getViewer }],
+  });
+
+it.effect("keeps one reader's marks on a host that names nobody", () =>
+  Effect.gen(function* () {
+    const service = yield* environmentViewedServiceWithViewer(
+      new Map([["src/a.ts", "blob-a"]]),
+      () => Effect.succeed(""),
+    );
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+  }),
+);
+
+it.effect("puts a listing and a press for one host on a single viewer lookup", () =>
+  Effect.gen(function* () {
+    let viewerLookups = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), []),
+          getViewer: () =>
+            Effect.gen(function* () {
+              viewerLookups += 1;
+              // Suspends before answering, as a subprocess would, so both callers are in flight
+              // at once rather than the second finding the first has already answered.
+              yield* Effect.yieldNow;
+              return "bilal";
+            }),
+        },
+      ],
+    });
+
+    // What a cold page load does: read the listing and the reader's own marks at the same time.
+    // Nothing about which of them asked is in the lookup's key, so they wait on one CLI between
+    // them rather than starting one each.
+    yield* Effect.all([service.list({ state: "open" }), service.filesViewed(GITLAB_REFERENCE)], {
+      concurrency: 2,
+    });
+
+    assert.strictEqual(viewerLookups, 1);
+  }),
+);
+
+it.effect("carries a bounded number of its own marks and says it held more", () =>
+  Effect.gen(function* () {
+    const asked: Array<ReadonlyArray<string>> = [];
+    const paths = Array.from(
+      { length: PullRequestFilesViewed.MAX_FILES_VIEWED_ROWS + 40 },
+      (_, at) => `src/f${String(at).padStart(4, "0")}.ts`,
+    );
+    const service = yield* environmentViewedService(
+      new Map(paths.map((path) => [path, "blob"] as const)),
+      asked,
+    );
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: paths.map((path) => ({ path, viewed: true })),
+    });
+    const read = yield* service.filesViewed(GITLAB_REFERENCE);
+
+    // Every mark read is a path held in a set and a map for as long as the caller holds the read,
+    // per scope it is holding, so the rows are bounded rather than however many a reader has ever
+    // ticked. The reader is told the count is short rather than shown a quietly clipped list.
+    assert.lengthOf(read.files, PullRequestFilesViewed.MAX_FILES_VIEWED_ROWS);
+    assert.strictEqual(read.truncated, true);
+  }),
+);
+
+it.effect("records a press while the host is backing off", () =>
+  Effect.gen(function* () {
+    let viewerLookups = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), []),
+          getViewer: () =>
+            Effect.sync(() => {
+              viewerLookups += 1;
+              return "bilal";
+            }),
+          // Backing off for the hour, so the pause outlives the ten minutes who is signed in is
+          // held for and the second press has to ask again while it is on.
+          getFileRevisions: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "gitlab",
+                operation: "getFileRevisions",
+                reason: "rate-limited",
+                detail: "API rate limit exceeded.",
+                retryAt: 60 * 60 * 1_000,
+              }),
+            ),
+        },
+      ],
+    });
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    yield* TestClock.adjust("11 minutes");
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
+
+    // Nothing about a host holding its reads off says the reader did not press these, and these
+    // rows are this environment's own. They keep no baseline, because none was read, so they hold
+    // until they are pressed again rather than reporting a staleness nobody looked up.
+    assert.deepStrictEqual(
+      [...(yield* service.filesViewed(GITLAB_REFERENCE)).files].toSorted((left, right) =>
+        left.path.localeCompare(right.path),
+      ),
+      [
+        { path: "src/a.ts", state: "viewed" },
+        { path: "src/b.ts", state: "viewed" },
+      ],
+    );
+    assert.strictEqual(viewerLookups, 2);
+  }),
+);
+
+it.effect("asks who is reading through a pause only for the press that is waiting on it", () =>
+  Effect.gen(function* () {
+    let viewerLookups = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), []),
+          getViewer: () =>
+            Effect.sync(() => {
+              viewerLookups += 1;
+              return "bilal";
+            }),
+          listChangeRequests: () =>
+            Effect.succeed({ items: [], truncated: false, continues: true }),
+          // Backing off for the hour, so the pause outlives the ten minutes who is signed in is
+          // held for.
+          getFileRevisions: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "gitlab",
+                operation: "getFileRevisions",
+                reason: "rate-limited",
+                detail: "API rate limit exceeded.",
+                retryAt: 60 * 60 * 1_000,
+              }),
+            ),
+        },
+      ],
+    });
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    assert.strictEqual(viewerLookups, 1);
+    yield* TestClock.adjust("11 minutes");
+
+    // A listing is not the reader waiting on this lookup, and a failed one is held nowhere, so
+    // letting it through would spawn the host's CLI on every refresh for as long as the pause
+    // lasts and re-extend it each time.
+    const listed = yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
+    assert.strictEqual(listed._tag, "PullRequestOperationError");
+    assert.strictEqual(viewerLookups, 1);
+
+    // The press is bounded by what the reader does, and its rows are keyed by who they are, so
+    // it is asked rather than refused.
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/b.ts", viewed: true }],
+    });
+    assert.strictEqual(viewerLookups, 2);
+  }),
+);
+
+it.effect("does not ask a paused host who is reading again after the ask failed", () =>
+  Effect.gen(function* () {
+    let viewerLookups = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        {
+          ...environmentViewedProvider(new Map([["src/a.ts", "blob-a"]]), []),
+          getViewer: () =>
+            Effect.suspend(() => {
+              viewerLookups += 1;
+              return Effect.fail(
+                new PullRequestProviderError({
+                  provider: "gitlab",
+                  operation: "getViewer",
+                  reason: "failed",
+                  detail: "glab exited with status 1",
+                }),
+              );
+            }),
+          listChangeRequests: () =>
+            Effect.succeed({ items: [], truncated: false, continues: true }),
+          runAction: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: "gitlab",
+                operation: "runAction",
+                reason: "rate-limited",
+                detail: "API rate limit exceeded.",
+                retryAt: 60 * 60 * 1_000,
+              }),
+            ),
+        },
+      ],
+    });
+
+    yield* Effect.flip(service.filesViewed(GITLAB_REFERENCE));
+    assert.strictEqual(viewerLookups, 1);
+    yield* Effect.flip(service.runAction({ ...GITLAB_REFERENCE, action: "merge" }));
+
+    // A failed lookup is held nowhere, so a background read let through the pause would spawn the
+    // host's CLI on every refresh for as long as the pause lasted, and re-extend it each time.
+    yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
+    yield* TestClock.adjust("11 minutes");
+    yield* Effect.flip(service.list({ state: "open", involvement: "all" }));
+    assert.strictEqual(viewerLookups, 1);
+  }),
+);
+
+it.effect("refuses the marks when the host could not be asked who is reading", () =>
+  Effect.gen(function* () {
+    let answering = true;
+    const service = yield* environmentViewedServiceWithViewer(
+      new Map([["src/a.ts", "blob-a"]]),
+      () =>
+        answering
+          ? Effect.succeed("bilal")
+          : Effect.fail(
+              new PullRequestProviderError({
+                provider: "gitlab",
+                operation: "getViewer",
+                reason: "failed",
+                detail: "glab exited with status 1",
+              }),
+            ),
+    );
+
+    yield* service.setFilesViewed({
+      ...GITLAB_REFERENCE,
+      files: [{ path: "src/a.ts", viewed: true }],
+    });
+    // Who is signed in is held for ten minutes, so the lookup has to come round again before a
+    // failing CLI can reach the read at all.
+    answering = false;
+    yield* TestClock.adjust("11 minutes");
+
+    // Answering these from the unnamed reader's rows would show the reader none of their own
+    // ticks, and file the next press where the recovered CLI will never look for it again.
+    const read = yield* Effect.flip(service.filesViewed(GITLAB_REFERENCE));
+    const write = yield* Effect.flip(
+      service.setFilesViewed({
+        ...GITLAB_REFERENCE,
+        files: [{ path: "src/b.ts", viewed: true }],
+      }),
+    );
+    assert.strictEqual(read._tag, "PullRequestOperationError");
+    assert.strictEqual(write._tag, "PullRequestOperationError");
+
+    answering = true;
+    assert.deepStrictEqual((yield* service.filesViewed(GITLAB_REFERENCE)).files, [
+      { path: "src/a.ts", state: "viewed" },
+    ]);
+  }),
+);
+
+it.effect("refuses to track viewed files on a host that does not", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "on gitlab",
+          workspaceRoot: "/a",
+          repository: "group/project",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitlab", {
+          getFilesViewed: () => Effect.die("must not be called"),
+          setFilesViewed: () => Effect.die("must not be called"),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "group/project", number: 1 };
+
+    const read = yield* Effect.flip(service.filesViewed(reference));
+    const write = yield* Effect.flip(
+      service.setFilesViewed({ ...reference, files: [{ path: "a.ts", viewed: true }] }),
+    );
+
+    assert.strictEqual(read._tag, "PullRequestOperationError");
+    assert.strictEqual(write._tag, "PullRequestOperationError");
   }),
 );
 

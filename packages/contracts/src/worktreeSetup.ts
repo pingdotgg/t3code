@@ -71,6 +71,17 @@ export const WorktreeSetupSnapshot = Schema.Struct({
 });
 export type WorktreeSetupSnapshot = typeof WorktreeSetupSnapshot.Type;
 
+/**
+ * Thread activity that carries a `WorktreeSetupSnapshot` as its payload. The
+ * bootstrap writes it under a fixed id once the thread exists (phase running)
+ * and again when the setup settles, so the projection always holds the
+ * latest known state: a client attaches the live stream while it says
+ * running and renders the outcome from it afterwards, on any device or
+ * after a reload.
+ */
+export const WORKTREE_SETUP_ACTIVITY_KIND = "worktree-setup";
+export const worktreeSetupActivityId = (threadId: ThreadId) => `worktree-setup:${threadId}`;
+
 export const WorktreeSetupSubscribeInput = Schema.Struct({
   threadId: ThreadId,
 });

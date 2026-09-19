@@ -122,7 +122,7 @@ test.provider(
       const state = yield* yield* State;
       const row = yield* state.get({
         stack: stack.name,
-        stage: "test",
+        stage: stack.stage,
         fqn: "InlineService",
       });
       const props = (row as { props?: Record<string, unknown> } | undefined)

@@ -18,8 +18,8 @@ const SOURCE = {
 function fileDiff(type: FileDiffMetadata["type"] = "rename-changed"): FileDiffMetadata {
   return {
     type,
-    prevName: "a/src/old-name.ts",
-    name: "b/src/new-name.ts",
+    prevName: "src/old-name.ts",
+    name: "src/new-name.ts",
   } as FileDiffMetadata;
 }
 

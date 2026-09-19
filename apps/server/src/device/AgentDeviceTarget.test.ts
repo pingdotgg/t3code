@@ -1,5 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off - exercises concurrent real CLI subprocesses.
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
@@ -84,6 +88,11 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
           ).rejects.toThrow("Call device_open first"),
         );
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcessIsExecutable, true),
+      Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+      Effect.provide(NodeServices.layer),
+    ),
   );
 });

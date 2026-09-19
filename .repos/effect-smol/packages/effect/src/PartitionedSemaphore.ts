@@ -216,8 +216,7 @@ export const makeUnsafe = <K = unknown>(options: {
       }
 
       const cleanup = () => {
-        waiters.delete(entry)
-        if (waiters.size === 0) {
+        if (waiters.delete(entry) && waiters.size === 0) {
           MutableHashMap.remove(partitions, key)
         }
       }

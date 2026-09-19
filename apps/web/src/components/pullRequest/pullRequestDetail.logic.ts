@@ -1,8 +1,8 @@
 import * as Schema from "effect/Schema";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 
 import {
   PullRequestDetail,
+  pullRequestHostOf,
   type PullRequestAction,
   type PullRequestActor,
   type PullRequestBaseComparison,
@@ -15,12 +15,20 @@ import {
   type PullRequestMergeability,
   type PullRequestMergeMethod,
   type PullRequestReaction,
+  type PullRequestRef,
+  type RepositoryIdentity,
   type PullRequestReviewThread,
   type PullRequestState,
   type PullRequestUpdateMethod,
   type SourceControlProviderKind,
+  type ThreadLinkedPullRequest,
+  type ThreadPullRequestLink,
   type VcsRef,
 } from "@t3tools/contracts";
+import {
+  threadPullRequestKeysEqual,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 import { reviewCommentContextId } from "~/lib/composerContextRecords";
@@ -161,28 +169,55 @@ export function editPullRequestThreadComment<
   return comments.map((comment) => (comment.id === commentId ? { ...comment, body } : comment));
 }
 
+type LegacyLinkedPullRequest = Pick<ThreadLinkedPullRequest, "repository" | "number">;
+
 /**
- * Whether the pull request on a right-panel surface is the thread's own one. Repository and
- * number are not enough: one environment can hold two checkouts of the same repository under
+ * How the detail panel behaves beside a thread: "thread" for a pull request the thread itself
+ * is linked to (any layer of its stack), "page" for any other one the reader opened there.
+ *
+ * Decided from the thread's full link list, never from the single legacy `linkedPullRequest`:
+ * that field is one server-chosen link out of many, and a thread's own second link or lower
+ * stack layer would otherwise be handed a checkout button for a branch it already works on. The
+ * legacy fields only answer for servers that predate link lists. Repository and number are not
+ * enough either way: one environment can hold two checkouts of the same repository under
  * different projects, and the other project's checkout is somebody else's branch.
  */
-export function isThreadOwnPullRequest(
+export function pullRequestPanelContext(
   thread: {
     readonly projectId: string | null;
-    readonly repository: string | null;
-    readonly number: number | null;
+    readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+    readonly linkedPullRequest?: LegacyLinkedPullRequest | null | undefined;
+    readonly branchPullRequest?: LegacyLinkedPullRequest | null | undefined;
   },
   surface: {
     readonly projectId: string;
+    readonly host?: string | undefined;
     readonly repository: string;
     readonly number: number;
   },
-): boolean {
-  return (
-    thread.projectId === surface.projectId &&
-    thread.repository === surface.repository &&
-    thread.number === surface.number
-  );
+): "page" | "thread" {
+  if (thread.projectId !== surface.projectId) return "page";
+  const links = visibleThreadPullRequests(thread.pullRequests ?? []);
+  if (links.length > 0) {
+    const repository = surface.repository.toLowerCase();
+    return links.some((link) =>
+      surface.host !== undefined
+        ? threadPullRequestKeysEqual(link, {
+            host: surface.host,
+            repository: surface.repository,
+            number: surface.number,
+          })
+        : link.number === surface.number && link.repository.toLowerCase() === repository,
+    )
+      ? "thread"
+      : "page";
+  }
+  const legacy = thread.linkedPullRequest ?? thread.branchPullRequest ?? null;
+  return legacy !== null &&
+    legacy.repository === surface.repository &&
+    legacy.number === surface.number
+    ? "thread"
+    : "page";
 }
 
 /** Names where a pull-request task will land, without letting each surface guess independently. */
@@ -198,13 +233,6 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
         fixCheck: "Fix",
         fixFindings: "Fix findings in a thread",
       };
-}
-
-export function pullRequestComposerTarget<T>(
-  context: "page" | "thread",
-  target: T | null | undefined,
-): T | null {
-  return context === "thread" ? (target ?? null) : null;
 }
 
 /** Whether the open pull-request action group contains at least one action. */
@@ -1092,6 +1120,15 @@ export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): bo
 
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
 
+export function resolvePullRequestReferenceHost(
+  reference: PullRequestRef,
+  identity: RepositoryIdentity | null | undefined,
+): PullRequestRef {
+  // Other providers may resolve an SSH remote to a different web authority on the server.
+  if (reference.host !== undefined || identity?.provider !== "github") return reference;
+  return { ...reference, host: pullRequestHostOf(identity, "github") };
+}
+
 export interface PullRequestDetailSnapshotRef {
   readonly host?: string | undefined;
   readonly projectId: string;
@@ -1121,7 +1158,13 @@ export function readPullRequestDetailSnapshot(
   reference: PullRequestDetailSnapshotRef,
 ): PullRequestDetail | null {
   try {
-    const raw = storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference));
+    const raw =
+      storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference)) ??
+      (reference.host === undefined
+        ? null
+        : storage?.getItem(
+            pullRequestDetailSnapshotKey(environmentId, { ...reference, host: undefined }),
+          ));
     if (!raw) return null;
     const decoded = decodeDetailSnapshot(JSON.parse(raw));
     return decoded._tag === "Some"
@@ -1157,14 +1200,22 @@ export function resolveDisplayedPullRequestDetail(input: {
 }): PullRequestDetail | null {
   if (input.live !== null) return input.live;
   if (
-    input.cached !== null &&
-    input.cached.projectId === input.reference.projectId &&
-    input.cached.repository.toLowerCase() === input.reference.repository.toLowerCase() &&
-    input.cached.number === input.reference.number &&
-    (input.reference.host === undefined ||
-      parseChangeRequestUrl(input.cached.url)?.host === input.reference.host.toLowerCase())
+    input.cached === null ||
+    input.cached.projectId !== input.reference.projectId ||
+    input.cached.repository.toLowerCase() !== input.reference.repository.toLowerCase() ||
+    input.cached.number !== input.reference.number
   ) {
-    return input.cached;
+    return null;
   }
-  return null;
+  if (input.reference.host === undefined) return input.cached;
+  try {
+    const url = new URL(input.cached.url);
+    const host = input.cached.provider === "forgejo" ? url.host : url.hostname;
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      host.toLowerCase() === input.reference.host.toLowerCase()
+      ? input.cached
+      : null;
+  } catch {
+    return null;
+  }
 }

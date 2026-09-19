@@ -389,7 +389,7 @@ export function DevicePanel(props: {
               ) : null}
               {loaded && !hostBusy ? (
                 <Button
-                  className="self-start"
+                  className={grouped.length > 0 ? "self-start" : "self-center"}
                   variant={grouped.length > 0 ? "ghost" : "outline"}
                   size="sm"
                   onClick={() => void list({ environmentId, input: {} })}

@@ -19,3 +19,6 @@
 "@effect/ai/AiError#UnknownError":
   replacement: "AiError.make + AiError.UnknownError"
   note: "UnknownError is now a semantic reason rather than a top-level error. Put module and method on AiError.make and inspect reason._tag when handling the outer AiError."
+"@effect/ai/AiError#HttpRequestDetails":
+  replacement: "AiError.HttpRequestDetails"
+  note: "Retained in effect/unstable/ai/AiError and also re-exported as Response.HttpRequestDetails. Hash is an optional string instead of Option, headers may contain Redacted strings, and method includes TRACE."
