@@ -258,9 +258,11 @@ export const layer: Layer.Layer<
               candidate.runId === run.id,
           );
           if (checkpoint?.status === "ready") return;
-          // A "missing" row means capture found no usable VCS for the scope, so
-          // no start ref was ever written. Skipping keeps replayed cleanups off
-          // the workspace lock for workspaces that never checkpoint.
+          // A "missing" row means capture confirmed the scope has no Git
+          // repository, so no start ref was ever written. Detection failures
+          // fail capture instead of recording "missing". Skipping keeps
+          // replayed cleanups off the workspace lock for workspaces that
+          // never checkpoint.
           if (checkpoint?.status === "missing") return;
           // A completed run only abandons its baseline once capture has actually
           // run and failed, which commits a non-ready row alongside this effect.

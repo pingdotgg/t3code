@@ -113,6 +113,76 @@ it.effect.each([false, true, "interrupt"] as const)(
   },
 );
 
+it.effect("propagates repository detection failures after a captured baseline", () => {
+  const scope: OrchestrationV2CheckpointScope = {
+    id: CheckpointScopeId.make("checkpoint-scope:detection-failure"),
+    threadId: ThreadId.make("thread:detection-failure"),
+    runId: RunId.make("run:detection-failure:1"),
+    nodeId: NodeId.make("node:detection-failure:1"),
+    parentScopeId: null,
+    providerThreadId: ProviderThreadId.make("provider-thread:detection-failure"),
+    kind: "root_run",
+    ordinalWithinParent: 0,
+    advancesAppRunCount: true,
+    cwd: "/repo",
+    createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
+  };
+  let detections = 0;
+  const isGitRepository = vi.fn((_cwd: string) =>
+    ++detections === 1
+      ? Effect.succeed(true)
+      : Effect.fail(
+          new VcsProcessTimeoutError({
+            operation: "test.detect",
+            command: "git",
+            cwd: "/repo",
+            timeoutMs: 5000,
+          }),
+        ),
+  );
+  const testLayer = checkpointServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        idAllocatorLayer,
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          isGitRepository,
+          hasCheckpointRef: () => Effect.succeed(true),
+          captureCheckpoint: () => Effect.void,
+          deleteCheckpointRefs: () => Effect.void,
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const checkpoints = yield* CheckpointServiceV2;
+    // Baseline capture succeeded, so the next turn's start ref now exists.
+    yield* checkpoints.captureBaseline({ scope, ordinalWithinScope: 0 });
+    // A transient detection failure must not masquerade as a confirmed
+    // non-Git workspace: recording "missing" would leak the captured start
+    // ref, and silently skipping cleanup would strand it forever.
+    const captureError = yield* checkpoints
+      .capture({
+        scope,
+        runId: scope.runId!,
+        nodeId: scope.nodeId!,
+        ordinalWithinScope: 1,
+        appRunOrdinal: 1,
+        capturedAt: scope.createdAt,
+      })
+      .pipe(Effect.flip);
+    assert.equal(captureError._tag, "CheckpointCaptureError");
+    const baselineError = yield* checkpoints
+      .captureBaseline({ scope, ordinalWithinScope: 1 })
+      .pipe(Effect.flip);
+    assert.equal(baselineError._tag, "CheckpointBaselineCaptureError");
+    const cleanupError = yield* checkpoints
+      .discardBaseline({ scope, ordinalWithinScope: 1 })
+      .pipe(Effect.flip);
+    assert.equal(cleanupError._tag, "CheckpointBaselineCleanupError");
+  }).pipe(Effect.provide(testLayer));
+});
+
 const processLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 const storeLayer = CheckpointStore.layer.pipe(
   Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(processLayer))),
