@@ -329,12 +329,6 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     disconnected: ReadonlyArray<PendingRequest>,
     completeStream = false,
   ) {
-    yield* Effect.forEach(
-      disconnected,
-      ({ deferred, context }) =>
-        Deferred.fail(deferred, new PreviewAutomationClientDisconnectedError(context)),
-      { discard: true },
-    );
     if (completeStream) {
       // Discard this generation's commands and complete the RPC stream so a
       // responsive desktop can re-register after a timeout eviction.
@@ -344,6 +338,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       // Replaced registrations must not reconnect and displace their successor.
       yield* Queue.shutdown(queue);
     }
+    yield* Effect.forEach(
+      disconnected,
+      ({ deferred, context }) =>
+        Deferred.fail(deferred, new PreviewAutomationClientDisconnectedError(context)),
+      { discard: true },
+    );
   });
 
   const disconnect = Effect.fn("PreviewAutomationBroker.disconnect")(function* (
@@ -351,11 +351,12 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     queue: ClientConnection["queue"],
     completeStream = false,
   ) {
-    const disconnected = yield* SynchronizedRef.modify(state, (current) => {
+    yield* SynchronizedRef.modifyEffect(state, (current) => {
       const removed = removeConnectionFromState(current, clientId, queue);
-      return [removed.disconnected, removed.state] as const;
+      return closeConnection(queue, removed.disconnected, completeStream).pipe(
+        Effect.as([undefined, removed.state] as const),
+      );
     });
-    yield* closeConnection(queue, disconnected, completeStream);
   });
 
   const acquireConnection = Effect.fn("PreviewAutomationBroker.acquireConnection")(function* (
@@ -564,18 +565,28 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       return { ...next, pending };
     });
     const awaitResponse = Effect.fn("PreviewAutomationBroker.awaitResponse")(function* () {
-      const offered = yield* Queue.offer(connection.queue, {
-        type: "request",
-        connectionId: connection.connectionId,
-        request: {
-          requestId,
-          threadId: input.scope.threadId,
-          tabId: requestContext.tabId,
-          tabIdExplicit: input.tabId !== undefined,
-          operation: input.operation,
-          input: input.input,
-          timeoutMs,
-        },
+      const offered = yield* SynchronizedRef.modifyEffect(state, (current) => {
+        // A route can outlive its generation while another request evicts it.
+        // Serialize the live-generation check and offer with queue closure.
+        if (
+          current.clients.get(connection.clientId)?.queue !== connection.queue ||
+          !current.pending.has(requestId)
+        ) {
+          return Effect.succeed([false, current] as const);
+        }
+        return Queue.offer(connection.queue, {
+          type: "request",
+          connectionId: connection.connectionId,
+          request: {
+            requestId,
+            threadId: input.scope.threadId,
+            tabId: requestContext.tabId,
+            tabIdExplicit: input.tabId !== undefined,
+            operation: input.operation,
+            input: input.input,
+            timeoutMs,
+          },
+        }).pipe(Effect.map((offered) => [offered, current] as const));
       });
       if (!offered) {
         const completion = yield* Deferred.poll(deferred);

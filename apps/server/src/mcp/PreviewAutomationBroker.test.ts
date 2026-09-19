@@ -1221,6 +1221,51 @@ it.effect("evicts an unanswered host and lets later calls use a healthy runtime"
   ),
 );
 
+it.effect("discards buffered actions before completing an evicted host stream", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const received = yield* Deferred.make<void>();
+      const actionRouted = yield* Deferred.make<void>();
+      const releaseConsumer = yield* Deferred.make<void>();
+      const operations: string[] = [];
+      const consumer = yield* Stream.runForEach(yield* broker.connect(makeHost()), (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        operations.push(event.request.operation);
+        return Deferred.succeed(received, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseConsumer)),
+        );
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      const timedOut = yield* broker
+        .invoke<void>({ scope, operation: "snapshot", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(received);
+      const buffered = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "click",
+          input: {},
+          timeoutMs: 10_000,
+          onTargetTab: () => {
+            Deferred.doneUnsafe(actionRouted, Effect.void);
+          },
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(actionRouted);
+      yield* TestClock.adjust(1_000);
+      expect(yield* Fiber.join(timedOut)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      expect(yield* Fiber.join(buffered)).toMatchObject({
+        _tag: "PreviewAutomationClientDisconnectedError",
+      });
+      yield* Deferred.succeed(releaseConsumer, undefined);
+      expect(Exit.isSuccess(yield* Fiber.await(consumer))).toBe(true);
+      expect(operations).toEqual(["snapshot"]);
+    }),
+  ),
+);
+
 it.effect("keeps a host that responds with an operation timeout", () =>
   Effect.scoped(
     Effect.gen(function* () {
