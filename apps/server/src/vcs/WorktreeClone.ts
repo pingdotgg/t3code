@@ -45,12 +45,13 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
 
       // Filters can depend on the checkout path. Sparse/worktree-specific config
       // and checkout hooks must retain Git's normal worktree-add semantics.
+      // Conditional includes can activate different hooks/filters in the target.
       const config = yield* git(
         cwd,
         [
           "config",
           "--get-regexp",
-          "^(filter\\.|core\\.sparsecheckout$|extensions\\.worktreeconfig$)",
+          "^(filter\\.|includeif\\.|core\\.sparsecheckout$|extensions\\.worktreeconfig$)",
         ],
         true,
       );

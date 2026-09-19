@@ -1,7 +1,8 @@
 import { GitCommandError } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 /** Forced copy-on-write: unsupported volumes must fail, never silently copy or hardlink. */
 export const makeFileClone = Effect.fn("makeFileClone")(function* () {
