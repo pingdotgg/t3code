@@ -24,7 +24,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
-import { WorktreeSize } from "./storageCleanupSize.ts";
+import * as StorageCleanupSize from "./storageCleanupSize.ts";
 import * as TxRef from "effect/TxRef";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
@@ -140,7 +140,7 @@ function storageCleanupActivityAt(thread: OrchestrationThreadShell): number {
 
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const worktreeSize = yield* WorktreeSize;
+  const worktreeSize = yield* StorageCleanupSize.WorktreeSize;
   const settingsService = yield* Settings.ServerSettingsService;
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const engine = yield* OrchestrationEngine.OrchestrationEngineService;

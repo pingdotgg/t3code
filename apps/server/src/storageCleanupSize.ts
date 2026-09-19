@@ -6,7 +6,7 @@ import * as Pull from "effect/Pull";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { ResourceMonitorBinary } from "./resourceTelemetry/ResourceMonitorBinary.ts";
+import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 
 export class WorktreeMeasurementError extends Schema.TaggedError<WorktreeMeasurementError>()(
   "WorktreeMeasurementError",
@@ -47,7 +47,7 @@ export class WorktreeSize extends Context.Service<
 >()("t3/storageCleanupSize/WorktreeSize") {}
 
 export const make = Effect.gen(function* () {
-  const binary = yield* ResourceMonitorBinary;
+  const binary = yield* ResourceMonitorBinary.ResourceMonitorBinary;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const measure: WorktreeSize["Service"]["measure"] = (root) =>
     Stream.unwrap(
