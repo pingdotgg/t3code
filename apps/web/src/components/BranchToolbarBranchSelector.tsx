@@ -39,7 +39,7 @@ import {
   THREAD_DETAILS_PANEL_ROW_POPUP_CLASS,
   THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
 } from "./chat/threadDetailsPanelStyles";
-import { ThreadDetailsPrRow } from "./chat/ThreadDetailsPrRow";
+import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -735,7 +735,10 @@ export function BranchToolbarBranchSelector({
           </ComboboxTrigger>
         </span>
         {displayMode === "panel" && prNumber !== undefined && prUrl !== undefined ? (
-          <ThreadDetailsPrRow
+          <ThreadDetailsPrRows
+            links={serverThread?.pullRequests ?? []}
+            currentLink={currentLinkedPr}
+            onOpenLink={openPrLink}
             environmentId={environmentId}
             pr={displayedPr}
             number={prNumber}
