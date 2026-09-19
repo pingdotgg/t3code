@@ -2020,10 +2020,11 @@ export const make = Effect.gen(function* () {
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseBranch);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
     const policy = yield* resolveStylePolicy(cwd, settings);
-    const changeRequestTemplate =
-      settings.style.followChangeRequestTemplates && provider.kind === "github"
-        ? Option.getOrUndefined(yield* detectPrTemplate(cwd, baseRangeRef, gitCore.execute))
-        : undefined;
+    const changeRequestTemplate = settings.style.followChangeRequestTemplates
+      ? Option.getOrUndefined(
+          yield* detectPrTemplate(cwd, baseRangeRef, gitCore.execute, provider.kind),
+        )
+      : undefined;
 
     const generated = yield* textGeneration.generatePrContent({
       cwd,

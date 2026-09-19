@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type { SourceControlProviderKind } from "@t3tools/contracts";
 
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -25,6 +26,24 @@ const TEMPLATE_DIRECTORIES = [
   ".github/PULL_REQUEST_TEMPLATE",
   "PULL_REQUEST_TEMPLATE",
   "docs/PULL_REQUEST_TEMPLATE",
+] as const;
+
+const GITLAB_DEFAULT_TEMPLATE_NAMES = [
+  "Default.md",
+  "default.md",
+  "DEFAULT.MD",
+  "Default.MD",
+] as const;
+
+const AZURE_DEVOPS_TEMPLATE_PATHS = [
+  ".azuredevops/pull_request_template.md",
+  ".azuredevops/pull_request_template.txt",
+  ".vsts/pull_request_template.md",
+  ".vsts/pull_request_template.txt",
+  "docs/pull_request_template.md",
+  "docs/pull_request_template.txt",
+  "pull_request_template.md",
+  "pull_request_template.txt",
 ] as const;
 
 const PrTemplateDetectionTestLayer = GitVcsDriver.layer.pipe(
@@ -77,10 +96,14 @@ const commitTemplates = (cwd: string) =>
     yield* runGit(cwd, ["commit", "--allow-empty", "-m", "Add pull request templates"]);
   });
 
-const detectTemplate = (cwd: string, treeish = "HEAD") =>
+const detectTemplate = (
+  cwd: string,
+  treeish = "HEAD",
+  providerKind: SourceControlProviderKind = "github",
+) =>
   Effect.gen(function* () {
     const git = yield* GitVcsDriver.GitVcsDriver;
-    return yield* detectPrTemplate(cwd, treeish, git.execute);
+    return yield* detectPrTemplate(cwd, treeish, git.execute, providerKind);
   });
 
 it.effect.each(SINGLE_TEMPLATE_PATHS)("recognizes $0", (relativePath) =>
@@ -136,6 +159,100 @@ it.effect.each(TEMPLATE_DIRECTORIES)("recognizes the $0 directory", (relativeDir
 
       const template = yield* detectTemplate(cwd);
       assert.strictEqual(Option.getOrUndefined(template), "directory template");
+    }),
+  ),
+);
+
+it.effect.each(GITLAB_DEFAULT_TEMPLATE_NAMES)(
+  "recognizes the GitLab default template named $0",
+  (templateFileName) =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        const relativePath = `.gitlab/merge_request_templates/${templateFileName}`;
+        yield* writeTemplate(cwd, relativePath, `template from ${templateFileName}`);
+        yield* commitTemplates(cwd);
+
+        const template = yield* detectTemplate(cwd, "HEAD", "gitlab");
+        assert.strictEqual(Option.getOrUndefined(template), `template from ${templateFileName}`);
+      }),
+    ),
+);
+
+it.effect("prefers the GitLab default template over named templates", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/Default.md", "default template");
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/feature.md", "feature template");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "gitlab");
+      assert.strictEqual(Option.getOrUndefined(template), "default template");
+    }),
+  ),
+);
+
+it.effect("does not use a named GitLab template when no default exists", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/feature.md", "feature template");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "gitlab");
+      assert.isTrue(Option.isNone(template));
+    }),
+  ),
+);
+
+it.effect.each(AZURE_DEVOPS_TEMPLATE_PATHS)(
+  "recognizes the Azure DevOps template at $0",
+  (relativePath) =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        yield* writeTemplate(cwd, relativePath, `template from ${relativePath}`);
+        yield* commitTemplates(cwd);
+
+        const template = yield* detectTemplate(cwd, "HEAD", "azure-devops");
+        assert.strictEqual(Option.getOrUndefined(template), `template from ${relativePath}`);
+      }),
+    ),
+);
+
+it.effect("uses the first Azure DevOps template in folder precedence order", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".azuredevops/pull_request_template.txt", "azuredevops txt");
+      yield* writeTemplate(cwd, ".vsts/pull_request_template.md", "vsts md");
+      yield* writeTemplate(cwd, "docs/pull_request_template.txt", "docs txt");
+      yield* writeTemplate(cwd, "pull_request_template.md", "root md");
+      yield* commitTemplates(cwd);
+
+      const template = yield* detectTemplate(cwd, "HEAD", "azure-devops");
+      assert.strictEqual(Option.getOrUndefined(template), "azuredevops txt");
+    }),
+  ),
+);
+
+it.effect("only detects templates for the active provider kind", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".github/pull_request_template.md", "github template");
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/Default.md", "gitlab template");
+      yield* writeTemplate(cwd, ".azuredevops/pull_request_template.md", "azure template");
+      yield* commitTemplates(cwd);
+
+      assert.strictEqual(
+        Option.getOrUndefined(yield* detectTemplate(cwd, "HEAD", "github")),
+        "github template",
+      );
+      assert.strictEqual(
+        Option.getOrUndefined(yield* detectTemplate(cwd, "HEAD", "gitlab")),
+        "gitlab template",
+      );
+      assert.strictEqual(
+        Option.getOrUndefined(yield* detectTemplate(cwd, "HEAD", "azure-devops")),
+        "azure template",
+      );
+      assert.isTrue(Option.isNone(yield* detectTemplate(cwd, "HEAD", "bitbucket")));
     }),
   ),
 );
