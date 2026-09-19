@@ -176,62 +176,70 @@ function PullRequestRowImpl({
             className="shrink-0 whitespace-nowrap text-[11px]"
           />
         </span>
-        <PullRequestMetaLine className="@container/pr-row-meta col-start-1 row-start-2 overflow-hidden text-xs text-muted-foreground/70">
-          {matchedElsewhere ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-[10px]" />
-                }
-              >
-                <span className="sr-only">matched in the description</span>
-                <SearchIcon aria-hidden className="size-3 shrink-0" />
-                <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
-                  matched in the description
-                </span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">Matched in the description</TooltipPopup>
-            </Tooltip>
-          ) : null}
-          <span className="flex shrink-0 items-center gap-1">
-            {showProvider ? (
+        <span className="col-span-2 col-start-1 row-start-2 flex min-w-0 items-baseline text-xs text-muted-foreground/70">
+          <PullRequestMetaLine className="@container/pr-row-meta min-w-0 overflow-hidden @md/pr-row:flex-1">
+            {matchedElsewhere ? (
               <Tooltip>
-                <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-                  <Icon aria-label={providerName} className="size-3" />
+                <TooltipTrigger
+                  render={
+                    <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-[10px]" />
+                  }
+                >
+                  <span className="sr-only">matched in the description</span>
+                  <SearchIcon aria-hidden className="size-3 shrink-0" />
+                  <span aria-hidden className="hidden truncate @xs/pr-row-meta:block">
+                    matched in the description
+                  </span>
                 </TooltipTrigger>
-                <TooltipPopup>{providerName}</TooltipPopup>
+                <TooltipPopup side="top">Matched in the description</TooltipPopup>
               </Tooltip>
             ) : null}
-            {/* The number carries the link, here as much as on the detail: a right-click on it
-                copies the pull request's own address rather than opening the editing menu. */}
-            <span
-              onContextMenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                void showPullRequestLinkContextMenu({
-                  url: entry.url,
-                  openLabel: openOnHostLabel(entry.provider),
-                  position: { x: event.clientX, y: event.clientY },
-                });
-              }}
-            >
-              #{entry.number}
+            <span className="flex shrink-0 items-center gap-1">
+              {showProvider ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+                    <Icon aria-label={providerName} className="size-3" />
+                  </TooltipTrigger>
+                  <TooltipPopup>{providerName}</TooltipPopup>
+                </Tooltip>
+              ) : null}
+              {/* The number carries the link, here as much as on the detail: a right-click on it
+                  copies the pull request's own address rather than opening the editing menu. */}
+              <span
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void showPullRequestLinkContextMenu({
+                    url: entry.url,
+                    openLabel: openOnHostLabel(entry.provider),
+                    position: { x: event.clientX, y: event.clientY },
+                  });
+                }}
+              >
+                #{entry.number}
+              </span>
             </span>
+            {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
+            {environmentLabel ? (
+              <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
+            ) : null}
+            {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
+          </PullRequestMetaLine>
+          <span
+            aria-hidden
+            className="mx-1.5 hidden shrink-0 text-muted-foreground/50 @sm/pr-row:inline @md/pr-row:hidden"
+          >
+            ·
           </span>
-          {showProjectTitle ? <span className="truncate">{entry.repository}</span> : null}
-          {environmentLabel ? (
-            <span className="min-w-0 max-w-32 truncate">{environmentLabel}</span>
-          ) : null}
-          <PullRequestActorLabel
-            actor={entry.author}
-            className="min-w-4 max-w-40"
-            labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
-          />
-          {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
-        </PullRequestMetaLine>
-        <span className="col-start-2 row-start-2 flex items-center justify-self-end gap-3 whitespace-nowrap text-[11px] text-muted-foreground/70 tabular-nums">
-          <span className="hidden @sm/pr-row:inline">
-            {formatRelativeTimeLabel(entry.updatedAt)}
+          <span className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
+            <span className="hidden w-14 text-right tabular-nums @sm/pr-row:inline">
+              {formatRelativeTimeLabel(entry.updatedAt)}
+            </span>
+            <PullRequestActorLabel
+              actor={entry.author}
+              className="min-w-4 max-w-40 flex-row-reverse"
+              labelClassName="sr-only @xs/pr-row:not-sr-only @xs/pr-row:truncate"
+            />
           </span>
         </span>
       </span>
