@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   type OrchestrationCommand,
+  ApprovalRequestId,
   type OrchestrationSessionStatus,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -15,6 +16,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import {
+  ProjectionPendingApprovalRepository,
+  type ProjectionPendingApproval,
+} from "./persistence/Services/ProjectionPendingApprovals.ts";
 import { OrchestrationCommandInvariantError } from "./orchestration/Errors.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -80,6 +85,7 @@ const queryWithThreads = (threads: ReadonlyArray<ReturnType<typeof makeThread>>)
 
 const runReconciliation = (input: {
   readonly threads: ReadonlyArray<ReturnType<typeof makeThread>>;
+  readonly approvals?: ReadonlyArray<ProjectionPendingApproval>;
   readonly continueAfterRestart?: boolean;
   readonly liveThreadIds?: ReadonlyArray<ThreadId>;
   readonly providerService?: ProviderService.ProviderService["Service"];
@@ -87,6 +93,11 @@ const runReconciliation = (input: {
   readonly dispatch: OrchestrationEngine.OrchestrationEngineService["Service"]["dispatch"];
 }) =>
   ServerRuntimeStartup.reconcileProviderSessions.pipe(
+    Effect.provide(
+      Layer.mock(ProjectionPendingApprovalRepository, {
+        listPending: () => Effect.succeed(input.approvals ?? []),
+      }),
+    ),
     Effect.provideService(
       ProjectionSnapshotQuery.ProjectionSnapshotQuery,
       queryWithThreads(input.threads),
@@ -114,6 +125,95 @@ const runReconciliation = (input: {
       ),
     ),
   );
+
+it.effect("dismisses only approvals whose runtime is absent at startup", () => {
+  const commands: OrchestrationCommand[] = [];
+  const liveThreadId = ThreadId.make("live-approval-thread");
+  const deadThreadId = ThreadId.make("dead-approval-thread");
+  return runReconciliation({
+    threads: [makeThread(deadThreadId, "stopped"), makeThread(liveThreadId, "running")],
+    liveThreadIds: [liveThreadId],
+    approvals: [deadThreadId, liveThreadId].map((threadId) => ({
+      requestId: ApprovalRequestId.make(`approval-${threadId}`),
+      threadId,
+      turnId: null,
+      status: "pending",
+      decision: null,
+      createdAt: updatedAt,
+      resolvedAt: null,
+    })),
+    directory: {
+      getBinding: () => Effect.succeedNone,
+      upsert: () => Effect.die("unused"),
+      recordImportedTranscript: () => Effect.die("unused"),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    },
+    dispatch: (command) =>
+      Effect.sync(() => {
+        commands.push(command);
+        return { sequence: commands.length };
+      }),
+  }).pipe(
+    Effect.tap(() => {
+      assert.equal(commands.length, 1);
+      const command = commands[0];
+      assert.equal(command?.type, "thread.activity.append");
+      if (command?.type !== "thread.activity.append") return Effect.void;
+      assert.equal(command.threadId, deadThreadId);
+      assert.equal(command.activity.kind, "approval.resolved");
+      return Effect.void;
+    }),
+  );
+});
+
+it.effect("still reconciles sessions when approval dismissal keeps failing", () => {
+  const thread = makeThread("approval-dismissal-failure", "running");
+  const commands: OrchestrationCommand[] = [];
+  return runReconciliation({
+    threads: [thread],
+    approvals: [
+      {
+        requestId: ApprovalRequestId.make("failed-dismissal"),
+        threadId: thread.id,
+        turnId: null,
+        status: "pending",
+        decision: null,
+        createdAt: updatedAt,
+        resolvedAt: null,
+      },
+    ],
+    directory: {
+      getBinding: () => Effect.succeedNone,
+      upsert: () => Effect.die("unused"),
+      recordImportedTranscript: () => Effect.die("unused"),
+      getProvider: () => Effect.die("unused"),
+      listThreadIds: () => Effect.die("unused"),
+      listBindings: () => Effect.succeed([]),
+    },
+    dispatch: (command) =>
+      Effect.suspend(() => {
+        commands.push(command);
+        return command.type === "thread.activity.append"
+          ? Effect.fail(
+              new OrchestrationCommandInvariantError({
+                commandType: command.type,
+                detail: "dismissal persistence failed",
+              }),
+            )
+          : Effect.succeed({ sequence: commands.length });
+      }),
+  }).pipe(
+    Effect.tap(() => {
+      assert.deepStrictEqual(
+        commands.map((command) => command.type),
+        ["thread.activity.append", "thread.activity.append", "thread.session.set"],
+      );
+      return Effect.void;
+    }),
+  );
+});
 
 it.effect("marks active running sessions that have persisted resume state", () => {
   const active = makeThread("thread-mark-active", "running", TurnId.make("turn-mark-active"));
@@ -694,6 +794,11 @@ it.effect("retries failed projections and continues after a persistent failure",
 it.effect("does not fail startup when the live provider session inventory cannot be read", () => {
   let queried = false;
   return ServerRuntimeStartup.reconcileProviderSessions.pipe(
+    Effect.provide(
+      Layer.mock(ProjectionPendingApprovalRepository, {
+        listPending: () => Effect.succeed([]),
+      }),
+    ),
     Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
       getUserInputActivity: () => Effect.die("unused"),
       getCommandReadModel: () =>

@@ -174,6 +174,7 @@ describe("ProviderCommandReactor", () => {
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
     readonly unreadableHistory?: boolean;
+    readonly failApprovalFailureActivity?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
@@ -427,6 +428,13 @@ describe("ProviderCommandReactor", () => {
           readThreadEvents: engine.readThreadEvents,
           getThreadReplayStats: engine.getThreadReplayStats,
           dispatch: (command) => {
+            if (
+              input?.failApprovalFailureActivity &&
+              command.type === "thread.activity.append" &&
+              command.activity.kind === "provider.approval.respond.failed"
+            ) {
+              return Effect.die(new Error("Injected approval failure activity failure"));
+            }
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
               if (
@@ -4046,6 +4054,103 @@ describe("ProviderCommandReactor", () => {
       },
     });
   });
+
+  effectIt.effect.each([
+    { status: "missing", failApprovalFailureActivity: false, alreadyResolved: false },
+    { status: "stopped", failApprovalFailureActivity: false, alreadyResolved: false },
+    { status: "missing", failApprovalFailureActivity: true, alreadyResolved: false },
+    { status: "stopped", failApprovalFailureActivity: true, alreadyResolved: false },
+    { status: "stopped", failApprovalFailureActivity: true, alreadyResolved: true },
+  ] as const)(
+    "dismisses approvals when responding to a $status session, failed diagnostic: $failApprovalFailureActivity, resolved: $alreadyResolved",
+    ({ status, failApprovalFailureActivity, alreadyResolved }) =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness({ failApprovalFailureActivity }));
+        const threadId = ThreadId.make("thread-1");
+        const createdAt = "2026-01-01T00:00:01.000Z";
+        if (status === "stopped") {
+          yield* harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("seed-stopped-session"),
+            threadId,
+            session: {
+              threadId,
+              status,
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+            createdAt,
+          });
+        }
+        yield* harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("seed-orphaned-approval"),
+          threadId,
+          activity: {
+            id: EventId.make("orphaned-approval"),
+            kind: "approval.requested",
+            tone: "approval",
+            summary: "Command approval requested",
+            payload: { requestId: "orphaned-approval", requestKind: "command" },
+            turnId: null,
+            createdAt,
+          },
+          createdAt,
+        });
+        if (alreadyResolved) {
+          yield* harness.engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make("seed-accepted-approval"),
+            threadId,
+            activity: {
+              id: EventId.make("accepted-approval"),
+              kind: "approval.resolved",
+              tone: "info",
+              summary: "Approval accepted",
+              payload: { requestId: "orphaned-approval", decision: "accept" },
+              turnId: null,
+              createdAt,
+            },
+            createdAt,
+          });
+        }
+        yield* harness.engine.dispatch({
+          type: "thread.approval.respond",
+          commandId: CommandId.make("respond-orphaned-approval"),
+          threadId,
+          requestId: asApprovalRequestId("orphaned-approval"),
+          decision: "accept",
+          createdAt,
+        });
+        yield* Effect.promise(() => harness.drain());
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        )!;
+        expect(thread.activities).toEqual(
+          expect.arrayContaining([
+            ...(!failApprovalFailureActivity
+              ? [expect.objectContaining({ kind: "provider.approval.respond.failed" })]
+              : []),
+            expect.objectContaining({
+              kind: "approval.resolved",
+              payload: {
+                requestId: "orphaned-approval",
+                ...(alreadyResolved ? { decision: "accept" } : {}),
+              },
+            }),
+          ]),
+        );
+        expect(
+          thread.activities.filter((activity) => activity.kind === "approval.resolved"),
+        ).toHaveLength(1);
+        const shell = yield* harness.snapshotQuery.getThreadShellById(threadId);
+        expect(Option.getOrThrow(shell).hasPendingApprovals).toBe(false);
+        expect(harness.respondToRequest).not.toHaveBeenCalled();
+      }),
+  );
 
   it("normalizes stale Codex approval callbacks without faking approval resolution", async () => {
     const harness = await createHarness();

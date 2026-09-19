@@ -33,6 +33,9 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
+import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
+import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
+import { dismissPendingApprovals } from "../dismissPendingApprovals.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
@@ -1021,6 +1024,7 @@ const make = Effect.gen(function* () {
   const threadPlanProgress = yield* ThreadPlanProgressService;
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const pendingApprovals = yield* ProjectionPendingApprovalRepository;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionThreadMessages = yield* ProjectionThreadMessageRepository;
@@ -1769,6 +1773,22 @@ const make = Effect.gen(function* () {
       const thread = yield* resolveThreadRuntimeContext(event.threadId);
       if (!thread) return;
 
+      if (event.type === "session.exited") {
+        // Adapters close or remove the old runtime before emitting its exit.
+        // A live runtime here is a replacement, even if the exit was queued first.
+        const sessions = yield* providerService.listSessions();
+        if (
+          sessions.some(
+            (session) =>
+              session.threadId === thread.id &&
+              session.status !== "closed" &&
+              session.status !== "error",
+          )
+        ) {
+          return;
+        }
+      }
+
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
@@ -2403,6 +2423,12 @@ const make = Effect.gen(function* () {
 
       if (event.type === "session.exited") {
         yield* clearTurnStateForSession(thread.id);
+        yield* pendingApprovals.listPending({ threadId: thread.id }).pipe(
+          Effect.flatMap((approvals) =>
+            dismissPendingApprovals(orchestrationEngine, approvals, now),
+          ),
+          Effect.retry({ times: 1 }),
+        );
       }
 
       if (event.type === "runtime.error") {
@@ -2713,6 +2739,7 @@ export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
 ).pipe(
+  Layer.provide(ProjectionPendingApprovalRepositoryLive),
   Layer.provide(ProjectionThreadActivityRepositoryLive),
   Layer.provide(ProjectionThreadMessageRepositoryLive),
   Layer.provide(ProjectionThreadProposedPlanRepositoryLive),

@@ -24,6 +24,8 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
+import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -41,6 +43,11 @@ import {
   ProviderWorkspaceMissingError,
 } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
+import { ProjectionPendingApprovalRepository } from "../../persistence/Services/ProjectionPendingApprovals.ts";
+import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layers/ProjectionPendingApprovals.ts";
+import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
+import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
+import { dismissPendingApprovals } from "../dismissPendingApprovals.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
@@ -210,6 +217,8 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngineService;
+  const pendingApprovals = yield* ProjectionPendingApprovalRepository;
+  const threadActivities = yield* ProjectionThreadActivityRepository;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerAuthService = yield* ProviderAuthService;
   const providerService = yield* ProviderService;
@@ -1610,7 +1619,7 @@ const make = Effect.gen(function* () {
     }
     const hasSession = thread.session && thread.session.status !== "stopped";
     if (!hasSession) {
-      return yield* appendProviderFailureActivity({
+      const failureActivity = yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.approval.respond.failed",
         summary: "Provider approval response failed",
@@ -1618,7 +1627,39 @@ const make = Effect.gen(function* () {
         turnId: null,
         createdAt: event.payload.createdAt,
         requestId: event.payload.requestId,
-      });
+      }).pipe(Effect.exit);
+      if (Exit.isFailure(failureActivity) && Cause.hasInterruptsOnly(failureActivity.cause)) {
+        return yield* Effect.failCause(failureActivity.cause);
+      }
+      const approvals = [...(yield* pendingApprovals.listPending({ threadId: thread.id }))];
+      if (Exit.isFailure(failureActivity)) {
+        // The response optimistically resolved this row. A failed diagnostic
+        // cannot restore it, so include it unless a provider already resolved it.
+        const responded = yield* pendingApprovals.getByRequestId({
+          requestId: event.payload.requestId,
+        });
+        const resolved = yield* threadActivities.listByThreadId({
+          threadId: thread.id,
+          activityKinds: ["approval.resolved"],
+        });
+        if (
+          Option.isSome(responded) &&
+          responded.value.threadId === thread.id &&
+          !approvals.some((approval) => approval.requestId === responded.value.requestId) &&
+          !resolved.some(
+            (activity) =>
+              Predicate.isObject(activity.payload) &&
+              activity.payload.requestId === responded.value.requestId,
+          )
+        ) {
+          approvals.push(responded.value);
+        }
+      }
+      yield* dismissPendingApprovals(orchestrationEngine, approvals, event.payload.createdAt);
+      if (Exit.isFailure(failureActivity)) {
+        return yield* Effect.failCause(failureActivity.cause);
+      }
+      return;
     }
 
     yield* providerService
@@ -1934,4 +1975,7 @@ const make = Effect.gen(function* () {
   } satisfies ProviderCommandReactorShape;
 });
 
-export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make);
+export const ProviderCommandReactorLive = Layer.effect(ProviderCommandReactor, make).pipe(
+  Layer.provide(ProjectionPendingApprovalRepositoryLive),
+  Layer.provide(ProjectionThreadActivityRepositoryLive),
+);
