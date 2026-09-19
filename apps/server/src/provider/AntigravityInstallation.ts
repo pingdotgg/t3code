@@ -136,6 +136,33 @@ const installationError = (operation: string, detail: string, cause?: unknown) =
 const wrapFailure = (operation: string, detail: string) => (cause: unknown) =>
   isInstallationError(cause) ? cause : installationError(operation, detail, cause);
 
+const SIGNAL_INTERRUPT_PATTERN = /receipt of signal: '([A-Za-z0-9]+)'/;
+
+/**
+ * Walks a chained `cause` (as produced by effect/platform's child process
+ * spawner) looking for the signal that killed the process. Bounded so an
+ * unexpected cyclical cause cannot recurse forever.
+ * @internal
+ */
+export function findTerminatingSignal(cause: unknown, depth = 0): string | undefined {
+  if (depth > 8 || !(cause instanceof Error)) return undefined;
+  const match = SIGNAL_INTERRUPT_PATTERN.exec(cause.message);
+  if (match) return match[1];
+  return findTerminatingSignal((cause as { cause?: unknown }).cause, depth + 1);
+}
+
+const GENERIC_VALIDATION_FAILURE_DETAIL =
+  "The downloaded Antigravity runtime could not start in this environment.";
+const SIGILL_VALIDATION_FAILURE_DETAIL =
+  "The downloaded Antigravity runtime crashed on startup with an illegal instruction (SIGILL). This usually means the CPU is missing instructions (such as AVX/AVX2) that the Antigravity runtime requires.";
+
+/** @internal */
+export function describeValidationFailure(cause: unknown): string {
+  return findTerminatingSignal(cause) === "SIGILL"
+    ? SIGILL_VALIDATION_FAILURE_DETAIL
+    : GENERIC_VALIDATION_FAILURE_DETAIL;
+}
+
 function executableNames(platform: NodeJS.Platform) {
   return platform === "win32"
     ? { executable: "agy_acp_server.exe", harness: "localharness_external.exe" }
@@ -508,11 +535,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(Path.Path, path),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(Crypto.Crypto, crypto),
-      Effect.mapError(
-        wrapFailure(
-          "verify",
-          "The downloaded Antigravity runtime could not start in this environment.",
-        ),
+      Effect.mapError((cause) =>
+        isInstallationError(cause)
+          ? cause
+          : installationError("verify", describeValidationFailure(cause), cause),
       ),
     );
 
