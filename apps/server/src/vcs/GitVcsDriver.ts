@@ -565,6 +565,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     GIT_OBJECT_DIRECTORY: undefined,
     GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
     GIT_CEILING_DIRECTORIES: undefined,
+    GIT_DISCOVERY_ACROSS_FILESYSTEM: undefined,
   };
 
   // Whether the path itself exists, including as a symlink — exists()
@@ -586,19 +587,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
   // Whether a .git entry exists along the workspace's physical ancestry —
   // filesystem evidence that repository metadata is present even when git
-  // cannot read it. Git resolves discovery from the real working directory,
-  // so a symlinked cwd must walk its resolved path, not the lexical one.
+  // cannot read it. Discovery follows Git's own rules: resolved from the
+  // real working directory (a symlinked cwd walks its resolved path), and
+  // stopping at filesystem boundaries because Git does not cross mounts by
+  // default. A resolution or lookup failure means absence was never proven,
+  // so it propagates to the caller's failure path instead of reading as
+  // non-Git.
   const hasGitMetadataEntry = (cwd: string) =>
     Effect.gen(function* () {
-      let directory = yield* fileSystem
-        .realPath(cwd)
-        .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(cwd)));
+      let directory = yield* fileSystem.realPath(cwd);
+      const startDevice = (yield* fileSystem.stat(directory)).dev;
       while (true) {
         if (yield* entryExists(path.join(directory, ".git"))) {
           return true;
         }
         const parent = path.dirname(directory);
         if (parent === directory) return false;
+        if ((yield* fileSystem.stat(parent)).dev !== startDevice) return false;
         directory = parent;
       }
     });
