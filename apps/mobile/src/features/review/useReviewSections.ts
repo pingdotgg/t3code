@@ -87,7 +87,10 @@ export function useReviewSections(input: {
   const reviewSections = useMemo(() => {
     const sections = buildReviewSectionItems({
       checkpoints: readyCheckpoints,
-      gitSections: canReadFiles || fileAccess.isPending ? (diffPreview.data?.sources ?? reviewCache.gitSections) : [],
+      gitSections:
+        canReadFiles || fileAccess.isPending
+          ? (diffPreview.data?.sources ?? reviewCache.gitSections)
+          : [],
       turnDiffById: reviewCache.turnDiffById,
       loadingTurnIds,
       loadingGitSections: fileAccess.isPending || diffPreview.isPending,
