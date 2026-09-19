@@ -929,10 +929,9 @@ for (const scenario of ["failure", "interruption", "stale-attempt"] as const) {
       );
       assert.isDefined(errorItem);
       if (errorItem?.type === "turn-item.updated" && errorItem.payload.type === "error") {
-        assert.equal(
-          errorItem.payload.failure.message,
-          "Server settings read-file failed at <test>.",
-        );
+        // The persisted item carries a bounded curated message; the exact
+        // underlying text stays in the logged cause.
+        assert.equal(errorItem.payload.failure.message, "Run preparation failed.");
       }
     }),
   );

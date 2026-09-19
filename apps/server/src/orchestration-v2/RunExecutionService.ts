@@ -865,7 +865,9 @@ export const layer: Layer.Layer<
                   terminal: makeFailedTerminalEvent(
                     makeProviderFailure({
                       cause: Cause.squash(cause),
-                      message: Cause.prettyErrors(cause)[0]?.message,
+                      // Keep exact underlying text in the logged cause only;
+                      // the persisted turn item gets a bounded curated message.
+                      message: "Run preparation failed.",
                       class: "unknown",
                     }),
                     input.providerTurnOrdinal * 100 + 1,
