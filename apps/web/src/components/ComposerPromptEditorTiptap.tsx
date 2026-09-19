@@ -124,6 +124,11 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  ariaLabel?: string | undefined;
+  /** Identifies an editor with suggestions, even while its list is closed. */
+  suggestionListId?: string | undefined;
+  /** References the highlighted option only while its list is rendered. */
+  activeSuggestionId?: string | undefined;
   containerClassName?: string;
   className?: string;
   placeholderClassName?: string;
@@ -136,7 +141,7 @@ export interface ComposerPromptEditorProps {
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab" | "Escape",
     event: KeyboardEvent,
     isTaskItem?: boolean,
   ) => boolean;
@@ -573,6 +578,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     skills,
     disabled,
     placeholder,
+    ariaLabel,
+    suggestionListId,
+    activeSuggestionId,
     containerClassName,
     className,
     placeholderClassName,
@@ -794,6 +802,22 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           ),
           "data-testid": "composer-editor",
           "data-composer-rich-text": richText ? "true" : "false",
+          role: "textbox",
+          "aria-multiline": "true",
+          ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
+          ...(disabled ? { "aria-readonly": "true" } : {}),
+          ...(!disabled && suggestionListId
+            ? {
+                "aria-autocomplete": "list",
+                "aria-haspopup": "listbox",
+                ...(activeSuggestionId
+                  ? {
+                      "aria-controls": suggestionListId,
+                      "aria-activedescendant": activeSuggestionId,
+                    }
+                  : {}),
+              }
+            : {}),
           "aria-placeholder": placeholder,
         },
         handleKeyDown: (view, event) => {
@@ -904,7 +928,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
                 ? ("ArrowDown" as const)
                 : event.key === "ArrowUp"
                   ? ("ArrowUp" as const)
-                  : null;
+                  : event.key === "Escape"
+                    ? ("Escape" as const)
+                    : null;
           if (!key) return false;
           const handled = handler(key, event);
           if (handled) {

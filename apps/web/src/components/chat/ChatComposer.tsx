@@ -59,6 +59,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -246,7 +247,11 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
-import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
+import {
+  type ComposerCommandItem,
+  ComposerCommandMenu,
+  composerSuggestionOptionId,
+} from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
@@ -2066,6 +2071,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     detectComposerTrigger(prompt, prompt.length),
   );
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const composerSuggestionId = useId();
+  const composerSuggestionListId = `${composerSuggestionId}-${encodeURIComponent(draftId ?? activeThreadId ?? "new")}-suggestions`;
+  const dismissedComposerSnapshotRef = useRef<{ value: string; expandedCursor: number } | null>(
+    null,
+  );
   // Active ArrowUp recall. Cleared on edit and on thread switch.
   const promptHistoryPositionRef = useRef<ComposerPromptHistoryPosition | null>(null);
   const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
@@ -2463,7 +2473,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
-    ? `${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
+    ? `${composerSuggestionListId}:${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
     : null;
   const activeComposerMenuItem = useMemo(() => {
     const activeItemId = resolveComposerMenuActiveItemId({
@@ -2490,6 +2500,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const isComposerApprovalState = activePendingApproval !== null;
+  const composerSuggestionsVisible = composerMenuOpen && !isComposerApprovalState;
+  const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
@@ -3121,7 +3133,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Reset compositor state on thread/draft change
   // ------------------------------------------------------------------
   useEffect(() => {
+    dismissedComposerSnapshotRef.current = null;
     setComposerHighlightedItemId(null);
+    setComposerHighlightedSearchKey(null);
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
@@ -3305,12 +3319,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       contextIds: string[],
     ) => {
       expandComposerForEditorChange();
+      const dismissed = dismissedComposerSnapshotRef.current;
+      const isDismissed =
+        dismissed?.value === nextPrompt && dismissed.expandedCursor === expandedCursor;
+      if (!isDismissed) dismissedComposerSnapshotRef.current = null;
+      const nextTrigger =
+        cursorAdjacentToMention || isDismissed
+          ? null
+          : detectComposerTrigger(nextPrompt, expandedCursor);
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
         setComposerCursor(nextCursor);
-        setComposerTrigger(
-          cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-        );
+        setComposerTrigger(nextTrigger);
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
           nextPrompt,
@@ -3400,9 +3420,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         addComposerDraftFiles(attachmentDraftTarget, attachmentChanges.filesToRestore);
       }
       setComposerCursor(nextCursor);
-      setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-      );
+      setComposerTrigger(nextTrigger);
     },
     [
       activePendingProgress?.activeQuestion,
@@ -3532,9 +3550,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     trigger: ComposerTrigger | null;
   } => {
     const snapshot = readComposerSnapshot();
+    const dismissed = dismissedComposerSnapshotRef.current;
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+      trigger:
+        dismissed?.value === snapshot.value && dismissed.expandedCursor === snapshot.expandedCursor
+          ? null
+          : detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
     };
   }, [readComposerSnapshot]);
 
@@ -3948,7 +3970,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Callbacks: command key
   // ------------------------------------------------------------------
   const onComposerCommandKey = (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab" | "Escape",
     event: KeyboardEvent,
     isTaskItem = false,
   ) => {
@@ -3957,8 +3979,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       toggleInteractionMode();
       return true;
     }
-    const { trigger } = resolveActiveComposerTrigger();
+    const { trigger, snapshot } = resolveActiveComposerTrigger();
     const menuIsActive = composerMenuOpenRef.current || trigger !== null;
+    if (key === "Escape") {
+      if (!menuIsActive || event.isComposing) return false;
+      dismissedComposerSnapshotRef.current = snapshot;
+      composerMenuOpenRef.current = false;
+      setComposerTrigger(null);
+      setComposerHighlightedItemId(null);
+      setComposerHighlightedSearchKey(null);
+      return true;
+    }
     if (menuIsActive) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
@@ -6395,9 +6426,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 </ComposerCommandMenuLayer>
               )}
 
-              {composerMenuOpen && !isComposerApprovalState && (
+              <div role="status" aria-atomic="true" className="sr-only">
+                {composerSuggestionsVisible
+                  ? isComposerMenuLoading
+                    ? composerTriggerKind === "pull-request"
+                      ? "Finding pull request..."
+                      : "Searching workspace files..."
+                    : composerMenuItems.length === 0
+                      ? composerMenuEmptyState
+                      : ""
+                  : ""}
+              </div>
+              {composerSuggestionsVisible && (
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
                   <ComposerCommandMenu
+                    listId={composerSuggestionListId}
                     items={composerMenuItems}
                     resolvedTheme={resolvedTheme}
                     isLoading={isComposerMenuLoading}
@@ -6800,6 +6843,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
+                    ariaLabel="Message"
+                    suggestionListId={composerSuggestionListId}
+                    activeSuggestionId={
+                      composerSuggestionListVisible && activeComposerMenuItem
+                        ? composerSuggestionOptionId(
+                            composerSuggestionListId,
+                            activeComposerMenuItem.id,
+                          )
+                        : undefined
+                    }
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
                     value={
