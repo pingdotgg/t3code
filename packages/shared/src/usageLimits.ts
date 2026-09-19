@@ -57,11 +57,33 @@ function accountKey(driver: ServerProvider["driver"], email: string | undefined)
   return normalizedEmail ? `${driver}:${normalizedEmail}` : null;
 }
 
+function hubAccountKey(sourceId: string, accountId: string): string {
+  return `${encodeURIComponent(sourceId)}:${encodeURIComponent(accountId)}`;
+}
+
+/** Personal and team subscriptions may share an email, even when one quota probe fails. */
+function ambiguousHubAccountKeys(sources: UsageLimitSourceSnapshots): ReadonlySet<string> {
+  const identities = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const source of sources) {
+    for (const account of source.accounts) {
+      const key = accountKey(account.driver, account.email);
+      if (!key) continue;
+      const identity = hubAccountKey(source.id, account.id);
+      const previous = identities.get(key);
+      if (previous !== undefined && previous !== identity) ambiguous.add(key);
+      identities.set(key, identity);
+    }
+  }
+  return ambiguous;
+}
+
 /**
  * One subscription account as the pooled views see it, whichever way it was
- * reported. The same email signed in natively on two environments, or reported
- * by a hub as well as natively, is one account: its quota is one bucket, so
- * counting it twice would misstate what is left.
+ * reported. Email links native and hub reads only when the hubs report one
+ * subscription for that address. Distinct hub identities must remain separate.
+ * Without a subscription ID, an ambiguous native login stays separate too;
+ * this may count it twice, but must not route credits to an arbitrary hub account.
  */
 export interface LimitAccount {
   readonly key: string;
@@ -92,6 +114,11 @@ export interface LimitAccount {
  * native instances supply names and environment labels.
  */
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
+  const ambiguous = ambiguousHubAccountKeys(
+    [...presentations.values()].flatMap(
+      (presentation) => presentation.serverConfig?.usageLimitSources ?? [],
+    ),
+  );
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
@@ -187,8 +214,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
-        merge(accountKey(account.driver, account.email) ?? `${source.id}:${account.id}`, {
-          key: `${source.id}:${account.id}`,
+        const key = accountKey(account.driver, account.email);
+        merge(key && !ambiguous.has(key) ? key : hubAccountKey(source.id, account.id), {
+          key: hubAccountKey(source.id, account.id),
           driver: account.driver,
           displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
           email: account.email,
@@ -547,6 +575,7 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
+  const ambiguous = ambiguousHubAccountKeys(sources);
   const native = providersWithLimits(providers).filter(
     (provider) => provider.driver === selected.driver,
   );
@@ -568,6 +597,7 @@ export function collectProviderUsageLimits(
       .filter(
         ({ account }) =>
           key !== null &&
+          !ambiguous.has(key) &&
           accountKey(account.driver, account.email) === key &&
           account.usageLimits.resetCredits &&
           !limitsNotice(account.usageLimits),
@@ -616,9 +646,9 @@ export function collectProviderUsageLimits(
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
     for (const account of matching) {
       const key = accountKey(account.driver, account.email);
-      if (key && nativeAccounts.has(key)) continue;
+      if (key && !ambiguous.has(key) && nativeAccounts.has(key)) continue;
       accounts.push({
-        id: `${source.id}:${account.id}`,
+        id: hubAccountKey(source.id, account.id),
         driver: account.driver,
         label: `${source.label} · ${account.id}`,
         sourceLabel: "CLI Proxy",

@@ -767,6 +767,57 @@ describe("/usage-limits", () => {
     },
   ];
 
+  it.each([false, true])("keeps same-email subscriptions separate (failed probe: %s)", (failed) => {
+    const hub = {
+      ...sources[0]!,
+      accounts: ["personal", "team"].map((id) => ({
+        ...sources[0]!.accounts[0]!,
+        id,
+        usageLimits: {
+          ...limits,
+          unavailable: failed && id === "team" ? { reason: "probeFailed" as const } : undefined,
+          resetCredits: { availableCount: 2, nextCreditId: id },
+        },
+      })),
+    };
+    const presentation = {
+      entry: { target: { label: "Local" } },
+      serverConfig: { providers: [selected], usageLimitSources: [hub] },
+    };
+    const accounts = collectLimitAccounts(
+      new Map(["a", "b"].map((id) => [EnvironmentId.make(id), presentation])),
+    );
+    expect(accounts).toHaveLength(failed ? 2 : 3);
+    expect(accounts[0]?.redeem?.input).toEqual({ instanceId: selected.instanceId });
+    const report = collectProviderUsageLimits(selected.instanceId, [selected], [hub], now);
+    expect(report?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "hub:personal",
+      "hub:team",
+    ]);
+    expect(report?.accounts[0]?.resetCreditInput).toEqual({ instanceId: selected.instanceId });
+  });
+
+  it("keeps source/account pairs distinct when their joined IDs collide", () => {
+    const ids = [
+      ["hub:team", "seat"],
+      ["hub", "team:seat"],
+    ] as const;
+    const hubs = ids.map(([id, accountId]) => ({
+      ...sources[0]!,
+      id: UsageLimitSourceId.make(id),
+      accounts: [{ ...sources[0]!.accounts[0]!, id: accountId }],
+    }));
+    const presentation = {
+      entry: { target: { label: "Local" } },
+      serverConfig: { usageLimitSources: hubs },
+    };
+    const accounts = collectLimitAccounts(new Map([[EnvironmentId.make("a"), presentation]]));
+    const report = collectProviderUsageLimits(selected.instanceId, [selected], hubs, now);
+    expect(new Set(accounts.map((account) => account.key)).size).toBe(2);
+    expect(new Set(report?.accounts.map((account) => account.id)).size).toBe(3);
+  });
+
   it("uses hub credit balances and redemption targets in the composer, including native duplicates", () => {
     const hubs = sources.map((source) => ({
       ...source,
