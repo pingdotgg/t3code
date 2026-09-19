@@ -48,6 +48,42 @@ function normalizePem(value: string): string {
   return value.replace(/\\n/gu, "\n").trim();
 }
 
+// PEM parsing + key import cost ~0.3–1ms per call and runs on every relay
+// JWT sign/verify (link, connect, status, publish, DPoP). Keys rotate rarely,
+// so cache the imported keys by normalized PEM with a small FIFO bound.
+const MAX_CACHED_KEYS = 50;
+const privateKeyCache = new Map<string, Promise<Awaited<ReturnType<typeof importPKCS8>>>>();
+const publicKeyCache = new Map<string, Promise<Awaited<ReturnType<typeof importSPKI>>>>();
+
+function cachedKeyImport<T>(
+  cache: Map<string, Promise<T>>,
+  normalizedPem: string,
+  importKey: (pem: string) => Promise<T>,
+): Promise<T> {
+  const existing = cache.get(normalizedPem);
+  if (existing !== undefined) {
+    return existing;
+  }
+  let pending: Promise<T>;
+  pending = importKey(normalizedPem).then(
+    (key) => key,
+    (error: unknown) => {
+      if (cache.get(normalizedPem) === pending) {
+        cache.delete(normalizedPem);
+      }
+      throw error;
+    },
+  );
+  if (cache.size >= MAX_CACHED_KEYS) {
+    const oldest = cache.keys().next();
+    if (!oldest.done) {
+      cache.delete(oldest.value);
+    }
+  }
+  cache.set(normalizedPem, pending);
+  return pending;
+}
+
 export function signRelayJwt(input: {
   readonly privateKey: string;
   readonly typ: string;
@@ -55,7 +91,9 @@ export function signRelayJwt(input: {
 }): Effect.Effect<string, RelayJwtError> {
   return Effect.tryPromise({
     try: async () => {
-      const key = await importPKCS8(normalizePem(input.privateKey), "EdDSA");
+      const key = await cachedKeyImport(privateKeyCache, normalizePem(input.privateKey), (pem) =>
+        importPKCS8(pem, "EdDSA"),
+      );
       return new SignJWT(input.payload)
         .setProtectedHeader({ alg: "EdDSA", typ: input.typ })
         .sign(key);
@@ -75,7 +113,9 @@ export function verifyRelayJwt(input: {
 }): Effect.Effect<JWTPayload, RelayJwtError> {
   return Effect.tryPromise({
     try: async () => {
-      const key = await importSPKI(normalizePem(input.publicKey), "EdDSA");
+      const key = await cachedKeyImport(publicKeyCache, normalizePem(input.publicKey), (pem) =>
+        importSPKI(pem, "EdDSA"),
+      );
       const verified = await jwtVerify(input.token, key, {
         algorithms: ["EdDSA"],
         typ: input.typ,
