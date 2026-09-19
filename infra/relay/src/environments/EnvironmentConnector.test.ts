@@ -2,6 +2,10 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 
 import {
+  RelayApi,
+  RelayClientPrincipal,
+  RelayDpopClientAuth,
+  RelayEnvironmentConnectRequest,
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
   RelayCloudEnvironmentHealthProofPayload,
@@ -25,12 +29,23 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
+import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi";
 
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentConnector from "./EnvironmentConnector.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
+import * as DpopProofs from "../auth/DpopProofs.ts";
+import { dpopClientApi, RELAY_REQUEST_DEADLINE_MS, traceRelayHttpRequest } from "../http/Api.ts";
 
 const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
   privateKeyEncoding: { format: "pem", type: "pkcs8" },
@@ -52,6 +67,9 @@ const decodeHealthRequestBody = Schema.decodeUnknownSync(
 );
 const decodeMintRequestBody = Schema.decodeUnknownSync(
   Schema.fromJsonString(RelayCloudMintCredentialRequest),
+);
+const encodeConnectRequestBody = Schema.encodeSync(
+  Schema.fromJsonString(RelayEnvironmentConnectRequest),
 );
 const isEnvironmentConnectNotAuthorized = Schema.is(
   EnvironmentConnector.EnvironmentConnectNotAuthorized,
@@ -782,6 +800,94 @@ describe("EnvironmentConnector", () => {
       }
     }).pipe(Effect.provide(connectorTestLayer(execute)));
   });
+
+  for (const stalledStep of ["proof", "link", "allocation", "mint"] as const) {
+    it.effect(`preserves the endpoint timeout under the relay deadline during ${stalledStep}`, () =>
+      Effect.gen(function* () {
+        const proofStarted = yield* Deferred.make<void>();
+        const releaseProof = yield* Deferred.make<void>();
+        const stepStarted = yield* Deferred.make<void>();
+        const interrupted = yield* Deferred.make<void>();
+        const stall = Deferred.succeed(stepStarted, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+        );
+        const links = makeLinks();
+        const allocations = makeAllocations();
+        const handlers = dpopClientApi.pipe(
+          Layer.provide(
+            connectorTestLayer(() => stall, {
+              links: {
+                ...links,
+                getForUser: (input) => (stalledStep === "link" ? stall : links.getForUser(input)),
+              },
+              allocations: {
+                ...allocations,
+                get: (input) => (stalledStep === "allocation" ? stall : allocations.get(input)),
+              },
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(DpopProofs.DpopProofReplay, {
+              verifyAndConsume: () =>
+                Deferred.succeed(proofStarted, undefined).pipe(
+                  Effect.andThen(stalledStep === "proof" ? stall : Deferred.await(releaseProof)),
+                  Effect.as("client-proof-key-thumbprint"),
+                ),
+            }),
+          ),
+          Layer.provideMerge(
+            Layer.succeed(RelayDpopClientAuth, {
+              relayDpop: (effect) =>
+                Effect.provideService(effect, RelayClientPrincipal, {
+                  userId: "user_123",
+                  token: "test-token",
+                  proofKeyThumbprint: "client-proof-key-thumbprint",
+                  dpopScopes: ["environment:connect"],
+                }),
+            }),
+          ),
+        );
+        const httpEffect = yield* HttpRouter.toHttpEffect(
+          HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.dpopClient)).pipe(
+            Layer.provide(handlers),
+          ),
+        );
+        const fiber = yield* traceRelayHttpRequest(httpEffect).pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromWeb(
+              new Request("https://relay.example.test/v1/environments/env-connector-test/connect", {
+                method: "POST",
+                headers: {
+                  authorization: "DPoP test-token",
+                  dpop: "test-proof",
+                  "content-type": "application/json",
+                },
+                body: encodeConnectRequestBody({
+                  clientProofKeyThumbprint: "client-proof-key-thumbprint",
+                }),
+              }),
+            ),
+          ),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(proofStarted);
+        yield* TestClock.adjust(Duration.seconds(3));
+        if (stalledStep !== "proof") {
+          yield* Deferred.succeed(releaseProof, undefined);
+        }
+        yield* Deferred.await(stepStarted);
+        yield* TestClock.adjust(Duration.millis(RELAY_REQUEST_DEADLINE_MS - 3_000));
+        const response = yield* Fiber.join(fiber);
+        const body = yield* Effect.promise(() => HttpServerResponse.toWeb(response).json());
+
+        expect(response.status).toBe(504);
+        expect(body).toMatchObject({ code: "environment_endpoint_timed_out" });
+        expect(yield* Deferred.isDone(interrupted)).toBe(true);
+      }).pipe(Effect.provide(HttpServer.layerServices), Effect.scoped),
+    );
+  }
 
   it.effect("times out hung managed endpoint mint requests", () => {
     let resolveRequestStarted: (() => void) | undefined;

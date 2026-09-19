@@ -799,6 +799,8 @@ export const dpopClientApi = HttpApiBuilder.group(
               ...(payload.deviceId ? { deviceId: payload.deviceId } : {}),
             });
           },
+          (effect, args) =>
+            EnvironmentConnector.withEnvironmentMintTimeout(effect, args.params.environmentId),
           mapRelayCommonApiErrors("invalid_dpop"),
           mapErrorTags({
             EnvironmentConnectNotAuthorized: (error, traceId) =>
