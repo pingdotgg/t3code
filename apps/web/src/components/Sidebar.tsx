@@ -141,6 +141,7 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
+import { useTranslate } from "../i18n/translate";
 import type { SidebarThreadSummary } from "../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
@@ -655,6 +656,7 @@ function SidebarSectionHeader(props: {
   isDropTarget?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
+  const t = useTranslate();
   const snoozed = props.marker === "snoozed-header";
   const className = cn(
     "flex h-full w-full items-center gap-2 px-2 text-left text-xs font-medium",
@@ -664,7 +666,7 @@ function SidebarSectionHeader(props: {
   );
   const content = (
     <>
-      <span className="shrink-0">{props.label}</span>
+      <span className="shrink-0">{t(props.label)}</span>
       <span
         aria-hidden
         className={cn(
@@ -1025,6 +1027,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
    */
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
 }) {
+  const t = useTranslate();
   const {
     isRenaming,
     onCancelRename,
@@ -1810,7 +1813,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                                 )}
                               >
                                 <AlarmClockIcon aria-hidden className="size-4 shrink-0" />
-                                <span role="status">{topStatus.label}</span>
+                                <span role="status">{t(topStatus.label)}</span>
                               </button>
                             }
                           />
@@ -1839,7 +1842,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
-                          <span role="status">{topStatus.label}</span>
+                          <span role="status">{t(topStatus.label)}</span>
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
