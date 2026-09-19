@@ -17,8 +17,13 @@ import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { cn } from "../../lib/utils";
@@ -62,6 +67,7 @@ import {
   PolicyTooltip,
   SettingResetButton,
   SettingsPageContainer,
+  SettingsRow,
   SettingsSearchTarget,
   SettingsSection,
   useSettingsSearchTargetId,
@@ -425,6 +431,42 @@ function GitFetchIntervalSettings() {
   );
 }
 
+function CreateDraftChangeRequestsSettings() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["createDraftChangeRequests"]);
+  const createDraft = settings.createDraftChangeRequests;
+  const defaultCreateDraft = DEFAULT_UNIFIED_SETTINGS.createDraftChangeRequests;
+
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["createDraftChangeRequests"]}
+      mixed={mixed}
+      {...searchableSetting("create-draft-change-requests")}
+      description="New pull requests start as drafts until you mark them ready for review."
+      resetAction={
+        mixed || createDraft !== defaultCreateDraft ? (
+          <SettingResetButton
+            label="create change requests as drafts"
+            onClick={() => updateSettings({ createDraftChangeRequests: defaultCreateDraft })}
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          mixed={mixed}
+          checked={mixed ? false : createDraft}
+          onCheckedChange={(checked) =>
+            updateSettings({ createDraftChangeRequests: Boolean(checked) })
+          }
+          aria-label="Create change requests as drafts"
+        />
+      }
+    />
+  );
+}
+
 function SourceControlSectionSkeleton({
   title,
   headerAction,
@@ -600,6 +642,12 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
+      <SettingsSection title="Change requests">
+        <CreateDraftChangeRequestsSettings />
+      </SettingsSection>
+
+      {/* Its rows are serverScoped: without a primary they render inert with
+          an explanation, which beats disappearing. */}
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );

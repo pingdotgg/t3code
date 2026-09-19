@@ -201,6 +201,7 @@ layer("GitLabCli.layer", (it) => {
         headSelector: "owner:feature/provider",
         title: "Provider MR",
         bodyFile: "/tmp/t3-mr-body.md",
+        draft: false,
       });
 
       expect(mockedRun).toHaveBeenCalledWith(
@@ -221,6 +222,30 @@ layer("GitLabCli.layer", (it) => {
             "--field",
             "description=@/tmp/t3-mr-body.md",
           ],
+        }),
+      );
+    }),
+  );
+
+  it.effect("marks merge requests as drafts when requested", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.createMergeRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "owner:feature/provider",
+        title: "Provider MR",
+        bodyFile: "/tmp/t3-mr-body.md",
+        draft: true,
+      });
+
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: expect.arrayContaining(["--raw-field", "draft=true"]),
         }),
       );
     }),

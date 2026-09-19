@@ -677,6 +677,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "create-draft-change-requests",
+    title: "Create change requests as drafts",
+    to: "/settings/source-control",
+    searchTerms: ["draft pull request merge request pr mr ready for review create open"],
+    environmentOnly: true,
+  },
+  {
     id: "source-control-writer-model",
     title: "Source control writer model",
     to: "/settings/source-control",
