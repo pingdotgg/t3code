@@ -89,7 +89,7 @@ export const T3ProjectFile = Schema.Struct({
   worktreeCloneFiles: Schema.optionalKey(
     Schema.Boolean.annotate({
       description:
-        "On macOS, use APFS clones for large tracked files in eligible clean, same-commit worktrees. Saves disk space but verification can be slower than Git checkout. Defaults to false.",
+        "Use copy-on-write files in eligible clean, same-commit worktrees on supported filesystems. Saves disk space but verification can be slower than Git checkout. Defaults to true; set false to use ordinary Git checkout.",
     }),
   ),
   worktreeCloneDependencies: Schema.optionalKey(

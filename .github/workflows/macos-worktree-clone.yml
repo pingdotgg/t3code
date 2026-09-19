@@ -1,0 +1,39 @@
+name: macOS Worktree Cloning
+
+on:
+  pull_request:
+    paths:
+      - "apps/server/src/vcs/FileClone*.ts"
+      - "apps/server/src/vcs/WorktreeClone*.ts"
+      - "apps/server/src/vcs/GitVcsDriverCore*.ts"
+      - "packages/contracts/src/t3ProjectFile*.ts"
+      - ".github/workflows/macos-worktree-clone.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-worktree-clone-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: APFS worktree copies
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+      - name: Verify native copies and Git fallback
+        run: vp test run apps/server/src/vcs/WorktreeClone.test.ts apps/server/src/vcs/GitVcsDriverCore.test.ts packages/contracts/src/t3ProjectFile.test.ts
+      - name: Typecheck server
+        run: vp run --filter t3 typecheck

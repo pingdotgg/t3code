@@ -54,10 +54,11 @@ Browser access changes apply when an agent session next starts.
 
 ## APFS worktree copies on macOS
 
-Set `"worktreeCloneFiles": true` in `t3.json` to use APFS copies for large tracked
-files in eligible clean, same-commit worktrees. The copies share disk blocks until
-edited; changes remain independent. This saves disk space, but verification can
-make checkout slower than Git. It is off by default; other checkouts use Git as usual.
+T3 uses APFS copies for regular tracked files in eligible clean, same-commit
+worktrees. The copies share disk blocks until edited; changes remain independent.
+This saves disk space, but verification can make checkout slower than Git. Set
+`"worktreeCloneFiles": false` in `t3.json` to opt out. Unsupported checkouts and
+filesystems use Git as usual.
 
 To seed dependencies too, set `"worktreeCloneDependencies": true` in `t3.json` and
 keep a `runOnWorktreeCreate` script that installs dependencies. T3 copies ignored
