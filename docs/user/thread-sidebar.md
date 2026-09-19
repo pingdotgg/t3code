@@ -112,6 +112,23 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+## Filter threads by project
+
+On web and desktop, use the project picker in the search row to narrow the
+list to one project. Click a project to show only its threads, and choose **All
+projects** to clear the filter. Type in the picker to search when you have many
+projects.
+
+To follow several related projects at once, hold `Cmd` on macOS or `Ctrl` on
+Windows and Linux while clicking a project, or while pressing `Enter`. The picker
+stays open and keeps your search text, so you can mark several in a row. Selected
+projects stay highlighted. Hover the project picker to see all selected project
+names.
+
+Your selection is kept as you move around the app and when you restart, so the
+list comes back scoped the way you left it. A project that is no longer available
+drops out of the filter on its own.
+
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
