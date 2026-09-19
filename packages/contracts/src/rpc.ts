@@ -176,7 +176,7 @@ import {
 } from "./relayClient.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
-  OrchestrationGetWorkflowScriptError,
+  OrchestrationWorkflowFileError,
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
@@ -1476,7 +1476,7 @@ const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   {
     payload: OrchestrationV2RpcSchemas.getWorkflowScript.input,
     success: OrchestrationV2RpcSchemas.getWorkflowScript.output,
-    error: Schema.Union([OrchestrationGetWorkflowScriptError, EnvironmentAuthorizationError]),
+    error: Schema.Union([OrchestrationWorkflowFileError, EnvironmentAuthorizationError]),
   },
 );
 

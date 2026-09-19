@@ -538,6 +538,86 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
 
+/**
+ * One entry of a dynamic workflow's phase plan. The plan grows while the run
+ * executes: a phase a script only reaches at runtime joins the list when it
+ * starts, so a client must treat the list as append-only rather than as a
+ * fixed arc declared up front.
+ */
+export const OrchestrationV2WorkflowPhase = Schema.Struct({
+  index: NonNegativeInt,
+  title: TrimmedNonEmptyString,
+});
+export type OrchestrationV2WorkflowPhase = typeof OrchestrationV2WorkflowPhase.Type;
+
+/**
+ * One agent inside a workflow run. Timestamps are epoch milliseconds rather
+ * than `DateTimeUtc` because only the top-level entity fields are remapped for
+ * the JSON wire shape (see `OrchestrationV2SubagentJson`), so a nested
+ * `DateTimeUtc` would never be encoded.
+ */
+export const OrchestrationV2WorkflowAgent = Schema.Struct({
+  /** Spawn ordinal within the run. Stable identity: an agent keeps it across updates. */
+  index: NonNegativeInt,
+  label: TrimmedNonEmptyString,
+  /**
+   * Provider-assigned id, absent until the agent actually starts. Names the
+   * member's transcript file inside the run's transcript directory.
+   */
+  agentId: Schema.optional(TrimmedNonEmptyString),
+  /** The member's own thread, so the UI can open it like any subagent's. */
+  childThreadId: Schema.optional(ThreadId),
+  state: Schema.Literals(["queued", "running", "completed", "failed"]),
+  phaseIndex: Schema.optional(NonNegativeInt),
+  phaseTitle: Schema.optional(TrimmedNonEmptyString),
+  model: Schema.optional(TrimmedNonEmptyString),
+  /** Retry counter; > 1 means the agent was restarted after a provider error. */
+  attempt: Schema.optional(NonNegativeInt),
+  totalTokens: Schema.optional(NonNegativeInt),
+  toolCalls: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+  queuedAt: Schema.optional(NonNegativeInt),
+  startedAt: Schema.optional(NonNegativeInt),
+  /**
+   * Prompt and result excerpts. A workflow member's whole conversation is one
+   * prompt and one answer, so together these are its transcript as far as the
+   * provider exposes it — both are capped by the CLI at a few hundred
+   * characters.
+   */
+  prompt: Schema.optional(TrimmedNonEmptyString),
+  result: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationV2WorkflowAgent = typeof OrchestrationV2WorkflowAgent.Type;
+
+/**
+ * Filesystem handles the provider reports when a run launches. The transcript
+ * directory is what makes a member's full conversation readable: members never
+ * become threads, and nothing about them crosses the event stream beyond the
+ * progress snapshot.
+ */
+export const OrchestrationV2WorkflowRunHandles = Schema.Struct({
+  runId: Schema.optional(TrimmedNonEmptyString),
+  transcriptDir: Schema.optional(TrimmedNonEmptyString),
+  scriptPath: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationV2WorkflowRunHandles = typeof OrchestrationV2WorkflowRunHandles.Type;
+
+/**
+ * Workflow-run shape carried by the coordinator subagent. The snapshot is the
+ * provider's own replace-in-full view of the run; members are additionally
+ * projected as subagents in their own right.
+ */
+export const OrchestrationV2SubagentWorkflow = Schema.Struct({
+  name: Schema.optional(TrimmedNonEmptyString),
+  runHandles: Schema.optional(OrchestrationV2WorkflowRunHandles),
+  phases: Schema.Array(OrchestrationV2WorkflowPhase),
+  agents: Schema.Array(OrchestrationV2WorkflowAgent),
+  totalTokens: Schema.optional(NonNegativeInt),
+  toolCalls: Schema.optional(NonNegativeInt),
+  durationMs: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWorkflow.Type;
+
 export const OrchestrationV2Subagent = Schema.Struct({
   id: NodeId,
   threadId: ThreadId,
@@ -571,6 +651,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
     "interrupted",
   ]),
   progress: Schema.optional(Schema.String),
+  /** Present only on a workflow coordinator task; absent on ordinary subagents. */
+  workflow: Schema.optional(OrchestrationV2SubagentWorkflow),
   result: Schema.NullOr(Schema.String),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -2867,36 +2949,41 @@ export const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
 export type OrchestrationV2GetWorkflowScriptResult =
   typeof OrchestrationV2GetWorkflowScriptResult.Type;
 
-const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
-  "invalid-path": "Workflow scripts must be absolute .js paths.",
-  "root-unavailable": "Script root unavailable.",
-  "not-found": "Script not found.",
-  "outside-root": "Script path is outside the workflow scripts root.",
-  "not-js": "Resolved script is not a .js file.",
-  "not-regular-file": "Script is not a regular file.",
-  "changed-during-read": "Script changed between resolution and open.",
-  "read-failed": "Script read failed.",
+/**
+ * Shared by every read of a file the Claude harness persisted for a workflow
+ * run — the script and each member's transcript. One vocabulary because both
+ * reads apply identical containment rules.
+ */
+const WORKFLOW_FILE_ERROR_MESSAGES = {
+  "invalid-path": "Workflow files must be absolute paths with the expected extension.",
+  "root-unavailable": "Workflow file root unavailable.",
+  "not-found": "Workflow file not found.",
+  "outside-root": "Path is outside the workflow files root.",
+  "wrong-extension": "Resolved file has the wrong extension.",
+  "not-regular-file": "Workflow file is not a regular file.",
+  "changed-during-read": "Workflow file changed between resolution and open.",
+  "read-failed": "Workflow file read failed.",
 } as const;
 
-export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<OrchestrationGetWorkflowScriptError>()(
-  "OrchestrationGetWorkflowScriptError",
+export class OrchestrationWorkflowFileError extends Schema.TaggedError<OrchestrationWorkflowFileError>()(
+  "OrchestrationWorkflowFileError",
   {
     reason: Schema.Literals([
       "invalid-path",
       "root-unavailable",
       "not-found",
       "outside-root",
-      "not-js",
+      "wrong-extension",
       "not-regular-file",
       "changed-during-read",
       "read-failed",
     ]),
-    scriptPath: Schema.String,
+    path: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return WORKFLOW_SCRIPT_ERROR_MESSAGES[this.reason];
+    return WORKFLOW_FILE_ERROR_MESSAGES[this.reason];
   }
 }
 

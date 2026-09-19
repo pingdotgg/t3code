@@ -6,7 +6,10 @@ import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { afterAll, assert, describe } from "vite-plus/test";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import { readWorkflowScript } from "./workflowScriptQuery.ts";
+import { readContainedWorkflowFile } from "./workflowFileRead.ts";
+
+const readWorkflowScript = (input: { readonly scriptPath: string }) =>
+  readContainedWorkflowFile({ path: input.scriptPath, extension: ".js", byteCap: 256 * 1024 });
 
 const root = NodePath.join(NodeOS.homedir(), ".claude", "projects", "__wf_script_test__");
 NodeFS.mkdirSync(root, { recursive: true });
@@ -30,7 +33,7 @@ afterAll(() => {
   NodeFS.rmSync(outside, { force: true });
 });
 
-describe("readWorkflowScript containment", () => {
+describe("workflow script containment", () => {
   effectIt.effect("serves a real script under the projects root", () =>
     Effect.gen(function* () {
       const result = yield* readWorkflowScript({ scriptPath });

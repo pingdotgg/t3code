@@ -1,4 +1,11 @@
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { field, text } from "../../orchestration/unknownField.ts";
+import { readWorkflowAgentAnswers } from "../../orchestration/workflowAgentAnswers.ts";
+import {
+  CLAUDE_WORKFLOW_TASK_TYPE,
+  mergeClaudeWorkflowProgress,
+  parseClaudeWorkflowRunHandles,
+} from "./claudeWorkflowProgress.ts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
@@ -50,6 +57,9 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2UserInputQuestion,
   type OrchestrationV2Subagent,
+  type OrchestrationV2AppThread,
+  type OrchestrationV2SubagentWorkflow,
+  type OrchestrationV2WorkflowRunHandles,
   type OrchestrationV2TurnItem,
   type OrchestrationV2WebSearchResult,
   type ProviderApprovalDecision,
@@ -2359,6 +2369,12 @@ interface ActiveClaudeProviderRetry {
 interface ActiveClaudeSubagent {
   task: OrchestrationV2Subagent;
   readonly childThreadId: ThreadId;
+  /**
+   * The child thread object itself, not just its id: workflow members are
+   * parented to it long after the launching turn has settled, and building a
+   * child thread needs the whole parent.
+   */
+  childThread: OrchestrationV2AppThread | null;
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
   readonly turnItemId: OrchestrationV2TurnItem["id"];
   readonly turnItemOrdinal: number;
@@ -2602,6 +2618,20 @@ export function makeClaudeAdapterV2(
         });
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
+        // Survives turn settle: members mostly finish after the launching
+        // turn has ended, and each transition must be emitted exactly once.
+        const workflowMemberStates = yield* Ref.make(
+          new Map<
+            string,
+            {
+              readonly status: OrchestrationV2Subagent["status"];
+              /** True only once the member's own transcript supplied the answer. */
+              readonly answeredFromTranscript: boolean;
+              /** First instant this member was seen, so settling cannot restamp it. */
+              readonly startedAt: DateTime.Utc;
+            }
+          >(),
+        );
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
@@ -3261,6 +3291,253 @@ export function makeClaudeAdapterV2(
           });
         });
 
+        /**
+         * Stamps each member with the thread it owns. Derived from the
+         * coordinator's own child thread so the id inherits its provider-thread
+         * scoping, and done here so the snapshot the clients read carries the
+         * same id the projection emits.
+         */
+        const withWorkflowMemberThreadIds = (
+          workflow: OrchestrationV2SubagentWorkflow,
+          coordinatorChildThreadId: ThreadId,
+        ): OrchestrationV2SubagentWorkflow => ({
+          ...workflow,
+          agents: workflow.agents.map((member) => ({
+            ...member,
+            childThreadId: idAllocator.derive.threadFromProviderThread({
+              driver: CLAUDE_PROVIDER,
+              nativeThreadId: `${coordinatorChildThreadId}:agent:${member.index}`,
+            }),
+          })),
+        });
+
+        /** Emits one conversation message into a member's own thread. */
+        const emitWorkflowMemberMessage = Effect.fnUntraced(function* (input: {
+          readonly nativeItemId: string;
+          readonly threadId: ThreadId;
+          readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
+          readonly role: "user" | "assistant";
+          readonly text: string;
+          readonly ordinal: number;
+          readonly now: DateTime.Utc;
+        }) {
+          const artifacts = makeSubagentConversationArtifacts({
+            messageId: idAllocator.derive.messageFromProviderItem({
+              driver: CLAUDE_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            }),
+            turnItemId: idAllocator.derive.turnItemFromProviderItem({
+              driver: CLAUDE_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            }),
+            threadId: input.threadId,
+            rootNodeId: input.rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: {
+              driver: CLAUDE_PROVIDER,
+              nativeId: input.nativeItemId,
+              strength: "strong",
+            },
+            role: input.role,
+            text: input.text,
+            ordinal: input.ordinal,
+            now: input.now,
+          });
+          yield* emitProviderEvent({
+            type: "message.updated",
+            driver: CLAUDE_PROVIDER,
+            message: artifacts.message,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: artifacts.turnItem,
+          });
+        });
+
+        /**
+         * Projects a workflow's members as ordinary subagents.
+         *
+         * A member is not a provider task — it exists only inside the
+         * coordinator's progress snapshot — but everything the user expects
+         * from a subagent (a thread to open, a prompt, an answer) is expressed
+         * by the same events, so this emits exactly the sequence
+         * updateClaudeSubagentNode emits rather than inventing a parallel
+         * shape. Members hang off the coordinator's thread, not the run's, so
+         * a fan-out of fifty does not bury the parent's lineage.
+         */
+        const projectClaudeWorkflowMembers = Effect.fnUntraced(function* (input: {
+          readonly coordinator: ActiveClaudeSubagent;
+          readonly workflow: OrchestrationV2SubagentWorkflow;
+        }) {
+          const parentThread = input.coordinator.childThread;
+          if (parentThread === null) return;
+          const now = yield* DateTime.now;
+          const seen = yield* Ref.get(workflowMemberStates);
+
+          for (const member of input.workflow.agents) {
+            // Extends the coordinator node id; provider-thread scope lives on
+            // the child thread ids, not here.
+            const memberKey = `${input.coordinator.task.id}:agent:${member.index}`;
+            const previous = seen.get(memberKey);
+            // Every member state but queued is already a subagent status, and a
+            // queued member is work in flight as far as the projection cares.
+            const status = member.state === "queued" ? "running" : member.state;
+            const settled = status !== "running";
+            const awaitingTranscript = settled && previous?.answeredFromTranscript !== true;
+            if (previous?.status === status && !awaitingTranscript) continue;
+            const startedAt = previous?.startedAt ?? now;
+
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              driver: CLAUDE_PROVIDER,
+              nativeItemId: memberKey,
+            });
+            const childRootNodeId = idAllocator.derive.nodeFromProviderItem({
+              driver: CLAUDE_PROVIDER,
+              nativeItemId: `${memberKey}:thread-root`,
+            });
+            const childThreadId = member.childThreadId;
+            if (childThreadId === undefined) continue;
+            const prompt = member.prompt ?? member.label;
+            const model = member.model ?? parentThread.modelSelection.model;
+
+            if (previous === undefined) {
+              yield* emitProviderEvent({
+                type: "app_thread.created",
+                driver: CLAUDE_PROVIDER,
+                appThread: makeSubagentChildThread({
+                  parentThread,
+                  childThreadId,
+                  parentNodeId: nodeId,
+                  activeProviderThreadId: null,
+                  providerInstanceId: parentThread.providerInstanceId,
+                  modelSelection: { instanceId: parentThread.providerInstanceId, model },
+                  title: member.label,
+                  now,
+                  createdBy: "agent",
+                  creationSource: "provider",
+                }),
+              });
+              yield* emitWorkflowMemberMessage({
+                nativeItemId: `${memberKey}:prompt`,
+                threadId: childThreadId,
+                rootNodeId: childRootNodeId,
+                role: "user",
+                text: prompt,
+                ordinal: 100,
+                now,
+              });
+            }
+
+            const task = {
+              id: nodeId,
+              threadId: parentThread.id,
+              runId: null,
+              parentNodeId: input.coordinator.childRootNodeId,
+              origin: "provider_native" as const,
+              createdBy: "agent" as const,
+              driver: CLAUDE_PROVIDER,
+              providerInstanceId: parentThread.providerInstanceId,
+              providerThreadId: null,
+              childThreadId,
+              nativeTaskRef: {
+                driver: CLAUDE_PROVIDER,
+                nativeId: memberKey,
+                strength: "strong" as const,
+              },
+              prompt,
+              title: member.label,
+              model,
+              status,
+              result: member.result ?? null,
+              startedAt,
+              completedAt: settled ? now : null,
+              updatedAt: now,
+            } satisfies OrchestrationV2Subagent;
+
+            const nodeBase = {
+              runId: null,
+              status,
+              countsForRun: false,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: task.nativeTaskRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt,
+              completedAt: settled ? now : null,
+            };
+            for (const node of [
+              {
+                ...nodeBase,
+                id: nodeId,
+                threadId: parentThread.id,
+                parentNodeId: input.coordinator.childRootNodeId,
+                rootNodeId: input.coordinator.childRootNodeId,
+                kind: "subagent" as const,
+              },
+              {
+                ...nodeBase,
+                id: childRootNodeId,
+                threadId: childThreadId,
+                parentNodeId: null,
+                rootNodeId: childRootNodeId,
+                kind: "root_turn" as const,
+              },
+            ]) {
+              yield* emitProviderEvent({ type: "node.updated", driver: CLAUDE_PROVIDER, node });
+            }
+
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: task,
+            });
+
+            // The transcript is the real answer; the capped excerpt stands in
+            // until the harness has flushed it. Message ids are derived from the
+            // turn index, so a later transcript read overwrites the excerpt in
+            // place rather than appending a second answer.
+            let answeredFromTranscript = previous?.answeredFromTranscript === true;
+            if (settled && !answeredFromTranscript) {
+              // The member's own transcript, when the run left one: a missing or
+              // unreadable file is expected (a run predating run-handle capture,
+              // a member that never started) and falls back to the excerpt.
+              const transcriptDir = input.workflow.runHandles?.transcriptDir;
+              const transcript =
+                transcriptDir === undefined || member.agentId === undefined
+                  ? []
+                  : yield* readWorkflowAgentAnswers({
+                      transcriptDir,
+                      agentId: member.agentId,
+                    }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+              answeredFromTranscript = transcript.length > 0;
+              const turns = answeredFromTranscript
+                ? transcript
+                : member.result === undefined
+                  ? []
+                  : [member.result];
+              for (const [index, answer] of turns.entries()) {
+                const ordinal = 200 + index;
+                yield* emitWorkflowMemberMessage({
+                  nativeItemId: `${memberKey}:answer:${ordinal}`,
+                  threadId: childThreadId,
+                  rootNodeId: childRootNodeId,
+                  role: "assistant",
+                  text: answer,
+                  ordinal,
+                  now,
+                });
+              }
+            }
+
+            yield* Ref.update(workflowMemberStates, (current) =>
+              new Map(current).set(memberKey, { status, answeredFromTranscript, startedAt }),
+            );
+          }
+        });
+
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly taskId: string;
@@ -3269,6 +3546,10 @@ export function makeClaudeAdapterV2(
           readonly title?: string;
           readonly model?: string;
           readonly progress?: string;
+          /** Raw SDK frame, folded into the coordinator's workflow snapshot. */
+          readonly workflowFrame?: unknown;
+          readonly workflowName?: string;
+          readonly workflowRunHandles?: OrchestrationV2WorkflowRunHandles;
           readonly result?: string;
           readonly status: Extract<
             OrchestrationV2ExecutionNode["status"],
@@ -3351,6 +3632,21 @@ export function makeClaudeAdapterV2(
                     existingSubagent.task,
                   )
                 : existingSubagent.task;
+          // Workflow telemetry is cumulative: fold this frame into whatever the
+          // coordinator already carried, so a usage-only frame cannot blank the
+          // member roster the user is watching.
+          const workflow = mergeClaudeWorkflowProgress({
+            previous: priorTask?.workflow,
+            ...(input.workflowName === undefined ? {} : { name: input.workflowName }),
+            ...(input.workflowRunHandles === undefined
+              ? {}
+              : { runHandles: input.workflowRunHandles }),
+            message: input.workflowFrame,
+          });
+          const workflowWithThreads =
+            workflow === undefined
+              ? undefined
+              : withWorkflowMemberThreadIds(workflow, childThreadId);
           const task = {
             ...(priorTask ?? {
               id: nodeId,
@@ -3391,6 +3687,7 @@ export function makeClaudeAdapterV2(
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.model === undefined ? {} : { model: input.model }),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
+            ...(workflowWithThreads === undefined ? {} : { workflow: workflowWithThreads }),
             ...(input.result === undefined ? {} : { result: input.result }),
             completedAt: input.status === "running" ? null : now,
             updatedAt: now,
@@ -3406,6 +3703,7 @@ export function makeClaudeAdapterV2(
                 nativeItemId: `${nativeItemId}:subagent`,
               }),
             turnItemOrdinal,
+            childThread: existingSubagent?.childThread ?? null,
             nextChildItemOrdinal: existingSubagent?.nextChildItemOrdinal ?? 100,
             progressItemOrdinal: existingSubagent?.progressItemOrdinal ?? null,
             progressStartedAt: existingSubagent?.progressStartedAt ?? null,
@@ -3461,6 +3759,7 @@ export function makeClaudeAdapterV2(
               driver: CLAUDE_PROVIDER,
               appThread: childThread,
             });
+            subagent.childThread = childThread;
           }
 
           if (lifecycleChanged) {
@@ -3555,6 +3854,12 @@ export function makeClaudeAdapterV2(
             driver: CLAUDE_PROVIDER,
             subagent: task,
           });
+          if (workflowWithThreads !== undefined) {
+            yield* projectClaudeWorkflowMembers({
+              coordinator: subagent,
+              workflow: workflowWithThreads,
+            });
+          }
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CLAUDE_PROVIDER,
@@ -4319,6 +4624,50 @@ export function makeClaudeAdapterV2(
           }
         });
 
+        /**
+         * Refreshes a background workflow coordinator's entity between turns.
+         * Deliberately narrow: only a registered coordinator that this frame
+         * carries a snapshot for is touched, and only `subagent.updated` is
+         * emitted, because node and turn-item ids need a turn context this path
+         * does not have. Status is left alone — `task_notification` owns the
+         * lifecycle, and it has its own turn-aware path.
+         */
+        const applyWorkflowProgressWithoutTurn = Effect.fnUntraced(function* (message: SDKMessage) {
+          if (message.type !== "system" || message.subtype !== "task_progress") return;
+          const taskId = message.task_id;
+          const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(taskId);
+          if (registered === undefined || registered.task.workflow === undefined) return;
+          const workflow = mergeClaudeWorkflowProgress({
+            previous: registered.task.workflow,
+            message,
+          });
+          if (workflow === undefined) return;
+          const now = yield* DateTime.now;
+          const progress = text(message.description);
+          const workflowWithThreads = withWorkflowMemberThreadIds(
+            workflow,
+            registered.childThreadId,
+          );
+          const task = {
+            ...registered.task,
+            ...(progress === undefined ? {} : { progress }),
+            workflow: workflowWithThreads,
+            updatedAt: now,
+          } satisfies OrchestrationV2Subagent;
+          yield* Ref.update(sessionSubagentsByTaskId, (current) =>
+            new Map(current).set(taskId, { ...registered, task }),
+          );
+          yield* emitProviderEvent({
+            type: "subagent.updated",
+            driver: CLAUDE_PROVIDER,
+            subagent: task,
+          });
+          yield* projectClaudeWorkflowMembers({
+            coordinator: { ...registered, task },
+            workflow: workflowWithThreads,
+          });
+        });
+
         const bufferWakeMessage = Effect.fnUntraced(function* (wakeInput: {
           readonly nativeThreadId: string;
           readonly message: SDKMessage;
@@ -4638,6 +4987,13 @@ export function makeClaudeAdapterV2(
           }
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
+            // A workflow is normally launched in the background, so most of its
+            // run happens after the turn that started it has settled. Nothing
+            // here can build turn items or nodes without a turn context, but the
+            // coordinator entity is exactly what the Agents surface renders —
+            // refresh it from the session registry so a live run keeps reporting
+            // its phases, members and usage instead of freezing at turn end.
+            yield* applyWorkflowProgressWithoutTurn(message);
             // task_notification must buffer wake evidence while still tracked
             // on the roster; clearing first would drop the wake pin.
             if (message.type === "system" && message.subtype === "task_notification") {
@@ -4972,12 +5328,27 @@ export function makeClaudeAdapterV2(
               if (message.tool_use_id !== undefined) {
                 context.pendingSubagentModelsByToolUseId.delete(message.tool_use_id);
               }
+              // A workflow coordinator is marked as one the moment it starts, so
+              // the Agents surface can open its group before the first member
+              // spawns rather than after the first progress snapshot.
+              const isWorkflow =
+                claudeTaskTypeFromSdkMessage(message) === CLAUDE_WORKFLOW_TASK_TYPE;
+              // `meta.name` from the workflow script; only workflow tasks carry it.
+              const workflowName = isWorkflow
+                ? text(Reflect.get(message, "workflow_name"))
+                : undefined;
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 ...(message.prompt === undefined ? {} : { prompt: message.prompt }),
                 ...(model === undefined ? {} : { model }),
+                ...(isWorkflow
+                  ? {
+                      workflowFrame: message,
+                      ...(workflowName === undefined ? {} : { workflowName }),
+                    }
+                  : {}),
                 title: message.description,
                 status: "running",
                 reopen: true,
@@ -4991,8 +5362,13 @@ export function makeClaudeAdapterV2(
               liveQuery.nativeThreadId,
               message.task_id,
             );
+            // A workflow frame is worth an update even with an empty description:
+            // it carries the phase plan, the member roster and the run's usage.
+            const workflowProgress = field(message, "workflow_progress");
+            const carriesWorkflowTelemetry =
+              Array.isArray(workflowProgress) && workflowProgress.length > 0;
             if (
-              progress.length > 0 &&
+              (progress.length > 0 || carriesWorkflowTelemetry) &&
               !context.ignoredTaskIds.has(message.task_id) &&
               !isBackgroundTask
             ) {
@@ -5000,7 +5376,8 @@ export function makeClaudeAdapterV2(
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
-                progress,
+                ...(progress.length === 0 ? {} : { progress }),
+                workflowFrame: message,
                 status: "running",
               });
             }
@@ -5025,6 +5402,8 @@ export function makeClaudeAdapterV2(
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                // Terminal usage totals arrive here, after the last snapshot.
+                workflowFrame: message,
                 result: message.summary,
                 status:
                   message.status === "completed"
@@ -5069,6 +5448,26 @@ export function makeClaudeAdapterV2(
 
           for (const { toolResult, output } of claudeToolResultEntriesFromMessage(message)) {
             const subagent = context.subagentsByToolUseId.get(toolResult.tool_use_id);
+            // Independent of the branches below: unlike the Agent tool, a
+            // Workflow tool_use is an ordinary tool call and so lands in
+            // toolCalls, which skips the subagent branch entirely. Its launch
+            // acknowledgement is the only carrier of the run's filesystem
+            // handles, so harvest them wherever the result arrives.
+            if (subagent !== undefined) {
+              const runHandles = parseClaudeWorkflowRunHandles(claudeNativeToolOutputValue(output));
+              if (runHandles !== undefined) {
+                yield* updateClaudeSubagentNode({
+                  context,
+                  taskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
+                  toolUseId: toolResult.tool_use_id,
+                  workflowRunHandles: runHandles,
+                  // The acknowledgement arrives at launch, so the coordinator
+                  // is still running; a late one is dropped by the same
+                  // terminal protection that guards every other update.
+                  status: "running",
+                });
+              }
+            }
             // A resume task_started reuses the resuming tool call's
             // tool_use_id (e.g. SendMessage), whose tool_result only
             // acknowledges delivery. Only the Agent launch's tool_result may

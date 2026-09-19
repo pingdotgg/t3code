@@ -49,7 +49,7 @@ const STATUS_VISUALS: Record<RuntimeSubagent["status"], { dotClass: string; labe
   interrupted: { dotClass: "bg-muted-foreground/60", label: "Stopped" },
 };
 
-function StatusDot({ status }: { status: RuntimeSubagent["status"] }) {
+export function StatusDot({ status }: { status: RuntimeSubagent["status"] }) {
   return (
     <span
       aria-hidden
@@ -150,7 +150,9 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   const metadata = [
     modelLabel,
     agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
-    agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
+    agent.usage?.toolUses !== undefined
+      ? `${agent.usage.toolUses} tool${agent.usage.toolUses === 1 ? "" : "s"}`
+      : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
 
@@ -222,9 +224,10 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
           {index > 0 ? (
             <ChevronRight aria-hidden className="size-3 text-muted-foreground/40" />
           ) : null}
+          {/* Fixed height + leading-none: a mono line box is taller than its glyphs. */}
           <div
             className={cn(
-              "flex items-center gap-1 rounded-sm border px-1.5 py-0.5",
+              "flex h-[1.125rem] items-center gap-1 rounded-sm border px-1.5",
               phase.state === "running"
                 ? "border-info/40"
                 : phase.state === "done"
@@ -234,7 +237,7 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
           >
             <span
               className={cn(
-                "font-mono text-[.65rem]",
+                "font-mono text-[.65rem] leading-none",
                 phase.state === "running"
                   ? "text-info-foreground"
                   : phase.state === "done"
@@ -247,7 +250,9 @@ function PhaseRail({ group }: { group: AgentPanelWorkflowGroup }) {
             </span>
             <span className="flex items-center gap-0.5">
               {phase.members.length === 0 ? (
-                <span className="font-mono text-[.6rem] text-muted-foreground/50">–</span>
+                <span className="font-mono text-[.6rem] leading-none text-muted-foreground/50">
+                  –
+                </span>
               ) : (
                 phase.members.map((member) => <StatusDot key={member.id} status={member.status} />)
               )}
