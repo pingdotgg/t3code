@@ -117,6 +117,15 @@ fn directory_entry(entry: &fs::DirEntry) -> io::Result<bool> {
     Ok(true)
 }
 
+// Files can disappear while a live worktree is being measured.
+fn skip_missing<T>(result: io::Result<T>) -> io::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct Progress {
     version: u32,
@@ -161,14 +170,24 @@ impl Worker {
         deadline: Instant,
     ) -> io::Result<()> {
         for _ in 0..limit {
+            if Instant::now() >= deadline {
+                break;
+            }
             if let Some(entries) = &mut self.current {
                 if let Some(entry) = entries.next() {
-                    let entry = entry?;
+                    let Some(entry) = skip_missing(entry)? else {
+                        continue;
+                    };
                     let path = entry.path();
-                    if directory_entry(&entry)? {
+                    let Some(is_directory) = skip_missing(directory_entry(&entry))? else {
+                        continue;
+                    };
+                    if is_directory {
                         pending.lock().unwrap().push(path);
                     } else {
-                        let info = file_info(&path)?;
+                        let Some(info) = skip_missing(file_info(&path))? else {
+                            continue;
+                        };
                         if info.directory {
                             pending.lock().unwrap().push(path);
                         } else if info.links <= 1 {
@@ -188,18 +207,20 @@ impl Worker {
                 let Some(directory) = directory else {
                     break;
                 };
-                let info = file_info(&directory)?;
+                let Some(info) = skip_missing(file_info(&directory))? else {
+                    continue;
+                };
                 if !info.directory {
                     return Err(io::Error::other(
                         "queued directory is no longer a directory",
                     ));
                 }
                 directories.lock().unwrap().visit(info.identity)?;
+                let Some(entries) = skip_missing(fs::read_dir(directory))? else {
+                    continue;
+                };
                 self.bytes += info.bytes;
-                self.current = Some(fs::read_dir(directory)?);
-            }
-            if Instant::now() >= deadline {
-                break;
+                self.current = Some(entries);
             }
         }
         Ok(())

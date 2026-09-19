@@ -121,12 +121,11 @@ fn finishes_large_worktrees_with_bounded_batches() {
 }
 
 #[test]
-fn reports_missing_directories_and_invalid_commands() {
+fn reports_invalid_roots_and_commands() {
     let fixture = Fixture::new();
-    for (input, root) in [
-        ("next\n", fixture.0.join("missing")),
-        ("invalid\n", fixture.0.clone()),
-    ] {
+    let file = fixture.0.join("file");
+    fs::write(&file, b"content").unwrap();
+    for (input, root) in [("next\n", file), ("invalid\n", fixture.0.clone())] {
         let mut output = Vec::new();
         serve(input.as_bytes(), &mut output, root).unwrap();
         let event: serde_json::Value = serde_json::from_slice(&output).unwrap();
@@ -247,4 +246,59 @@ fn refuses_a_different_filesystem_before_counting_it() {
     assert!(directories.visit((2, 99)).is_err());
     assert!(!directories.visited.contains(&(2, 99)));
     directories.visit((1, 99)).unwrap();
+}
+
+#[test]
+fn skips_a_directory_removed_after_it_was_queued() {
+    let fixture = Fixture::new();
+    let root = fixture.0.join("worktree");
+    let nested = root.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    let mut scan = Scan::new(root.clone());
+    scan.workers[0]
+        .step(
+            &scan.pending,
+            &scan.directories,
+            2,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .unwrap();
+    assert_eq!(*scan.pending.lock().unwrap(), vec![nested.clone()]);
+    fs::remove_dir(&nested).unwrap();
+    let remaining = root.join("remaining");
+    fs::create_dir(&remaining).unwrap();
+    let file = remaining.join("file");
+    fs::write(&file, vec![0; 8192]).unwrap();
+    // Queue surviving work explicitly so cursor caching cannot affect the fixture.
+    scan.pending.lock().unwrap().push(remaining.clone());
+    scan.workers[0].current = None;
+    let expected = scan.workers[0].bytes
+        + file_info(&remaining).unwrap().bytes
+        + file_info(&file).unwrap().bytes;
+    assert_eq!(finish(&mut scan, 1), expected);
+}
+
+#[test]
+fn finishes_with_zero_bytes_when_the_root_disappears() {
+    let fixture = Fixture::new();
+    assert_eq!(finish(&mut Scan::new(fixture.0.join("missing")), 1), 0);
+}
+
+#[test]
+fn missing_path_handling_preserves_other_errors() {
+    assert!(
+        skip_missing::<()>(Err(io::ErrorKind::NotFound.into()))
+            .unwrap()
+            .is_none()
+    );
+    for kind in [
+        io::ErrorKind::PermissionDenied,
+        io::ErrorKind::InvalidData,
+        io::ErrorKind::Interrupted,
+    ] {
+        assert_eq!(
+            skip_missing::<()>(Err(kind.into())).unwrap_err().kind(),
+            kind
+        );
+    }
 }
