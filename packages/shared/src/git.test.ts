@@ -151,6 +151,35 @@ describe("parseOriginUrlFromGitConfig", () => {
 });
 
 describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
+  it.each([
+    "https://alice@github.com/T3Tools/T3Code.git",
+    "https://alice:example-token@github.com/T3Tools/T3Code.git",
+    "ssh://git@github.com:22/T3Tools/T3Code.git",
+    "git://github.com:9418/T3Tools/T3Code.git",
+    "HTTPS://github.com/T3Tools/T3Code/",
+  ])("extracts repository identity from %s", (remote) => {
+    expect(parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remote)).toBe("T3Tools/T3Code");
+  });
+
+  it.each([
+    null,
+    "",
+    "https://github.com.attacker.example/T3Tools/T3Code.git",
+    "https://github.com@elsewhere.example/T3Tools/T3Code.git",
+    "https://gitlab.com/T3Tools/T3Code.git",
+    "file://github.com/T3Tools/T3Code.git",
+    "https://github.com/T3Tools",
+    "https://github.com/T3Tools/T3Code/extra",
+    "https://github.com/T3Tools/T3Code.git?other=repo",
+    "https://github.com/T3Tools/T3Code.git#fragment",
+    "https://github.com/T3Tools/T3Code.git?",
+    "https://github.com/T3Tools/T3Code.git#",
+    "https://github.com/T3Tools/T3 Code.git",
+    "ssh://git@github.com:invalid/T3Tools/T3Code.git",
+  ])("does not infer a GitHub repository from %s", (remote) => {
+    expect(parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remote)).toBeNull();
+  });
+
   it("extracts the owner and repository from common GitHub remote shapes", () => {
     expect(
       parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:T3Tools/T3Code.git"),

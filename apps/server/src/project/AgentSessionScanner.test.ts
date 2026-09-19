@@ -913,6 +913,30 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("recognizes GitHub repositories behind credential-bearing remote URLs", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const repo = yield* makeTempDir("t3code-workspace-repo-");
+        yield* fs.makeDirectory(path.join(repo, ".git"));
+        yield* fs.writeFileString(
+          path.join(repo, ".git", "config"),
+          '[remote "origin"]\n\turl = https://alice:example-token@github.com/pingdotgg/t3code.git\n',
+        );
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-repo", "a.jsonl"),
+          contents: claudeSessionLine(repo),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+        expect(result.candidates.map((candidate) => candidate.git)).toEqual([
+          { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" },
+        ]);
+      }),
+    );
+
     it.effect("skips linked git worktrees and reports the origin of real checkouts", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
