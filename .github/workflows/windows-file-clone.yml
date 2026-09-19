@@ -6,6 +6,8 @@ on:
     paths:
       - apps/server/src/vcs/FileClone.ts
       - apps/server/src/vcs/WindowsFileClone*
+      - apps/server/src/vcs/WorktreeClone*
+      - apps/server/src/vcs/GitVcsDriverCore*
       - .github/workflows/windows-file-clone.yml
 
 permissions:
@@ -46,7 +48,13 @@ jobs:
           "T3_TEST_NTFS_ROOT=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - name: Verify native clones and unsupported fallback
         working-directory: apps/server
-        run: vp test run src/vcs/WindowsFileClone.test.ts
+        shell: pwsh
+        run: |
+          # Hosted runners install Git filters globally; isolate fixture configuration.
+          $env:GIT_CONFIG_GLOBAL = Join-Path $env:RUNNER_TEMP 't3-clone-empty.gitconfig'
+          New-Item -ItemType File -Path $env:GIT_CONFIG_GLOBAL | Out-Null
+          $env:GIT_CONFIG_NOSYSTEM = '1'
+          vp test run src/vcs/WindowsFileClone.test.ts
       - name: Detach disposable volume
         if: always()
         shell: pwsh
