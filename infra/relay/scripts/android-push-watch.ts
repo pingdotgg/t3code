@@ -88,8 +88,9 @@ const main = Effect.gen(function* () {
   );
   const socketConstructor = Layer.succeed(
     Socket.WebSocketConstructor,
+    // Socket.makeWebSocket only ever passes its `protocols` option here.
     (url, protocols) =>
-      new NodeSocket.NodeWS.WebSocket(url, protocols, {
+      new NodeSocket.NodeWS.WebSocket(url, protocols as string | string[] | undefined, {
         headers: { authorization: `Bearer ${connection.bearerToken}` },
       }) as unknown as globalThis.WebSocket,
   );

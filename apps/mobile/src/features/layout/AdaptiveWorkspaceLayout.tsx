@@ -22,7 +22,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useWindowDimensions, View } from "react-native";
+import { Platform, useWindowDimensions, View } from "react-native";
 import Animated, {
   useAnimatedStyle,
   useDerivedValue,
@@ -56,7 +56,6 @@ import {
 } from "../keyboard/hardwareKeyboardCommands";
 import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
 import { HomeListOptionsProvider } from "../home/home-list-options";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
@@ -234,7 +233,6 @@ function AdaptiveWorkspaceLayoutContent(
   },
 ) {
   const projectGroupingMode = props.projectGroupingMode;
-  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const { width, height } = useWindowDimensions();
   const pathname = props.pathname;
   const navigation = useNavigation();
@@ -582,7 +580,7 @@ function AdaptiveWorkspaceLayoutContent(
               style={sidebarAnimatedStyle}
             >
               <View className="flex-1" style={{ width: layout.listPaneWidth }}>
-                <AndroidHomeFabLayout onStartNewTask={handleStartNewTask}>
+                <AndroidHomeFabLayout sidebar onStartNewTask={handleStartNewTask}>
                   <ThreadNavigationSidebar
                     width={layout.listPaneWidth}
                     visible={panes.primarySidebarVisible}
@@ -602,7 +600,7 @@ function AdaptiveWorkspaceLayoutContent(
           ) : null}
           <View
             className={
-              materialYouStyleLayoutActive
+              Platform.OS === "android"
                 ? "flex-1 overflow-hidden bg-header"
                 : "flex-1 overflow-hidden bg-screen"
             }
@@ -611,7 +609,12 @@ function AdaptiveWorkspaceLayoutContent(
             <View
               collapsable={false}
               style={
-                contentSettledWidth !== null ? { flex: 1, width: contentSettledWidth } : { flex: 1 }
+                contentSettledWidth !== null
+                  ? {
+                      flex: 1,
+                      width: contentSettledWidth,
+                    }
+                  : { flex: 1 }
               }
             >
               <WorkspaceContentWidthContext

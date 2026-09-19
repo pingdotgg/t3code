@@ -1,6 +1,6 @@
 {
   "name": "@effect/atom-react",
-  "version": "4.0.0-rc.112",
+  "version": "4.0.0-rc.115",
   "type": "module",
   "license": "MIT",
   "description": "React bindings for the Effect Atom modules",
@@ -67,15 +67,15 @@
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^7.0.1",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@types/react-dom": "^19.2.7",
     "@types/scheduler": "^0.26.0",
     "effect": "workspace:^",
     "jsdom": "^30.0.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-error-boundary": "^6.1.3",
+    "react-error-boundary": "^6.1.5",
     "scheduler": "^0.27.0"
   }
 }

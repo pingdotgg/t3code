@@ -1,3 +1,4 @@
+import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { LegendList } from "@legendapp/list/react-native";
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import {
@@ -8,18 +9,19 @@ import {
   type ThirdPartyLicenseEntry,
 } from "@t3tools/shared/thirdPartyLicenses";
 import { useCallback, useMemo, useState } from "react";
-import { Linking, Platform, Pressable, ScrollView, View } from "react-native";
+import { Linking, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { SettingsScreen } from "./components/SettingsScreen";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
+
 import { getMobileThirdPartyLicenses } from "./mobileThirdPartyLicenses";
 
 function useMobileThirdPartyLicenses() {
@@ -97,24 +99,18 @@ export function SettingsOpenSourceLicensesRouteScreen() {
 
   if (!manifest) {
     return (
-      <View collapsable={false} className="flex-1 bg-sheet">
-        {Platform.OS === "android" ? (
-          <>
-            <NativeStackScreenOptions options={{ headerShown: false }} />
-            <AndroidScreenHeader title="Open source licenses" onBack={() => navigation.goBack()} />
-          </>
-        ) : null}
+      <SettingsScreen title="Open source licenses">
         <View className="flex-1 items-center justify-center px-6">
           <Text className="text-center text-base text-foreground-muted">
             License notices are unavailable in this build.
           </Text>
         </View>
-      </View>
+      </SettingsScreen>
     );
   }
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <SettingsScreen title="Open source licenses">
       {Platform.OS === "ios" ? (
         <NativeStackScreenOptions
           options={{
@@ -148,12 +144,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
           <NativeHeaderToolbar.SearchBarSlot />
         </NativeHeaderToolbar>
       ) : null}
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Open source licenses" onBack={() => navigation.goBack()} />
-        </>
-      ) : null}
+
       <LegendList
         className="flex-1"
         contentContainerStyle={{
@@ -195,14 +186,13 @@ export function SettingsOpenSourceLicensesRouteScreen() {
         renderItem={renderItem}
         showsVerticalScrollIndicator={false}
       />
-    </View>
+    </SettingsScreen>
   );
 }
 
 type LicenseDetailProps = StaticScreenProps<{ readonly entryKey: string }>;
 
 export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailProps) {
-  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const manifest = useMobileThirdPartyLicenses();
   const entry = manifest
@@ -212,30 +202,18 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
 
   if (!entry) {
     return (
-      <View collapsable={false} className="flex-1 bg-sheet">
-        {Platform.OS === "android" ? (
-          <>
-            <NativeStackScreenOptions options={{ headerShown: false }} />
-            <AndroidScreenHeader title="License notice" onBack={() => navigation.goBack()} />
-          </>
-        ) : null}
+      <SettingsScreen title="License notice">
         <View className="flex-1 items-center justify-center px-6">
           <Text className="text-center text-base text-foreground-muted">
             This license notice is unavailable.
           </Text>
         </View>
-      </View>
+      </SettingsScreen>
     );
   }
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="License notice" onBack={() => navigation.goBack()} />
-        </>
-      ) : null}
+    <SettingsScreen title="License notice">
       <ScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
@@ -275,6 +253,6 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
           </Text>
         </View>
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }

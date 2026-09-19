@@ -80,18 +80,6 @@ export const Scheduler: Context.Reference<Scheduler> = Context.Reference<Schedul
   defaultValue: () => new MixedScheduler()
 })
 
-const setImmediate = "setImmediate" in globalThis
-  ? (f: () => void) => {
-    // @ts-ignore
-    const timer = globalThis.setImmediate(f)
-    // @ts-ignore
-    return (): void => globalThis.clearImmediate(timer)
-  }
-  : (f: () => void) => {
-    const timer = setTimeout(f, 0)
-    return (): void => clearTimeout(timer)
-  }
-
 const setMicrotask = (f: () => void) => {
   let cancelled = false
   Promise.resolve().then(() => {
@@ -99,6 +87,28 @@ const setMicrotask = (f: () => void) => {
   })
   return (): void => {
     cancelled = true
+  }
+}
+
+const setTimer: (f: () => void) => () => void = "setImmediate" in globalThis
+  ? (f) => {
+    // @ts-ignore
+    const timer = globalThis.setImmediate(f)
+    // @ts-ignore
+    return (): void => globalThis.clearImmediate(timer)
+  }
+  : (f) => {
+    const timer = setTimeout(f, 0)
+    return (): void => clearTimeout(timer)
+  }
+
+// Some runtimes (e.g. Cloudflare Workers) throw when a timer is set in global
+// scope. Fall back to a microtask so effects can still yield at module load.
+const setImmediate = (f: () => void) => {
+  try {
+    return setTimer(f)
+  } catch {
+    return setMicrotask(f)
   }
 }
 
@@ -172,7 +182,7 @@ export class MixedScheduler implements Scheduler {
    * @since 2.0.0
    */
   shouldYield(fiber: Fiber.Fiber<unknown, unknown>) {
-    return fiber.currentOpCount >= fiber.maxOpsBeforeYield
+    return fiber.currentOpCount >= fiber.cache.maxOpsBeforeYield
   }
 
   /**

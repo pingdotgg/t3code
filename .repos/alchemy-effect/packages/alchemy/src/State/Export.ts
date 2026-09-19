@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
-import type { PersistedState, StateService, StateStoreError } from "./State.ts";
+import { State, type PersistedState } from "./State.ts";
+import { allStages } from "./Tree.ts";
 
 /**
  * One resource record in a state export, addressed by the
@@ -40,8 +41,8 @@ export interface ExportStateFilter {
  * Read every resource record in scope from the state store as one
  * document.
  *
- * Traverses `listStacks → listStages → list → get` with the listing
- * fan-out unbounded and the per-resource reads bounded, so a whole
+ * Fans out over every `(stack, stage)` the store holds — see
+ * {@link allStages} — with the per-resource reads bounded, so a whole
  * estate is fetched in a single pass instead of a call per resource.
  * Records that disappear between `list` and `get` (a concurrent
  * deploy/destroy) are skipped rather than failing the export.
@@ -49,48 +50,28 @@ export interface ExportStateFilter {
  * Results are ordered deterministically: by stack, then stage, then
  * FQN.
  */
-export const exportState = (
-  state: StateService,
+export const exportState = Effect.fn("exportState")(function* (
   filter: ExportStateFilter = {},
-): Effect.Effect<StateExport, StateStoreError> =>
-  Effect.gen(function* () {
-    const stacks =
-      filter.stack !== undefined
-        ? [filter.stack]
-        : [...(yield* state.listStacks())].sort();
-
-    const perStack = yield* Effect.forEach(
-      stacks,
-      (stack) =>
-        Effect.gen(function* () {
-          const stages =
-            filter.stage !== undefined
-              ? [filter.stage]
-              : [...(yield* state.listStages(stack))].sort();
-          return yield* Effect.forEach(
-            stages,
-            (stage) =>
-              Effect.gen(function* () {
-                const fqns = [...(yield* state.list({ stack, stage }))].sort();
-                const records = yield* Effect.forEach(
-                  fqns,
-                  (fqn) =>
-                    Effect.map(state.get({ stack, stage, fqn }), (value) =>
-                      value === undefined
-                        ? undefined
-                        : ({ stack, stage, fqn, state: value } as const),
-                    ),
-                  { concurrency: 16 },
-                );
-                return records.filter(
-                  (r): r is ExportedResource => r !== undefined,
-                );
-              }),
-            { concurrency: "unbounded" },
-          );
-        }),
-      { concurrency: "unbounded" },
-    );
-
-    return { resources: perStack.flat(2) };
-  });
+) {
+  const state = yield* yield* State;
+  const perStage = yield* Effect.forEach(
+    yield* allStages(filter),
+    ({ stack, stage }) =>
+      Effect.gen(function* () {
+        const fqns = [...(yield* state.list({ stack, stage }))].sort();
+        const records = yield* Effect.forEach(
+          fqns,
+          (fqn) =>
+            Effect.map(state.get({ stack, stage, fqn }), (value) =>
+              value === undefined
+                ? undefined
+                : ({ stack, stage, fqn, state: value } as const),
+            ),
+          { concurrency: 16 },
+        );
+        return records.filter((r): r is ExportedResource => r !== undefined);
+      }),
+    { concurrency: "unbounded" },
+  );
+  return { resources: perStage.flat() } satisfies StateExport;
+});

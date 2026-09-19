@@ -1,3 +1,4 @@
+import { SettingsGroup } from "./SettingsGroup";
 import { InfoIcon, Undo2Icon } from "lucide-react";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
@@ -215,17 +216,9 @@ export function SettingsSection({
           <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
         </div>
       )}
-      <div
-        data-settings-scroll-target={hideTitle ? "" : undefined}
-        className={cn(
-          "relative overflow-visible text-foreground",
-          variant === "grouped"
-            ? "rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none"
-            : "space-y-1",
-        )}
-      >
+      <SettingsGroup data-settings-scroll-target={hideTitle ? "" : undefined} variant={variant}>
         {children}
-      </div>
+      </SettingsGroup>
     </section>
   );
 }

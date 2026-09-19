@@ -49,6 +49,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
@@ -208,7 +209,6 @@ export function ComposerSurface(props: {
   /** Morphs between the compact and expanded composer layouts. */
   readonly animateLayout?: boolean;
 }) {
-  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const colors = useUniwindTheme();
   const targetBorderRadius =
     typeof props.style.borderRadius === "number" ? props.style.borderRadius : 0;
@@ -232,27 +232,23 @@ export function ComposerSurface(props: {
   return (
     <Animated.View
       className={
-        materialYouStyleLayoutActive
-          ? undefined
-          : "shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
+        Platform.OS === "android" ? undefined : "shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
       }
       layout={layoutTransition}
       style={[
         animatedShapeStyle,
         {
           overflow: "hidden",
-          // Android versions before 9 do not support outset box shadows.
-          elevation: Platform.OS === "android" && Platform.Version < 28 ? 10 : undefined,
         },
       ]}
     >
       <AnimatedGlassSurface
         chrome="none"
         fallbackColor={
-          materialYouStyleLayoutActive ? colors["--color-composer-surface"] : colors["--color-card"]
+          Platform.OS === "android" ? colors["--color-composer-surface"] : colors["--color-card"]
         }
         fallbackClassName={
-          materialYouStyleLayoutActive ? "border border-composer-border" : "border border-border"
+          Platform.OS === "android" ? "border border-composer-border" : "border border-border"
         }
         glassEffectStyle="regular"
         // The composer is a passive material containing interactive controls.
@@ -277,8 +273,7 @@ export function ComposerSurface(props: {
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
-  const { materialYouStyleLayoutActive, themeVariables: materialTheme } =
-    useAppearancePreferences();
+  const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
@@ -627,7 +622,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       style={{
         paddingTop: isExpanded ? 8 : 6,
         paddingBottom: (props.bottomInset ?? 0) + (isExpanded ? 8 : 6),
-        backgroundColor: materialYouStyleLayoutActive ? composerPanel : undefined,
+        backgroundColor:
+          Platform.OS === "android" ? themeColorWithAlpha(composerPanel, 1) : undefined,
       }}
     >
       {/* The backdrop gradient lives on a plain View: Reanimated's Animated.View
@@ -635,7 +631,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
           strip fully transparent and the feed text legible through the composer. */}
       <View
         className={
-          materialYouStyleLayoutActive
+          Platform.OS === "android"
             ? "hidden"
             : "absolute inset-0 bg-linear-to-b from-screen/0 via-screen/60 to-screen/90"
         }

@@ -14,7 +14,7 @@ import {
   type Ref,
 } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
-import { Image, StyleSheet } from "react-native";
+import { Image, Platform, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import {
@@ -259,7 +259,7 @@ export function ComposerEditor({
   );
   const { systemColorsActive } = useAppearancePreferences();
   const themeJson = JSON.stringify({
-    selection: systemColorsActive ? theme["--color-primary"] : null,
+    selection: Platform.OS === "android" || systemColorsActive ? theme["--color-primary"] : null,
     text: theme["--color-foreground"],
     placeholder: theme["--color-placeholder"],
     chipBackground: theme["--color-subtle"],

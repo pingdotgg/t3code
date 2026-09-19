@@ -68,10 +68,11 @@ it.layer(PersistedQueueRedisLayer, { timeout: "30 seconds" })(
 
         const queue = yield* PersistedQueue.make({
           name: queueName,
-          schema: RedisItem
+          schema: RedisItem,
+          maxAttempts: 1
         })
         const id = yield* queue.offer({ n: 42 })
-        const error = yield* queue.take(() => Effect.fail("boom"), { maxAttempts: 1 }).pipe(Effect.flip)
+        const error = yield* queue.take(() => Effect.fail("boom")).pipe(Effect.flip)
         assert.strictEqual(error, "boom")
 
         const failed = yield* redis.use((client) => client.lrange(`effectq:${queueName}:failed`, 0, -1))
@@ -135,6 +136,48 @@ it.effect("uses the URL username for two-argument AUTH", () =>
     assert.strictEqual(
       yield* Fiber.join(server),
       "*3\r\n$4\r\nAUTH\r\n$5\r\nalice\r\n$6\r\nsecret\r\n"
+    )
+  }))
+
+it.effect("decodes URL authority credentials once", () =>
+  Effect.gen(function*() {
+    const listener = yield* makeListener
+    const server = yield* Effect.gen(function*() {
+      const connection = yield* accept(listener)
+      const request = yield* read(connection)
+      yield* write(connection, "+OK\r\n")
+      return request
+    }).pipe(Effect.forkChild)
+
+    const port = (listener.addr as Deno.NetAddr).port
+    yield* Layer.build(DenoRedis.layer({
+      url: `redis://app%3A%2540:p%40ss%2525@127.0.0.1:${port}`
+    }))
+
+    assert.strictEqual(
+      yield* Fiber.join(server),
+      "*3\r\n$4\r\nAUTH\r\n$7\r\napp:%40\r\n$7\r\np@ss%25\r\n"
+    )
+  }))
+
+it.effect("does not decode a query-string password twice", () =>
+  Effect.gen(function*() {
+    const listener = yield* makeListener
+    const server = yield* Effect.gen(function*() {
+      const connection = yield* accept(listener)
+      const request = yield* read(connection)
+      yield* write(connection, "+OK\r\n")
+      return request
+    }).pipe(Effect.forkChild)
+
+    const port = (listener.addr as Deno.NetAddr).port
+    yield* Layer.build(DenoRedis.layer({
+      url: `redis://alice@127.0.0.1:${port}/?password=p%2540ss`
+    }))
+
+    assert.strictEqual(
+      yield* Fiber.join(server),
+      "*3\r\n$4\r\nAUTH\r\n$5\r\nalice\r\n$6\r\np%40ss\r\n"
     )
   }))
 

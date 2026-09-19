@@ -84,6 +84,18 @@ it.effect("decodes a dispatch error after its bootstrap thread was deleted", () 
   }),
 );
 
+it.effect("decodes a dispatch error before its bootstrap thread was created", () =>
+  Effect.gen(function* () {
+    const error = yield* decodeDispatchCommandError({
+      _tag: "OrchestrationDispatchCommandError",
+      message: "A separate worktree requires a base commit.",
+      bootstrapThreadDisposition: "not-created",
+    });
+
+    assert.strictEqual(error.bootstrapThreadDisposition, "not-created");
+  }),
+);
+
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeTurnDiffInput({
@@ -545,6 +557,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
           baseBranch: "main",
           branch: "t3code/example",
           startFromOrigin: true,
+          requireWorktree: true,
         },
         runSetupScript: true,
       },
@@ -553,6 +566,7 @@ it.effect("accepts bootstrap metadata in thread.turn.start", () =>
     assert.strictEqual(parsed.bootstrap?.createThread?.projectId, "project-1");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.baseBranch, "main");
     assert.strictEqual(parsed.bootstrap?.prepareWorktree?.startFromOrigin, true);
+    assert.strictEqual(parsed.bootstrap?.prepareWorktree?.requireWorktree, true);
     assert.strictEqual(parsed.bootstrap?.runSetupScript, true);
   }),
 );

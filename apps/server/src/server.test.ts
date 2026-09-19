@@ -86,6 +86,7 @@ import {
 } from "effect/unstable/http";
 import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import * as NetAddress from "effect/unstable/net/NetAddress";
 import * as Socket from "effect/unstable/socket/Socket";
 import { vi } from "vite-plus/test";
 
@@ -579,6 +580,7 @@ const buildAppUnderTest = (options?: {
       traceMaxFiles: 10,
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
       otlpExportIntervalMs: 10_000,
       otlpServiceName: "t3-server",
       otlpHeaders: undefined,
@@ -755,7 +757,11 @@ const buildAppUnderTest = (options?: {
     );
 
     const servedRoutesLayer = HttpRouter.serve(
-      makeRoutesLayer.pipe(Layer.provide(serviceLauncherClientLayer)),
+      // Viewed-file marks for a host that keeps none of its own are rows, so the routes want a
+      // database. Its own, in memory: nothing here shares a table with the auth store.
+      makeRoutesLayer.pipe(
+        Layer.provide(Layer.mergeAll(serviceLauncherClientLayer, SqlitePersistenceMemory)),
+      ),
       {
         disableListenLog: true,
         disableLogger: true,
@@ -1238,9 +1244,10 @@ const wsRpcProtocolLayer = (wsUrl: string, onMessage?: (message: string) => void
   const webSocketConstructorLayer = Layer.succeed(
     Socket.WebSocketConstructor,
     (socketUrl, protocols) => {
+      // Socket.makeWebSocket only ever passes its `protocols` option here.
       const socket = new NodeSocket.NodeWS.WebSocket(
         socketUrl,
-        protocols,
+        protocols as string | string[] | undefined,
         cookie ? { headers: { cookie } } : undefined,
       );
       if (onMessage) socket.on("message", (data) => onMessage(data.toString()));
@@ -1300,7 +1307,7 @@ const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) =>
 const getHttpServerUrl = (pathname = "") =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
-    const address = server.address as HttpServer.TcpAddress;
+    const address = server.address as NetAddress.InetAddress;
     return `http://127.0.0.1:${address.port}${pathname}`;
   });
 
@@ -1660,7 +1667,7 @@ const getWsServerUrl = (
 ) =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
-    const address = server.address as HttpServer.TcpAddress;
+    const address = server.address as NetAddress.InetAddress;
     const baseUrl = `ws://127.0.0.1:${address.port}${pathname}`;
     if (options?.authenticated === false) {
       return baseUrl;
@@ -2061,7 +2068,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             return new Proxy(file, {
               get(target, key) {
                 if (key === "readAlloc") {
-                  return (size: FileSystem.SizeInput) => {
+                  return (size: number) => {
                     bodyReads += 1;
                     return target.readAlloc(size);
                   };
@@ -6285,6 +6292,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         config: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+          otlpLogsUrl: "http://localhost:4318/v1/logs",
         },
         layers: {
           keybindings: {
@@ -6320,6 +6328,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(first.config.observability.otlpTracesEnabled, true);
         assert.equal(first.config.observability.otlpMetricsUrl, "http://localhost:4318/v1/metrics");
         assert.equal(first.config.observability.otlpMetricsEnabled, true);
+        assert.equal(first.config.observability.otlpLogsUrl, "http://localhost:4318/v1/logs");
+        assert.equal(first.config.observability.otlpLogsEnabled, true);
         assert.deepEqual(first.config.settings, DEFAULT_SERVER_SETTINGS);
       }
       assert.deepEqual(second, {
@@ -11184,6 +11194,102 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect.each([
+    { caseName: "a non-repository", isRepository: false, failFetch: false },
+    { caseName: "a base without a commit", isRepository: true, failFetch: false },
+    { caseName: "a fetch failure", isRepository: true, failFetch: true },
+  ])(
+    "rejects required worktree bootstrap before creating a thread for $caseName",
+    ({ isRepository, failFetch }) =>
+      Effect.gen(function* () {
+        const dispatchedCommands: Array<OrchestrationCommand> = [];
+        const createWorktree = vi.fn(
+          (_: Parameters<GitVcsDriver.GitVcsDriver["Service"]["createWorktree"]>[0]) =>
+            Effect.die(new Error("createWorktree must not run before a valid base is found")),
+        );
+
+        yield* buildAppUnderTest({
+          layers: {
+            vcsDriver: {
+              isInsideWorkTree: () => Effect.succeed(isRepository),
+            },
+            gitVcsDriver: {
+              execute: () =>
+                Effect.succeed({
+                  ...SUCCESSFUL_GIT_EXECUTION,
+                  exitCode: ChildProcessSpawner.ExitCode(128),
+                  stderr: "fatal: Needed a single revision",
+                }),
+              remoteExists: () => Effect.succeed(true),
+              fetchRemote: () => Effect.die(new Error("fetch failed before thread creation")),
+              createWorktree,
+            },
+            orchestrationEngine: {
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatchedCommands.push(command);
+                  return { sequence: dispatchedCommands.length };
+                }),
+              readEvents: () => Stream.empty,
+            },
+          },
+        });
+
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              type: "thread.turn.start",
+              commandId: CommandId.make("cmd-required-worktree"),
+              threadId: ThreadId.make("thread-required-worktree"),
+              message: {
+                messageId: MessageId.make("msg-required-worktree"),
+                role: "user",
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              bootstrap: {
+                createThread: {
+                  projectId: defaultProjectId,
+                  title: "Bootstrap Thread",
+                  modelSelection: defaultModelSelection,
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  branch: "main",
+                  worktreePath: null,
+                  createdAt,
+                },
+                prepareWorktree: {
+                  projectCwd: "/tmp/project",
+                  baseBranch: "main",
+                  requireWorktree: true,
+                  startFromOrigin: failFetch,
+                },
+              },
+              createdAt,
+            }),
+          ).pipe(Effect.result),
+        );
+
+        assertTrue(result._tag === "Failure");
+        assertTrue(result.failure._tag === "OrchestrationDispatchCommandError");
+        assert.strictEqual(result.failure.bootstrapThreadDisposition, "not-created");
+        assert.include(
+          result.failure.message,
+          failFetch ? "fetch failed" : "separate worktree requires",
+        );
+        assert.equal(createWorktree.mock.calls.length, 0);
+        assert.deepEqual(
+          dispatchedCommands.map((command) => command.type),
+          ["thread.activity.append"],
+        );
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("falls back to the project checkout when worktree mode targets a non-repository", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
@@ -11614,9 +11720,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   );
 
   it.effect.each([
-    { caseName: "async setup scripts let the turn start before the script exits", async: true },
-    { caseName: "sync setup scripts hold the turn until the script exits", async: false },
-  ])("$caseName", ({ async }) =>
+    {
+      caseName: "async setup scripts let the turn start before the script exits",
+      async: true,
+      cancel: false,
+    },
+    {
+      caseName: "sync setup scripts hold the turn until the script exits",
+      async: false,
+      cancel: false,
+    },
+    {
+      caseName: "cancelling worktree setup publishes its outcome and cleans up the thread",
+      async: false,
+      cancel: true,
+    },
+  ])("$caseName", ({ async, cancel }) =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];
       const scriptExit = yield* Deferred.make<void>();
@@ -11749,6 +11868,26 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(stageStatus(running, "agent"), "pending");
       assert.isFalse(turnStarted());
+
+      if (cancel) {
+        const cancelled = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) => client[WS_METHODS.worktreeSetupCancel]({ threadId })),
+        );
+        assert.isTrue(cancelled.cancelled);
+        assertTrue(dispatchedCommands.some((command) => command.type === "thread.delete"));
+        const outcome = dispatchedCommands.findLast(
+          (command) =>
+            command.type === "thread.activity.append" && command.activity.kind === "worktree-setup",
+        );
+        assertTrue(outcome?.type === "thread.activity.append");
+        assert.propertyVal(outcome.activity.payload, "phase", "cancelled");
+        const result = yield* Fiber.join(dispatchFiber).pipe(Effect.result);
+        assertTrue(result._tag === "Failure");
+        assert.propertyVal(result.failure, "message", "Worktree setup cancelled.");
+        assert.propertyVal(result.failure, "bootstrapThreadDisposition", "deleted");
+        assert.isFalse(turnStarted());
+        return;
+      }
 
       // The client that sent the message goes away mid-setup (a reload or a
       // dropped socket). The bootstrap belongs to the server, not the
@@ -12496,14 +12635,14 @@ it.live(
 
       const report = formatTransferBudgetReport(runs);
       yield* Effect.logInfo(`\n${report}`);
-      const reportPath = yield* Config.string("T3CODE_TRANSFER_BUDGET_REPORT_PATH").pipe(
+      const reportPath = yield* Config.String("T3CODE_TRANSFER_BUDGET_REPORT_PATH").pipe(
         Config.option,
       );
       if (Option.isSome(reportPath)) {
         const fileSystem = yield* FileSystem.FileSystem;
         yield* fileSystem.writeFileString(reportPath.value, report);
       }
-      const resultPath = yield* Config.string("T3CODE_TRANSFER_BUDGET_RESULT_PATH").pipe(
+      const resultPath = yield* Config.String("T3CODE_TRANSFER_BUDGET_RESULT_PATH").pipe(
         Config.option,
       );
       if (Option.isSome(resultPath)) {

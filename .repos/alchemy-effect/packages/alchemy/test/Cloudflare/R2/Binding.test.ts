@@ -8,6 +8,7 @@ import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { createHash } from "node:crypto";
 import Stack from "./fixtures/stack.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
@@ -127,6 +128,14 @@ const put = (base: string, key: string, value: string) =>
     ),
   );
 
+/** PUT `/put-stream?key=&sha256=`: the body is streamed into R2 under a declared hash. */
+const putStream = (base: string, key: string, body: string, sha256: string) =>
+  HttpClient.execute(
+    HttpClientRequest.put(
+      `${base}/put-stream?key=${encodeURIComponent(key)}&sha256=${sha256}`,
+    ).pipe(HttpClientRequest.bodyText(body)),
+  );
+
 const del = (base: string, key: string) =>
   untilOk(
     HttpClient.execute(
@@ -238,7 +247,7 @@ const exercise = (
  * - round-trip a key through the ReadWrite worker by itself.
  *
  * The stack lives in `fixtures/stack.ts` so it can also be inspected
- * directly, e.g. `alchemy tail --stage test ./test/Cloudflare/R2/fixtures/stack.ts`.
+ * directly, e.g. `alchemy logs --tail --stage test --config ./test/Cloudflare/R2/fixtures/stack.ts`.
  */
 const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {
@@ -266,6 +275,45 @@ test(
       out.readWriteBinding,
       out.readWriteBinding,
       true,
+    );
+  }).pipe(logLevel),
+  { timeout: TEST_TIMEOUT },
+);
+
+// A `put` given an Effect `Stream` goes through a `FixedLengthStream`, and
+// the options passed alongside it must still reach R2. Without them R2 has
+// nothing to verify and stores whatever bytes arrive under the declared
+// hash, which lets a caller plant content under a hash it does not have.
+test(
+  "native binding: a streamed put is verified against its declared sha256",
+  Effect.gen(function* () {
+    const out = yield* stack;
+    const value = "stream-value";
+    const sha256 = yield* Effect.sync(() =>
+      createHash("sha256").update(value).digest("hex"),
+    );
+
+    // Matching hash: stored and readable.
+    const ok = yield* untilOk(
+      putStream(out.writeBinding, "stream/ok", value, sha256),
+    );
+    expect(((yield* ok.json) as { stored: boolean }).stored).toBe(true);
+    expect(yield* expectValue(out.readBinding, "stream/ok", value)).toBe(value);
+
+    // Mismatched hash: R2 rejects the body and nothing is stored. The key is
+    // cleared first so a previous run cannot satisfy the final check.
+    yield* del(out.writeBinding, "stream/bad");
+    yield* expectMissing(out.readBinding, "stream/bad");
+    const bad = yield* putStream(
+      out.writeBinding,
+      "stream/bad",
+      value,
+      "0".repeat(64),
+    );
+    expect(bad.status).toBe(400);
+    expect(((yield* bad.json) as { stored: boolean }).stored).toBe(false);
+    expect((yield* headObject(out.readBinding, "stream/bad")).exists).toBe(
+      false,
     );
   }).pipe(logLevel),
   { timeout: TEST_TIMEOUT },

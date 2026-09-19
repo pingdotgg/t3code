@@ -1,0 +1,125 @@
+---
+title: All on Cloudflare
+description: A git host on one Cloudflare account. One Worker, one bucket, two Durable Object namespaces, and dynamically loaded Workers hashing large pushes.
+---
+
+The examples use `Authentication` from
+[Getting Started](/git/getting-started): the application's request middleware.
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+Everything on one account, with large pushes hashed by dynamically
+loaded Workers so nothing leaves Cloudflare:
+
+```typescript
+// src/git.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Git from "alchemy/Git";
+import * as GitHasher from "alchemy/Git/Hasher";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
+import * as Http from "alchemy/Http";
+
+export const GitObjects = Cloudflare.R2.Bucket("GitObjects");
+
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryDurableObject),
+  Layer.provide(GitHasher.HasherWorkerLoader()),
+  Layer.provide(Git.BlobStoreR2(GitObjects)),
+);
+
+export default class GitHost extends Cloudflare.Worker<GitHost>()(
+  "Git",
+  { main: import.meta.url, ...Git.GIT_WORKER_OPTIONS },
+  Effect.gen(function* () {
+    const fetch = yield* HttpRouter.toHttpEffect(GitLive.pipe(Layer.provide(Http.Platform)));
+    return { fetch };
+  }),
+) {}
+```
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import GitHost from "./src/git.ts";
+
+export default Alchemy.Stack(
+  "GitService",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    const git = yield* GitHost;
+    return { url: git.url.as<string>() };
+  }),
+);
+```
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+## What gets created
+
+- An R2 bucket for packs, clone bundles, and spilled push bodies.
+- A Worker with `nodejs_compat`, a 300 s CPU limit, a `worker_loader`
+  binding for the hasher, and the shared secret bound as a secret.
+- Two Durable Object namespaces on that Worker, one per repository and
+  one for the registry, each with SQLite storage.
+
+Nothing runs until a request arrives, and a repository that receives
+no traffic costs its storage.
+
+## Variations
+
+`HasherInline` is enough until pushes of tens of megabytes matter:
+
+```diff lang="typescript"
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+  Layer.provide(Git.RegistryDurableObject),
+-  Layer.provide(GitHasher.HasherWorkerLoader()),
++  Layer.provide(Git.HasherInline),
+  Layer.provide(Git.BlobStoreR2(GitObjects)),
+);
+```
+
+A registry on D1 replicates name lookups instead of serving them from
+one region:
+
+```diff lang="typescript"
++export const RepoIndex = Cloudflare.D1.Database("RepoIndex");
++
+const GitLive = Git.ApiLive.pipe(
+  Layer.provide(Git.ApiHandlersLive),
+  Layer.provide(Authentication.layer),
+  Layer.provide(Git.ReposDurableObject),
+-  Layer.provide(Git.RegistryDurableObject),
++  Layer.provide(Git.RegistryD1(RepoIndex)),
+  Layer.provide(GitHasher.HasherWorkerLoader()),
+  Layer.provide(Git.BlobStoreR2(GitObjects)),
+);
+```
+
+A custom domain is a Worker option, so clone URLs read
+`https://git.example.com/acme/web.git`. [Custom domains &
+routes](/cloudflare/networking/custom-domains) covers it, and
+the [application example](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-git-service)
+serves a browser UI and Git on the same origin.
