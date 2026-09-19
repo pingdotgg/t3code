@@ -418,6 +418,78 @@ describe("ssh tunnel scripts", () => {
     ),
   );
 
+  it.effect("recreates a stale tunnel after one probe timeout", () =>
+    Effect.gen(function* () {
+      let tunnelStarts = 0;
+      let tunnelStops = 0;
+      let remoteStops = 0;
+      let probeMode: "ready" | "refused" = "ready";
+      const reuseProbeStarted = yield* Deferred.make<void>();
+      let probeCount = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-N")) {
+            tunnelStarts += 1;
+            return makeRunningProcess(() => {
+              tunnelStops += 1;
+            });
+          }
+          if (args.includes("sh") && args.includes("--")) {
+            return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"managed"}\n');
+          }
+          if (args.includes("sh")) {
+            remoteStops += 1;
+            return makeSuccessfulProcess('{"stopped":true}\n');
+          }
+          return makeSuccessfulProcess("\n");
+        }),
+      );
+      const client = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          probeCount += 1;
+          if (probeMode === "refused") {
+            yield* Deferred.succeed(reuseProbeStarted, undefined);
+            return HttpClientResponse.fromWeb(request, new Response("", { status: 503 }));
+          }
+          return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        TestClock.layer(),
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, client),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshPasswordPrompt.disabledLayer,
+        SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      const target = {
+        alias: "stale-link",
+        hostname: "stale-link.example.com",
+        username: "tester",
+        port: 22,
+      } as const;
+
+      return yield* Effect.gen(function* () {
+        const manager = yield* SshEnvironmentManager;
+        yield* manager.ensureEnvironment(target);
+        probeMode = "refused";
+        const reconnect = yield* Effect.forkChild(manager.ensureEnvironment(target));
+        yield* Deferred.await(reuseProbeStarted);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.seconds(8));
+        probeMode = "ready";
+        yield* Fiber.join(reconnect);
+
+        assert.isAtLeast(probeCount, 3);
+        assert.equal(tunnelStarts, 2);
+        assert.equal(tunnelStops, 1);
+        assert.equal(remoteStops, 1);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it("preserves primitive readiness reason values in diagnostic output", () => {
     assert.deepEqual(
       describeReadinessCause({
