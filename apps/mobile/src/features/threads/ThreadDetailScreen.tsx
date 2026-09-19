@@ -109,6 +109,7 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
+  readonly canOperateThread: boolean;
   readonly selectedThread: OrchestrationThreadShell;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
@@ -988,6 +989,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   >
                     {props.activePendingApproval ? (
                       <PendingApprovalCard
+                        canOperateThread={props.canOperateThread}
                         approval={props.activePendingApproval}
                         respondingApprovalId={props.respondingApprovalId}
                         onRespond={props.onRespondToApproval}
@@ -995,6 +997,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     ) : null}
                     {props.activePendingUserInput ? (
                       <PendingUserInputCard
+                        canOperateThread={props.canOperateThread}
                         pendingUserInput={props.activePendingUserInput}
                         maxHeight={pendingUserInputMaxHeight}
                         collapsed={userInputCollapsed}
@@ -1028,6 +1031,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 }
               >
                 <ThreadComposer
+                  canOperateThread={props.canOperateThread}
                   editorRef={composerEditorRef}
                   draftMessage={props.draftMessage}
                   draftAttachments={props.draftAttachments}

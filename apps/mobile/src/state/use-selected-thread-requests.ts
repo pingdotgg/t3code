@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ApprovalRequestId,
+  AuthOrchestrationOperateScope,
   type ProviderApprovalDecision,
   type UserInputQuestion,
 } from "@t3tools/contracts";
@@ -34,6 +35,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { useSelectedThreadDetail } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { useAtomCommand } from "./use-atom-command";
+import { readEnvironmentScope } from "./session";
 
 const userInputDraftsByRequestKeyAtom = Atom.make<
   Record<string, Record<string, PendingUserInputDraftAnswer>>
@@ -214,7 +216,10 @@ export function useSelectedThreadRequests() {
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
-      if (!selectedThreadShell) {
+      if (
+        !selectedThreadShell ||
+        !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
+      ) {
         return;
       }
 
@@ -234,7 +239,12 @@ export function useSelectedThreadRequests() {
   );
 
   const onSubmitUserInput = useCallback(async () => {
-    if (!selectedThreadShell || !activePendingUserInput || !activePendingUserInputAnswers) {
+    if (
+      !selectedThreadShell ||
+      !activePendingUserInput ||
+      !activePendingUserInputAnswers ||
+      !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
+    ) {
       return;
     }
 

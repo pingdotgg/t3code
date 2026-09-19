@@ -13,13 +13,16 @@ import type {
   EnvironmentId,
   UploadChatImageAttachment,
 } from "@t3tools/contracts";
-import { PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { appAtomRegistry } from "../state/atom-registry";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
-import { environmentSession } from "../state/session";
+import { environmentSession, readEnvironmentScope } from "../state/session";
 import { retainComposerAttachmentFileForPreview } from "../state/use-composer-drafts";
 import { resolveOwnedComposerAttachmentFileUri } from "./composerAttachmentFiles";
 import {
@@ -109,6 +112,9 @@ export async function releasePendingAttachmentUploads(
   attachmentIds: ReadonlyArray<string>,
 ): Promise<void> {
   const deleteOnce = async (attachmentId: string): Promise<boolean> => {
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+      throw new Error("This connection cannot delete pending attachments.");
+    }
     const result = await runAtomCommand(
       appAtomRegistry,
       attachmentEnvironment.remove,
@@ -255,6 +261,7 @@ async function composerImageAttachmentDataUrl(
 }
 
 async function uploadFileBytes(
+  environmentId: EnvironmentId,
   attachment: DraftComposerAttachment,
   url: string,
   signal: AbortSignal,
@@ -262,6 +269,9 @@ async function uploadFileBytes(
 ): Promise<void> {
   const { File, Paths, UploadType } = await import("expo-file-system");
   if (signal.aborted) throw new Error("Upload cancelled.");
+  if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+    throw new Error("This connection cannot upload attachments.");
+  }
   // Legacy image drafts persisted inline bytes and stage them in a temp cache
   // file for the native uploader. Everything else uploads its owned copy.
   const fileUri = attachment.fileUri;
@@ -349,6 +359,13 @@ export async function prepareTurnAttachments(input: {
     }
   }
 
+  const requireUploadAccess = () => {
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+      throw new Error("This connection cannot upload attachments.");
+    }
+  };
+  requireUploadAccess();
+
   const connection = appAtomRegistry.get(
     environmentSession.preparedConnectionValueAtom(environmentId),
   );
@@ -365,6 +382,7 @@ export async function prepareTurnAttachments(input: {
   try {
     for (const attachment of input.attachments) {
       if (controller.signal.aborted) throw new Error("Upload cancelled.");
+      requireUploadAccess();
       if (attachment.type === "image" && !input.supportsImageUploads) {
         uploadedAttachments.push(...(await toUploadChatImageAttachments([attachment])));
         continue;
@@ -393,6 +411,7 @@ export async function prepareTurnAttachments(input: {
         // "missing": the pending upload expired, upload the bytes again.
       }
 
+      requireUploadAccess();
       const result = await runAttachmentUploadCycle({
         registry: appAtomRegistry,
         createUploadUrl: attachmentEnvironment.createUploadUrl,
@@ -402,6 +421,7 @@ export async function prepareTurnAttachments(input: {
         // Read the connection at transfer time: the environment may have
         // reconnected on a new base URL since this cycle started.
         resolveUploadUrl: (relativeUrl) => {
+          requireUploadAccess();
           const currentConnection = appAtomRegistry.get(
             environmentSession.preparedConnectionValueAtom(environmentId),
           );
@@ -411,6 +431,7 @@ export async function prepareTurnAttachments(input: {
         },
         transport: (url) => ({
           done: uploadFileBytes(
+            environmentId,
             attachment,
             url,
             controller.signal,
