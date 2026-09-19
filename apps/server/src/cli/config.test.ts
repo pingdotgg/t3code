@@ -506,6 +506,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         resolved.terminalLogsDir,
         resolved.attachmentsDir,
         resolved.worktreesDir,
+        path.dirname(resolved.serverLogPath),
         path.dirname(resolved.serverTracePath),
       ]) {
         expect(yield* fs.exists(directory)).toBe(true);

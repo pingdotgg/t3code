@@ -81,7 +81,7 @@ const checkNodeSqliteCompat = () => {
   return Effect.void;
 };
 
-const make = Effect.fn("make")(function* (
+const make = Effect.fn("makeWithDatabase")(function* (
   options: SqliteClientConfig,
 ): Effect.fn.Return<Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> {
   yield* checkNodeSqliteCompat();

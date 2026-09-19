@@ -117,9 +117,6 @@ importers:
 
   .:
     devDependencies:
-      '@babel/parser':
-        specifier: 7.29.7
-        version: 7.29.7
       '@effect/tsgo':
         specifier: 'catalog:'
         version: 0.41.0
