@@ -69,6 +69,11 @@ export class DesktopShellEnvironment extends Context.Service<
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
+  // A GUI launch runs no shell rc, so an SDK in a non-default location is
+  // invisible to the device host, which then tells the user to "set
+  // ANDROID_HOME" — advice they have usually already followed in their profile.
+  "ANDROID_HOME",
+  "ANDROID_SDK_ROOT",
   "DBUS_SESSION_BUS_ADDRESS",
   "DISPLAY",
   "LANG",
@@ -442,6 +447,8 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     }
 
     for (const name of [
+      "ANDROID_HOME",
+      "ANDROID_SDK_ROOT",
       "DISPLAY",
       "HOMEBREW_PREFIX",
       "HOMEBREW_CELLAR",
