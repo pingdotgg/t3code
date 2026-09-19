@@ -14,6 +14,10 @@ export const measureWorktreeBytes = Effect.fn("measureWorktreeBytes")(function* 
       let bytes = 0;
       while (directories.length > 0) {
         const directory = directories.pop()!;
+        const directoryStat = await NodeFSP.lstat(directory);
+        if (!directoryStat.isDirectory()) return null;
+        // Directory links include children and parents, not externally shared file data.
+        bytes += directoryStat.blocks * 512;
         for await (const entry of await NodeFSP.opendir(directory)) {
           signal.throwIfAborted();
           if (++entries > 20_000) return null;
