@@ -135,6 +135,12 @@ server, but the host's own site will not show them, and the count reads **viewed
 The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
 does not show its diff, so marks are made and read on web and desktop.
 
+## Branch mismatches
+
+When a thread's recorded branch differs from its checkout, the composer shows **Branch mismatch**
+before you send. Sending uses the checked-out branch for the thread; local checkouts also offer
+**Restore branch** to switch back instead.
+
 ## Troubleshooting
 
 - **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
