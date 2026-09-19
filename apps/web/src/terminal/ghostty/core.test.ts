@@ -111,6 +111,33 @@ describe("GhosttyTerminalCore snapshots", () => {
     vi.restoreAllMocks();
   });
 
+  it("tracks split synchronized-output markers and ends an expired group", async () => {
+    const core = await createCore();
+    expect(core.isSynchronizedOutput()).toBe(false);
+    core.write("\x1b[?20");
+    expect(core.isSynchronizedOutput()).toBe(false);
+    core.write("26hpartial");
+    expect(core.isSynchronizedOutput()).toBe(true);
+    core.endSynchronizedOutput();
+    expect(core.isSynchronizedOutput()).toBe(false);
+    core.write("\x1b[?2026hnext\x1b[?2026");
+    expect(core.isSynchronizedOutput()).toBe(true);
+    core.write("l");
+    expect(core.isSynchronizedOutput()).toBe(false);
+    core.write("\x1b[?2026h");
+    core.resetAndWrite("reset");
+    expect(core.isSynchronizedOutput()).toBe(false);
+  });
+
+  it("lets Ghostty end synchronized output when the terminal grid resizes", async () => {
+    const core = await createCore();
+    core.write("\x1b[?2026hpartial");
+    expect(core.isSynchronizedOutput()).toBe(true);
+    core.resize(13, 3, 8, 16);
+    expect(core.isSynchronizedOutput()).toBe(false);
+    expect(core.snapshot().rowData[0]?.text).toBe("partial");
+  });
+
   it("preserves styles, wide cells, and selection after shared memory grows", async () => {
     const core = await createCore();
     const runtime = await loadGhosttyRuntime();
