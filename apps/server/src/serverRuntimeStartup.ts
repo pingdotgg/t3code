@@ -375,8 +375,19 @@ export const startEffectWorkerWithRelay = Effect.fn(
   readonly startRelay: Effect.Effect<void, never, RelayContext>;
   readonly workerFiberRef: Ref.Ref<Fiber.Fiber<void, never> | null>;
 }) {
-  const workerFiber = yield* forkParkedFiber(input.runWorker);
+  // The worker is detached from the scope and bound by this bounded-interrupt
+  // finalizer instead: forkScoped's own finalizer waits on the worker's exit
+  // unboundedly, and it is registered after the teardown finalizer, so a
+  // stalled worker would pin scope close before providerSessions.shutdown.
+  const workerFiber = yield* forkParkedFiber(input.runWorker, { detached: true });
   yield* Ref.set(input.workerFiberRef, workerFiber);
+  yield* Effect.addFinalizer(() =>
+    Ref.getAndSet(input.workerFiberRef, null).pipe(
+      Effect.flatMap((ownedWorkerFiber) =>
+        ownedWorkerFiber === null ? Effect.void : interruptEffectWorker(ownedWorkerFiber),
+      ),
+    ),
+  );
   yield* input.startRelay.pipe(
     Effect.onExit((exit) => {
       if (Exit.isSuccess(exit)) {

@@ -236,7 +236,9 @@ export function runOrchestratorV2ProviderReplayScenario<
       yield* Effect.flatMap(EffectOutbox.EffectOutboxV2, (outbox) =>
         outbox.reconcileAfterProcessLoss.pipe(Effect.orDie),
       );
-      yield* runEffectWorkerDaemon.pipe(Effect.forkScoped);
+      if (options.runEffectWorker !== false) {
+        yield* runEffectWorkerDaemon.pipe(Effect.forkScoped);
+      }
       const result = yield* run;
       yield* Effect.flatMap(
         ProviderSessionManager.ProviderSessionManagerV2,

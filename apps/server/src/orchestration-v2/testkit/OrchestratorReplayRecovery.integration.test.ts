@@ -443,6 +443,63 @@ describe("orchestrator replay recovery", () => {
         } finally {
           check.close();
         }
+
+        // A restart with the worker disabled must not start the daemon after
+        // reconciliation — persisted work stays parked for manual inspection.
+        const parkedEffectId = "restart-reconcile-parked";
+        const seedParked = new NodeSqlite.DatabaseSync(dbPath);
+        try {
+          seedParked
+            .prepare(
+              `INSERT INTO orchestration_v2_effect_outbox (
+                  effect_id, command_id, thread_id, effect_type, payload_json,
+                  status, attempt_count, available_at, created_at, updated_at
+                ) VALUES (?, ?, ?, 'terminal.cleanup', '{"type":"terminal.cleanup"}', 'pending', 0, ?, ?, ?)`,
+            )
+            .run(
+              parkedEffectId,
+              "restart-reconcile-command-parked",
+              "restart-reconcile-thread-parked",
+              seededAt,
+              seededAt,
+              seededAt,
+            );
+        } finally {
+          seedParked.close();
+        }
+
+        yield* Effect.scoped(
+          runOrchestratorV2ProviderReplayScenario(
+            {
+              name: "provider_thread_resume/cursor:reconcile-worker-disabled",
+              transcript,
+              commands: [],
+              steps: [],
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: tempDir },
+              runtimeRestart: true,
+            },
+            harness,
+            { ...options, runEffectWorker: false },
+          ),
+        );
+
+        const checkParked = new NodeSqlite.DatabaseSync(dbPath);
+        try {
+          const parkedRow = checkParked
+            .prepare(
+              `SELECT status, attempt_count
+                 FROM orchestration_v2_effect_outbox
+                 WHERE effect_id = ?`,
+            )
+            .get(parkedEffectId) as unknown as {
+            readonly status: string;
+            readonly attempt_count: number;
+          };
+          assert.deepStrictEqual(parkedRow, { status: "pending", attempt_count: 0 });
+        } finally {
+          checkParked.close();
+        }
       }).pipe(
         provideDeterministicTestRuntime,
         Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer)),
