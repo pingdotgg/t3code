@@ -1231,8 +1231,11 @@ it.effect(
   "detectRepository distinguishes a confirmed absent repository from detection failures",
   () => {
     let revParseResult = { exitCode: 0, stdout: "", stderr: "" };
+    let observedEnv: NodeJS.ProcessEnv | undefined;
     return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
       const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-detect-" });
       // Git's "not a git repository" fatal is the nonzero signature that
       // confirms the workspace has no usable repository.
       revParseResult = {
@@ -1240,7 +1243,16 @@ it.effect(
         stdout: "",
         stderr: "fatal: not a git repository (or any of the parent directories): .git\n",
       };
-      assert.isNull(yield* driver.detectRepository("/repo"));
+      assert.isNull(yield* driver.detectRepository(cwd));
+      // The diagnostic locale is pinned so translated fatals cannot evade the
+      // signature match.
+      assert.equal(observedEnv?.LC_ALL, "C");
+      // The same fatal with .git metadata present means the repository is
+      // broken (unreadable HEAD, broken worktree pointer), not absent.
+      yield* fileSystem.makeDirectory(`${cwd}/.git`, { recursive: true });
+      const brokenError = yield* driver.detectRepository(cwd).pipe(Effect.flip);
+      assert.equal(brokenError._tag, "VcsProcessExitError");
+      yield* fileSystem.remove(`${cwd}/.git`, { recursive: true });
       // Other fatals (unreadable config, permission denied, I/O) mean detection
       // itself failed — they must propagate rather than report the workspace as
       // non-Git, which callers rely on to decide that no repo state exists.
@@ -1249,33 +1261,25 @@ it.effect(
         stdout: "",
         stderr: "fatal: unable to access '.git/config': Permission denied\n",
       };
-      const error = yield* driver.detectRepository("/repo").pipe(Effect.flip);
+      const error = yield* driver.detectRepository(cwd).pipe(Effect.flip);
       assert.equal(error._tag, "VcsProcessExitError");
     }).pipe(
+      Effect.scoped,
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
           Layer.mock(VcsProcess.VcsProcess)({
             run: (input) =>
-              // Mirror the real VcsProcess contract: a nonzero exit fails the
-              // effect unless the caller opted into allowNonZeroExit.
-              input.allowNonZeroExit === true || revParseResult.exitCode === 0
-                ? Effect.succeed({
-                    exitCode: ChildProcessSpawner.ExitCode(revParseResult.exitCode),
-                    stdout: revParseResult.stdout,
-                    stderr: revParseResult.stderr,
-                    stdoutTruncated: false,
-                    stderrTruncated: false,
-                  })
-                : Effect.fail(
-                    new VcsProcessExitError({
-                      operation: input.operation,
-                      command: "git",
-                      cwd: input.cwd,
-                      exitCode: revParseResult.exitCode,
-                      detail: revParseResult.stderr.trim(),
-                    }),
-                  ),
+              Effect.sync(() => {
+                observedEnv = input.env;
+                return {
+                  exitCode: ChildProcessSpawner.ExitCode(revParseResult.exitCode),
+                  stdout: revParseResult.stdout,
+                  stderr: revParseResult.stderr,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                };
+              }),
           }),
         ),
       ),
