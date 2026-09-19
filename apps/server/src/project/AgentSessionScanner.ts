@@ -124,6 +124,8 @@ const TranscriptRecord = Schema.Struct({
     Schema.Struct({
       id: Schema.optional(Schema.String),
       session_id: Schema.optional(Schema.String),
+      name: Schema.optional(Schema.NullOr(Schema.String)),
+      threadName: Schema.optional(Schema.NullOr(Schema.String)),
       type: Schema.optional(Schema.String),
       role: Schema.optional(Schema.String),
       message: Schema.optional(Schema.String),
@@ -304,6 +306,7 @@ function parseAgentSessionRecords(
   // timestamp text, so only transcript metadata can provide a resumable ID.
   let providerSessionId = input.source === "codex" ? "" : input.fallbackSessionId;
   let title: string | null = null;
+  let derivedTitle: string | undefined;
   let model: string | null = null;
   let hasCodexSessionId = false;
   const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
@@ -372,6 +375,19 @@ function parseAgentSessionRecords(
     if (firstUserMessage === undefined && message.role === "user") {
       firstUserMessage = message;
     }
+    if (derivedTitle === undefined && message.role === "user") {
+      // Strip only known leading Codex preambles, and only for the title.
+      const prompt =
+        input.source === "codex"
+          ? message.text
+              .trim()
+              .replace(
+                /^(?:(?:# AGENTS\.md instructions for [^\n]*\n\s*)?<(recommended_plugins|environment_context|user_instructions|INSTRUCTIONS)>[\s\S]*?<\/\1>\s*|## My request for Codex:\s*)+/,
+                "",
+              )
+          : message.text.trim();
+      derivedTitle = prompt.split("\n")[0]?.slice(0, 100).trim() || undefined;
+    }
     messages.push(message);
     if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
   };
@@ -429,6 +445,7 @@ function parseAgentSessionRecords(
       if (!hasCodexSessionId && sessionId) {
         providerSessionId = sessionId;
         hasCodexSessionId = true;
+        title = record.payload?.name?.trim() || record.payload?.threadName?.trim() || null;
       }
       continue;
     }
@@ -492,13 +509,12 @@ function parseAgentSessionRecords(
   const retainedMessages = firstUserMessageRetained
     ? visibleMessages
     : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
-  const derivedTitle = visibleFirstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();
 
   return {
     source: input.source,
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
-    title: title ?? (derivedTitle && derivedTitle.length > 0 ? derivedTitle : "Imported thread"),
+    title: title ?? derivedTitle ?? "Imported thread",
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
