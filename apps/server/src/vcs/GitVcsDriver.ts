@@ -581,9 +581,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           ? Effect.succeed(true)
           : fileSystem.readLink(entry).pipe(
               Effect.as(true),
-              Effect.catchTag("PlatformError", (error) =>
-                error.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(error),
-              ),
+              Effect.catchTags({
+                PlatformError: (error) =>
+                  error.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(error),
+              }),
             ),
       ),
     );
@@ -641,7 +642,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       if (
         !insideWorkTreeResult.stderr.includes("not a git repository") ||
         (yield* hasGitMetadataEntry(cwd).pipe(
-          Effect.catchTag("PlatformError", () => Effect.succeed(true)),
+          Effect.catchTags({ PlatformError: () => Effect.succeed(true) }),
         ))
       ) {
         return yield* detectionFailure;
