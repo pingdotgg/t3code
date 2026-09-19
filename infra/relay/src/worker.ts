@@ -330,6 +330,15 @@ export const ApiLive = Api.make(
             ),
           ),
         ),
+        // Armed cards showing only finished work end once the display window
+        // passes, even when no environment publishes again.
+        Effect.andThen(
+          Effect.all([AgentActivityPublisher.AgentActivityPublisher, DateTime.now]).pipe(
+            Effect.flatMap(([publisher, now]) =>
+              publisher.endIdleLiveActivities({ nowMs: now.epochMilliseconds }),
+            ),
+          ),
+        ),
         Effect.withSpan("relay.cron.prune_expired_state"),
         Effect.provide(runtimeLayer),
       ),

@@ -768,6 +768,22 @@ export const make = Effect.gen(function* () {
         return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
       }
     }
+    // A contentless end retires the token. Work that started after the end
+    // was queued may already have painted the card through its own update;
+    // ending now would drop that card and strand the new work.
+    if (
+      input.kind === "live_activity_end" &&
+      aggregate === null &&
+      (yield* userStillHasLiveWork(input.target.user_id))
+    ) {
+      if (input.sourceJobId) {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Stale APNs end job skipped.",
+        });
+      }
+      return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+    }
     if (
       input.kind === "live_activity_start" &&
       !(yield* userStillHasLiveWork(input.target.user_id))
