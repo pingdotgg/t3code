@@ -35,6 +35,7 @@ import {
   type SourceControlWritingStyleSettings,
   type ThreadId,
 } from "@t3tools/contracts";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import {
   hasProjectSettingsOverrides,
   resolveProjectSettings,
@@ -137,9 +138,10 @@ const SHORT_SHA_LENGTH = 7;
 const TOAST_DESCRIPTION_MAX = 72;
 const STATUS_RESULT_CACHE_TTL = Duration.seconds(1);
 const STATUS_RESULT_CACHE_CAPACITY = 2_048;
-// Matches the automatic settlement sweep cadence so every background sweep
-// reads fresh branch state: an external merge settles within about a minute
-// instead of waiting out a longer cache. Unpublished branches never reach the
+// The shortest lifetime of a pull request lookup, and the cadence of the
+// sweeps that read it. The Background Activity `pullRequestLookupInterval`
+// can only lengthen it: at this floor an external merge settles within about a
+// minute, at a longer interval within that interval. Unpublished branches never reach the
 // host (a local probe answers first), and failed lookups still back off
 // exponentially via prLookupFailureTtl, so throttling pressure still drops
 // under 429s instead of amplifying it.
@@ -1065,6 +1067,20 @@ export const make = Effect.gen(function* () {
     prLookupFailureStreakByKey.set(key, streak);
     return prLookupFailureTtl(streak);
   };
+  // Every background reader of a branch's pull request (thread discovery,
+  // settlement, status) goes through this cache, so its lifetime is the one
+  // place that bounds how often the hosting CLI runs for an unchanged branch.
+  // Each entry carries the interval it was looked up under; lookups of
+  // different branches overlap, so a shared value could come from another one.
+  const readPrLookupTtl = serverSettingsService.getSettings.pipe(
+    Effect.map((settings) =>
+      Duration.max(
+        resolveServerBackgroundActivitySettings(settings).pullRequestLookupInterval,
+        PR_LOOKUP_CACHE_TTL,
+      ),
+    ),
+    Effect.orElseSucceed(() => PR_LOOKUP_CACHE_TTL),
+  );
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
       const [
@@ -1083,9 +1099,10 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
+        const ttl = yield* readPrLookupTtl;
         const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
         if (!lookup) {
-          return { latest: null, headContext };
+          return { latest: null, headContext, ttl };
         }
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
@@ -1094,10 +1111,10 @@ export const make = Effect.gen(function* () {
           details.upstreamRef === null &&
           (yield* isUnpublishedBranch(cwd, headContext))
         ) {
-          return { latest: null, headContext };
+          return { latest: null, headContext, ttl };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
-        return { latest, headContext };
+        return { latest, headContext, ttl };
       });
     },
     {
@@ -1105,7 +1122,7 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit, key) => {
         if (Exit.isSuccess(exit)) {
           prLookupFailureStreakByKey.delete(key);
-          return PR_LOOKUP_CACHE_TTL;
+          return exit.value.ttl;
         }
         return nextPrLookupFailureTtl(key);
       },

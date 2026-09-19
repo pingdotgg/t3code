@@ -913,6 +913,7 @@ export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyle
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
+export const DEFAULT_PULL_REQUEST_LOOKUP_INTERVAL = Duration.minutes(5);
 
 export const BackgroundActivityProfile = Schema.Literals([
   "balanced",
@@ -933,6 +934,7 @@ export type BackgroundActivityProfileSelection = typeof BackgroundActivityProfil
 export const BackgroundActivityOverrides = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
+  pullRequestLookupInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorActiveInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorIdleInterval: Schema.optionalKey(Schema.DurationFromMillis),
   idleClientTtl: Schema.optionalKey(Schema.DurationFromMillis),

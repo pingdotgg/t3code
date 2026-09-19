@@ -177,6 +177,7 @@ export function resolveBackgroundActivityProfileOption(
     overrides: {
       automaticGitFetchInterval: resolved.automaticGitFetchInterval,
       providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
+      pullRequestLookupInterval: resolved.pullRequestLookupInterval,
       hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
       hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
       idleClientTtl: resolved.idleClientTtl,
@@ -316,6 +317,7 @@ export function backgroundActivityOverrideSettings(
   const nextOverrides: BackgroundActivityOverridePatch = {
     automaticGitFetchInterval: resolved.automaticGitFetchInterval,
     providerHealthRefreshInterval: resolved.providerHealthRefreshInterval,
+    pullRequestLookupInterval: resolved.pullRequestLookupInterval,
     hostPowerMonitorActiveInterval: resolved.hostPowerMonitorActiveInterval,
     hostPowerMonitorIdleInterval: resolved.hostPowerMonitorIdleInterval,
     idleClientTtl: resolved.idleClientTtl,

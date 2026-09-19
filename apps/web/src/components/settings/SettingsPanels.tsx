@@ -879,6 +879,9 @@ function BackgroundActivityAdvancedDialog({
   const providerHealthRefreshIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.providerHealthRefreshInterval,
   );
+  const pullRequestLookupIntervalMinutes = Math.round(
+    durationToSeconds(resolvedBackgroundActivity.pullRequestLookupInterval) / 60,
+  );
   const hostPowerMonitorActiveIntervalSeconds = durationToSeconds(
     resolvedBackgroundActivity.hostPowerMonitorActiveInterval,
   );
@@ -976,6 +979,45 @@ function BackgroundActivityAdvancedDialog({
                   </NumberFieldGroup>
                 </NumberField>
                 <span className="text-xs text-muted-foreground">seconds</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <div className="text-sm font-medium">Pull request lookup interval</div>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Ask the Git host again for a branch's pull request. Finished turns and refreshes
+                  ask right away.
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <NumberField
+                  value={pullRequestLookupIntervalMinutes}
+                  min={1}
+                  step={1}
+                  size="sm"
+                  className="w-32"
+                  onValueChange={(value) =>
+                    updateSettings(
+                      backgroundActivityOverrideSettings(
+                        settings.backgroundActivity,
+                        resolvedBackgroundActivity,
+                        {
+                          pullRequestLookupInterval: Duration.minutes(
+                            normalizeIntervalSeconds(value, 1),
+                          ),
+                        },
+                      ),
+                    )
+                  }
+                >
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement aria-label="Decrease pull request lookup interval" />
+                    <NumberFieldInput aria-label="Pull request lookup interval in minutes" />
+                    <NumberFieldIncrement aria-label="Increase pull request lookup interval" />
+                  </NumberFieldGroup>
+                </NumberField>
+                <span className="text-xs text-muted-foreground">minutes</span>
               </div>
             </div>
 

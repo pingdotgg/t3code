@@ -391,7 +391,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     scope: "environment-defaults",
     searchTerms: [
-      "balanced performance battery saver advanced git fetch provider health refresh host power monitor idle policy",
+      "balanced performance battery saver advanced git fetch pull request lookup provider health refresh host power monitor idle policy",
     ],
   },
   {
