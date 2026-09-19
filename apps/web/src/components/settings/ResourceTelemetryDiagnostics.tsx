@@ -536,7 +536,10 @@ function ProcessActions({
   }
   const isSignaling = signalingKeys.has(processIdentityKey(process));
   return (
-    <ProcessSignalActions disabled={!canMaintainEnvironment || isSignaling} onSignal={(signal) => onSignal(process, signal)} />
+    <ProcessSignalActions
+      disabled={!canMaintainEnvironment || isSignaling}
+      onSignal={(signal) => onSignal(process, signal)}
+    />
   );
 }
 

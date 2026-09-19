@@ -805,7 +805,12 @@ export function DiagnosticsSettingsPanel() {
     async (pid: number, signal: ServerProcessSignal) => {
       const targetEnvironmentId = environmentIdRef.current;
       const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
-      if (targetEnvironmentId === null || process === undefined || !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)) return;
+      if (
+        targetEnvironmentId === null ||
+        process === undefined ||
+        !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)
+      )
+        return;
       if (signalingPidRef.current !== null) return;
       signalingPidRef.current = pid;
       setSignalingPid(pid);
