@@ -1110,6 +1110,7 @@ export function makeCursorAdapter(
           yield* ctx.acp.drainEvents;
           const failure = ctx.assistantReply.failure;
           if (ctx.promptsInFlight === 1 && result.stopReason !== "cancelled" && failure) {
+            yield* withThreadLock(input.threadId, stopSessionInternal(ctx));
             return yield* new ProviderAdapterRequestError({
               provider: PROVIDER,
               method: "session/prompt",
