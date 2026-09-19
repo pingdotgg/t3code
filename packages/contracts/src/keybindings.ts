@@ -61,6 +61,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "terminal.splitVertical",
   "terminal.new",
   "terminal.close",
+  "terminal.find",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
   "rightPanel.close",

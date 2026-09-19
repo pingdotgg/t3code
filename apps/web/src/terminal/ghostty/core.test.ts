@@ -12,6 +12,7 @@ import {
 import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";
 import { loadGhosttyRuntime } from "./runtime";
+import { findTerminalSearchMatches } from "./search";
 
 vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
   default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
@@ -376,5 +377,63 @@ describe("GhosttyTerminalCore snapshots", () => {
     writeTerminalOutputUpdate(core, reattached);
     reference.resetAndWrite("hello");
     expect(core.snapshot()).toEqual(reference.snapshot());
+  });
+});
+
+const searchTheme = {
+  foreground: { r: 255, g: 255, b: 255 },
+  background: { r: 0, g: 0, b: 0 },
+  cursor: { r: 255, g: 255, b: 255 },
+};
+const searchOptions = { caseSensitive: false };
+
+describe("GhosttyTerminalCore.searchRows", () => {
+  const cores = new Set<GhosttyTerminalCore>();
+  const noWraps = [false, false, false, false];
+  async function createCore() {
+    const core = await GhosttyTerminalCore.create(10, 4, 8, 16, searchTheme, () => {});
+    cores.add(core);
+    return core;
+  }
+  afterEach(() => {
+    for (const core of cores) core.dispose();
+    cores.clear();
+  });
+  it.each([
+    ["plain text", "Hello", { texts: ["Hello"], wraps: noWraps }],
+    ["wide text", "漢字x", { texts: ["漢字x"], wraps: noWraps }],
+    ["an empty screen", "", { texts: [], wraps: noWraps }],
+    ["hard breaks", "One\r\nTwo", { texts: ["One", "Two"], wraps: noWraps }],
+    ["leading spaces", "  padded", { texts: ["  padded"], wraps: noWraps }],
+    ["styled text", "\x1b[31mRed\x1b[0m", { texts: ["Red"], wraps: noWraps }],
+    [
+      "a soft wrap",
+      "0123456789WRAP",
+      { texts: ["0123456789", "WRAP"], wraps: [true, false, false, false] },
+    ],
+    [
+      "scrollback",
+      "Line1\r\nLine2\r\nLine3\r\nLine4\r\nLine5\r\n",
+      { texts: ["Line1", "Line2", "Line3", "Line4", "Line5"], wraps: [...noWraps, false, false] },
+    ],
+  ])("formats %s exactly", async (_description, input, expected) => {
+    const core = await createCore();
+    core.write(input);
+    expect(core.searchRows()).toEqual(expected);
+  });
+  it("supports matches across formatted rows", async () => {
+    const core = await createCore();
+    core.write("0123456789WRAP");
+    expect(findTerminalSearchMatches(core.searchRows(), "89WRAP", searchOptions).matches).toEqual([
+      { start: { row: 0, offset: 8 }, end: { row: 1, offset: 4 } },
+    ]);
+  });
+  it("preserves selection text", async () => {
+    const core = await createCore();
+    core.write("Hello World");
+    core.setSelection({ x: 0, y: 0 }, { x: 4, y: 0 });
+    expect(core.selectionText()).toBe("Hello");
+    core.searchRows();
+    expect(core.selectionText()).toBe("Hello");
   });
 });

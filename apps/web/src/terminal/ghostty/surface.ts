@@ -8,6 +8,17 @@ import {
   type GhosttyTheme,
 } from "./core";
 import {
+  type TerminalSearchMatch,
+  type TerminalSearchOptions,
+  type TerminalSearchResult,
+  closestTerminalSearchIndex,
+  findTerminalSearchMatches,
+  initialTerminalSearchIndex,
+  stepTerminalSearchIndex,
+  terminalSearchHighlights,
+  terminalSearchScrollDelta,
+} from "./search";
+import {
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
@@ -37,6 +48,7 @@ const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
 const CURSOR_BLINK_INTERVAL_MS = 500;
+const SEARCH_REFRESH_DELAY_MS = 150;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
 const TERMINAL_FONT_LOAD_VARIANTS = [
   "normal 400",
@@ -537,6 +549,12 @@ export interface GhosttySelectionPosition {
   readonly end: { readonly x: number; readonly y: number };
 }
 
+export interface GhosttyTerminalSearchState {
+  readonly matchCount: number;
+  readonly activeIndex: number;
+  readonly truncated: boolean;
+}
+
 export interface GhosttyTerminalSurfaceOptions {
   readonly theme: GhosttyTheme;
   readonly font?: GhosttyTerminalFont;
@@ -553,6 +571,7 @@ export interface GhosttyTerminalSurfaceOptions {
    * default — whose Paste entry can never reach a canvas terminal.
    */
   readonly onContextMenu?: (event: MouseEvent) => void;
+  readonly onSearchChange?: (state: GhosttyTerminalSearchState) => void;
 }
 
 export class GhosttyTerminalSurface {
@@ -637,6 +656,13 @@ export class GhosttyTerminalSurface {
   private readonly reducedMotionMedia = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   private inputLeft = -1;
   private inputTop = -1;
+  private searchQuery = "";
+  private searchOptions: TerminalSearchOptions | null = null;
+  private searchMatches: TerminalSearchMatch[] = [];
+  private searchActiveIndex = -1;
+  private searchRefreshTimer: number | null = null;
+  private searchPreviousActiveMatch: TerminalSearchMatch | null = null;
+  private searchTruncated = false;
 
   private constructor(
     mount: HTMLElement,
@@ -770,6 +796,7 @@ export class GhosttyTerminalSurface {
     this.cursorOn = true;
     this.scrollbarDirty = true;
     this.requestRender();
+    if (this.searchQuery) this.scheduleSearchRefresh();
   }
 
   resetAndWrite(data: string): void {
@@ -783,6 +810,7 @@ export class GhosttyTerminalSurface {
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
+    if (this.searchQuery) this.scheduleSearchRefresh();
   }
 
   setTheme(theme: GhosttyTheme): void {
@@ -890,7 +918,8 @@ export class GhosttyTerminalSurface {
     this.mountHeight = height;
     // onResize is the only PTY resize channel, so the first successful fit must
     // notify even when the measured grid equals the 1x1 construction sentinel.
-    if (grid.cols !== this.cols || grid.rows !== this.rows || !this.resizeNotified) {
+    const gridChanged = grid.cols !== this.cols || grid.rows !== this.rows;
+    if (gridChanged || !this.resizeNotified) {
       this.cols = grid.cols;
       this.rows = grid.rows;
       this.core.resize(grid.cols, grid.rows, this.metrics.width, this.metrics.height);
@@ -898,6 +927,7 @@ export class GhosttyTerminalSurface {
       this.forceFullRender = true;
       this.scrollbarDirty = true;
       shouldRender = true;
+      if (gridChanged && this.searchQuery) this.scheduleSearchRefresh();
     }
     // Rendering synchronously keeps the repaint inside the same frame as the
     // layout change: ResizeObserver fires before paint, so the browser never
@@ -1035,6 +1065,7 @@ export class GhosttyTerminalSurface {
       // the surface unmounts inside the debounce window.
       this.options.onResize(this.cols, this.rows);
     }
+    this.clearSearchRefreshTimer();
     this.cancelRender();
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
@@ -1050,6 +1081,115 @@ export class GhosttyTerminalSurface {
       this.input.remove();
       this.scrollbar.remove();
     }
+  }
+
+  /** Replace the active terminal search and select its first visible match. */
+  setSearch(query: string, options: TerminalSearchOptions): GhosttyTerminalSearchState {
+    if (this.disposed) return this.getSearchState();
+    this.searchQuery = query;
+    this.searchOptions = options;
+    this.clearSearchRefreshTimer();
+    const result = query ? this.computeSearch(query, options) : { matches: [], truncated: false };
+    return this.applySearchResult(result, this.initialSearchIndex(result.matches), true);
+  }
+
+  /** Select and reveal the next search match, wrapping at the end. */
+  searchNext(): GhosttyTerminalSearchState {
+    return this.stepSearch(1);
+  }
+
+  /** Select and reveal the previous search match, wrapping at the start. */
+  searchPrevious(): GhosttyTerminalSearchState {
+    return this.stepSearch(-1);
+  }
+
+  /** Clear the active search and remove its highlights. */
+  clearSearch(): void {
+    if (this.disposed) return;
+    this.searchQuery = "";
+    this.searchOptions = null;
+    this.clearSearchRefreshTimer();
+    this.applySearchResult({ matches: [], truncated: false }, -1, false);
+  }
+
+  private getSearchState(): GhosttyTerminalSearchState {
+    return {
+      matchCount: this.searchMatches.length,
+      activeIndex: this.searchActiveIndex,
+      truncated: this.searchTruncated,
+    };
+  }
+
+  private stepSearch(direction: 1 | -1): GhosttyTerminalSearchState {
+    if (this.disposed || this.searchMatches.length === 0) return this.getSearchState();
+    const count = this.searchMatches.length;
+    this.searchActiveIndex = stepTerminalSearchIndex(this.searchActiveIndex, count, direction);
+    const match = this.searchMatches[this.searchActiveIndex];
+    this.searchPreviousActiveMatch = match ?? null;
+    if (match) this.reveal(match);
+    this.forceFullRender = true;
+    this.requestRender();
+    return this.getSearchState();
+  }
+
+  private applySearchResult(result: TerminalSearchResult, activeIndex: number, reveal: boolean) {
+    if (this.disposed) return this.getSearchState();
+    this.searchMatches = [...result.matches];
+    this.searchTruncated = result.truncated;
+    const match = this.searchMatches[activeIndex];
+    this.searchActiveIndex = match ? activeIndex : -1;
+    this.searchPreviousActiveMatch = match ?? null;
+    if (match && reveal) this.reveal(match);
+    this.forceFullRender = true;
+    this.requestRender();
+    return this.getSearchState();
+  }
+
+  private reveal(match: TerminalSearchMatch): void {
+    const scrollState = this.readScrollbarState();
+    if (scrollState === null) return;
+    const delta = terminalSearchScrollDelta(match, scrollState);
+    if (delta !== 0) this.scrollViewport(delta);
+  }
+
+  private computeSearch(query: string, options: TerminalSearchOptions) {
+    const { texts, wraps } = this.core.searchRows();
+    return findTerminalSearchMatches({ texts, wraps }, query, options);
+  }
+
+  private initialSearchIndex(matches: readonly TerminalSearchMatch[]): number {
+    const scroll = this.readScrollbarState();
+    return initialTerminalSearchIndex(matches, scroll?.offset ?? 0, scroll?.len ?? this.rows);
+  }
+
+  private scheduleSearchRefresh(): void {
+    if (this.disposed || !this.searchQuery || this.searchRefreshTimer !== null) return;
+    this.searchRefreshTimer = window.setTimeout(() => {
+      this.searchRefreshTimer = null;
+      this.refreshSearchResults();
+    }, SEARCH_REFRESH_DELAY_MS);
+  }
+
+  private clearSearchRefreshTimer(): void {
+    if (this.searchRefreshTimer !== null) window.clearTimeout(this.searchRefreshTimer);
+    this.searchRefreshTimer = null;
+  }
+
+  private refreshSearchResults(): void {
+    if (this.disposed || !this.searchQuery || this.searchOptions === null) return;
+    const previous = this.getSearchState();
+    const result = this.computeSearch(this.searchQuery, this.searchOptions);
+    const closest = closestTerminalSearchIndex(result.matches, this.searchPreviousActiveMatch);
+    const next = this.applySearchResult(
+      result,
+      closest === -1 ? this.initialSearchIndex(result.matches) : closest,
+      false,
+    );
+    const changed =
+      previous.matchCount !== next.matchCount ||
+      previous.activeIndex !== next.activeIndex ||
+      previous.truncated !== next.truncated;
+    if (changed) this.options.onSearchChange?.(next);
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
@@ -1849,6 +1989,16 @@ export class GhosttyTerminalSurface {
       previousCursorY: this.renderedCursorY,
       focused: this.focused,
       hoveredLinkRange: this.hoveredLink?.range ?? null,
+      ...(this.searchMatches.length > 0
+        ? {
+            searchHighlights: terminalSearchHighlights(
+              this.searchMatches,
+              this.searchActiveIndex,
+              scrollState?.offset ?? 0,
+              this.snapshot.rowData,
+            ),
+          }
+        : {}),
       ...(this.theme.selectionBackground !== undefined
         ? { selectionBackground: this.theme.selectionBackground }
         : {}),

@@ -395,6 +395,14 @@ export function isTerminalCloseShortcut(
   return matchesCommandShortcut(event, keybindings, "terminal.close", options);
 }
 
+export function isTerminalFindShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "terminal.find", options);
+}
+
 export function isDiffToggleShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
