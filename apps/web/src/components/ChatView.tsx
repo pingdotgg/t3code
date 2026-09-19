@@ -10072,6 +10072,23 @@ export default function ChatView(props: ChatViewProps) {
                                 ? openUsageLimits
                                 : undefined
                             }
+                            // The meter reads the selected instance's own
+                            // snapshot; the panel also merges hub-reported accounts.
+                            usageLimits={
+                              usageLimitsOffered ? activeProviderStatus?.usageLimits : undefined
+                            }
+                            usageLimitsProviderLabel={
+                              activeProviderStatus?.displayName?.trim() ||
+                              (activeProviderStatus ? String(activeProviderStatus.driver) : "")
+                            }
+                            // Unlike the slash command, the meter is a button:
+                            // it opens the panel outright, so a draft carrying
+                            // attachments or contexts is no reason to refuse.
+                            onOpenUsageLimits={
+                              usageLimitsOffered && usageLimitsKey !== null
+                                ? openUsageLimits
+                                : undefined
+                            }
                             environmentUnavailable={activeEnvironmentUnavailableState}
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}
