@@ -60,7 +60,7 @@ export function beginCodexFeedbackSubmission(
 export function codexFeedbackMessage(
   submission: CodexFeedbackSubmission,
   role: "user" | "assistant" = "user",
-): OrchestrationMessage {
+): OrchestrationMessage & { readonly role: "user" | "assistant" } {
   const text =
     role === "user"
       ? submission.command
