@@ -383,6 +383,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           if (next.reason === "application-active-reconnect") {
             return true;
           }
+          if (next.reason === "network-path-changed") {
+            // The socket being opened is bound to the interface this handoff
+            // replaced, so restart the attempt on the new one. The ladder
+            // carries over: a flapping interface must not pin the delay to its
+            // first rung.
+            return false;
+          }
           if (next.reason === "credentials-changed" && target._tag === "RelayConnectionTarget") {
             yield* logManagedRelayAccountChange;
             return false;
@@ -413,9 +420,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           }
           if (next.reason === "application-active-reconnect") {
             // Mobile operating systems commonly suspend sockets without
-            // delivering a close event. A long background resume deliberately
-            // replaces that lease and starts a fresh attempt without backoff.
+            // delivering a close event, so a long background resume replaces
+            // that lease and starts a fresh attempt without backoff.
             return true;
+          }
+          if (next.reason === "network-path-changed") {
+            // A handoff leaves this lease bound to the interface it was opened
+            // on, so replace it while keeping the ladder.
+            return false;
           }
           if (next.reason === "application-active" || next.reason === "application-active-probe") {
             const probe = yield* lease.session.probe.pipe(
@@ -465,6 +477,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
                   if (probeEvent.signal.reason === "application-active-reconnect") {
                     yield* Fiber.interrupt(probe);
                     return true;
+                  }
+                  if (probeEvent.signal.reason === "network-path-changed") {
+                    yield* Fiber.interrupt(probe);
+                    return false;
                   }
                   if (
                     probeEvent.signal.reason === "credentials-changed" &&
@@ -613,6 +629,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           const next = yield* Queue.take(signals);
           switch (next._tag) {
             case "Wakeup":
+              if (next.reason === "network-path-changed") {
+                // There is no lease to replace during backoff, and cutting the
+                // delay short would let a flapping interface hammer the server.
+                break;
+              }
               return ConnectionWakeups.isApplicationActiveWakeup(next.reason);
             case "ConnectRequested":
             case "DisconnectRequested":
@@ -625,11 +646,19 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  const waitForSignal = Queue.take(signals).pipe(
-    Effect.map(
-      (next) => next._tag === "Wakeup" && ConnectionWakeups.isApplicationActiveWakeup(next.reason),
-    ),
-  );
+  const waitForSignal = Effect.gen(function* () {
+    for (;;) {
+      const next = yield* Queue.take(signals);
+      if (next._tag !== "Wakeup") {
+        return false;
+      }
+      // There is no lease to replace while idle, offline, or blocked, so a
+      // path change must not wake the loop for nothing.
+      if (next.reason !== "network-path-changed") {
+        return ConnectionWakeups.isApplicationActiveWakeup(next.reason);
+      }
+    }
+  });
 
   const run = Effect.fnUntraced(function* () {
     let failureCount = 0;

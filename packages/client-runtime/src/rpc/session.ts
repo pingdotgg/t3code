@@ -188,6 +188,14 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         ),
         Effect.asVoid,
       ),
+      // The transport fails the session after a few missed pongs. Logging it
+      // separately tells a silently dead route apart from an ordinary close.
+      onPingTimeout: Effect.logWarning("Connection ping timed out.").pipe(
+        Effect.annotateLogs({
+          "connection.environment.id": connection.environmentId,
+          "connection.label": connection.label,
+        }),
+      ),
     });
     const socketLayer = Socket.layerWebSocket(connection.socketUrl, {
       openTimeout: SOCKET_OPEN_TIMEOUT,

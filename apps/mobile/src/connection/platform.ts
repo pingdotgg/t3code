@@ -32,7 +32,12 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { clearThreadOutboxEnvironment } from "../state/thread-outbox-removal";
 import { clearComposerDraftsEnvironment } from "../state/use-composer-drafts";
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import { type NetworkPath, makeNetworkPathTracker } from "./network-path";
 import { connectionStorageLayer } from "./storage";
+
+function networkPath(state: Network.NetworkState): NetworkPath | undefined {
+  return state.isConnected === true ? state.type : undefined;
+}
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
   if (state.isConnected === false) {
@@ -87,28 +92,68 @@ const connectivityLayer = Connectivity.layer({
 });
 
 const wakeupsLayer = Wakeups.layer({
-  changes: Stream.merge(
-    Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
-      Effect.acquireRelease(
-        Effect.sync(() => {
-          let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
-          return AppState.addEventListener("change", (state) => {
-            if (state === "background") {
-              backgroundedAtMs = Date.now();
-              return;
-            }
-            if (state === "active") {
-              Queue.offerUnsafe(queue, mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()));
-              backgroundedAtMs = null;
-            }
-          });
-        }),
-        (subscription) => Effect.sync(() => subscription.remove()),
-      ).pipe(Effect.asVoid),
-    ),
-    managedRelayAccountChanges(appAtomRegistry).pipe(
-      Stream.map(() => "credentials-changed" as const),
-    ),
+  changes: Stream.mergeAll(
+    [
+      Stream.callback<"application-active-probe" | "application-active-reconnect">((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            let backgroundedAtMs = AppState.currentState === "background" ? Date.now() : null;
+            return AppState.addEventListener("change", (state) => {
+              if (state === "background") {
+                backgroundedAtMs = Date.now();
+                return;
+              }
+              if (state === "active") {
+                Queue.offerUnsafe(
+                  queue,
+                  mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()),
+                );
+                backgroundedAtMs = null;
+              }
+            });
+          }),
+          (subscription) => Effect.sync(() => subscription.remove()),
+        ).pipe(Effect.asVoid),
+      ),
+      Stream.callback<"network-path-changed">((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            // A Wi-Fi/cellular handoff keeps isConnected true while the socket
+            // stays bound to the interface it was opened on. Android reports
+            // only the default network, so once it moves on we never hear that
+            // the old one died.
+            const tracker = makeNetworkPathTracker();
+            const wake = () => Queue.offerUnsafe(queue, "network-path-changed");
+            const networkSubscription = Network.addNetworkStateListener((state) => {
+              if (tracker.observe(networkPath(state), AppState.currentState === "active")) {
+                wake();
+              }
+            });
+            // The listener only fires on a change, so without this read the
+            // first handoff after launch would look like the first interface.
+            void Network.getNetworkStateAsync()
+              .then((state) => tracker.seed(networkPath(state)))
+              .catch(() => undefined);
+            const appStateSubscription = AppState.addEventListener("change", (state) => {
+              if (state === "active" && tracker.activate()) {
+                wake();
+              }
+            });
+            return {
+              close: () => {
+                networkSubscription.remove();
+                appStateSubscription.remove();
+              },
+            };
+          }),
+          ({ close }) => Effect.sync(close),
+        ).pipe(Effect.asVoid),
+      ),
+      managedRelayAccountChanges(appAtomRegistry).pipe(
+        Stream.map(() => "credentials-changed" as const),
+      ),
+    ],
+    { concurrency: "unbounded" },
   ),
 });
 
