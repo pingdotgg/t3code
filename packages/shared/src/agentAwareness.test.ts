@@ -12,6 +12,7 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import { projectThreadAwareness } from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
+const TERMINAL_AT = "2026-05-21T12:00:00.000Z";
 
 const project = {
   title: "t3code",
@@ -106,15 +107,26 @@ describe("projectThreadAwareness", () => {
     const finishedTurn = {
       turnId: "turn-1" as TurnId,
       state: "interrupted" as const,
-      requestedAt: NOW,
-      startedAt: NOW,
-      completedAt: NOW,
+      requestedAt: TERMINAL_AT,
+      startedAt: TERMINAL_AT,
+      completedAt: TERMINAL_AT,
       assistantMessageId: null,
     };
     const state = projectThreadAwareness({
       environmentId: "env-1" as EnvironmentId,
       project,
-      thread: thread({ latestTurn: finishedTurn }),
+      thread: thread({
+        latestTurn: finishedTurn,
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "stopped",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW,
+        },
+      }),
     });
 
     // Session teardown settles still-running turns by session status, and
@@ -122,6 +134,7 @@ describe("projectThreadAwareness", () => {
     // durable signal. Without this the thread resolves to null persistently
     // and gets tombstoned off the lock-screen card instead of showing Done.
     expect(state?.phase).toBe("completed");
+    expect(state?.updatedAt).toBe(TERMINAL_AT);
 
     const trulyInterrupted = projectThreadAwareness({
       environmentId: "env-1" as EnvironmentId,
@@ -146,12 +159,13 @@ describe("projectThreadAwareness", () => {
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: null,
-          updatedAt: NOW,
+          updatedAt: TERMINAL_AT,
         },
       }),
     });
 
     expect(state?.phase).toBe("completed");
+    expect(state?.updatedAt).toBe(TERMINAL_AT);
   });
 
   it("projects failures with the session error detail", () => {
@@ -166,7 +180,7 @@ describe("projectThreadAwareness", () => {
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: "Provider process exited.",
-          updatedAt: NOW,
+          updatedAt: TERMINAL_AT,
         },
       }),
     });
@@ -175,6 +189,7 @@ describe("projectThreadAwareness", () => {
       phase: "failed",
       headline: "Agent failed",
       detail: "Provider process exited.",
+      updatedAt: TERMINAL_AT,
     });
   });
 });
