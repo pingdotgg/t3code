@@ -530,7 +530,8 @@ export function createDeviceStreamClient(
       }
     };
     ws.onclose = (event) => {
-      if (socket === ws) socket = null;
+      if (socket !== ws) return;
+      socket = null;
       if (stopped) return;
       events.onInputConnected(
         false,
@@ -589,7 +590,8 @@ export function createDeviceStreamClient(
       decode(isKey, packet.data, packet.timestamp);
     };
     ws.onclose = (event) => {
-      if (socket === ws) socket = null;
+      if (socket !== ws) return;
+      socket = null;
       closeDecoder();
       if (stopped) return;
       events.onInputConnected(false, event.reason || `closed ${event.code}`);

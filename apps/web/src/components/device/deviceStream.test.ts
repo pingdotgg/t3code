@@ -54,9 +54,11 @@ describe("native device stream transport", () => {
     vi.stubGlobal("VideoDecoder", vi.fn());
     vi.stubGlobal("EncodedVideoChunk", vi.fn());
     let resolveOpened!: (socket: FakeSocket) => void;
-    const opened = new Promise<FakeSocket>((resolve) => {
-      resolveOpened = resolve;
-    });
+    const waitForSocket = () =>
+      new Promise<FakeSocket>((resolve) => {
+        resolveOpened = resolve;
+      });
+    const opened = waitForSocket();
     class FakeSocket {
       static OPEN = 1;
       readyState = 1;
@@ -96,7 +98,7 @@ describe("native device stream transport", () => {
       { getContext: () => null } as unknown as HTMLCanvasElement,
       events,
     );
-    return { client, opened, events, fetch };
+    return { client, opened, waitForSocket, events, fetch };
   }
 
   it("uses authenticated iOS MJPEG and forwards controls without a cross-origin video fetch", async () => {
@@ -162,6 +164,33 @@ describe("native device stream transport", () => {
     expect(vi.getTimerCount()).toBe(0);
     client.stop();
   });
+
+  it.each(["ios", "android"] as const)(
+    "keeps a restarted %s stream connected when the discarded socket closes late",
+    async (platform) => {
+      const { client, opened, waitForSocket, events } = setup(platform);
+      client.start();
+      const discarded = await opened;
+      client.stop();
+      const reopened = waitForSocket();
+      client.start();
+      const replacement = await reopened;
+      replacement.onopen?.();
+      replacement.send.mockClear();
+      events.onInputConnected.mockClear();
+
+      discarded.onclose?.({ code: 1006, reason: "" });
+
+      expect(events.onUnauthorized).not.toHaveBeenCalled();
+      expect(events.onInputConnected).not.toHaveBeenCalled();
+      expect(replacement.close).not.toHaveBeenCalled();
+      client.pressButton("home");
+      expect(replacement.send).toHaveBeenCalledTimes(1);
+      client.stop();
+      expect(replacement.close).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 
   it.each(["ios", "android"] as const)(
     "does not renew credentials or reconnect a stopped %s stream",
