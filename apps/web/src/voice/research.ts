@@ -440,9 +440,9 @@ export function createResearchBridge(
       }
 
       const turns = read.thread.turns;
-      const turn =
-        [...turns].filter((candidate) => candidate.turnId === turnId).at(-1) ??
-        [...turns].reverse().find((candidate) => candidate.assistantText !== null);
+      // Only the requested turn's answer may be delivered or recorded: falling
+      // back to another turn here would attribute that turn's text to this one.
+      const turn = [...turns].reverse().find((candidate) => candidate.turnId === turnId);
       const resultText = turn?.assistantText ?? null;
       const title = read.thread.title;
       let content: string;
