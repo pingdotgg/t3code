@@ -778,3 +778,150 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       }),
   );
 });
+
+const elicitationForm = {
+  sessionId: "session-1",
+  mode: "form" as const,
+  message: "Continue?",
+  requestedSchema: {
+    type: "object" as const,
+    properties: { choice: { type: "string" as const } },
+    required: ["choice"],
+  },
+};
+const decodeWireResponse = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeWireError = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ error: Schema.Struct({ code: Schema.Finite }) })),
+);
+
+it.effect.each(["accept", "decline", "cancel"] as const)(
+  "returns a flat %s action to the SDK and preserves the legacy response",
+  (action) =>
+    Effect.gen(function* () {
+      for (const method of ["elicitation/create", "session/elicitation"]) {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const acp = yield* AcpClient.make(stdio);
+        const answer = action === "accept" ? { action, content: { choice: "yes" } } : { action };
+        const response = { action: answer, _meta: { trace: "fixture" } };
+        yield* acp.handleElicitation((request) => {
+          assert.deepEqual(request, elicitationForm);
+          return Effect.succeed(response);
+        });
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(jsonRpcRequest(method, AcpSchema.ElicitationRequest), {
+            jsonrpc: "2.0",
+            id: 71,
+            headers: [],
+            method,
+            params: elicitationForm,
+          }),
+        );
+        const received = yield* decodeWireResponse(yield* Queue.take(output));
+        assert.deepEqual(received, {
+          jsonrpc: "2.0",
+          id: 71,
+          result: method === "elicitation/create" ? { ...answer, _meta: response._meta } : response,
+        });
+      }
+    }).pipe(Effect.scoped),
+);
+
+it.effect("dispatches SDK URL elicitation to the same registered handler", () =>
+  Effect.gen(function* () {
+    const { stdio, input, output } = yield* makeInMemoryStdio();
+    const acp = yield* AcpClient.make(stdio);
+    const params = {
+      sessionId: "session-1",
+      mode: "url" as const,
+      message: "Sign in",
+      elicitationId: "elicitation-1",
+      url: "https://example.test/sign-in",
+    };
+    yield* acp.handleElicitation((request) => {
+      assert.deepEqual(request, params);
+      return Effect.succeed({ action: { action: "accept" as const } });
+    });
+    yield* Queue.offer(
+      input,
+      yield* encodeJsonl(jsonRpcRequest("elicitation/create", AcpSchema.ElicitationRequest), {
+        jsonrpc: "2.0",
+        id: 72,
+        headers: [],
+        method: "elicitation/create",
+        params,
+      }),
+    );
+    assert.deepEqual(yield* decodeWireResponse(yield* Queue.take(output)), {
+      jsonrpc: "2.0",
+      id: 72,
+      result: { action: "accept" },
+    });
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each(["elicitation/complete", "session/elicitation/complete"])(
+  "delivers %s notifications to the completion handler",
+  (method) =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const acp = yield* AcpClient.make(stdio);
+      const received = yield* Deferred.make<AcpSchema.ElicitationCompleteNotification>();
+      yield* acp.handleElicitationComplete((notification) =>
+        Deferred.succeed(received, notification).pipe(Effect.asVoid),
+      );
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(jsonRpcNotification(method, AcpSchema.ElicitationCompleteNotification), {
+          jsonrpc: "2.0",
+          method,
+          params: { elicitationId: "elicitation-1" },
+        }),
+      );
+      assert.deepEqual(yield* Deferred.await(received), { elicitationId: "elicitation-1" });
+    }).pipe(Effect.scoped),
+);
+
+it.effect("rejects malformed SDK elicitation without calling the question handler", () =>
+  Effect.gen(function* () {
+    const { stdio, input, output } = yield* makeInMemoryStdio();
+    const acp = yield* AcpClient.make(stdio);
+    let calls = 0;
+    yield* acp.handleElicitation(() => {
+      calls++;
+      return Effect.succeed({ action: { action: "cancel" as const } });
+    });
+    yield* Queue.offer(
+      input,
+      yield* encodeJsonl(jsonRpcRequest("elicitation/create", Schema.Unknown), {
+        jsonrpc: "2.0",
+        id: 73,
+        headers: [],
+        method: "elicitation/create",
+        params: { ...elicitationForm, message: 123 },
+      }),
+    );
+    const response = yield* decodeWireError(yield* Queue.take(output));
+    assert.equal(response.error.code, -32602);
+    assert.equal(calls, 0);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("returns method-not-found when SDK elicitation has no question handler", () =>
+  Effect.gen(function* () {
+    const { stdio, input, output } = yield* makeInMemoryStdio();
+    yield* AcpClient.make(stdio);
+    yield* Queue.offer(
+      input,
+      yield* encodeJsonl(jsonRpcRequest("elicitation/create", AcpSchema.ElicitationRequest), {
+        jsonrpc: "2.0",
+        id: 74,
+        headers: [],
+        method: "elicitation/create",
+        params: elicitationForm,
+      }),
+    );
+    const response = yield* decodeWireError(yield* Queue.take(output));
+    assert.equal(response.error.code, -32601);
+  }).pipe(Effect.scoped),
+);
