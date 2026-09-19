@@ -440,9 +440,9 @@ export const make = Effect.gen(function* () {
 
   const quota = yield* Cache.makeWith(
     (key: string) => {
-      const host = key.split("\0")[0]!;
+      const [host, , cwd] = key.split("\0") as [string, string, string];
       return executeRaw({
-        cwd: globalThis.process.cwd(),
+        cwd,
         args: [
           "api",
           "rate_limit",
@@ -487,7 +487,20 @@ export const make = Effect.gen(function* () {
       const guarded = Effect.gen(function* () {
         const lease = yield* limits.check(key, allowReserve ? { allowPaused: true } : undefined);
         return yield* Effect.gen(function* () {
-          yield* Cache.get(quota, `${host}\0${credential?.credentialFingerprint ?? ""}`);
+          // A quota probe is a courtesy check, not a precondition: its own transport or
+          // command failure must not block the read it is guarding. `budget.query` right
+          // after it is what actually enforces a known-exhausted budget.
+          yield* Cache.get(
+            quota,
+            `${host}\0${credential?.credentialFingerprint ?? ""}\0${input.cwd}`,
+          ).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("GitHub API quota probe failed; proceeding without it", {
+                host,
+                error,
+              }),
+            ),
+          );
           yield* budget.query(host, "query {}", allowReserve ? { allowReserve: true } : undefined);
           return yield* executeRaw(input);
         }).pipe(

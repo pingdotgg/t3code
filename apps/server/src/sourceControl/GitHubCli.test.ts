@@ -109,6 +109,50 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer.pipe(Layer.provide(GitHubGraphQlBudget.layer)))),
   );
 
+  it.effect("probes quota using the caller's cwd, not the process cwd", () =>
+    Effect.gen(function* () {
+      const probeCwds: string[] = [];
+      const gh = yield* GitHubCli.make.pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            Effect.sync(() => {
+              if (input.args[1] === "rate_limit") {
+                probeCwds.push(input.cwd);
+                return quotaOutput();
+              }
+              return processOutput("[]");
+            }),
+        }),
+      );
+      yield* gh.execute({ cwd: "/repo/project-a", args: ["pr", "list"] });
+      assert.deepStrictEqual(probeCwds, ["/repo/project-a"]);
+    }).pipe(Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer))),
+  );
+
+  it.effect("does not block the read when the quota probe itself fails", () =>
+    Effect.gen(function* () {
+      const gh = yield* GitHubCli.make.pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            input.args[1] === "rate_limit"
+              ? Effect.fail(
+                  new VcsProcessExitError({
+                    operation: "GitHubCli.execute",
+                    command: "gh",
+                    cwd: input.cwd,
+                    exitCode: 1,
+                    failureKind: "command-failed",
+                    detail: "Process exited with a non-zero status.",
+                  }),
+                )
+              : Effect.succeed(processOutput("[]")),
+        }),
+      );
+      const result = yield* gh.execute({ cwd: "/repo", args: ["pr", "list"] });
+      assert.strictEqual(result.stdout, "[]");
+    }).pipe(Effect.provide(Layer.merge(GitHubGraphQlBudget.layer, SourceControlRateLimit.layer))),
+  );
+
   it.effect("keeps quota snapshots separate for verified credentials on the same host", () =>
     Effect.gen(function* () {
       let reads = 0;
