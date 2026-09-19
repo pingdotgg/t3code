@@ -13,9 +13,10 @@ import {
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
   type ThreadPullRequestBadge,
+  threadPullRequestSearchTerms,
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
-import { useMemo, type MouseEvent } from "react";
+import { useMemo, type MouseEvent, type ComponentProps } from "react";
 import { buttonVariants, InlineButton } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -580,4 +581,84 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
       ) : null}
     </span>
   );
+}
+
+/** Number presentation for compact thread search results. */
+function ThreadPullRequestNumber({
+  number,
+  className,
+  ...props
+}: ComponentProps<"span"> & { number: number }) {
+  return (
+    <span {...props} className={cn("shrink-0 text-xs tabular-nums", className)}>
+      #{number}
+    </span>
+  );
+}
+
+function settledPrHoverColorClass(state: NonNullable<ThreadPr>["state"], isDraft = false): string {
+  switch (state) {
+    case "open":
+      if (isDraft) {
+        return "group-hover/sidebar-row:text-zinc-500 dark:group-hover/sidebar-row:text-zinc-400/80";
+      }
+      return "group-hover/sidebar-row:text-emerald-600 dark:group-hover/sidebar-row:text-emerald-300/90";
+    case "merged":
+      return "group-hover/sidebar-row:text-violet-600 dark:group-hover/sidebar-row:text-violet-300/90";
+    case "closed":
+      return "group-hover/sidebar-row:text-red-600 dark:group-hover/sidebar-row:text-red-300/90";
+  }
+}
+
+export function ThreadSearchPullRequestNumber({
+  thread,
+  query,
+  enabled = true,
+  settled = false,
+}: {
+  thread: SidebarThreadSummary;
+  query: string;
+  enabled?: boolean;
+  settled?: boolean;
+}) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const matches = (candidate: Parameters<typeof threadPullRequestSearchTerms>[0]) =>
+    normalizedQuery.length > 0 &&
+    threadPullRequestSearchTerms(candidate).some((term) =>
+      term.toLowerCase().includes(normalizedQuery),
+    );
+  const matchedLink = visibleThreadPullRequests(thread.pullRequests).find((pr) =>
+    matches({ pullRequests: [pr] }),
+  );
+  const fallbackCandidates =
+    thread.pullRequests.length === 0
+      ? [thread.linkedPullRequest, thread.branchPullRequest]
+      : [thread.branchPullRequest];
+  const legacyReference = matchedLink
+    ? undefined
+    : fallbackCandidates.find((pr) => pr != null && matches({ linkedPullRequest: pr }));
+  const legacyStatus = useLinkedThreadPullRequest(
+    thread.environmentId,
+    legacyReference,
+    enabled,
+    undefined,
+    legacyReference,
+  );
+  const reference = matchedLink ?? legacyReference;
+  const linked = matchedLink ? linkedPullRequestSnapshotStatus(matchedLink) : legacyStatus;
+  const status = prStatusIndicator(linked?.pr ?? null, linked?.sourceControlProvider);
+  return reference ? (
+    <ThreadPullRequestNumber
+      number={reference.number}
+      className={
+        settled
+          ? cn(
+              "text-secondary-label transition-colors",
+              linked?.pr && settledPrHoverColorClass(linked.pr.state, linked.pr.isDraft),
+            )
+          : (status?.colorClass ?? "text-secondary-label")
+      }
+      aria-label={status?.tooltip ?? `Pull request #${reference.number}`}
+    />
+  ) : null;
 }
