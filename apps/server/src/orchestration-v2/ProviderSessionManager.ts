@@ -2082,24 +2082,32 @@ export const layerWithOptions = (
             const now = yield* Clock.currentTimeMillis;
             const [idleFiber] = yield* Effect.uninterruptible(
               Effect.gen(function* () {
-                const outcome = yield* Ref.modify(sessions, (current) => {
-                  const entry = current.get(key);
-                  if (
-                    entry === undefined ||
-                    (expectedRuntime !== undefined && entry.runtime !== expectedRuntime)
-                  ) {
-                    return [[null, false] as const, current] as const;
-                  }
-                  const updated = new Map(current);
-                  updated.set(key, {
-                    ...entry,
-                    busyCount: entry.busyCount + 1,
-                    idleFiber: null,
-                    lastActivityAtMs: now,
-                    pinnedSinceMs: null,
-                  });
-                  return [[entry.idleFiber, true] as const, updated] as const;
-                });
+                const outcome = yield* Ref.modify(
+                  sessions,
+                  (
+                    current,
+                  ): readonly [
+                    readonly [Fiber.Fiber<void, never> | null, boolean],
+                    Map<string, LiveSessionEntry>,
+                  ] => {
+                    const entry = current.get(key);
+                    if (
+                      entry === undefined ||
+                      (expectedRuntime !== undefined && entry.runtime !== expectedRuntime)
+                    ) {
+                      return [[null, false], current];
+                    }
+                    const updated = new Map(current);
+                    updated.set(key, {
+                      ...entry,
+                      busyCount: entry.busyCount + 1,
+                      idleFiber: null,
+                      lastActivityAtMs: now,
+                      pinnedSinceMs: null,
+                    });
+                    return [[entry.idleFiber, true], updated];
+                  },
+                );
                 // The acquisition flag is set in the same uninterruptible
                 // region as the increment so an onExit unwind can tell
                 // exactly whether this call took a mark — decrementing
