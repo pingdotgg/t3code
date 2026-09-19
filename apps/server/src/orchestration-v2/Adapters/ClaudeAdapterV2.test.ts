@@ -6504,3 +6504,66 @@ describe("ClaudeAdapterV2 query message stream", () => {
     }),
   );
 });
+
+describe("ClaudeAdapterV2 session cleanup", () => {
+  it.effect("propagates a native query close failure through the session scope", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-claude-close-",
+      });
+      const scope = yield* Scope.make();
+      const adapter = makeClaudeAdapterV2({
+        instanceId: CLAUDE_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CLAUDE_SETTINGS,
+        environment: {},
+        attachmentsDir,
+        fileSystem,
+        path: yield* Path.Path,
+        idAllocator: yield* IdAllocatorV2,
+        queryRunner: {
+          allocateSessionId: Effect.succeed("native-thread-claude-close"),
+          open: () =>
+            Effect.succeed({
+              messages: Stream.never,
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.die("claude query close failed"),
+            }),
+          forkSession: () => Effect.die("unused"),
+          assertComplete: Effect.void,
+        },
+      });
+      const threadId = ThreadId.make("thread-claude-close");
+      const runtime = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-close"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        })
+        .pipe(Effect.provideService(Scope.Scope, scope));
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      yield* runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId,
+          providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-close"),
+          text: "hello",
+          attachments: [],
+        }),
+      );
+
+      // The native close failure must reach the scope close so the session
+      // manager records a failed cleanup instead of a clean release.
+      const closeExit = yield* Scope.close(scope, Exit.void).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(closeExit));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+  );
+});

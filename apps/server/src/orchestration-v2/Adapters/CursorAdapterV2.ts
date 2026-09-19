@@ -2036,7 +2036,9 @@ export function makeCursorAdapterV2(
             return existing;
           }
           if (existing !== null) {
-            yield* existing.session.close.pipe(Effect.ignore);
+            // A close failure means the old agent may still own the native
+            // thread — propagate it instead of opening a second agent on top.
+            yield* existing.session.close;
             yield* Ref.set(liveAgent, null);
           }
           const sdkSession = yield* runner.open({
@@ -2308,7 +2310,12 @@ export function makeCursorAdapterV2(
         const closeSession = Effect.fnUntraced(function* () {
           const existing = yield* Ref.get(liveAgent);
           if (existing !== null) {
-            yield* existing.session.close.pipe(Effect.ignore);
+            // A failed native close must reach the session scope's close so
+            // the manager keeps ownership instead of recording a clean
+            // release — and the live agent stays recorded for a retry.
+            // Finalizers cannot carry typed errors, so the failure surfaces
+            // as a defect that fails the close the same way.
+            yield* existing.session.close.pipe(Effect.orDie);
             yield* Ref.set(liveAgent, null);
           }
           yield* runner.assertComplete.pipe(

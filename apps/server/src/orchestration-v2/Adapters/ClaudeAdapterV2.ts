@@ -5537,7 +5537,10 @@ export function makeClaudeAdapterV2(
           // the replacement open succeeds or fails below.
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
+            // A failed close means the replaced query's CLI may still be
+            // alive: the failure must surface instead of opening a second
+            // process that silently co-owns the native thread.
+            yield* existing.query.close;
             if (existing.nativeThreadId !== nativeThreadId) {
               yield* clearWakeStateForNativeThread(existing.nativeThreadId);
               yield* resetBackgroundTaskStateForNativeThreadProcess(existing.nativeThreadId, {
@@ -5831,29 +5834,31 @@ export function makeClaudeAdapterV2(
               return next;
             });
             yield* existing.query.interrupt;
-            yield* existing.query.close.pipe(Effect.ignore);
+            // The interrupt bookkeeping completes either way, but a failed
+            // close means the query's CLI may still be alive — the failure
+            // must reach the caller instead of reporting a clean interrupt.
+            const closeExit = yield* existing.query.close.pipe(Effect.exit);
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
             );
-            if (Option.isSome(closed)) {
-              return;
+            if (Option.isNone(closed)) {
+              const completedAt = yield* DateTime.now;
+              yield* Effect.logWarning("orchestration-v2.claude-query-interrupt-timeout", {
+                providerSessionId: input.providerSessionId,
+                providerThreadId: turnInput.providerThread.id,
+                providerTurnId: turnInput.providerTurnId,
+              });
+              yield* Ref.update(queryContext, (current) =>
+                current?.query === existing.query ? null : current,
+              );
+              yield* finalizeActiveTurn({
+                context: currentTurn,
+                status: "interrupted",
+                completedAt,
+              });
+              yield* Deferred.succeed(existing.closed, undefined);
             }
-
-            const completedAt = yield* DateTime.now;
-            yield* Effect.logWarning("orchestration-v2.claude-query-interrupt-timeout", {
-              providerSessionId: input.providerSessionId,
-              providerThreadId: turnInput.providerThread.id,
-              providerTurnId: turnInput.providerTurnId,
-            });
-            yield* Ref.update(queryContext, (current) =>
-              current?.query === existing.query ? null : current,
-            );
-            yield* finalizeActiveTurn({
-              context: currentTurn,
-              status: "interrupted",
-              completedAt,
-            });
-            yield* Deferred.succeed(existing.closed, undefined);
+            return yield* closeExit;
           },
           (effect, turnInput) =>
             effect.pipe(
@@ -5920,7 +5925,11 @@ export function makeClaudeAdapterV2(
         const closeSession = Effect.fnUntraced(function* () {
           const existing = yield* Ref.get(queryContext);
           if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
+            // A failed native close must reach the session scope's close so
+            // the manager keeps ownership instead of recording a clean
+            // release. Finalizers cannot carry typed errors, so the failure
+            // surfaces as a defect that fails the close the same way.
+            yield* existing.query.close.pipe(Effect.orDie);
           }
           yield* Effect.yieldNow;
           yield* queryRunner.assertComplete.pipe(
@@ -5939,7 +5948,10 @@ export function makeClaudeAdapterV2(
             return;
           }
 
-          yield* existing.query.close.pipe(Effect.ignore);
+          // A close failure means the live query may still own the native
+          // thread — propagate it instead of letting a rollback or fork spawn
+          // a second query on top of it.
+          yield* existing.query.close;
           const closed = yield* Deferred.await(existing.closed).pipe(
             Effect.timeoutOption("10 seconds"),
           );

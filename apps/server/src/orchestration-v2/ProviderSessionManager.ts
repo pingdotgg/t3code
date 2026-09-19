@@ -1794,6 +1794,271 @@ export const layerWithOptions = (
           return updated;
         });
 
+      const attachLockSection = (input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly threadId: ThreadId;
+        readonly providerInstanceId: ProviderInstanceId;
+        readonly expectedRuntime: ProviderAdapterV2SessionRuntime;
+      }): Effect.Effect<
+        "closing" | "released" | "attached" | "alreadyAttached",
+        ProviderSessionActivityError
+      > =>
+        Effect.suspend(() => {
+          // Set synchronously when prepare reserves a credential, so a prepare
+          // that never returns (failed or interrupted mid-resolve/issue) can
+          // still have its in-flight reservation unwound.
+          let pendingMcpCredentialId: string | undefined;
+          // Whether the post-prepare step introduced the entry's credential
+          // claim; a claim recorded before this attach (a plain detach
+          // retains it for the still-live process) is not ours to remove.
+          let recordOwned = false;
+          // A retained credential this attach's record overwrote. Once it is
+          // out of the entry it has no remaining cleanup path, so the unwind
+          // must cover it if the normal sweep below is interrupted first.
+          let supersededMcpCredentialId: string | undefined;
+          let reservationDropped = false;
+          const dropReservation = () => {
+            if (!reservationDropped && pendingMcpCredentialId !== undefined) {
+              reservationDropped = true;
+              dropMcpCredentialReservation(input.threadId, pendingMcpCredentialId);
+            }
+          };
+          const expectedRuntime = input.expectedRuntime;
+          // Entry identity rides on the runtime reference: bookkeeping updates
+          // replace the entry record but never the runtime, while a reopened
+          // same-id session always carries a new one.
+          const entryStillOwned = (current: ReadonlyMap<string, LiveSessionEntry>) => {
+            const key = sessionKey(input.providerSessionId);
+            const entry = current.get(key);
+            return entry !== undefined && entry.runtime === expectedRuntime
+              ? entry
+              : ((releasing.has(key) ? "closing" : "released") as "closing" | "released");
+          };
+          // The guard in rejectPendingThreadAttachment ran before this
+          // caller queued on the attach lock and suspended in credential
+          // preparation — a dying startup that still owns this thread's
+          // resources may have been marked meanwhile, so every ownership
+          // recheck below must see it too.
+          const attachOwnership = (current: ReadonlyMap<string, LiveSessionEntry>) => {
+            const owned = entryStillOwned(current);
+            return owned !== "closing" &&
+              owned !== "released" &&
+              findBlockingStartup(input.providerSessionId, input.threadId) !== undefined
+              ? ("closing" as const)
+              : owned;
+          };
+          const abandonPrepared = (
+            outcome: "closing" | "released",
+          ): Effect.Effect<"closing" | "released", ProviderSessionActivityError> =>
+            Effect.gen(function* () {
+              // "closing"/"released" return normally, so the onExit unwind
+              // below never runs for them — the provisional attachment and
+              // any recorded credential claim must be removed here or a live
+              // entry keeps a thread whose attach was rejected.
+              yield* removeThreadAttachment({ ...input, expectedRuntime });
+              yield* releasePrepared();
+              return outcome;
+            });
+          // Unwind a failed attach's credential bookkeeping while the entry may
+          // still be owned: drop our reservation and the claim this attempt
+          // recorded, then revoke only when no other holder claims the
+          // credential.
+          const releasePrepared = () =>
+            Effect.suspend(() => {
+              // When prepare never reserved — the attach was interrupted
+              // while queued on mcpPrepareLock — the thread's configured
+              // credential may still need a claim recheck once the
+              // provisional attachment is gone.
+              const mcpCredentialId =
+                pendingMcpCredentialId ??
+                McpProviderSession.readMcpProviderSession(input.threadId)?.providerSessionId;
+              dropReservation();
+              const removeRecord =
+                recordOwned && mcpCredentialId !== undefined
+                  ? Ref.update(sessions, (current) => {
+                      const key = sessionKey(input.providerSessionId);
+                      const entry = current.get(key);
+                      if (
+                        entry === undefined ||
+                        entry.runtime !== expectedRuntime ||
+                        entry.mcpCredentialIdByThread.get(input.threadId) !== mcpCredentialId
+                      ) {
+                        return current;
+                      }
+                      const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
+                      mcpCredentialIdByThread.delete(input.threadId);
+                      const updated = new Map(current);
+                      updated.set(key, { ...entry, mcpCredentialIdByThread });
+                      return updated;
+                    })
+                  : Effect.void;
+              return removeRecord.pipe(
+                Effect.andThen(
+                  mcpCredentialId === undefined
+                    ? Effect.void
+                    : releaseUnclaimedMcpCredential(input.threadId, mcpCredentialId),
+                ),
+                Effect.andThen(
+                  supersededMcpCredentialId === undefined
+                    ? Effect.void
+                    : releaseUnclaimedMcpCredential(input.threadId, supersededMcpCredentialId),
+                ),
+              );
+            });
+          return Effect.gen(function* () {
+            const attach = yield* attachThread(input);
+            if (attach.outcome === "closing" || attach.outcome === "released") {
+              return attach.outcome;
+            }
+            const attached = attach.outcome;
+            if (attached === "attached") {
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                (mcpCredentialId) => {
+                  pendingMcpCredentialId = mcpCredentialId;
+                },
+              );
+              // Re-check ownership after prepare suspends: a release may have
+              // claimed the session in between. Recording the credential and
+              // deciding happen in the same Ref.modify.
+              const postPrepare = yield* Ref.modify(
+                sessions,
+                (
+                  current,
+                ): readonly [
+                  (
+                    | "closing"
+                    | "released"
+                    | {
+                        readonly entry: LiveSessionEntry;
+                        readonly priorMcpCredentialId: string | undefined;
+                      }
+                  ),
+                  Map<string, LiveSessionEntry>,
+                ] => {
+                  const key = sessionKey(input.providerSessionId);
+                  const owned = attachOwnership(current);
+                  if (owned === "closing" || owned === "released") {
+                    return [owned, current];
+                  }
+                  const entry = owned;
+                  if (prepared.mcpCredentialId === undefined) {
+                    return [{ entry, priorMcpCredentialId: undefined } as const, current];
+                  }
+                  const priorMcpCredentialId = entry.mcpCredentialIdByThread.get(input.threadId);
+                  recordOwned = priorMcpCredentialId !== prepared.mcpCredentialId;
+                  supersededMcpCredentialId =
+                    priorMcpCredentialId !== undefined &&
+                    priorMcpCredentialId !== prepared.mcpCredentialId
+                      ? priorMcpCredentialId
+                      : undefined;
+                  const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
+                  mcpCredentialIdByThread.set(input.threadId, prepared.mcpCredentialId);
+                  const updated = new Map(current);
+                  updated.set(key, { ...entry, mcpCredentialIdByThread });
+                  return [{ entry, priorMcpCredentialId } as const, updated];
+                },
+              );
+              if (postPrepare === "closing" || postPrepare === "released") {
+                return yield* abandonPrepared(postPrepare);
+              }
+              const superseded = postPrepare.priorMcpCredentialId;
+              if (
+                superseded !== undefined &&
+                superseded !== prepared.mcpCredentialId &&
+                superseded !== pendingMcpCredentialId
+              ) {
+                // A retained record from an earlier attach was just
+                // overwritten: revoke the superseded credential once nothing
+                // else claims it, or it lives on unclaimed.
+                yield* releaseUnclaimedMcpCredential(input.threadId, superseded);
+              }
+              // The release path reports terminal status under releaseStatus,
+              // so checking ownership and writing the attach event inside the
+              // same lock orders this event strictly before any stopped/error
+              // write: a release that claimed the session first is observed
+              // here and the late write is skipped instead of resurrecting the
+              // persisted live status.
+              const written = yield* releaseStatus
+                .withLock(
+                  input.providerSessionId,
+                  Ref.get(sessions).pipe(
+                    Effect.flatMap(
+                      (
+                        current,
+                      ): Effect.Effect<
+                        LiveSessionEntry | "closing" | "released",
+                        ProviderSessionActivityError
+                      > => {
+                        const owned = attachOwnership(current);
+                        if (owned === "closing" || owned === "released") {
+                          return Effect.succeed(owned);
+                        }
+                        return withActivityError(
+                          input.providerSessionId,
+                          writeProviderSessionEvents({
+                            runtime: owned.runtime,
+                            threadIds: [input.threadId],
+                            type: "provider-session.attached",
+                            payload: owned.runtime.providerSession,
+                          }),
+                        ).pipe(Effect.as(owned));
+                      },
+                    ),
+                  ),
+                )
+                .pipe(
+                  // A failed write skips the post-write recheck, so run it on
+                  // the error path too: a release that landed mid-write must
+                  // still reject the caller instead of returning a closed
+                  // adapter.
+                  Effect.catch((writeError) =>
+                    Ref.get(sessions).pipe(
+                      Effect.flatMap((current) => {
+                        const owned = attachOwnership(current);
+                        return owned === "closing" || owned === "released"
+                          ? Effect.succeed(owned)
+                          : Effect.fail(writeError);
+                      }),
+                    ),
+                  ),
+                );
+              if (written === "closing" || written === "released") {
+                return yield* abandonPrepared(written);
+              }
+              // Removal from `sessions` does not take the releaseStatus lock,
+              // so a release may still have claimed the session between the
+              // in-lock check and now. Re-check before reporting success.
+              const postWrite = yield* Ref.modify(sessions, (current) => [
+                attachOwnership(current),
+                current,
+              ]);
+              if (postWrite === "closing" || postWrite === "released") {
+                return yield* abandonPrepared(postWrite);
+              }
+            }
+            return attached;
+          }).pipe(
+            // Unwind on any non-success exit: typed failures, defects, and
+            // interruption all must drop the provisional thread attachment —
+            // while it stays in the entry it claims the credential, which
+            // keeps a token alive that no live holder recorded — and then
+            // release the in-flight credential bookkeeping.
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit)
+                ? Effect.void
+                : removeThreadAttachment({ ...input, expectedRuntime }).pipe(
+                    Effect.andThen(releasePrepared()),
+                  ),
+            ),
+            // The entry's own record (written above while the thread is
+            // attached) guards the credential from here on; the reservation
+            // is only needed until then. Ensuring covers defects/interrupts.
+            Effect.ensuring(Effect.sync(dropReservation)),
+          );
+        });
+
       const ensureThreadAttached = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
@@ -1802,261 +2067,7 @@ export const layerWithOptions = (
       }) =>
         threadAttach.withLock(
           threadAttachKey(input.providerSessionId, input.expectedRuntime, input.threadId),
-          Effect.suspend(() => {
-            // Set synchronously when prepare reserves a credential, so a prepare
-            // that never returns (failed or interrupted mid-resolve/issue) can
-            // still have its in-flight reservation unwound.
-            let pendingMcpCredentialId: string | undefined;
-            // Whether the post-prepare step introduced the entry's credential
-            // claim; a claim recorded before this attach (a plain detach
-            // retains it for the still-live process) is not ours to remove.
-            let recordOwned = false;
-            // A retained credential this attach's record overwrote. Once it is
-            // out of the entry it has no remaining cleanup path, so the unwind
-            // must cover it if the normal sweep below is interrupted first.
-            let supersededMcpCredentialId: string | undefined;
-            let reservationDropped = false;
-            const dropReservation = () => {
-              if (!reservationDropped && pendingMcpCredentialId !== undefined) {
-                reservationDropped = true;
-                dropMcpCredentialReservation(input.threadId, pendingMcpCredentialId);
-              }
-            };
-            const expectedRuntime = input.expectedRuntime;
-            // Entry identity rides on the runtime reference: bookkeeping updates
-            // replace the entry record but never the runtime, while a reopened
-            // same-id session always carries a new one.
-            const entryStillOwned = (current: ReadonlyMap<string, LiveSessionEntry>) => {
-              const key = sessionKey(input.providerSessionId);
-              const entry = current.get(key);
-              return entry !== undefined && entry.runtime === expectedRuntime
-                ? entry
-                : ((releasing.has(key) ? "closing" : "released") as "closing" | "released");
-            };
-            // The guard in rejectPendingThreadAttachment ran before this
-            // caller queued on the attach lock and suspended in credential
-            // preparation — a dying startup that still owns this thread's
-            // resources may have been marked meanwhile, so every ownership
-            // recheck below must see it too.
-            const attachOwnership = (current: ReadonlyMap<string, LiveSessionEntry>) => {
-              const owned = entryStillOwned(current);
-              return owned !== "closing" &&
-                owned !== "released" &&
-                findBlockingStartup(input.providerSessionId, input.threadId) !== undefined
-                ? ("closing" as const)
-                : owned;
-            };
-            const abandonPrepared = (
-              outcome: "closing" | "released",
-            ): Effect.Effect<"closing" | "released", ProviderSessionActivityError> =>
-              Effect.gen(function* () {
-                // "closing"/"released" return normally, so the onExit unwind
-                // below never runs for them — the provisional attachment and
-                // any recorded credential claim must be removed here or a live
-                // entry keeps a thread whose attach was rejected.
-                yield* removeThreadAttachment({ ...input, expectedRuntime });
-                yield* releasePrepared();
-                return outcome;
-              });
-            // Unwind a failed attach's credential bookkeeping while the entry may
-            // still be owned: drop our reservation and the claim this attempt
-            // recorded, then revoke only when no other holder claims the
-            // credential.
-            const releasePrepared = () =>
-              Effect.suspend(() => {
-                // When prepare never reserved — the attach was interrupted
-                // while queued on mcpPrepareLock — the thread's configured
-                // credential may still need a claim recheck once the
-                // provisional attachment is gone.
-                const mcpCredentialId =
-                  pendingMcpCredentialId ??
-                  McpProviderSession.readMcpProviderSession(input.threadId)?.providerSessionId;
-                dropReservation();
-                const removeRecord =
-                  recordOwned && mcpCredentialId !== undefined
-                    ? Ref.update(sessions, (current) => {
-                        const key = sessionKey(input.providerSessionId);
-                        const entry = current.get(key);
-                        if (
-                          entry === undefined ||
-                          entry.runtime !== expectedRuntime ||
-                          entry.mcpCredentialIdByThread.get(input.threadId) !== mcpCredentialId
-                        ) {
-                          return current;
-                        }
-                        const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
-                        mcpCredentialIdByThread.delete(input.threadId);
-                        const updated = new Map(current);
-                        updated.set(key, { ...entry, mcpCredentialIdByThread });
-                        return updated;
-                      })
-                    : Effect.void;
-                return removeRecord.pipe(
-                  Effect.andThen(
-                    mcpCredentialId === undefined
-                      ? Effect.void
-                      : releaseUnclaimedMcpCredential(input.threadId, mcpCredentialId),
-                  ),
-                  Effect.andThen(
-                    supersededMcpCredentialId === undefined
-                      ? Effect.void
-                      : releaseUnclaimedMcpCredential(input.threadId, supersededMcpCredentialId),
-                  ),
-                );
-              });
-            return Effect.gen(function* () {
-              const attach = yield* attachThread(input);
-              if (attach.outcome === "closing" || attach.outcome === "released") {
-                return attach.outcome;
-              }
-              const attached = attach.outcome;
-              if (attached === "attached") {
-                const prepared = yield* prepareMcpSession(
-                  input.threadId,
-                  input.providerInstanceId,
-                  (mcpCredentialId) => {
-                    pendingMcpCredentialId = mcpCredentialId;
-                  },
-                );
-                // Re-check ownership after prepare suspends: a release may have
-                // claimed the session in between. Recording the credential and
-                // deciding happen in the same Ref.modify.
-                const postPrepare = yield* Ref.modify(
-                  sessions,
-                  (
-                    current,
-                  ): readonly [
-                    (
-                      | "closing"
-                      | "released"
-                      | {
-                          readonly entry: LiveSessionEntry;
-                          readonly priorMcpCredentialId: string | undefined;
-                        }
-                    ),
-                    Map<string, LiveSessionEntry>,
-                  ] => {
-                    const key = sessionKey(input.providerSessionId);
-                    const owned = attachOwnership(current);
-                    if (owned === "closing" || owned === "released") {
-                      return [owned, current];
-                    }
-                    const entry = owned;
-                    if (prepared.mcpCredentialId === undefined) {
-                      return [{ entry, priorMcpCredentialId: undefined } as const, current];
-                    }
-                    const priorMcpCredentialId = entry.mcpCredentialIdByThread.get(input.threadId);
-                    recordOwned = priorMcpCredentialId !== prepared.mcpCredentialId;
-                    supersededMcpCredentialId =
-                      priorMcpCredentialId !== undefined &&
-                      priorMcpCredentialId !== prepared.mcpCredentialId
-                        ? priorMcpCredentialId
-                        : undefined;
-                    const mcpCredentialIdByThread = new Map(entry.mcpCredentialIdByThread);
-                    mcpCredentialIdByThread.set(input.threadId, prepared.mcpCredentialId);
-                    const updated = new Map(current);
-                    updated.set(key, { ...entry, mcpCredentialIdByThread });
-                    return [{ entry, priorMcpCredentialId } as const, updated];
-                  },
-                );
-                if (postPrepare === "closing" || postPrepare === "released") {
-                  return yield* abandonPrepared(postPrepare);
-                }
-                const superseded = postPrepare.priorMcpCredentialId;
-                if (
-                  superseded !== undefined &&
-                  superseded !== prepared.mcpCredentialId &&
-                  superseded !== pendingMcpCredentialId
-                ) {
-                  // A retained record from an earlier attach was just
-                  // overwritten: revoke the superseded credential once nothing
-                  // else claims it, or it lives on unclaimed.
-                  yield* releaseUnclaimedMcpCredential(input.threadId, superseded);
-                }
-                // The release path reports terminal status under releaseStatus,
-                // so checking ownership and writing the attach event inside the
-                // same lock orders this event strictly before any stopped/error
-                // write: a release that claimed the session first is observed
-                // here and the late write is skipped instead of resurrecting the
-                // persisted live status.
-                const written = yield* releaseStatus
-                  .withLock(
-                    input.providerSessionId,
-                    Ref.get(sessions).pipe(
-                      Effect.flatMap(
-                        (
-                          current,
-                        ): Effect.Effect<
-                          LiveSessionEntry | "closing" | "released",
-                          ProviderSessionActivityError
-                        > => {
-                          const owned = attachOwnership(current);
-                          if (owned === "closing" || owned === "released") {
-                            return Effect.succeed(owned);
-                          }
-                          return withActivityError(
-                            input.providerSessionId,
-                            writeProviderSessionEvents({
-                              runtime: owned.runtime,
-                              threadIds: [input.threadId],
-                              type: "provider-session.attached",
-                              payload: owned.runtime.providerSession,
-                            }),
-                          ).pipe(Effect.as(owned));
-                        },
-                      ),
-                    ),
-                  )
-                  .pipe(
-                    // A failed write skips the post-write recheck, so run it on
-                    // the error path too: a release that landed mid-write must
-                    // still reject the caller instead of returning a closed
-                    // adapter.
-                    Effect.catch((writeError) =>
-                      Ref.get(sessions).pipe(
-                        Effect.flatMap((current) => {
-                          const owned = attachOwnership(current);
-                          return owned === "closing" || owned === "released"
-                            ? Effect.succeed(owned)
-                            : Effect.fail(writeError);
-                        }),
-                      ),
-                    ),
-                  );
-                if (written === "closing" || written === "released") {
-                  return yield* abandonPrepared(written);
-                }
-                // Removal from `sessions` does not take the releaseStatus lock,
-                // so a release may still have claimed the session between the
-                // in-lock check and now. Re-check before reporting success.
-                const postWrite = yield* Ref.modify(sessions, (current) => [
-                  attachOwnership(current),
-                  current,
-                ]);
-                if (postWrite === "closing" || postWrite === "released") {
-                  return yield* abandonPrepared(postWrite);
-                }
-              }
-              return attached;
-            }).pipe(
-              // Unwind on any non-success exit: typed failures, defects, and
-              // interruption all must drop the provisional thread attachment —
-              // while it stays in the entry it claims the credential, which
-              // keeps a token alive that no live holder recorded — and then
-              // release the in-flight credential bookkeeping.
-              Effect.onExit((exit) =>
-                Exit.isSuccess(exit)
-                  ? Effect.void
-                  : removeThreadAttachment({ ...input, expectedRuntime }).pipe(
-                      Effect.andThen(releasePrepared()),
-                    ),
-              ),
-              // The entry's own record (written above while the thread is
-              // attached) guards the credential from here on; the reservation
-              // is only needed until then. Ensuring covers defects/interrupts.
-              Effect.ensuring(Effect.sync(dropReservation)),
-            );
-          }),
+          attachLockSection(input),
         );
 
       const markBusy = (
@@ -2139,13 +2150,21 @@ export const layerWithOptions = (
       // pending-release check runs twice: the gate rejects attachments whose
       // thread a pending release recorded, and attachThread atomically rejects
       // a session that releaseEntry claimed between the gate and the attach.
-      const attachThreadOrReject = (input: {
-        readonly providerSessionId: ProviderSessionId;
-        readonly threadId: ThreadId;
-        readonly providerInstanceId: ProviderInstanceId;
-        readonly driver: ProviderDriverKind;
-        readonly expectedRuntime: ProviderAdapterV2SessionRuntime;
-      }) =>
+      const attachThreadOrReject = <A, E, R>(
+        input: {
+          readonly providerSessionId: ProviderSessionId;
+          readonly threadId: ThreadId;
+          readonly providerInstanceId: ProviderInstanceId;
+          readonly driver: ProviderDriverKind;
+          readonly expectedRuntime: ProviderAdapterV2SessionRuntime;
+        },
+        // The follow-up runs inside the same [session, thread] lock hold as
+        // the attach bookkeeping: releasing in between let a terminal detach
+        // strip the attachment and revoke its credential claim before the
+        // adapter call was admitted, so the op could create provider resources
+        // the teardown already passed.
+        runAttached: (attached: "attached" | "alreadyAttached") => Effect.Effect<A, E, R>,
+      ): Effect.Effect<A, E | ProviderAdapterProtocolError, R> =>
         Effect.andThen(
           rejectPendingThreadAttachment({
             providerSessionId: input.providerSessionId,
@@ -2153,57 +2172,67 @@ export const layerWithOptions = (
             driver: input.driver,
           }),
           Effect.gen(function* () {
-            const attached = yield* ensureThreadAttached({
-              providerSessionId: input.providerSessionId,
-              threadId: input.threadId,
-              providerInstanceId: input.providerInstanceId,
-              expectedRuntime: input.expectedRuntime,
-            }).pipe(
-              Effect.catch((error) =>
-                Ref.get(sessions).pipe(
-                  Effect.flatMap(
-                    (
-                      current,
-                    ): Effect.Effect<"closing" | "released", ProviderAdapterProtocolError> => {
-                      const key = sessionKey(input.providerSessionId);
-                      const entry = current.get(key);
-                      if (entry === undefined || entry.runtime !== input.expectedRuntime) {
-                        // The attach failed because the session was claimed
-                        // mid-flight — report the lifecycle outcome.
-                        return Effect.succeed(
-                          releasing.has(key) ? ("closing" as const) : ("released" as const),
-                        );
-                      }
-                      // The session is still owned but the attach bookkeeping
-                      // failed: proceeding would invoke the adapter for an
-                      // untracked attachment missing its prepared credential.
-                      return Effect.logWarning("orchestration-v2.driver-session.attach-failed", {
-                        providerSessionId: input.providerSessionId,
-                        error,
-                      }).pipe(
-                        Effect.andThen(
-                          Effect.fail(
-                            new ProviderAdapterProtocolError({
-                              driver: input.driver,
-                              detail: "The provider session could not attach the thread.",
-                            }),
+            const outcome = yield* threadAttach.withLock(
+              threadAttachKey(input.providerSessionId, input.expectedRuntime, input.threadId),
+              attachLockSection(input).pipe(
+                Effect.catch((error) =>
+                  Ref.get(sessions).pipe(
+                    Effect.flatMap(
+                      (
+                        current,
+                      ): Effect.Effect<"closing" | "released", ProviderAdapterProtocolError> => {
+                        const key = sessionKey(input.providerSessionId);
+                        const entry = current.get(key);
+                        if (entry === undefined || entry.runtime !== input.expectedRuntime) {
+                          // The attach failed because the session was claimed
+                          // mid-flight — report the lifecycle outcome.
+                          return Effect.succeed(
+                            releasing.has(key) ? ("closing" as const) : ("released" as const),
+                          );
+                        }
+                        // The session is still owned but the attach bookkeeping
+                        // failed: proceeding would invoke the adapter for an
+                        // untracked attachment missing its prepared credential.
+                        return Effect.logWarning("orchestration-v2.driver-session.attach-failed", {
+                          providerSessionId: input.providerSessionId,
+                          error,
+                        }).pipe(
+                          Effect.andThen(
+                            Effect.fail(
+                              new ProviderAdapterProtocolError({
+                                driver: input.driver,
+                                detail: "The provider session could not attach the thread.",
+                              }),
+                            ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
+                ),
+                Effect.flatMap(
+                  (
+                    attached,
+                  ): Effect.Effect<
+                    { readonly attached: "attached" | "alreadyAttached"; readonly value: A },
+                    E | ProviderAdapterProtocolError,
+                    R
+                  > =>
+                    attached === "closing" || attached === "released"
+                      ? Effect.fail(
+                          new ProviderAdapterProtocolError({
+                            driver: input.driver,
+                            detail:
+                              attached === "closing"
+                                ? "A previous provider session has not finished cleanup."
+                                : "The provider session is no longer running.",
+                          }),
+                        )
+                      : Effect.map(runAttached(attached), (value) => ({ attached, value })),
                 ),
               ),
             );
-            if (attached === "closing" || attached === "released") {
-              return yield* new ProviderAdapterProtocolError({
-                driver: input.driver,
-                detail:
-                  attached === "closing"
-                    ? "A previous provider session has not finished cleanup."
-                    : "The provider session is no longer running.",
-              });
-            }
+            return outcome.value;
           }),
         );
 
@@ -2243,6 +2272,7 @@ export const layerWithOptions = (
         readonly driver: ProviderDriverKind;
         readonly operation: Effect.Effect<A, E>;
         readonly drainTimeout: Duration.Duration | undefined;
+        readonly requiredThreadId?: ThreadId;
       }): Effect.Effect<A, E | ProviderAdapterProtocolError> =>
         Effect.uninterruptibleMask((_restore) =>
           Effect.gen(function* () {
@@ -2251,22 +2281,36 @@ export const layerWithOptions = (
               done: Deferred.makeUnsafe<void, never>(),
               drainTimeout: input.drainTimeout,
             };
-            const admitted = yield* Ref.modify(sessions, (current) => {
+            const admission = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined || entry.runtime !== input.expectedRuntime) {
-                return [false, current] as const;
+                return ["missing" as const, current] as const;
+              }
+              // A terminal detach that won the [session, thread] lock between
+              // the attach's bookkeeping and this admission removed the thread
+              // while the shared runtime stays live — refuse rather than
+              // invoke the adapter for a detached thread whose credential
+              // claim was already revoked.
+              if (
+                input.requiredThreadId !== undefined &&
+                !entry.attachedThreadIds.has(input.requiredThreadId)
+              ) {
+                return ["detached" as const, current] as const;
               }
               const ops = inflightAdapterOps.get(key) ?? new Set();
               ops.add(record);
               inflightAdapterOps.set(key, ops);
-              return [true, current] as const;
+              return ["admitted" as const, current] as const;
             });
-            if (!admitted) {
+            if (admission !== "admitted") {
               return yield* new ProviderAdapterProtocolError({
                 driver: input.driver,
-                detail: releasing.has(key)
-                  ? "A previous provider session has not finished cleanup."
-                  : "The provider session is no longer running.",
+                detail:
+                  admission === "detached"
+                    ? "The thread is no longer attached to the provider session."
+                    : releasing.has(key)
+                      ? "A previous provider session has not finished cleanup."
+                      : "The provider session is no longer running.",
               });
             }
             // The operation runs uninterruptibly inside the mask: adapters
@@ -2343,43 +2387,42 @@ export const layerWithOptions = (
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
           ),
           ensureThread: (input) =>
-            attachThreadOrReject({
-              providerSessionId,
-              threadId: input.threadId,
-              providerInstanceId: runtime.instanceId,
-              driver: runtime.driver,
-              expectedRuntime: runtime,
-            }).pipe(
-              Effect.andThen(
-                // The adapter call holds the attach lock so a detach cannot
-                // strip this thread's bookkeeping mid-call, and it runs under
-                // an admission record a release drains before closing the
-                // session scope — a resource the adapter creates (e.g.
-                // Cursor's late runner.open result) is never installed after
-                // the finalizer that would have closed it already ran.
-                threadAttach.withLock(
-                  threadAttachKey(providerSessionId, runtime, input.threadId),
-                  runResourceCreatingAdapterOp({
-                    providerSessionId,
-                    expectedRuntime: runtime,
-                    driver: runtime.driver,
-                    operation: runtime.ensureThread(input),
-                    drainTimeout: undefined,
-                  }),
-                ),
-              ),
-              Effect.tap((providerThread) =>
-                markProviderThreadLoaded({
+            attachThreadOrReject(
+              {
+                providerSessionId,
+                threadId: input.threadId,
+                providerInstanceId: runtime.instanceId,
+                driver: runtime.driver,
+                expectedRuntime: runtime,
+              },
+              // The adapter call holds the attach lock so a detach cannot
+              // strip this thread's bookkeeping mid-call, and it runs under
+              // an admission record a release drains before closing the
+              // session scope — a resource the adapter creates (e.g.
+              // Cursor's late runner.open result) is never installed after
+              // the finalizer that would have closed it already ran.
+              () =>
+                runResourceCreatingAdapterOp({
                   providerSessionId,
                   expectedRuntime: runtime,
-                  threadId: input.threadId,
-                  providerThreadKey: providerThreadLoadKey({
-                    providerThread,
-                    modelSelection: input.modelSelection,
-                    runtimePolicy: input.runtimePolicy,
-                  }),
-                }),
-              ),
+                  driver: runtime.driver,
+                  operation: runtime.ensureThread(input),
+                  drainTimeout: undefined,
+                  requiredThreadId: input.threadId,
+                }).pipe(
+                  Effect.tap((providerThread) =>
+                    markProviderThreadLoaded({
+                      providerSessionId,
+                      expectedRuntime: runtime,
+                      threadId: input.threadId,
+                      providerThreadKey: providerThreadLoadKey({
+                        providerThread,
+                        modelSelection: input.modelSelection,
+                        runtimePolicy: input.runtimePolicy,
+                      }),
+                    }),
+                  ),
+                ),
             ),
           resumeThread: (input) => {
             const threadId = input.threadId ?? input.providerThread.appThreadId;
@@ -2405,124 +2448,116 @@ export const layerWithOptions = (
                 : { modelSelection: input.modelSelection }),
               ...(input.runtimePolicy === undefined ? {} : { runtimePolicy: input.runtimePolicy }),
             });
-            return attachThreadOrReject({
-              providerSessionId,
-              threadId,
-              providerInstanceId: runtime.instanceId,
-              driver: runtime.driver,
-              expectedRuntime: runtime,
-            }).pipe(
-              Effect.andThen(
+            return attachThreadOrReject(
+              {
+                providerSessionId,
+                threadId,
+                providerInstanceId: runtime.instanceId,
+                driver: runtime.driver,
+                expectedRuntime: runtime,
+              },
+              () =>
                 isProviderThreadLoaded({
                   providerSessionId,
                   threadId,
                   providerThreadKey,
                   expectedRuntime: runtime,
-                }),
-              ),
-              Effect.flatMap((loaded) =>
-                loaded
-                  ? Effect.succeed(input.providerThread)
-                  : threadAttach.withLock(
-                      threadAttachKey(providerSessionId, runtime, threadId),
-                      runResourceCreatingAdapterOp({
-                        providerSessionId,
-                        expectedRuntime: runtime,
-                        driver: runtime.driver,
-                        operation: runtime.resumeThread(input),
-                        drainTimeout: undefined,
+                }).pipe(
+                  Effect.flatMap((loaded) =>
+                    loaded
+                      ? Effect.succeed(input.providerThread)
+                      : runResourceCreatingAdapterOp({
+                          providerSessionId,
+                          expectedRuntime: runtime,
+                          driver: runtime.driver,
+                          operation: runtime.resumeThread(input),
+                          drainTimeout: undefined,
+                          requiredThreadId: threadId,
+                        }),
+                  ),
+                  Effect.tap((providerThread) =>
+                    markProviderThreadLoaded({
+                      providerSessionId,
+                      expectedRuntime: runtime,
+                      threadId,
+                      providerThreadKey: providerThreadLoadKey({
+                        providerThread,
+                        ...(input.modelSelection === undefined
+                          ? {}
+                          : { modelSelection: input.modelSelection }),
+                        ...(input.runtimePolicy === undefined
+                          ? {}
+                          : { runtimePolicy: input.runtimePolicy }),
                       }),
-                    ),
-              ),
-              Effect.tap((providerThread) =>
-                markProviderThreadLoaded({
-                  providerSessionId,
-                  expectedRuntime: runtime,
-                  threadId,
-                  providerThreadKey: providerThreadLoadKey({
-                    providerThread,
-                    ...(input.modelSelection === undefined
-                      ? {}
-                      : { modelSelection: input.modelSelection }),
-                    ...(input.runtimePolicy === undefined
-                      ? {}
-                      : { runtimePolicy: input.runtimePolicy }),
-                  }),
-                }),
-              ),
+                    }),
+                  ),
+                ),
             );
           },
           forkThread: (input) =>
-            attachThreadOrReject({
-              providerSessionId,
-              threadId: input.targetThreadId,
-              providerInstanceId: runtime.instanceId,
-              driver: runtime.driver,
-              expectedRuntime: runtime,
-            }).pipe(
+            attachThreadOrReject(
+              {
+                providerSessionId,
+                threadId: input.targetThreadId,
+                providerInstanceId: runtime.instanceId,
+                driver: runtime.driver,
+                expectedRuntime: runtime,
+              },
               // Fork acquires provider-side state for the target thread
               // (ACP session/fork may restart the runtime) — the same
               // acquire-then-return shape as ensure/resume, so it drains
               // under the same admission record.
-              Effect.andThen(
-                threadAttach.withLock(
-                  threadAttachKey(providerSessionId, runtime, input.targetThreadId),
-                  runResourceCreatingAdapterOp({
-                    providerSessionId,
-                    expectedRuntime: runtime,
-                    driver: runtime.driver,
-                    operation: runtime.forkThread(input),
-                    drainTimeout: undefined,
-                  }),
-                ),
-              ),
-              Effect.tap((providerThread) =>
-                markProviderThreadLoaded({
+              () =>
+                runResourceCreatingAdapterOp({
                   providerSessionId,
                   expectedRuntime: runtime,
-                  threadId: input.targetThreadId,
-                  providerThreadKey: providerThreadLoadKey({
-                    providerThread,
-                    ...(input.modelSelection === undefined
-                      ? {}
-                      : { modelSelection: input.modelSelection }),
-                    ...(input.runtimePolicy === undefined
-                      ? {}
-                      : { runtimePolicy: input.runtimePolicy }),
-                  }),
-                }),
-              ),
+                  driver: runtime.driver,
+                  operation: runtime.forkThread(input),
+                  drainTimeout: undefined,
+                  requiredThreadId: input.targetThreadId,
+                }).pipe(
+                  Effect.tap((providerThread) =>
+                    markProviderThreadLoaded({
+                      providerSessionId,
+                      expectedRuntime: runtime,
+                      threadId: input.targetThreadId,
+                      providerThreadKey: providerThreadLoadKey({
+                        providerThread,
+                        ...(input.modelSelection === undefined
+                          ? {}
+                          : { modelSelection: input.modelSelection }),
+                        ...(input.runtimePolicy === undefined
+                          ? {}
+                          : { runtimePolicy: input.runtimePolicy }),
+                      }),
+                    }),
+                  ),
+                ),
             ),
           startTurn: (input) =>
-            Effect.andThen(
-              attachThreadOrReject({
-                providerSessionId,
-                threadId: input.threadId,
-                providerInstanceId: runtime.instanceId,
-                driver: runtime.driver,
-                expectedRuntime: runtime,
-              }),
-              observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
-                // markBusy can suspend waiting on the idle fiber; a close may
-                // have claimed the session meanwhile — re-check before
-                // invoking the adapter.
-                Effect.andThen(
-                  requireLiveRuntime({
+            // markBusy runs before the attach rather than between it and the
+            // adapter call: it can suspend waiting on the idle fiber, and the
+            // attach lock must not be held across that wait (an open already
+            // holding threadLifecycle would deadlock on it). The attach's own
+            // gates re-check ownership after the suspend.
+            observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
+              Effect.andThen(
+                attachThreadOrReject(
+                  {
                     providerSessionId,
-                    expectedRuntime: runtime,
+                    threadId: input.threadId,
+                    providerInstanceId: runtime.instanceId,
                     driver: runtime.driver,
-                  }),
-                ),
-                // The adapter call returns once the turn is started — most
-                // adapters fork the turn's lifetime into the session scope —
-                // so the admission record spans only the acquisition window
-                // (Cursor's openAgent/runner.open, ACP session activate+prompt
-                // submit). Only in-band turn calls get the bounded drain —
-                // abandoning an acquire-then-return call could strand a
-                // resource the scope close already finished checking for.
-                Effect.andThen(
-                  threadAttach.withLock(
-                    threadAttachKey(providerSessionId, runtime, input.threadId),
+                    expectedRuntime: runtime,
+                  },
+                  // The adapter call returns once the turn is started — most
+                  // adapters fork the turn's lifetime into the session scope —
+                  // so the admission record spans only the acquisition window
+                  // (Cursor's openAgent/runner.open, ACP session activate+prompt
+                  // submit). Only in-band turn calls get the bounded drain —
+                  // abandoning an acquire-then-return call could strand a
+                  // resource the scope close already finished checking for.
+                  () =>
                     runResourceCreatingAdapterOp({
                       providerSessionId,
                       expectedRuntime: runtime,
@@ -2531,13 +2566,13 @@ export const layerWithOptions = (
                       drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
                         ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
                         : undefined,
+                      requiredThreadId: input.threadId,
                     }),
-                  ),
                 ),
-                Effect.catch((error) =>
-                  observeActivity(providerSessionId, markIdle(providerSessionId, runtime)).pipe(
-                    Effect.andThen(Effect.fail(error)),
-                  ),
+              ),
+              Effect.catch((error) =>
+                observeActivity(providerSessionId, markIdle(providerSessionId, runtime)).pipe(
+                  Effect.andThen(Effect.fail(error)),
                 ),
               ),
             ),
@@ -2606,28 +2641,22 @@ export const layerWithOptions = (
             ? {}
             : {
                 compactThread: (input: Parameters<NonNullable<typeof runtime.compactThread>>[0]) =>
-                  Effect.andThen(
-                    attachThreadOrReject({
-                      providerSessionId,
-                      threadId: input.threadId,
-                      providerInstanceId: runtime.instanceId,
-                      driver: runtime.driver,
-                      expectedRuntime: runtime,
-                    }),
-                    observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
-                      Effect.andThen(
-                        requireLiveRuntime({
+                  // Same markBusy-before-attach ordering as startTurn: the
+                  // wait on the idle fiber must not run under the attach lock.
+                  observeActivity(providerSessionId, markBusy(providerSessionId, runtime)).pipe(
+                    Effect.andThen(
+                      attachThreadOrReject(
+                        {
                           providerSessionId,
-                          expectedRuntime: runtime,
+                          threadId: input.threadId,
+                          providerInstanceId: runtime.instanceId,
                           driver: runtime.driver,
-                        }),
-                      ),
-                      // Compaction delegates to the same acquire-then-start
-                      // path as startTurn, so it shares the admission record
-                      // and the same driver-keyed drain policy.
-                      Effect.andThen(
-                        threadAttach.withLock(
-                          threadAttachKey(providerSessionId, runtime, input.threadId),
+                          expectedRuntime: runtime,
+                        },
+                        // Compaction delegates to the same acquire-then-start
+                        // path as startTurn, so it shares the admission record
+                        // and the same driver-keyed drain policy.
+                        () =>
                           runResourceCreatingAdapterOp({
                             providerSessionId,
                             expectedRuntime: runtime,
@@ -2636,14 +2665,13 @@ export const layerWithOptions = (
                             drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
                               ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
                               : undefined,
+                            requiredThreadId: input.threadId,
                           }),
-                        ),
                       ),
-                      Effect.catch((error) =>
-                        observeActivity(
-                          providerSessionId,
-                          markIdle(providerSessionId, runtime),
-                        ).pipe(Effect.andThen(Effect.fail(error))),
+                    ),
+                    Effect.catch((error) =>
+                      observeActivity(providerSessionId, markIdle(providerSessionId, runtime)).pipe(
+                        Effect.andThen(Effect.fail(error)),
                       ),
                     ),
                   ),
@@ -3375,14 +3403,19 @@ export const layerWithOptions = (
                               const closeExit = yield* Scope.close(sessionScope, Exit.void).pipe(
                                 Effect.exit,
                               );
-                              // The reservation outlives the scope close: the
-                              // provider process can still present the credential
-                              // while it is shutting down, so a peer's terminal
-                              // detach must keep seeing this claim until the close
-                              // settles.
-                              dropReservationNow();
+                              // The reservation outlives a successful scope
+                              // close: the provider process can still present
+                              // the credential while it is shutting down, so a
+                              // peer's terminal detach must keep seeing this
+                              // claim until the close settles. A failed close
+                              // keeps the reservation — and skips the sweep —
+                              // because the provider may still own the
+                              // credential.
+                              if (Exit.isSuccess(closeExit)) {
+                                dropReservationNow();
+                              }
                               const sweepExit =
-                                pendingMcpCredentialId === undefined
+                                Exit.isFailure(closeExit) || pendingMcpCredentialId === undefined
                                   ? Exit.void
                                   : yield* releaseUnclaimedMcpCredential(
                                       input.threadId,

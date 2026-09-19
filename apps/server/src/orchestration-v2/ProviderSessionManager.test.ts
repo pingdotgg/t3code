@@ -5997,6 +5997,102 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 keeps the attach lock through the adapter call when a detach queues",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const issuing = yield* Deferred.make<void>();
+      const issueGate = yield* Deferred.make<void>();
+      const pauseIssue = yield* Ref.make(false);
+      const adapterCalls = yield* Ref.make(0);
+      const callsWithClaim = yield* Ref.make(0);
+      const allocatorSlot = yield* Ref.make<IdAllocatorV2Shape | undefined>(undefined);
+      const sessionIdSlot = yield* Ref.make<ProviderSessionId | undefined>(undefined);
+      const sharedThreadId = ThreadId.make("thread-detach-gap-shared");
+      const mcpRegistryLayer = Layer.effect(
+        McpSessionRegistry.McpSessionRegistry,
+        Effect.gen(function* () {
+          const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+          return McpSessionRegistry.McpSessionRegistry.of({
+            ...delegate,
+            issue: (input) =>
+              Ref.get(pauseIssue).pipe(
+                Effect.flatMap((pause) =>
+                  pause
+                    ? Deferred.succeed(issuing, undefined).pipe(
+                        Effect.andThen(Deferred.await(issueGate)),
+                      )
+                    : Effect.void,
+                ),
+                Effect.andThen(delegate.issue(input)),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(TestMcpRegistryLayer));
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        yield* Ref.set(allocatorSlot, yield* IdAllocatorV2);
+        const ownerThreadId = ThreadId.make("thread-detach-gap-owner");
+        const owner = yield* makeThreadSessionFixture(ownerThreadId);
+        yield* makeThreadSessionFixture(sharedThreadId);
+        const providerSessionId = yield* owner.allocate;
+        yield* Ref.set(sessionIdSlot, providerSessionId);
+        const runtime = yield* owner.open(providerSessionId);
+        yield* Ref.set(pauseIssue, true);
+        // The shared thread's attach suspends inside credential issuance with
+        // the [session, thread] lock held and its provisional attachment
+        // already recorded, so the terminal detach queues on that lock.
+        const attaching = yield* runtime
+          .ensureThread({ threadId: sharedThreadId, modelSelection, runtimePolicy })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(issuing);
+        const detaching = yield* manager
+          .detach({ providerSessionId, threadId: sharedThreadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        // The queued detach cannot strip the attachment between the attach's
+        // bookkeeping and the adapter call: one lock hold spans both, so the
+        // adapter runs while the credential claim still exists and the
+        // teardown only lands after the call completes.
+        yield* Effect.forEach(Array.from({ length: 12 }), () => Effect.yieldNow, {
+          discard: true,
+        });
+        yield* Deferred.succeed(issueGate, undefined);
+        const attachExit = yield* Fiber.join(attaching);
+        assert.equal(attachExit._tag, "Success");
+        assert.equal(yield* Ref.get(adapterCalls), 1);
+        assert.equal(yield* Ref.get(callsWithClaim), 1);
+        const detachExit = yield* Fiber.join(detaching);
+        assert.equal(detachExit._tag, "Success");
+        // The queued detach then tears the attachment down: the thread's
+        // credential is revoked and its config slot cleared.
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(sharedThreadId));
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(issueGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            mcpRegistryLayer,
+            ensureThread: (threadInput) =>
+              Effect.gen(function* () {
+                yield* Ref.update(adapterCalls, (count) => count + 1);
+                if (McpProviderSession.readMcpProviderSession(threadInput.threadId) !== undefined) {
+                  yield* Ref.update(callsWithClaim, (count) => count + 1);
+                }
+                return makeProviderThread({
+                  idAllocator: (yield* Ref.get(allocatorSlot))!,
+                  threadId: threadInput.threadId,
+                  providerSessionId: (yield* Ref.get(sessionIdSlot))!,
+                  now: yield* DateTime.now,
+                });
+              }),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 serializes credential revocation against a new attachment's reservation",
   () =>
     Effect.gen(function* () {
@@ -7767,16 +7863,27 @@ it.effect(
       const mcpConfigs = yield* Ref.make<
         ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
       >([]);
-      const poisonOpen = yield* Ref.make(true);
-      const poisonClose = yield* Ref.make(true);
+      const poisonOpen = yield* Ref.make(false);
+      const poisonClose = yield* Ref.make(false);
       yield* Effect.gen(function* () {
         const manager = yield* ProviderSessionManagerV2;
         const registry = yield* McpSessionRegistry.McpSessionRegistry;
         const threadId = ThreadId.make("thread-open-startup-failed-cleanup");
         const { allocate, open } = yield* makeThreadSessionFixture(threadId);
+        const peerSessionId = yield* allocate;
         const providerSessionId = yield* allocate;
         const replacementId = yield* allocate;
 
+        // A live peer on the same thread records the thread's credential: the
+        // failed startup below reserves the same credential, and the peer's
+        // terminal detach must keep seeing the failed startup's claim.
+        yield* open(peerSessionId);
+        const issued = (yield* Ref.get(mcpConfigs)).at(-1);
+        const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(token);
+
+        yield* Ref.set(poisonOpen, true);
+        yield* Ref.set(poisonClose, true);
         // openSession fails after registering its scope finalizers, and the
         // scope close itself defects: the startup cleanup cannot complete, so
         // the provider process and its credential may still be owned.
@@ -7800,13 +7907,17 @@ it.effect(
         );
         assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
 
-        // The unclaimed credential was still swept even though the scope close
-        // failed: the record stays only for the provider resources.
-        const issued = (yield* Ref.get(mcpConfigs)).at(-1);
-        const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
-        assert.isDefined(token);
-        assert.isUndefined(yield* registry.resolve(token!));
-        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        // The failed startup keeps its credential reservation: its provider
+        // process may still own the credential, so the live peer's terminal
+        // detach — which sweeps the thread's configured credential — must
+        // leave the credential valid even though the thread's config slot is
+        // honestly released.
+        yield* manager.detach({
+          providerSessionId: peerSessionId,
+          threadId,
+          revokeMcpCredential: true,
+        });
+        assert.isDefined(yield* registry.resolve(token!));
       }).pipe(
         Effect.provide(
           makeTestLayer({
