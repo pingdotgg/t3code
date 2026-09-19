@@ -1618,6 +1618,224 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("keeps new-run items whose ordinals sort below the partial watermark", () =>
+    Effect.gen(function* () {
+      // A long provider turn fills the retained window at ordinal 1250. The
+      // next run's items allocate runOrdinal*100 and providerTurnOrdinal*100+i
+      // from lower counters, so they sort below the watermark — they are new
+      // live content, not paged history.
+      const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+      const retained = {
+        id: TurnItemId.make("item-turn-11-tail"),
+        threadId: THREAD_ID,
+        runId: "run-11" as never,
+        nodeId: null,
+        providerThreadId: "provider-thread-1" as never,
+        providerTurnId: "turn-11" as never,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1250,
+        status: "completed" as const,
+        title: null,
+        startedAt: NOW,
+        completedAt: NOW,
+        updatedAt: NOW,
+        type: "command_execution" as const,
+        input: "tail",
+        output: "ok",
+        exitCode: 0,
+      } satisfies OrchestrationV2TurnItem;
+      const retainedRow = {
+        position: 0,
+        visibility: "local" as const,
+        sourceThreadId: THREAD_ID,
+        sourceItemId: retained.id,
+        item: retained,
+      };
+      const boundedProjection: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        thread: { ...BASE_PROJECTION.thread, title: "Long turn" },
+        runs: [
+          {
+            id: "run-11" as never,
+            threadId: THREAD_ID,
+            ordinal: 11,
+            providerInstanceId: "codex" as never,
+            modelSelection: { instanceId: "codex" as never, model: "gpt-5" },
+            providerThreadId: "provider-thread-1" as never,
+            userMessageId: "message-11" as never,
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed" as const,
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+        providerTurns: [
+          {
+            id: "turn-11" as never,
+            providerThreadId: "provider-thread-1" as never,
+            nodeId: "node-1" as never,
+            runAttemptId: "attempt-11" as never,
+            nativeTurnRef: null,
+            ordinal: 12,
+            status: "completed" as const,
+            startedAt: NOW,
+            completedAt: NOW,
+          },
+        ],
+        turnItems: [retained],
+        visibleTurnItems: [retainedRow],
+      };
+      const harness = yield* makeHarness({
+        httpSnapshot: {
+          _tag: "present",
+          snapshot: {
+            snapshotSequence: 5,
+            projection: boundedProjection,
+            latestLocalTurnOrdinal: 1250,
+          },
+          history: {
+            historyCursor: "partial-cursor",
+            hasMoreHistory: true,
+            latestLocalTurnOrdinal: 1250,
+          },
+        },
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && Option.isSome(value.data),
+      );
+
+      // Run 12 starts: run.updated then its turn, then items below the
+      // watermark — a new user message at 1200 and the provider turn's first
+      // item at 1105.
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 6,
+        event: {
+          id: EventId.make("event-run-12"),
+          type: "run.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+          payload: {
+            id: "run-12" as never,
+            threadId: THREAD_ID,
+            ordinal: 12,
+            providerInstanceId: "codex" as never,
+            modelSelection: { instanceId: "codex" as never, model: "gpt-5" },
+            providerThreadId: "provider-thread-1" as never,
+            userMessageId: "message-12" as never,
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "starting" as const,
+            requestedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+            startedAt: null,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+      });
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 7,
+        event: {
+          id: EventId.make("event-turn-12"),
+          type: "provider-turn.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+          payload: {
+            id: "turn-12" as never,
+            providerThreadId: "provider-thread-1" as never,
+            nodeId: "node-1" as never,
+            runAttemptId: "attempt-12" as never,
+            nativeTurnRef: null,
+            ordinal: 11,
+            status: "running" as const,
+            startedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+            completedAt: null,
+          },
+        },
+      });
+      const userMessage = {
+        id: TurnItemId.make("item-run-12-user"),
+        threadId: THREAD_ID,
+        runId: "run-12" as never,
+        nodeId: null,
+        providerThreadId: "provider-thread-1" as never,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1200,
+        status: "completed" as const,
+        title: null,
+        startedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+        completedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+        updatedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+        type: "user_message" as const,
+        messageId: "message-12" as never,
+        inputIntent: "turn_start" as const,
+        text: "next question",
+        attachments: [],
+      } satisfies OrchestrationV2TurnItem;
+      const providerItem = {
+        ...retained,
+        id: TurnItemId.make("item-turn-12-first"),
+        runId: "run-12" as never,
+        providerTurnId: "turn-12" as never,
+        ordinal: 1105,
+        status: "running" as const,
+        completedAt: null,
+      } satisfies OrchestrationV2TurnItem;
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 8,
+        event: {
+          id: EventId.make("event-user-12"),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+          payload: userMessage,
+        },
+      });
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        sequence: 9,
+        event: {
+          id: EventId.make("event-provider-12"),
+          type: "turn-item.updated",
+          threadId: THREAD_ID,
+          occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+          payload: providerItem,
+        },
+      });
+
+      const after = yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          value.status === "live" &&
+          Option.isSome(value.data) &&
+          value.data.value.turnItems.length === 3,
+      );
+      const applied = Option.getOrThrow(after.data);
+      // Both new items survive despite ordinals below the 1250 watermark.
+      expect(applied.turnItems.map((item) => String(item.id))).toEqual([
+        String(retained.id),
+        String(userMessage.id),
+        String(providerItem.id),
+      ]);
+      expect(applied.visibleTurnItems.map((row) => String(row.sourceItemId))).toEqual([
+        String(providerItem.id),
+        String(userMessage.id),
+        String(retained.id),
+      ]);
+    }),
+  );
+
   it.effect("installs and advances latestLocalTurnOrdinal for partial progressive windows", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

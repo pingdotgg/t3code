@@ -86,12 +86,48 @@ function oldestLocalTurnOrdinal(
   return oldest;
 }
 
+const LIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+
+/**
+ * Ordinals are not globally monotonic: user/handoff items allocate
+ * runOrdinal*100 while provider items allocate providerTurnOrdinal*100+index,
+ * so a later run's first items can sort below retained items of a longer
+ * earlier turn. A live or not-yet-seen run/providerTurn marks the item as new
+ * content regardless of its ordinal; every link resolving terminal (or no
+ * links at all) leaves the ordinal watermark to decide.
+ */
+function hasLiveItemLineage(
+  projection: OrchestrationV2ThreadProjection,
+  item: OrchestrationV2TurnItem,
+): boolean {
+  if (item.runId !== null) {
+    const run = projection.runs.find((candidate) => candidate.id === item.runId);
+    if (run === undefined || LIVE_RUN_STATUSES.has(run.status)) return true;
+  }
+  if (item.providerTurnId !== null) {
+    const turn = projection.providerTurns.find((candidate) => candidate.id === item.providerTurnId);
+    if (turn === undefined || turn.status === "pending" || turn.status === "running") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function shouldDropMissingPartialTurnItem(
   projection: OrchestrationV2ThreadProjection,
   item: OrchestrationV2TurnItem,
   latestLocalTurnOrdinal: number | null | undefined,
 ): boolean {
   if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
+    return false;
+  }
+  if (hasLiveItemLineage(projection, item)) {
     return false;
   }
   if (
