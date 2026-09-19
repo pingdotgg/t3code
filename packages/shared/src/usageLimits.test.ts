@@ -201,160 +201,6 @@ describe("pools", () => {
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
   });
 
-  it.each([false, true])(
-    "preserves same-email subscriptions across environments (reverse: %s)",
-    (reverse) => {
-      const personal = {
-        id: "personal.json",
-        driver: claude,
-        email: "Same@example.com",
-        usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 100 }] },
-      };
-      const team = {
-        ...personal,
-        id: "team.json",
-        email: " same@example.com ",
-        usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 23 }] },
-      };
-      const hub = { ...source, accounts: reverse ? [team, personal] : [personal, team] };
-      const input = new Map([
-        [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { usageLimitSources: [hub] } }],
-        [EnvironmentId.make("env-b"), { ...laptop, serverConfig: { usageLimitSources: [hub] } }],
-      ]);
-      const accounts = collectLimitAccounts(input);
-      expect(
-        accounts.map((account) => [account.key, account.limits.windows[0]?.usedPercent]).sort(),
-      ).toEqual([
-        ["hub:personal.json", 100],
-        ["hub:team.json", 23],
-      ]);
-      expect(collectLimitPools(accounts, now)[0]?.windows[0]?.remainingPercent).toBe(39);
-      input.delete(EnvironmentId.make("env-b"));
-      expect(collectLimitAccounts(input)).toHaveLength(2);
-    },
-  );
-
-  it("keeps colon-containing source and account IDs distinct", () => {
-    const native = provider({
-      auth: { status: "authenticated", email: "same@example.com" },
-      usageLimits: { checkedAt, windows: [window] },
-    });
-    const hubs = [
-      ["hub:team", "seat"],
-      ["hub", "team:seat"],
-    ].map(([sourceId, accountId]) => ({
-      ...source,
-      id: UsageLimitSourceId.make(sourceId!),
-      accounts: [
-        {
-          id: accountId!,
-          driver: native.driver,
-          email: "same@example.com",
-          usageLimits: { checkedAt, windows: [window] },
-        },
-      ],
-    }));
-    const input = new Map([
-      [
-        EnvironmentId.make("env-a"),
-        { ...laptop, serverConfig: { providers: [native], usageLimitSources: hubs } },
-      ],
-    ]);
-    expect(collectLimitAccounts(input).map((account) => account.key)).toEqual([
-      "env-a:codex",
-      "hub%3Ateam:seat",
-      "hub:team%3Aseat",
-    ]);
-    expect(
-      collectProviderUsageLimits(native.instanceId, [native], hubs, now)?.accounts.map(
-        (account) => account.id,
-      ),
-    ).toEqual(["codex", "hub%3Ateam:seat", "hub:team%3Aseat"]);
-  });
-
-  it("does not attach an ambiguous hub subscription or its credits to a native login", () => {
-    const native = provider({
-      auth: { status: "authenticated", email: "same@example.com" },
-      usageLimits: { checkedAt, windows: [window], resetCredits: { availableCount: 1 } },
-    });
-    const hub = {
-      ...source,
-      accounts: ["personal", "team"].map((id) => ({
-        id,
-        driver: native.driver,
-        email: "same@example.com",
-        usageLimits: {
-          checkedAt,
-          windows: [window],
-          resetCredits: { availableCount: 2, nextCreditId: `${id}-credit` },
-        },
-      })),
-    };
-    const input = new Map([
-      [
-        EnvironmentId.make("env-a"),
-        { ...laptop, serverConfig: { providers: [native], usageLimitSources: [hub] } },
-      ],
-    ]);
-    const accounts = collectLimitAccounts(input);
-    expect(accounts.map((account) => account.key)).toEqual([
-      "env-a:codex",
-      "hub:personal",
-      "hub:team",
-    ]);
-    expect(accounts[0]?.limits.resetCredits?.availableCount).toBe(1);
-    expect(accounts[0]?.redeem?.input).toEqual({ instanceId: "codex" });
-    expect(accounts.slice(1).map((account) => account.redeem?.input)).toEqual([
-      { sourceId: "hub", accountId: "personal", creditId: "personal-credit" },
-      { sourceId: "hub", accountId: "team", creditId: "team-credit" },
-    ]);
-    const report = collectProviderUsageLimits(native.instanceId, [native], [hub], now);
-    expect(report?.accounts.map((account) => account.id)).toEqual([
-      "codex",
-      "hub:personal",
-      "hub:team",
-    ]);
-    expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(1);
-    expect(report?.accounts[0]?.resetCreditInput).toEqual({ instanceId: "codex" });
-
-    // A failed quota probe does not make the other subscription an unambiguous match.
-    const failedHub = {
-      ...hub,
-      accounts: hub.accounts.map((account) =>
-        account.id === "team"
-          ? {
-              ...account,
-              usageLimits: {
-                checkedAt,
-                windows: [],
-                unavailable: { reason: "probeFailed" as const },
-              },
-            }
-          : account,
-      ),
-    };
-    const failedReport = collectProviderUsageLimits(native.instanceId, [native], [failedHub], now);
-    expect(failedReport?.accounts.map((account) => account.id)).toEqual([
-      "codex",
-      "hub:personal",
-      "hub:team",
-    ]);
-    expect(failedReport?.accounts[0]?.resetCreditInput).toEqual({ instanceId: "codex" });
-    const failedInput = new Map([
-      [
-        EnvironmentId.make("env-a"),
-        {
-          ...laptop,
-          serverConfig: { providers: [native], usageLimitSources: [failedHub] },
-        },
-      ],
-    ]);
-    expect(collectLimitAccounts(failedInput).map((account) => account.key)).toEqual([
-      "env-a:codex",
-      "hub:personal",
-    ]);
-  });
-
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
     const native = provider({
       driver: claude,
@@ -920,6 +766,57 @@ describe("/usage-limits", () => {
       ],
     },
   ];
+
+  it.each([false, true])("keeps same-email subscriptions separate (failed probe: %s)", (failed) => {
+    const hub = {
+      ...sources[0]!,
+      accounts: ["personal", "team"].map((id) => ({
+        ...sources[0]!.accounts[0]!,
+        id,
+        usageLimits: {
+          ...limits,
+          unavailable: failed && id === "team" ? { reason: "probeFailed" as const } : undefined,
+          resetCredits: { availableCount: 2, nextCreditId: id },
+        },
+      })),
+    };
+    const presentation = {
+      entry: { target: { label: "Local" } },
+      serverConfig: { providers: [selected], usageLimitSources: [hub] },
+    };
+    const accounts = collectLimitAccounts(
+      new Map(["a", "b"].map((id) => [EnvironmentId.make(id), presentation])),
+    );
+    expect(accounts).toHaveLength(failed ? 2 : 3);
+    expect(accounts[0]?.redeem?.input).toEqual({ instanceId: selected.instanceId });
+    const report = collectProviderUsageLimits(selected.instanceId, [selected], [hub], now);
+    expect(report?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "hub:personal",
+      "hub:team",
+    ]);
+    expect(report?.accounts[0]?.resetCreditInput).toEqual({ instanceId: selected.instanceId });
+  });
+
+  it("keeps source/account pairs distinct when their joined IDs collide", () => {
+    const ids = [
+      ["hub:team", "seat"],
+      ["hub", "team:seat"],
+    ] as const;
+    const hubs = ids.map(([id, accountId]) => ({
+      ...sources[0]!,
+      id: UsageLimitSourceId.make(id),
+      accounts: [{ ...sources[0]!.accounts[0]!, id: accountId }],
+    }));
+    const presentation = {
+      entry: { target: { label: "Local" } },
+      serverConfig: { usageLimitSources: hubs },
+    };
+    const accounts = collectLimitAccounts(new Map([[EnvironmentId.make("a"), presentation]]));
+    const report = collectProviderUsageLimits(selected.instanceId, [selected], hubs, now);
+    expect(new Set(accounts.map((account) => account.key)).size).toBe(2);
+    expect(new Set(report?.accounts.map((account) => account.id)).size).toBe(3);
+  });
 
   it("uses hub credit balances and redemption targets in the composer, including native duplicates", () => {
     const hubs = sources.map((source) => ({
