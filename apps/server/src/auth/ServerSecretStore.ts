@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as HostProcess from "@t3tools/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
 
@@ -155,6 +156,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const platform = yield* HostProcess.HostProcessPlatform;
 
   yield* fileSystem.makeDirectory(serverConfig.secretsDir, { recursive: true });
   yield* fileSystem.chmod(serverConfig.secretsDir, 0o700).pipe(
@@ -226,13 +228,34 @@ export const make = Effect.gen(function* () {
     const secretPath = resolveSecretPath(name);
     return Effect.scoped(
       Effect.gen(function* () {
-        const file = yield* fileSystem.open(secretPath, {
-          flag: "wx",
-          mode: 0o600,
+        const temporaryDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          directory: serverConfig.secretsDir,
+          prefix: ".create-",
         });
-        yield* file.writeAll(value);
-        yield* file.sync;
-        yield* fileSystem.chmod(secretPath, 0o600);
+        const temporaryPath = path.join(temporaryDirectory, "secret.bin");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const file = yield* fileSystem.open(temporaryPath, {
+              flag: "wx",
+              mode: 0o600,
+            });
+            yield* file.writeAll(value);
+            yield* file.sync;
+            yield* fileSystem.chmod(temporaryPath, 0o600);
+          }),
+        );
+        // Publish complete bytes without replacing a concurrent creator's secret.
+        yield* fileSystem.link(temporaryPath, secretPath);
+        const directory = yield* fileSystem.open(serverConfig.secretsDir, { flag: "r" });
+        yield* directory.sync.pipe(
+          Effect.catch((cause) =>
+            platform === "win32" &&
+            Predicate.hasProperty(cause.reason.cause, "code") &&
+            cause.reason.cause.code === "EPERM"
+              ? Effect.void
+              : Effect.fail(cause),
+          ),
+        );
       }),
     ).pipe(
       Effect.mapError(
