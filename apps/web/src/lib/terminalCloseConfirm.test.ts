@@ -16,7 +16,11 @@ vi.mock("~/localApi", () => ({
   readLocalApi: () => readLocalApiMock(),
 }));
 
-import { confirmTerminalClose, isTerminalCloseConfirmPending } from "./terminalCloseConfirm";
+import {
+  confirmInspectedTerminalClose,
+  confirmTerminalClose,
+  isTerminalCloseConfirmPending,
+} from "./terminalCloseConfirm";
 
 describe("terminal close confirmation", () => {
   beforeEach(() => {
@@ -31,7 +35,7 @@ describe("terminal close confirmation", () => {
 
     expect(isTerminalCloseConfirmPending()).toBe(false);
 
-    const confirmation = confirmTerminalClose(["Terminal 1"]);
+    const confirmation = confirmTerminalClose([{ label: "Terminal 1" }]);
     expect(isTerminalCloseConfirmPending()).toBe(true);
 
     settle(true);
@@ -48,7 +52,7 @@ describe("terminal close confirmation", () => {
         }),
     );
 
-    const confirmation = confirmTerminalClose(["Terminal 1"]);
+    const confirmation = confirmTerminalClose([{ label: "Terminal 1" }]);
     expect(isTerminalCloseConfirmPending()).toBe(true);
 
     reject(new Error("dialog failed"));
@@ -59,7 +63,9 @@ describe("terminal close confirmation", () => {
   it("names every terminal in a multi-terminal close", async () => {
     confirmMock.mockResolvedValue(true);
 
-    await expect(confirmTerminalClose(["Terminal 1", "Development server"])).resolves.toBe(true);
+    await expect(
+      confirmTerminalClose([{ label: "Terminal 1" }, { label: "Development server" }]),
+    ).resolves.toBe(true);
     expect(confirmMock).toHaveBeenCalledWith(
       [
         "Close 2 terminals?",
@@ -69,10 +75,73 @@ describe("terminal close confirmation", () => {
     );
   });
 
+  it("closes known idle terminals without prompting", async () => {
+    await expect(
+      confirmTerminalClose([{ label: "Terminal 1", hasRunningSubprocess: false }]),
+    ).resolves.toBe(true);
+    await expect(
+      confirmTerminalClose([
+        { label: "Terminal 1", hasRunningSubprocess: false },
+        { label: "Terminal 2", hasRunningSubprocess: false },
+      ]),
+    ).resolves.toBe(true);
+
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(isTerminalCloseConfirmPending()).toBe(false);
+  });
+
+  it("keeps prompting when a terminal is running or its activity is unknown", async () => {
+    confirmMock.mockResolvedValue(true);
+
+    await confirmTerminalClose([
+      { label: "Terminal 1", hasRunningSubprocess: false },
+      { label: "Development server", hasRunningSubprocess: true },
+    ]);
+    await confirmTerminalClose([{ label: "Terminal 1" }]);
+    await confirmTerminalClose([
+      { label: "Terminal 1", hasRunningSubprocess: false },
+      { label: "Terminal 2" },
+    ]);
+
+    expect(confirmMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses a fresh inspection and fails safe when inspection is unavailable", async () => {
+    confirmMock.mockResolvedValue(true);
+    const labelFor = (terminalId: string) => `Terminal ${terminalId}`;
+
+    await expect(
+      confirmInspectedTerminalClose({
+        terminalIds: ["1"],
+        labelFor,
+        inspect: async () => [{ terminalId: "1", hasRunningSubprocess: false }],
+      }),
+    ).resolves.toBe(true);
+    expect(confirmMock).not.toHaveBeenCalled();
+
+    await confirmInspectedTerminalClose({
+      terminalIds: ["1"],
+      labelFor,
+      inspect: async () => [{ terminalId: "1", hasRunningSubprocess: true }],
+    });
+    await confirmInspectedTerminalClose({
+      terminalIds: ["1"],
+      labelFor,
+      inspect: async () => undefined,
+    });
+    await confirmInspectedTerminalClose({
+      terminalIds: ["1"],
+      labelFor,
+      inspect: async () => [{ terminalId: "1", hasRunningSubprocess: null }],
+    });
+
+    expect(confirmMock).toHaveBeenCalledTimes(3);
+  });
+
   it("closes without prompting when no local API is available", async () => {
     readLocalApiMock.mockReturnValue(undefined);
 
-    await expect(confirmTerminalClose(["Terminal 1"])).resolves.toBe(true);
+    await expect(confirmTerminalClose([{ label: "Terminal 1" }])).resolves.toBe(true);
     expect(confirmMock).not.toHaveBeenCalled();
   });
 });

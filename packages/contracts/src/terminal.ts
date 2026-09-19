@@ -8,6 +8,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
  * that want "the primary shell" don't hardcode `"term-1"`.
  */
 export const DEFAULT_TERMINAL_ID = "term-1";
+export const MAX_TERMINAL_SUBPROCESS_INSPECTION_IDS = 64;
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
@@ -93,6 +94,27 @@ export const TerminalCloseInput = Schema.Struct({
   deleteHistory: Schema.optional(Schema.Boolean),
 });
 export type TerminalCloseInput = typeof TerminalCloseInput.Type;
+
+export const TerminalInspectSubprocessesInput = Schema.Struct({
+  ...TerminalThreadInput.fields,
+  terminalIds: Schema.Array(TerminalIdSchema).check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(MAX_TERMINAL_SUBPROCESS_INSPECTION_IDS),
+  ),
+});
+export type TerminalInspectSubprocessesInput = typeof TerminalInspectSubprocessesInput.Type;
+
+export const TerminalSubprocessActivity = Schema.Struct({
+  terminalId: TerminalIdSchema,
+  /** `null` means the server could not obtain a fresh process snapshot. */
+  hasRunningSubprocess: Schema.NullOr(Schema.Boolean),
+});
+export type TerminalSubprocessActivity = typeof TerminalSubprocessActivity.Type;
+
+export const TerminalInspectSubprocessesResult = Schema.Struct({
+  terminals: Schema.Array(TerminalSubprocessActivity),
+});
+export type TerminalInspectSubprocessesResult = typeof TerminalInspectSubprocessesResult.Type;
 
 export const TerminalSessionStatus = Schema.Literals(["starting", "running", "exited", "error"]);
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
