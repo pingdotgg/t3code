@@ -37,6 +37,7 @@ import {
   RunId,
   ThreadLinkedPullRequest,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -218,6 +219,10 @@ export interface OrchestratorV2Shape {
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, OrchestratorV2Error>;
+  readonly getThreadTurnItem: (
+    threadId: ThreadId,
+    itemId: TurnItemId,
+  ) => Effect.Effect<OrchestrationV2TurnItem | null, OrchestratorV2Error>;
   readonly getThreadSnapshot: (threadId: ThreadId) => Effect.Effect<
     {
       readonly schemaVersion: number;
@@ -8847,6 +8852,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projectionStore
         .getCheckpointContext(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    getThreadTurnItem: (threadId, itemId) =>
+      projectionStore
+        .getThreadTurnItem(threadId, itemId)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getThreadSnapshot: (threadId) =>
       projectionStore
         .getThreadSnapshot(threadId)
@@ -8957,6 +8966,13 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         }),
       ),
     getCheckpointContext: (threadId) =>
+      Effect.fail(
+        new OrchestratorProjectionError({
+          threadId,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    getThreadTurnItem: (threadId) =>
       Effect.fail(
         new OrchestratorProjectionError({
           threadId,

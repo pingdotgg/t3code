@@ -72,12 +72,14 @@ import {
   threadHistoryCursorItemTag,
   threadHistoryCursorThreadTag,
   THREAD_HISTORY_MAX_RAW_TURNS,
+  THREAD_HISTORY_MAX_RESOLVED_REQUEST_BYTES,
   THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES,
   THREAD_HISTORY_MAX_WINDOW_BYTES,
   THREAD_HISTORY_MAX_WINDOW_ROWS,
 } from "./threadHistoryPaging.ts";
 import {
   boundedPayloadPreviewJson,
+  boundedTurnItemPreviewJson,
   compactProjectedHistoryPayloadToLimit,
   jsonDepthExceeds,
   parseBoundedPayloadJson,
@@ -376,6 +378,15 @@ export interface ProjectionStoreV2Shape {
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /**
+   * One raw turn item by id — the recovery path for items whose bounded
+   * preview dropped content (`payloadTruncated`). Returns `null` when no row
+   * with that id exists on the thread; never reads the preview column.
+   */
+  readonly getThreadTurnItem: (
+    threadId: ThreadId,
+    itemId: TurnItemId,
+  ) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
@@ -1176,6 +1187,23 @@ const boundRetainedPayloadJson = (payloadJson: string, maxRowPayloadBytes: numbe
         ),
       )
     : payloadJson;
+
+// Turn-item variant: compaction means content was dropped, so the flag rides
+// inside the emitted JSON — every downstream decode produces a flagged item
+// without each decode site tracking provenance. Stored previews already carry
+// the flag from the write-time stamp (and the 057 backfill), so this only
+// marks rows compacted on the fly — raw rows over the cap with no preview, or
+// previews re-compacted under a caller's tighter cap.
+const boundRetainedTurnItemPayloadJson = (
+  payloadJson: string,
+  maxRowPayloadBytes: number,
+): string => {
+  const boundJson = boundRetainedPayloadJson(payloadJson, maxRowPayloadBytes);
+  if (boundJson === payloadJson) return boundJson;
+  const preview = parseBoundedPayloadJson(boundJson) as Record<string, unknown>;
+  preview["payloadTruncated"] = true;
+  return JSON.stringify(preview);
+};
 
 function inheritedVisibleTurnItemsFromLocalItems(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
@@ -2394,7 +2422,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.status},
                 ${stringField(payload, "updatedAt")},
                 ${payloadJson},
-                ${boundedPayloadPreviewJson(payloadJson)},
+                ${boundedTurnItemPreviewJson(payloadJson)},
                 -- Digest of the decoded id — the column's bound bytes can
                 -- differ (lone surrogates, leading BOM under bun:sqlite), so
                 -- cursor anchors must match on this, never on turn_item_id.
@@ -3058,6 +3086,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       WHERE type = 'run_interrupt_result' AND run_id IS NOT NULL
                     )
                     AND request.turn_item_id NOT IN (SELECT turn_item_id FROM kept)
+                  UNION
+                  -- Items carrying a pending runtime request are dependencies,
+                  -- not pageable rows: runtimeRequests retains the pending
+                  -- request even when its display item paged out, and pending
+                  -- questions/approvals render from that item's payload.
+                  -- Payload-to-payload hex joins keep both sides in decoded
+                  -- space so lone-surrogate ids cannot strand the match.
+                  SELECT
+                    COALESCE(item.bounded_json, item.payload_json),
+                    item.ordinal, item.turn_item_id, item.run_id, 0
+                  FROM orchestration_v2_projection_turn_items AS item
+                  WHERE item.thread_id = ${threadId}
+                    AND (
+                      hex(json_extract(
+                        COALESCE(item.bounded_json, item.payload_json), '$.requestId'))
+                        IN (
+                          SELECT hex(json_extract(
+                            COALESCE(request.bounded_json, request.payload_json), '$.id'))
+                          FROM orchestration_v2_projection_runtime_requests AS request
+                          WHERE request.thread_id = ${threadId}
+                            AND request.status = 'pending'
+                        )
+                      OR hex(json_extract(
+                        COALESCE(item.bounded_json, item.payload_json), '$.runtimeRequestId'))
+                        IN (
+                          SELECT hex(json_extract(
+                            COALESCE(request.bounded_json, request.payload_json), '$.id'))
+                          FROM orchestration_v2_projection_runtime_requests AS request
+                          WHERE request.thread_id = ${threadId}
+                            AND request.status = 'pending'
+                        )
+                    )
+                    AND item.turn_item_id NOT IN (SELECT turn_item_id FROM kept)
                 )
                 SELECT
                   retained.turn_item_id AS turn_item_id,
@@ -3108,8 +3169,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ...row,
                 payload_json: boundFetchedPayloadJson(row.payload_json),
               }));
+        const boundFetchedTurnItemRows = (rows: ReadonlyArray<PayloadRow>) =>
+          window === undefined
+            ? rows
+            : rows.map((row) => ({
+                ...row,
+                payload_json: boundRetainedTurnItemPayloadJson(
+                  row.payload_json,
+                  maxRowPayloadBytes,
+                ),
+              }));
         const boundedTurnItemRows: ReadonlyArray<PayloadRow> =
-          boundFetchedRows(windowedTurnItemRows);
+          boundFetchedTurnItemRows(windowedTurnItemRows);
         // Reuse the decoded items for cohort IDs and the resulting projection.
         // Parsing these rows separately duplicates every retained tool output.
         const turnItems = yield* decodeRows(decodeTurnItemPayload, threadId)(boundedTurnItemRows);
@@ -3207,7 +3278,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               UNION
               SELECT hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
               FROM orchestration_v2_projection_runtime_requests
-              WHERE thread_id = ${threadId} AND status IN ('pending','waiting')
+              WHERE thread_id = ${threadId} AND status = 'pending'
               UNION
               SELECT hex(json_extract(COALESCE(bounded_json, payload_json), '$.parentNodeId'))
               FROM orchestration_v2_projection_subagents
@@ -3237,6 +3308,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const cohortPlanIds = cohortJson("planId");
         const cohortCheckpointIds = cohortJson("checkpointId");
         const cohortHandoffIds = cohortJson("contextHandoffId");
+        // Resolved runtime requests hydrate only when a retained item
+        // references them (requestId on approval/user-input items,
+        // runtimeRequestId on interrupt items) — never fan out by turn.
+        const cohortRequestIds =
+          stringifyJsonDeep(
+            cohortPayloads.flatMap((payload) => {
+              const requestId = nullableStringField(payload, "requestId");
+              const runtimeRequestId = nullableStringField(payload, "runtimeRequestId");
+              return [
+                ...(requestId === null ? [] : [requestId]),
+                ...(runtimeRequestId === null ? [] : [runtimeRequestId]),
+              ];
+            }),
+          ) ?? "[]";
 
         const [
           thread,
@@ -3422,14 +3507,29 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY created_at ASC, runtime_request_id ASC
           `
             : sql<PayloadRow>`
-            SELECT COALESCE(bounded_json, payload_json) AS payload_json
-            FROM orchestration_v2_projection_runtime_requests
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','waiting')
-                OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
-                  IN (SELECT value FROM json_each(${cohortNodeHexes}))
-                OR json_extract(COALESCE(bounded_json, payload_json), '$.providerTurnId')
-                  IN (SELECT value FROM json_each(${cohortProviderTurnIds})))
+            -- Pending requests always hydrate. Resolved ones hydrate only when
+            -- a retained item references them (one turn's resolved approvals
+            -- cannot fan out unbounded), and the resolved cohort shares one
+            -- aggregate stored-byte budget enforced before decode.
+            SELECT payload_json, created_at, runtime_request_id FROM (
+              SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                created_at, runtime_request_id
+              FROM orchestration_v2_projection_runtime_requests
+              WHERE thread_id = ${threadId} AND status = 'pending'
+              UNION ALL
+              SELECT payload_json, created_at, runtime_request_id FROM (
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                  created_at, runtime_request_id,
+                  SUM(LENGTH(CAST(COALESCE(bounded_json, payload_json) AS BLOB))) OVER (
+                    ORDER BY created_at DESC, runtime_request_id DESC
+                  ) AS resolved_running_bytes
+                FROM orchestration_v2_projection_runtime_requests
+                WHERE thread_id = ${threadId}
+                  AND status <> 'pending'
+                  AND runtime_request_id
+                    IN (SELECT value FROM json_each(${cohortRequestIds}))
+              ) WHERE resolved_running_bytes <= ${THREAD_HISTORY_MAX_RESOLVED_REQUEST_BYTES}
+            )
             ORDER BY created_at ASC, runtime_request_id ASC
           `,
           window === undefined
@@ -5153,6 +5253,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getThreadTurnItem: ProjectionStoreV2Shape["getThreadTurnItem"] = (threadId, itemId) =>
+      Effect.gen(function* () {
+        // The digest column matches decoded ids — the stored turn_item_id can
+        // fold lone surrogates differently at bind time. The OR keeps rows
+        // readable from before the 056 digest backfill.
+        const rows = yield* sql<{ readonly payload_json: string }>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+            AND (item_id_digest = ${threadHistoryCursorItemTag(itemId)}
+              OR (item_id_digest IS NULL AND turn_item_id = ${itemId}))
+          ORDER BY rowid DESC
+          LIMIT 1
+        `;
+        const row = rows[0];
+        if (row === undefined) return null;
+        const decoded = yield* Effect.option(decodeTurnItemPayload(row.payload_json));
+        return decoded._tag === "Some" ? decoded.value : null;
+      }).pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
+
     const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
       sql
         .withTransaction(
@@ -6008,6 +6128,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext,
       getRunMessage,
       canStartQueuedRun,
+      getThreadTurnItem,
       getPendingNativeUserInputs,
       getRuntimeRequest,
       getPlan,
@@ -6376,6 +6497,14 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             )
           );
         }),
+      getThreadTurnItem: (threadId, itemId) =>
+        Effect.gen(function* () {
+          const projection = (yield* Ref.get(replayState)).projections.get(threadId);
+          if (projection === undefined) {
+            return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+          }
+          return projection.turnItems.find((item) => item.id === itemId) ?? null;
+        }),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
           const existing = (yield* Ref.get(replayState)).projections;
@@ -6544,6 +6673,15 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 encode: (value: A) => Effect.Effect<unknown, E>,
                 decode: (json: string) => Effect.Effect<A, E>,
               ) => Effect.forEach(rows, (row) => boundRow(row, encode, decode));
+              // boundRow returns the same reference when a row fits, so a
+              // different result means the item was compacted — flag it like
+              // the SQL path's stamped previews.
+              const boundTurnItemRow = (item: OrchestrationV2TurnItem) =>
+                boundRow(item, encodeTurnItemPayloadValue, decodeTurnItemPayload).pipe(
+                  Effect.map((bound) =>
+                    bound === item ? bound : { ...bound, payloadTruncated: true },
+                  ),
+                );
               // Over-cap rows run boundRow once here so billing sees the true
               // emitted size; aligned rows reuse the bound item instead of
               // encoding it twice.
@@ -6572,11 +6710,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 const row = candidates[index]!;
                 const rawRowBytes = bytesOfJson(row.item);
                 if (rawRowBytes > maxRowPayloadBytes) {
-                  const boundItem = yield* boundRow(
-                    row.item,
-                    encodeTurnItemPayloadValue,
-                    decodeTurnItemPayload,
-                  );
+                  const boundItem = yield* boundTurnItemRow(row.item);
                   boundItems.set(row, boundItem);
                   billedBytes += bytesOfJson(boundItem);
                 } else {
@@ -6614,9 +6748,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               const bounded = yield* Effect.forEach(aligned, (row) => {
                 const bound = boundItems.get(row);
                 return Effect.map(
-                  bound === undefined
-                    ? boundRow(row.item, encodeTurnItemPayloadValue, decodeTurnItemPayload)
-                    : Effect.succeed(bound),
+                  bound === undefined ? boundTurnItemRow(row.item) : Effect.succeed(bound),
                   (item) => ({ ...row, item }),
                 );
               });
@@ -6651,17 +6783,36 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                           : latest,
                       null,
                     )?.id ?? null);
-              const turnItems = yield* boundRows(
+              // Items carrying a pending runtime request are dependencies:
+              // runtimeRequests retains the pending request even when its
+              // display item paged out, and pending questions/approvals
+              // render from that item's payload.
+              const pendingRequestIds = new Set(
+                snapshot.projection.runtimeRequests.flatMap((request) =>
+                  request.status === "pending" ? [String(request.id)] : [],
+                ),
+              );
+              const itemRequestRef = (item: (typeof snapshot.projection.turnItems)[number]) => {
+                const record = item as Record<string, unknown>;
+                const requestId = record["requestId"];
+                if (typeof requestId === "string") return requestId;
+                const runtimeRequestId = record["runtimeRequestId"];
+                return typeof runtimeRequestId === "string" ? runtimeRequestId : null;
+              };
+              const turnItems = yield* Effect.forEach(
                 snapshot.projection.turnItems.filter(
                   (item) =>
                     retainedIds.has(String(item.id)) ||
                     String(item.id) === watermarkId ||
                     (item.type === "run_interrupt_request" &&
                       item.runId !== null &&
-                      inWindowResultRunIds.has(item.runId)),
+                      inWindowResultRunIds.has(item.runId)) ||
+                    (() => {
+                      const requestRef = itemRequestRef(item);
+                      return requestRef !== null && pendingRequestIds.has(requestRef);
+                    })(),
                 ),
-                encodeTurnItemPayloadValue,
-                decodeTurnItemPayload,
+                boundTurnItemRow,
               );
               // Mirror the SQL hydration cohorts: each collection carries only
               // the rows the retained window can reference plus live/dependent
@@ -6855,11 +7006,34 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   cohortProviderTurnIds.has(String(providerTurn.id)) ||
                   cohortNodeIds.has(String(providerTurn.nodeId)),
               );
+              // Pending requests always hydrate. Resolved ones hydrate only
+              // when a retained item references them (no per-turn fan-out),
+              // sharing the same aggregate byte budget as the SQL path —
+              // newest first, so the cap drops the oldest referenced history.
+              const cohortRequestIds = new Set([
+                ...cohortItemIds("requestId"),
+                ...cohortItemIds("runtimeRequestId"),
+              ]);
+              const resolvedRequestKeepIds = new Set<string>();
+              {
+                let resolvedBytes = 0;
+                for (
+                  let index = snapshot.projection.runtimeRequests.length - 1;
+                  index >= 0;
+                  index -= 1
+                ) {
+                  const request = snapshot.projection.runtimeRequests[index]!;
+                  if (activeRequestStatuses.has(request.status)) continue;
+                  if (!cohortRequestIds.has(String(request.id))) continue;
+                  resolvedBytes += bytesOfJson(request);
+                  if (resolvedBytes > THREAD_HISTORY_MAX_RESOLVED_REQUEST_BYTES) break;
+                  resolvedRequestKeepIds.add(String(request.id));
+                }
+              }
               const windowRuntimeRequests = snapshot.projection.runtimeRequests.filter(
                 (request) =>
                   activeRequestStatuses.has(request.status) ||
-                  cohortNodeIds.has(String(request.nodeId)) ||
-                  inCohort(cohortProviderTurnIds, request.providerTurnId),
+                  resolvedRequestKeepIds.has(String(request.id)),
               );
               const windowMessages = snapshot.projection.messages.filter(
                 (message) =>

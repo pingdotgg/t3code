@@ -23,6 +23,9 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(ORCHESTRATION_V2_WS_METHODS.getThreadHistoryPage)).toBe(
       AuthOrchestrationReadScope,
     );
+    expect(requiredScopeForRpcMethod(ORCHESTRATION_V2_WS_METHODS.getThreadTurnItem)).toBe(
+      AuthOrchestrationReadScope,
+    );
   });
 
   it("authorizes background policy reporting and observation deliberately", () => {

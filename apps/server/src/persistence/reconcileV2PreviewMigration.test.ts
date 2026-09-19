@@ -35,6 +35,7 @@ describe("V2 preview upgrade", () => {
         [53, "PullRequestFilesViewed"],
         [55, "ProjectionV2BoundedPayloadPreviews"],
         [56, "ProjectionV2TurnItemIdDigest"],
+        [57, "ProjectionV2TurnItemPayloadTruncated"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -82,6 +83,7 @@ describe("V2 preview upgrade", () => {
         [53, "PullRequestFilesViewed"],
         [55, "ProjectionV2BoundedPayloadPreviews"],
         [56, "ProjectionV2TurnItemIdDigest"],
+        [57, "ProjectionV2TurnItemPayloadTruncated"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

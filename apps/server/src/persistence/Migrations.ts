@@ -70,6 +70,7 @@ import Migration0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import Migration0054 from "./Migrations/054_OrchestrationV2.ts";
 import Migration0055 from "./Migrations/055_ProjectionV2BoundedPayloadPreviews.ts";
 import Migration0056 from "./Migrations/056_ProjectionV2TurnItemIdDigest.ts";
+import Migration0057 from "./Migrations/057_ProjectionV2TurnItemPayloadTruncated.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -140,6 +141,7 @@ export const migrationEntries = [
   [54, "OrchestrationV2", Migration0054],
   [55, "ProjectionV2BoundedPayloadPreviews", Migration0055],
   [56, "ProjectionV2TurnItemIdDigest", Migration0056],
+  [57, "ProjectionV2TurnItemPayloadTruncated", Migration0057],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

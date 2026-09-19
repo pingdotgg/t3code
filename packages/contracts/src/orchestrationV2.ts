@@ -1053,6 +1053,12 @@ const OrchestrationV2TurnItemBaseFields = {
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
   updatedAt: Schema.DateTimeUtc,
+  /**
+   * Set when the stored bounded preview dropped content (oversized or
+   * over-deep payload). The complete raw item remains retrievable through
+   * `orchestration.getThreadTurnItem`.
+   */
+  payloadTruncated: Schema.optional(Schema.Boolean),
 } as const;
 
 export const OrchestrationV2FileSearchResult = Schema.Struct({
@@ -2641,6 +2647,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getThreadHistoryPage: "orchestration.getThreadHistoryPage",
   getThreadCheckpointContext: "orchestration.getThreadCheckpointContext",
+  getThreadTurnItem: "orchestration.getThreadTurnItem",
   getWorkflowScript: "orchestration.getWorkflowScript",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
@@ -2790,6 +2797,24 @@ export const OrchestrationV2GetThreadCheckpointContextInput = Schema.Struct({
 });
 export type OrchestrationV2GetThreadCheckpointContextInput =
   typeof OrchestrationV2GetThreadCheckpointContextInput.Type;
+
+export const OrchestrationV2GetThreadTurnItemInput = Schema.Struct({
+  threadId: ThreadId,
+  itemId: TurnItemId,
+});
+export type OrchestrationV2GetThreadTurnItemInput =
+  typeof OrchestrationV2GetThreadTurnItemInput.Type;
+
+/**
+ * Single raw turn item fetched outside the bounded window — the recovery path
+ * for items whose stored preview was compacted (`payloadTruncated`). `null`
+ * when no row with that id exists on the thread.
+ */
+export const OrchestrationV2GetThreadTurnItemResult = Schema.Struct({
+  item: Schema.NullOr(OrchestrationV2TurnItem),
+});
+export type OrchestrationV2GetThreadTurnItemResult =
+  typeof OrchestrationV2GetThreadTurnItemResult.Type;
 
 /**
  * Checkpoint metadata for command shaping (e.g. resolving a rewind ordinal to
@@ -3066,6 +3091,10 @@ export const OrchestrationV2RpcSchemas = {
   getThreadCheckpointContext: {
     input: OrchestrationV2GetThreadCheckpointContextInput,
     output: OrchestrationV2ThreadCheckpointContext,
+  },
+  getThreadTurnItem: {
+    input: OrchestrationV2GetThreadTurnItemInput,
+    output: OrchestrationV2GetThreadTurnItemResult,
   },
   getWorkflowScript: {
     input: OrchestrationV2GetWorkflowScriptInput,

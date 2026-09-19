@@ -1964,6 +1964,25 @@ const makeWsRpcLayer = (
               "orchestration_v2.thread_id": input.threadId,
             },
           ),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadTurnItem]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.getThreadTurnItem,
+            threadManagement.getThreadTurnItem(input.threadId, input.itemId).pipe(
+              Effect.map((item) => ({ item })),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: `Failed to load orchestration V2 thread ${input.threadId} turn item`,
+                    cause,
+                  }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
         [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.launchThread,
