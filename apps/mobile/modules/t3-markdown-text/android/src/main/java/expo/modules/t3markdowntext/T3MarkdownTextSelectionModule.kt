@@ -34,6 +34,10 @@ import java.io.ByteArrayOutputStream
 import kotlin.math.ceil
 
 private const val OBJECT_REPLACEMENT_CHARACTER = "\uFFFC"
+// The markdown renderer wraps inline code in an RTL paragraph with an LTR bidi
+// isolate (LRI \u2066 \u2026 PDI \u2069) so it renders left-to-right without a Text
+// ref call per span. Invisible in the UI, but must not leak into a paste.
+private val BIDI_ISOLATE_CHARACTERS = setOf('\u2066', '\u2069')
 
 // Match React Native's measurement buffer. Android orders tied line-height
 // spans differently in SpannableString, shifting inline images once RN's
@@ -48,7 +52,13 @@ internal fun copyTextWithoutInlineImages(
   start: Int,
   end: Int
 ): String {
-  if (text !is Spanned) return text.subSequence(start, end).toString()
+  if (text !is Spanned) {
+    return buildString {
+      for (index in start until end) {
+        if (text[index] !in BIDI_ISOLATE_CHARACTERS) append(text[index])
+      }
+    }
+  }
 
   fun isInlineImage(index: Int): Boolean =
     index >= 0 && text[index].toString() == OBJECT_REPLACEMENT_CHARACTER &&
@@ -59,7 +69,9 @@ internal fun copyTextWithoutInlineImages(
       // The renderer inserts one NBSP after each image to keep its label on the same line.
       // Inspect the original text even when selection starts after the image.
       val isIconSpacer = text[index] == '\u00A0' && isInlineImage(index - 1)
-      if (!isInlineImage(index) && !isIconSpacer) append(text[index])
+      if (!isInlineImage(index) && !isIconSpacer && text[index] !in BIDI_ISOLATE_CHARACTERS) {
+        append(text[index])
+      }
     }
   }
 }
@@ -82,7 +94,12 @@ private fun canonicalSelection(
       hasContext = true
     }
   }
-  return if (hasContext) canonical.toString().replace(OBJECT_REPLACEMENT_CHARACTER, "") else null
+  if (!hasContext) return null
+  var sanitized = canonical.toString().replace(OBJECT_REPLACEMENT_CHARACTER, "")
+  for (isolate in BIDI_ISOLATE_CHARACTERS) {
+    sanitized = sanitized.replace(isolate.toString(), "")
+  }
+  return sanitized
 }
 
 private fun selectedContextRecords(records: JSONArray, selectedText: String): JSONArray {

@@ -21,6 +21,7 @@ import {
   contextChipPresentation,
 } from "@t3tools/mobile-markdown-text/markdown";
 import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
+import { firstStrongDirection } from "@t3tools/mobile-markdown-text/markdown";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
 import { useFontFamily } from "../lib/useFontFamily";
@@ -78,6 +79,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly fontSize: number;
   readonly lineHeight: number;
   readonly contentInsetVertical: number;
+  readonly writingDirection: "ltr" | "rtl";
   readonly editable: boolean;
   readonly readOnly: boolean;
   readonly enterBehavior: string;
@@ -280,6 +282,10 @@ export function ComposerEditor({
           : bodyText.lineHeight
       }
       contentInsetVertical={contentInsetVertical}
+      // Live composer direction: the draft's first strong letter decides
+      // (plain first-strong, no tech-token stripping — while typing, follow
+      // what the user actually typed; empty resets to LTR).
+      writingDirection={firstStrongDirection(props.value)}
       editable={props.editable ?? true}
       readOnly={props.readOnly ?? false}
       enterBehavior={props.enterBehavior ?? DEFAULT_COMPOSER_ENTER_BEHAVIOR}

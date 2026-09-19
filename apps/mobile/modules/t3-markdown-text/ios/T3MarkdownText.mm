@@ -27,7 +27,13 @@ using namespace facebook::react;
 }
 @end
 
-/** Preserve canonical references and their payload when copying a native text selection. */
+/**
+ * Preserve canonical references and their payload when copying a native text
+ * selection. Also strips characters the markdown renderer embeds but that
+ * must never leak into a paste: the object-replacement character used for
+ * file/skill icon placeholders, and the LTR bidi isolate (LRI \u2066 / PDI
+ * \u2069) inline code gets wrapped in inside RTL paragraphs.
+ */
 @interface T3ContextCopyTextView : UITextView
 @property(nonatomic, copy) NSDictionary *contextClipboardConfig;
 @end
@@ -45,12 +51,14 @@ using namespace facebook::react;
 - (void)copy:(id)sender
 {
   NSRange selected = self.selectedRange;
-  NSArray *ranges = self.contextClipboardConfig[@"ranges"];
-  if (selected.location == NSNotFound || selected.length == 0 || NSMaxRange(selected) > self.text.length || ranges.count == 0) {
+  if (selected.location == NSNotFound || selected.length == 0 || NSMaxRange(selected) > self.text.length) {
     [super copy:sender];
     return;
   }
-  NSMutableString *text = [[self.text substringWithRange:selected] mutableCopy];
+
+  NSString *originalText = [self.text substringWithRange:selected];
+  NSArray *ranges = self.contextClipboardConfig[@"ranges"];
+  NSMutableString *text = [originalText mutableCopy];
   BOOL hasContext = NO;
   for (NSDictionary *range in [ranges reverseObjectEnumerator]) {
     NSUInteger start = [range[@"start"] unsignedIntegerValue];
@@ -61,8 +69,20 @@ using namespace facebook::react;
     [text replaceCharactersInRange:NSMakeRange(overlap.location - selected.location, overlap.length) withString:range[@"text"]];
     hasContext = YES;
   }
-  if (!hasContext) { [super copy:sender]; return; }
+
   [text replaceOccurrencesOfString:@"\uFFFC\u00A0" withString:@"" options:0 range:NSMakeRange(0, text.length)];
+  [text replaceOccurrencesOfString:@"\uFFFC" withString:@"" options:0 range:NSMakeRange(0, text.length)];
+  [text replaceOccurrencesOfString:@"\u2066" withString:@"" options:0 range:NSMakeRange(0, text.length)];
+  [text replaceOccurrencesOfString:@"\u2069" withString:@"" options:0 range:NSMakeRange(0, text.length)];
+
+  if (!hasContext) {
+    if ([text isEqualToString:originalText]) {
+      [super copy:sender];
+    } else {
+      UIPasteboard.generalPasteboard.string = text;
+    }
+    return;
+  }
   NSString *fragment = self.contextClipboardConfig[@"fragment"];
   NSMutableDictionary *payload = [[NSJSONSerialization JSONObjectWithData:[fragment dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingMutableContainers error:nil] mutableCopy];
   NSArray *records = payload[@"records"];
@@ -113,8 +133,13 @@ static void T3MarkdownTextApplyParagraphStyles(
     paragraphStyle.firstLineHeadIndent = styleRange.firstLineHeadIndent;
     paragraphStyle.headIndent = styleRange.headIndent;
     paragraphStyle.paragraphSpacing = styleRange.paragraphSpacing;
+    if (styleRange.rtl) {
+      paragraphStyle.baseWritingDirection = NSWritingDirectionRightToLeft;
+    }
+    // Must match applyParagraphStyles in T3MarkdownTextShadowNode.mm (measure path).
     paragraphStyle.tabStops = @[
-      [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft
+      [[NSTextTab alloc] initWithTextAlignment:styleRange.rtl ? NSTextAlignmentRight
+                                              : NSTextAlignmentLeft
                                       location:styleRange.headIndent
                                        options:@{}]
     ];

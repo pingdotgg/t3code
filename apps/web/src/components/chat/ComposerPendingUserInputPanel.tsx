@@ -7,6 +7,7 @@ import {
 } from "../../pendingUserInput";
 import { CheckIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import { resolvedTextDirection } from "../ChatMarkdown";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 
@@ -187,11 +188,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       >
         <ComposerBanner.Icon />
         <ComposerBanner.Content>
-          <span className="shrink-0 font-medium text-muted-foreground">
+          <span
+            dir={resolvedTextDirection(activeQuestion.header)}
+            className="shrink-0 font-medium text-muted-foreground"
+          >
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
+            <span
+              dir={resolvedTextDirection(activeQuestion.question)}
+              className="min-w-0 flex-1 truncate text-secondary-label"
+            >
               {activeQuestion.question}
             </span>
           ) : null}
@@ -230,7 +237,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
-            <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
+            {/* The question and its options are agent-authored prose, so each
+                string resolves its own direction — a Hebrew question reads and
+                aligns right-to-left while the panel chrome stays put. */}
+            <p
+              dir={resolvedTextDirection(activeQuestion.question)}
+              className="text-sm text-foreground/85"
+            >
+              {activeQuestion.question}
+            </p>
             {activeQuestion.multiSelect ? (
               <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
             ) : null}
@@ -245,7 +260,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
                 const shortcutKey = index < 9 ? index + 1 : null;
                 const className = cn(
-                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-primary/25",
+                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-start outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-primary/25",
                   isSelected
                     ? "bg-muted/55 text-foreground"
                     : "bg-transparent text-foreground/85 hover:bg-muted/30",
@@ -255,9 +270,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const content = (
                   <>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{option.label}</span>
+                      <span
+                        dir={resolvedTextDirection(option.label)}
+                        className="text-sm font-medium"
+                      >
+                        {option.label}
+                      </span>
                       {option.description && option.description !== option.label ? (
-                        <span className="text-secondary-label text-[11px]">
+                        <span
+                          dir={resolvedTextDirection(option.description)}
+                          className="text-secondary-label text-[11px]"
+                        >
                           {option.description}
                         </span>
                       ) : null}

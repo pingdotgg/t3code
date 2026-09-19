@@ -36,8 +36,14 @@ static void applyParagraphStyles(
     paragraphStyle.firstLineHeadIndent = styleRange.firstLineHeadIndent;
     paragraphStyle.headIndent = styleRange.headIndent;
     paragraphStyle.paragraphSpacing = styleRange.paragraphSpacing;
+    if (styleRange.rtl) {
+      paragraphStyle.baseWritingDirection = NSWritingDirectionRightToLeft;
+    }
+    // The tab stop's alignment matches the paragraph's writing direction so the
+    // list-marker column sits on the leading edge (right, for RTL paragraphs).
     paragraphStyle.tabStops = @[
-      [[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentLeft
+      [[NSTextTab alloc] initWithTextAlignment:styleRange.rtl ? NSTextAlignmentRight
+                                              : NSTextAlignmentLeft
                                       location:styleRange.headIndent
                                        options:@{}]
     ];
@@ -179,6 +185,15 @@ Size T3MarkdownTextShadowNode::measureContent(
           textAttributes.alignment = TextAlignment::Natural;
         }
 
+        // Natural alignment follows the paragraph's base writing direction, so an
+        // explicit "rtl" run right-aligns and reorders as Hebrew/Arabic prose while
+        // "ltr" pins code, and "auto" keeps TextKit's first-strong resolution.
+        if (props.writingDirection == T3MarkdownTextRunWritingDirection::Ltr) {
+          textAttributes.baseWritingDirection = WritingDirection::LeftToRight;
+        } else if (props.writingDirection == T3MarkdownTextRunWritingDirection::Rtl) {
+          textAttributes.baseWritingDirection = WritingDirection::RightToLeft;
+        }
+
         textAttributes.backgroundColor = props.backgroundColor;
 
         fragment.string = props.text;
@@ -193,6 +208,7 @@ Size T3MarkdownTextShadowNode::measureContent(
               props.shadowOffset.width,
               props.shadowOffset.height,
               props.shadowRadius - ParagraphStyleEncodingOffset,
+              props.writingDirection == T3MarkdownTextRunWritingDirection::Rtl,
           });
         }
         if (props.nativeId.rfind("t3-chip:", 0) == 0 && fragmentLength > 0) {

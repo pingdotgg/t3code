@@ -792,6 +792,14 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             "composer-tiptap block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
             className,
           ),
+          // The draft belongs to whoever is typing it: `dir="auto"` re-reads the
+          // first strong character on every input, so a Hebrew draft flips the
+          // composer RTL (text-align follows `start`) live, and clearing it
+          // falls back to LTR. ProseMirror stamps each paragraph with its own
+          // direction too; this covers the root box, the caret in an empty
+          // composer, and any non-paragraph child. No CSS here forces a
+          // text-align that could fight it.
+          dir: "auto",
           "data-testid": "composer-editor",
           "data-composer-rich-text": richText ? "true" : "false",
           "aria-placeholder": placeholder,
