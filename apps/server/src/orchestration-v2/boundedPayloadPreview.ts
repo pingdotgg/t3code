@@ -492,3 +492,17 @@ export const boundedPayloadPreviewJson = (payloadJson: string): string | null =>
           THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES,
         ),
       );
+
+/**
+ * Turn-item preview variant. A stored preview exists only when the raw
+ * payload exceeded the row cap, so every preview is content that was dropped;
+ * stamping `payloadTruncated` lets bounded reads flag the item and clients
+ * recover the raw row through `orchestration.getThreadTurnItem`.
+ */
+export const boundedTurnItemPreviewJson = (payloadJson: string): string | null => {
+  const previewJson = boundedPayloadPreviewJson(payloadJson);
+  if (previewJson === null) return null;
+  const preview = JSON.parse(previewJson) as Record<string, unknown>;
+  preview["payloadTruncated"] = true;
+  return JSON.stringify(preview);
+};

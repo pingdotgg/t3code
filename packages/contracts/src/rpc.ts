@@ -1494,6 +1494,15 @@ const WsOrchestrationV2GetThreadCheckpointContextRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetThreadTurnItemRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadTurnItem,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadTurnItem.input,
+    success: OrchestrationV2RpcSchemas.getThreadTurnItem.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
   {
@@ -1802,6 +1811,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2GetThreadHistoryPageRpc,
   WsOrchestrationV2GetThreadCheckpointContextRpc,
+  WsOrchestrationV2GetThreadTurnItemRpc,
   WsOrchestrationV2LaunchThreadRpc,
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,

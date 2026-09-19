@@ -1683,6 +1683,147 @@ it("never truncates identity members that cursors and cohort joins compare", () 
   assert.isBelow(preview.text!.length, payload.text.length);
 });
 
+it.effect(
+  "memory snapshot windows retain a pending request's display item as a hidden dependency",
+  () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:memory-pending-dep");
+      yield* projectionStore.apply({
+        id: EventId.make("event:memory-pending-dep:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:memory-pending-dep"),
+          title: "memory pending dep",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const itemBase = {
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        status: "completed" as const,
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+      };
+      yield* projectionStore.apply({
+        id: EventId.make("event:memory-pending-dep:question"),
+        type: "turn-item.updated",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          ...itemBase,
+          id: TurnItemId.make("item:memory-pending-dep:question"),
+          ordinal: 1,
+          status: "pending",
+          completedAt: null,
+          type: "user_input_request",
+          requestId: RuntimeRequestId.make("request:memory-pending-dep"),
+          questions: [
+            {
+              header: "Pick",
+              id: "q1",
+              options: [
+                { label: "a", description: "first" },
+                { label: "b", description: "second" },
+              ],
+              question: "which?",
+            },
+          ],
+        },
+      });
+      for (let index = 2; index <= 80; index += 1) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:memory-pending-dep:${index}`),
+          type: "turn-item.updated",
+          threadId,
+          driver,
+          occurredAt: now,
+          payload: {
+            ...itemBase,
+            id: TurnItemId.make(`item:memory-pending-dep:${index}`),
+            ordinal: index,
+            type: "command_execution",
+            input: "cmd",
+            output: "ok",
+            exitCode: 0,
+          },
+        });
+      }
+      yield* projectionStore.apply({
+        id: EventId.make("event:memory-pending-dep:request"),
+        type: "runtime-request.updated",
+        threadId,
+        runId: null,
+        nodeId: NodeId.make("node:memory-pending-dep"),
+        driver,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make("request:memory-pending-dep"),
+          nodeId: NodeId.make("node:memory-pending-dep"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 75,
+      });
+      assert.isTrue(
+        windowed.projection.runtimeRequests.some(
+          (request) => request.id === RuntimeRequestId.make("request:memory-pending-dep"),
+        ),
+      );
+      assert.isTrue(
+        windowed.projection.turnItems.some(
+          (item) => item.id === TurnItemId.make("item:memory-pending-dep:question"),
+        ),
+      );
+      assert.isFalse(
+        windowed.projection.visibleTurnItems.some(
+          (row) => row.sourceItemId === TurnItemId.make("item:memory-pending-dep:question"),
+        ),
+      );
+    }).pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
+
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
   it.effect("surfaces missing threads as not-found, not read errors", () =>
     Effect.gen(function* () {
@@ -9814,6 +9955,542 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         ],
       );
       assert.lengthOf(importedEmptyBoundary.projection.visibleTurnItems, 104);
+    }),
+  );
+
+  it.effect(
+    "hydrates only referenced resolved requests plus all pending ones — no provider-turn fan-out",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const now = yield* DateTime.now;
+        const nowIso = DateTime.formatIso(now);
+        const threadId = ThreadId.make("thread:bounded-request-cohort");
+        const providerTurnId = ProviderTurnId.make("provider-turn:bounded-request-cohort");
+        yield* projectionStore.apply({
+          id: EventId.make("event:bounded-request-cohort:thread"),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId: ProjectId.make("project:bounded-request-cohort"),
+            title: "bounded request cohort",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+        const insertItem = (input: { id: string; ordinal: number; requestId?: string }) =>
+          sql`
+            INSERT INTO orchestration_v2_projection_turn_items (
+              turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+              parent_item_id, ordinal, type, status, updated_at, payload_json
+            ) VALUES (
+              ${input.id}, ${threadId}, NULL, NULL, NULL,
+              ${input.requestId === undefined ? null : providerTurnId},
+              NULL, ${input.ordinal},
+              ${input.requestId === undefined ? "command_execution" : "user_input_request"},
+              'completed', ${nowIso},
+              ${encodeUnknownJsonString({
+                id: input.id,
+                threadId,
+                runId: null,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: input.requestId === undefined ? null : providerTurnId,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: input.ordinal,
+                status: "completed",
+                title: null,
+                startedAt: nowIso,
+                completedAt: nowIso,
+                updatedAt: nowIso,
+                ...(input.requestId === undefined
+                  ? {
+                      type: "command_execution",
+                      input: "cmd",
+                      output: "ok",
+                      exitCode: 0,
+                    }
+                  : {
+                      type: "user_input_request",
+                      requestId: input.requestId,
+                      questions: [],
+                    }),
+              })}
+            )
+          `;
+        for (let index = 1; index <= 79; index += 1) {
+          yield* insertItem({
+            id: `item:bounded-request-cohort:${index}`,
+            ordinal: index,
+          });
+        }
+        // The retained window covers high ordinals; this referencing item pulls
+        // its request into the resolved cohort while its turn-mate stays out.
+        yield* insertItem({
+          id: "item:bounded-request-cohort:80",
+          ordinal: 80,
+          requestId: "request:bounded-request-cohort:kept",
+        });
+        const insertRequest = (input: {
+          id: string;
+          status: "pending" | "resolved";
+          reason?: string;
+        }) =>
+          sql`
+            INSERT INTO orchestration_v2_projection_runtime_requests (
+              runtime_request_id, thread_id, node_id, provider_turn_id, kind,
+              status, created_at, resolved_at, payload_json
+            ) VALUES (
+              ${input.id}, ${threadId}, 'node:bounded-request-cohort', ${providerTurnId}, 'command',
+              ${input.status}, ${nowIso},
+              ${input.status === "resolved" ? nowIso : null},
+              ${encodeUnknownJsonString({
+                id: input.id,
+                nodeId: "node:bounded-request-cohort",
+                providerTurnId,
+                nativeRequestRef: null,
+                kind: "command",
+                status: input.status,
+                responseCapability: {
+                  type: "not_resumable",
+                  reason: input.reason ?? "done",
+                },
+                createdAt: nowIso,
+                resolvedAt: input.status === "resolved" ? nowIso : null,
+              })}
+            )
+          `;
+        // Same provider turn as the referenced request: under turn-fan-out
+        // hydration both would land; only the referenced one must.
+        yield* insertRequest({ id: "request:bounded-request-cohort:kept", status: "resolved" });
+        yield* insertRequest({ id: "request:bounded-request-cohort:dropped", status: "resolved" });
+        yield* insertRequest({ id: "request:bounded-request-cohort:pending", status: "pending" });
+
+        const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: 75,
+        });
+        const requestIds = windowed.projection.runtimeRequests
+          .map((request) => String(request.id))
+          .sort();
+        assert.deepEqual(requestIds, [
+          "request:bounded-request-cohort:kept",
+          "request:bounded-request-cohort:pending",
+        ]);
+      }),
+  );
+
+  it.effect("caps aggregate resolved request bytes, keeping the newest referenced", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const threadId = ThreadId.make("thread:bounded-request-bytes");
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-request-bytes:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:bounded-request-bytes"),
+          title: "bounded request bytes",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const requestCount = 20;
+      // 20 × ~70 KiB ≈ 1.4 MiB > the 1 MiB resolved-request budget.
+      const reason = "r".repeat(70_000);
+      for (let index = 0; index < requestCount; index += 1) {
+        const requestId = `request:bounded-request-bytes:${index}`;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${`item:bounded-request-bytes:${index}`}, ${threadId}, NULL, NULL, NULL, NULL,
+            NULL, ${index + 1}, 'user_input_request', 'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              id: `item:bounded-request-bytes:${index}`,
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: index + 1,
+              status: "completed",
+              title: null,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "user_input_request",
+              requestId,
+              questions: [],
+            })}
+          )
+        `;
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runtime_requests (
+            runtime_request_id, thread_id, node_id, provider_turn_id, kind,
+            status, created_at, resolved_at, payload_json
+          ) VALUES (
+            ${requestId}, ${threadId}, 'node:bounded-request-bytes', NULL, 'command', 'resolved',
+            ${`2026-09-13T00:00:${String(index).padStart(2, "0")}.000Z`}, ${nowIso},
+            ${encodeUnknownJsonString({
+              id: requestId,
+              nodeId: "node:bounded-request-bytes",
+              providerTurnId: null,
+              nativeRequestRef: null,
+              kind: "command",
+              status: "resolved",
+              responseCapability: { type: "not_resumable", reason },
+              createdAt: `2026-09-13T00:00:${String(index).padStart(2, "0")}.000Z`,
+              resolvedAt: nowIso,
+            })}
+          )
+        `;
+      }
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 75,
+      });
+      const hydrated = windowed.projection.runtimeRequests.map((request) => String(request.id));
+      // The aggregate cap drops the oldest referenced requests first.
+      assert.isBelow(hydrated.length, requestCount);
+      assert.isAbove(hydrated.length, 0);
+      const hydratedIndexes = hydrated.map((id) =>
+        Number(id.slice("request:bounded-request-bytes:".length)),
+      );
+      assert.deepEqual(
+        [...hydratedIndexes].sort((a, b) => a - b),
+        hydratedIndexes,
+      );
+      for (const index of hydratedIndexes) {
+        assert.isAbove(index, requestCount - 1 - hydrated.length);
+      }
+    }),
+  );
+
+  it.effect("retains a pending request's display item paged out of the window", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const threadId = ThreadId.make("thread:pending-request-dep");
+      yield* projectionStore.apply({
+        id: EventId.make("event:pending-request-dep:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:pending-request-dep"),
+          title: "pending request dep",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      // Ordinal 1 pages out under a 75-row window; its pending request keeps it
+      // in turnItems as a hidden dependency so pending questions still render.
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        ) VALUES (
+          'item:pending-request-dep:question', ${threadId}, NULL, NULL, NULL, NULL,
+          NULL, 1, 'user_input_request', 'pending', ${nowIso},
+          ${encodeUnknownJsonString({
+            id: "item:pending-request-dep:question",
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "pending",
+            title: null,
+            startedAt: nowIso,
+            completedAt: null,
+            updatedAt: nowIso,
+            type: "user_input_request",
+            requestId: "request:pending-request-dep",
+            questions: [
+              {
+                header: "Pick",
+                id: "q1",
+                options: [
+                  { label: "a", description: "first" },
+                  { label: "b", description: "second" },
+                ],
+                question: "which?",
+              },
+            ],
+          })}
+        )
+      `;
+      for (let index = 2; index <= 80; index += 1) {
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_turn_items (
+            turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+            parent_item_id, ordinal, type, status, updated_at, payload_json
+          ) VALUES (
+            ${`item:pending-request-dep:${index}`}, ${threadId}, NULL, NULL, NULL, NULL,
+            NULL, ${index}, 'command_execution', 'completed', ${nowIso},
+            ${encodeUnknownJsonString({
+              id: `item:pending-request-dep:${index}`,
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: index,
+              status: "completed",
+              title: null,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+              input: "cmd",
+              output: "ok",
+              exitCode: 0,
+            })}
+          )
+        `;
+      }
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_runtime_requests (
+          runtime_request_id, thread_id, node_id, provider_turn_id, kind,
+          status, created_at, resolved_at, payload_json
+        ) VALUES (
+          'request:pending-request-dep', ${threadId}, 'node:pending-request-dep', NULL, 'user_input',
+          'pending', ${nowIso}, NULL,
+          ${encodeUnknownJsonString({
+            id: "request:pending-request-dep",
+            nodeId: "node:pending-request-dep",
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: nowIso,
+            resolvedAt: null,
+          })}
+        )
+      `;
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 75,
+      });
+      // The request hydrates (pending is unconditional) and its display item
+      // rides along as a hidden dependency — never as a pageable row.
+      assert.isTrue(
+        windowed.projection.runtimeRequests.some(
+          (request) => request.id === "request:pending-request-dep",
+        ),
+      );
+      const depItem = windowed.projection.turnItems.find(
+        (item) => item.id === "item:pending-request-dep:question",
+      );
+      assert.isDefined(depItem);
+      assert.isFalse(
+        windowed.projection.visibleTurnItems.some(
+          (row) => row.sourceItemId === "item:pending-request-dep:question",
+        ),
+      );
+    }),
+  );
+
+  it.effect("flags compacted items and serves the raw row through getThreadTurnItem", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:turn-item-recovery");
+      const itemId = TurnItemId.make("item:turn-item-recovery:huge");
+      const hugeText = "h".repeat(200_000);
+      yield* projectionStore.apply({
+        id: EventId.make("event:turn-item-recovery:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:turn-item-recovery"),
+          title: "turn item recovery",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:turn-item-recovery:item"),
+        type: "turn-item.updated",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: itemId,
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "assistant_message",
+          messageId: MessageId.make("message:turn-item-recovery"),
+          text: hugeText,
+          attachments: [],
+          streaming: false,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:turn-item-recovery:small"),
+        type: "turn-item.updated",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("item:turn-item-recovery:small"),
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "assistant_message",
+          messageId: MessageId.make("message:turn-item-recovery:small"),
+          text: "small",
+          attachments: [],
+          streaming: false,
+        },
+      });
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 75,
+      });
+      const compacted = windowed.projection.turnItems.find((item) => item.id === itemId);
+      assert.isDefined(compacted);
+      assert.strictEqual(compacted?.payloadTruncated, true);
+      assert.isTrue(
+        compacted?.type === "assistant_message" && compacted.text.length < hugeText.length,
+      );
+      const small = windowed.projection.turnItems.find(
+        (item) => item.id === TurnItemId.make("item:turn-item-recovery:small"),
+      );
+      assert.isUndefined(small?.payloadTruncated);
+
+      // The raw row is reachable by id and carries the full content unflagged.
+      const raw = yield* projectionStore.getThreadTurnItem(threadId, itemId);
+      assert.isTrue(raw?.type === "assistant_message" && raw.text === hugeText);
+      assert.isUndefined(raw?.payloadTruncated);
+      const missing = yield* projectionStore.getThreadTurnItem(
+        threadId,
+        TurnItemId.make("item:turn-item-recovery:absent"),
+      );
+      assert.isNull(missing);
     }),
   );
 });

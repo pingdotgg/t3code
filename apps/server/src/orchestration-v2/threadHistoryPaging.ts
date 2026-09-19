@@ -30,6 +30,13 @@ export const THREAD_HISTORY_MAX_RAW_TURNS = 150;
  */
 export const THREAD_HISTORY_MAX_WINDOW_ROWS = 1_500;
 export const THREAD_HISTORY_MAX_WINDOW_BYTES = 4_194_304;
+/**
+ * Aggregate stored-byte budget for resolved runtime requests hydrated into a
+ * bounded window. Pending requests always hydrate; resolved ones load only
+ * when a retained item references them, and this cap bounds that cohort so a
+ * single long turn's resolved history cannot bypass the window budgets.
+ */
+export const THREAD_HISTORY_MAX_RESOLVED_REQUEST_BYTES = 1_048_576;
 /** Rows larger than this carry a write-time `bounded_json` preview used by bounded reads. */
 export const THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES = 65_536;
 /** Cap applied to each oversized string field during payload compaction. */
@@ -702,6 +709,50 @@ function retainedInterruptRequestTurnItems(
   return retained;
 }
 
+/**
+ * Display items referenced by pending runtime requests are control
+ * dependencies even when they page out of the window: runtimeRequests keeps
+ * the pending request, and pending questions/approvals render from the item
+ * payload, so the item must stay reachable in the bounded turnItems.
+ */
+function retainedPendingRequestTurnItems(
+  projection: OrchestrationV2ThreadProjection,
+  visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+): OrchestrationV2TurnItem[] {
+  const pendingRequestIds = new Set<string>();
+  for (const request of projection.runtimeRequests) {
+    if (request.status === "pending") {
+      pendingRequestIds.add(String(request.id));
+    }
+  }
+  if (pendingRequestIds.size === 0) {
+    return [];
+  }
+  const visibleLocalIds = new Set<string>();
+  for (const row of visible) {
+    if (isLocalProjectedRow(projection, row)) {
+      visibleLocalIds.add(String(row.sourceItemId));
+    }
+  }
+  const retained: OrchestrationV2TurnItem[] = [];
+  for (const item of projection.turnItems) {
+    const requestId =
+      "requestId" in item && typeof item.requestId === "string"
+        ? item.requestId
+        : "runtimeRequestId" in item && typeof item.runtimeRequestId === "string"
+          ? item.runtimeRequestId
+          : null;
+    if (requestId === null || !pendingRequestIds.has(requestId)) {
+      continue;
+    }
+    if (visibleLocalIds.has(String(item.id))) {
+      continue;
+    }
+    retained.push(item);
+  }
+  return retained;
+}
+
 function localTurnItemsForVisibleWindow(
   projection: OrchestrationV2ThreadProjection,
   visible: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
@@ -812,14 +863,31 @@ export function buildBoundedThreadProjection(input: {
   };
   const latestLocalTurnOrdinal = computeLatestLocalTurnOrdinal(input.projection.turnItems);
 
-  // Reserve bytes for small interrupt-request dependencies that may sit outside
-  // the recent window but are required for visibility of results inside it.
+  // Reserve bytes for small interrupt-request and pending-request dependencies
+  // that may sit outside the recent window but are required for visibility of
+  // results inside it or for pending question/approval rendering.
   const dependencyReserve = (() => {
+    const pendingRequestIds = new Set<string>();
+    for (const request of controlProjection.runtimeRequests) {
+      if (request.status === "pending") {
+        pendingRequestIds.add(String(request.id));
+      }
+    }
     // Upper bound: all request items in the full projection. Window selection
     // uses this reserve so the final contribution stays under the cap.
     let reserve = 0;
     for (const item of controlProjection.turnItems) {
       if (item.type === "run_interrupt_request") {
+        reserve += bytesOfJson(item);
+        continue;
+      }
+      const requestId =
+        "requestId" in item && typeof item.requestId === "string"
+          ? item.requestId
+          : "runtimeRequestId" in item && typeof item.runtimeRequestId === "string"
+            ? item.runtimeRequestId
+            : null;
+      if (requestId !== null && pendingRequestIds.has(requestId)) {
         reserve += bytesOfJson(item);
       }
     }
@@ -855,11 +923,18 @@ export function buildBoundedThreadProjection(input: {
     controlProjection,
     visibleTurnItems,
   );
+  const pendingRequestTurnItems = retainedPendingRequestTurnItems(
+    controlProjection,
+    visibleTurnItems,
+  );
   const turnItemById = new Map<string, OrchestrationV2TurnItem>();
   for (const item of windowTurnItems) {
     turnItemById.set(String(item.id), item);
   }
   for (const item of dependencyTurnItems) {
+    turnItemById.set(String(item.id), item);
+  }
+  for (const item of pendingRequestTurnItems) {
     turnItemById.set(String(item.id), item);
   }
   const turnItems = [...turnItemById.values()];
