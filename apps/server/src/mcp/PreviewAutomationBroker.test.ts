@@ -21,6 +21,7 @@ import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Result from "effect/Result";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
@@ -1261,6 +1262,70 @@ it.effect("discards buffered actions before completing an evicted host stream", 
       });
       yield* Deferred.succeed(releaseConsumer, undefined);
       expect(Exit.isSuccess(yield* Fiber.await(consumer))).toBe(true);
+      expect(operations).toEqual(["snapshot"]);
+    }),
+  ),
+);
+
+it.effect("rejects a routed action when its generation is evicted before delivery", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const received = yield* Deferred.make<void>();
+      const actionRouted = yield* Deferred.make<void>();
+      const operations: string[] = [];
+      const consumer = yield* Stream.runForEach(yield* broker.connect(makeHost()), (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        operations.push(event.request.operation);
+        return Deferred.succeed(received, undefined);
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      const timedOut = yield* broker
+        .invoke<void>({ scope, operation: "snapshot", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Deferred.await(received);
+
+      // Suspend only this invocation in the gap between route selection and delivery.
+      const tasks: Array<() => void> = [];
+      let paused = false;
+      const dispatcher: Scheduler.SchedulerDispatcher = {
+        scheduleTask: (task) => tasks.push(task),
+        flush: () => {
+          let task: (() => void) | undefined;
+          while ((task = tasks.shift()) !== undefined) task();
+        },
+      };
+      const scheduler: Scheduler.Scheduler = {
+        executionMode: "async",
+        makeDispatcher: () => dispatcher,
+        shouldYield: () => paused,
+      };
+      const action = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "click",
+          input: {},
+          onTargetTab: () => {
+            paused = true;
+            Deferred.doneUnsafe(actionRouted, Effect.void);
+          },
+        })
+        .pipe(
+          Effect.flip,
+          Effect.provideService(Scheduler.Scheduler, scheduler),
+          Effect.forkScoped,
+        );
+      yield* Deferred.await(actionRouted);
+      yield* TestClock.adjust(1_000);
+      expect(yield* Fiber.join(timedOut)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      expect(Exit.isSuccess(yield* Fiber.await(consumer))).toBe(true);
+
+      paused = false;
+      dispatcher.flush();
+      expect(yield* Fiber.join(action)).toMatchObject({
+        _tag: "PreviewAutomationClientDisconnectedError",
+      });
       expect(operations).toEqual(["snapshot"]);
     }),
   ),
