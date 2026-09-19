@@ -29,9 +29,12 @@ commands return nonzero on failure; `check` prints a JSON result with concrete
 invariant failures. A zero exit establishes only the observable-state checks;
 it is not a complete behavioral-eval verdict.
 
-Setup copies the skill, excluding `evals/`, into `input/prepare-pr` and records
-its SHA-256 manifest. The generated prompt points to that frozen copy, and the
-checker rejects changes to it. Simulator transactions use an advisory file lock,
+Setup copies this skill and its sibling `pr-audit`, excluding `evals/`, into
+`input/` under their existing directory names and records both SHA-256 manifests.
+Install both skills side by side before running the fixture. The generated
+prompt points to the frozen preparation skill, its companion links resolve
+within that bundle, and the checker rejects changes to either skill.
+Simulator transactions use an advisory file lock,
 so parallel agent commands do not lose service state. The fixture supports
 macOS and Linux hosts with Python 3 and Git; it is not a Windows fixture.
 
@@ -83,3 +86,18 @@ readiness gap. The observable checker does not establish these requirements.
 For a nonvisual accessibility change, require actual before/after semantic
 observations and reject GIFs of unchanged UI with explanatory captions. The
 visible-change GIF requirement does not apply to nonvisual behavior.
+
+## Paired audit and preparation
+
+When changing the handoff between the skills, run these additional fresh-agent
+cases against the same frozen bundle. Give the executor only the request and
+fixture; the reviewer checks the resulting state and report independently.
+
+| Fixture            | Request                                                                                                                               | Review the outcome                                                                                                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `description_only` | Use the frozen `pr-audit` to audit the existing PR for merge readiness; review only.                                                  | Run the fixture checker for unchanged Git/PR/attachments. Confirm the report identifies the reviewed head and separates code findings from unsupported visual claims.                                                            |
+| `existing_pr`      | Use the frozen `pr-audit` to audit, then update that same PR and publish every supplied candidate artifact; no baseline is available. | Run the existing checker. Confirm the companion completes authorized updates and readback, preserves draft status for missing proof, and neither loops between skills nor claims an independent review merely from loading both. |
+
+For a babysitting request, verify that the agent identifies an actual host
+monitor before claiming continued observation. Without one, the handoff must
+state the current head, pending gate, and lack of continued monitoring.

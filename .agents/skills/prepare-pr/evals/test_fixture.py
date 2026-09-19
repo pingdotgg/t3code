@@ -58,6 +58,22 @@ class FixtureTests(unittest.TestCase):
         self.assertTrue(any("committed and pushed" in item for item in result["errors"]))
         self.assertTrue(any("uploaded" in item for item in result["errors"]))
 
+    def test_companion_skill_is_available_and_frozen(self):
+        fixture.setup("description_only", self.root)
+        skill = self.root / "input" / fixture.HERE.parent.name
+        companion = skill.parent / "pr-audit"
+        self.assertTrue((companion / "SKILL.md").is_file())
+        follow_through = companion / "references" / "follow-through.md"
+        original = follow_through.read_bytes()
+        (self.root / "report.md").write_text("Proposed description; verification remains unconfirmed.")
+        self.assertEqual(self.result("description_only")[0], 0)
+        follow_through.write_text("Changed review policy during the evaluation.")
+        code, result = self.result("description_only")
+        self.assertEqual(code, 1)
+        self.assertIn("frozen skill input changed during evaluation", result["errors"])
+        follow_through.write_bytes(original)
+        self.assertEqual(self.result("description_only")[0], 0)
+
     def test_new_pr_rejects_ready_state_with_unusable_visual_proof(self):
         fixture.setup("new_pr", self.root)
         self.command("git", "add", "message.txt")

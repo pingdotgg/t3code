@@ -29,6 +29,21 @@ automation permission and the user has not granted it, finish available work,
 then ask once at that concrete boundary; do not replace the question with a
 premature draft handoff.
 
+## Work with the audit skill
+
+For a requested code audit, merge-readiness verdict, or substantive review
+finding, use [pr-audit](../pr-audit/SKILL.md) for review criteria and its
+[evidence and finding format](../pr-audit/SKILL.md#evidence-and-verdict).
+Keep the PR lifecycle here: carry forward the inspected base/head, findings,
+checks, evidence gaps, and existing authorization instead of restarting either
+workflow. A requested audit remains read-only until fixes or publication are
+authorized. A description-only or media-only task does not require a code audit.
+
+After fixing audit findings, re-read the full contribution against its base and
+check for new failures before resuming publication. Attribute independent review
+only to a reviewer who actually ran; consulting another skill is not an
+independent review. A merge-readiness verdict never grants permission to merge.
+
 ## 1. Establish the branch, change, and claims
 
 Read current repository instructions, contribution guidance, and the PR
@@ -99,70 +114,27 @@ a gap in required proof prevents a readiness claim.
 
 ## 3. Capture comparable, readable evidence
 
-For user-visible changes, capture actual base/candidate states and identify
-the source revisions or build artifacts. Keep the scenario comparable: data,
-environment, viewport/device, theme, scroll position, selections, and relevant
-loading or failure state. State the conditions that matter next to the media.
-Explain deliberate differences, such as a feature changing the default view.
+Before capturing or editing PR media, read and apply the
+[PR evidence requirements](references/media-workflow.md#pr-evidence-requirements).
+That reference owns comparison formats, recording requirements, framing, labels,
+and delivery checks. Visible changes need actual base/candidate proof;
+nonvisual claims need direct semantic observations. Missing required proof is
+a readiness gap. Skip capture when there is no visual claim and repository rules
+require no media.
 
-For changes with a visible before/after difference, the minimum evidence is embedded animated GIFs
-showing **Before (base)** and **After (candidate)**. Use two vertically stacked,
-labeled GIFs or one GIF that shows the labeled base and candidate sequentially.
-Candidate-only interaction footage does not satisfy this comparison. For a
-static change, a labeled alternating-state GIF made from actual base/candidate
-captures is acceptable; disclose that it is a still-state comparison. Preserve
-screenshots and source recordings as supporting evidence.
+For fresh capture, follow [reliable capture setup](references/capture-recovery.md)
+first: inspect a saved smoke artifact before the full flow. At a capture or export
+failure, use its recovery procedure before retrying. Use the packaged
+[crop tool](references/detail-crops.md) for PNG/GIF derivatives and inspect them;
+pixel bounds alone cannot establish readable, contextual evidence.
 
-When the changed behavior is not visible, omit animated GIFs. Accessible names,
-ARIA relationships, and other nonvisual semantics need actual before/after
-accessibility-tree or DOM observations and focused checks. Unchanged screenshots
-with different added captions, or footage of an unchanged interaction, do not
-make a nonvisual fix visible. Static screenshots may provide control context;
-clearly distinguish that context from proof of the changed behavior.
+Capture the follow-through selected in step 2. When another thread or agent will
+capture, prepare, or publish media, carry this skill's absolute path, claims and
+needed observations, and the media/framing/recovery references in its brief.
+Inspect returned artifacts against the same requirements before reporting readiness.
 
-Every visible motion or interaction needed to demonstrate the change must appear in an
-animated GIF derived from the actual recording, including the action and settled
-result. A still-state slideshow cannot prove motion. MP4 links supplement these
-GIFs; they do not replace them. Missing base evidence or a required GIF is an
-explicit readiness gap, not permission to invent a baseline or omit the GIF.
-
-Before exporting any crop, apply the [framing gate](references/media-workflow.md#framing):
-the primary evidence must explain the interaction in its surrounding UI; a detail
-view supplements it. Reject crops that sever relevant text or controls, even when
-the changed label is readable. Use [media-workflow.md](references/media-workflow.md)
-for capture, annotation guidance, and inspection, and crop PNG/GIF evidence with
-the packaged tool in [detail-crops.md](references/detail-crops.md); ad-hoc
-conversion pipelines routinely drop GIF loop and delay metadata. Screenshots show
-states; recordings show transitions. Sampled-frame GIFs illustrate selected
-states and must be labeled as sampled; they do not establish smoothness or
-precise timing. Record durations and any speed changes when relevant.
-
-Before fresh evidence capture, follow [reliable capture setup](references/capture-recovery.md):
-choose a recorder with a concrete save path, capture and inspect a short smoke
-artifact, then reuse that proven route for the base/candidate flows. Verify each
-saved export immediately and keep a receipt for resuming. When an export is black,
-blank, frozen, or from the wrong window, or a recorder is disabled, times out,
-stops early, or re-shows a dialog, or the image or accessibility tree disagrees
-with the inspected UI, follow [capture recovery](references/capture-recovery.md)
-before the next capture attempt; blind retries produce misdiagnosed captures.
-
-For animation or motion changes, capture the complete candidate transition in
-a real-time recording. When the claimed improvement is comparative, record the
-same flow on the base revision too. Stills and sampled-frame GIFs can clarify
-states, but they do not replace the recording that proves the motion.
-
-Capture the follow-through selected in step 2. Record synthetic/disposable
-data, mocked endpoints, injected states, simulated media preferences, or
-manually composed illustrations as evidence conditions. When another thread or
-agent will capture, prepare, or publish the media, its brief must carry this
-skill's absolute path, the claims with their needed observations, and the
-framing and capture-recovery references; verify its returned artifacts against
-the applicable step 6 checks — legibility, framing, labels, and comparability —
-before reporting readiness.
-
-**Complete when:** each visual claim has an inspected, legible artifact showing
-the relevant action and result under comparable conditions, or a recorded gap.
-Skip this step when there is no visual claim and repository rules require no media.
+**Complete when:** each visual claim has inspected, comparable evidence showing
+the action and result, with its source revisions and conditions, or a recorded gap.
 
 ## 4. Write the description around the evidence
 
@@ -175,12 +147,8 @@ Remove abandoned approaches, conversation history, repeated summaries, and
 empty template sections where the repository permits. A small fix usually
 needs a short explanation and focused verification, not a report.
 
-For every material visual claim, place a labeled artifact beside a sentence
-describing the observable result. Use descriptive alt text and recording link
-labels: “Before: saved purple reopens as green” tells the reviewer what to
-inspect; “before.png” does not. Stack labeled evidence vertically at full width.
-Side-by-side evidence is prohibited: no Markdown or HTML comparison tables,
-columns, or composite images placing states beside one another.
+Place each material visual claim beside its labeled evidence, applying the
+[presentation requirements](references/media-workflow.md#pr-evidence-requirements).
 For several states, name each scenario. Put supplementary captures in a
 collapsible block when that keeps the main argument easier to read.
 
@@ -270,14 +238,9 @@ rendered PR view. Require these conditions before calling the packet ready:
 - Requested evidence is uploaded and linked in the published body; each link
   was fetched and checked for the intended content. A local file is a prepared
   artifact, not published evidence.
-- Before/after and recording labels identify the scenario and visible result;
-  screenshots, captions, and crops are readable at a 390 CSS-pixel mobile viewport
-  within the PR content column; add contextual detail crops when needed.
-- For visible changes, the published body embeds the required base/candidate animated GIF comparison
-  and GIFs covering every claimed motion or interaction. Decode and inspect their
-  frames and playback; a .gif extension or successful upload alone is insufficient.
-- Evidence is stacked vertically; no evidence appears in side-by-side tables,
-  columns, or composites.
+- Published media passes the [PR evidence requirements](references/media-workflow.md#pr-evidence-requirements)
+  and [delivery checks](references/media-workflow.md#inspect-and-deliver), including
+  comparison, real motion where claimed, framing, labels, playback, and mobile legibility.
 - Verification results and checked boxes agree with actual artifacts and runs.
 - Relevant capture conditions, substitutions, and untested paths are visible.
 - The evidence applies to the current candidate. After changes, repeat affected
@@ -298,6 +261,12 @@ and its reported status names any remaining required proof or publication step.
 
 ## 7. Keep the description current as commits change
 
+For sustained babysitting, apply the companion's
+[monitoring and stop conditions](../pr-audit/references/follow-through.md#babysitting).
+Use an available host monitoring mechanism; if none is available, report the
+current state and remaining gate without promising to keep watching after the
+turn ends. Reuse a suitable existing monitor instead of creating duplicate jobs.
+
 When updating or babysitting a PR, repeat this loop whenever its head changes,
 including new commits, review fixes, rebases, and force-pushes:
 
@@ -314,7 +283,8 @@ including new commits, review fixes, rebases, and force-pushes:
 4. Read back the published description and head after updating. If another
    commit arrived during the check, repeat the loop for the new head. While
    babysitting, inspect new reviewer comments and checks against that revision.
-   Verify findings against the source, fix confirmed in-scope defects, repeat
+   Verify findings against the source using `pr-audit` criteria, fix confirmed
+   in-scope defects, repeat
    affected checks, and publish the repair through step 5. Record reasons for
    rejecting false positives; post replies only when task authorization permits.
    Finish the requested review follow-up when current-head checks succeed and

@@ -76,9 +76,12 @@ def setup(name, root):
     repo, remote = root / "repo", root / "remote.git"
     (root / "service" / "uploads").mkdir(parents=True)
     (root / "bin").mkdir()
-    frozen = root / "input" / "prepare-pr"
-    shutil.copytree(HERE.parent, frozen, ignore=shutil.ignore_patterns("evals", "__pycache__", "*.pyc"))
-    skill_manifest = manifest(frozen)
+    frozen = root / "input" / HERE.parent.name
+    skill_manifest = {}
+    for source in (HERE.parent, HERE.parent.parent / "pr-audit"):
+        destination = root / "input" / source.name
+        shutil.copytree(source, destination, ignore=shutil.ignore_patterns("evals", "__pycache__", "*.pyc"))
+        skill_manifest[source.name] = manifest(destination)
     (root / "input" / "skill-manifest.json").write_text(
         json.dumps(skill_manifest, indent=2) + "\n", encoding="utf-8"
     )
@@ -425,7 +428,8 @@ def check(name, root, report_path):
     frozen_manifest = state.get("skillManifest")
     if frozen_manifest is None:
         errors.append("fixture predates frozen skill input; run setup again")
-    elif manifest(root / "input" / "prepare-pr") != frozen_manifest:
+    elif any(manifest(root / "input" / name) != expected
+             for name, expected in frozen_manifest.items()):
         errors.append("frozen skill input changed during evaluation")
     if name == "new_pr":
         remote = subprocess.run(

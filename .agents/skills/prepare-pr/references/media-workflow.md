@@ -16,11 +16,47 @@ Locate the supplied source first. If it is missing or inaccessible, request the
 file or a reachable path and state what framing it needs. Pause dependent media
 work until it arrives; report the missing input rather than claiming completion.
 
-For PR evidence, apply the parent skill's required animated GIF comparison and
-vertical-layout rules. Omit GIFs for nonvisual changes; use observed accessibility
-properties or other direct checks instead. For visible changes, produce labeled base/candidate GIFs (or one sequential
-comparison GIF) and a recording-derived GIF for each motion claim. MP4s remain
-supporting evidence. For artifact-only requests, deliver the requested formats.
+## PR evidence requirements
+
+Apply this section when preparing evidence for a PR. For artifact-only requests,
+deliver the requested formats and destination without adding PR work.
+
+Capture actual base/candidate states and identify their source revisions or
+builds, including uncommitted overlays. Keep data, environment, viewport/device,
+theme, scroll position, selection, and loading/failure state comparable. Explain
+deliberate differences, such as a feature changing the default view.
+
+For a visible before/after difference, embed labeled **Before (base)** and
+**After (candidate)** animated GIFs, stacked vertically, or one sequentially
+labeled comparison GIF. Candidate-only footage does not prove the comparison.
+For a static change, an alternating GIF from actual still captures is acceptable;
+label it as a still-state comparison. Preserve screenshots and source recordings.
+
+Every motion or interaction needed to demonstrate the change must appear in a
+GIF derived from the actual recording, including the action and settled result.
+Preserve a real-time recording of the complete transition; comparative motion
+claims need the same flow on the base too. MP4 links supplement the GIFs rather
+than replace them. Sampled frames and still-state slideshows illustrate states;
+they do not prove smoothness or precise timing. Disclose sampling and speed changes.
+Missing required baseline, recording, or GIF evidence remains a readiness gap.
+
+For nonvisual changes, omit GIFs of unchanged UI. Accessible names and ARIA
+relationships need actual base/candidate accessibility-tree or DOM observations
+and focused checks. Static screenshots may show the control's context; distinguish
+that context from proof of the changed semantics.
+
+Place labeled evidence next to its claim. Use descriptive alt text and recording
+labels that name the scenario and observable result. Stack evidence vertically
+at full width; side-by-side tables, columns, and comparison composites are not
+accepted. Verify readability at desktop and a 390 CSS-pixel mobile PR viewport.
+A contextual primary view must explain the interaction; detail crops supplement
+it. Apply the framing gate below before exporting and inspect the final media.
+
+Disclose relevant conditions beside the evidence: synthetic/disposable data,
+mocked endpoints, injected states, simulated media preferences, or manually
+composed illustrations. Keep source revisions, timing limits, and untested paths
+visible in the description. Publication and baseline comparison are separate:
+a successful upload cannot supply a missing comparison.
 
 ## Framing
 
