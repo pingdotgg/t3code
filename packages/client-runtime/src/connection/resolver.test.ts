@@ -81,6 +81,8 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
   readonly descriptorProtocolVersion?: number | null | undefined;
+  /** Overrides the descriptor fetch, for tests that answer per route. */
+  readonly fetch?: typeof fetch;
 }) => {
   const profiles = new Map(
     (options?.profiles ?? []).map((profile) => [profile.connectionId, profile]),
@@ -146,21 +148,24 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   });
 
   const dependencies = Layer.mergeAll(
-    remoteHttpClientLayer((() =>
-      Promise.resolve(
-        Response.json({
-          environmentId: ENVIRONMENT_ID,
-          label: "Compatible environment",
-          platform: { os: "linux", arch: "x64" },
-          serverVersion: "0.0.0-test",
-          ...(options?.descriptorProtocolVersion === undefined
-            ? { orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION }
-            : options.descriptorProtocolVersion === null
-              ? {}
-              : { orchestrationProtocolVersion: options.descriptorProtocolVersion }),
-          capabilities: { repositoryIdentity: true },
-        }),
-      )) satisfies typeof fetch),
+    remoteHttpClientLayer(
+      options?.fetch ??
+        ((() =>
+          Promise.resolve(
+            Response.json({
+              environmentId: ENVIRONMENT_ID,
+              label: "Compatible environment",
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              ...(options?.descriptorProtocolVersion === undefined
+                ? { orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION }
+                : options.descriptorProtocolVersion === null
+                  ? {}
+                  : { orchestrationProtocolVersion: options.descriptorProtocolVersion }),
+              capabilities: { repositoryIdentity: true },
+            }),
+          )) satisfies typeof fetch),
+    ),
     Layer.succeed(
       ConnectionProfileStore.ConnectionProfileStore,
       options?.profileStore ?? profileStore,
@@ -309,6 +314,86 @@ describe("ConnectionResolver", () => {
         (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).socketUrl,
       ).toContain("wsTicket=ticket");
       expect(yield* Ref.get(bearerInputs)).toEqual([{ token: "secret-bearer", method: "direct" }]);
+    }),
+  );
+
+  const descriptorResponse = (environmentId: string) =>
+    Response.json({
+      environmentId,
+      label: "Routed environment",
+      platform: { os: "linux", arch: "x64" },
+      serverVersion: "0.0.0-test",
+      orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+      capabilities: { repositoryIdentity: true },
+    });
+  const ROUTED_PROFILE = new BearerConnectionProfile({
+    connectionId: "saved-1",
+    environmentId: ENVIRONMENT_ID,
+    label: "Saved",
+    httpBaseUrl: "https://lan.example.test/",
+    wsBaseUrl: "wss://lan.example.test/",
+    alternateHttpBaseUrls: ["https://tailnet.example.test/", "https://stale.example.test/"],
+  });
+  const ROUTED_TARGET = new BearerConnectionTarget({
+    environmentId: ENVIRONMENT_ID,
+    label: "Saved",
+    connectionId: "saved-1",
+  });
+
+  it.effect("dials the first route that answers with the expected environment", () =>
+    Effect.gen(function* () {
+      const requested: Array<string> = [];
+      const brokerLayer = yield* makeDependencies({
+        credentials: [["saved-1", new BearerConnectionCredential({ token: "secret-bearer" })]],
+        fetch: ((input) => {
+          const url = new URL(String(input));
+          requested.push(url.origin);
+          // The LAN route is unreachable and the stale route now serves another machine.
+          if (url.hostname === "lan.example.test")
+            return Promise.reject(new TypeError("unreachable"));
+          if (url.hostname === "stale.example.test") {
+            return Promise.resolve(descriptorResponse("environment-other"));
+          }
+          return Promise.resolve(descriptorResponse(ENVIRONMENT_ID));
+        }) satisfies typeof fetch,
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const prepared = yield* broker.prepare(
+        catalogEntry(ROUTED_TARGET, Option.some(ROUTED_PROFILE)),
+      );
+
+      expect(prepared.httpBaseUrl).toBe("https://tailnet.example.test/");
+      expect(new Set(requested)).toEqual(
+        new Set([
+          "https://lan.example.test",
+          "https://tailnet.example.test",
+          "https://stale.example.test",
+        ]),
+      );
+    }),
+  );
+
+  it.effect("keeps the preferred route when every route fails so the usual error surfaces", () =>
+    Effect.gen(function* () {
+      const brokerLayer = yield* makeDependencies({
+        credentials: [["saved-1", new BearerConnectionCredential({ token: "secret-bearer" })]],
+        authorizeBearer: (input) =>
+          Effect.fail(
+            new ConnectionTransientError({
+              reason: "network",
+              detail: `unreachable ${input.httpBaseUrl}`,
+            }),
+          ),
+        fetch: (() => Promise.reject(new TypeError("unreachable"))) satisfies typeof fetch,
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+
+      const error = yield* Effect.flip(
+        broker.prepare(catalogEntry(ROUTED_TARGET, Option.some(ROUTED_PROFILE))),
+      );
+
+      expect(error.message).toBe("unreachable https://lan.example.test/");
     }),
   );
 

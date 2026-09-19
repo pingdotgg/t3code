@@ -84,6 +84,9 @@ const resolvePairingTarget = Effect.fn("clientRuntime.connection.onboarding.reso
   },
 );
 
+const isBearerCredential = Schema.is(BearerConnectionCredential);
+const isBearerProfile = Schema.is(BearerConnectionProfile);
+
 export const preparePairingRegistration = Effect.fn(
   "clientRuntime.connection.onboarding.preparePairingRegistration",
 )(function* (input: PairingConnectionInput) {
@@ -121,17 +124,39 @@ export const preparePairingRegistration = Effect.fn(
   });
 });
 
+/**
+ * Pairing an environment this client already saved adds a route instead of
+ * replacing one: the previous addresses stay as alternates behind the newly
+ * paired one, so a machine reached over LAN and over a tailnet keeps both.
+ */
+export function mergeBearerRoutes(
+  registration: BearerConnectionRegistration,
+  previous: Option.Option<ConnectionCatalogEntry>,
+): BearerConnectionRegistration {
+  const previousProfile = Option.getOrNull(Option.flatMap(previous, (entry) => entry.profile));
+  if (previousProfile === null || !isBearerProfile(previousProfile)) return registration;
+  const alternateHttpBaseUrls = [
+    ...new Set([previousProfile.httpBaseUrl, ...(previousProfile.alternateHttpBaseUrls ?? [])]),
+  ].filter((httpBaseUrl) => httpBaseUrl !== registration.profile.httpBaseUrl);
+  if (alternateHttpBaseUrls.length === 0) return registration;
+  return new BearerConnectionRegistration({
+    ...registration,
+    profile: new BearerConnectionProfile({ ...registration.profile, alternateHttpBaseUrls }),
+  });
+}
+
 const registerPairingConnection = Effect.fn(
   "clientRuntime.connection.onboarding.registerPairingConnection",
 )(function* (input: PairingConnectionInput) {
-  const registration = yield* preparePairingRegistration(input);
+  const prepared = yield* preparePairingRegistration(input);
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+  const previous = (yield* SubscriptionRef.get(registry.entries)).get(
+    prepared.target.environmentId,
+  );
+  const registration = mergeBearerRoutes(prepared, Option.fromUndefinedOr(previous));
   yield* registry.register(registration);
   return registration.target.environmentId;
 });
-
-const isBearerCredential = Schema.is(BearerConnectionCredential);
-const isBearerProfile = Schema.is(BearerConnectionProfile);
 
 const updateBearerConnection = Effect.fn(
   "clientRuntime.connection.onboarding.updateBearerConnection",
@@ -195,6 +220,11 @@ export const prepareBearerConnectionUpdate = Effect.fn(
         detail: cause instanceof Error ? cause.message : "The environment URL is invalid.",
       }),
   });
+  // Editing the preferred address keeps the other saved routes, minus the one
+  // that just became preferred.
+  const alternateHttpBaseUrls = (entry.profile.value.alternateHttpBaseUrls ?? []).filter(
+    (candidate) => candidate !== httpBaseUrl,
+  );
   const connectionId = entry.target.connectionId;
   return new BearerConnectionRegistration({
     target: new BearerConnectionTarget({
@@ -208,6 +238,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       label,
       httpBaseUrl,
       wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
+      ...(alternateHttpBaseUrls.length === 0 ? {} : { alternateHttpBaseUrls }),
     }),
     credential: credential.value,
   });

@@ -13,6 +13,7 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
+  bearerRouteCandidates,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
 } from "./catalog.ts";
@@ -42,6 +43,7 @@ import {
   orchestrationProtocolCompatibilityError,
 } from "./compatibility.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+import { deriveWsBaseUrl } from "../environment/endpoint.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
@@ -102,9 +104,37 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
   });
 });
 
+/**
+ * Picks the route to dial for a bearer profile. With several candidates every
+ * route fetches the environment descriptor at once and the first one to answer
+ * with the expected identity wins; the fastest answer is the best route this
+ * device has right now. When no route answers the preferred route is returned
+ * so authorization reports the failure exactly as a single-route profile would.
+ */
+const selectBearerRoute = Effect.fn("clientRuntime.connection.broker.selectBearerRoute")(function* (
+  profile: BearerConnectionProfile,
+) {
+  const candidates = bearerRouteCandidates(profile);
+  if (candidates.length === 1) return candidates[0]!;
+  return yield* Effect.raceAll(
+    candidates.map((httpBaseUrl) =>
+      fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
+        Effect.filterOrFail((descriptor) => descriptor.environmentId === profile.environmentId),
+        Effect.as(httpBaseUrl),
+      ),
+    ),
+  ).pipe(
+    Effect.tap((httpBaseUrl) =>
+      Effect.annotateCurrentSpan({ "connection.route.httpBaseUrl": httpBaseUrl }),
+    ),
+    Effect.orElseSucceed(() => profile.httpBaseUrl),
+  );
+});
+
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+  const httpClient = yield* HttpClient.HttpClient;
 
   return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
     entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
@@ -137,10 +167,14 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     if (!isBearerCredential(credential)) {
       return yield* credentialMissingError(target.connectionId);
     }
+    const httpBaseUrl = yield* selectBearerRoute(profile).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: profile.httpBaseUrl,
-      wsBaseUrl: profile.wsBaseUrl,
+      httpBaseUrl,
+      wsBaseUrl:
+        httpBaseUrl === profile.httpBaseUrl ? profile.wsBaseUrl : deriveWsBaseUrl(httpBaseUrl),
       bearerToken: credential.token,
       connectionMethod: "direct",
     });

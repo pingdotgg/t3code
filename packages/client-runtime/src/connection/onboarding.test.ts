@@ -11,8 +11,10 @@ import * as Option from "effect/Option";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
 import { ClientPresentation, SshEnvironmentGateway } from "../platform/capabilities.ts";
 import { BearerConnectionCredential, BearerConnectionProfile } from "./catalog.ts";
+import { gitHubRoutingConnectionKey } from "./githubRoutingPermissions.ts";
 import { BearerConnectionTarget } from "./model.ts";
 import {
+  mergeBearerRoutes,
   prepareBearerConnectionUpdate,
   preparePairingRegistration,
   prepareSshRegistration,
@@ -234,6 +236,75 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("editing keeps the saved alternates and drops the one that became preferred", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-paired");
+      const entry = Option.some({
+        target: new BearerConnectionTarget({
+          environmentId,
+          label: "Saved",
+          connectionId: "bearer:environment-paired",
+        }),
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId: "bearer:environment-paired",
+            environmentId,
+            label: "Saved",
+            httpBaseUrl: "http://lan.example.test/",
+            wsBaseUrl: "ws://lan.example.test/",
+            alternateHttpBaseUrls: ["https://tailnet.example.test/"],
+          }),
+        ),
+        enabled: true,
+      });
+      const credential = Option.some(new BearerConnectionCredential({ token: "bearer-token" }));
+
+      const relabeled = yield* prepareBearerConnectionUpdate({
+        input: { environmentId, label: "Renamed", httpBaseUrl: "http://lan.example.test" },
+        entry,
+        credential,
+      });
+      expect(relabeled.profile.alternateHttpBaseUrls).toEqual(["https://tailnet.example.test/"]);
+
+      const swapped = yield* prepareBearerConnectionUpdate({
+        input: { environmentId, label: "Saved", httpBaseUrl: "https://tailnet.example.test" },
+        entry,
+        credential,
+      });
+      expect(swapped.profile.httpBaseUrl).toBe("https://tailnet.example.test/");
+      expect(swapped.profile.alternateHttpBaseUrls).toBeUndefined();
+    }),
+  );
+
+  it.effect("re-pairing a saved environment keeps its previous address as an alternate route", () =>
+    Effect.gen(function* () {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+      const paired = yield* preparePairingRegistration({
+        host: "tailnet.example.test",
+        pairingCode: "pairing-token",
+      }).pipe(Effect.provide(Layer.mergeAll(CLIENT_PRESENTATION_LAYER, pairingHttpLayer(calls))));
+      const previousProfile = new BearerConnectionProfile({
+        connectionId: "bearer:environment-paired",
+        environmentId: EnvironmentId.make("environment-paired"),
+        label: "Saved",
+        httpBaseUrl: "http://lan.example.test/",
+        wsBaseUrl: "ws://lan.example.test/",
+        alternateHttpBaseUrls: ["https://tailnet.example.test/"],
+      });
+      const previous = Option.some({
+        target: paired.target,
+        profile: Option.some(previousProfile),
+        enabled: true,
+      });
+
+      expect(mergeBearerRoutes(paired, previous).profile).toMatchObject({
+        httpBaseUrl: "https://tailnet.example.test/",
+        alternateHttpBaseUrls: ["http://lan.example.test/"],
+      });
+      expect(mergeBearerRoutes(paired, Option.none())).toBe(paired);
+    }),
+  );
+
   it.effect("prepares an SSH registration from the provisioned platform environment", () =>
     Effect.gen(function* () {
       const target = {
@@ -282,4 +353,33 @@ describe("connection onboarding", () => {
       });
     }),
   );
+});
+
+describe("gitHubRoutingConnectionKey", () => {
+  it("changes when a bearer profile gains or loses an alternate route", () => {
+    const environmentId = EnvironmentId.make("environment-paired");
+    const target = new BearerConnectionTarget({
+      environmentId,
+      label: "Saved",
+      connectionId: "bearer:environment-paired",
+    });
+    const profile = new BearerConnectionProfile({
+      connectionId: "bearer:environment-paired",
+      environmentId,
+      label: "Saved",
+      httpBaseUrl: "http://lan.example.test/",
+      wsBaseUrl: "ws://lan.example.test/",
+    });
+    const key = (candidate: BearerConnectionProfile) =>
+      gitHubRoutingConnectionKey({ target, profile: Option.some(candidate), enabled: true });
+
+    const withAlternate = new BearerConnectionProfile({
+      ...profile,
+      alternateHttpBaseUrls: ["https://tailnet.example.test/"],
+    });
+    expect(key(withAlternate)).not.toBe(key(profile));
+    expect(key(new BearerConnectionProfile({ ...profile, alternateHttpBaseUrls: [] }))).toBe(
+      key(profile),
+    );
+  });
 });
