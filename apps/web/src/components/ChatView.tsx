@@ -7364,6 +7364,17 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.editQueuedMessage") {
+        if (routeKind === "draft") return;
+        // Anywhere else in the draft the key keeps moving the caret, so a
+        // second press from the first paragraph reaches the queue.
+        if (!composerRef.current?.isCaretAtStart()) return;
+        if (!queuedRunsControlRef.current?.editLatest(event.repeat)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (command === "thread.stop") {
         // An unavailable command should not shadow contextual shortcuts such as Escape to close a dialog.
         if (!canInterruptRunningThread) return;
@@ -10584,6 +10595,11 @@ export default function ChatView(props: ChatViewProps) {
                                     keybindings,
                                     "thread.steerQueuedMessage",
                                     { context: { terminalFocus: false } },
+                                  )}
+                                  editShortcutLabel={shortcutLabelForCommand(
+                                    keybindings,
+                                    "thread.editQueuedMessage",
+                                    { context: { composerFocus: true } },
                                   )}
                                   environmentId={activeThread.environmentId}
                                   threadId={activeThread.id}

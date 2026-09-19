@@ -44,6 +44,7 @@ const QUEUED_RUN_DRAG_TYPE = "application/x-t3code-queued-run";
 
 export interface QueuedRunsControlHandle {
   steerNext: (repeat: boolean) => boolean;
+  editLatest: (repeat: boolean) => boolean;
 }
 
 export function QueuedRunsControl({
@@ -52,6 +53,7 @@ export function QueuedRunsControl({
 }: {
   readonly ref?: Ref<QueuedRunsControlHandle>;
   readonly steerShortcutLabel?: string | null;
+  readonly editShortcutLabel?: string | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly optimisticMessages: ReadonlyArray<
@@ -209,6 +211,22 @@ export function QueuedRunsControl({
       const next = queued[0];
       if (!next || !workflow?.canPromoteToSteer) return false;
       if (!repeat && busyRunId === null) void steer(next.run.id);
+      return true;
+    },
+    // Declines while a queued message is already being edited so the key keeps
+    // moving the caret inside that draft.
+    editLatest(repeat) {
+      const latest = queued.at(-1);
+      if (!latest || props.editingRunId !== null || busyRunId !== null) return false;
+      if (!repeat) {
+        setExpanded(true);
+        props.onEditQueuedRun({
+          runId: latest.run.id,
+          messageId: latest.run.userMessageId,
+          text: latest.text,
+          attachments: latest.attachments,
+        });
+      }
       return true;
     },
   }));
@@ -445,7 +463,9 @@ export function QueuedRunsControl({
                           >
                             <PencilIcon />
                           </TooltipTrigger>
-                          <TooltipPopup>Edit in the composer</TooltipPopup>
+                          <TooltipPopup>
+                            {`Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
+                          </TooltipPopup>
                         </Tooltip>
                         <Tooltip>
                           <TooltipTrigger render={<span className="flex shrink-0" />}>
