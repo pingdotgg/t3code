@@ -103,7 +103,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
           ...props.options,
         }}
       />
-      {props.sidebar !== false && layout.usesSplitView ? (
+      {layout.usesSplitView && (props.sidebar !== false || props.backInSplitView) ? (
         <NativeHeaderToolbar placement="left">
           {props.backInSplitView && (props.backInSplitView.onPress || props.onBack) ? (
             <ScreenHeaderButton
@@ -111,18 +111,22 @@ export function ScreenHeader(props: ScreenHeaderProps) {
               onPress={props.backInSplitView.onPress ?? props.onBack}
             />
           ) : null}
-          <ScreenHeaderButton
-            accessibilityLabel={
-              panes.primarySidebarVisible ? `Maximize ${props.title.toLowerCase()}` : "Show threads"
-            }
-            icon={
-              panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
-            }
-            onPress={togglePrimarySidebar}
-            separateBackground={
-              props.backInSplitView ? props.backInSplitView.separateBackground : true
-            }
-          />
+          {props.sidebar !== false ? (
+            <ScreenHeaderButton
+              accessibilityLabel={
+                panes.primarySidebarVisible
+                  ? `Maximize ${props.title.toLowerCase()}`
+                  : "Show threads"
+              }
+              icon={
+                panes.primarySidebarVisible ? "arrow.up.left.and.arrow.down.right" : "sidebar.left"
+              }
+              onPress={togglePrimarySidebar}
+              separateBackground={
+                props.backInSplitView ? props.backInSplitView.separateBackground : true
+              }
+            />
+          ) : null}
         </NativeHeaderToolbar>
       ) : null}
       {(props.actions?.length ||

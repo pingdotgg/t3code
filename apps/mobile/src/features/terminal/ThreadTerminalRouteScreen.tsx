@@ -100,9 +100,8 @@ function TerminalHeader(props: {
       subtitle={props.subtitle}
       onBack={props.onCloseTerminal}
       backInSplitView={{
-        accessibilityLabel: "Close terminal",
-        icon: "xmark",
-        separateBackground: true,
+        accessibilityLabel: "Back to chat",
+        icon: "chevron.left",
       }}
       menus={
         props.isEnvironmentReady

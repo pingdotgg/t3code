@@ -238,6 +238,7 @@ function AdaptiveWorkspaceLayoutContent(
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
+  const showPrimarySidebar = pathname === "/" || primarySidebarPreferredVisible;
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
   const [supplementaryPanePreferredWidth, setSupplementaryPanePreferredWidth] = useState<
     number | null
@@ -262,17 +263,9 @@ function AdaptiveWorkspaceLayoutContent(
         viewportWidth: width,
         preferredWidth: fileInspectorPreferredWidth ?? undefined,
         reservedLeadingWidth:
-          shouldRenderPrimarySidebar && primarySidebarPreferredVisible
-            ? (layout.listPaneWidth ?? 0)
-            : 0,
+          shouldRenderPrimarySidebar && showPrimarySidebar ? (layout.listPaneWidth ?? 0) : 0,
       }),
-    [
-      fileInspectorPreferredWidth,
-      layout,
-      primarySidebarPreferredVisible,
-      shouldRenderPrimarySidebar,
-      width,
-    ],
+    [fileInspectorPreferredWidth, layout, showPrimarySidebar, shouldRenderPrimarySidebar, width],
   );
   const auxiliaryPaneRole: WorkspaceAuxiliaryPaneRole =
     focusedAuxiliaryPaneRole ?? (/\/files(?:\/|$)/.test(pathname) ? "inspector" : "supplementary");
@@ -289,7 +282,7 @@ function AdaptiveWorkspaceLayoutContent(
       deriveWorkspacePaneLayout({
         layout,
         viewportWidth: width,
-        primarySidebarPreferredVisible,
+        primarySidebarPreferredVisible: showPrimarySidebar,
         auxiliaryPanePreferredVisible,
         auxiliaryPaneRole,
         auxiliaryPanePreferredWidth: auxiliaryPanePreferredWidth ?? undefined,
@@ -299,7 +292,7 @@ function AdaptiveWorkspaceLayoutContent(
       auxiliaryPaneRole,
       auxiliaryPanePreferredWidth,
       layout,
-      primarySidebarPreferredVisible,
+      showPrimarySidebar,
       width,
     ],
   );
@@ -357,13 +350,16 @@ function AdaptiveWorkspaceLayoutContent(
     };
   }, []);
   const togglePrimarySidebar = useCallback(() => {
+    if (pathname === "/") {
+      return;
+    }
     if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
       setPrimarySidebarPreferredVisible(true);
       return;
     }
     setPrimarySidebarPreferredVisible((current) => !current);
-  }, [panes.primarySidebarSuppressedByAuxiliary, panes.primarySidebarVisible]);
+  }, [panes.primarySidebarSuppressedByAuxiliary, panes.primarySidebarVisible, pathname]);
   const revealPrimarySidebar = useCallback(() => {
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
@@ -374,7 +370,11 @@ function AdaptiveWorkspaceLayoutContent(
     togglePrimarySidebar();
     return true;
   }, [togglePrimarySidebar]);
-  useHardwareKeyboardCommand("toggleSidebar", handleToggleSidebarCommand);
+  const sidebarCommands = useMemo(
+    () => (pathname === "/" ? [] : (["toggleSidebar"] as const)),
+    [pathname],
+  );
+  useHardwareKeyboardCommand(sidebarCommands, handleToggleSidebarCommand);
   const showAuxiliaryPane = useCallback((role: WorkspaceAuxiliaryPaneRole) => {
     if (role === "inspector") {
       setFocusedAuxiliaryPaneRole("inspector");

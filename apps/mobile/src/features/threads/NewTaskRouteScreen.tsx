@@ -98,28 +98,24 @@ function NewTaskHeader(props: {
       title={props.title}
       subtitle={props.subtitle ?? undefined}
       sidebar={false}
+      backInSplitView={{
+        accessibilityLabel: "Go back",
+        icon: "chevron.left",
+      }}
+      options={{ headerBackVisible: !layout.usesSplitView }}
       hideBottomBorder
       onBack={() => navigation.goBack()}
-      actions={[
-        ...(Platform.OS === "ios" && layout.usesSplitView
-          ? [
-              {
-                accessibilityLabel: "Close new task",
-                icon: "xmark" as const,
-                onPress: () => navigation.goBack(),
-              },
-            ]
-          : []),
-        ...(props.canAddProject
+      actions={
+        props.canAddProject
           ? [
               {
                 accessibilityLabel: "Add project",
-                icon: "plus" as const,
+                icon: "plus",
                 onPress: () => navigation.dispatch(StackActions.push("AddProject")),
               },
             ]
-          : []),
-      ]}
+          : []
+      }
       search={{
         value: props.searchText,
         onChangeText: props.onSearchTextChange,
