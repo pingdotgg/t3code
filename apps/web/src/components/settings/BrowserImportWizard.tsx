@@ -540,6 +540,7 @@ function DoneStep({
   readonly destinationEnvironmentName: string;
   readonly onClose: () => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   return (
     <>
       <DialogHeader>
@@ -563,7 +564,24 @@ function DoneStep({
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Skipped
           </p>
-          <p className="mt-1 text-sm text-foreground">{formatSkippedDomains(skippedDomains)}</p>
+          <p className="mt-1 break-words text-sm text-foreground">
+            {skippedDomains.length <= 3 ? (
+              formatSkippedDomains(skippedDomains)
+            ) : (
+              <>
+                {expanded ? skippedDomains.join(", ") : skippedDomains.slice(0, 3).join(", ")}
+                {expanded ? " " : " and "}
+                <button
+                  type="button"
+                  aria-expanded={expanded}
+                  onClick={() => setExpanded((value) => !value)}
+                  className="cursor-pointer rounded-sm underline underline-offset-2 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {expanded ? "Show less" : `${skippedDomains.length - 3} more`}
+                </button>
+              </>
+            )}
+          </p>
         </DialogPanel>
       ) : null}
       <DialogFooter>
