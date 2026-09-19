@@ -4,6 +4,8 @@ import {
   ThreadId,
   type ScopedThreadRef,
   type PullRequestDetailView,
+  type PullRequestSummary,
+  type PullRequestListEntry,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
@@ -41,16 +43,17 @@ vi.mock("~/lib/sourceControlActions", () => ({
   usePreparePullRequestThreadAction: () => ({ run: prepareThread }),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
-vi.mock("~/state/pullRequests", () => ({
+vi.mock("~/state/pullRequests", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/pullRequests")>()),
   pullRequestEnvironment: { detail: () => "detail", activity: () => "activity" },
   usePullRequestTurnRefresh: () => 0,
-  useSharedPullRequestSummary: () => null,
+  useSharedPullRequestSummary: () => observedSummary,
 }));
 vi.mock("~/state/vcs", () => ({ vcsEnvironment: { listRefs: () => null } }));
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: (query: string) => ({
-    data: query === "detail" ? detail : null,
-    isPending: false,
+    data: query === "detail" ? loadedDetail : null,
+    isPending: query === "detail" && loadedDetail === null,
     isSuccess: true,
     error: null,
     refresh,
@@ -202,8 +205,12 @@ const threadRef: ScopedThreadRef = {
 const draftId = DraftId.make("draft-1");
 const newDraftId = DraftId.make("new-draft");
 let renderer: ReactTestRenderer;
+let loadedDetail: PullRequestDetailView | null = detail;
+let observedSummary: PullRequestSummary | null = null;
 
 beforeEach(() => {
+  loadedDetail = detail;
+  observedSummary = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
@@ -333,5 +340,68 @@ describe.each([
     } else {
       expect(newThread).toHaveBeenCalled();
     }
+  });
+});
+
+describe("PR list status in the sidebar detail", () => {
+  const panel = (listEntry: PullRequestListEntry | null = null) => (
+    <PullRequestDetailPanel
+      environmentId={threadRef.environmentId}
+      reference={detail}
+      listEntry={listEntry}
+      shortcutsEnabled={false}
+      getShortcutContext={() => ({
+        terminalFocus: false,
+        terminalOpen: false,
+        previewFocus: false,
+        previewOpen: false,
+        isWeb: true,
+        isDesktop: false,
+      })}
+    />
+  );
+
+  it("shows the known title and conflict before full detail arrives", async () => {
+    loadedDetail = null;
+    observedSummary = detail;
+    await act(async () => {
+      renderer = create(panel());
+    });
+    expect(
+      renderer.root.findAll((node) => node.children.includes("Conflicts with main")),
+    ).toHaveLength(1);
+    expect(renderer.root.findAll((node) => node.children.includes(detail.title))).toHaveLength(1);
+    expect(renderer.root.findAllByType("button")).toHaveLength(0);
+  });
+
+  it("keeps the list conflict when the shared summary omits mergeability", async () => {
+    loadedDetail = null;
+    observedSummary = { ...detail, mergeability: undefined, isDraft: undefined };
+    const row = { ...detail, host: "github.com", viewerReviewRequested: false };
+    await act(async () => {
+      renderer = create(panel(row));
+    });
+    expect(
+      renderer.root.findAll((node) => node.children.includes("Conflicts with main")),
+    ).toHaveLength(1);
+  });
+
+  it("uses the list conflict while an older detail snapshot is displayed", async () => {
+    loadedDetail = { ...detail, mergeability: "mergeable" };
+    await act(async () => {
+      renderer = create(panel());
+    });
+    expect(
+      renderer.root.findAll((node) => node.children.includes("Resolve conflicts")),
+    ).toHaveLength(0);
+
+    loadedDetail = null;
+    observedSummary = detail;
+    await act(async () => {
+      renderer.update(panel());
+    });
+    expect(
+      renderer.root.findAll((node) => node.children.includes("Resolve conflicts")).length,
+    ).toBeGreaterThan(0);
   });
 });

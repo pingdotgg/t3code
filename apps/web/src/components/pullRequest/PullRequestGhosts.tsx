@@ -7,7 +7,7 @@
  * both themes) and the single `animate-skeleton` pulse, applied once on the container so any
  * number of bars costs one opacity animation.
  */
-import type { PullRequestListEntry } from "@t3tools/contracts";
+import type { PullRequestListEntry, PullRequestSummary } from "@t3tools/contracts";
 import { ArrowLeftIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
@@ -18,6 +18,7 @@ import {
   PullRequestActorLabel,
   PullRequestDiffStat,
   pullRequestChecksStatePresentation,
+  resolvePullRequestConflict,
   resolvePullRequestState,
 } from "./pullRequestPresentation";
 
@@ -72,15 +73,37 @@ export function PullRequestListGhost({
  * boundaries in the ghost prevents the loaded pull request from replacing one layout with
  * another a moment later.
  */
-export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry | null }) {
+export function PullRequestDetailGhost({
+  seed: entry,
+  summary,
+}: {
+  seed?: PullRequestListEntry | null;
+  summary?: PullRequestSummary | null;
+}) {
+  const seed = summary
+    ? {
+        ...entry,
+        ...summary,
+        isDraft: summary.isDraft ?? entry?.isDraft,
+        mergeability: summary.mergeability ?? entry?.mergeability,
+      }
+    : entry;
   const statePresentation = seed
     ? resolvePullRequestState({
         state: seed.state,
-        isDraft: seed.isDraft,
+        isDraft: seed.isDraft ?? false,
       })
     : null;
   const checksPresentation = seed?.checksState
     ? pullRequestChecksStatePresentation(seed.checksState)
+    : null;
+  const conflictPresentation = seed
+    ? resolvePullRequestConflict({
+        state: seed.state,
+        isDraft: seed.isDraft ?? false,
+        mergeability: seed.mergeability ?? "unknown",
+        baseBranch: seed.baseBranch,
+      })
     : null;
 
   return (
@@ -129,7 +152,7 @@ export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry |
             {seed ? (
               <>
                 <PullRequestActorLabel
-                  actor={seed.author}
+                  actor={seed.author ?? null}
                   className="font-medium"
                   tooltip={false}
                 />
@@ -165,8 +188,8 @@ export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry |
               <GhostBar className="w-10" />
               {seed ? (
                 <PullRequestDiffStat
-                  additions={seed.additions}
-                  deletions={seed.deletions}
+                  additions={seed.additions ?? 0}
+                  deletions={seed.deletions ?? 0}
                   className="font-mono text-xs"
                 />
               ) : (
@@ -182,7 +205,17 @@ export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry |
             <GhostBar className="h-6 w-16 rounded-md" />
             <GhostBar className="h-6 w-12 rounded-md" />
           </div>
-          {checksPresentation ? (
+          {conflictPresentation ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 text-xs",
+                conflictPresentation.toneClassName,
+              )}
+            >
+              <conflictPresentation.Icon aria-hidden className="size-3.5" />
+              {conflictPresentation.label}
+            </span>
+          ) : checksPresentation ? (
             <span
               className={cn(
                 "inline-flex items-center gap-1.5 text-xs",
@@ -217,7 +250,7 @@ export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry |
               <GhostBar className="w-10" />
             </div>
             <div className="flex items-center gap-1">
-              {seed ? (
+              {seed?.labels ? (
                 seed.labels.slice(0, 3).map((label) => {
                   const color = pullRequestLabelColor(label.color);
                   return (

@@ -78,8 +78,13 @@ import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { pullRequestEnvironment } from "~/state/pullRequests";
-import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/pullRequests";
+import {
+  pullRequestEnvironment,
+  pullRequestListEntryToSummary,
+  newestPullRequestSummary,
+  usePullRequestTurnRefresh,
+  useSharedPullRequestSummary,
+} from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
@@ -144,8 +149,8 @@ import {
   PULL_REQUEST_MERGE_METHOD_LABELS,
   readableFailure,
   readPullRequestDetailSnapshot,
-  resolvePullRequestReferenceHost,
   resolveDisplayedPullRequestDetail,
+  resolvePullRequestPanelReferences,
   resolvePullRequestPrimaryControl,
   allowsSinglePullRequestMerge,
   resolveBaseFreshness,
@@ -527,22 +532,22 @@ export function PullRequestDetailPanel({
   )?.repositoryIdentity;
   const supportsThreadPullRequests =
     environmentConfigs.get(environmentId)?.environment.capabilities.threadPullRequests === true;
-  const reference = useMemo(
+  const { reference, cacheReference } = useMemo(
     () =>
-      supportsThreadPullRequests
-        ? resolvePullRequestReferenceHost(requestedReference, repositoryIdentity)
-        : {
-            projectId: requestedReference.projectId,
-            repository: requestedReference.repository,
-            number: requestedReference.number,
-          },
+      resolvePullRequestPanelReferences(
+        requestedReference,
+        repositoryIdentity,
+        supportsThreadPullRequests,
+      ),
     [requestedReference, repositoryIdentity, supportsThreadPullRequests],
   );
-  const pullRequestKey = `${reference.projectId}:${reference.host ?? ""}:${reference.repository}#${reference.number}`;
+  const pullRequestKey = `${cacheReference.projectId}:${cacheReference.host ?? ""}:${cacheReference.repository}#${cacheReference.number}`;
   const matchingListEntry =
-    listEntry?.projectId === reference.projectId &&
-    listEntry.repository.toLowerCase() === reference.repository.toLowerCase() &&
-    listEntry.number === reference.number
+    listEntry?.projectId === cacheReference.projectId &&
+    listEntry.repository.toLowerCase() === cacheReference.repository.toLowerCase() &&
+    (cacheReference.host === undefined ||
+      listEntry.host.toLowerCase() === cacheReference.host.toLowerCase()) &&
+    listEntry.number === cacheReference.number
       ? listEntry
       : null;
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
@@ -641,7 +646,7 @@ export function PullRequestDetailPanel({
     readPullRequestDetailSnapshot(
       typeof window === "undefined" ? undefined : window.localStorage,
       environmentId,
-      reference,
+      cacheReference,
     ),
   );
   useEffect(() => {
@@ -649,16 +654,22 @@ export function PullRequestDetailPanel({
       readPullRequestDetailSnapshot(
         typeof window === "undefined" ? undefined : window.localStorage,
         environmentId,
-        reference,
+        cacheReference,
       ),
     );
-  }, [environmentId, pullRequestKey, reference.projectId, reference.repository, reference.number]);
+  }, [
+    environmentId,
+    pullRequestKey,
+    cacheReference.projectId,
+    cacheReference.repository,
+    cacheReference.number,
+  ]);
   useEffect(() => {
     if (detailQuery.data === null) return;
     writePullRequestDetailSnapshot(
       typeof window === "undefined" ? undefined : window.localStorage,
       environmentId,
-      reference,
+      cacheReference,
       detailQuery.data,
     );
     setCachedDetail(detailQuery.data);
@@ -666,23 +677,40 @@ export function PullRequestDetailPanel({
     detailQuery.data,
     environmentId,
     pullRequestKey,
-    reference.projectId,
-    reference.repository,
-    reference.number,
+    cacheReference.projectId,
+    cacheReference.repository,
+    cacheReference.number,
   ]);
   const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
     live: detailQuery.data,
     cached: cachedDetail,
-    reference,
+    reference: cacheReference,
   });
-  const sharedSummary = useSharedPullRequestSummary(environmentId, reference, resolvedCoreDetail);
+  const listSummary = useMemo(
+    () => (matchingListEntry === null ? null : pullRequestListEntryToSummary(matchingListEntry)),
+    [matchingListEntry],
+  );
+  const observedSummary = useSharedPullRequestSummary(
+    environmentId,
+    cacheReference,
+    detailQuery.data,
+    detailQuery.dataUpdatedAt,
+  );
+  const sharedSummary = useMemo(
+    () => newestPullRequestSummary(resolvedCoreDetail, observedSummary ?? listSummary),
+    [resolvedCoreDetail, observedSummary, listSummary],
+  );
   const coreDetail = useMemo(
     () =>
       resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
         ? resolvedCoreDetail
         : {
             ...resolvedCoreDetail,
-            ...sharedSummary,
+            title: sharedSummary.title,
+            state: sharedSummary.state,
+            headBranch: sharedSummary.headBranch,
+            baseBranch: sharedSummary.baseBranch,
+            updatedAt: sharedSummary.updatedAt,
             author: sharedSummary.author ?? resolvedCoreDetail.author,
             additions: sharedSummary.additions ?? resolvedCoreDetail.additions,
             deletions: sharedSummary.deletions ?? resolvedCoreDetail.deletions,
@@ -1512,7 +1540,7 @@ export function PullRequestDetailPanel({
   // The list already has the pull request's identity and summary. Keep them on screen
   // and let the richer detail read replace the remaining placeholders in place.
   if (detailQuery.isPending && !detail) {
-    return <PullRequestDetailGhost seed={matchingListEntry} />;
+    return <PullRequestDetailGhost seed={matchingListEntry} summary={sharedSummary} />;
   }
 
   return (

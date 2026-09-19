@@ -83,8 +83,13 @@ export function useLinkedThreadPullRequest(
     !enabled || environmentId === null || reference === null
       ? null
       : linkedPullRequestDetailAtom({ environmentId, input: reference }),
-  ).data;
-  const detail = useSharedPullRequestSummary(environmentId, reference, queried);
+  );
+  const detail = useSharedPullRequestSummary(
+    environmentId,
+    reference,
+    queried.data,
+    queried.dataUpdatedAt,
+  );
 
   return useMemo(() => {
     if (current !== null) return linkedPullRequestSnapshotStatus(current);

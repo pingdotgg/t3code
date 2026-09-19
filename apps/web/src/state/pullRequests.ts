@@ -8,6 +8,7 @@ import type {
   EnvironmentId,
   PullRequestListInput,
   PullRequestListStatsInput,
+  PullRequestListEntry,
   PullRequestRef,
   PullRequestSummary,
 } from "@t3tools/contracts";
@@ -30,8 +31,13 @@ export const linkedPullRequestDetailAtom = createLinkedPullRequestSummaryAtomFam
   pullRequestEnvironment.refreshes,
 );
 
+interface ObservedPullRequestSummary {
+  readonly summary: PullRequestSummary;
+  readonly observedAt: number;
+}
+
 const observedPullRequestSummaryAtom = Atom.family((key: string) =>
-  Atom.make<PullRequestSummary | null>(null).pipe(
+  Atom.make<ObservedPullRequestSummary | null>(null).pipe(
     Atom.setIdleTTL(5 * 60_000),
     Atom.withLabel(`web-pull-requests:observed-summary:${key}`),
   ),
@@ -43,36 +49,114 @@ export function newestPullRequestSummary(
 ): PullRequestSummary | null {
   if (current === null) return observed;
   if (observed === null) return current;
-  if (current.state === "merged") return current;
-  if (observed.state === "merged") return observed;
+  if (current.state === "merged" && observed.state !== "merged") return current;
+  if (observed.state === "merged" && current.state !== "merged") return observed;
   return Date.parse(observed.updatedAt) >= Date.parse(current.updatedAt) ? observed : current;
+}
+
+/** Reuse list status without treating its deferred line-count placeholders as real stats. */
+export function pullRequestListEntryToSummary(entry: PullRequestListEntry): PullRequestSummary {
+  return {
+    provider: entry.provider,
+    projectId: entry.projectId,
+    repository: entry.repository,
+    number: entry.number,
+    title: entry.title,
+    url: entry.url,
+    state: entry.state,
+    isDraft: entry.isDraft,
+    headBranch: entry.headBranch,
+    baseBranch: entry.baseBranch,
+    updatedAt: entry.updatedAt,
+    author: entry.author,
+    ...(entry.reviewDecision === undefined ? {} : { reviewDecision: entry.reviewDecision }),
+    ...(entry.checksState === undefined ? {} : { checksState: entry.checksState }),
+    mergeability: entry.mergeability,
+  };
+}
+
+function pullRequestSummaryKey(environmentId: EnvironmentId, reference: PullRequestRef): string {
+  return JSON.stringify([
+    environmentId,
+    reference.projectId,
+    reference.host?.toLowerCase() ?? null,
+    reference.repository.toLowerCase(),
+    reference.number,
+  ]);
+}
+
+function newestObservation(
+  current: ObservedPullRequestSummary | null,
+  incoming: ObservedPullRequestSummary | null,
+): ObservedPullRequestSummary | null {
+  if (current === null) return incoming;
+  if (incoming === null) return current;
+  const selected = newestPullRequestSummary(current.summary, incoming.summary);
+  // A base-branch push can change conflicts without changing the PR timestamp. Use the
+  // query timestamp to break ties, so remounting a cached query is not a new observation.
+  const newlyMerged = incoming.summary.state === "merged" && current.summary.state !== "merged";
+  if (
+    selected !== incoming.summary ||
+    (!newlyMerged &&
+      Date.parse(current.summary.updatedAt) === Date.parse(incoming.summary.updatedAt) &&
+      current.observedAt >= incoming.observedAt)
+  )
+    return current;
+  // A sparse summary must not erase known status, or carry old detail stats into a new list read.
+  return {
+    ...incoming,
+    summary: {
+      ...incoming.summary,
+      isDraft: incoming.summary.isDraft ?? current.summary.isDraft,
+      mergeability: incoming.summary.mergeability ?? current.summary.mergeability,
+      reviewDecision:
+        incoming.summary.reviewDecision === undefined
+          ? current.summary.reviewDecision
+          : incoming.summary.reviewDecision,
+      checksState:
+        incoming.summary.checksState === undefined
+          ? current.summary.checksState
+          : incoming.summary.checksState,
+    },
+  };
+}
+
+function observePullRequestSummary(
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
+  summary: PullRequestSummary,
+  observedAt: number,
+): void {
+  const atom = observedPullRequestSummaryAtom(pullRequestSummaryKey(environmentId, reference));
+  appAtomRegistry.modify(atom, (previous) => {
+    const next = newestObservation(previous, { summary, observedAt });
+    return next === previous ? [false, previous] : [true, next];
+  });
 }
 
 export function useSharedPullRequestSummary(
   environmentId: EnvironmentId | null,
   reference: PullRequestRef | null,
   current: PullRequestSummary | null,
+  observedAt: number | null = null,
 ): PullRequestSummary | null {
   const key =
     environmentId === null || reference === null
       ? "none"
-      : JSON.stringify([
-          environmentId,
-          reference.projectId,
-          reference.host?.toLowerCase() ?? null,
-          reference.repository.toLowerCase(),
-          reference.number,
-        ]);
+      : pullRequestSummaryKey(environmentId, reference);
   const atom = observedPullRequestSummaryAtom(key);
   const observed = useAtomValue(atom);
   useLayoutEffect(() => {
-    if (environmentId === null || current === null) return;
-    appAtomRegistry.modify(atom, (previous) => {
-      const next = newestPullRequestSummary(previous, current);
-      return next === previous ? [false, previous] : [true, next];
-    });
-  }, [atom, current, environmentId]);
-  return newestPullRequestSummary(current, observed);
+    if (environmentId === null || reference === null || current === null || observedAt === null)
+      return;
+    observePullRequestSummary(environmentId, reference, current, observedAt);
+  }, [current, environmentId, reference, observedAt]);
+  return (
+    newestObservation(
+      observed,
+      current === null || observedAt === null ? null : { summary: current, observedAt },
+    )?.summary ?? current
+  );
 }
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,
@@ -90,6 +174,7 @@ interface MergedEnvironmentQueryView<A> {
   /** The first environment that failed. Others may still have answered — this is not fatal. */
   readonly error: string | null;
   readonly isPending: boolean;
+  readonly observations: ReadonlyArray<readonly [EnvironmentId, A, number]>;
 }
 
 /**
@@ -110,6 +195,7 @@ function createMergedEnvironmentQuery<Input, A>(
     Atom.make((get): MergedEnvironmentQueryView<A> => {
       const targets = JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>;
       const values: Array<readonly [EnvironmentId, A]> = [];
+      const observations: Array<readonly [EnvironmentId, A, number]> = [];
       let error: string | null = null;
       let isPending = false;
       for (const target of targets) {
@@ -120,12 +206,16 @@ function createMergedEnvironmentQuery<Input, A>(
         }
         const value = Option.getOrNull(AsyncResult.value(result));
         if (value !== null) values.push([target.environmentId, value]);
+        if (result._tag === "Success") {
+          observations.push([target.environmentId, result.value, result.timestamp]);
+        }
       }
-      return { values, error, isPending };
+      return { values, error, isPending, observations };
     }).pipe(Atom.withLabel(`${label}:${key}`)),
   );
   const empty = Atom.make<MergedEnvironmentQueryView<A>>({
     values: [],
+    observations: [],
     error: null,
     isPending: false,
   }).pipe(Atom.withLabel(`${label}:empty`));
@@ -187,6 +277,23 @@ export function usePullRequestList(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>,
 ): MergedPullRequestListView {
   const query = usePullRequestListsQuery(targets);
+  useLayoutEffect(() => {
+    for (const [environmentId, answer, observedAt] of query.observations) {
+      for (const entry of answer.entries) {
+        observePullRequestSummary(
+          environmentId,
+          {
+            projectId: entry.projectId,
+            host: entry.host,
+            repository: entry.repository,
+            number: entry.number,
+          },
+          pullRequestListEntryToSummary(entry),
+          observedAt,
+        );
+      }
+    }
+  }, [query.observations]);
   const data = useMemo(() => mergePullRequestLists(query.values), [query.values]);
   return { data, error: query.error, isPending: query.isPending, refresh: query.refresh };
 }

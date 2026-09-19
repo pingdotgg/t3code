@@ -1129,6 +1129,27 @@ export function resolvePullRequestReferenceHost(
   return { ...reference, host: pullRequestHostOf(identity, "github") };
 }
 
+export function resolvePullRequestPanelReferences(
+  requestedReference: PullRequestRef,
+  identity: RepositoryIdentity | null | undefined,
+  supportsThreadPullRequests: boolean,
+): { readonly reference: PullRequestRef; readonly cacheReference: PullRequestRef } {
+  const resolvedReference = resolvePullRequestReferenceHost(requestedReference, identity);
+  if (supportsThreadPullRequests) {
+    return { reference: resolvedReference, cacheReference: resolvedReference };
+  }
+  return {
+    reference: {
+      projectId: requestedReference.projectId,
+      repository: requestedReference.repository,
+      number: requestedReference.number,
+    },
+    // Legacy servers cannot receive a host, but the client cache must retain it so rows from
+    // github.com and a GitHub Enterprise host cannot share a summary.
+    cacheReference: resolvedReference,
+  };
+}
+
 export interface PullRequestDetailSnapshotRef {
   readonly host?: string | undefined;
   readonly projectId: string;
