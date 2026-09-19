@@ -151,6 +151,7 @@ import {
   deriveThreadFeedPresentation,
   deriveUnsettledTurnId,
   isContextCompactionActivityGroup,
+  isThinkingTraceMessage,
   type ThreadFeedEntry,
   type ThreadFeedLatestTurn,
 } from "../../lib/threadActivity";
@@ -1484,7 +1485,7 @@ function renderFeedEntry(
 
   if (entry.type === "message") {
     const { message } = entry;
-    if (message.role === "reasoning") {
+    if (isThinkingTraceMessage(message)) {
       const messages = entry.reasoningMessages ?? [message];
       return (
         <ThreadReasoningRow
@@ -1513,6 +1514,9 @@ function renderFeedEntry(
           </MarkdownImageAvailableWidthContext>
         </ThreadReasoningRow>
       );
+    }
+    if (message.role === "system") {
+      return null;
     }
     const isUser = message.role === "user";
     const renderedText = renderAssistantCitationsAsText(message.text);
@@ -2717,7 +2721,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       switch (entry.type) {
         case "message":
           // A collapsed reasoning row is the same chrome as a work toggle.
-          return entry.message.role === "reasoning" && !expandedReasoningMessageIds.has(entry.id)
+          return isThinkingTraceMessage(entry.message) && !expandedReasoningMessageIds.has(entry.id)
             ? WORK_GROUP_TOGGLE_HEIGHT
             : undefined;
         case "turn-fold":
@@ -2929,7 +2933,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
             keyExtractor={(entry) => entry.id}
             getItemType={(entry) =>
-              entry.type === "message" ? `message:${entry.message.role}` : entry.type
+              entry.type === "message"
+                ? `message:${isThinkingTraceMessage(entry.message) ? "reasoning" : entry.message.role}`
+                : entry.type
             }
             getFixedItemSize={getFixedItemSize}
             // Virtualized rows must move with their measurements. Native layout

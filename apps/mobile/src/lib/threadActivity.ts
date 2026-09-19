@@ -41,6 +41,22 @@ import * as Order from "effect/Order";
 
 export type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
 
+/**
+ * Servers that do not hear `reasoningMessages=true` remap thinking traces to
+ * `system` so older role decoders keep their sequence watermarks. The remap
+ * keeps the turn. Persisted system instructions are not turn-scoped, so
+ * `system` is thinking chrome only with that turn provenance. `reasoning`
+ * is always a trace.
+ */
+export function isThinkingTraceMessage(
+  message: Pick<OrchestrationThread["messages"][number], "role" | "turnId">,
+): boolean {
+  if (message.role === "reasoning") {
+    return true;
+  }
+  return message.role === "system" && message.turnId !== null;
+}
+
 export interface PendingUserInputDraftAnswer {
   readonly selectedOptionValues?: ReadonlyArray<string>;
   readonly customAnswer?: string;
@@ -1664,7 +1680,7 @@ function deriveThreadFeedTurnFolds(
     // Nothing folds while the turn is live, which is when traces are watched.
     const turnId =
       entry.type === "message" &&
-      (entry.message.role === "assistant" || entry.message.role === "reasoning")
+      (entry.message.role === "assistant" || isThinkingTraceMessage(entry.message))
         ? entry.message.turnId
         : entry.type === "activity-group"
           ? entry.turnId
@@ -1697,7 +1713,9 @@ function deriveThreadFeedTurnFolds(
     if (
       entries.some(
         (entry) =>
-          entry.type === "message" && entry.message.streaming && entry.message.role !== "reasoning",
+          entry.type === "message" &&
+          entry.message.streaming &&
+          !isThinkingTraceMessage(entry.message),
       )
     ) {
       continue;
@@ -1726,7 +1744,7 @@ function deriveThreadFeedTurnFolds(
       (entry) =>
         hiddenEntryIds.has(entry.id) &&
         !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
-        !(entry.type === "message" && entry.message.role === "reasoning"),
+        !(entry.type === "message" && isThinkingTraceMessage(entry.message)),
     );
     if (!hidesFoldableWork) {
       continue;
@@ -1896,7 +1914,7 @@ export function deriveThreadFeedPresentation(
 }
 
 function activityRunTurnId(entry: ThreadFeedEntry): TurnId | null {
-  if (entry.type === "message" && entry.message.role === "reasoning") {
+  if (entry.type === "message" && isThinkingTraceMessage(entry.message)) {
     return entry.message.turnId;
   }
   if (
@@ -2006,7 +2024,11 @@ function groupConsecutiveReasoningMessages(
   const result: ThreadFeedEntry[] = [];
   for (let index = 0; index < feed.length; index += 1) {
     const entry = feed[index]!;
-    if (entry.type !== "message" || entry.message.role !== "reasoning" || !entry.message.turnId) {
+    if (
+      entry.type !== "message" ||
+      !isThinkingTraceMessage(entry.message) ||
+      !entry.message.turnId
+    ) {
       result.push(entry);
       continue;
     }
@@ -2015,7 +2037,7 @@ function groupConsecutiveReasoningMessages(
       const next = feed[index + 1]!;
       if (
         next.type !== "message" ||
-        next.message.role !== "reasoning" ||
+        !isThinkingTraceMessage(next.message) ||
         next.message.turnId !== entry.message.turnId
       ) {
         break;
@@ -2430,7 +2452,15 @@ export function buildThreadFeed(
   const entries = Arr.sortWith(
     [
       ...messages
-        .filter((message) => message.role !== "user" || !foldedAnswerMessageIds.has(message.id))
+        .filter((message) => {
+          if (message.role === "user" && foldedAnswerMessageIds.has(message.id)) {
+            return false;
+          }
+          // Web leaves ordinary system rows unrendered. Keep remapped traces
+          // (turn-scoped system) and drop the rest so they cannot become
+          // assistant markdown on mobile.
+          return message.role !== "system" || isThinkingTraceMessage(message);
+        })
         .map((message) => {
           let entry = messageEntriesCache.get(message);
           if (!entry) {
