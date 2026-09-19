@@ -26,6 +26,7 @@ import { ControlPillMenu } from "../../components/ControlPill";
 import { SymbolView } from "../../components/AppSymbol";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../../native/NativeWorkspaceColumns";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
@@ -123,7 +124,7 @@ interface ThreadNavigationSidebarProps {
  *
  * On iOS the pane is hosted inside its own navigation-inert single-screen
  * native stack (SidebarNavigationShell) so the header is a real
- * UINavigationBar: large title, native bar-button items, and a
+ * UINavigationBar: compact brand title, native bar-button items, and a
  * UISearchController search field — the same chrome a UISplitViewController
  * column gets. Other platforms keep the custom header chrome.
  */
@@ -1205,16 +1206,18 @@ function ThreadNavigationSidebarPane(
               onOpenEnvironments: props.onOpenEnvironmentSettings,
               fallbackTitleStyle: { fontSize: 18, fontWeight: "800" },
             }),
+            headerLargeTitleEnabled: false,
+            unstable_headerLeftItems: () => [],
             headerSearchBarOptions: {
               ref: searchBarRef,
               autoCapitalize: "none",
               hideNavigationBar: false,
-              // Keep the search bar pinned under the title — UIKit's default
-              // hidesSearchBarWhenScrolling collapses it on scroll.
+              // UIKit owns the Duo sidebar's bottom search placement.
               hideWhenScrolling: false,
               obscureBackground: false,
               placeholder: "Search",
-              placement: "stacked",
+              placement: NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? "integrated" : "stacked",
+              allowToolbarIntegration: NATIVE_WORKSPACE_COLUMNS_SUPPORTED,
               onCancelButtonPress: () => {
                 props.onSearchQueryChange("");
               },
@@ -1223,6 +1226,8 @@ function ThreadNavigationSidebarPane(
               },
             },
             unstable_headerRightItems: () => nativeHeaderItems,
+            unstable_headerToolbarItems: () =>
+              NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? [{ type: "searchBarPlacement" }] : [],
           }}
         />
         <View className="flex-1">

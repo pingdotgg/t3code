@@ -34,6 +34,11 @@ import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspace
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../../native/NativeWorkspaceColumns";
+import {
+  useNativeColumnLayoutMetrics,
+  useNativeLayoutMetrics,
+} from "../layout/native-layout-metrics";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
@@ -230,6 +235,11 @@ export function HomeScreen(props: HomeScreenProps) {
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
   const insets = useSafeAreaInsets();
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  const screenMetrics = useNativeLayoutMetrics();
+  const contentSideInsets = NATIVE_WORKSPACE_COLUMNS_SUPPORTED
+    ? (columnMetrics ?? screenMetrics)?.safeArea
+    : undefined;
   const iosBottomToolbarClearance =
     Platform.OS === "ios" && !NATIVE_LIQUID_GLASS_SUPPORTED
       ? PRE_LIQUID_GLASS_BOTTOM_TOOLBAR_HEIGHT
@@ -1115,6 +1125,8 @@ export function HomeScreen(props: HomeScreenProps) {
           style={{
             paddingBottom: Math.max(insets.bottom, 24) + iosBottomToolbarClearance,
             paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
+            paddingLeft: 32 + (contentSideInsets?.left ?? 0),
+            paddingRight: 32 + (contentSideInsets?.right ?? 0),
           }}
         >
           <View className="w-full max-w-[430px]">
@@ -1250,6 +1262,8 @@ export function HomeScreen(props: HomeScreenProps) {
               {...scrollGateHandlers}
               scrollEventThrottle={16}
               contentContainerStyle={{
+                paddingLeft: contentSideInsets?.left ?? 0,
+                paddingRight: contentSideInsets?.right ?? 0,
                 paddingBottom:
                   Platform.OS === "ios"
                     ? Math.max(insets.bottom, 24) + 96 + iosBottomToolbarClearance
@@ -1299,6 +1313,8 @@ export function HomeScreen(props: HomeScreenProps) {
             recycleItems
             scrollEventThrottle={16}
             contentContainerStyle={{
+              paddingLeft: contentSideInsets?.left ?? 0,
+              paddingRight: contentSideInsets?.right ?? 0,
               // Android reserves room for the floating new-task FAB
               // (56 button + 16 gap + bottom inset). Pre-glass iOS shows a
               // standard 44pt bottom toolbar that overlays the list and is not

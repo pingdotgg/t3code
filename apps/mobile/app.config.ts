@@ -249,6 +249,11 @@ const config: ExpoConfig = {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
     },
     infoPlist: {
+      UISupportedInterfaceOrientations: [
+        "UIInterfaceOrientationPortrait",
+        "UIInterfaceOrientationLandscapeLeft",
+        "UIInterfaceOrientationLandscapeRight",
+      ],
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
@@ -413,6 +418,7 @@ const config: ExpoConfig = {
       },
     ],
     "./plugins/withIosCocoaPodsUuidCache.cjs",
+    "./plugins/withIosNativeSplitView.cjs",
     // Must be listed BEFORE expo-widgets: same-type mods run last-registered-
     // first, so registering earlier makes this plugin's mods run AFTER
     // expo-widgets' — its dangerous mod wipes ios/ExpoWidgetsTarget/ (which

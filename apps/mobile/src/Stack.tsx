@@ -103,6 +103,7 @@ import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
 import { deriveLayout } from "./lib/layout";
 import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
+import { NativeSheetContent } from "./native/NativeSheetContent";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
 
@@ -168,6 +169,7 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
 
 const SettingsContentStack = createNativeStackNavigator({
   initialRouteName: "Settings",
+  screenLayout: ({ children }) => <NativeSheetContent>{children}</NativeSheetContent>,
   screenOptions: {
     ...GLASS_HEADER_OPTIONS,
     // Sheets read better with the iOS-default centered title (no editor style).
@@ -351,6 +353,12 @@ const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 // whether the flow opens in the workspace or in a compact form sheet.
 const NewTaskSheetStack = createNativeStackNavigator({
   initialRouteName: "NewTask",
+  screenLayout: ({ children, route }) =>
+    route.name === "ThreadSettings" ? (
+      children
+    ) : (
+      <NativeSheetContent>{children}</NativeSheetContent>
+    ),
   screenOptions: {
     ...SHEET_GLASS_HEADER_OPTIONS,
     // The form-sheet host owns the one opaque adaptive surface. Child screens
@@ -581,6 +589,13 @@ function NotFoundScreen() {
 const RootStackConfig = createNativeStackNavigator({
   initialRouteName: "Home",
   layout: RootStackLayout,
+  screenLayout: ({ children, options, route }) =>
+    (options.presentation === "formSheet" || options.presentation === "fullScreenModal") &&
+    !["SettingsSheet", "ThreadSettingsSheet", "GitOverview"].includes(route.name) ? (
+      <NativeSheetContent>{children}</NativeSheetContent>
+    ) : (
+      children
+    ),
   screenOptions: {
     headerShown: false,
   },

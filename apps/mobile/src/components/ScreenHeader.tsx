@@ -3,6 +3,7 @@ import { useId } from "react";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../native/StackHeader";
+import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "../features/layout/AdaptiveWorkspaceLayout";
 import {
   createNativeMailSearchToolbarItem,
@@ -11,6 +12,7 @@ import {
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import type { ScreenHeaderMenuItem, ScreenHeaderProps } from "./ScreenHeader.types";
 import type { AppSymbolName } from "./AppSymbol";
+import { useNativeMailSearchToolbar } from "../features/layout/use-native-mail-search-toolbar";
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -35,12 +37,13 @@ export function ScreenHeader(props: ScreenHeaderProps) {
   const headerId = useId();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const { themeVariables } = useAppearancePreferences();
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const { search, menus } = props;
   const menu = menus?.[0];
   const compactSearch =
     search !== undefined &&
     (search.compactToolbar ?? !layout.usesSplitView) &&
-    NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
+    usesNativeMailSearchToolbar;
   const visibleMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
   const refresh = search?.refreshInToolbar ? search.onRefresh : undefined;
   return (
@@ -83,7 +86,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
                           : undefined),
                       }),
                     ]
-                  : undefined,
+                  : () => [],
                 headerSearchBarOptions: compactSearch
                   ? undefined
                   : {
@@ -111,8 +114,10 @@ export function ScreenHeader(props: ScreenHeaderProps) {
               onPress={props.backInSplitView.onPress ?? props.onBack}
             />
           ) : null}
-          {props.sidebar !== false ? (
+          {props.sidebar !== false &&
+          (!NATIVE_WORKSPACE_COLUMNS_SUPPORTED || !panes.primarySidebarVisible) ? (
             <ScreenHeaderButton
+              axisBehavior={NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? "horizontalOnly" : undefined}
               accessibilityLabel={
                 panes.primarySidebarVisible
                   ? `Maximize ${props.title.toLowerCase()}`

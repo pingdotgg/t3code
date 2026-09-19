@@ -5,7 +5,7 @@ index fa1b77317f609983ae2434764174072e51130550..270c81c90971b0ff3038b999973dd4d1
 @@ -124,6 +124,34 @@ class ScreenStackHeaderConfigViewManager :
          config.setTitle(title)
      }
- 
+
 +    // The t3 patch adds these iOS glass-chrome props to the native spec; they have
 +    // no Android implementation, but the codegen-generated interface requires the
 +    // setters to exist. No-ops keep the Android build compiling.
@@ -44,7 +44,7 @@ index 64f14f0c5ade16eb9519b8780d4ce013f88fbd3a..6cb1d69f97a95759c662a6006a962692
 @@ -47,6 +47,12 @@ class ScreenStackHeaderSubviewManager :
          Log.w("[RNScreens]", "hidesSharedBackground prop is not available on Android")
      }
- 
+
 +    // Bar button transition identifiers only apply on iOS.
 +    override fun setIdentifier(
 +        view: ScreenStackHeaderSubview,
@@ -67,16 +67,27 @@ index a26d1254eafd89268f65d968988cf6a3b8c1e457..62eea42ac26c532801189556c5f51012
 +                    menuAction:(RNSBarButtonMenuItemAction)menuAction
 +                   imageLoader:(RCTImageLoader *)imageLoader;
  #endif // defined(__cplusplus)
- 
+
  @end
 diff --git a/ios/RNSBarButtonItem.mm b/ios/RNSBarButtonItem.mm
-index 76a39d4df4a4482d6447f4ead1ae4de544132831..15bd5a9662434c9b19e6970b77e796da4b61983c 100644
+index 76a39d4df4a4482d6447f4ead1ae4de544132831..00bc25d5643e5450a1d55ac86a68372b972a980a 100644
 --- a/ios/RNSBarButtonItem.mm
 +++ b/ios/RNSBarButtonItem.mm
-@@ -110,6 +110,58 @@ static UIMenuOptions RNSMakeUIMenuOptionsFromConfig(NSDictionary *config);
+@@ -110,6 +110,69 @@ - (instancetype)initWithConfig:(NSDictionary<NSString *, id> *)dict
    if (dict[@"accessibilityHint"]) {
      self.accessibilityHint = dict[@"accessibilityHint"];
    }
++#if !TARGET_OS_TV && !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++  if (@available(iOS 27.1, *)) {
++    NSString *axisBehavior = dict[@"axisBehavior"];
++    if ([axisBehavior isEqualToString:@"horizontalOnly"]) {
++      self.axisBehavior = UIBarButtonItemAxisBehaviorHorizontalOnly;
++    } else if ([axisBehavior isEqualToString:@"verticalPreferred"]) {
++      self.axisBehavior = UIBarButtonItemAxisBehaviorVerticalPreferred;
++    }
++  }
++#endif
++
 +#if !TARGET_OS_TV && RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
 +  NSNumber *glassEffectNum = dict[@"glassEffect"];
 +  if (@available(iOS 26.0, *)) {
@@ -129,17 +140,204 @@ index 76a39d4df4a4482d6447f4ead1ae4de544132831..15bd5a9662434c9b19e6970b77e796da
 +    }
 +  }
 +#endif
- 
+
  #if !TARGET_OS_TV || __TV_OS_VERSION_MAX_ALLOWED >= 170000
    if (@available(tvOS 17.0, *)) {
+diff --git a/ios/RNSScreen.mm b/ios/RNSScreen.mm
+index 3074998f64a1ec055936a7579797fe31fff966af..c0c7b9be83721ca681a56672942852366f45250d 100644
+--- a/ios/RNSScreen.mm
++++ b/ios/RNSScreen.mm
+@@ -30,6 +30,9 @@
+ #import "RNSTabBarController.h"
+
+ #import "RNSDefines.h"
++#if RNS_GAMMA_ENABLED
++#import "gamma/split/RNSSplitHostController.h"
++#endif
+ #import "UIView+RNSUtility.h"
+
+ namespace react = facebook::react;
+@@ -63,6 +66,10 @@ @implementation RNSScreenView {
+   RCTSurfaceTouchHandler *_touchHandler;
+   react::RNSScreenShadowNode::ConcreteState::Shared _state;
+   NSMutableArray<UIView *> *_reactSubviews;
++  CALayer *_splitResizeMask;
++  CALayer *_splitPreviousMask;
++  __weak RNSScreenContentWrapper *_splitResizeContent;
++  BOOL _splitAwaitingTransitionCompletion;
+ }
+
+ - (instancetype)initWithFrame:(CGRect)frame
+@@ -80,6 +87,7 @@ - (instancetype)initWithFrame:(CGRect)frame
+
+ - (void)initCommonProps
+ {
++  [self clearSplitResizeMask];
+   _controller = [[RNSScreen alloc] initWithView:self];
+   _stackPresentation = RNSScreenStackPresentationPush;
+   _stackAnimation = RNSScreenStackAnimationDefault;
+@@ -132,6 +140,9 @@ - (UIViewController *)reactViewController
+ - (void)updateBounds
+ {
+   if (_state != nullptr) {
++    if ([self deferBoundsUpdateForSplitTransition]) {
++      return;
++    }
+     RNSScreenStackHeaderConfig *config = [self findHeaderConfig];
+
+     // * in large title, ScrollView handles the offset of content so we cannot set it here also
+@@ -176,6 +187,110 @@ - (void)updateBounds
+   }
+ }
+
++- (BOOL)deferBoundsUpdateForSplitTransition
++{
++#if RNS_GAMMA_ENABLED && !TARGET_OS_TV && !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++  if (@available(iOS 27.1, *)) {
++    UISplitViewController *split = _controller.splitViewController;
++    if (![split isKindOfClass:RNSSplitHostController.class] ||
++        !((RNSSplitHostController *)split).isTransitioningPrimaryColumn) {
++      return NO;
++    }
++    for (UIViewController *child in _controller.childViewControllers) {
++      if ([child isKindOfClass:UINavigationController.class]) {
++        return NO;
++      }
++    }
++    UIViewController *secondary = [split viewControllerForColumn:UISplitViewControllerColumnSecondary];
++    UIViewController *ancestor = _controller;
++    while (ancestor != nil && ancestor != secondary && ancestor != split) {
++      ancestor = ancestor.parentViewController;
++    }
++    auto previousSize = _state->getData().frameSize;
++    if (ancestor == secondary && previousSize.width > 0 && previousSize.height > 0 &&
++        (_splitResizeMask != nil || fabs(previousSize.width - self.bounds.size.width) > 0.5)) {
++      // Clip the content wrapper while UIKit moves the column. The native
++      // screen already has its final bounds, but Fabric may still be wider.
++      UIEdgeInsets insets = secondary.view.safeAreaInsets;
++      RNSScreenContentWrapper *content = _splitResizeContent ?: _contentWrapperBox.contentWrapper;
++      if (content == nil) {
++        return NO;
++      }
++      if (_splitResizeMask == nil) {
++        // Fabric manages CALayer masks directly. A UIView-backed mask can
++        // leave UIKit's backing-layer traversal stale during column reparenting.
++        CALayer *resizeMask = [CALayer layer];
++        CALayer *previousMask = content.layer.mask;
++        _splitResizeMask = resizeMask;
++        _splitPreviousMask = previousMask;
++        _splitResizeContent = content;
++        [CATransaction begin];
++        [CATransaction setDisableActions:YES];
++        resizeMask.backgroundColor = UIColor.blackColor.CGColor;
++        resizeMask.anchorPoint = CGPointZero;
++        resizeMask.frame = CGRectMake(insets.left,
++                                      0,
++                                      MAX(0, content.bounds.size.width - insets.left - insets.right),
++                                      content.bounds.size.height);
++        content.layer.mask = resizeMask;
++        [CATransaction commit];
++      }
++      if (!_splitAwaitingTransitionCompletion) {
++        _splitAwaitingTransitionCompletion = YES;
++        CALayer *resizeMask = _splitResizeMask;
++        __weak RNSScreenView *weakSelf = self;
++        [(RNSSplitHostController *)split afterPrimaryColumnTransition:^{
++          RNSScreenView *screen = weakSelf;
++          if (screen == nil || screen->_splitResizeMask != resizeMask) {
++            return;
++          }
++          screen->_splitAwaitingTransitionCompletion = NO;
++          [screen updateBounds];
++          [screen finishSplitResizeForContentWrapper:content frame:content.frame];
++        }];
++      }
++      CGRect targetFrame = CGRectMake(insets.left,
++                                      0,
++                                      MAX(0, self.bounds.size.width - insets.left - insets.right),
++                                      self.bounds.size.height);
++      // Give the layer clip UIKit's actual column animation timeline.
++      [(RNSSplitHostController *)split animatePrimaryColumnMask:_splitResizeMask toFrame:targetFrame];
++      // Shrink once before the column moves. Keep that narrow layout while
++      // closing, then expand once the native column reaches its final position.
++      return previousSize.width <= self.bounds.size.width;
++    }
++  }
++#endif
++  return NO;
++}
++
++- (void)clearSplitResizeMask
++{
++  RNSScreenContentWrapper *content = _splitResizeContent;
++  if (_splitResizeMask != nil && content.layer.mask == _splitResizeMask) {
++    content.layer.mask = _splitPreviousMask;
++  }
++  _splitResizeMask = nil;
++  _splitPreviousMask = nil;
++  _splitResizeContent = nil;
++  _splitAwaitingTransitionCompletion = NO;
++}
++
++- (void)finishSplitResizeForContentWrapper:(RNSScreenContentWrapper *)content frame:(CGRect)frame
++{
++#if RNS_GAMMA_ENABLED && !TARGET_OS_TV && !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++  if (@available(iOS 27.1, *)) {
++    UISplitViewController *split = _controller.splitViewController;
++    BOOL transitioning = [split isKindOfClass:RNSSplitHostController.class] &&
++        ((RNSSplitHostController *)split).isTransitioningPrimaryColumn;
++    if (_splitResizeMask != nil && _splitResizeContent == content && !transitioning &&
++        fabs(frame.size.width - self.bounds.size.width) < 0.5) {
++      [self clearSplitResizeMask];
++    }
++  }
++#endif
++}
++
+ - (void)applyFrameCorrectionForDescendantScrollView
+ {
+   RCTScrollViewComponentView *scrollView = [self tryFindDescendantScrollView];
+@@ -457,6 +572,7 @@ - (BOOL)registerContentWrapper:(RNSScreenContentWrapper *)contentWrapper content
+ /// This is RNSScreenContentWrapperDelegate method, where we do get notified when React did update frame of our child.
+ - (void)contentWrapper:(RNSScreenContentWrapper *)contentWrapper receivedReactFrame:(CGRect)reactFrame
+ {
++  [self finishSplitResizeForContentWrapper:contentWrapper frame:reactFrame];
+   // We want to update and animate allowedDetents for FormSheet only if there was a change
+   // in frame's height but sometimes we receive a frame with the same dimensions mutliple times.
+   // In order to prevent visual glitches, we compare new value to the old one and update
+@@ -1223,6 +1339,9 @@ - (void)unmountChildComponentView:(UIView<RCTComponentViewProtocol> *)childCompo
+     _config = nil;
+   }
+   if ([childComponentView isKindOfClass:[RNSScreenContentWrapper class]]) {
++    if (childComponentView == _splitResizeContent) {
++      [self clearSplitResizeMask];
++    }
+     _contentWrapperBox.contentWrapper.delegate = nil;
+     _contentWrapperBox.contentWrapper = nil;
+   }
 diff --git a/ios/RNSScreenStack.mm b/ios/RNSScreenStack.mm
-index c233036b56c6b2ba433785d5cbc06e9f411b5a19..0c2db425e9910eb6acc8512cfd6e4ab9677f16c6 100644
+index c233036b56c6b2ba433785d5cbc06e9f411b5a19..51a64a508c0575aa7071def3fd9c25bda6de215b 100644
 --- a/ios/RNSScreenStack.mm
 +++ b/ios/RNSScreenStack.mm
-@@ -1076,6 +1076,15 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -74,6 +74,14 @@ - (void)viewDidLayoutSubviews
+       [screenController calculateAndNotifyHeaderHeightChangeIsModal:NO];
+     }
+
++#if !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++    if (@available(iOS 27.1, *)) {
++      RNSScreenStackHeaderConfig *headerConfig = screenController.screenView.findHeaderConfig;
++      if (headerConfig.shouldHeaderBeVisible) {
++        [headerConfig updateHeaderItemGroups];
++      }
++    }
++#endif
+     [self maybeUpdateHeaderLayoutInfoInShadowTree:screenController];
+   }
+ }
+@@ -1076,6 +1084,15 @@ - (BOOL)scrollViewHasHorizontalPart:(UIScrollView *)scrollView
    return scrollView.contentSize.width > scrollView.frame.size.width;
  }
- 
+
 +// Whether a horizontally scrollable ScrollView is resting at its leading edge, so a
 +// pan in the back-gesture direction has nothing left to scroll. Checked in the
 +// ScrollView's own coordinate space: React Native mirrors the view for RTL layout,
@@ -152,7 +350,7 @@ index c233036b56c6b2ba433785d5cbc06e9f411b5a19..0c2db425e9910eb6acc8512cfd6e4ab9
  // Custom method for compatibility with iOS < 13.4
  // RNSScreenStackView is a UIGestureRecognizerDelegate for three types of gesture recognizers:
  // RNSPanGestureRecognizer, RNSScreenEdgeGestureRecognizer, _UIParallaxTransitionPanGestureRecognizer
-@@ -1169,9 +1178,11 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -1169,9 +1186,11 @@ - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
      if (gestureRecognizer == _controller.interactiveContentPopGestureRecognizer &&
          [self isScrollViewPanGestureRecognizer:otherGestureRecognizer]) {
        // ScrollView should take precedence when scrolling horizontally (it should be required to fail).
@@ -165,8 +363,8 @@ index c233036b56c6b2ba433785d5cbc06e9f411b5a19..0c2db425e9910eb6acc8512cfd6e4ab9
 +      return [self scrollViewHasHorizontalPart:scrollView] && ![self scrollViewIsAtLeadingEdge:scrollView];
      }
    }
- 
-@@ -1191,6 +1202,15 @@ RNS_IGNORE_SUPER_CALL_END
+
+@@ -1191,6 +1210,15 @@ - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
      // gestureRecognizer:shouldRequireFailureOfGestureRecognizer
      isEdgeSwipeGestureRecognizer =
          isEdgeSwipeGestureRecognizer && gestureRecognizer != _controller.interactiveContentPopGestureRecognizer;
@@ -181,14 +379,14 @@ index c233036b56c6b2ba433785d5cbc06e9f411b5a19..0c2db425e9910eb6acc8512cfd6e4ab9
 +    }
    }
  #endif // check for iOS >= 26
- 
+
 diff --git a/ios/RNSScreenStackHeaderConfig.h b/ios/RNSScreenStackHeaderConfig.h
-index 8a41697223f6c4b5cb2dd6d450fc58cbb3b27536..309ba2f762068dcf452c172f7c7cbf2a55d03cb2 100644
+index 8a41697223f6c4b5cb2dd6d450fc58cbb3b27536..489d4e4d94d95d365e8410522566a79f91cfed28 100644
 --- a/ios/RNSScreenStackHeaderConfig.h
 +++ b/ios/RNSScreenStackHeaderConfig.h
 @@ -23,6 +23,8 @@
  NS_ASSUME_NONNULL_BEGIN
- 
+
  @property (nonatomic, retain) NSString *title;
 +@property (nonatomic, retain) NSString *subtitle;
 +@property (nonatomic, retain) NSString *largeSubtitle;
@@ -206,20 +404,33 @@ index 8a41697223f6c4b5cb2dd6d450fc58cbb3b27536..309ba2f762068dcf452c172f7c7cbf2a
 +@property (nonatomic, copy, nullable) NSArray<NSDictionary<NSString *, id> *> *headerCenterBarButtonItems;
 +@property (nonatomic, copy, nullable) NSArray<NSDictionary<NSString *, id> *> *headerToolbarItems;
  @property (nonatomic, readwrite) BOOL synchronousShadowStateUpdatesEnabled;
- 
+
  NS_ASSUME_NONNULL_END
+@@ -99,6 +104,12 @@ NS_ASSUME_NONNULL_END
+  */
+ - (void)updateHeaderStateInShadowTreeInContextOfNavigationBar:(nullable UINavigationBar *)navBar;
+
++// Refreshes native groups when the bar container changes geometry.
++- (void)updateHeaderItemGroups;
++
++// Refreshes the shared rail after UIKit changes visible split columns.
++- (void)refreshPinnedHeaderItemGroup;
++
+ @end
+
+ #pragma mark - Experimental
 diff --git a/ios/RNSScreenStackHeaderConfig.mm b/ios/RNSScreenStackHeaderConfig.mm
-index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab60e185033 100644
+index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..919452d82915a1fbd8b7f762ec694b30da015d63 100644
 --- a/ios/RNSScreenStackHeaderConfig.mm
 +++ b/ios/RNSScreenStackHeaderConfig.mm
-@@ -24,11 +24,46 @@
+@@ -24,11 +24,67 @@
  #import "RNSSearchBar.h"
  #import "UINavigationBar+RNSUtility.h"
- 
+
 +#import <objc/runtime.h>
 +
  namespace react = facebook::react;
- 
+
  static const NSNumber *const DEFAULT_TITLE_FONT_SIZE = @17;
 +
 +#if !TARGET_OS_TV
@@ -227,6 +438,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +// items on the other side into new groups during a navigation transition.
 +static char RNSAppliedLeadingHeaderItemsKey;
 +static char RNSAppliedTrailingHeaderItemsKey;
++static char RNSAppliedPinnedHeaderItemsKey;
 +static char RNSAppliedCenterHeaderItemsKey;
 +
 +// Records a placement's owner and contents, returning whether they changed.
@@ -238,10 +450,30 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +  objc_setAssociatedObject(navitem, key, itemsKey, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 +  return YES;
 +}
++// A Duo container resize changes the shared native bar layout even when its
++// button definitions stay the same. Cache geometry alongside each placement.
++static NSArray *RNSHeaderItemsCacheKey(
++    RNSScreenStackHeaderConfig *config,
++    NSArray *itemConfigs,
++    NSArray *customItems,
++    UINavigationController *navctr)
++{
++  NSArray *key = @[ config, itemConfigs, customItems ];
++#if !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++  if (@available(iOS 27.1, *)) {
++    key = @[
++      config, itemConfigs, customItems, [NSValue valueWithCGSize:navctr.view.bounds.size],
++      @(navctr.traitCollection.verticalBarEdge)
++    ];
++  }
++#endif
++  return key;
++}
++
 +#endif
 +static char RNSAppliedToolbarConfigsKey;
  static const NSNumber *const DEFAULT_TITLE_LARGE_FONT_SIZE = @34;
- 
+
 +static NSInteger navigationItemStyleFromCppEquivalent(
 +    react::RNSScreenStackHeaderConfigNavigationItemStyle navigationItemStyle)
 +{
@@ -259,17 +491,17 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
  @interface RCTImageLoader (Private)
  - (id<RCTImageCache>)imageCache;
  @end
-@@ -46,6 +81,9 @@ static const NSNumber *const DEFAULT_TITLE_LARGE_FONT_SIZE = @34;
+@@ -46,6 +102,9 @@ + (BOOL)rnscreens_isBlankOrNull:(NSString *)string
  @end
- 
+
  @interface RNSScreenStackHeaderConfig () <RCTMountingTransactionObserving>
 +#if !TARGET_OS_TV
 +- (NSArray<UIBarButtonItemGroup *> *)barButtonItemGroupsFromItems:(NSArray<UIBarButtonItem *> *)items;
 +#endif
  @end
- 
+
  @implementation RNSScreenStackHeaderConfig {
-@@ -80,6 +118,7 @@ static const NSNumber *const DEFAULT_TITLE_LARGE_FONT_SIZE = @34;
+@@ -80,6 +139,7 @@ - (void)initProps
    self.hidden = YES;
    _reactSubviews = [NSMutableArray new];
    _backTitleVisible = YES;
@@ -277,18 +509,125 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
    _blurEffect = RNSBlurEffectStyleNone;
    _synchronousShadowStateUpdatesEnabled = YES;
  }
-@@ -507,6 +546,10 @@ RNS_IGNORE_SUPER_CALL_END
- 
+@@ -157,6 +217,106 @@ - (void)updateViewControllerIfNeeded
+   }
+ }
+
++- (void)updateHeaderItemGroupsWithNavigationItem:(UINavigationItem *)navitem
++                          navigationController:(UINavigationController *)navctr
++                                     leftItems:(NSArray<UIBarButtonItem *> *)subviewLeftItems
++                                    rightItems:(NSArray<UIBarButtonItem *> *)subviewRightItems
++{
++#if !TARGET_OS_TV
++  if (@available(iOS 16.0, *)) {
++    NSArray *leftConfigs = self.headerLeftBarButtonItems ?: @[];
++    NSMutableArray *trailingConfigs = [NSMutableArray array];
++    NSMutableArray *pinnedConfigs = [NSMutableArray array];
++    for (NSDictionary *itemConfig in self.headerRightBarButtonItems) {
++      if ([itemConfig[@"pinned"] boolValue]) {
++        [pinnedConfigs addObject:itemConfig];
++      } else {
++        [trailingConfigs addObject:itemConfig];
++      }
++    }
++    if (RNSUpdateHeaderItemsCache(
++            navitem, &RNSAppliedLeadingHeaderItemsKey,
++            RNSHeaderItemsCacheKey(self, leftConfigs, subviewLeftItems, navctr))) {
++      NSArray *items = [self barButtonItemsFromConfigs:leftConfigs
++                                    withCurrentItems:subviewLeftItems
++                                      navigationItem:navitem
++                            allowsSearchBarPlacement:NO];
++      navitem.leadingItemGroups = [self barButtonItemGroupsFromItems:items];
++    }
++    if (RNSUpdateHeaderItemsCache(
++            navitem, &RNSAppliedTrailingHeaderItemsKey,
++            RNSHeaderItemsCacheKey(self, trailingConfigs, subviewRightItems, navctr))) {
++      NSArray *items = [self barButtonItemsFromConfigs:trailingConfigs
++                                    withCurrentItems:subviewRightItems
++                                      navigationItem:navitem
++                            allowsSearchBarPlacement:NO];
++      navitem.trailingItemGroups = [self barButtonItemGroupsFromItems:items];
++    }
++    if (navctr.topViewController.navigationItem == navitem &&
++        RNSUpdateHeaderItemsCache(
++            navitem, &RNSAppliedPinnedHeaderItemsKey,
++            RNSHeaderItemsCacheKey(self, pinnedConfigs, @[], navctr))) {
++      NSArray *items = [self barButtonItemsFromConfigs:pinnedConfigs
++                                    withCurrentItems:@[]
++                                      navigationItem:navitem
++                            allowsSearchBarPlacement:NO];
++      if (items.count == 0) {
++        navitem.pinnedTrailingGroup = nil;
++      } else if (navitem.pinnedTrailingGroup != nil) {
++        // The Duo's shared rail observes this group across column resizes.
++        // Updating its items preserves that owner instead of replacing it.
++        navitem.pinnedTrailingGroup.barButtonItems = items;
++      } else {
++        navitem.pinnedTrailingGroup = [UIBarButtonItemGroup fixedGroupWithRepresentativeItem:nil items:items];
++      }
++    }
++    if (@available(iOS 26.0, *)) {
++      NSArray *centerConfigs = self.headerCenterBarButtonItems ?: @[];
++      if (RNSUpdateHeaderItemsCache(
++              navitem, &RNSAppliedCenterHeaderItemsKey,
++              RNSHeaderItemsCacheKey(self, centerConfigs, @[], navctr))) {
++        NSArray *items = [self barButtonItemsFromConfigs:centerConfigs
++                                      withCurrentItems:@[]
++                                        navigationItem:navitem
++                              allowsSearchBarPlacement:NO];
++        navitem.centerItemGroups = [self barButtonItemGroupsFromItems:items];
++      }
++    }
++  }
++#endif
++}
++
++- (void)updateHeaderItemGroups
++{
++  UIViewController *vc = self.screenView.controller;
++  UINavigationController *navctr = vc.navigationController;
++  if (vc == nil || navctr.topViewController != vc) {
++    return;
++  }
++  NSMutableArray<UIBarButtonItem *> *leftItems = [NSMutableArray array];
++  NSMutableArray<UIBarButtonItem *> *rightItems = [NSMutableArray array];
++  for (RNSScreenStackHeaderSubview *subview in self.reactSubviews) {
++    if (subview.type == RNSScreenStackHeaderSubviewTypeLeft) {
++      [leftItems addObject:[subview getUIBarButtonItem]];
++    } else if (subview.type == RNSScreenStackHeaderSubviewTypeRight) {
++      [rightItems addObject:[subview getUIBarButtonItem]];
++    }
++  }
++  [self updateHeaderItemGroupsWithNavigationItem:vc.navigationItem
++                          navigationController:navctr
++                                     leftItems:leftItems
++                                    rightItems:rightItems];
++}
++
++- (void)refreshPinnedHeaderItemGroup
++{
++#if !TARGET_OS_TV
++  objc_setAssociatedObject(self.screenView.controller.navigationItem,
++                           &RNSAppliedPinnedHeaderItemsKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
++  [self updateHeaderItemGroups];
++#endif
++}
++
+ - (void)layoutNavigationControllerView
+ {
+   // We need to layout navigation controller view after translucent prop changes, because otherwise
+@@ -507,6 +667,10 @@ + (void)updateViewController:(UIViewController *)vc
+
    if (shouldHide) {
      navitem.title = config.title;
 +    if (@available(iOS 26.0, *)) {
 +      navitem.subtitle = config.subtitle;
 +      navitem.largeSubtitle = config.largeSubtitle;
 +    }
- 
+
      // Setting navigation bar visibility is split to mitigate iOS 26 bug with bar button items.
      [navctr setNavigationBarHidden:YES animated:animated];
-@@ -523,11 +566,19 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -523,11 +687,19 @@ + (void)updateViewController:(UIViewController *)vc
    }
    navitem.largeTitleDisplayMode =
        config.largeTitle ? UINavigationItemLargeTitleDisplayModeAlways : UINavigationItemLargeTitleDisplayModeNever;
@@ -297,7 +636,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +    navitem.style = (UINavigationItemStyle)config.navigationItemStyle;
 +  }
  #endif
- 
+
    UINavigationBarAppearance *appearance = [self buildAppearance:vc withConfig:config];
    navitem.standardAppearance = appearance;
    navitem.compactAppearance = appearance;
@@ -305,22 +644,22 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +    navitem.subtitle = config.subtitle;
 +    navitem.largeSubtitle = config.largeSubtitle;
 +  }
- 
+
  // appearance does not apply to the tvOS so we need to use lagacy customization
  #if TARGET_OS_TV
-@@ -559,8 +610,6 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -559,8 +731,6 @@ + (void)updateViewController:(UIViewController *)vc
    navitem.leftItemsSupplementBackButton = config.backButtonInCustomView;
  #endif
    navitem.titleView = nil;
 -  navitem.leftBarButtonItems = nil;
 -  navitem.rightBarButtonItems = nil;
- 
+
  #if !TARGET_OS_TV
    // We want to set navitem.searchController to nil only if we are sure
-@@ -568,22 +617,18 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -568,22 +738,18 @@ + (void)updateViewController:(UIViewController *)vc
    bool searchBarPresent = false;
  #endif /* !TARGET_OS_TV */
- 
+
 +  NSMutableArray<UIBarButtonItem *> *subviewLeftItems = [NSMutableArray array];
 +  NSMutableArray<UIBarButtonItem *> *subviewRightItems = [NSMutableArray array];
    for (RNSScreenStackHeaderSubview *subview in config.reactSubviews) {
@@ -344,7 +683,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
          break;
        }
        case RNSScreenStackHeaderSubviewTypeCenter:
-@@ -648,10 +693,470 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -648,10 +814,446 @@ + (void)updateViewController:(UIViewController *)vc
    // This assignment should be done after `navitem.titleView = ...` assignment (iOS 16.0 bug).
    // See: https://github.com/software-mansion/react-native-screens/issues/1570 (comments)
    navitem.title = config.title;
@@ -366,34 +705,10 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +  // including the empty leading group beside the system back button.
 +#if !TARGET_OS_TV
 +  if (@available(iOS 16.0, *)) {
-+    NSArray *headerLeftConfigs = config.headerLeftBarButtonItems ?: @[];
-+    NSArray *headerRightConfigs = config.headerRightBarButtonItems ?: @[];
-+    NSArray *headerCenterConfigs = config.headerCenterBarButtonItems ?: @[];
-+    if (RNSUpdateHeaderItemsCache(
-+            navitem, &RNSAppliedLeadingHeaderItemsKey, @[ config, headerLeftConfigs, subviewLeftItems ])) {
-+      NSArray *items = [config barButtonItemsFromConfigs:config.headerLeftBarButtonItems
-+                                      withCurrentItems:subviewLeftItems
-+                                        navigationItem:navitem
-+                              allowsSearchBarPlacement:NO];
-+      navitem.leadingItemGroups = [config barButtonItemGroupsFromItems:items];
-+    }
-+    if (RNSUpdateHeaderItemsCache(
-+            navitem, &RNSAppliedTrailingHeaderItemsKey, @[ config, headerRightConfigs, subviewRightItems ])) {
-+      NSArray *items = [config barButtonItemsFromConfigs:config.headerRightBarButtonItems
-+                                      withCurrentItems:subviewRightItems
-+                                        navigationItem:navitem
-+                              allowsSearchBarPlacement:NO];
-+      navitem.trailingItemGroups = [config barButtonItemGroupsFromItems:items];
-+    }
-+    if (@available(iOS 26.0, *)) {
-+      if (RNSUpdateHeaderItemsCache(navitem, &RNSAppliedCenterHeaderItemsKey, @[ config, headerCenterConfigs ])) {
-+        NSArray *items = [config barButtonItemsFromConfigs:config.headerCenterBarButtonItems
-+                                        withCurrentItems:@[]
-+                                          navigationItem:navitem
-+                                allowsSearchBarPlacement:NO];
-+        navitem.centerItemGroups = [config barButtonItemGroupsFromItems:items];
-+      }
-+    }
++    [config updateHeaderItemGroupsWithNavigationItem:navitem
++                              navigationController:navctr
++                                         leftItems:subviewLeftItems
++                                        rightItems:subviewRightItems];
 +  } else
 +#endif
 +  {
@@ -816,11 +1131,11 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +    objc_setAssociatedObject(
 +        navitem, &RNSAppliedToolbarConfigsKey, toolbarCacheKey, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 +  }
- 
+
    // Setting navigation bar visibility is split to mitigate iOS 26 bug with bar button items
    // (setting nav bar visibility should be done after `navitem.*BarButtonItems`).
-@@ -784,6 +1289,8 @@ RNS_IGNORE_SUPER_CALL_END
- 
+@@ -784,6 +1386,8 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
+
  - (NSArray<UIBarButtonItem *> *)barButtonItemsFromConfigs:(NSArray<NSDictionary<NSString *, id> *> *)dicts
                                           withCurrentItems:(NSArray<UIBarButtonItem *> *)currentItems
 +                                           navigationItem:(UINavigationItem *)navitem
@@ -828,7 +1143,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
  {
    if (dicts.count == 0) {
      return currentItems;
-@@ -792,7 +1299,200 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -792,7 +1396,200 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    [items addObjectsFromArray:currentItems];
    for (NSUInteger i = 0; i < dicts.count; i++) {
      NSDictionary *dict = dicts[i];
@@ -1030,7 +1345,7 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
        RNSBarButtonItem *item = [[RNSBarButtonItem alloc] initWithConfig:dict
            action:^(NSString *buttonId) {
              auto eventEmitter = std::static_pointer_cast<const facebook::react::RNSScreenStackHeaderConfigEventEmitter>(
-@@ -814,19 +1514,23 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -814,19 +1611,23 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
            }
            imageLoader:_imageLoader];
        NSNumber *index = dict[@"index"];
@@ -1060,10 +1375,10 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
          [items insertObject:item atIndex:index.integerValue];
        } else {
          [items addObject:item];
-@@ -836,6 +1540,47 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -836,6 +1637,47 @@ - (void)applySemanticContentAttributeIfNeededToNavCtrl:(UINavigationController *
    return items;
  }
- 
+
 +#if !TARGET_OS_TV
 +- (NSArray<UIBarButtonItemGroup *> *)barButtonItemGroupsFromItems:(NSArray<UIBarButtonItem *> *)items
 +{
@@ -1108,27 +1423,27 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
  RNS_IGNORE_SUPER_CALL_BEGIN
  - (void)insertReactSubview:(RNSScreenStackHeaderSubview *)subview atIndex:(NSInteger)atIndex
  {
-@@ -1023,6 +1768,8 @@ static RCTResizeMode resizeModeFromCppEquiv(react::ImageResizeMode resizeMode)
+@@ -1023,6 +1865,8 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    }
- 
+
    _title = RCTNSStringFromStringNilIfEmpty(newScreenProps.title);
 +  _subtitle = RCTNSStringFromStringNilIfEmpty(newScreenProps.subtitle);
 +  _largeSubtitle = RCTNSStringFromStringNilIfEmpty(newScreenProps.largeSubtitle);
    if (newScreenProps.titleFontFamily != oldScreenProps.titleFontFamily) {
      _titleFontFamily = RCTNSStringFromStringNilIfEmpty(newScreenProps.titleFontFamily);
    }
-@@ -1048,6 +1795,7 @@ static RCTResizeMode resizeModeFromCppEquiv(react::ImageResizeMode resizeMode)
+@@ -1048,6 +1892,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    _disableBackButtonMenu = newScreenProps.disableBackButtonMenu;
    _backButtonDisplayMode =
        [RNSConvert UINavigationItemBackButtonDisplayModeFromCppEquivalent:newScreenProps.backButtonDisplayMode];
 +  _navigationItemStyle = navigationItemStyleFromCppEquivalent(newScreenProps.navigationItemStyle);
- 
+
    if (newScreenProps.userInterfaceStyle != oldScreenProps.userInterfaceStyle) {
      _userInterfaceStyle = [RNSConvert UIUserInterfaceStyleFromCppEquivalent:newScreenProps.userInterfaceStyle];
-@@ -1094,6 +1842,30 @@ static RCTResizeMode resizeModeFromCppEquiv(react::ImageResizeMode resizeMode)
+@@ -1094,6 +1939,30 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
      _headerRightBarButtonItems = array;
    }
- 
+
 +  if (newScreenProps.headerCenterBarButtonItems != oldScreenProps.headerCenterBarButtonItems) {
 +    const auto &vec = newScreenProps.headerCenterBarButtonItems;
 +    NSMutableArray<NSDictionary<NSString *, id> *> *array = [NSMutableArray arrayWithCapacity:vec.size()];
@@ -1154,13 +1469,13 @@ index 1c844846a5c66e31cfa530ca462774d2fb6bbea1..a60b96b44e85d3f4b29dc0d190b95ab6
 +  }
 +
    [self updateViewControllerIfNeeded];
- 
+
    if (needsNavigationControllerLayout) {
 diff --git a/ios/RNSScreenStackHeaderSubview.mm b/ios/RNSScreenStackHeaderSubview.mm
 index add33c4807e038dcd846f6c72b2fc472ded02809..489afa5fa2da09c1ec6986d1832b58bb595396ae 100644
 --- a/ios/RNSScreenStackHeaderSubview.mm
 +++ b/ios/RNSScreenStackHeaderSubview.mm
-@@ -20,7 +20,9 @@ namespace react = facebook::react;
+@@ -20,7 +20,9 @@ @implementation RNSScreenStackHeaderSubview {
    // This is a strong reference to UIBarButtonItem which creates a retain cycle.
    // The cycle is cleared via `invalidateUIBarButtonItem` method, called by `invalidate` callback.
    UIBarButtonItem *_barButtonItem;
@@ -1168,9 +1483,9 @@ index add33c4807e038dcd846f6c72b2fc472ded02809..489afa5fa2da09c1ec6986d1832b58bb
    BOOL _hidesSharedBackground;
 +  UILabel *_titleScrollEdgeEffectGuide;
  }
- 
+
  #pragma mark - Common
-@@ -102,6 +104,25 @@ namespace react = facebook::react;
+@@ -102,6 +104,25 @@ - (void)updateShadowStateWithFrame:(CGRect)frame
  - (void)layoutSubviews
  {
    [super layoutSubviews];
@@ -1195,16 +1510,16 @@ index add33c4807e038dcd846f6c72b2fc472ded02809..489afa5fa2da09c1ec6986d1832b58bb
 +#endif
    [self updateShadowStateInContextOfAncestorView:[self findNavigationBar]];
  }
- 
-@@ -124,6 +145,7 @@ namespace react = facebook::react;
+
+@@ -124,6 +145,7 @@ - (void)updateProps:(react::Props::Shared const &)props oldProps:(react::Props::
    const auto &newHeaderSubviewProps = *std::static_pointer_cast<const react::RNSScreenStackHeaderSubviewProps>(props);
- 
+
    [self setType:[RNSConvert RNSScreenStackHeaderSubviewTypeFromCppEquivalent:newHeaderSubviewProps.type]];
 +  [self setBarButtonItemIdentifier:RCTNSStringFromStringNilIfEmpty(newHeaderSubviewProps.identifier)];
    [self setHidesSharedBackground:newHeaderSubviewProps.hidesSharedBackground];
    [self setSynchronousShadowStateUpdatesEnabled:newHeaderSubviewProps.synchronousShadowStateUpdatesEnabled];
    [super updateProps:props oldProps:oldProps];
-@@ -276,7 +298,14 @@ RNS_IGNORE_SUPER_CALL_END
+@@ -276,7 +298,14 @@ - (void)configureBarButtonItem
  #if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
    if (@available(iOS 26.0, *)) {
      if (_barButtonItem != nil) {
@@ -1220,8 +1535,8 @@ index add33c4807e038dcd846f6c72b2fc472ded02809..489afa5fa2da09c1ec6986d1832b58bb
      }
    }
  #endif // RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
-@@ -284,10 +313,22 @@ RNS_IGNORE_SUPER_CALL_END
- 
+@@ -284,10 +313,22 @@ - (void)configureBarButtonItem
+
  - (void)setHidesSharedBackground:(BOOL)hidesSharedBackground
  {
 +  if (_hidesSharedBackground == hidesSharedBackground) {
@@ -1230,7 +1545,7 @@ index add33c4807e038dcd846f6c72b2fc472ded02809..489afa5fa2da09c1ec6986d1832b58bb
    _hidesSharedBackground = hidesSharedBackground;
    [self configureBarButtonItem];
  }
- 
+
 +- (void)setBarButtonItemIdentifier:(nullable NSString *)identifier
 +{
 +  if (_barButtonItemIdentifier == identifier || [_barButtonItemIdentifier isEqualToString:identifier]) {
@@ -1241,8 +1556,329 @@ index add33c4807e038dcd846f6c72b2fc472ded02809..489afa5fa2da09c1ec6986d1832b58bb
 +}
 +
  #pragma mark - Dynamic frameworks support
- 
+
  // Needed because of this: https://github.com/facebook/react-native/pull/37274
+diff --git a/ios/gamma/split/RNSSplitAppearanceApplicator.mm b/ios/gamma/split/RNSSplitAppearanceApplicator.mm
+index e33c804f732db1cb9f0921aabf70155996b340cd..d63942ca74783935c993d547a61e35b237c5c6e7 100644
+--- a/ios/gamma/split/RNSSplitAppearanceApplicator.mm
++++ b/ios/gamma/split/RNSSplitAppearanceApplicator.mm
+@@ -167,7 +167,26 @@ - (void)updateSplitViewConfigurationFor:(RNSSplitHostComponentView *)splitHost
+ - (void)updateSplitViewDisplayModeFor:(RNSSplitHostComponentView *)splitHost
+                        withController:(RNSSplitHostController *)splitHostController
+ {
+-  splitHostController.preferredDisplayMode = splitHost.preferredDisplayMode;
++  UISplitViewControllerDisplayMode displayMode = splitHost.preferredDisplayMode;
++#if !TARGET_OS_TV && !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++  if (@available(iOS 27.1, *)) {
++    UISplitViewControllerDisplayMode currentMode = splitHostController.requestedPrimaryColumnDisplayMode;
++    if (currentMode == displayMode) {
++      return;
++    }
++    BOOL togglesPrimaryColumn =
++        (currentMode == UISplitViewControllerDisplayModeSecondaryOnly &&
++         displayMode == UISplitViewControllerDisplayModeOneBesideSecondary) ||
++        (currentMode == UISplitViewControllerDisplayModeOneBesideSecondary &&
++         displayMode == UISplitViewControllerDisplayModeSecondaryOnly);
++    if (togglesPrimaryColumn && splitHostController.viewIfLoaded.window != nil &&
++        !splitHostController.isCollapsed && !UIAccessibilityIsReduceMotionEnabled()) {
++      [splitHostController animatePrimaryColumnToDisplayMode:displayMode];
++      return;
++    }
++  }
++#endif
++  splitHostController.preferredDisplayMode = displayMode;
+ }
+
+ - (void)validateColumnConstraintsWithMinWidth:(CGFloat)minWidth maxWidth:(CGFloat)maxWidth
+diff --git a/ios/gamma/split/RNSSplitHostController.h b/ios/gamma/split/RNSSplitHostController.h
+index 6162b537895d33b0bc2edcdc5bbef8c60db76fb0..b7801a8630ec595386d4fda2a8e0eb263e30f92d 100644
+--- a/ios/gamma/split/RNSSplitHostController.h
++++ b/ios/gamma/split/RNSSplitHostController.h
+@@ -81,6 +81,12 @@ NS_ASSUME_NONNULL_BEGIN
+  */
+ - (void)showColumnNamed:(NSString *)columnName;
+
++@property (nonatomic, readonly, getter=isTransitioningPrimaryColumn) BOOL transitioningPrimaryColumn;
++@property (nonatomic, readonly) UISplitViewControllerDisplayMode requestedPrimaryColumnDisplayMode;
++- (void)animatePrimaryColumnToDisplayMode:(UISplitViewControllerDisplayMode)displayMode;
++- (void)animatePrimaryColumnMask:(CALayer *)mask toFrame:(CGRect)frame;
++- (void)afterPrimaryColumnTransition:(dispatch_block_t)completion;
++
+ @end
+
+ NS_ASSUME_NONNULL_END
+diff --git a/ios/gamma/split/RNSSplitHostController.mm b/ios/gamma/split/RNSSplitHostController.mm
+index c7d2db75965d2cd661d9a56922d4d201a89564c1..3d2d542d1c6499a047095b9e264606616f1536a8 100644
+--- a/ios/gamma/split/RNSSplitHostController.mm
++++ b/ios/gamma/split/RNSSplitHostController.mm
+@@ -2,6 +2,8 @@
+
+ #import <React/RCTAssert.h>
+ #import "RNSDefines.h"
++#import "RNSScreen.h"
++#import "RNSScreenStackHeaderConfig.h"
+ #import "RNSSplitAppearanceApplicator.h"
+ #import "RNSSplitAppearanceCoordinator.h"
+ #import "RNSSplitHostComponentView.h"
+@@ -13,6 +15,7 @@
+ static const NSInteger minNumberOfColumns = 2;
+ static const NSInteger maxNumberOfColumns = 3;
+ static const NSInteger maxNumberOfInspectors = 1;
++static const NSTimeInterval primaryColumnTransitionDuration = 0.26;
+
+ @interface RNSSplitHostController () <UISplitViewControllerDelegate,
+                                       RNSSplitNavigationControllerFrameOriginChangeDelegate>
+@@ -41,6 +44,10 @@ @implementation RNSSplitHostController {
+    * avoiding crashes when certain columns are collapsed or hidden.
+    */
+   NSMutableSet<NSNumber *> *_visibleColumns;
++  BOOL _transitioningPrimaryColumn;
++  NSUInteger _primaryColumnTransitionGeneration;
++  UISplitViewControllerDisplayMode _pendingPrimaryColumnDisplayMode;
++  NSMutableArray<dispatch_block_t> *_primaryColumnTransitionCompletions;
+ }
+
+ - (instancetype)initWithSplitHostComponentView:(RNSSplitHostComponentView *)splitHostComponentView
+@@ -53,6 +60,7 @@ - (instancetype)initWithSplitHostComponentView:(RNSSplitHostComponentView *)spli
+     _fixedColumnsCount = numberOfColumns;
+     _needsChildViewControllersUpdate = NO;
+     _visibleColumns = [NSMutableSet set];
++    _primaryColumnTransitionCompletions = [NSMutableArray new];
+
+     self.delegate = self;
+   }
+@@ -209,15 +217,61 @@ + (UISplitViewControllerStyle)styleByNumberOfColumns:(NSInteger)numberOfColumns
+
+ #pragma mark - Public setters
+
++- (void)refreshSecondaryPinnedHeaderItems
++{
++#if !TARGET_OS_TV && !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++  if (@available(iOS 27.1, *)) {
++    UIViewController *secondary = [self viewControllerForColumn:UISplitViewControllerColumnSecondary];
++    NSMutableArray<UIViewController *> *pending = [NSMutableArray array];
++    if (secondary != nil) {
++      [pending addObject:secondary];
++    }
++    while (pending.count > 0) {
++      UIViewController *controller = pending.lastObject;
++      [pending removeLastObject];
++      if ([controller isKindOfClass:RNSScreen.class] && controller.navigationItem.pinnedTrailingGroup != nil) {
++        RNSScreenStackHeaderConfig *config = ((RNSScreen *)controller).screenView.findHeaderConfig;
++        if (config.shouldHeaderBeVisible) {
++          [config refreshPinnedHeaderItemGroup];
++        }
++      }
++      [pending addObjectsFromArray:controller.childViewControllers];
++    }
++  }
++#endif
++}
++
+ - (void)toggleSplitViewInspector:(BOOL)showInspector
+ {
+ #if RNS_IPHONE_OS_VERSION_AVAILABLE(26_0)
+   if (@available(iOS 26.0, *)) {
++#if !TARGET_OS_TV && !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++    BOOL refreshPinnedItems = NO;
++    if (@available(iOS 27.1, *)) {
++      refreshPinnedItems = [self isShowingColumn:UISplitViewControllerColumnInspector] != showInspector;
++    }
++#endif
+     if (showInspector) {
+       [self maybeShowInspector];
+     } else {
+       [self maybeHideInspector];
+     }
++#if !TARGET_OS_TV && !TARGET_OS_VISION && RNS_IPHONE_OS_VERSION_AVAILABLE(27_1)
++    if (refreshPinnedItems) {
++      // UIKit rebuilds the shared rail after changing the trailingmost column.
++      // Refresh its pinned items once the inspector transition has settled.
++      __weak RNSSplitHostController *weakSelf = self;
++      id<UIViewControllerTransitionCoordinator> coordinator = self.transitionCoordinator;
++      BOOL scheduled = coordinator != nil &&
++          [coordinator animateAlongsideTransition:nil
++                                       completion:^(id<UIViewControllerTransitionCoordinatorContext> context) {
++                                         [weakSelf refreshSecondaryPinnedHeaderItems];
++                                       }];
++      if (!scheduled) {
++        [self refreshSecondaryPinnedHeaderItems];
++      }
++    }
++#endif
+   }
+ #endif
+ }
+@@ -233,6 +287,114 @@ - (void)showColumnNamed:(NSString *)columnName
+   [self showColumn:(UISplitViewControllerColumn)column.integerValue];
+ }
+
++- (BOOL)isTransitioningPrimaryColumn
++{
++  return _transitioningPrimaryColumn;
++}
++
++- (void)afterPrimaryColumnTransition:(dispatch_block_t)completion
++{
++  if (_transitioningPrimaryColumn) {
++    [_primaryColumnTransitionCompletions addObject:[completion copy]];
++  } else {
++    completion();
++  }
++}
++
++- (UISplitViewControllerDisplayMode)requestedPrimaryColumnDisplayMode
++{
++  return _pendingPrimaryColumnDisplayMode != UISplitViewControllerDisplayModeAutomatic
++      ? _pendingPrimaryColumnDisplayMode
++      : self.preferredDisplayMode;
++}
++
++- (void)animatePrimaryColumnToDisplayMode:(UISplitViewControllerDisplayMode)displayMode
++{
++  if (_transitioningPrimaryColumn) {
++    // Finish the column and its content clip together. Keep only the latest
++    // request, and expand Fabric's content only after the final pose settles.
++    _pendingPrimaryColumnDisplayMode = displayMode;
++    return;
++  }
++  [self startPrimaryColumnTransitionToDisplayMode:displayMode];
++}
++
++- (void)startPrimaryColumnTransitionToDisplayMode:(UISplitViewControllerDisplayMode)displayMode
++{
++  [self.view layoutIfNeeded];
++  _transitioningPrimaryColumn = YES;
++  NSUInteger generation = ++_primaryColumnTransitionGeneration;
++  __weak RNSSplitHostController *weakSelf = self;
++  [UIView animateWithDuration:primaryColumnTransitionDuration
++                        delay:0
++                      options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionCurveEaseInOut
++                   animations:^{
++                     weakSelf.preferredDisplayMode = displayMode;
++                     [weakSelf.view layoutIfNeeded];
++                   }
++                   completion:^(BOOL finished) {
++                     RNSSplitHostController *host = weakSelf;
++                     if (host == nil || generation != host->_primaryColumnTransitionGeneration) {
++                       return;
++                     }
++                     UISplitViewControllerDisplayMode pendingMode = host->_pendingPrimaryColumnDisplayMode;
++                     host->_pendingPrimaryColumnDisplayMode = UISplitViewControllerDisplayModeAutomatic;
++                     if (pendingMode != UISplitViewControllerDisplayModeAutomatic &&
++                         pendingMode != host.preferredDisplayMode) {
++                       [host startPrimaryColumnTransitionToDisplayMode:pendingMode];
++                       return;
++                     }
++                     host->_transitioningPrimaryColumn = NO;
++                     NSArray<dispatch_block_t> *completions = [host->_primaryColumnTransitionCompletions copy];
++                     [host->_primaryColumnTransitionCompletions removeAllObjects];
++                     for (dispatch_block_t completion in completions) {
++                       completion();
++                     }
++                   }];
++}
++
++- (void)animatePrimaryColumnMask:(CALayer *)mask toFrame:(CGRect)frame
++{
++  if (CGRectEqualToRect(mask.frame, frame)) {
++    return;
++  }
++  UIView *secondary = [self viewControllerForColumn:UISplitViewControllerColumnSecondary].view;
++  UIView *columnViewport = secondary.superview;
++  CAAnimation *resize = [columnViewport.layer animationForKey:@"bounds.size"];
++  CGFloat horizontalInsets = secondary.safeAreaInsets.left + secondary.safeAreaInsets.right;
++  if ([resize isKindOfClass:CABasicAnimation.class] &&
++      fabs(columnViewport.bounds.size.width - frame.size.width - horizontalInsets) < 0.5) {
++    // Reuse UIKit's column animation, including its transaction start and any
++    // interruption handling. An independent clip timeline can expose the rail.
++    CABasicAnimation *clip = [(CABasicAnimation *)resize copy];
++    clip.delegate = nil;
++    if (clip.beginTime != 0) {
++      clip.beginTime = [mask convertTime:clip.beginTime fromLayer:columnViewport.layer];
++    }
++    if (!clip.additive) {
++      CGSize fromSize = [(NSValue *)clip.fromValue CGSizeValue];
++      fromSize.width = MAX(0, fromSize.width - horizontalInsets);
++      clip.fromValue = [NSValue valueWithCGSize:fromSize];
++      clip.toValue = [NSValue valueWithCGSize:frame.size];
++      clip.byValue = nil;
++    }
++    [CATransaction begin];
++    [CATransaction setDisableActions:YES];
++    mask.frame = frame;
++    [CATransaction commit];
++    [mask addAnimation:clip forKey:@"rnsSplitViewport"];
++  } else {
++    // If UIKit has not installed its new column geometry yet, keep the smaller
++    // clip until layout provides it or Fabric mounts the final content size.
++    frame.size.width = MIN(mask.frame.size.width, frame.size.width);
++    [CATransaction begin];
++    [CATransaction setDisableActions:YES];
++    mask.frame = frame;
++    [CATransaction commit];
++    [mask removeAnimationForKey:@"rnsSplitViewport"];
++  }
++}
++
+ /**
+  * @brief Maps a string column name to its corresponding `UISplitViewController.Column` value.
+  *
+diff --git a/ios/gamma/split/RNSSplitNavigationController.mm b/ios/gamma/split/RNSSplitNavigationController.mm
+index b884a59a2ee5ce9bc37ae8b075e9efe645bf5c7e..6218e7a858d63c0a67af8742409a9beada06ef0c 100644
+--- a/ios/gamma/split/RNSSplitNavigationController.mm
++++ b/ios/gamma/split/RNSSplitNavigationController.mm
+@@ -4,6 +4,7 @@
+
+ @implementation RNSSplitNavigationController {
+   RNSSplitNavigationControllerFrameObserver *_frameObserver;
++  BOOL _requestedNavigationBarHidden;
+   id<RNSSplitNavigationControllerFrameOriginChangeDelegate> __weak _frameOriginChangeDelegate;
+ }
+
+@@ -18,6 +19,42 @@ - (instancetype)initWithRootViewController:(UIViewController *)rootViewControlle
+   return self;
+ }
+
++// Columns embedding a native stack let it own the bars rather than reserving
++// space for a second, empty navigation bar on the split wrapper.
++- (BOOL)hasNestedNavigationController
++{
++  // Collapse pushes the secondary column's navigation controller onto the
++  // primary one. Its nested native stack still owns the visible navigation.
++  if ([self.topViewController isKindOfClass:UINavigationController.class]) {
++    return YES;
++  }
++  for (UIViewController *child in self.topViewController.childViewControllers) {
++    if ([child isKindOfClass:UINavigationController.class]) {
++      return YES;
++    }
++  }
++  return NO;
++}
++
++- (void)setNavigationBarHidden:(BOOL)hidden animated:(BOOL)animated
++{
++  _requestedNavigationBarHidden = hidden;
++  [super setNavigationBarHidden:hidden || [self hasNestedNavigationController] animated:animated];
++}
++
++- (void)viewDidLayoutSubviews
++{
++  [super viewDidLayoutSubviews];
++  BOOL nestedNavigation = [self hasNestedNavigationController];
++  // UIKit can put this entire wrapper on the collapsed column's stack. Keep
++  // its back action out of the shared Duo rail; the inner stack supplies it.
++  self.navigationItem.hidesBackButton = nestedNavigation;
++  BOOL hidden = _requestedNavigationBarHidden || nestedNavigation;
++  if (self.navigationBarHidden != hidden) {
++    [super setNavigationBarHidden:hidden animated:NO];
++  }
++}
++
+ /**
+  * @brief Called after the view controller’s view has been loaded.
+  *
 diff --git a/lib/commonjs/components/ScreenStackHeaderConfig.js b/lib/commonjs/components/ScreenStackHeaderConfig.js
 index 6e68cd1f83469fb6976aee837ba704f996546b61..9e0948514644b01d9fd7956fcf3ac84cef3e9577 100644
 --- a/lib/commonjs/components/ScreenStackHeaderConfig.js
@@ -1262,7 +1898,7 @@ index 6e68cd1f83469fb6976aee837ba704f996546b61..9e0948514644b01d9fd7956fcf3ac84c
 +  const preparedHeaderCenterBarButtonItems = headerCenterBarButtonItems && _utils.isHeaderBarButtonsAvailableForCurrentPlatform ? (0, _prepareHeaderBarButtonItems.prepareHeaderBarButtonItems)(headerCenterBarButtonItems, 'center') : undefined;
 +  const preparedHeaderToolbarItems = headerToolbarItems && _utils.isHeaderBarButtonsAvailableForCurrentPlatform ? (0, _prepareHeaderBarButtonItems.prepareHeaderBarButtonItems)(headerToolbarItems, 'toolbar') : undefined;
 +  const hasHeaderBarButtonItems = _utils.isHeaderBarButtonsAvailableForCurrentPlatform && (preparedHeaderLeftBarButtonItems?.length || preparedHeaderRightBarButtonItems?.length || preparedHeaderCenterBarButtonItems?.length || preparedHeaderToolbarItems?.length);
- 
+
    // Handle bar button item presses
    const onPressHeaderBarButtonItem = hasHeaderBarButtonItems ? event => {
 -    const pressedItem = [...(preparedHeaderLeftBarButtonItems ?? []), ...(preparedHeaderRightBarButtonItems ?? [])].find(item => item && 'buttonId' in item && item.buttonId === event.nativeEvent.buttonId);
@@ -1292,10 +1928,10 @@ index 6e68cd1f83469fb6976aee837ba704f996546b61..9e0948514644b01d9fd7956fcf3ac84c
 +      }
      }
    } : undefined;
- 
+
 @@ -64,7 +89,7 @@ const ScreenStackHeaderConfig = exports.ScreenStackHeaderConfig = /*#__PURE__*/_
      };
- 
+
      // Check each bar-button item with a menu
 -    const allItems = [...(preparedHeaderLeftBarButtonItems ?? []), ...(preparedHeaderRightBarButtonItems ?? [])];
 +    const allItems = [...(preparedHeaderLeftBarButtonItems ?? []), ...(preparedHeaderRightBarButtonItems ?? []), ...(preparedHeaderCenterBarButtonItems ?? []), ...(preparedHeaderToolbarItems ?? [])];
@@ -1327,6 +1963,41 @@ index 6e68cd1f83469fb6976aee837ba704f996546b61..9e0948514644b01d9fd7956fcf3ac84c
      onPressHeaderBarButtonItem: onPressHeaderBarButtonItem,
      onPressHeaderBarButtonMenuItem: onPressHeaderBarButtonMenuItem,
      ref: ref,
+diff --git a/lib/commonjs/components/gamma/split/SplitHost.js b/lib/commonjs/components/gamma/split/SplitHost.js
+index dd84c0e7f3049a95cf02db7b203114df44077616..61e68d00d22e44f50f458af5066914666cc600c5 100644
+--- a/lib/commonjs/components/gamma/split/SplitHost.js
++++ b/lib/commonjs/components/gamma/split/SplitHost.js
+@@ -74,7 +74,7 @@ function SplitHost({
+     ,
+     key: `columns-${columns.length}-inspectors-${inspectors.length}`
+   }, props, {
+-    style: styles.container
++    style: [styles.container, props.style]
+   }), props.children);
+ }
+ const styles = _reactNative.StyleSheet.create({
+diff --git a/lib/commonjs/components/gamma/split/SplitScreen.js b/lib/commonjs/components/gamma/split/SplitScreen.js
+index 6e1848347df41b0e7d912b5bfec75c4afaaf5cf7..1f75a256391a7064658d80acf32bdff6a4a5dcaf 100644
+--- a/lib/commonjs/components/gamma/split/SplitScreen.js
++++ b/lib/commonjs/components/gamma/split/SplitScreen.js
+@@ -16,7 +16,7 @@ function Column(props) {
+   return /*#__PURE__*/_react.default.createElement(_SplitScreenNativeComponent.default, _extends({
+     columnType: "column"
+   }, props, {
+-    style: _reactNative.StyleSheet.absoluteFill
++    style: [_reactNative.StyleSheet.absoluteFill, props.style]
+   }), props.children);
+ }
+
+@@ -27,7 +27,7 @@ function Inspector(props) {
+   return /*#__PURE__*/_react.default.createElement(_SplitScreenNativeComponent.default, _extends({
+     columnType: "inspector"
+   }, props, {
+-    style: _reactNative.StyleSheet.absoluteFill
++    style: [_reactNative.StyleSheet.absoluteFill, props.style]
+   }), props.children);
+ }
+
 diff --git a/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js b/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js
 index 589b6ccc3c68229cfa0eaf8abeb73724aaa6b66b..b584624cf3dcd8ada86b6a6359d0d3940ca24a2e 100644
 --- a/lib/commonjs/components/helpers/prepareHeaderBarButtonItems.js
@@ -1334,7 +2005,7 @@ index 589b6ccc3c68229cfa0eaf8abeb73724aaa6b66b..b584624cf3dcd8ada86b6a6359d0d394
 @@ -8,7 +8,7 @@ var _reactNative = require("react-native");
  // Local nominal type so declaration emit doesn't resolve the RN alias down to
  // the non-public `types_generated/.../AssetSourceResolver#ResolvedAssetSource`.
- 
+
 -const prepareMenu = (menu, index, side, path = '') => {
 +const prepareMenu = (menu, index, placement, path = '') => {
    return {
@@ -1434,7 +2105,7 @@ index 242898c203307c25e752ee0a9a4abc864d773e78..7cebaa3d6919724a9d8b7b7ab2075665
 +  const preparedHeaderCenterBarButtonItems = headerCenterBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform ? prepareHeaderBarButtonItems(headerCenterBarButtonItems, 'center') : undefined;
 +  const preparedHeaderToolbarItems = headerToolbarItems && isHeaderBarButtonsAvailableForCurrentPlatform ? prepareHeaderBarButtonItems(headerToolbarItems, 'toolbar') : undefined;
 +  const hasHeaderBarButtonItems = isHeaderBarButtonsAvailableForCurrentPlatform && (preparedHeaderLeftBarButtonItems?.length || preparedHeaderRightBarButtonItems?.length || preparedHeaderCenterBarButtonItems?.length || preparedHeaderToolbarItems?.length);
- 
+
    // Handle bar button item presses
    const onPressHeaderBarButtonItem = hasHeaderBarButtonItems ? event => {
 -    const pressedItem = [...(preparedHeaderLeftBarButtonItems ?? []), ...(preparedHeaderRightBarButtonItems ?? [])].find(item => item && 'buttonId' in item && item.buttonId === event.nativeEvent.buttonId);
@@ -1464,10 +2135,10 @@ index 242898c203307c25e752ee0a9a4abc864d773e78..7cebaa3d6919724a9d8b7b7ab2075665
 +      }
      }
    } : undefined;
- 
+
 @@ -60,7 +85,7 @@ export const ScreenStackHeaderConfig = /*#__PURE__*/React.forwardRef((props, ref
      };
- 
+
      // Check each bar-button item with a menu
 -    const allItems = [...(preparedHeaderLeftBarButtonItems ?? []), ...(preparedHeaderRightBarButtonItems ?? [])];
 +    const allItems = [...(preparedHeaderLeftBarButtonItems ?? []), ...(preparedHeaderRightBarButtonItems ?? []), ...(preparedHeaderCenterBarButtonItems ?? []), ...(preparedHeaderToolbarItems ?? [])];
@@ -1499,6 +2170,41 @@ index 242898c203307c25e752ee0a9a4abc864d773e78..7cebaa3d6919724a9d8b7b7ab2075665
      onPressHeaderBarButtonItem: onPressHeaderBarButtonItem,
      onPressHeaderBarButtonMenuItem: onPressHeaderBarButtonMenuItem,
      ref: ref,
+diff --git a/lib/module/components/gamma/split/SplitHost.js b/lib/module/components/gamma/split/SplitHost.js
+index 81a206db0e9eb929e204089457a98d11f82c5b08..633a3af50c66a9d79bf2efcf6d4315332126ead7 100644
+--- a/lib/module/components/gamma/split/SplitHost.js
++++ b/lib/module/components/gamma/split/SplitHost.js
+@@ -66,7 +66,7 @@ function SplitHost({
+     ,
+     key: `columns-${columns.length}-inspectors-${inspectors.length}`
+   }, props, {
+-    style: styles.container
++    style: [styles.container, props.style]
+   }), props.children);
+ }
+ const styles = StyleSheet.create({
+diff --git a/lib/module/components/gamma/split/SplitScreen.js b/lib/module/components/gamma/split/SplitScreen.js
+index 788895571d1849b3d6d9932b0a4d012e56433adf..5c0567a4aff60672b0eb686af67818f1771ed1a0 100644
+--- a/lib/module/components/gamma/split/SplitScreen.js
++++ b/lib/module/components/gamma/split/SplitScreen.js
+@@ -9,7 +9,7 @@ function Column(props) {
+   return /*#__PURE__*/React.createElement(SplitScreenNativeComponent, _extends({
+     columnType: "column"
+   }, props, {
+-    style: StyleSheet.absoluteFill
++    style: [StyleSheet.absoluteFill, props.style]
+   }), props.children);
+ }
+
+@@ -20,7 +20,7 @@ function Inspector(props) {
+   return /*#__PURE__*/React.createElement(SplitScreenNativeComponent, _extends({
+     columnType: "inspector"
+   }, props, {
+-    style: StyleSheet.absoluteFill
++    style: [StyleSheet.absoluteFill, props.style]
+   }), props.children);
+ }
+
 diff --git a/lib/module/components/helpers/prepareHeaderBarButtonItems.js b/lib/module/components/helpers/prepareHeaderBarButtonItems.js
 index 24bf271717a0876fee87c3f01f4a2707b481036a..693cfad508029c66207535b7e5e26e372eb4130d 100644
 --- a/lib/module/components/helpers/prepareHeaderBarButtonItems.js
@@ -1506,7 +2212,7 @@ index 24bf271717a0876fee87c3f01f4a2707b481036a..693cfad508029c66207535b7e5e26e37
 @@ -3,7 +3,7 @@ import { Image, processColor } from 'react-native';
  // Local nominal type so declaration emit doesn't resolve the RN alias down to
  // the non-public `types_generated/.../AssetSourceResolver#ResolvedAssetSource`.
- 
+
 -const prepareMenu = (menu, index, side, path = '') => {
 +const prepareMenu = (menu, index, placement, path = '') => {
    return {
@@ -1656,7 +2362,7 @@ index 2cb1a7954a7f5dc19155d59bdb13b4118ef2934b..d6ca5a4ef9c4e9748203443998a47804
  }
  declare const _default: HostComponent<NativeProps>;
 diff --git a/lib/typescript/types.d.ts b/lib/typescript/types.d.ts
-index ff378811e169f12657f030b6138185b5df56138f..b487303bbd500c3f0897498f4c0f7e0912102e52 100644
+index ff378811e169f12657f030b6138185b5df56138f..d0e95093871f9c14646f420e5cf3e041e72b0fe0 100644
 --- a/lib/typescript/types.d.ts
 +++ b/lib/typescript/types.d.ts
 @@ -19,6 +19,7 @@ export type SearchBarCommands = {
@@ -1744,7 +2450,7 @@ index ff378811e169f12657f030b6138185b5df56138f..b487303bbd500c3f0897498f4c0f7e09
      /**
       * A boolean value indicating whether the background this item may share with other items in the bar should be hidden.
       * Only applicable to type="right" and type="left" subviews.
-@@ -1056,6 +1106,11 @@ interface SharedHeaderBarButtonItem {
+@@ -1056,6 +1106,15 @@ interface SharedHeaderBarButtonItem {
       * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/style-swift.property
       */
      variant?: 'plain' | 'done' | 'prominent' | undefined;
@@ -1753,10 +2459,14 @@ index ff378811e169f12657f030b6138185b5df56138f..b487303bbd500c3f0897498f4c0f7e09
 +     * Only available from iOS 26.0 and later.
 +     */
 +    glassEffect?: boolean | undefined;
++    /** Native bar axis preference on iOS 27.1 and later. */
++    axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred' | undefined;
++    /** Keep this right-side item in UINavigationItem.pinnedTrailingGroup. */
++    pinned?: boolean | undefined;
      /**
       * The tint color to apply to the item.
       *
-@@ -1201,8 +1256,38 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
+@@ -1201,8 +1260,38 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
  export interface HeaderBarButtonItemSpacing {
      type: 'spacing';
      spacing: number;
@@ -1803,7 +2513,7 @@ index 509d6cd1410a1b49a6a7b46346f447ad5810bc7f..761e49be5f15efc700070b8bc53472ee
 @@ -54,7 +54,12 @@ export const ScreenStackHeaderConfig = React.forwardRef<
      props.disableBottomInsetApplication ?? false,
    );
- 
+
 -  const { headerLeftBarButtonItems, headerRightBarButtonItems } = props;
 +  const {
 +    headerLeftBarButtonItems,
@@ -1811,7 +2521,7 @@ index 509d6cd1410a1b49a6a7b46346f447ad5810bc7f..761e49be5f15efc700070b8bc53472ee
 +    headerCenterBarButtonItems,
 +    headerToolbarItems,
 +  } = props;
- 
+
    const preparedHeaderLeftBarButtonItems =
      headerLeftBarButtonItems && isHeaderBarButtonsAvailableForCurrentPlatform
 @@ -64,22 +69,36 @@ export const ScreenStackHeaderConfig = React.forwardRef<
@@ -1833,7 +2543,7 @@ index 509d6cd1410a1b49a6a7b46346f447ad5810bc7f..761e49be5f15efc700070b8bc53472ee
 +      preparedHeaderRightBarButtonItems?.length ||
 +      preparedHeaderCenterBarButtonItems?.length ||
 +      preparedHeaderToolbarItems?.length);
- 
+
    // Handle bar button item presses
    const onPressHeaderBarButtonItem = hasHeaderBarButtonItems
      ? (event: NativeSyntheticEvent<{ buttonId: string }>) => {
@@ -1924,6 +2634,41 @@ index 509d6cd1410a1b49a6a7b46346f447ad5810bc7f..761e49be5f15efc700070b8bc53472ee
        onPressHeaderBarButtonItem={onPressHeaderBarButtonItem}
        onPressHeaderBarButtonMenuItem={onPressHeaderBarButtonMenuItem}
        ref={ref}
+diff --git a/src/components/gamma/split/SplitHost.tsx b/src/components/gamma/split/SplitHost.tsx
+index 7a5de71374ec4d6c88e50b4c01121b0a55e4be13..05bbebaeaba3d073922da66157cdec50e146dedc 100644
+--- a/src/components/gamma/split/SplitHost.tsx
++++ b/src/components/gamma/split/SplitHost.tsx
+@@ -101,7 +101,7 @@ function SplitHost({ ref, ...props }: SplitHostProps) {
+       // This enables us to fully recreate the Split when necessary, ensuring the correct column configuration is always applied.
+       key={`columns-${columns.length}-inspectors-${inspectors.length}`}
+       {...props}
+-      style={styles.container}>
++      style={[styles.container, props.style]}>
+       {props.children}
+     </SplitHostNativeComponent>
+   );
+diff --git a/src/components/gamma/split/SplitScreen.tsx b/src/components/gamma/split/SplitScreen.tsx
+index 52b7d211a23e907b76a80069d6a8c45911d599e9..18f6d043fedbba4c307fd509ef8a3853ddd6dd8e 100644
+--- a/src/components/gamma/split/SplitScreen.tsx
++++ b/src/components/gamma/split/SplitScreen.tsx
+@@ -11,7 +11,7 @@ function Column(props: SplitScreenProps) {
+     <SplitScreenNativeComponent
+       columnType="column"
+       {...props}
+-      style={StyleSheet.absoluteFill}>
++      style={[StyleSheet.absoluteFill, props.style]}>
+       {props.children}
+     </SplitScreenNativeComponent>
+   );
+@@ -25,7 +25,7 @@ function Inspector(props: SplitScreenProps) {
+     <SplitScreenNativeComponent
+       columnType="inspector"
+       {...props}
+-      style={StyleSheet.absoluteFill}>
++      style={[StyleSheet.absoluteFill, props.style]}>
+       {props.children}
+     </SplitScreenNativeComponent>
+   );
 diff --git a/src/components/helpers/prepareHeaderBarButtonItems.ts b/src/components/helpers/prepareHeaderBarButtonItems.ts
 index 19ab7bcdcd0f6f23c0d9e1794144adefb459c6c5..9fd5cebd8a5c18c0c1caac00562cbcb8fa52be01 100644
 --- a/src/components/helpers/prepareHeaderBarButtonItems.ts
@@ -1956,7 +2701,7 @@ index 19ab7bcdcd0f6f23c0d9e1794144adefb459c6c5..9fd5cebd8a5c18c0c1caac00562cbcb8
      }),
    };
  };
- 
+
  export const prepareHeaderBarButtonItems = (
 -  barButtonItems: HeaderBarButtonItem[],
 -  side: 'left' | 'right',
@@ -2029,10 +2774,10 @@ index da28c51c6ffd29b996c876742a11cfdf322db969..1136622d7125916ff94401c3027c9135
 +++ b/src/fabric/ScreenStackHeaderConfigNativeComponent.ts
 @@ -19,6 +19,7 @@ type OnPressHeaderBarButtonItemEvent = Readonly<{ buttonId: string }>;
  type OnPressHeaderBarButtonMenuItemEvent = Readonly<{ menuId: string }>;
- 
+
  type BackButtonDisplayMode = 'minimal' | 'default' | 'generic';
 +type NavigationItemStyle = 'navigator' | 'browser' | 'editor';
- 
+
  type BlurEffect =
    | 'none'
 @@ -66,12 +67,15 @@ export interface NativeProps extends ViewProps {
@@ -2071,14 +2816,14 @@ index 9a6af57ac0a5d4775d2cc76778939c02486fa4f7..03aa2b28e7930dd203c6e3191fa1913a
 +  identifier?: string | undefined;
    synchronousShadowStateUpdatesEnabled?: CT.WithDefault<boolean, true>;
  }
- 
+
 diff --git a/src/types.tsx b/src/types.tsx
-index 8594b733fae4eba17b44ad917047d38614464a34..20c6e88686fe0c8eeaab2c5adb9f9248995b1512 100644
+index 8594b733fae4eba17b44ad917047d38614464a34..b7eff2132e2f7caa01fc771f447ba45329ff7774 100644
 --- a/src/types.tsx
 +++ b/src/types.tsx
 @@ -35,6 +35,7 @@ export type SearchBarCommands = {
  };
- 
+
  export type BackButtonDisplayMode = 'default' | 'generic' | 'minimal';
 +export type NavigationItemStyle = 'navigator' | 'browser' | 'editor';
  export type StackPresentationTypes =
@@ -2149,7 +2894,7 @@ index 8594b733fae4eba17b44ad917047d38614464a34..20c6e88686fe0c8eeaab2c5adb9f9248
     */
 @@ -1139,6 +1182,13 @@ export interface SearchBarProps {
  }
- 
+
  export interface ScreenStackHeaderSubviewProps {
 +  /**
 +   * An identifier used to match this item across navigation bar transitions.
@@ -2161,7 +2906,7 @@ index 8594b733fae4eba17b44ad917047d38614464a34..20c6e88686fe0c8eeaab2c5adb9f9248
    /**
     * A boolean value indicating whether the background this item may share with other items in the bar should be hidden.
     * Only applicable to type="right" and type="left" subviews.
-@@ -1180,6 +1230,11 @@ interface SharedHeaderBarButtonItem {
+@@ -1180,6 +1230,15 @@ interface SharedHeaderBarButtonItem {
     * Read more: https://developer.apple.com/documentation/uikit/uibarbuttonitem/style-swift.property
     */
    variant?: 'plain' | 'done' | 'prominent' | undefined;
@@ -2170,10 +2915,14 @@ index 8594b733fae4eba17b44ad917047d38614464a34..20c6e88686fe0c8eeaab2c5adb9f9248
 +   * Only available from iOS 26.0 and later.
 +   */
 +  glassEffect?: boolean | undefined;
++  /** Native bar axis preference on iOS 27.1 and later. */
++  axisBehavior?: 'automatic' | 'horizontalOnly' | 'verticalPreferred' | undefined;
++  /** Keep this right-side item in UINavigationItem.pinnedTrailingGroup. */
++  pinned?: boolean | undefined;
    /**
     * The tint color to apply to the item.
     *
-@@ -1335,11 +1390,47 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
+@@ -1335,11 +1394,47 @@ export interface HeaderBarButtonItemWithMenu extends SharedHeaderBarButtonItem {
  export interface HeaderBarButtonItemSpacing {
    type: 'spacing';
    spacing: number;
@@ -2211,7 +2960,7 @@ index 8594b733fae4eba17b44ad917047d38614464a34..20c6e88686fe0c8eeaab2c5adb9f9248
 +  useFallbackSearchField?: boolean | undefined;
 +  width?: number | undefined;
  }
- 
+
  export type HeaderBarButtonItem =
    | HeaderBarButtonItemWithAction
    | HeaderBarButtonItemWithMenu
@@ -2219,5 +2968,5 @@ index 8594b733fae4eba17b44ad917047d38614464a34..20c6e88686fe0c8eeaab2c5adb9f9248
 +  | HeaderBarButtonSearchFieldItem
 +  | HeaderBarButtonSearchBarPlacementItem
    | HeaderBarButtonItemSpacing;
- 
+
  /**

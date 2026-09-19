@@ -19,8 +19,8 @@ import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/Stac
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
+import { useNativeMailSearchToolbar } from "../layout/use-native-mail-search-toolbar";
 
 import { getMobileThirdPartyLicenses } from "./mobileThirdPartyLicenses";
 
@@ -72,7 +72,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
-  const usesNativeMailSearchToolbar = Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const manifest = useMobileThirdPartyLicenses();
   const entries = manifest?.entries ?? [];
   const filteredEntries = useMemo(

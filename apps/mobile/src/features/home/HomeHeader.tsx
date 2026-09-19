@@ -1,14 +1,13 @@
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { useCallback, useRef } from "react";
 import type { SearchBarCommands } from "react-native-screens";
+import { NATIVE_WORKSPACE_COLUMNS_SUPPORTED } from "../../native/NativeWorkspaceColumns";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
-} from "../layout/native-mail-search-toolbar";
+import { createNativeMailSearchToolbarItem } from "../layout/native-mail-search-toolbar";
+import { useNativeMailSearchToolbar } from "../layout/use-native-mail-search-toolbar";
 import { buildHomeListFilterMenu } from "./home-list-filter-menu";
 import {
   hasCustomHomeListOptions,
@@ -20,6 +19,7 @@ import type { HomeHeaderProps } from "./HomeHeader.types";
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
 export function HomeHeader(props: HomeHeaderProps) {
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const searchBarRef = useRef<SearchBarCommands>(null);
   const iconColor = useUniwindTheme()["--color-icon"];
   // Thread List v2 lays the list out in fixed creation order, so the
@@ -59,8 +59,9 @@ export function HomeHeader(props: HomeHeaderProps) {
           ],
           // The keys below are set per-branch (not `undefined`) so a later
           // reapply cannot clobber options owned by NativeHeaderToolbar.
-          ...(NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
+          ...(usesNativeMailSearchToolbar
             ? {
+                headerSearchBarOptions: undefined,
                 unstable_headerToolbarItems: () => [
                   createNativeMailSearchToolbarItem({
                     composeButtonId: "home-new-task",
@@ -79,13 +80,20 @@ export function HomeHeader(props: HomeHeaderProps) {
                 ],
               }
             : {
-                // Pre-Liquid-Glass iOS: standard pull-down search in the nav
-                // bar; create + sort live in the plain bottom toolbar below.
+                // UIKit places integrated search in the Duo rail. Older iOS
+                // keeps standard pull-down search in the navigation bar.
                 headerSearchBarOptions: {
                   ref: searchBarRef,
                   autoCapitalize: "none" as const,
                   hideNavigationBar: false,
                   placeholder: "Search",
+                  ...(NATIVE_WORKSPACE_COLUMNS_SUPPORTED
+                    ? {
+                        hideWhenScrolling: false,
+                        placement: "integrated" as const,
+                        allowToolbarIntegration: true,
+                      }
+                    : {}),
                   onCancelButtonPress: () => {
                     props.onSearchQueryChange("");
                   },
@@ -97,7 +105,7 @@ export function HomeHeader(props: HomeHeaderProps) {
         }}
       />
 
-      {NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED ? null : (
+      {usesNativeMailSearchToolbar ? null : (
         <NativeHeaderToolbar placement="bottom">
           <NativeHeaderToolbar.Menu
             accessibilityLabel="Filter and sort threads"
@@ -181,6 +189,7 @@ export function HomeHeader(props: HomeHeaderProps) {
               </NativeHeaderToolbar.Menu>
             )}
           </NativeHeaderToolbar.Menu>
+          {NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? <NativeHeaderToolbar.SearchBarSlot /> : null}
           <NativeHeaderToolbar.Spacer flexible />
           <NativeHeaderToolbar.Button
             accessibilityLabel="New task"
