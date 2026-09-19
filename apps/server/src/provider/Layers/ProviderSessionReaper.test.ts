@@ -22,6 +22,7 @@ import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import { ProviderValidationError } from "../Errors.ts";
 import { ProviderSessionReaper } from "../Services/ProviderSessionReaper.ts";
+import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { ProviderService, type ProviderServiceShape } from "../Services/ProviderService.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import { makeProviderSessionReaperLive } from "./ProviderSessionReaper.ts";
@@ -122,7 +123,10 @@ function makeReadModel(
 
 describe("ProviderSessionReaper", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    ProviderSessionReaper | ProviderSessionRuntime.ProviderSessionRuntimeRepository,
+    | ProviderSessionReaper
+    | ProviderSessionRuntime.ProviderSessionRuntimeRepository
+    | ProviderSessionDirectory
+    | ProjectionSnapshotQuery,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -150,20 +154,29 @@ describe("ProviderSessionReaper", () => {
     );
   }
 
-  async function sweepAt(nowMs: number) {
+  async function sweepAt(
+    nowMs: number | { wallMs: number; monotonicMs: number },
+    monotonicMs = typeof nowMs === "number" ? nowMs : nowMs.monotonicMs,
+    afterWallRead?: () => void,
+  ) {
+    const time = typeof nowMs === "number" ? { wallMs: nowMs, monotonicMs } : nowMs;
     await runtime!.runPromise(
       Effect.gen(function* () {
         const reaper = yield* ProviderSessionReaper;
-        const clock = yield* Clock.Clock;
         const swept = yield* Deferred.make<void>();
         yield* reaper.start().pipe(
           Effect.provideService(Clock.Clock, {
-            currentTimeMillis: Effect.succeed(nowMs),
-            currentTimeMillisUnsafe: () => nowMs,
-            currentTimeNanos: Effect.succeed(BigInt(nowMs) * 1_000_000n),
-            currentTimeNanosUnsafe: () => BigInt(nowMs) * 1_000_000n,
-            monotonicTimeNanos: clock.monotonicTimeNanos,
-            monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+            currentTimeMillis: Effect.sync(() => {
+              const wallMs = time.wallMs;
+              afterWallRead?.();
+              afterWallRead = undefined;
+              return wallMs;
+            }),
+            currentTimeMillisUnsafe: () => time.wallMs,
+            currentTimeNanos: Effect.sync(() => BigInt(time.wallMs) * 1_000_000n),
+            currentTimeNanosUnsafe: () => BigInt(time.wallMs) * 1_000_000n,
+            monotonicTimeNanos: Effect.sync(() => BigInt(time.monotonicMs) * 1_000_000n),
+            monotonicTimeNanosUnsafe: () => BigInt(time.monotonicMs) * 1_000_000n,
             // Reaching the next scheduled sleep proves this sweep has finished.
             sleep: () => Deferred.succeed(swept, undefined).pipe(Effect.andThen(Effect.never)),
           }),
@@ -517,6 +530,179 @@ describe("ProviderSessionReaper", () => {
       expect(harness.stopSession).not.toHaveBeenCalled();
       await sweepAt(nowMs + 1_000);
       expect(harness.stopSession).toHaveBeenCalledExactlyOnceWith({ threadId });
+    },
+  );
+
+  it.each([
+    { sleepMs: 8 * 60 * 60 * 1_000, monotonicAdvances: false },
+    { sleepMs: 8 * 60 * 60 * 1_000, monotonicAdvances: true },
+    { sleepMs: 2_000, monotonicAdvances: false },
+  ])(
+    "gives sessions a fresh idle window after $sleepMs ms sleep, monotonic clock advances=$monotonicAdvances",
+    async ({ sleepMs, monotonicAdvances }) => {
+      const threadId = ThreadId.make("thread-reaper-sleep");
+      const now = "2026-04-14T01:00:00.000Z";
+      const nowMs = Date.parse(now);
+      const harness = await createHarness({
+        readModel: makeReadModel([{ id: threadId, session: null }]),
+      });
+      const repository = await runtime!.runPromise(
+        Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+      );
+      await runtime!.runPromise(
+        repository.upsert({
+          threadId,
+          providerName: "claudeAgent",
+          providerInstanceId: null,
+          adapterKey: "claudeAgent",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: now,
+          resumeCursor: { opaque: "resume-sleep" },
+          runtimePayload: null,
+        }),
+      );
+
+      await sweepAt(nowMs, 0);
+      expect(harness.stopSession).not.toHaveBeenCalled();
+
+      const resumedAt = nowMs + sleepMs;
+      const monotonicMs = monotonicAdvances ? sleepMs : 0;
+      await sweepAt(resumedAt, monotonicMs);
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      await sweepAt(resumedAt + 999, monotonicMs + 999);
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      const secondResumeAt = resumedAt + 999 + sleepMs;
+      const secondMonotonicMs = monotonicMs + 999 + (monotonicAdvances ? sleepMs : 0);
+      await sweepAt(secondResumeAt, secondMonotonicMs);
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      await sweepAt(secondResumeAt + 999, secondMonotonicMs + 999);
+      expect(harness.stopSession).not.toHaveBeenCalled();
+      await sweepAt(secondResumeAt + 1_000, secondMonotonicMs + 1_000);
+      expect(harness.stopSession).toHaveBeenCalledExactlyOnceWith({ threadId });
+    },
+  );
+
+  it("does not mistake a slow sweep for host sleep", async () => {
+    const threadId = ThreadId.make("thread-reaper-slow-stop");
+    const lastSeenAt = "2026-04-14T01:00:00.000Z";
+    const time = { wallMs: Date.parse(lastSeenAt) + 1_000, monotonicMs: 0 };
+    const harness = await createHarness({
+      readModel: makeReadModel([{ id: threadId, session: null }]),
+      stopSessionImplementation: () =>
+        Effect.sync(() => {
+          time.wallMs += 2_000;
+          time.monotonicMs += 2_000;
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderValidationError({
+                operation: "ProviderSessionReaper.test",
+                issue: "slow stop failed; retry on the next sweep",
+              }),
+            ),
+          ),
+        ),
+    });
+    const repository = await runtime!.runPromise(
+      Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+    );
+    await runtime!.runPromise(
+      repository.upsert({
+        threadId,
+        providerName: "claudeAgent",
+        providerInstanceId: null,
+        adapterKey: "claudeAgent",
+        runtimeMode: "full-access",
+        status: "running",
+        lastSeenAt,
+        resumeCursor: { opaque: "resume-slow-stop" },
+        runtimePayload: null,
+      }),
+    );
+    await sweepAt(time);
+    expect(harness.stopSession).toHaveBeenCalledTimes(1);
+
+    for (let attempt = 2; attempt <= 4; attempt++) {
+      time.wallMs += 62_000;
+      time.monotonicMs += 62_000;
+      await sweepAt(time);
+      expect(harness.stopSession).toHaveBeenCalledTimes(attempt);
+    }
+  });
+
+  it.each(
+    [false, true].flatMap((monotonicAdvances) =>
+      (["list", "query", "stop", "clock"] as const).flatMap((stage) =>
+        (stage === "stop" ? [true] : stage === "clock" ? [false] : [false, true]).map((fails) => ({
+          stage,
+          fails,
+          monotonicAdvances,
+        })),
+      ),
+    ),
+  )(
+    "preserves resume grace across $stage, fails=$fails, monotonic advances=$monotonicAdvances",
+    async ({ stage, fails, monotonicAdvances }) => {
+      const threadId = ThreadId.make("thread-reaper-mid-sweep-sleep");
+      const lastSeenAt = "2026-04-14T01:00:00.000Z";
+      const time = { wallMs: Date.parse(lastSeenAt) + 1_000, monotonicMs: 0 };
+      const harness = await createHarness({
+        readModel: makeReadModel([{ id: threadId, session: null }]),
+      });
+      const repository = await runtime!.runPromise(
+        Effect.service(ProviderSessionRuntime.ProviderSessionRuntimeRepository),
+      );
+      await runtime!.runPromise(
+        repository.upsert({
+          threadId,
+          providerName: "claudeAgent",
+          providerInstanceId: null,
+          adapterKey: "claudeAgent",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt,
+          resumeCursor: { opaque: "resume-mid-sweep" },
+          runtimePayload: null,
+        }),
+      );
+      const advanceTime = () => {
+        const sleepMs = 8 * 60 * 60 * 1_000;
+        time.wallMs += sleepMs;
+        if (monotonicAdvances) time.monotonicMs += sleepMs;
+      };
+      const suspend = Effect.sync(advanceTime).pipe(
+        Effect.andThen(fails ? Effect.die("failed after resume") : Effect.void),
+      );
+      if (stage === "list") {
+        const directory = await runtime!.runPromise(Effect.service(ProviderSessionDirectory));
+        const listBindings = directory.listBindings;
+        vi.spyOn(directory, "listBindings").mockImplementationOnce(() =>
+          suspend.pipe(Effect.andThen(listBindings())),
+        );
+      } else if (stage === "query") {
+        const query = await runtime!.runPromise(Effect.service(ProjectionSnapshotQuery));
+        const getThread = query.getThreadShellById;
+        vi.spyOn(query, "getThreadShellById").mockImplementationOnce((id) =>
+          suspend.pipe(Effect.andThen(getThread(id))),
+        );
+      } else if (stage === "stop") {
+        harness.stopSession.mockImplementationOnce(() => suspend);
+      }
+
+      const callsBeforeResume = stage === "stop" ? 1 : 0;
+      await sweepAt(time, time.monotonicMs, stage === "clock" ? advanceTime : undefined);
+      expect(harness.stopSession).toHaveBeenCalledTimes(callsBeforeResume);
+      await sweepAt(time);
+      expect(harness.stopSession).toHaveBeenCalledTimes(callsBeforeResume);
+      time.wallMs += 999;
+      time.monotonicMs += 999;
+      await sweepAt(time);
+      expect(harness.stopSession).toHaveBeenCalledTimes(callsBeforeResume);
+      time.wallMs += 1;
+      time.monotonicMs += 1;
+      await sweepAt(time);
+      expect(harness.stopSession).toHaveBeenCalledTimes(callsBeforeResume + 1);
     },
   );
 
