@@ -85,8 +85,15 @@ const decodeSessionUpdate = Schema.decodeUnknownEffect(AcpSchema.SessionNotifica
 const decodeElicitationComplete = Schema.decodeUnknownEffect(
   AcpSchema.ElicitationCompleteNotification,
 );
-const parserFactory = RpcSerialization.ndJsonRpc();
+// Cursor sessions replay large tool results on session/load; real sessions exceed
+// Effect's 16 MiB ndjson default and brick the thread on every resume.
+const ACP_MAX_WIRE_BYTES = 64 * 1024 * 1024;
+const parserFactory = RpcSerialization.ndJsonRpc({ maxBufferSize: ACP_MAX_WIRE_BYTES });
 const MAX_BUFFERED_RAW_NOTIFICATIONS = 32;
+// Budget serialized UTF-16 payload size, not exact object heap usage. Allow one
+// maximum-size wire message while preventing 32 large replays from accumulating.
+const MAX_BUFFERED_NOTIFICATION_BYTES = 2 * ACP_MAX_WIRE_BYTES;
+const encodeRawNotification = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 // Outbound JSON-RPC notification: no `id`, so peers never treat it as a request.
 const encodeJsonRpcNotification = Schema.encodeUnknownExit(
   Schema.fromJsonString(
@@ -104,8 +111,23 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const parser = parserFactory.makeUnsafe();
   const serverQueue = yield* Queue.unbounded<RpcMessage.FromClientEncoded>();
   const clientQueue = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
-  const notificationQueue = yield* Queue.sliding<AcpIncomingNotification>(
-    MAX_BUFFERED_RAW_NOTIFICATIONS,
+  const notificationReady = yield* Queue.sliding<void>(1);
+  const notifications: Array<{ notification: AcpIncomingNotification; bytes: number }> = [];
+  let notificationBytes = 0;
+  const incoming = Stream.fromEffectRepeat(
+    Effect.gen(function* () {
+      while (true) {
+        const entry = notifications.shift();
+        if (entry) {
+          notificationBytes -= entry.bytes;
+          if (notifications.length > 0) {
+            Queue.offerUnsafe(notificationReady, undefined);
+          }
+          return entry.notification;
+        }
+        yield* Queue.take(notificationReady);
+      }
+    }),
   );
   const disconnects = yield* Queue.unbounded<number>();
   const outgoing = yield* Queue.unbounded<string | Uint8Array, Cause.Done<void>>();
@@ -213,7 +235,23 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     );
 
   const dispatchNotification = (notification: AcpIncomingNotification) =>
-    Queue.offer(notificationQueue, notification).pipe(
+    Effect.sync(() => {
+      const bytes = encodeRawNotification(notification).length * 2;
+      while (
+        notifications.length > 0 &&
+        (notifications.length >= MAX_BUFFERED_RAW_NOTIFICATIONS ||
+          notificationBytes + bytes > MAX_BUFFERED_NOTIFICATION_BYTES)
+      ) {
+        notificationBytes -= notifications.shift()!.bytes;
+      }
+      // A transform can expand a notification beyond the wire limit. Callbacks
+      // still receive it, but the optional raw stream must stay within its budget.
+      if (bytes <= MAX_BUFFERED_NOTIFICATION_BYTES) {
+        notifications.push({ notification, bytes });
+        notificationBytes += bytes;
+        Queue.offerUnsafe(notificationReady, undefined);
+      }
+    }).pipe(
       Effect.andThen(
         options.onNotification
           ? options.onNotification(notification).pipe(Effect.catch(() => Effect.void))
@@ -611,7 +649,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     clientProtocol,
     serverProtocol,
     get incoming() {
-      return Stream.fromQueue(notificationQueue);
+      return incoming;
     },
     request: sendRequest,
     notify: sendNotification,
