@@ -731,6 +731,36 @@ export const layer = Layer.effect(
       },
     );
 
+    // The caller-side half of expectedExecution*: destination modes are
+    // pinned separately, but authorization compared them against the
+    // *calling* thread's snapshot modes. Re-reading that row inside the
+    // transaction fails the write when the caller's modes moved in between —
+    // the only way an unbound creation (whose stored modes are just the
+    // caller's, so the execution check is a no-op) or a cross-thread update
+    // can be caught before it outlives its authorization.
+    const ensureExpectedCaller = Effect.fn("ScheduledTaskService.ensureExpectedCaller")(
+      function* (input: {
+        readonly taskId: ScheduledTaskId | undefined;
+        readonly caller: {
+          readonly threadId: ThreadId;
+          readonly runtimeMode: ScheduledTask["runtimeMode"];
+          readonly interactionMode: ScheduledTask["interactionMode"];
+        };
+      }) {
+        const row = yield* boundThreadRow(input.caller.threadId);
+        if (
+          row === undefined ||
+          row.runtime_mode !== input.caller.runtimeMode ||
+          row.interaction_mode !== input.caller.interactionMode
+        ) {
+          return yield* taskError(
+            "The calling thread's modes changed since this scheduled-task change was authorized; retry the operation.",
+            input.taskId === undefined ? undefined : { taskId: input.taskId },
+          );
+        }
+      },
+    );
+
     // "A committed archive on the task's bound thread postdates its stored
     // enablement." When this holds, an explicit enable affirmation is a
     // resume — the row stayed enabled only because the archive's pause is
@@ -944,6 +974,10 @@ export const layer = Layer.effect(
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual",
+      expected?: {
+        readonly expectedProjectId?: ScheduledTask["projectId"] | undefined;
+        readonly expectedActiveRun?: ScheduledTaskRunNowInput["expectedActiveRun"] | undefined;
+      },
     ) {
       const reserved = yield* Ref.modify(activeRuns, (active) => {
         if (active.has(task.id)) return [false, active] as const;
@@ -972,6 +1006,24 @@ export const layer = Layer.effect(
               Effect.gen(function* () {
                 const active = yield* findTask(task.id);
                 if (active === null) return null;
+                // A manual run authorized against a separately loaded row pins
+                // that authorization here: a project move or a settled caller
+                // run committed in between fails the claim instead of firing
+                // through a scope or run the caller no longer holds.
+                if (expected !== undefined) {
+                  if (!taskMatchesExpected(expected, active)) {
+                    return yield* taskError(
+                      "Scheduled task changed since it was authorized; retry the operation.",
+                      { taskId: active.id },
+                    );
+                  }
+                  if (expected.expectedActiveRun !== undefined) {
+                    yield* ensureExpectedActiveRun({
+                      taskId: active.id,
+                      run: expected.expectedActiveRun,
+                    });
+                  }
+                }
                 // A next_run_at corrupted between the poll read and this
                 // re-read must not defect the poll; an unparseable value is
                 // treated as not due.
@@ -1449,11 +1501,15 @@ export const layer = Layer.effect(
               if (input.expectedActiveRun !== undefined) {
                 yield* ensureExpectedActiveRun({ taskId: task.id, run: input.expectedActiveRun });
               }
+              if (input.expectedCaller !== undefined) {
+                yield* ensureExpectedCaller({ taskId: task.id, caller: input.expectedCaller });
+              }
               // Same pin as update: the destination's modes are re-read here
               // so a concurrent elevation on the bound thread fails the write
               // rather than persisting a task authorized against a stale
               // snapshot. An unbound task's stored modes are what the caller
-              // passed, making the check a no-op.
+              // passed, making the check a no-op — the caller pin above is
+              // what catches a mid-write mode change on the calling thread.
               yield* ensureExpectedExecutionModes({
                 taskId: task.id,
                 projectId: task.projectId,
@@ -1531,6 +1587,9 @@ export const layer = Layer.effect(
               }
               if (input.expectedActiveRun !== undefined) {
                 yield* ensureExpectedActiveRun({ taskId: input.id, run: input.expectedActiveRun });
+              }
+              if (input.expectedCaller !== undefined) {
+                yield* ensureExpectedCaller({ taskId: input.id, caller: input.expectedCaller });
               }
               const nextEnabled = input.enabled ?? existing.enabled;
               const nextSchedule = input.schedule ?? existing.schedule;
@@ -1891,7 +1950,14 @@ export const layer = Layer.effect(
     const runNow: ScheduledTaskService["Service"]["runNow"] = (input: ScheduledTaskRunNowInput) =>
       Effect.gen(function* () {
         const task = yield* loadTask(input.id);
-        const next = yield* runTask(task, "manual").pipe(
+        const next = yield* runTask(task, "manual", {
+          ...(input.expectedProjectId === undefined
+            ? {}
+            : { expectedProjectId: input.expectedProjectId }),
+          ...(input.expectedActiveRun === undefined
+            ? {}
+            : { expectedActiveRun: input.expectedActiveRun }),
+        }).pipe(
           Effect.mapError((cause) =>
             taskError("Could not run schedule task.", { taskId: input.id, cause }),
           ),

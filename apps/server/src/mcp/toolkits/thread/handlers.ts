@@ -72,11 +72,12 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (
 export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
   run_scheduled_task_now: (input) =>
     Effect.gen(function* () {
-      const { caller } = yield* readMutationCaller();
+      const { scope, caller } = yield* readMutationCaller();
       if (
         caller.archivedAt !== null ||
         caller.runtimeMode !== "full-access" ||
-        caller.interactionMode !== "default"
+        caller.interactionMode !== "default" ||
+        caller.activeRunId === null
       )
         return yield* new OrchestratorMcpFailure({
           code: "capability_denied",
@@ -89,8 +90,20 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
           code: "invalid_request",
           message: "The task was not found in the calling project.",
         });
+      // The list() membership check and the caller's live run are snapshots:
+      // both are re-verified inside the run claim transaction so a project
+      // move or a settled caller run committed in between cannot carry this
+      // authorization into work launched outside the calling project.
       const { task } = yield* scheduler
-        .runNow({ id: input.taskId })
+        .runNow({
+          id: input.taskId,
+          expectedProjectId: caller.projectId,
+          expectedActiveRun: {
+            id: caller.activeRunId,
+            threadId: caller.id,
+            providerInstanceId: scope.providerInstanceId,
+          },
+        })
         .pipe(Effect.mapError(unavailable));
       return {
         taskId: task.id,

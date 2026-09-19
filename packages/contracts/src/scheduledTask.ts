@@ -136,6 +136,19 @@ const ScheduledTaskExpectedActiveRun = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
 });
 
+/**
+ * Pins the calling thread's modes at the time the mutation was authorized.
+ * Re-read inside the write transaction so a runtime/interaction-mode change
+ * on the caller racing the authorization fails the write instead of arming
+ * work the caller can no longer run — e.g. an unbound task that copied the
+ * caller's modes before the caller switched to plan.
+ */
+const ScheduledTaskExpectedCaller = Schema.Struct({
+  threadId: ThreadId,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+});
+
 export const ScheduledTaskUpsertInput = Schema.Struct({
   id: Schema.optional(ScheduledTaskId),
   requireExisting: Schema.optional(Schema.Boolean).annotate({
@@ -161,6 +174,7 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   // write rather than persisting a task authorized against a stale snapshot.
   expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
   expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
+  expectedCaller: Schema.optional(ScheduledTaskExpectedCaller),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
@@ -197,6 +211,7 @@ export const ScheduledTaskUpdateInput = Schema.Struct({
   expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
   expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
   expectedActiveRun: Schema.optional(ScheduledTaskExpectedActiveRun),
+  expectedCaller: Schema.optional(ScheduledTaskExpectedCaller),
 });
 export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
 
@@ -224,6 +239,12 @@ export type ScheduledTaskDeleteInput = typeof ScheduledTaskDeleteInput.Type;
 
 export const ScheduledTaskRunNowInput = Schema.Struct({
   id: ScheduledTaskId,
+  // Same optimistic preconditions as update/delete: enforced inside the
+  // run-claim transaction so a manual run authorized against a stale row —
+  // including a task moved to another project after the caller's scoped
+  // membership check — cannot fire through a project the caller does not own.
+  expectedProjectId: Schema.optional(ProjectId),
+  expectedActiveRun: Schema.optional(ScheduledTaskExpectedActiveRun),
 });
 export type ScheduledTaskRunNowInput = typeof ScheduledTaskRunNowInput.Type;
 

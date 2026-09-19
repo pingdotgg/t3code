@@ -1213,6 +1213,16 @@ const make = Effect.gen(function* () {
           },
           expectedExecutionRuntimeMode: parent.thread.runtimeMode,
           expectedExecutionInteractionMode: parent.thread.interactionMode,
+          // The task inherits this thread's modes, so the authorization is
+          // the caller's own current modes — which this pin re-reads inside
+          // the write transaction. For an unbound task the destination check
+          // above is a no-op (stored modes are the same snapshot), so this is
+          // what fails the write when the caller's modes moved mid-flight.
+          expectedCaller: {
+            threadId: scope.threadId,
+            runtimeMode: parent.thread.runtimeMode,
+            interactionMode: parent.thread.interactionMode,
+          },
           // Scope the idempotency key by provider session so two callers
           // reusing the same clientRequestId cannot collide on one task row.
           ...(input.clientRequestId === undefined
@@ -1307,6 +1317,16 @@ const make = Effect.gen(function* () {
                   expectedInteractionMode: existing.interactionMode,
                   expectedExecutionRuntimeMode: executionModes.runtimeMode,
                   expectedExecutionInteractionMode: executionModes.interactionMode,
+                  // requireTaskModeAccess compared the destination modes
+                  // against this thread's snapshot modes — the pin re-reads
+                  // that row inside the transaction so a caller-side mode
+                  // change racing the write fails instead of arming work the
+                  // caller no longer covers.
+                  expectedCaller: {
+                    threadId: scope.threadId,
+                    runtimeMode: parent.thread.runtimeMode,
+                    interactionMode: parent.thread.interactionMode,
+                  },
                 }),
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),

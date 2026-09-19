@@ -2468,6 +2468,107 @@ it.effect("mutations proceed while the pinned authorizing run is still active", 
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
+it.effect("runNow rejects when the pinned project or authorizing run drifted", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    const sql = yield* SqlClient.SqlClient;
+
+    // The caller's membership check saw this project; a move committed before
+    // the run claim must fail the run instead of launching work in a project
+    // the caller cannot see.
+    sendToThreadCalls = 0;
+    yield* sql`UPDATE scheduled_tasks SET project_id = 'project:moved' WHERE task_id = ${seeded.id}`;
+    const moved = yield* tasks
+      .runNow({ id: seeded.id, expectedProjectId: archivedBindingProjectId })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(moved));
+    assert.equal(sendToThreadCalls, 0);
+    yield* sql`UPDATE scheduled_tasks SET project_id = ${archivedBindingProjectId} WHERE task_id = ${seeded.id}`;
+
+    // The run the caller was authorized under has already completed: the pin
+    // is re-checked inside the claim transaction and fails the manual run.
+    yield* seedAuthorizingRun("completed");
+    const settled = yield* tasks
+      .runNow({ id: seeded.id, expectedActiveRun: authorizingRun })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(settled));
+    if (Exit.isFailure(settled)) {
+      assert.include(Cause.pretty(settled.cause), "no longer active");
+    }
+    assert.equal(sendToThreadCalls, 0);
+
+    // Pins that still match let the same call run.
+    yield* reseedAuthorizingRun("running");
+    const ran = yield* tasks.runNow({
+      id: seeded.id,
+      expectedProjectId: archivedBindingProjectId,
+      expectedActiveRun: authorizingRun,
+    });
+    assert.equal(ran.task.id, seeded.id);
+    assert.equal(sendToThreadCalls, 1);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("mutations reject when the calling thread's modes changed since authorization", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    // archiveBoundThreadId doubles as the calling thread here: the row the
+    // expectedCaller pin re-reads inside the write transaction.
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const caller = {
+      threadId: archiveBoundThreadId,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    } as const;
+
+    // An unbound creation inherits the caller's modes, so the destination
+    // pin is a no-op for it: a caller switched to plan between authorization
+    // and commit can only be caught by the caller pin.
+    yield* setBoundThreadModes(archiveBoundThreadId, {
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+    });
+    const driftedCreate = yield* tasks
+      .upsert({ ...boundTaskInput, threadId: null, enabled: true, expectedCaller: caller })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(driftedCreate));
+    if (Exit.isFailure(driftedCreate)) {
+      assert.include(Cause.pretty(driftedCreate.cause), "modes changed");
+    }
+
+    const seeded = yield* seedBoundTask(true);
+    const driftedUpdate = yield* tasks
+      .update({
+        id: seeded.id,
+        projectId: archivedBindingProjectId,
+        title: "stale caller",
+        expectedCaller: caller,
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(driftedUpdate));
+
+    // With the caller back at the authorized modes both writes land.
+    yield* setBoundThreadModes(archiveBoundThreadId, null);
+    const created = yield* tasks.upsert({
+      ...boundTaskInput,
+      id: ScheduledTaskId.make("scheduled-task:caller-pin-unbound"),
+      threadId: null,
+      enabled: true,
+      expectedCaller: caller,
+    });
+    assert.isNull(created.task.threadId);
+    const updated = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      title: "still authorized",
+      expectedCaller: caller,
+    });
+    assert.equal(Option.getOrThrow(updated).task.title, "still authorized");
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
 it.effect(
   "update succeeds on a paused task bound to an archived thread when pinned modes match",
   () =>
