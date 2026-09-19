@@ -23,6 +23,7 @@ import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
@@ -261,10 +262,9 @@ function fileManagerCommandForPlatform(
 // so the client would see a silent no-op. Require the handler before
 // advertising the file manager on Linux.
 //
-// The probe carries its own timeout well inside the scan timeout
-// `server.getConfig` applies to editor discovery: that outer timeout degrades
-// to an empty editor list, so a hung `xdg-mime` (broken D-Bus or desktop
-// session) must cost only the file manager, not every discovered editor.
+// The probe's shorter timeout leaves time for the remaining editor probes
+// before the overall scan deadline, even when `xdg-mime` hangs on a broken
+// D-Bus or desktop session.
 const LINUX_DIRECTORY_HANDLER_PROBE_TIMEOUT = "2 seconds";
 
 const hasUsableLinuxDirectoryHandler = Effect.fn("externalLauncher.hasUsableLinuxDirectoryHandler")(
@@ -417,15 +417,15 @@ function buildBrowserLaunch(
   };
 }
 
-const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
-  platform: NodeJS.Platform,
-  env: NodeJS.ProcessEnv,
-): Effect.fn.Return<
-  ReadonlyArray<EditorId>,
-  never,
-  FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
-> {
-  const available: EditorId[] = [];
+/**
+ * Appends editors to `available` as their sequential probes succeed. The caller
+ * can return this accumulator when a timeout interrupts the remaining probes.
+ */
+const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* (
+  available: EditorId[],
+) {
+  const platform = yield* HostProcessPlatform;
+  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
 
   for (const editor of EDITORS) {
     if (editor.commands === null) {
@@ -452,12 +452,6 @@ const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(
   return buildBrowserLaunch(target, platform, env);
 });
 
-const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
-  const platform = yield* HostProcessPlatform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
-  return yield* buildAvailableEditors(platform, env);
-});
-
 const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileManagerRevealKind")(
   function* () {
     const platform = yield* HostProcessPlatform;
@@ -472,12 +466,10 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
 // per-command cache lookups in @t3tools/shared/shell.
 //
 // This deliberately does not use `Effect.cachedWithTTL`: that memoizes the
-// first caller's Exit whatever it is, including an interrupt. Callers run this
-// on the connection fiber under a timeout (`resolveAvailableEditorsForConfig`),
-// so one client disconnecting mid-scan would cache the interrupt and replay it
-// to every later connect for the whole TTL, breaking `server.getConfig`
-// permanently. Storing only on success means an interrupted scan leaves the
-// cache untouched and the next connect simply rescans.
+// first caller's Exit whatever it is, including an interrupt. Editor discovery
+// can be interrupted by its timeout or by a client disconnecting mid-scan.
+// Storing only on success means an interrupted scan leaves the cache untouched
+// and the next connect simply rescans.
 // Expiry uses the monotonic clock (Clock.currentTimeNanos), matching the
 // command-resolution cache in @t3tools/shared/shell, so a backward wall-clock
 // adjustment cannot keep an expired entry alive.
@@ -494,7 +486,9 @@ interface EditorDiscoveryCacheEntry {
 export class ExternalLauncher extends Context.Service<
   ExternalLauncher,
   {
-    readonly resolveAvailableEditors: () => Effect.Effect<ReadonlyArray<EditorId>>;
+    readonly resolveAvailableEditors: (options?: {
+      readonly timeout?: Duration.Input;
+    }) => Effect.Effect<ReadonlyArray<EditorId>>;
     /**
      * Reveal kind for the host, or undefined when the executable a reveal
      * actually spawns is unavailable. Only meaningful when
@@ -769,15 +763,17 @@ export const make = Effect.gen(function* () {
   const editorDiscoveryCache = yield* Ref.make<Option.Option<EditorDiscoveryCacheEntry>>(
     Option.none(),
   );
-  const cachedAvailableEditors = Effect.gen(function* () {
+  const cachedAvailableEditors = Effect.fn("externalLauncher.cachedAvailableEditors")(function* (
+    available: EditorId[],
+  ) {
     const nowNanos = yield* Clock.currentTimeNanos;
     const entry = yield* Ref.get(editorDiscoveryCache);
     if (Option.isSome(entry) && entry.value.expiresAtNanos > nowNanos) {
       return entry.value.editors;
     }
-    const editors = yield* provideCommandResolutionServices(resolveAvailableEditors()).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
+    const editors = yield* provideCommandResolutionServices(
+      resolveAvailableEditors(available),
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
     yield* Ref.set(
       editorDiscoveryCache,
       Option.some({
@@ -789,7 +785,20 @@ export const make = Effect.gen(function* () {
   });
 
   return ExternalLauncher.of({
-    resolveAvailableEditors: () => cachedAvailableEditors,
+    resolveAvailableEditors: (options) =>
+      Effect.gen(function* () {
+        const available: EditorId[] = [];
+        const discovery = cachedAvailableEditors(available);
+        if (options?.timeout === undefined) {
+          return yield* discovery;
+        }
+        return yield* discovery.pipe(
+          Effect.timeoutOrElse({
+            duration: options.timeout,
+            orElse: () => Effect.succeed(available),
+          }),
+        );
+      }),
     resolveFileManagerRevealKind: () =>
       provideCommandResolutionServices(resolveFileManagerRevealKind()).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
