@@ -49,6 +49,7 @@ import {
   serverApi,
   traceRelayHttpRequestWith,
   unlinkEnvironmentRecord,
+  resetClerkOAuthClientCache,
   verifyRelayClientBearerToken,
   withoutCapturedParentSpan,
 } from "./Api.ts";
@@ -199,6 +200,7 @@ describe("relay client authentication", () => {
         Effect.sync(() => {
           vi.mocked(verifyToken).mockReset();
           vi.mocked(createClerkClient).mockReset();
+          resetClerkOAuthClientCache();
         }),
       ),
     ),
@@ -222,11 +224,19 @@ describe("relay client authentication", () => {
         secretKey: "clerk-secret-key",
         publishableKey: "pk_test_test",
       });
+      // The client is memoized per credential pair: a second verification
+      // with the same settings must not construct another client.
+      expect(yield* verifyRelayClientBearerToken(relaySettings, "oauth-token")).toEqual({
+        sub: "user_oauth",
+        mode: "clerk_oauth_bearer",
+      });
+      expect(createClerkClient).toHaveBeenCalledTimes(1);
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
           vi.mocked(verifyToken).mockReset();
           vi.mocked(createClerkClient).mockReset();
+          resetClerkOAuthClientCache();
         }),
       ),
     ),

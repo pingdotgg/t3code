@@ -1259,16 +1259,48 @@ function verifyClerkBearerToken(
   );
 }
 
+type ClerkOAuthClient = ReturnType<typeof createClerkClient>;
+
+// Client construction is pure overhead per request: the relay configuration is
+// isolate-scoped, so one client per credential pair is enough. Keyed by the
+// credentials so a config change still rebuilds.
+let cachedClerkOAuthClient:
+  | {
+      readonly secretKey: string;
+      readonly publishableKey: string;
+      readonly client: ClerkOAuthClient;
+    }
+  | undefined;
+
+/** Clears the memoized OAuth client (test isolation; production keys rotate via the keyed cache). */
+export function resetClerkOAuthClientCache(): void {
+  cachedClerkOAuthClient = undefined;
+}
+
+function clerkOAuthClientFor(secretKey: string, publishableKey: string): ClerkOAuthClient {
+  const cached = cachedClerkOAuthClient;
+  if (
+    cached !== undefined &&
+    cached.secretKey === secretKey &&
+    cached.publishableKey === publishableKey
+  ) {
+    return cached.client;
+  }
+  const client = createClerkClient({ secretKey, publishableKey });
+  cachedClerkOAuthClient = { secretKey, publishableKey, client };
+  return client;
+}
+
 function verifyClerkOAuthBearerToken(
   config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
   return Effect.tryPromise({
     try: async () => {
-      const client = createClerkClient({
-        secretKey: Redacted.value(config.clerkSecretKey),
-        publishableKey: config.clerkPublishableKey,
-      });
+      const client = clerkOAuthClientFor(
+        Redacted.value(config.clerkSecretKey),
+        config.clerkPublishableKey,
+      );
       const state = await client.authenticateRequest(
         new Request(config.relayIssuer, {
           headers: { authorization: `Bearer ${token}` },
