@@ -10,10 +10,18 @@ import { ResourceMonitorBinary } from "./resourceTelemetry/ResourceMonitorBinary
 
 export class WorktreeMeasurementError extends Schema.TaggedError<WorktreeMeasurementError>()(
   "WorktreeMeasurementError",
-  { cause: Schema.Defect() },
-) {}
-
-const isWorktreeMeasurementError = Schema.is(WorktreeMeasurementError);
+  {
+    path: Schema.String,
+    stage: Schema.Literals(["resolve", "spawn", "request", "response", "scan", "exit"]),
+    reason: Schema.Literals(["failed", "invalid-response", "premature-exit", "nonzero-exit"]),
+    exitCode: Schema.optionalKey(Schema.Int),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message() {
+    return `Worktree measurement ${this.stage}: ${this.reason}`;
+  }
+}
 
 const Progress = Schema.Struct({
   version: Schema.Literal(1),
@@ -44,16 +52,38 @@ export const make = Effect.gen(function* () {
   const measure: WorktreeSize["Service"]["measure"] = (root) =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const executable = yield* binary.resolve;
-        const child = yield* Effect.acquireRelease(
-          spawner.spawn(
-            ChildProcess.make(executable, ["--storage-scan", root], {
-              stdin: { stream: "pipe", endOnDone: false },
-              stdout: "pipe",
-              stderr: "ignore",
-              forceKillAfter: "2 seconds",
-            }),
+        const executable = yield* binary.resolve.pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorktreeMeasurementError({
+                path: root,
+                stage: "resolve",
+                reason: "failed",
+                cause,
+              }),
           ),
+        );
+        const child = yield* Effect.acquireRelease(
+          spawner
+            .spawn(
+              ChildProcess.make(executable, ["--storage-scan", root], {
+                stdin: { stream: "pipe", endOnDone: false },
+                stdout: "pipe",
+                stderr: "ignore",
+                forceKillAfter: "2 seconds",
+              }),
+            )
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new WorktreeMeasurementError({
+                    path: root,
+                    stage: "spawn",
+                    reason: "failed",
+                    cause,
+                  }),
+              ),
+            ),
           (handle) => handle.kill().pipe(Effect.ignore),
         );
         const read = yield* Stream.toPull(
@@ -61,37 +91,106 @@ export const make = Effect.gen(function* () {
             Stream.decodeText(),
             Stream.splitLines,
             Stream.filter((line) => line !== ""),
-            Stream.mapEffect((line) => decodeEvent(line)),
+            Stream.mapError(
+              (cause) =>
+                new WorktreeMeasurementError({
+                  path: root,
+                  stage: "response",
+                  reason: "failed",
+                  cause,
+                }),
+            ),
+            Stream.mapEffect((line) =>
+              decodeEvent(line).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new WorktreeMeasurementError({
+                      path: root,
+                      stage: "response",
+                      reason: "invalid-response",
+                      cause,
+                    }),
+                ),
+              ),
+            ),
           ),
         );
         // Request only when downstream pulls: a paused scan keeps its native cursor,
         // while closing the stream terminates the child and releases its handles.
         return Stream.paginate(undefined, () =>
           Effect.gen(function* () {
-            yield* Stream.run(Stream.encodeText(Stream.make("next\n")), child.stdin);
+            yield* Stream.run(Stream.encodeText(Stream.make("next\n")), child.stdin).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new WorktreeMeasurementError({
+                    path: root,
+                    stage: "request",
+                    reason: "failed",
+                    cause,
+                  }),
+              ),
+            );
             const events = yield* read.pipe(
               Pull.catchDone(() =>
                 Effect.fail(
                   new WorktreeMeasurementError({
-                    cause: "Native storage scanner exited before completion",
+                    path: root,
+                    stage: "response",
+                    reason: "premature-exit",
                   }),
                 ),
               ),
               Effect.timeout("30 seconds"),
+              Effect.catchTags({
+                TimeoutError: (cause) =>
+                  Effect.fail(
+                    new WorktreeMeasurementError({
+                      path: root,
+                      stage: "response",
+                      reason: "failed",
+                      cause,
+                    }),
+                  ),
+              }),
             );
             if (events.length !== 1)
               return yield* Effect.fail(
-                new WorktreeMeasurementError({ cause: "Unexpected storage scan response" }),
+                new WorktreeMeasurementError({
+                  path: root,
+                  stage: "response",
+                  reason: "invalid-response",
+                }),
               );
             const event = events[0];
             if ("error" in event)
-              return yield* Effect.fail(new WorktreeMeasurementError({ cause: event.error }));
+              return yield* Effect.fail(
+                new WorktreeMeasurementError({
+                  path: root,
+                  stage: "scan",
+                  reason: "failed",
+                  cause: event.error,
+                }),
+              );
             if (event.done) {
-              const exitCode = yield* child.exitCode.pipe(Effect.timeout("2 seconds"));
+              const exitCode = yield* child.exitCode.pipe(
+                Effect.timeout("2 seconds"),
+                Effect.mapError(
+                  (cause) =>
+                    new WorktreeMeasurementError({
+                      path: root,
+                      stage: "exit",
+                      reason: "failed",
+                      cause,
+                    }),
+                ),
+              );
               if (exitCode !== 0)
                 return yield* Effect.fail(
                   new WorktreeMeasurementError({
-                    cause: `Native storage scanner exited with ${exitCode}`,
+                    path: root,
+                    stage: "exit",
+                    reason: "nonzero-exit",
+                    exitCode,
                   }),
                 );
             }
@@ -102,10 +201,6 @@ export const make = Effect.gen(function* () {
           }),
         );
       }),
-    ).pipe(
-      Stream.mapError((cause) =>
-        isWorktreeMeasurementError(cause) ? cause : new WorktreeMeasurementError({ cause }),
-      ),
     );
   return WorktreeSize.of({ measure });
 });

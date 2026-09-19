@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, ReadDir};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -67,7 +67,7 @@ fn file_info(path: &Path) -> io::Result<FileInfo> {
     let mut allocated = standard.AllocationSize;
     let mut id = FILE_ID_INFO::default();
     unsafe {
-        if !directory && standard.NumberOfLinks > 1 {
+        if directory || standard.NumberOfLinks > 1 {
             GetFileInformationByHandleEx(
                 handle,
                 FileIdInfo,
@@ -125,6 +125,26 @@ struct Progress {
 }
 
 #[derive(Default)]
+struct Directories {
+    device: Option<u64>,
+    visited: HashSet<(u64, u128)>,
+}
+impl Directories {
+    fn visit(&mut self, identity: (u64, u128)) -> io::Result<()> {
+        let device = *self.device.get_or_insert(identity.0);
+        if device != identity.0 {
+            return Err(io::Error::other(
+                "directory crosses the root filesystem boundary",
+            ));
+        }
+        if !self.visited.insert(identity) {
+            return Err(io::Error::other("directory identity was already visited"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default)]
 struct Worker {
     current: Option<ReadDir>,
     // A hardlinked file only contributes once all of its links were found in this worktree.
@@ -136,6 +156,7 @@ impl Worker {
     fn step(
         &mut self,
         pending: &Mutex<Vec<PathBuf>>,
+        directories: &Mutex<Directories>,
         limit: usize,
         deadline: Instant,
     ) -> io::Result<()> {
@@ -173,6 +194,7 @@ impl Worker {
                         "queued directory is no longer a directory",
                     ));
                 }
+                directories.lock().unwrap().visit(info.identity)?;
                 self.bytes += info.bytes;
                 self.current = Some(fs::read_dir(directory)?);
             }
@@ -190,6 +212,7 @@ fn worker_count(available_cpus: usize) -> usize {
 
 struct Scan {
     pending: Mutex<Vec<PathBuf>>,
+    directories: Mutex<Directories>,
     workers: Vec<Worker>,
 }
 
@@ -197,6 +220,7 @@ impl Scan {
     fn new(root: PathBuf) -> Self {
         Self {
             pending: Mutex::new(vec![root]),
+            directories: Mutex::new(Directories::default()),
             workers: (0..worker_count(
                 std::thread::available_parallelism()
                     .map(|cpus| cpus.get())
@@ -210,6 +234,7 @@ impl Scan {
     fn step(&mut self, limit: usize, budget: Duration) -> io::Result<Progress> {
         let deadline = Instant::now() + budget;
         let pending = &self.pending;
+        let directories = &self.directories;
         let workers = self.workers.len();
         // Join every batch before replying: no filesystem work continues while the
         // client pauses requests, and dropping the scan closes every directory cursor.
@@ -220,7 +245,7 @@ impl Scan {
                 .enumerate()
                 .map(|(index, worker)| {
                     let allowance = limit / workers + usize::from(index < limit % workers);
-                    scope.spawn(move || worker.step(pending, allowance, deadline))
+                    scope.spawn(move || worker.step(pending, directories, allowance, deadline))
                 })
                 .collect();
             let mut result = Ok(());
