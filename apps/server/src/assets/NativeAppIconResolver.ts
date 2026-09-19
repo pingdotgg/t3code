@@ -21,7 +21,45 @@ import * as ServerConfig from "../config.ts";
 const ICON_SIZE = 64;
 const COMMAND_TIMEOUT = "5 seconds";
 const RESOLUTION_CACHE_TTL = Duration.hours(1);
+const MISSING_APP_CACHE_TTL = Duration.seconds(30);
 const RESOLUTION_CACHE_MAX_ENTRIES = 256;
+
+// JXA exposes AppKit through the built-in osascript runtime, including on CLI-only
+// installations. These scripts call local APIs; they do not send Apple events or
+// launch applications. App references and paths are passed as arguments, never code.
+const APPLICATION_PATH_SCRIPT = `
+ObjC.import("AppKit");
+function run(argv) {
+  const url = $.NSWorkspace.sharedWorkspace.URLForApplicationWithBundleIdentifier(argv[0]);
+  return url.isNil() ? "" : ObjC.unwrap(url.path);
+}
+`;
+
+const APPLICATION_ICON_SCRIPT = `
+ObjC.import("AppKit");
+function run(argv) {
+  const size = Number(argv[2]);
+  const icon = $.NSWorkspace.sharedWorkspace.iconForFile(argv[0]);
+  const bitmap = $.NSBitmapImageRep.alloc
+    .initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(
+      null, size, size, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0
+    );
+  const context = $.NSGraphicsContext.graphicsContextWithBitmapImageRep(bitmap);
+  $.NSGraphicsContext.saveGraphicsState;
+  try {
+    $.NSGraphicsContext.setCurrentContext(context);
+    icon.drawInRectFromRectOperationFraction(
+      $.NSMakeRect(0, 0, size, size), $.NSZeroRect, $.NSCompositingOperationCopy, 1
+    );
+    context.flushGraphics;
+  } finally {
+    $.NSGraphicsContext.restoreGraphicsState;
+  }
+  const png = bitmap.representationUsingTypeProperties($.NSPNGFileType, $({}));
+  if (!png.writeToFileAtomically(argv[1], true)) throw new Error("Cannot write application icon");
+  return "";
+}
+`;
 
 /** Resolves and caches macOS application icons without exposing host paths to clients. */
 export class NativeAppIconResolver extends Context.Service<
@@ -94,9 +132,23 @@ const resolveApplicationPath = Effect.fn("NativeAppIconResolver.resolveApplicati
   app: ToolActivityNativeAppReference,
 ) {
   const path = yield* Path.Path;
+  if (app._tag === "app-id") {
+    const nativePath = yield* commandOutput("/usr/bin/osascript", [
+      "-l",
+      "JavaScript",
+      "-e",
+      APPLICATION_PATH_SCRIPT,
+      app.appId,
+    ]).pipe(
+      Effect.map((value) => value.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+    if (path.isAbsolute(nativePath) && nativePath.endsWith(".app")) return nativePath;
+  }
+
   const query =
     app._tag === "app-id"
-      ? `kMDItemCFBundleIdentifier == '${app.appId}'`
+      ? `kMDItemCFBundleIdentifier == '${escapeSpotlightString(app.appId)}'`
       : `kMDItemContentType == 'com.apple.application-bundle' && kMDItemDisplayName == '${escapeSpotlightString(app.displayName)}'`;
   const spotlightOutput = yield* commandOutput("/usr/bin/mdfind", [query]);
   const candidates = spotlightOutput
@@ -140,43 +192,13 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   if (!appPath) return null;
 
   const canonicalAppPath = yield* fileSystem.realPath(appPath);
+  if ((yield* fileSystem.stat(canonicalAppPath)).type !== "Directory") return null;
   const infoPlistPath = path.join(canonicalAppPath, "Contents", "Info.plist");
-  const resourcesDirectory = path.join(canonicalAppPath, "Contents", "Resources");
-  const iconName =
-    (yield* plistValue(infoPlistPath, "CFBundleIconFile")) ||
-    (yield* plistValue(infoPlistPath, "CFBundleIconName"));
-  if (iconName && path.basename(iconName) !== iconName) return null;
-  const iconFileName = iconName ? (path.extname(iconName) ? iconName : `${iconName}.icns`) : null;
-  const resourceEntries = yield* fileSystem
-    .readDirectory(resourcesDirectory)
-    .pipe(Effect.orElseSucceed(() => []));
-  const sourceIconCandidate =
-    (iconFileName ? yield* existingFile(path.join(resourcesDirectory, iconFileName)) : null) ??
-    (yield* existingFile(path.join(resourcesDirectory, "AppIcon.icns"))) ??
-    (resourceEntries.find((entry) => entry.toLowerCase().endsWith(".icns"))
-      ? yield* existingFile(
-          path.join(
-            resourcesDirectory,
-            resourceEntries.find((entry) => entry.toLowerCase().endsWith(".icns"))!,
-          ),
-        )
-      : null);
-  if (!sourceIconCandidate) return null;
-  const sourceIconPath = yield* fileSystem.realPath(sourceIconCandidate);
-  const relativeSource = path.relative(resourcesDirectory, sourceIconPath);
-  if (
-    relativeSource === ".." ||
-    relativeSource.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativeSource)
-  ) {
-    return null;
-  }
-
   const appVersion =
     (yield* plistValue(infoPlistPath, "CFBundleVersion")) ||
     (yield* plistValue(infoPlistPath, "CFBundleShortVersionString"));
   const cacheKey = NodeCrypto.createHash("sha256")
-    .update(`${canonicalAppPath}\0${appVersion}\0${sourceIconPath}`)
+    .update(`nsworkspace-v1\0${ICON_SIZE}\0${canonicalAppPath}\0${appVersion}`)
     .digest("hex");
   const cacheDirectory = path.join(config.providerStatusCacheDir, "native-app-icons");
   const cachePath = path.join(cacheDirectory, `${cacheKey}.png`);
@@ -187,16 +209,14 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
     cacheDirectory,
     `.${cacheKey}-${process.pid}-${(yield* Clock.currentTimeMillis).toString(36)}-${NodeCrypto.randomUUID()}.png`,
   );
-  yield* commandOutput("/usr/bin/sips", [
-    "-z",
-    String(ICON_SIZE),
-    String(ICON_SIZE),
-    "-s",
-    "format",
-    "png",
-    sourceIconPath,
-    "--out",
+  yield* commandOutput("/usr/bin/osascript", [
+    "-l",
+    "JavaScript",
+    "-e",
+    APPLICATION_ICON_SCRIPT,
+    canonicalAppPath,
     temporaryPath,
+    String(ICON_SIZE),
   ]).pipe(
     Effect.tap(() => fileSystem.rename(temporaryPath, cachePath)),
     Effect.ensuring(
@@ -221,7 +241,7 @@ export const make = Effect.gen(function* () {
     {
       capacity: RESOLUTION_CACHE_MAX_ENTRIES,
       timeToLive: Exit.match({
-        onSuccess: () => RESOLUTION_CACHE_TTL,
+        onSuccess: (value) => (value === null ? MISSING_APP_CACHE_TTL : RESOLUTION_CACHE_TTL),
         onFailure: () => Duration.zero,
       }),
     },
@@ -241,7 +261,7 @@ export const make = Effect.gen(function* () {
   ) {
     if (
       hostPlatform !== "darwin" ||
-      (app._tag === "display-name" && containsControlCharacter(app.displayName))
+      containsControlCharacter(app._tag === "app-id" ? app.appId : app.displayName)
     ) {
       return null;
     }
