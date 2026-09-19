@@ -58,7 +58,7 @@ function DeviceStreamDocumentView({
   readonly background: string;
   readonly onRetry: () => void;
 }) {
-  const webView = useRef<WebView>(null);
+  const webView = useRef<WebView<object>>(null);
   const source = useMemo(
     () => ({
       html: deviceStreamDocument(configuration, deviceStreamScript),
@@ -83,7 +83,7 @@ function DeviceStreamDocumentView({
     return () => view?.injectJavaScript("window.T3DeviceStream?.stop(); true;");
   }, []);
   return (
-    <WebView
+    <WebView<object>
       ref={webView}
       source={source}
       originWhitelist={["*"]}

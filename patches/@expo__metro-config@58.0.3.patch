@@ -1,24 +1,10 @@
 diff --git a/build/serializer/sourceMap.js b/build/serializer/sourceMap.js
-index 547e53377a7c560db8dfd983601606de15896e07..29a0c855088bceacb7ba00a627615539cbf37738 100644
+index 2a58f5792e351b3c64dca1590c36586d7c1fdab3..a90ce773ff7af897acab586621d11ff14a00317f 100644
 --- a/build/serializer/sourceMap.js
 +++ b/build/serializer/sourceMap.js
-@@ -27,6 +27,13 @@ function loadSourcemapCodec() {
-     }
-     return _sourcemapCodec;
- }
-+let _traceMapping;
-+function loadTraceMapping() {
-+    if (!_traceMapping) {
-+        _traceMapping = require('@jridgewell/trace-mapping');
-+    }
-+    return _traceMapping;
-+}
- let _Generator;
- function loadGenerator() {
-     if (!_Generator) {
-@@ -224,6 +231,58 @@ function repairInvalidNegativeIndices(map) {
-     }
-     return changed ? { ...map, mappings: encode(decoded) } : map;
+@@ -177,6 +177,58 @@ function repairInvalidNegativeIndices(map) {
+         mappings: encode(decoded)
+     } : map;
  }
 +// Hermes can emit mappings for Metro trailer/debug lines that have no
 +// corresponding Metro source-map line. @jridgewell/remapping assumes every
@@ -72,11 +58,11 @@ index 547e53377a7c560db8dfd983601606de15896e07..29a0c855088bceacb7ba00a627615539
 +    }
 +    return sanitized;
 +}
- // `maps[0]` is the original-most transform; `maps[maps.length - 1]` is
- // the most recent. Built on `@jridgewell/remapping` instead of mozilla's
- // `SourceMapConsumer`-based composer.
-@@ -251,7 +310,7 @@ function composeSourceMaps(maps) {
-         return { ...map, ignoreList: map.x_google_ignoreList };
+ function composeSourceMaps(maps) {
+     if (maps.length < 1) {
+         throw new Error('composeSourceMaps: Expected at least one map');
+@@ -192,7 +244,7 @@ function composeSourceMaps(maps) {
+         };
      });
      // Metro convention is original-first; remapping is most-recent first.
 -    let input = normalized.slice().reverse();

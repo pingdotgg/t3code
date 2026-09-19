@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { Pressable, TextInput, View } from "react-native";
+import { Pressable, TextInput, type TextInputInstance, View } from "react-native";
 
 import { SymbolView } from "./AppSymbol";
 
@@ -11,7 +11,7 @@ export function MaterialSearchField({
   value,
   onChangeText,
 }: {
-  readonly inputRef: RefObject<TextInput | null>;
+  readonly inputRef: RefObject<TextInputInstance | null>;
   readonly accessibilityLabel: string;
   readonly clearAccessibilityLabel: string;
   readonly placeholder: string;
