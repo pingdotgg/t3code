@@ -39,7 +39,7 @@ const withWindowsEnvironmentMocks = <A, E, R>(
   );
 
 describe("readPathFromLoginShell", () => {
-  it("uses a shell-agnostic printenv PATH probe", () => {
+  it("probes PATH through a login shell without interactive job control", () => {
     const execFile = vi.fn<
       (
         file: string,
@@ -62,11 +62,53 @@ describe("readPathFromLoginShell", () => {
     const [shell, args, options] = firstCall;
     expect(shell).toBe("/opt/homebrew/bin/fish");
     expect(args).toHaveLength(2);
-    expect(args?.[0]).toBe("-ilc");
+    // `-l` without `-i`: interactive job control stops the probe on SIGTTOU
+    // when the session inherits a controlling TTY owned by another pgrp.
+    expect(args?.[0]).toBe("-lc");
+    expect(args?.[0]).not.toContain("i");
     expect(args?.[1]).toContain("printenv PATH || true");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");
     expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+  });
+
+  it("keeps zsh interactive startup files while disabling job control", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "__T3CODE_ENV_PATH_START__\n/a:/b\n__T3CODE_ENV_PATH_END__\n");
+
+    expect(readPathFromLoginShell("/bin/zsh", execFile)).toBe("/a:/b");
+
+    const args = execFile.mock.calls[0]?.[1];
+    // `-i` keeps ~/.zshrc, where version managers commonly export PATH, and
+    // `+m` clears MONITOR before startup so the shell never tcsetpgrp()s a
+    // controlling TTY owned by another process group.
+    expect(args).toHaveLength(3);
+    expect(args?.[0]).toBe("+m");
+    expect(args?.[1]).toBe("-ilc");
+    expect(args?.[2]).toContain("printenv PATH || true");
+  });
+
+  it("does not probe bash interactively", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >(() => "__T3CODE_ENV_PATH_START__\n/a:/b\n__T3CODE_ENV_PATH_END__\n");
+
+    expect(readPathFromLoginShell("/bin/bash", execFile)).toBe("/a:/b");
+
+    const args = execFile.mock.calls[0]?.[1];
+    // Login bash never reads ~/.bashrc, so `-i` adds nothing, and bash still
+    // grabs the terminal even with `+m` - it must stay non-interactive.
+    expect(args).toHaveLength(2);
+    expect(args?.[0]).toBe("-lc");
   });
 });
 
