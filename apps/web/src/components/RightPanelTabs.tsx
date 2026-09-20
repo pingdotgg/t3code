@@ -45,6 +45,8 @@ import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { Button } from "~/components/ui/button";
+// Reuses the local shadcn Badge: https://ui.shadcn.com/docs/components/base/badge
+import { Badge } from "~/components/ui/badge";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
@@ -287,15 +289,9 @@ function agentsWorkingLabel(count: number): string {
 
 function AgentCountPill({ count, className }: { count: number; className?: string }) {
   return (
-    <span
-      aria-hidden
-      className={cn(
-        "flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white",
-        className,
-      )}
-    >
+    <Badge aria-hidden size="count" variant="infoSolid" className={className}>
       {count}
-    </span>
+    </Badge>
   );
 }
 
