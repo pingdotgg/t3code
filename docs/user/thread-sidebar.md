@@ -140,7 +140,7 @@ another provider instance.
 
 When the provider reports a reset time, choose **Resume at reset** to schedule a
 continuation. You can cancel it from the thread. Enable **Auto-resume limited
-threads** in thread behavior settings to schedule new limit stops by default.
+threads** in thread behavior settings to schedule limit stops by default.
 The environment must be running when the reset arrives; it resumes overdue
 continuations after a restart. Sending a new message, archiving, or settling the
 thread prevents a pending continuation from starting.

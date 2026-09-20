@@ -52,12 +52,16 @@ export function limitRecoveryCommand(
     (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
   )
     return null;
+  const deliveryIdentity = `${identity}:${recovery.requestId ?? "legacy"}`;
   return {
     type: "message.dispatch",
-    commandId: CommandId.make(`limit-resume:${identity}`),
-    messageId: MessageId.make(`limit-resume:${identity}`),
+    commandId: CommandId.make(`limit-resume:${deliveryIdentity}`),
+    messageId: MessageId.make(`limit-resume:${deliveryIdentity}`),
     threadId: thread.id,
     usageLimitContinuationOfRunId: thread.latestRunId,
+    ...(recovery.requestId === undefined
+      ? {}
+      : { usageLimitRecoveryRequestId: recovery.requestId }),
     text: "Continue where you left off.",
     attachments: [],
     dispatchMode: { type: "start_immediately" },
@@ -66,7 +70,7 @@ export function limitRecoveryCommand(
   };
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const projections = yield* ProjectionStoreV2;
   const threads = yield* ThreadManagementService;
   const settings = yield* ServerSettingsService;

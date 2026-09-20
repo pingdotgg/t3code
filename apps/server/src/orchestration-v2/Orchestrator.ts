@@ -2408,7 +2408,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined
               ? {}
-              : { limitRecovery: command.limitRecovery }),
+              : {
+                  limitRecovery:
+                    command.limitRecovery === null
+                      ? null
+                      : { ...command.limitRecovery, requestId: command.commandId },
+                }),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined
@@ -3791,6 +3796,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           failure?.class !== "usage_limit" ||
           threadShellFromProjection(projection).lastErrorClass !== "usage_limit" ||
           !recovery?.autoResume ||
+          recovery.requestId !== command.usageLimitRecoveryRequestId ||
           recovery.runId !== run.id ||
           recovery.resetAt !== failure.resetAt ||
           Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||

@@ -327,6 +327,7 @@ export const OrchestrationV2ProviderCapabilities = Schema.Struct({
 export type OrchestrationV2ProviderCapabilities = typeof OrchestrationV2ProviderCapabilities.Type;
 
 export const OrchestrationV2LimitRecovery = Schema.Struct({
+  requestId: Schema.optional(CommandId),
   runId: RunId,
   resetAt: IsoDateTime,
   autoResume: Schema.Boolean,
@@ -2429,6 +2430,7 @@ export const OrchestrationV2Command = Schema.Union([
     sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
     restartContinuationOfRunId: Schema.optional(RunId),
     usageLimitContinuationOfRunId: Schema.optional(RunId),
+    usageLimitRecoveryRequestId: Schema.optional(CommandId),
     /** Resolve untargeted delivery against the server's serialized thread state. */
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     delegatedCompletion: Schema.optional(
