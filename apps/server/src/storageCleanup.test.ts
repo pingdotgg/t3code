@@ -1,13 +1,32 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, vi } from "vite-plus/test";
+import { it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProjectId,
   ProviderInstanceId,
   RunId,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  DEFAULT_SERVER_SETTINGS,
+  GitCommandError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { storageCleanupActivityAt, storageCleanupThreadIdle } from "./storageCleanup.ts";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as ServerConfig from "./config.ts";
+import * as GitManager from "./git/GitManager.ts";
+import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "./orchestration-v2/Orchestrator.ts";
+import { ProjectionStoreV2 } from "./orchestration-v2/ProjectionStore.ts";
+import * as Settings from "./serverSettings.ts";
+import * as TerminalManager from "./terminal/Manager.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { make, storageCleanupActivityAt, storageCleanupThreadIdle } from "./storageCleanup.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -104,3 +123,103 @@ describe("V2 storage cleanup eligibility", () => {
     return { ...candidate(), status };
   }
 });
+
+it.effect.each([true, false])(
+  "inspects linked Git worktrees only when jj is absent (jj: %s)",
+  (hasJj) => {
+    const status = vi.fn((cwd: string) =>
+      Effect.fail(
+        new GitCommandError({
+          operation: "test.cleanupStatus",
+          command: "git status",
+          cwd,
+          detail: "Stop after Git inspection.",
+        }),
+      ),
+    );
+    const remove = vi.fn(() => Effect.die("Git must not remove jj workspaces"));
+    return Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectRoot = yield* fs.makeTempDirectoryScoped();
+      const worktreePath = path.join(config.worktreesDir, "jj-worktree");
+      yield* fs.makeDirectory(worktreePath, { recursive: true });
+      if (hasJj) yield* fs.makeDirectory(path.join(worktreePath, ".jj"));
+      yield* fs.writeFileString(
+        path.join(worktreePath, ".git"),
+        "gitdir: /unused/git/worktrees/jj\n",
+      );
+      const inspected = yield* Deferred.make<void>();
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        storageCleanup: {
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeAfterDays: 1,
+        },
+      };
+      yield* Effect.gen(function* () {
+        const cleanup = yield* make;
+        yield* cleanup.start();
+        yield* Deferred.await(inspected);
+        yield* cleanup.drain;
+        expect(status).toHaveBeenCalledTimes(hasJj ? 0 : 1);
+        expect(remove).not.toHaveBeenCalled();
+        expect(yield* fs.exists(path.join(worktreePath, ".git"))).toBe(true);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(Settings.ServerSettingsService)({
+              getSettings: Effect.succeed(settings),
+              subscribeChanges: Effect.succeed(Stream.empty),
+            }),
+            Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+              getProjectShellsWithoutEnrichment: () =>
+                Effect.succeed([
+                  {
+                    id: ProjectId.make("project-1"),
+                    title: "Project",
+                    workspaceRoot: projectRoot,
+                    defaultModelSelection: null,
+                    scripts: [],
+                    createdAt: DateTime.formatIso(at(0)),
+                    updatedAt: DateTime.formatIso(at(0)),
+                  },
+                ]),
+            }),
+            Layer.mock(ProjectionStoreV2)({
+              getShellSnapshot: (options) =>
+                Deferred.succeed(inspected, undefined).pipe(
+                  Effect.as({
+                    schemaVersion: 1,
+                    snapshotSequence: 0,
+                    threads:
+                      options?.location === "archive"
+                        ? []
+                        : [shell({ branch: "feature", worktreePath })],
+                    archivedThreads: [],
+                  }),
+                ),
+            }),
+            Layer.mock(OrchestratorV2)({ streamDomainEvents: Stream.empty }),
+            NodeSqliteClient.layer({ filename: ":memory:" }),
+            Layer.mock(GitVcsDriver.GitVcsDriver)({
+              statusDetailsLocal: status,
+              removeWorktree: remove,
+            }),
+            Layer.mock(GitManager.GitManager)({}),
+            Layer.mock(TerminalManager.TerminalManager)({
+              subscribeMetadata: () => Effect.succeed(() => {}),
+            }),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-jj-cleanup-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+  },
+);
