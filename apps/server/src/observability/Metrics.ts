@@ -58,6 +58,29 @@ export const providerRuntimeEventsTotal = Metric.counter("t3_provider_runtime_ev
   description: "Total canonical provider runtime events processed.",
 });
 
+export const mcpToolCallsTotal = Metric.counter("t3_mcp_tool_calls_total", {
+  description: "Total authenticated MCP tool operations executed.",
+});
+
+export const mcpToolCallDuration = Metric.timer("t3_mcp_tool_call_duration", {
+  description: "Authenticated MCP tool operation duration.",
+});
+
+export const mcpWorkStateResultsTotal = Metric.counter("t3_mcp_work_state_results_total", {
+  description: "Durable work-state operation outcomes.",
+});
+
+export const contextCompactionsTotal = Metric.counter("t3_context_compactions_total", {
+  description: "Total provider context compactions observed.",
+});
+
+export const contextCompactionTokensRemovedTotal = Metric.counter(
+  "t3_context_compaction_tokens_removed_total",
+  {
+    description: "Total context tokens removed by compaction.",
+  },
+);
+
 export const gitCommandsTotal = Metric.counter("t3_git_commands_total", {
   description: "Total git commands executed by the server runtime.",
 });

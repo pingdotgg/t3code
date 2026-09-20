@@ -217,6 +217,10 @@ const ThreadActivityKindsLookupInput = Schema.Struct({
   threadId: ThreadId,
   activityKinds: Schema.Array(Schema.String),
 });
+const LatestThreadActivityByKindInput = Schema.Struct({
+  threadId: ThreadId,
+  kind: Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty(), Schema.isMaxLength(128)),
+});
 const ThreadActivityIdsLookupInput = Schema.Struct({
   activityIds: Schema.Array(ProjectionThreadActivity.fields.activityId),
 });
@@ -1455,6 +1459,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const getLatestThreadActivityByKindRow = SqlSchema.findOneOption({
+    Request: LatestThreadActivityByKindInput,
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ threadId, kind }) =>
+      sql`
+        SELECT
+          activity_id AS "activityId",
+          thread_id AS "threadId",
+          turn_id AS "turnId",
+          tone,
+          kind,
+          summary,
+          payload_json AS "payload",
+          sequence,
+          created_at AS "createdAt"
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND kind = ${kind}
+        ORDER BY sequence DESC, created_at DESC, activity_id DESC
+        LIMIT 1
+      `,
+  });
+
   const getUserInputActivityRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ threadId: ThreadId, requestId: ApprovalRequestId }),
     Result: ProjectionThreadActivityDbRowSchema,
@@ -1519,6 +1546,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         toPersistenceSqlOrDecodeError(
           "ProjectionSnapshotQuery.listActivitiesByKind:query",
           "ProjectionSnapshotQuery.listActivitiesByKind:decodeRow",
+        ),
+      ),
+    );
+
+  const getLatestThreadActivityByKind: NonNullable<
+    ProjectionSnapshotQueryShape["getLatestThreadActivityByKind"]
+  > = (input) =>
+    getLatestThreadActivityByKindRow(input).pipe(
+      Effect.map(Option.map(mapThreadActivityRow)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getLatestThreadActivityByKind:query",
+          "ProjectionSnapshotQuery.getLatestThreadActivityByKind:decodeRow",
         ),
       ),
     );
@@ -3763,6 +3803,7 @@ pending_approval_requests AS (
       );
 
   return {
+    getLatestThreadActivityByKind,
     getCommandReadModel,
     getUserInputActivity,
     listActivitiesByKind,

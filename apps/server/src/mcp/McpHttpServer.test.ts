@@ -1,7 +1,13 @@
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentId, PreviewTabId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  PREVIEW_AUTOMATION_OPERATIONS,
+  PreviewTabId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -9,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Metric from "effect/Metric";
 import * as Stream from "effect/Stream";
 import { McpProtocol, McpSchema, McpServer } from "effect/unstable/ai";
 import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/unstable/http";
@@ -114,6 +121,17 @@ const callSnapshot = (args: Record<string, unknown>) =>
         Effect.provideService(McpSchema.McpServerClient, client),
       );
   });
+
+const hasMetricSnapshot = (
+  snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
+  id: string,
+  attributes: Readonly<Record<string, string>>,
+) =>
+  snapshots.some(
+    (snapshot) =>
+      snapshot.id === id &&
+      Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
+  );
 
 it("normalizes empty successful notification responses to accepted", () => {
   const notificationResponse = McpHttpServer.normalizeMcpHttpResponse(
@@ -637,6 +655,7 @@ it.effect("registers annotated tools and preserves authenticated request context
       const events = yield* broker.connect({
         clientId: "mcp-test-client",
         environmentId,
+        supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
       });
       yield* Stream.runForEach(events, (event) => {
         if (event.type === "connected") return Effect.void;
@@ -649,18 +668,27 @@ it.effect("registers annotated tools and preserves authenticated request context
           result:
             event.request.operation === "snapshot"
               ? snapshotResult
-              : event.request.operation === "evaluate"
-                ? ["Connect", "Continue"]
-                : event.request.operation === "press"
-                  ? undefined
-                  : {
-                      available: true,
-                      visible: true,
-                      tabId,
-                      url: "http://example.test/",
-                      title: "Example",
-                      loading: false,
-                    },
+              : event.request.operation === "diagnostics"
+                ? {
+                    kind: "console",
+                    tabId: alternateTabId,
+                    entries: [],
+                    capturedCount: 0,
+                    returnedCount: 0,
+                    truncated: false,
+                  }
+                : event.request.operation === "evaluate"
+                  ? ["Connect", "Continue"]
+                  : event.request.operation === "press"
+                    ? undefined
+                    : {
+                        available: true,
+                        visible: true,
+                        tabId,
+                        url: "http://example.test/",
+                        title: "Example",
+                        loading: false,
+                      },
         });
       }).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
@@ -674,6 +702,12 @@ it.effect("registers annotated tools and preserves authenticated request context
       expect(snapshotTool?.tool.annotations?.readOnlyHint).toBe(true);
       expect(snapshotTool?.tool.annotations?.idempotentHint).toBe(true);
       expect(snapshotTool?.tool.annotations?.openWorldHint).toBe(true);
+
+      const diagnosticsTool = server.tools.find(({ tool }) => tool.name === "preview_diagnostics");
+      expect(diagnosticsTool?.tool.annotations?.readOnlyHint).toBe(true);
+      expect(diagnosticsTool?.tool.annotations?.idempotentHint).toBe(true);
+      expect(diagnosticsTool?.tool.annotations?.destructiveHint).toBe(false);
+      expect(diagnosticsTool?.tool.annotations?.openWorldHint).toBe(true);
 
       const clickTool = server.tools.find(({ tool }) => tool.name === "preview_click");
       expect(clickTool?.tool.annotations?.readOnlyHint).toBe(false);
@@ -700,6 +734,20 @@ it.effect("registers annotated tools and preserves authenticated request context
         available: true,
         tabId,
       });
+      const statusSnapshots = yield* Metric.snapshot;
+      expect(
+        hasMetricSnapshot(statusSnapshots, "t3_mcp_tool_calls_total", {
+          family: "preview",
+          operation: "status",
+          outcome: "success",
+        }),
+      ).toBe(true);
+      expect(
+        hasMetricSnapshot(statusSnapshots, "t3_mcp_tool_call_duration", {
+          family: "preview",
+          operation: "status",
+        }),
+      ).toBe(true);
 
       const malformed = yield* server
         .callTool({ name: "preview_click", arguments: { selector: "" } })
@@ -722,6 +770,24 @@ it.effect("registers annotated tools and preserves authenticated request context
         screenshot: { mimeType: "image/png", width: 10, height: 5 },
       });
       expect(routedRequests.find(({ operation }) => operation === "snapshot")?.tabId).toBe(
+        alternateTabId,
+      );
+
+      const diagnostics = yield* server
+        .callTool({
+          name: "preview_diagnostics",
+          arguments: { kind: "console", tabId: alternateTabId, limit: 1 },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(diagnostics.isError).toBe(false);
+      expect(diagnostics.structuredContent).toMatchObject({
+        kind: "console",
+        tabId: alternateTabId,
+      });
+      expect(routedRequests.find(({ operation }) => operation === "diagnostics")?.tabId).toBe(
         alternateTabId,
       );
 

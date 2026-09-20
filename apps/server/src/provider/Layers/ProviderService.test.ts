@@ -413,6 +413,24 @@ const hasMetricSnapshot = (
       Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
   );
 
+const findCounterSnapshot = (
+  snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
+  id: string,
+  attributes: Readonly<Record<string, string>>,
+) =>
+  snapshots.find(
+    (snapshot): snapshot is Extract<Metric.Metric.Snapshot, { readonly type: "Counter" }> =>
+      snapshot.type === "Counter" &&
+      snapshot.id === id &&
+      Object.entries(attributes).every(([key, value]) => snapshot.attributes?.[key] === value),
+  );
+
+const counterValue = (
+  snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
+  id: string,
+  attributes: Readonly<Record<string, string>>,
+): number => Number(findCounterSnapshot(snapshots, id, attributes)?.state.count ?? 0);
+
 function makeProviderServiceLayer(
   input: {
     readonly directory?: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
@@ -5157,5 +5175,97 @@ describe("agent browser access", () => {
         { threadId, capabilities: ["preview", "pull-requests", "work_state"] },
       ]);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+const compactionMetrics = makeProviderServiceLayer();
+compactionMetrics.layer("ProviderServiceLive compaction metrics", (it) => {
+  it.effect("records canonical compaction metrics with bounded token removal", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-compaction-metrics");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("project-compaction-metrics"),
+        runtimeMode: "full-access",
+      });
+
+      const emitAndAwait = (event: LegacyProviderRuntimeEvent) =>
+        Effect.gen(function* () {
+          const observed = yield* Stream.take(provider.streamEvents, 1).pipe(
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          compactionMetrics.codex.emit(event);
+          yield* Fiber.join(observed);
+        });
+      const compactionId = "t3_context_compactions_total";
+      const removedTokensId = "t3_context_compaction_tokens_removed_total";
+      const attributes = { provider: CODEX_DRIVER };
+      const initial = yield* Metric.snapshot;
+
+      yield* emitAndAwait({
+        type: "thread.state.changed",
+        eventId: asEventId("evt-compaction-metrics-with-tokens"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId,
+        payload: { state: "compacted", beforeTokens: 10_000, afterTokens: 4_000 },
+      });
+      const afterWithTokens = yield* Metric.snapshot;
+      assert.equal(
+        counterValue(afterWithTokens, compactionId, attributes) -
+          counterValue(initial, compactionId, attributes),
+        1,
+      );
+      assert.equal(
+        counterValue(afterWithTokens, removedTokensId, attributes) -
+          counterValue(initial, removedTokensId, attributes),
+        6_000,
+      );
+
+      yield* emitAndAwait({
+        type: "thread.state.changed",
+        eventId: asEventId("evt-compaction-metrics-without-tokens"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId,
+        payload: { state: "compacted" },
+      });
+      const afterWithoutTokens = yield* Metric.snapshot;
+      assert.equal(
+        counterValue(afterWithoutTokens, compactionId, attributes) -
+          counterValue(afterWithTokens, compactionId, attributes),
+        1,
+      );
+      assert.equal(
+        counterValue(afterWithoutTokens, removedTokensId, attributes) -
+          counterValue(afterWithTokens, removedTokensId, attributes),
+        0,
+      );
+
+      yield* emitAndAwait({
+        type: "message.delta",
+        eventId: asEventId("evt-compaction-metrics-non-compaction"),
+        provider: CODEX_DRIVER,
+        createdAt: "2026-01-01T00:00:02.000Z",
+        threadId,
+        payload: { delta: "not compacted" },
+      });
+      const afterNonCompaction = yield* Metric.snapshot;
+      assert.equal(
+        counterValue(afterNonCompaction, compactionId, attributes) -
+          counterValue(afterWithoutTokens, compactionId, attributes),
+        0,
+      );
+      assert.equal(
+        counterValue(afterNonCompaction, removedTokensId, attributes) -
+          counterValue(afterWithoutTokens, removedTokensId, attributes),
+        0,
+      );
+    }),
   );
 });

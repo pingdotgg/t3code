@@ -31,6 +31,7 @@ import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts"
 import { encodeThreadDetailPageCursor } from "../threadDetailCursor.ts";
 import { projectThreadDetailSnapshot } from "../ActivityPayloadProjection.ts";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
+import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
@@ -2393,6 +2394,57 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         (yield* snapshotQuery.searchThreads({ query: "user needle" })).matches,
         [],
       );
+    }),
+  );
+  it.effect("selects the newest exact thread activity kind and validates its bounded input", () =>
+    Effect.gen(function* () {
+      const query = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const latest = query.getLatestThreadActivityByKind;
+      assert.isDefined(latest);
+      if (latest === undefined) return;
+
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`
+        INSERT INTO projection_thread_activities
+          (activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at)
+        VALUES
+          ('kind-old', 'kind-thread-a', NULL, 'info', 'context-compaction', 'old', '{}', 2, '2026-04-01T00:00:01.000Z'),
+          ('kind-newer', 'kind-thread-a', NULL, 'info', 'context-compaction', 'newer', '{}', 4, '2026-04-01T00:00:00.000Z'),
+          ('kind-tie-newer', 'kind-thread-a', NULL, 'info', 'context-compaction', 'tie-newer', '{}', 4, '2026-04-01T00:00:02.000Z'),
+          ('kind-other', 'kind-thread-a', NULL, 'info', 'runtime.note', 'other kind', '{}', 99, '2026-04-01T00:00:03.000Z'),
+          ('kind-leak', 'kind-thread-b', NULL, 'info', 'context-compaction', 'other thread', '{}', 100, '2026-04-01T00:00:04.000Z')
+      `;
+
+      const selected = yield* latest({
+        threadId: ThreadId.make("kind-thread-a"),
+        kind: "context-compaction",
+      });
+      assert.isTrue(selected._tag === "Some");
+      if (selected._tag === "Some") {
+        assert.equal(selected.value.id, asEventId("kind-tie-newer"));
+        assert.equal(selected.value.kind, "context-compaction");
+      }
+
+      const otherThread = yield* latest({
+        threadId: ThreadId.make("kind-thread-b"),
+        kind: "context-compaction",
+      });
+      assert.isTrue(otherThread._tag === "Some");
+      if (otherThread._tag === "Some") assert.equal(otherThread.value.id, asEventId("kind-leak"));
+
+      const absent = yield* latest({
+        threadId: ThreadId.make("kind-thread-a"),
+        kind: "missing-kind",
+      });
+      assert.isTrue(absent._tag === "None");
+
+      for (const kind of ["", " context-compaction ", "x".repeat(129)]) {
+        const rejected: ProjectionRepositoryError = yield* Effect.flip(
+          latest({ threadId: ThreadId.make("kind-thread-a"), kind }),
+        );
+        assert.isDefined(rejected);
+      }
     }),
   );
 });

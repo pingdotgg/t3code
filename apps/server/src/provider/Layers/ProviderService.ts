@@ -60,6 +60,8 @@ import * as DeviceService from "../../device/DeviceService.ts";
 import { ensureAgentDeviceShim } from "../../device/AgentDeviceShim.ts";
 import type * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import {
+  contextCompactionTokensRemovedTotal,
+  contextCompactionsTotal,
   increment,
   providerMetricAttributes,
   providerRuntimeEventsTotal,
@@ -969,8 +971,34 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.tap(() => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId))),
     );
 
+  const recordCompactionMetrics = (event: ProviderRuntimeEvent): Effect.Effect<void> => {
+    if (event.type !== "thread.state.changed" || event.payload.state !== "compacted") {
+      return Effect.void;
+    }
+    const { beforeTokens, afterTokens } = event.payload;
+    return Effect.gen(function* () {
+      yield* increment(contextCompactionsTotal, { provider: event.provider });
+      if (
+        typeof beforeTokens === "number" &&
+        typeof afterTokens === "number" &&
+        Number.isFinite(beforeTokens) &&
+        Number.isFinite(afterTokens) &&
+        beforeTokens >= 0 &&
+        afterTokens >= 0 &&
+        beforeTokens >= afterTokens
+      ) {
+        yield* increment(
+          contextCompactionTokensRemovedTotal,
+          { provider: event.provider },
+          beforeTokens - afterTokens,
+        );
+      }
+    });
+  };
+
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
+      Effect.tap(recordCompactionMetrics),
       Effect.tap((canonicalEvent) =>
         canonicalEventLogger
           ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)

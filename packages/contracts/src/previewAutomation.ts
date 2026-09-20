@@ -43,6 +43,7 @@ export const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
   "setColorScheme",
+  "diagnostics",
 ] as const;
 
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);
@@ -280,6 +281,49 @@ export const PreviewAutomationSetColorSchemeResult = Schema.Struct({
 export type PreviewAutomationSetColorSchemeResult =
   typeof PreviewAutomationSetColorSchemeResult.Type;
 
+const PreviewAutomationDiagnosticsLimit = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
+  Schema.isLessThanOrEqualTo(100),
+);
+const PreviewAutomationDiagnosticsRequestId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+const PreviewAutomationDiagnosticsSampleMs = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(0),
+).check(Schema.isLessThanOrEqualTo(5_000));
+
+export const PreviewAutomationDiagnosticsInput = Schema.Union([
+  Schema.Struct({
+    ...PreviewAutomationTabTargetFields,
+    kind: Schema.Literal("console"),
+    limit: Schema.optional(PreviewAutomationDiagnosticsLimit),
+  }),
+  Schema.Struct({
+    ...PreviewAutomationTabTargetFields,
+    kind: Schema.Literal("network"),
+    limit: Schema.optional(PreviewAutomationDiagnosticsLimit),
+    requestId: Schema.optional(PreviewAutomationDiagnosticsRequestId),
+    includeResponseBody: Schema.optional(Schema.Boolean),
+  }).check(
+    Schema.makeFilter(
+      (input) =>
+        input.includeResponseBody !== true ||
+        input.requestId !== undefined ||
+        "includeResponseBody requires requestId.",
+    ),
+  ),
+  Schema.Struct({
+    ...PreviewAutomationTabTargetFields,
+    kind: Schema.Literal("performance"),
+    sampleMs: Schema.optional(PreviewAutomationDiagnosticsSampleMs),
+  }),
+  Schema.Struct({
+    ...PreviewAutomationTabTargetFields,
+    kind: Schema.Literal("memory"),
+  }),
+]).annotate({
+  description:
+    "Read-only DevTools-grade evidence from the exact collaborative preview tab. Console and network limits default to 50; performance sampling defaults to 0ms.",
+});
+export type PreviewAutomationDiagnosticsInput = typeof PreviewAutomationDiagnosticsInput.Type;
+
 const Locator = TrimmedNonEmptyString.annotate({
   description:
     "Playwright selector, preferably role/text based, for example role=button[name='Send'] or text=Continue. Use snapshot first to inspect the page.",
@@ -499,11 +543,26 @@ export const PreviewAutomationElement = Schema.Struct({
 });
 export type PreviewAutomationElement = typeof PreviewAutomationElement.Type;
 
+const DiagnosticBoundedText = Schema.String.check(Schema.isMaxLength(4_096));
+const DiagnosticBoundedUrl = Schema.String.check(Schema.isMaxLength(2_048));
+
+export const PreviewAutomationConsoleStackFrame = Schema.Struct({
+  functionName: Schema.optional(DiagnosticBoundedText),
+  url: Schema.optional(DiagnosticBoundedUrl),
+  lineNumber: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  columnNumber: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+export type PreviewAutomationConsoleStackFrame = typeof PreviewAutomationConsoleStackFrame.Type;
+
 export const PreviewAutomationConsoleEntry = Schema.Struct({
   level: Schema.String,
   text: Schema.String,
   timestamp: Schema.String,
   source: Schema.optional(Schema.String),
+  url: Schema.optional(DiagnosticBoundedUrl),
+  lineNumber: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  columnNumber: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  stack: Schema.optional(Schema.Array(PreviewAutomationConsoleStackFrame)),
 });
 export type PreviewAutomationConsoleEntry = typeof PreviewAutomationConsoleEntry.Type;
 
@@ -545,6 +604,111 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   }),
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
+
+export const PreviewAutomationCompletedNetworkRecord = Schema.Struct({
+  requestId: PreviewAutomationDiagnosticsRequestId,
+  url: DiagnosticBoundedUrl,
+  method: Schema.String,
+  resourceType: Schema.optional(Schema.String),
+  status: Schema.optional(Schema.Number),
+  mimeType: Schema.optional(Schema.String),
+  protocol: Schema.optional(Schema.String),
+  fromDiskCache: Schema.optional(Schema.Boolean),
+  encodedDataLength: Schema.optional(Schema.Number),
+  failed: Schema.Boolean,
+  errorText: Schema.optional(DiagnosticBoundedText),
+  startedAt: Schema.String,
+  completedAt: Schema.String,
+  durationMs: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type PreviewAutomationCompletedNetworkRecord =
+  typeof PreviewAutomationCompletedNetworkRecord.Type;
+
+export const PreviewAutomationConsoleDiagnosticsResult = Schema.Struct({
+  kind: Schema.Literal("console"),
+  tabId: PreviewTabId,
+  entries: Schema.Array(PreviewAutomationConsoleEntry),
+  capturedCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  returnedCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  truncated: Schema.Boolean,
+});
+export type PreviewAutomationConsoleDiagnosticsResult =
+  typeof PreviewAutomationConsoleDiagnosticsResult.Type;
+
+export const PreviewAutomationNetworkDiagnosticsResult = Schema.Struct({
+  kind: Schema.Literal("network"),
+  tabId: PreviewTabId,
+  records: Schema.Array(PreviewAutomationCompletedNetworkRecord),
+  capturedCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  returnedCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  truncated: Schema.Boolean,
+  selectedRequestId: Schema.optional(PreviewAutomationDiagnosticsRequestId),
+  selectedRecord: Schema.optional(PreviewAutomationCompletedNetworkRecord),
+  requestFound: Schema.optional(Schema.Boolean),
+  responseBody: Schema.optional(Schema.String.check(Schema.isMaxLength(65_536))),
+  responseBodyBase64Encoded: Schema.optional(Schema.Boolean),
+  responseBodyTruncated: Schema.optional(Schema.Boolean),
+  responseBodyUnavailableReason: Schema.optional(DiagnosticBoundedText),
+});
+export type PreviewAutomationNetworkDiagnosticsResult =
+  typeof PreviewAutomationNetworkDiagnosticsResult.Type;
+
+export const PreviewAutomationPerformanceMetric = Schema.Struct({
+  name: Schema.String,
+  value: Schema.Number,
+});
+export type PreviewAutomationPerformanceMetric = typeof PreviewAutomationPerformanceMetric.Type;
+
+export const PreviewAutomationNavigationTiming = Schema.Struct({
+  type: Schema.String,
+  startTime: Schema.Number,
+  duration: Schema.Number,
+  domInteractive: Schema.Number,
+  domContentLoadedEventEnd: Schema.Number,
+  loadEventEnd: Schema.Number,
+  transferSize: Schema.Number,
+  encodedBodySize: Schema.Number,
+  decodedBodySize: Schema.Number,
+});
+export type PreviewAutomationNavigationTiming = typeof PreviewAutomationNavigationTiming.Type;
+
+export const PreviewAutomationPerformanceDiagnosticsResult = Schema.Struct({
+  kind: Schema.Literal("performance"),
+  tabId: PreviewTabId,
+  metrics: Schema.Array(PreviewAutomationPerformanceMetric),
+  before: Schema.optional(Schema.Array(PreviewAutomationPerformanceMetric)),
+  after: Schema.optional(Schema.Array(PreviewAutomationPerformanceMetric)),
+  delta: Schema.optional(Schema.Array(PreviewAutomationPerformanceMetric)),
+  navigation: Schema.NullOr(PreviewAutomationNavigationTiming),
+});
+export type PreviewAutomationPerformanceDiagnosticsResult =
+  typeof PreviewAutomationPerformanceDiagnosticsResult.Type;
+
+export const PreviewAutomationMemoryDiagnosticsResult = Schema.Struct({
+  kind: Schema.Literal("memory"),
+  tabId: PreviewTabId,
+  heapUsage: Schema.Struct({
+    usedSize: Schema.Number,
+    totalSize: Schema.Number,
+    embedderHeapSize: Schema.optional(Schema.Number),
+    backingStorageSize: Schema.optional(Schema.Number),
+  }),
+  domCounters: Schema.Struct({
+    documents: Schema.Number,
+    nodes: Schema.Number,
+    jsEventListeners: Schema.Number,
+  }),
+});
+export type PreviewAutomationMemoryDiagnosticsResult =
+  typeof PreviewAutomationMemoryDiagnosticsResult.Type;
+
+export const PreviewAutomationDiagnosticsResult = Schema.Union([
+  PreviewAutomationConsoleDiagnosticsResult,
+  PreviewAutomationNetworkDiagnosticsResult,
+  PreviewAutomationPerformanceDiagnosticsResult,
+  PreviewAutomationMemoryDiagnosticsResult,
+]);
+export type PreviewAutomationDiagnosticsResult = typeof PreviewAutomationDiagnosticsResult.Type;
 
 export const PreviewAutomationRecordingStatus = Schema.Struct({
   tabId: PreviewTabId,
