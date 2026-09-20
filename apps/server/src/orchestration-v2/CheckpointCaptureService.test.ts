@@ -263,7 +263,7 @@ it.layer(ProjectionStoreTestLayer)("CheckpointCaptureServiceV2", (it) => {
                       Layer.mergeAll(
                         IdAllocator.layer,
                         Layer.mock(CheckpointStore.CheckpointStore)({
-                          isGitRepository: () => Effect.succeed(true),
+                          supportsCheckpoints: () => Effect.succeed(true),
                           captureCheckpoint: () => Effect.void,
                           hasCheckpointRef: () =>
                             Effect.fail(
