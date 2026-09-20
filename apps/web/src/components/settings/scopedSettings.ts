@@ -19,6 +19,7 @@ import {
   type ProjectSettingSource,
 } from "@t3tools/shared/projectSettings";
 import * as Equal from "effect/Equal";
+import * as Struct from "effect/Struct";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -31,7 +32,10 @@ interface ScopedSettingsEnvironment {
   readonly serverConfig: {
     readonly settings: ServerSettings;
     readonly environment?: {
-      readonly capabilities: { readonly projectSettingsOverrides?: boolean | undefined };
+      readonly capabilities: {
+        readonly projectSettingsOverrides?: boolean | undefined;
+        readonly threadAutoSettlementScope?: boolean | undefined;
+      };
     };
   } | null;
 }
@@ -226,7 +230,7 @@ export function planScopedSettingsPatch(
   const unscopableKeys = isProjectScope
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
     : [];
-  const serverWrites: ScopedServerWrite[] =
+  const plannedServerWrites: ScopedServerWrite[] =
     serverKeys.length === 0
       ? []
       : isProjectScope
@@ -289,6 +293,29 @@ export function planScopedSettingsPatch(
                   : serverPatch,
             }))
           : [];
+  const serverWrites = plannedServerWrites.map((write) => {
+    const environment = connectedEnvironments.find(
+      (target) => target.environmentId === write.environmentId,
+    );
+    if (environment?.serverConfig?.environment?.capabilities.threadAutoSettlementScope === true)
+      return write;
+    const patch = Struct.omit(write.patch, ["sidebarAutoSettleScope"]);
+    return {
+      ...write,
+      patch:
+        patch.projectSettingsOverrides === undefined
+          ? patch
+          : {
+              ...patch,
+              projectSettingsOverrides: Object.fromEntries(
+                Object.entries(patch.projectSettingsOverrides).map(([projectId, entry]) => [
+                  projectId,
+                  entry === null ? null : Struct.omit(entry, ["sidebarAutoSettleScope"]),
+                ]),
+              ),
+            },
+    };
+  });
   const hasClientWrite = Object.keys(clientPatch).length > 0;
   const hasWrite = hasClientWrite || serverWrites.length > 0;
   const unavailableReason =

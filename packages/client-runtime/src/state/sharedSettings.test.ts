@@ -215,6 +215,15 @@ describe("filterSharedServerPatch", () => {
       ).toEqual(availability === "enabled" ? [{ environmentId: boxId, label: "Remote Box" }] : []);
     },
   );
+  it("syncs settlement scope only to servers that support it", () => {
+    const patch = {
+      sidebarAutoSettleScope: "without-pr" as const,
+      sidebarAutoSettleAfterDays: 3,
+    };
+    expect(filterSharedServerPatch(patch, { threadAutoSettlementScope: true })).toEqual(patch);
+    expect(filterSharedServerPatch(patch, {})).toEqual({ sidebarAutoSettleAfterDays: 3 });
+    expect(splitSharedServerPatch(patch).sharedPatch).toEqual(patch);
+  });
 
   it.each([true, false])("preserves supported restart preference %s", (enabled) => {
     const patch = { continueThreadsAfterServerUpdate: enabled, sidebarAutoSettleAfterDays: 7 };
