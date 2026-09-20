@@ -1108,8 +1108,10 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale?: () => string | null;
-  // One bootstrap per pool instance currently registered with bootstrap
-  // info (omits instances whose backend hasn't produced a config yet).
+  /** Refresh the cached local topology without blocking the renderer. Absent on older desktops. */
+  refreshLocalEnvironment?: () => Promise<void>;
+  // Reads the last successful refresh, including pending secondary backends
+  // with null endpoints. Initialize with refreshLocalEnvironment before reading.
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled?: () => boolean;

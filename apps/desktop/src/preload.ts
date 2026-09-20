@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopEnvironmentBootstrap,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -61,6 +62,35 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
   return result as Awaited<ReturnType<DesktopBridge["ensureSshEnvironment"]>>;
 }
 
+let localEnvironmentSnapshot:
+  | { bootstraps: readonly DesktopEnvironmentBootstrap[]; enabled: boolean }
+  | undefined;
+let localEnvironmentRefresh: Promise<void> | undefined;
+
+function readLocalEnvironmentSnapshot() {
+  if (localEnvironmentSnapshot === undefined) {
+    throw new Error("The desktop local environment has not been initialized.");
+  }
+  return localEnvironmentSnapshot;
+}
+
+// The web entry awaits the first refresh before loading consumers. Later polls
+// refresh asynchronously; synchronous bridge reads only consult this snapshot.
+function refreshLocalEnvironment(): Promise<void> {
+  return (localEnvironmentRefresh ??= Promise.all([
+    ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL) as Promise<
+      readonly DesktopEnvironmentBootstrap[]
+    >,
+    ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL) as Promise<boolean>,
+  ])
+    .then(([bootstraps, enabled]) => {
+      localEnvironmentSnapshot = { bootstraps, enabled };
+    })
+    .finally(() => {
+      localEnvironmentRefresh = undefined;
+    }));
+}
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
@@ -82,17 +112,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     const result = ipcRenderer.sendSync(IpcChannels.GET_SYSTEM_LOCALE_CHANNEL);
     return typeof result === "string" ? result : null;
   },
-  getLocalEnvironmentBootstraps: () => {
-    const result = ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL);
-    if (!Array.isArray(result)) {
-      return [];
-    }
-    return result as ReturnType<DesktopBridge["getLocalEnvironmentBootstraps"]>;
-  },
+  refreshLocalEnvironment,
+  getLocalEnvironmentBootstraps: () => readLocalEnvironmentSnapshot().bootstraps,
   getLocalEnvironmentBearerToken: () =>
     ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL),
-  getLocalEnvironmentEnabled: () =>
-    ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL) !== false,
+  getLocalEnvironmentEnabled: () => readLocalEnvironmentSnapshot().enabled,
   setLocalEnvironmentEnabled: (enabled) =>
     ipcRenderer.invoke(IpcChannels.SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL, enabled),
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),

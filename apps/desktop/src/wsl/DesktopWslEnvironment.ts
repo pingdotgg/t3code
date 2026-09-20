@@ -1249,12 +1249,8 @@ export const layer = Layer.effect(
     // WSL availability is effectively static for the process lifetime — the
     // Windows feature isn't added/removed mid-session, and backend mode
     // changes already require an app restart — so the cached boolean stays
-    // accurate. Crucially this keeps `isAvailable` synchronously resolvable:
-    // it's read inside the sync IPC handler getLocalEnvironmentBootstraps
-    // (via the primary instance's lazy label -> resolvePrimaryLabel ->
-    // describePrimary). The underlying probe does a filesystem `exists`
-    // check, so leaving it as a live effect would make Effect.runSync throw
-    // there and break the renderer's synchronous bootstrap path.
+    // accurate and avoids a filesystem probe on each topology refresh through
+    // the primary instance's lazy label -> resolvePrimaryLabel -> describePrimary.
     const wslAvailable = yield* makeIsAvailable(environment.platform, windir).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, environment.path),

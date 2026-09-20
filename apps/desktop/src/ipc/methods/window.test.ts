@@ -75,7 +75,7 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
 describe("getLocalEnvironmentBootstraps", () => {
   it.effect("publishes the concrete running distro without replacing the stable instance id", () =>
     Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
+      const result = yield* getLocalEnvironmentBootstraps.handler(undefined);
 
       assert.deepEqual(result, [
         {
@@ -112,7 +112,7 @@ describe("getLocalEnvironmentBootstraps", () => {
     };
 
     return Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
+      const result = yield* getLocalEnvironmentBootstraps.handler(undefined);
       assert.deepEqual(result, [
         {
           id: "wsl:default",
@@ -148,7 +148,7 @@ describe("getLocalEnvironmentBootstraps", () => {
     };
 
     return Effect.gen(function* () {
-      const result = yield* getLocalEnvironmentBootstraps.handler();
+      const result = yield* getLocalEnvironmentBootstraps.handler(undefined);
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(DesktopBackendPool.layerTest([stoppedInstance])));
   });
