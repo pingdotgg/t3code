@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 
 import { type SlowRpcAckRequest, useSlowRpcAckRequests } from "../rpc/requestLatencyState";
+import { useClientSettings } from "../hooks/useSettings";
+import { formatShortTimestamp } from "../timestampFormat";
 import { toastManager } from "./ui/toast";
 
 function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): string {
@@ -14,6 +16,7 @@ function describeSlowRequests(requests: ReadonlyArray<SlowRpcAckRequest>): strin
 }
 
 function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   return (
     <ul className="space-y-2.5 text-xs text-muted-foreground">
       {requests.map((request) => (
@@ -23,7 +26,8 @@ function SlowRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRe
         >
           <div className="wrap-break-word font-medium text-foreground">{request.tag}</div>
           <div className="mt-0.5 text-[10px] opacity-75">
-            Started {new Date(request.startedAt).toLocaleTimeString()}
+            Started{" "}
+            {formatShortTimestamp(request.startedAt, timestampFormat, true) || "Invalid Date"}
           </div>
         </li>
       ))}

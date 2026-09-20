@@ -52,7 +52,12 @@ import * as Option from "effect/Option";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
-import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
+import { useClientSettings } from "../../hooks/useSettings";
+import {
+  formatFullTimestamp,
+  formatElapsedDurationLabel,
+  formatExpiresInLabel,
+} from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
   applyWslEnableSelection,
@@ -191,19 +196,6 @@ const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 // neither can collide with a real distro name.
 const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
 const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
-
-const accessTimestampFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
-
-function formatAccessTimestamp(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return accessTimestampFormatter.format(parsed);
-}
 
 const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
   readonly scope: AuthEnvironmentScope;
@@ -598,6 +590,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
   revokingPairingLinkId,
   onRevoke,
 }: PairingLinkListRowProps) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const nowMs = useRelativeTimeTick(1_000);
   const expiresAtMs = useMemo(
     () => new Date(pairingLink.expiresAt).getTime(),
@@ -732,7 +725,8 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     if (credential) copyPairingValue(credential, "code");
   }, [copyPairingValue, credential]);
 
-  const expiresAbsolute = formatAccessTimestamp(pairingLink.expiresAt);
+  const expiresAbsolute =
+    formatFullTimestamp(pairingLink.expiresAt, timestampFormat, false) || pairingLink.expiresAt;
 
   const primaryLabel = pairingLink.label ?? "Pairing link";
   const selectedQrOption = selectQrEndpointOption(
@@ -755,7 +749,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <ConnectionStatusDot
-              tooltipText={`Link created at ${formatAccessTimestamp(pairingLink.createdAt)}`}
+              tooltipText={`Link created at ${formatFullTimestamp(pairingLink.createdAt, timestampFormat, false) || pairingLink.createdAt}`}
               dotClassName="bg-amber-400"
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
@@ -979,6 +973,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
   revokingClientSessionId,
   onRevokeSession,
 }: ConnectedClientListRowProps) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const nowMs = useRelativeTimeTick(1_000);
   const isLive = clientSession.current || clientSession.connected;
   const lastConnectedAt = clientSession.lastConnectedAt;
@@ -987,7 +982,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
       ? `Connected for ${formatElapsedDurationLabel(lastConnectedAt, nowMs)}`
       : "Connected"
     : lastConnectedAt
-      ? `Last connected at ${formatAccessTimestamp(lastConnectedAt)}`
+      ? `Last connected at ${formatFullTimestamp(lastConnectedAt, timestampFormat, false) || lastConnectedAt}`
       : "Not connected yet.";
   const deviceInfoBits = [
     clientSession.client.deviceType !== "unknown"
