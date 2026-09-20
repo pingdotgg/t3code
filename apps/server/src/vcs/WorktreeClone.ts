@@ -1,4 +1,4 @@
-import { GitCommandError, T3ProjectFile } from "@t3tools/contracts";
+import { T3ProjectFile } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -20,12 +20,13 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { supported, clone } = yield* makeFileClone();
-  const git = (cwd: string, args: string[], allowNonZeroExit = false) =>
+  const git = (cwd: string, args: string[], allowNonZeroExit = false, stdin?: string) =>
     execute({
       operation: "GitVcsDriver.worktreeClone",
       cwd,
       args,
       allowNonZeroExit,
+      ...(stdin === undefined ? {} : { stdin }),
       timeoutMs,
       maxOutputBytes,
     });
@@ -56,6 +57,8 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
         true,
       );
       if (config.exitCode !== 1) return null;
+      const autoCrlf = yield* git(cwd, ["config", "--get", "core.autocrlf"], true);
+      if (autoCrlf.exitCode !== 1 && autoCrlf.stdout.trim().toLowerCase() !== "false") return null;
       const hook = (yield* git(cwd, [
         "rev-parse",
         "--git-path",
@@ -68,6 +71,7 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
       if (tree.stdoutTruncated) return null;
       const files: string[] = [];
       const attributes: string[] = [];
+      const executables: string[] = [];
       let totalFiles = 0;
       for (const entry of tree.stdout.split("\0")) {
         if (!entry) continue;
@@ -79,14 +83,52 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
         totalFiles += 1;
         if (path.basename(name) === ".gitattributes") attributes.push(name);
         files.push(name);
+        if (entry.startsWith("100755 ")) executables.push(name);
       }
-      return files.length > 0 ? { cwd, head, files, attributes, totalFiles } : null;
+      // A clean index does not prove that the source has fresh-checkout bytes:
+      // clean conversions can hide LF/CRLF, encoding, or ident differences.
+      const conversions = yield* git(
+        cwd,
+        [
+          "check-attr",
+          "--cached",
+          "-z",
+          "--stdin",
+          "text",
+          "eol",
+          "crlf",
+          "ident",
+          "filter",
+          "working-tree-encoding",
+        ],
+        false,
+        `${files.join("\0")}\0`,
+      );
+      if (conversions.stdoutTruncated) return null;
+      const converted = new Set<string>();
+      const values = conversions.stdout.split("\0");
+      for (let index = 0; index + 2 < values.length; index += 3) {
+        if (values[index + 2] !== "unspecified" && values[index + 2] !== "unset") {
+          converted.add(values[index]!);
+        }
+      }
+      const cloneFiles = files.filter((name) => !converted.has(name));
+      return cloneFiles.length > 0
+        ? { cwd, head, files: cloneFiles, attributes, executables, totalFiles }
+        : null;
     },
     Effect.orElseSucceed(() => null),
   );
 
   const checkout = Effect.fn("WorktreeClone.checkout")(function* (
-    plan: { cwd: string; head: string; files: string[]; attributes: string[]; totalFiles: number },
+    plan: {
+      cwd: string;
+      head: string;
+      files: string[];
+      attributes: string[];
+      executables: string[];
+      totalFiles: number;
+    },
     destination: string,
     onProgress?: CreateWorktreeProgress["onCheckoutProgress"],
   ) {
@@ -117,6 +159,16 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
             });
         }
       }
+      // Git records only executable versus regular mode. Source read-only or
+      // ignored executable bits must not leak into the new checkout.
+      const executables = new Set(plan.executables);
+      for (const name of plan.files) {
+        const target = path.join(destination, name);
+        const link = yield* fs.readLink(target).pipe(Effect.orElseSucceed(() => null));
+        if (link === null && (yield* fs.stat(target)).type === "File") {
+          yield* fs.chmod(target, (executables.has(name) ? 0o777 : 0o666) & ~process.umask());
+        }
+      }
       yield* git(destination, ["read-tree", "HEAD"]);
       for (const name of plan.attributes) {
         yield* git(destination, ["checkout-index", "--force", "--", name]);
@@ -133,104 +185,5 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
     return copied;
   });
 
-  const warmDependencies = Effect.fn("WorktreeClone.warmDependencies")(function* (
-    cwd: string,
-    destination: string,
-  ) {
-    if (!supported) return;
-    // Seeding is only an install accelerator. Require the repository to declare
-    // a setup step so this never silently replaces dependency reconciliation.
-    const project = yield* decodeProjectFile(
-      yield* fs.readFileString(path.join(destination, "t3.json")),
-    );
-    if (
-      !project.worktreeCloneDependencies ||
-      !project.scripts?.some((script) => script.runOnWorktreeCreate)
-    )
-      return;
-    const root = (yield* git(cwd, ["rev-parse", "--show-toplevel"])).stdout.trim();
-    if ((yield* fs.realPath(root)) !== (yield* fs.realPath(cwd))) return;
-    const targetStatus = yield* git(destination, ["status", "--porcelain=v1", "-uno"]);
-    if (targetStatus.stdoutTruncated || targetStatus.stdout.length > 0) return;
-    const sourceHead = (yield* git(cwd, ["rev-parse", "HEAD"])).stdout.trim();
-    if ((yield* git(destination, ["rev-parse", "HEAD"])).stdout.trim() !== sourceHead) return;
-    const status = yield* git(cwd, ["status", "--porcelain=v1", "-uno"]);
-    if (status.stdoutTruncated || status.stdout.length > 0) return;
-    const tracked = yield* git(destination, ["ls-files", "-z"]);
-    if (tracked.stdoutTruncated) return;
-    const files = tracked.stdout.split("\0");
-    if (
-      !files.some((name) =>
-        ["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "bun.lockb"].includes(
-          name,
-        ),
-      )
-    )
-      return;
-    const roots = files
-      .filter((name) => path.basename(name) === "package.json")
-      .map((name) => path.dirname(name));
-    for (const root of roots) {
-      const relative = path.join(root, "node_modules");
-      if (files.some((name) => name === relative || name.startsWith(`${relative}/`))) continue;
-      const source = path.join(cwd, relative);
-      const target = path.join(destination, relative);
-      if (!(yield* fs.exists(source)) || (yield* fs.exists(target))) continue;
-      // A symlinked node_modules usually denotes a shared environment; never
-      // turn it into another worktree's dependency directory.
-      if (
-        yield* fs.readLink(source).pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        )
-      )
-        continue;
-      const ignored = yield* git(cwd, ["check-ignore", "-q", "--", relative], true);
-      if (ignored.exitCode !== 0) continue;
-      const seed = Effect.gen(function* () {
-        const staging = yield* fs.makeTempDirectoryScoped({
-          directory: destination,
-          prefix: ".t3-deps-",
-        });
-        yield* clone([source], staging);
-        const staged = path.join(staging, "node_modules");
-        const directories = [staged];
-        while (directories.length > 0) {
-          const directory = directories.pop()!;
-          for (const name of yield* fs.readDirectory(directory)) {
-            const entry = path.join(directory, name);
-            if ([".bin", ".cache", ".vite", ".vite-temp"].includes(name)) {
-              yield* fs.remove(entry, { recursive: true, force: true });
-              continue;
-            }
-            const link = yield* fs.readLink(entry).pipe(Effect.orElseSucceed(() => null));
-            if (link !== null) {
-              const original = path.join(source, path.relative(staged, entry));
-              const resolved = path.resolve(path.dirname(original), link);
-              const fromProject = path.relative(cwd, resolved);
-              if (
-                path.isAbsolute(link) ||
-                fromProject === ".." ||
-                fromProject.startsWith(`..${path.sep}`)
-              ) {
-                return yield* new GitCommandError({
-                  operation: "GitVcsDriver.worktreeClone",
-                  cwd,
-                  command: "/bin/cp",
-                  detail: "Dependencies contain a non-portable symlink",
-                });
-              }
-            } else if ((yield* fs.stat(entry)).type === "Directory") {
-              directories.push(entry);
-            }
-          }
-        }
-        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
-        yield* fs.rename(staged, target);
-      }).pipe(Effect.scoped);
-      yield* seed.pipe(Effect.ignore);
-    }
-  }, Effect.ignore());
-
-  return { prepare, checkout, warmDependencies };
+  return { prepare, checkout };
 });

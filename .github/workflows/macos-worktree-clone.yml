@@ -5,6 +5,8 @@ on:
     paths:
       - "apps/server/src/vcs/FileClone*.ts"
       - "apps/server/src/vcs/WorktreeClone*.ts"
+      - "apps/server/src/vcs/WorktreeDependencies*.ts"
+      - "apps/server/src/project/ProjectSetupScriptRunner*.ts"
       - "apps/server/src/vcs/GitVcsDriverCore*.ts"
       - "packages/contracts/src/t3ProjectFile*.ts"
       - ".github/workflows/macos-worktree-clone.yml"
@@ -40,6 +42,6 @@ jobs:
         env:
           GIT_CONFIG_GLOBAL: /dev/null
           GIT_CONFIG_NOSYSTEM: "1"
-        run: vp test run apps/server/src/vcs/WorktreeClone.test.ts apps/server/src/vcs/GitVcsDriverCore.test.ts packages/contracts/src/t3ProjectFile.test.ts
+        run: vp test run apps/server/src/vcs/WorktreeClone.test.ts apps/server/src/vcs/GitVcsDriverCore.test.ts packages/contracts/src/t3ProjectFile.test.ts apps/server/src/project/ProjectSetupScriptRunner.test.ts
       - name: Typecheck server
         run: vp run --filter t3 typecheck
