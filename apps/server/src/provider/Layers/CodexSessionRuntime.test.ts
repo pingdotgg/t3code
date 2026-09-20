@@ -9,7 +9,10 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
+import {
+  buildCodexBrowserInstructions,
+  buildCodexDeveloperInstructions,
+} from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
   buildTurnStartParams,
@@ -154,6 +157,72 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
+  it.effect("delivers browser guidance as application context without changing user input", () =>
+    Effect.gen(function* () {
+      for (const interactionMode of [undefined, "default", "plan"] as const) {
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread-1",
+          runtimeMode: "full-access",
+          prompt: "Check the UI",
+          attachments: [{ type: "localImage", path: "/tmp/page.png" }],
+          ...(interactionMode ? { interactionMode } : {}),
+          browserToolsAvailable: { browser: true, device: true },
+        });
+        NodeAssert.deepEqual(params.input, [
+          { type: "text", text: "Check the UI" },
+          { type: "localImage", path: "/tmp/page.png" },
+        ]);
+        NodeAssert.equal(params.additionalContext?.t3_browser?.kind, "application");
+        NodeAssert.match(
+          params.additionalContext?.t3_browser?.value ?? "",
+          /first call `preview_status`/,
+        );
+        NodeAssert.doesNotMatch(
+          params.collaborationMode?.settings.developer_instructions ?? "",
+          /T3 Code collaborative browser/,
+        );
+        if (interactionMode) {
+          NodeAssert.match(
+            params.collaborationMode?.settings.developer_instructions ?? "",
+            /device_list/,
+          );
+        }
+      }
+    }),
+  );
+
+  it.effect("omits browser context unless the preview tools are attached", () =>
+    Effect.gen(function* () {
+      for (const browserToolsAvailable of [undefined, false, { browser: false, device: true }]) {
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread-1",
+          runtimeMode: "full-access",
+          prompt: "Check the app",
+          ...(browserToolsAvailable !== undefined ? { browserToolsAvailable } : {}),
+        });
+        NodeAssert.equal(params.additionalContext, undefined);
+      }
+    }),
+  );
+
+  it.effect("keeps browser context stable across mode changes and image-only turns", () =>
+    Effect.gen(function* () {
+      const contexts = [];
+      for (const interactionMode of ["default", "plan"] as const) {
+        const params = yield* buildTurnStartParams({
+          threadId: "provider-thread-1",
+          runtimeMode: "full-access",
+          attachments: [{ type: "localImage", path: "/tmp/page.png" }],
+          interactionMode,
+          browserToolsAvailable: true,
+        });
+        contexts.push(params.additionalContext);
+        NodeAssert.deepEqual(params.input, [{ type: "localImage", path: "/tmp/page.png" }]);
+      }
+      NodeAssert.deepEqual(contexts[0], contexts[1]);
+    }),
+  );
+
   it.effect("sends currency skill aliases in Codex's canonical dollar form", () =>
     Effect.gen(function* () {
       for (const symbol of ["€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
@@ -617,39 +686,19 @@ describe("buildCodexDeveloperInstructions", () => {
 });
 
 describe("T3 browser developer instructions", () => {
-  const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
-
-  it("prefers the product-native preview tools in both collaboration modes", () => {
-    for (const mode of ["default", "plan"] as const) {
-      const instructions = buildCodexDeveloperInstructions(mode, runtime, true);
-      NodeAssert.match(instructions, /t3-code/);
-      NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /Do not switch to global browser skills/);
-    }
+  it("retains preview initialization, error recovery, and explicit browser overrides", () => {
+    const instructions = buildCodexBrowserInstructions({ browser: true, device: false });
+    NodeAssert.match(instructions, /first call `preview_status`/);
+    NodeAssert.match(instructions, /call `preview_open` before concluding/);
+    NodeAssert.match(instructions, /user explicitly requests another browser/);
+    NodeAssert.match(instructions, /retried with corrected arguments/);
+    NodeAssert.doesNotMatch(instructions, /<collaboration_mode>|<runtime_info>/);
   });
 
-  it("omits the browser block entirely when the preview tools are not attached", () => {
-    for (const mode of ["default", "plan"] as const) {
-      const instructions = buildCodexDeveloperInstructions(mode, runtime, false);
-      NodeAssert.doesNotMatch(instructions, /preview_status/);
-      NodeAssert.doesNotMatch(instructions, /preview_open/);
-      NodeAssert.doesNotMatch(instructions, /T3 Code collaborative browser/);
-      // Steering away from other browser automation must go with the tools;
-      // keeping it would leave the model talked out of its only option.
-      NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
-      // The rest of the collaboration mode is untouched.
-      NodeAssert.match(instructions, /<collaboration_mode>/);
-      NodeAssert.match(instructions, /<\/collaboration_mode>/);
+  it("omits browser guidance when disabled or only device tools are attached", () => {
+    for (const availability of [false, { browser: false, device: true }]) {
+      NodeAssert.equal(buildCodexBrowserInstructions(availability), "");
     }
-  });
-
-  it("tracks the turn's MCP configuration rather than defaulting to on", () => {
-    NodeAssert.match(buildCodexDeveloperInstructions("default", runtime, true), /preview_open/);
-    NodeAssert.doesNotMatch(
-      buildCodexDeveloperInstructions("default", runtime, false),
-      /preview_open/,
-    );
   });
 });
 
