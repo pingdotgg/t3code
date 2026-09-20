@@ -30,9 +30,9 @@ export function MaterialSearchField({
         returnKeyType="search"
         placeholder={placeholder}
         placeholderTextColorClassName="accent-placeholder"
-        selectionColorClassName="accent-primary/32"
-        cursorColorClassName="accent-primary"
-        selectionHandleColorClassName="accent-primary"
+        selectionColorClassName="accent-focus/32"
+        cursorColorClassName="accent-focus"
+        selectionHandleColorClassName="accent-focus"
         className="min-w-0 flex-1 py-2 font-sans text-base text-foreground"
         value={value}
         onChangeText={onChangeText}

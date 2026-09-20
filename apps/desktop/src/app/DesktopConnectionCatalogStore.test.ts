@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -21,6 +22,11 @@ const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 const decodeConnectionCatalog = Schema.decodeEffect(
   Schema.fromJsonString(ConnectionCatalogDocument),
+);
+const encodeLegacySavedEnvironments = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
+  ),
 );
 function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
@@ -125,7 +131,8 @@ describe("DesktopConnectionCatalogStore", () => {
     withStore(
       Effect.gen(function* () {
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
-        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
         const records: readonly PersistedSavedEnvironmentRecord[] = [
           {
             environmentId: EnvironmentId.make("relay-environment"),
@@ -159,11 +166,21 @@ describe("DesktopConnectionCatalogStore", () => {
             lastConnectedAt: null,
           },
         ];
-        yield* savedEnvironments.setRegistry(records);
-        assert.isTrue(
-          yield* savedEnvironments.setSecret({
-            environmentId: EnvironmentId.make("bearer-environment"),
-            secret: "legacy-token",
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          yield* encodeLegacySavedEnvironments({
+            version: 1,
+            records: records.map((record) =>
+              record.environmentId === "bearer-environment"
+                ? {
+                    ...record,
+                    encryptedBearerToken: Encoding.encodeBase64(
+                      textEncoder.encode("encrypted:legacy-token"),
+                    ),
+                  }
+                : record,
+            ),
           }),
         );
 
@@ -218,7 +235,10 @@ describe("DesktopConnectionCatalogStore", () => {
           assert.equal(catalog.credentials[0].credential.token, "legacy-token");
         }
 
-        yield* savedEnvironments.setRegistry([]);
+        yield* fileSystem.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          '{"version":1,"records":[]}',
+        );
         assert.deepEqual(yield* store.get, migrated);
       }),
     ),
