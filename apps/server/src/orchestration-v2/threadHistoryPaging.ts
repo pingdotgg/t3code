@@ -37,6 +37,15 @@ export const THREAD_HISTORY_MAX_WINDOW_BYTES = 4_194_304;
  * single long turn's resolved history cannot bypass the window budgets.
  */
 export const THREAD_HISTORY_MAX_RESOLVED_REQUEST_BYTES = 1_048_576;
+/**
+ * Aggregate stored-byte budget for each completed-record cohort hydrated
+ * alongside a bounded window (run attempts, subagents, provider turns and
+ * threads, checkpoint scopes and checkpoints, context transfers). Live rows
+ * and rows referenced by retained items hydrate unconditionally; the cohort
+ * beyond those shares one budget per collection, newest first, so a retained
+ * run or node cannot fan out its completed related history unbounded.
+ */
+export const THREAD_HISTORY_MAX_COHORT_BYTES = 1_048_576;
 /** Rows larger than this carry a write-time `bounded_json` preview used by bounded reads. */
 export const THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES = 65_536;
 /** Cap applied to each oversized string field during payload compaction. */

@@ -412,6 +412,295 @@ it("includes imported runless history when selecting fork context through a run"
   );
 });
 
+// Completed records that match a retained run or node only through the broad
+// cohort arms share one aggregate stored-byte budget per collection: live and
+// referenced records always hydrate, and the newest surplus rows fill the
+// budget. The fixture leaves twenty ~70 KiB completed subagents on a retained
+// run so the SQL and memory windows can prove the cap binds both paths.
+const applyCohortSurplusFixture = Effect.fn("applyCohortSurplusFixture")(function* (
+  prefix: string,
+) {
+  const projectionStore = yield* ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const threadId = ThreadId.make(`thread:${prefix}`);
+  const runId = RunId.make(`run:${prefix}`);
+  const rootNodeId = NodeId.make(`node:${prefix}:root`);
+  const scopeNodeId = NodeId.make(`node:${prefix}:scope`);
+  const referencedSubagentId = NodeId.make(`node:${prefix}:subagent:referenced`);
+  const liveSubagentId = NodeId.make(`node:${prefix}:subagent:live`);
+  const scopeId = CheckpointScopeId.make(`scope:${prefix}`);
+  const checkpointId = CheckpointId.make(`checkpoint:${prefix}`);
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${prefix}:thread`),
+    type: "thread.created",
+    threadId,
+    occurredAt: now,
+    payload: {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: ProjectId.make(`project:${prefix}`),
+      title: "cohort surplus",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: threadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  });
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${prefix}:run`),
+    type: "run.created",
+    threadId,
+    runId,
+    occurredAt: now,
+    payload: {
+      id: runId,
+      threadId,
+      ordinal: 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make(`message:${prefix}`),
+      rootNodeId,
+      activeAttemptId: null,
+      status: "completed",
+      requestedAt: now,
+      startedAt: now,
+      completedAt: now,
+      checkpointId: null,
+      contextHandoffId: null,
+    },
+  });
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${prefix}:root-node`),
+    type: "node.updated",
+    threadId,
+    runId,
+    nodeId: rootNodeId,
+    driver,
+    occurredAt: now,
+    payload: {
+      id: rootNodeId,
+      threadId,
+      runId,
+      rootNodeId,
+      parentNodeId: null,
+      kind: "root_turn",
+      status: "completed",
+      countsForRun: true,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: now,
+      completedAt: now,
+    },
+  });
+  // Eighty completed items retain the run in the windowed cohort; the last one
+  // sits on the referenced subagent's own node.
+  for (let index = 1; index <= 80; index += 1) {
+    const itemNodeId = index === 80 ? referencedSubagentId : rootNodeId;
+    yield* projectionStore.apply({
+      id: EventId.make(`event:${prefix}:item:${index}`),
+      type: "turn-item.updated",
+      threadId,
+      runId,
+      nodeId: itemNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make(`item:${prefix}:${index}`),
+        threadId,
+        runId,
+        nodeId: itemNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: index,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "command_execution",
+        input: `echo ${index}`,
+        output: "ok",
+        exitCode: 0,
+      },
+    });
+  }
+  const applySubagent = (input: {
+    id: NodeId;
+    status: "running" | "completed";
+    prompt: string;
+    eventId: string;
+  }) =>
+    projectionStore.apply({
+      id: EventId.make(`event:${prefix}:subagent:${input.eventId}`),
+      type: "subagent.updated",
+      threadId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: input.id,
+        threadId,
+        runId,
+        parentNodeId: rootNodeId,
+        origin: "app_owned",
+        createdBy: "user",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: null,
+        nativeTaskRef: null,
+        prompt: input.prompt,
+        title: null,
+        model: null,
+        status: input.status,
+        result: null,
+        startedAt: now,
+        completedAt: input.status === "completed" ? now : null,
+        updatedAt: now,
+      },
+    });
+  yield* applySubagent({
+    id: referencedSubagentId,
+    status: "completed",
+    prompt: "referenced",
+    eventId: "referenced",
+  });
+  yield* applySubagent({
+    id: liveSubagentId,
+    status: "running",
+    prompt: "live",
+    eventId: "live",
+  });
+  // Eighty ~70 KiB completed subagents on the retained run exceed the 1 MiB
+  // cohort surplus budget: SQL bills the ~17 KiB write-time previews
+  // (~1.35 MiB), memory bills full records (~5.6 MiB) — both paths must drop
+  // the oldest rows.
+  for (let index = 0; index < 80; index += 1) {
+    yield* applySubagent({
+      id: NodeId.make(`node:${prefix}:subagent:completed:${index}`),
+      status: "completed",
+      prompt: "p".repeat(70_000),
+      eventId: `completed:${index}`,
+    });
+  }
+  // Small completed cohort records still fit the budget and hydrate.
+  for (let index = 0; index < 3; index += 1) {
+    yield* projectionStore.apply({
+      id: EventId.make(`event:${prefix}:attempt:${index}`),
+      type: "run-attempt.updated",
+      threadId,
+      runId,
+      nodeId: rootNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: RunAttemptId.make(`attempt:${prefix}:${index}`),
+        runId,
+        attemptOrdinal: index + 1,
+        rootNodeId,
+        providerInstanceId,
+        providerThreadId: ProviderThreadId.make(`provider-thread:${prefix}`),
+        providerTurnId: null,
+        reason: "initial",
+        status: "completed",
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+  }
+  // The scope and checkpoint sit on a node outside the retained cohort so the
+  // run-id surplus arm is the only path that can hydrate them.
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${prefix}:scope`),
+    type: "checkpoint-scope.created",
+    threadId,
+    occurredAt: now,
+    payload: {
+      id: scopeId,
+      threadId,
+      runId,
+      nodeId: scopeNodeId,
+      parentScopeId: null,
+      providerThreadId: null,
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo/worktree",
+      createdAt: now,
+    },
+  });
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${prefix}:checkpoint`),
+    type: "checkpoint.captured",
+    threadId,
+    occurredAt: now,
+    payload: {
+      id: checkpointId,
+      threadId,
+      scopeId,
+      runId,
+      nodeId: scopeNodeId,
+      parentCheckpointId: null,
+      ordinalWithinScope: 0,
+      appRunOrdinal: 1,
+      ref: CheckpointRef.make(`refs/t3/${prefix}/0`),
+      status: "ready",
+      files: [],
+      capturedAt: now,
+    },
+  });
+  return { threadId, referencedSubagentId, liveSubagentId };
+});
+
+const assertCohortSurplusWindow = Effect.fn("assertCohortSurplusWindow")(function* (
+  prefix: string,
+) {
+  const projectionStore = yield* ProjectionStoreV2;
+  const { threadId, referencedSubagentId, liveSubagentId } =
+    yield* applyCohortSurplusFixture(prefix);
+  const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 75 });
+  const subagentIds = new Set(windowed.projection.subagents.map((subagent) => String(subagent.id)));
+  // Live and referenced subagents always hydrate; the newest completed rows
+  // fill the surplus budget while the oldest drop out.
+  assert.isTrue(subagentIds.has(String(liveSubagentId)));
+  assert.isTrue(subagentIds.has(String(referencedSubagentId)));
+  assert.isTrue(subagentIds.has(`node:${prefix}:subagent:completed:79`));
+  assert.isFalse(subagentIds.has(`node:${prefix}:subagent:completed:0`));
+  assert.isFalse(subagentIds.has(`node:${prefix}:subagent:completed:1`));
+  assert.isAtMost(windowed.projection.subagents.length, 70);
+  assert.lengthOf(windowed.projection.attempts, 3);
+  assert.lengthOf(windowed.projection.checkpointScopes, 1);
+  assert.lengthOf(windowed.projection.checkpoints, 1);
+});
+
+it.effect("memory windows cap a retained run's completed related-record cohort", () =>
+  assertCohortSurplusWindow("memory-cohort-surplus").pipe(
+    Effect.provide(projectionStoreMemoryLayer),
+  ),
+);
+
 it.effect("memory recovery selection ignores unfinished items from rolled-back runs", () =>
   Effect.gen(function* () {
     const projectionStore = yield* ProjectionStoreV2;
@@ -10501,6 +10790,10 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         assert.isAbove(index, requestCount - 1 - hydrated.length);
       }
     }),
+  );
+
+  it.effect("caps a retained run's completed related-record cohort inside the surplus budget", () =>
+    assertCohortSurplusWindow("sql-cohort-surplus"),
   );
 
   it.effect("retains a pending request's display item paged out of the window", () =>

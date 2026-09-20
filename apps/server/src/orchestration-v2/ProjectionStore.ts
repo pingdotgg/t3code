@@ -71,6 +71,7 @@ import {
   stringifyJsonDeep,
   threadHistoryCursorItemTag,
   threadHistoryCursorThreadTag,
+  THREAD_HISTORY_MAX_COHORT_BYTES,
   THREAD_HISTORY_MAX_RAW_TURNS,
   THREAD_HISTORY_MAX_RESOLVED_REQUEST_BYTES,
   THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES,
@@ -3371,20 +3372,43 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY run_id ASC, attempt_ordinal ASC
           `
             : sql<PayloadRow>`
-            SELECT COALESCE(bounded_json, payload_json) AS payload_json
-            FROM orchestration_v2_projection_run_attempts
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','starting','running','waiting')
-                OR run_id IN (
-                  SELECT run_id FROM orchestration_v2_projection_runs
-                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
-                )
-                OR run_id = (
-                  SELECT run_id FROM orchestration_v2_projection_runs
-                  WHERE rowid = ${window.requiredRunRowId ?? null} LIMIT 1
-                )
-                OR (${window.requiredRunRowId ?? null} IS NULL
-                  AND run_id = ${window.requiredRunId ?? null}))
+            -- Live and anchor attempts always hydrate. Completed attempts of
+            -- retained runs share one aggregate stored-byte budget, newest
+            -- first, so a retained run cannot fan out its attempt history.
+            SELECT payload_json, run_id, attempt_ordinal FROM (
+              SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                run_id, attempt_ordinal
+              FROM orchestration_v2_projection_run_attempts
+              WHERE thread_id = ${threadId}
+                AND (status IN ('pending','starting','running','waiting')
+                  OR run_id = (
+                    SELECT run_id FROM orchestration_v2_projection_runs
+                    WHERE rowid = ${window.requiredRunRowId ?? null} LIMIT 1
+                  )
+                  OR (${window.requiredRunRowId ?? null} IS NULL
+                    AND run_id = ${window.requiredRunId ?? null}))
+              UNION ALL
+              SELECT payload_json, run_id, attempt_ordinal FROM (
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                  run_id, attempt_ordinal,
+                  SUM(LENGTH(CAST(COALESCE(bounded_json, payload_json) AS BLOB))) OVER (
+                    ORDER BY rowid DESC
+                  ) AS cohort_running_bytes
+                FROM orchestration_v2_projection_run_attempts
+                WHERE thread_id = ${threadId}
+                  AND status NOT IN ('pending','starting','running','waiting')
+                  AND run_id IN (
+                    SELECT run_id FROM orchestration_v2_projection_runs
+                    WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                  )
+                  AND run_id NOT IN (
+                    SELECT run_id FROM orchestration_v2_projection_runs
+                    WHERE rowid = ${window.requiredRunRowId ?? null}
+                      OR (${window.requiredRunRowId ?? null} IS NULL
+                        AND run_id = ${window.requiredRunId ?? null})
+                  )
+              ) WHERE cohort_running_bytes <= ${THREAD_HISTORY_MAX_COHORT_BYTES}
+            )
             ORDER BY run_id ASC, attempt_ordinal ASC
           `,
           window === undefined
@@ -3410,16 +3434,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `
             : sql<PayloadRow>`
-            SELECT COALESCE(bounded_json, payload_json) AS payload_json
-            FROM orchestration_v2_projection_subagents
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','starting','running','waiting')
-                OR run_id IN (
-                  SELECT run_id FROM orchestration_v2_projection_runs
-                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
-                )
-                OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.parentNodeId'))
-                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
+            -- Live subagents and ones whose own node is retained always
+            -- hydrate. Completed subagents matching only the retained run or
+            -- parent-node cohort share one aggregate stored-byte budget,
+            -- newest first — a retained run spawning thousands of subagents
+            -- cannot fan out unbounded.
+            SELECT payload_json, started_at, subagent_id FROM (
+              SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                started_at, subagent_id
+              FROM orchestration_v2_projection_subagents
+              WHERE thread_id = ${threadId}
+                AND (status IN ('pending','starting','running','waiting')
+                  OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.id'))
+                    IN (SELECT value FROM json_each(${cohortNodeHexes})))
+              UNION ALL
+              SELECT payload_json, started_at, subagent_id FROM (
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                  started_at, subagent_id,
+                  SUM(LENGTH(CAST(COALESCE(bounded_json, payload_json) AS BLOB))) OVER (
+                    ORDER BY rowid DESC
+                  ) AS cohort_running_bytes
+                FROM orchestration_v2_projection_subagents
+                WHERE thread_id = ${threadId}
+                  AND status NOT IN ('pending','starting','running','waiting')
+                  AND hex(json_extract(COALESCE(bounded_json, payload_json), '$.id'))
+                    NOT IN (SELECT value FROM json_each(${cohortNodeHexes}))
+                  AND (run_id IN (
+                      SELECT run_id FROM orchestration_v2_projection_runs
+                      WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                    )
+                    OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.parentNodeId'))
+                      IN (SELECT value FROM json_each(${cohortNodeHexes})))
+              ) WHERE cohort_running_bytes <= ${THREAD_HISTORY_MAX_COHORT_BYTES}
+            )
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `,
           window === undefined
@@ -3466,19 +3513,38 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `
             : sql<PayloadRow>`
-            SELECT COALESCE(bounded_json, payload_json) AS payload_json
-            FROM orchestration_v2_projection_provider_threads
-            WHERE (thread_id = ${threadId} AND status = 'active')
-              -- The cohort arms scan foreign threads' rows; a row whose
-              -- payload cannot be parsed (migration 054 leaves bounded_json
-              -- NULL for those) must be skipped, not abort the whole query.
-              OR (json_valid(COALESCE(bounded_json, payload_json))
-                AND json_extract(COALESCE(bounded_json, payload_json), '$.id')
-                  IN (SELECT value FROM json_each(${cohortProviderThreadIds})))
-              OR (json_valid(COALESCE(bounded_json, payload_json))
-                AND hex(json_extract(
-                  COALESCE(bounded_json, payload_json), '$.ownerNodeId'))
-                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
+            -- Active threads of this thread and threads referenced by retained
+            -- items always hydrate. Threads matching only the owner-node cohort
+            -- share one aggregate stored-byte budget, newest first.
+            SELECT payload_json, first_run_ordinal, provider_thread_id FROM (
+              SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                first_run_ordinal, provider_thread_id
+              FROM orchestration_v2_projection_provider_threads
+              WHERE (thread_id = ${threadId} AND status = 'active')
+                -- The cohort arms scan foreign threads' rows; a row whose
+                -- payload cannot be parsed (migration 054 leaves bounded_json
+                -- NULL for those) must be skipped, not abort the whole query.
+                OR (json_valid(COALESCE(bounded_json, payload_json))
+                  AND json_extract(COALESCE(bounded_json, payload_json), '$.id')
+                    IN (SELECT value FROM json_each(${cohortProviderThreadIds})))
+              UNION ALL
+              SELECT payload_json, first_run_ordinal, provider_thread_id FROM (
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                  first_run_ordinal, provider_thread_id,
+                  SUM(LENGTH(CAST(COALESCE(bounded_json, payload_json) AS BLOB))) OVER (
+                    ORDER BY rowid DESC
+                  ) AS cohort_running_bytes
+                FROM orchestration_v2_projection_provider_threads
+                WHERE json_valid(COALESCE(bounded_json, payload_json))
+                  AND hex(json_extract(
+                    COALESCE(bounded_json, payload_json), '$.ownerNodeId'))
+                    IN (SELECT value FROM json_each(${cohortNodeHexes}))
+                  AND NOT COALESCE(thread_id = ${threadId} AND status = 'active', 0)
+                  AND NOT COALESCE(json_extract(
+                    COALESCE(bounded_json, payload_json), '$.id')
+                      IN (SELECT value FROM json_each(${cohortProviderThreadIds})), 0)
+              ) WHERE cohort_running_bytes <= ${THREAD_HISTORY_MAX_COHORT_BYTES}
+            )
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `,
           window === undefined
@@ -3489,14 +3555,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY provider_thread_id ASC, ordinal ASC
           `
             : sql<PayloadRow>`
-            SELECT COALESCE(bounded_json, payload_json) AS payload_json
-            FROM orchestration_v2_projection_provider_turns
-            WHERE thread_id = ${threadId}
-              AND (status IN ('starting','running','waiting')
-                OR json_extract(COALESCE(bounded_json, payload_json), '$.id')
-                  IN (SELECT value FROM json_each(${cohortProviderTurnIds}))
-                OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
-                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
+            -- Live turns and turns referenced by retained items always
+            -- hydrate. Completed turns matching only the node cohort share
+            -- one aggregate stored-byte budget, newest first.
+            SELECT payload_json, provider_thread_id, ordinal FROM (
+              SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                provider_thread_id, ordinal
+              FROM orchestration_v2_projection_provider_turns
+              WHERE thread_id = ${threadId}
+                AND (status IN ('starting','running','waiting')
+                  OR json_extract(COALESCE(bounded_json, payload_json), '$.id')
+                    IN (SELECT value FROM json_each(${cohortProviderTurnIds})))
+              UNION ALL
+              SELECT payload_json, provider_thread_id, ordinal FROM (
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                  provider_thread_id, ordinal,
+                  SUM(LENGTH(CAST(COALESCE(bounded_json, payload_json) AS BLOB))) OVER (
+                    ORDER BY rowid DESC
+                  ) AS cohort_running_bytes
+                FROM orchestration_v2_projection_provider_turns
+                WHERE thread_id = ${threadId}
+                  AND status NOT IN ('starting','running','waiting')
+                  AND NOT COALESCE(json_extract(
+                    COALESCE(bounded_json, payload_json), '$.id')
+                      IN (SELECT value FROM json_each(${cohortProviderTurnIds})), 0)
+                  AND hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+                    IN (SELECT value FROM json_each(${cohortNodeHexes}))
+              ) WHERE cohort_running_bytes <= ${THREAD_HISTORY_MAX_COHORT_BYTES}
+            )
             ORDER BY provider_thread_id ASC, ordinal ASC
           `,
           window === undefined
@@ -3582,15 +3668,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY ordinal_within_parent ASC, scope_id ASC
           `
             : sql<PayloadRow>`
-            SELECT COALESCE(bounded_json, payload_json) AS payload_json
-            FROM orchestration_v2_projection_checkpoint_scopes
-            WHERE thread_id = ${threadId}
-              AND (run_id IN (
-                  SELECT run_id FROM orchestration_v2_projection_runs
-                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
-                )
-                OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
-                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
+            -- Scopes owned by retained nodes always hydrate. Scopes matching
+            -- only the retained-run cohort share one aggregate stored-byte
+            -- budget, newest first.
+            SELECT payload_json, ordinal_within_parent, scope_id FROM (
+              SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                ordinal_within_parent, scope_id
+              FROM orchestration_v2_projection_checkpoint_scopes
+              WHERE thread_id = ${threadId}
+                AND hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+                  IN (SELECT value FROM json_each(${cohortNodeHexes}))
+              UNION ALL
+              SELECT payload_json, ordinal_within_parent, scope_id FROM (
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                  ordinal_within_parent, scope_id,
+                  SUM(LENGTH(CAST(COALESCE(bounded_json, payload_json) AS BLOB))) OVER (
+                    ORDER BY rowid DESC
+                  ) AS cohort_running_bytes
+                FROM orchestration_v2_projection_checkpoint_scopes
+                WHERE thread_id = ${threadId}
+                  AND hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+                    NOT IN (SELECT value FROM json_each(${cohortNodeHexes}))
+                  AND run_id IN (
+                    SELECT run_id FROM orchestration_v2_projection_runs
+                    WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                  )
+              ) WHERE cohort_running_bytes <= ${THREAD_HISTORY_MAX_COHORT_BYTES}
+            )
             ORDER BY ordinal_within_parent ASC, scope_id ASC
           `,
           window === undefined
@@ -3601,18 +3705,41 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY scope_id ASC, ordinal_within_scope ASC
           `
             : sql<PayloadRow>`
-            SELECT COALESCE(bounded_json, payload_json) AS payload_json
-            FROM orchestration_v2_projection_checkpoints
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','capturing')
-                OR json_extract(COALESCE(bounded_json, payload_json), '$.id')
-                  IN (SELECT value FROM json_each(${cohortCheckpointIds}))
-                OR run_id IN (
-                  SELECT run_id FROM orchestration_v2_projection_runs
-                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
-                )
-                OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
-                  IN (SELECT value FROM json_each(${cohortNodeHexes})))
+            -- Live checkpoints, checkpoints referenced by retained items, and
+            -- checkpoints on retained nodes always hydrate. Checkpoints
+            -- matching only the retained-run cohort share one aggregate
+            -- stored-byte budget, newest first.
+            SELECT payload_json, scope_id, ordinal_within_scope FROM (
+              SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                scope_id, ordinal_within_scope
+              FROM orchestration_v2_projection_checkpoints
+              WHERE thread_id = ${threadId}
+                AND (status IN ('pending','capturing')
+                  OR json_extract(COALESCE(bounded_json, payload_json), '$.id')
+                    IN (SELECT value FROM json_each(${cohortCheckpointIds}))
+                  OR hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+                    IN (SELECT value FROM json_each(${cohortNodeHexes})))
+              UNION ALL
+              SELECT payload_json, scope_id, ordinal_within_scope FROM (
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json,
+                  scope_id, ordinal_within_scope,
+                  SUM(LENGTH(CAST(COALESCE(bounded_json, payload_json) AS BLOB))) OVER (
+                    ORDER BY rowid DESC
+                  ) AS cohort_running_bytes
+                FROM orchestration_v2_projection_checkpoints
+                WHERE thread_id = ${threadId}
+                  AND status NOT IN ('pending','capturing')
+                  AND NOT COALESCE(json_extract(
+                    COALESCE(bounded_json, payload_json), '$.id')
+                      IN (SELECT value FROM json_each(${cohortCheckpointIds})), 0)
+                  AND hex(json_extract(COALESCE(bounded_json, payload_json), '$.nodeId'))
+                    NOT IN (SELECT value FROM json_each(${cohortNodeHexes}))
+                  AND run_id IN (
+                    SELECT run_id FROM orchestration_v2_projection_runs
+                    WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                  )
+              ) WHERE cohort_running_bytes <= ${THREAD_HISTORY_MAX_COHORT_BYTES}
+            )
             ORDER BY scope_id ASC, ordinal_within_scope ASC
           `,
           window === undefined
@@ -3642,16 +3769,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY rowid ASC
           `
             : sql<PayloadRow>`
-            SELECT COALESCE(bounded_json, payload_json) AS payload_json
-            FROM orchestration_v2_projection_context_transfers
-            WHERE (source_thread_id = ${threadId} OR target_thread_id = ${threadId})
-              AND (status IN ('pending','running','waiting')
-                OR target_run_id IN (
-                  SELECT run_id FROM orchestration_v2_projection_runs
-                  WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
-                )
-                OR json_extract(COALESCE(bounded_json, payload_json), '$.resolution.contextHandoffId') IN
-                  (SELECT value FROM json_each(${cohortHandoffIds})))
+            -- Live transfers and transfers resolving a retained handoff always
+            -- hydrate. Transfers matching only the target-run cohort share one
+            -- aggregate stored-byte budget, newest first.
+            SELECT payload_json, rowid FROM (
+              SELECT COALESCE(bounded_json, payload_json) AS payload_json, rowid
+              FROM orchestration_v2_projection_context_transfers
+              WHERE (source_thread_id = ${threadId} OR target_thread_id = ${threadId})
+                AND (status IN ('pending','running','waiting')
+                  OR json_extract(COALESCE(bounded_json, payload_json), '$.resolution.contextHandoffId') IN
+                    (SELECT value FROM json_each(${cohortHandoffIds})))
+              UNION ALL
+              SELECT payload_json, rowid FROM (
+                SELECT COALESCE(bounded_json, payload_json) AS payload_json, rowid,
+                  SUM(LENGTH(CAST(COALESCE(bounded_json, payload_json) AS BLOB))) OVER (
+                    ORDER BY rowid DESC
+                  ) AS cohort_running_bytes
+                FROM orchestration_v2_projection_context_transfers
+                WHERE (source_thread_id = ${threadId} OR target_thread_id = ${threadId})
+                  AND status NOT IN ('pending','running','waiting')
+                  AND NOT COALESCE(json_extract(
+                    COALESCE(bounded_json, payload_json), '$.resolution.contextHandoffId')
+                      IN (SELECT value FROM json_each(${cohortHandoffIds})), 0)
+                  AND target_run_id IN (
+                    SELECT run_id FROM orchestration_v2_projection_runs
+                    WHERE rowid IN (SELECT value FROM json_each(${cohortRunRowids}))
+                  )
+              ) WHERE cohort_running_bytes <= ${THREAD_HISTORY_MAX_COHORT_BYTES}
+            )
             ORDER BY rowid ASC
           `,
         ]);
@@ -6950,26 +7095,62 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   activeRunStatuses.has(run.status) ? [String(run.id)] : [],
                 ),
               );
+              // Live rows and rows referenced by retained items hydrate
+              // unconditionally. Rows matching only the broad run/node
+              // cohorts share one aggregate stored-byte budget per
+              // collection, newest first — the same split the SQL path
+              // enforces before decode, so a retained run or node cannot
+              // fan out its completed related history unbounded.
+              const capCohortSurplus = <T>(
+                rows: ReadonlyArray<T>,
+                isSurplus: (row: T) => boolean,
+                idOf: (row: T) => string,
+              ) => {
+                const keepIds = new Set<string>();
+                let spent = 0;
+                for (let index = rows.length - 1; index >= 0; index -= 1) {
+                  const row = rows[index]!;
+                  if (!isSurplus(row)) continue;
+                  spent += bytesOfJson(row);
+                  if (spent > THREAD_HISTORY_MAX_COHORT_BYTES) break;
+                  keepIds.add(idOf(row));
+                }
+                return keepIds;
+              };
               const windowRuns = snapshot.projection.runs.filter(
                 (run) =>
                   activeRunStatuses.has(run.status) ||
                   cohortRunIds.has(String(run.id)) ||
                   (requiredRunId !== undefined && String(run.id) === requiredRunId),
               );
+              const isKeptAttempt = (attempt: (typeof snapshot.projection.attempts)[number]) =>
+                activeExecutionStatuses.has(attempt.status) ||
+                (requiredRunId !== undefined && String(attempt.runId) === requiredRunId);
+              const attemptSurplusIds = capCohortSurplus(
+                snapshot.projection.attempts,
+                (attempt) => !isKeptAttempt(attempt) && inCohort(cohortRunIds, attempt.runId),
+                (attempt) => String(attempt.id),
+              );
               const windowAttempts = snapshot.projection.attempts.filter(
-                (attempt) =>
-                  activeExecutionStatuses.has(attempt.status) ||
-                  cohortRunIds.has(String(attempt.runId)) ||
-                  (requiredRunId !== undefined && String(attempt.runId) === requiredRunId),
+                (attempt) => isKeptAttempt(attempt) || attemptSurplusIds.has(String(attempt.id)),
               );
               const windowNodes = snapshot.projection.nodes.filter((node) =>
                 cohortNodeIds.has(String(node.id)),
               );
+              const isKeptSubagent = (subagent: (typeof snapshot.projection.subagents)[number]) =>
+                activeExecutionStatuses.has(subagent.status) ||
+                cohortNodeIds.has(String(subagent.id));
+              const subagentSurplusIds = capCohortSurplus(
+                snapshot.projection.subagents,
+                (subagent) =>
+                  !isKeptSubagent(subagent) &&
+                  (inCohort(cohortRunIds, subagent.runId) ||
+                    cohortNodeIds.has(String(subagent.parentNodeId))),
+                (subagent) => String(subagent.id),
+              );
               const windowSubagents = snapshot.projection.subagents.filter(
                 (subagent) =>
-                  activeExecutionStatuses.has(subagent.status) ||
-                  inCohort(cohortRunIds, subagent.runId) ||
-                  cohortNodeIds.has(String(subagent.parentNodeId)),
+                  isKeptSubagent(subagent) || subagentSurplusIds.has(String(subagent.id)),
               );
               // The SQL cohort arms join provider_threads globally: a retained
               // item can reference a thread owned by another app thread, and
@@ -6979,13 +7160,22 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               const allProviderThreads = [
                 ...(yield* Ref.get(replayState)).providerThreadsById.values(),
               ];
+              const isKeptProviderThread = (providerThread: (typeof allProviderThreads)[number]) =>
+                (providerThread.appThreadId !== null &&
+                  String(providerThread.appThreadId) === String(threadId) &&
+                  providerThread.status === "active") ||
+                cohortProviderThreadIds.has(String(providerThread.id));
+              const providerThreadSurplusIds = capCohortSurplus(
+                allProviderThreads,
+                (providerThread) =>
+                  !isKeptProviderThread(providerThread) &&
+                  inCohort(cohortNodeIds, providerThread.ownerNodeId),
+                (providerThread) => String(providerThread.id),
+              );
               const windowProviderThreads = allProviderThreads.filter(
                 (providerThread) =>
-                  (providerThread.appThreadId !== null &&
-                    String(providerThread.appThreadId) === String(threadId) &&
-                    providerThread.status === "active") ||
-                  cohortProviderThreadIds.has(String(providerThread.id)) ||
-                  inCohort(cohortNodeIds, providerThread.ownerNodeId),
+                  isKeptProviderThread(providerThread) ||
+                  providerThreadSurplusIds.has(String(providerThread.id)),
               );
               const cohortProviderThreadSessionIds = new Set(
                 allProviderThreads.flatMap((providerThread) =>
@@ -7000,11 +7190,21 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   activeSessionStatuses.has(session.status) ||
                   cohortProviderThreadSessionIds.has(String(session.id)),
               );
+              const isKeptProviderTurn = (
+                providerTurn: (typeof snapshot.projection.providerTurns)[number],
+              ) =>
+                activeProviderTurnStatuses.has(providerTurn.status) ||
+                cohortProviderTurnIds.has(String(providerTurn.id));
+              const providerTurnSurplusIds = capCohortSurplus(
+                snapshot.projection.providerTurns,
+                (providerTurn) =>
+                  !isKeptProviderTurn(providerTurn) && inCohort(cohortNodeIds, providerTurn.nodeId),
+                (providerTurn) => String(providerTurn.id),
+              );
               const windowProviderTurns = snapshot.projection.providerTurns.filter(
                 (providerTurn) =>
-                  activeProviderTurnStatuses.has(providerTurn.status) ||
-                  cohortProviderTurnIds.has(String(providerTurn.id)) ||
-                  cohortNodeIds.has(String(providerTurn.nodeId)),
+                  isKeptProviderTurn(providerTurn) ||
+                  providerTurnSurplusIds.has(String(providerTurn.id)),
               );
               // Pending requests always hydrate. Resolved ones hydrate only
               // when a retained item references them (no per-turn fan-out),
@@ -7042,29 +7242,53 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               const windowPlans = snapshot.projection.plans.filter(
                 (plan) => plan.status === "active" || cohortPlanIds.has(String(plan.id)),
               );
+              const scopeSurplusIds = capCohortSurplus(
+                snapshot.projection.checkpointScopes,
+                (scope) =>
+                  !inCohort(cohortNodeIds, scope.nodeId) && inCohort(cohortRunIds, scope.runId),
+                (scope) => String(scope.id),
+              );
               const windowCheckpointScopes = snapshot.projection.checkpointScopes.filter(
                 (scope) =>
-                  inCohort(cohortRunIds, scope.runId) || cohortNodeIds.has(String(scope.nodeId)),
+                  inCohort(cohortNodeIds, scope.nodeId) || scopeSurplusIds.has(String(scope.id)),
+              );
+              const isKeptCheckpoint = (
+                checkpoint: (typeof snapshot.projection.checkpoints)[number],
+              ) =>
+                activeCheckpointStatuses.has(checkpoint.status) ||
+                cohortCheckpointIds.has(String(checkpoint.id)) ||
+                inCohort(cohortNodeIds, checkpoint.nodeId);
+              const checkpointSurplusIds = capCohortSurplus(
+                snapshot.projection.checkpoints,
+                (checkpoint) =>
+                  !isKeptCheckpoint(checkpoint) && inCohort(cohortRunIds, checkpoint.runId),
+                (checkpoint) => String(checkpoint.id),
               );
               const windowCheckpoints = snapshot.projection.checkpoints.filter(
                 (checkpoint) =>
-                  activeCheckpointStatuses.has(checkpoint.status) ||
-                  cohortCheckpointIds.has(String(checkpoint.id)) ||
-                  inCohort(cohortRunIds, checkpoint.runId) ||
-                  cohortNodeIds.has(String(checkpoint.nodeId)),
+                  isKeptCheckpoint(checkpoint) || checkpointSurplusIds.has(String(checkpoint.id)),
               );
               const windowContextHandoffs = snapshot.projection.contextHandoffs.filter(
                 (handoff) =>
                   activeHandoffStatuses.has(handoff.status) ||
                   cohortHandoffIds.has(String(handoff.id)),
               );
+              const isKeptTransfer = (
+                transfer: (typeof snapshot.projection.contextTransfers)[number],
+              ) =>
+                activeTransferStatuses.has(transfer.status) ||
+                (transfer.resolution !== null &&
+                  "contextHandoffId" in transfer.resolution &&
+                  cohortHandoffIds.has(String(transfer.resolution.contextHandoffId)));
+              const transferSurplusIds = capCohortSurplus(
+                snapshot.projection.contextTransfers,
+                (transfer) =>
+                  !isKeptTransfer(transfer) && inCohort(cohortRunIds, transfer.targetRunId),
+                (transfer) => String(transfer.id),
+              );
               const windowContextTransfers = snapshot.projection.contextTransfers.filter(
                 (transfer) =>
-                  activeTransferStatuses.has(transfer.status) ||
-                  inCohort(cohortRunIds, transfer.targetRunId) ||
-                  (transfer.resolution !== null &&
-                    "contextHandoffId" in transfer.resolution &&
-                    cohortHandoffIds.has(String(transfer.resolution.contextHandoffId))),
+                  isKeptTransfer(transfer) || transferSurplusIds.has(String(transfer.id)),
               );
               const [
                 thread,
