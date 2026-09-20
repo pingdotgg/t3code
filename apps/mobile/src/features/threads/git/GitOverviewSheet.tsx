@@ -22,10 +22,17 @@ import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "re
 import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../../lib/useUniwindTheme";
-
-import { AndroidSheetHeader } from "../../../components/AndroidScreenHeader";
+import {
+  AndroidHeaderIconButton,
+  AndroidSheetHeader,
+} from "../../../components/AndroidScreenHeader";
+import { MaterialScreenContent } from "../../../components/MaterialScreenContent";
+import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { AppText as Text } from "../../../components/AppText";
-import { nativeHeaderScrollEdgeEffects } from "../../../native/StackHeader";
+import {
+  NativeStackScreenOptions,
+  nativeHeaderScrollEdgeEffects,
+} from "../../../native/StackHeader";
 import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useThreadSelection } from "../../../state/use-thread-selection";
@@ -47,6 +54,7 @@ type GitOverviewSheetProps = StaticScreenProps<{
 };
 
 export function GitOverviewSheet(props: GitOverviewSheetProps) {
+  const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
@@ -224,14 +232,14 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
 
   const content = (
     <ScrollView
-      className="flex-1 bg-screen"
+      className={Platform.OS === "android" ? "flex-1 bg-sheet-solid" : "flex-1 bg-screen"}
       contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
       showsVerticalScrollIndicator={false}
       contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
       contentContainerStyle={{
-        paddingHorizontal: isInspector ? 12 : 20,
+        paddingHorizontal: Platform.OS === "android" ? 8 : isInspector ? 12 : 20,
         paddingTop: 8,
-        gap: 14,
+        gap: Platform.OS === "android" ? 8 : 14,
       }}
       refreshControl={
         <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullRefresh()} />
@@ -239,14 +247,18 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
     >
       <View
         className={
-          isInspector
-            ? "overflow-hidden rounded-2xl border border-border bg-card px-3 py-1"
-            : "overflow-hidden rounded-[22px] border border-border bg-card px-4 py-1"
+          Platform.OS === "android"
+            ? "overflow-hidden rounded-[20px] bg-card"
+            : isInspector
+              ? "overflow-hidden rounded-2xl border border-border bg-card px-3 py-1"
+              : "overflow-hidden rounded-[22px] border border-border bg-card px-4 py-1"
         }
       >
         {sheetMenuItems.map(({ item, disabledReason }, index) => (
           <View key={`${item.id}-${item.label}`}>
-            {index > 0 ? <View className="ml-12 h-px bg-border" /> : null}
+            {index > 0 && Platform.OS !== "android" ? (
+              <View className="ml-12 h-px bg-border" />
+            ) : null}
             <SheetListRow
               icon={menuItemIconName(item.icon)}
               title={item.label}
@@ -258,7 +270,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         ))}
         {behindCount > 0 ? (
           <>
-            <View className="ml-12 h-px bg-border" />
+            {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
             <SheetListRow
               icon="arrow.down.circle"
               title="Pull latest"
@@ -268,7 +280,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             />
           </>
         ) : null}
-        <View className="ml-12 h-px bg-border" />
+        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
           icon="text.bubble"
           title="Review changes"
@@ -283,7 +295,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
             );
           }}
         />
-        <View className="ml-12 h-px bg-border" />
+        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
           title="Branches & worktrees"
@@ -306,7 +318,11 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           {linkedPrChains.map((chain) => (
             <View
               key={threadPullRequestKeyOf(chain.layers[0]!)}
-              className="overflow-hidden rounded-2xl border border-border bg-card px-3 py-1"
+              className={
+                Platform.OS === "android"
+                  ? "overflow-hidden rounded-[20px] bg-card"
+                  : "overflow-hidden rounded-2xl border border-border bg-card px-3 py-1"
+              }
             >
               {chain.layers.length > 1 ? (
                 <View className="flex-row items-center gap-2 px-1 pt-2 pb-1">
@@ -323,7 +339,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
               ) : null}
               {chain.layers.map((link, index) => (
                 <View key={threadPullRequestKeyOf(link)}>
-                  {index > 0 ? <View className="ml-12 h-px bg-border" /> : null}
+                  {index > 0 && Platform.OS !== "android" ? (
+                    <View className="ml-12 h-px bg-border" />
+                  ) : null}
                   <SheetListRow
                     icon="arrow.triangle.pull"
                     title={`#${link.number} ${link.snapshot?.title ?? "Pull request"}`}
@@ -416,8 +434,19 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   return (
     <View
       collapsable={false}
-      className={isInspector ? "flex-1 border-l border-border bg-sheet" : "flex-1 bg-sheet"}
+      className={
+        Platform.OS === "android"
+          ? "flex-1 bg-header"
+          : isInspector
+            ? "flex-1 border-l border-border bg-sheet"
+            : "flex-1 bg-sheet"
+      }
     >
+      {!isInspector ? (
+        <NativeStackScreenOptions
+          options={{ sheetCornerRadius: Platform.OS === "android" ? 28 : undefined }}
+        />
+      ) : null}
       {isInspector ? (
         <View
           style={{
@@ -428,24 +457,41 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       ) : null}
 
       {isInspector ? (
-        <View className="gap-1 border-b border-border px-4 pb-4 pt-3">
-          <Pressable
-            className={
-              busy
-                ? "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle opacity-[0.45]"
-                : "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle"
-            }
-            disabled={busy}
-            onPress={() => void gitActions.refreshSelectedThreadGitStatus()}
-          >
-            <SymbolView
-              name="arrow.clockwise"
-              size={16}
-              tintColorClassName={"accent-icon"}
-              type="monochrome"
-              weight="medium"
-            />
-          </Pressable>
+        <View
+          className={
+            Platform.OS === "android"
+              ? "gap-1 bg-header px-4 pb-4 pt-3"
+              : "gap-1 border-b border-border px-4 pb-4 pt-3"
+          }
+        >
+          {Platform.OS === "android" ? (
+            <View className="absolute right-3 top-4 z-[1]">
+              <AndroidHeaderIconButton
+                accessibilityLabel="Refresh repository status"
+                disabled={busy}
+                icon="arrow.clockwise"
+                onPress={() => void gitActions.refreshSelectedThreadGitStatus()}
+              />
+            </View>
+          ) : (
+            <Pressable
+              className={
+                busy
+                  ? "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle opacity-[0.45]"
+                  : "absolute right-3 top-4 z-[1] h-9 w-9 items-center justify-center rounded-full bg-subtle"
+              }
+              disabled={busy}
+              onPress={() => void gitActions.refreshSelectedThreadGitStatus()}
+            >
+              <SymbolView
+                name="arrow.clockwise"
+                size={16}
+                tintColorClassName="accent-icon"
+                type="monochrome"
+                weight="medium"
+              />
+            </Pressable>
+          )}
           <Text className="text-xs font-t3-bold tracking-[1px] uppercase text-foreground-muted">
             Repository
           </Text>
@@ -457,6 +503,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
       ) : (
         <AndroidSheetHeader
           title={currentBranchLabel}
+          hideBottomBorder={Platform.OS === "android"}
           subtitle={currentStatusSummary}
           onBack={() => navigation.goBack()}
           actions={[
@@ -470,7 +517,9 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         />
       )}
 
-      {content}
+      <MaterialScreenContent insetHorizontal={layout.usesSplitView}>
+        {content}
+      </MaterialScreenContent>
     </View>
   );
 }

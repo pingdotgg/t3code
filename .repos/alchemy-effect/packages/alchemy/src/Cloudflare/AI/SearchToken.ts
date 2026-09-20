@@ -267,13 +267,10 @@ export const SearchTokenProvider = () =>
         .pipe(
           Effect.retry({
             while: (e) => e._tag === "TokenInUseByInstances",
-            // The referencing instance tears down its managed Vectorize
-            // index asynchronously and can hold the token well past two
-            // minutes. Poll at a steady 5s and give it a generous overall
-            // budget (~5min) so the token delete reliably waits out the
-            // instance instead of racing the teardown and failing flakily.
+            // Allow brief asynchronous teardown, but surface a token still
+            // referenced by another instance instead of stalling cleanup.
             schedule: Schedule.spaced("5 seconds"),
-            times: 60,
+            times: 8,
           }),
           Effect.catchTag("TokenNotFound", () => Effect.void),
         );
