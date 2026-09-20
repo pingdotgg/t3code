@@ -1447,8 +1447,9 @@ function toCheckEntries(
  * GitHub's own indicator reads: a run that has already gone red will not go green by finishing.
  *
  * Null rather than "passing" for a head commit with no checks at all, so a repository that runs
- * none shows nothing instead of a green tick it never earned. Checks whose verdict is neither a
- * pass, a failure nor a wait — skipped, cancelled, neutral — count towards neither.
+ * none shows nothing instead of a green tick it never earned. A cancelled run is a failure, as
+ * GitHub's own rollup and the client's detail rollup both read it; skipped and neutral count
+ * towards neither, so the row and the detail header never disagree about one head commit.
  *
  * Counted off the deduped checks rather than the raw rollup, so the word and the list under it
  * cannot disagree: the run a re-run replaced is not a verdict twice. A row with no name at all is
@@ -1463,7 +1464,7 @@ function rollupChecksState(
     ...(raw ?? []).filter(isNamelessCheck).map((check) => toCheckStatus(check)),
   ];
   if (statuses.length === 0) return null;
-  if (statuses.includes("failure")) return "failing";
+  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
   if (statuses.includes("pending") || statuses.includes("action-required")) return "pending";
   return statuses.includes("success") ? "passing" : null;
 }

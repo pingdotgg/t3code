@@ -658,6 +658,30 @@ export interface DesktopPreviewPointerEvent {
   createdAt: string;
 }
 
+/** Recording decorations are forwarded separately from the captured page pixels. */
+export const DesktopPreviewRecordingInputSchema = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("pointer"),
+    phase: Schema.Literals(["move", "down", "up", "click"]),
+    x: Schema.Finite,
+    y: Schema.Finite,
+    width: Schema.Finite.check(Schema.isGreaterThan(0)),
+    height: Schema.Finite.check(Schema.isGreaterThan(0)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("key"),
+    label: Schema.NullOr(Schema.String.check(Schema.isMaxLength(100))),
+    held: Schema.Boolean,
+    width: Schema.Finite.check(Schema.isGreaterThan(0)),
+  }),
+  Schema.Struct({ type: Schema.Literal("clear") }),
+]);
+export type DesktopPreviewRecordingInput = typeof DesktopPreviewRecordingInputSchema.Type;
+export interface DesktopPreviewRecordingInputEvent {
+  readonly tabId: string;
+  readonly input: DesktopPreviewRecordingInput;
+}
+
 /**
  * Static config a renderer needs to mount a preview `<webview>`. Returned
  * atomically by `DesktopPreviewBridge.getPreviewConfig()` so the renderer
@@ -1295,6 +1319,7 @@ export interface DesktopPreviewBridge {
     close: (tabId: string) => Promise<void>;
   };
   recording: {
+    onInput: (listener: (event: DesktopPreviewRecordingInputEvent) => void) => () => void;
     startScreencast: (tabId: string) => Promise<void>;
     stopScreencast: (tabId: string) => Promise<void>;
     save: (
