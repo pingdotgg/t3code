@@ -175,25 +175,31 @@ export const make = Effect.gen(function* () {
         identity &&
         !thread.pullRequests.some((link) => threadPullRequestKeysEqual(link, identity))
       ) {
-        const uuid = yield* crypto.randomUUIDv4;
-        yield* engine.dispatch({
-          type: "thread.pull-request.link",
-          commandId: CommandId.make(`server:legacy-pr-link:${thread.id}:${uuid}`),
-          threadId: thread.id,
-          host: identity.host,
-          repository: identity.repository,
-          number: identity.number,
-          url: legacy.url,
-          source: "agent",
-        });
-        links.push({
-          ...identity,
-          url: legacy.url,
-          source: "agent",
-          linkedAt: nowIso,
-          snapshot: null,
-          stack: null,
-        });
+        yield* Effect.gen(function* () {
+          const uuid = yield* crypto.randomUUIDv4;
+          yield* engine.dispatch({
+            type: "thread.pull-request.link",
+            commandId: CommandId.make(`server:legacy-pr-link:${thread.id}:${uuid}`),
+            threadId: thread.id,
+            host: identity.host,
+            repository: identity.repository,
+            number: identity.number,
+            url: legacy.url,
+            source: "agent",
+          });
+          links.push({
+            ...identity,
+            url: legacy.url,
+            source: "agent",
+            linkedAt: nowIso,
+            snapshot: null,
+            stack: null,
+          });
+        }).pipe(
+          Effect.catchCause(
+            logSkipped("legacy pull request link skipped", { threadId: thread.id }),
+          ),
+        );
       }
       for (const link of links) {
         const key = threadPullRequestKeyOf(link);
