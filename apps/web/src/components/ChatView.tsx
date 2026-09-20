@@ -175,6 +175,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { isContextMenuOpen } from "../contextMenuFallback";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -6887,6 +6888,13 @@ export default function ChatView(props: ChatViewProps) {
       if (command === "thread.stop") {
         // An unavailable command should not shadow contextual shortcuts such as Escape to close a dialog.
         if (!canInterruptRunningThread) return;
+        // Esc still closes the topmost dialog/menu first: only stop when
+        // nothing dismissible is open.
+        if (event.key === "Escape") {
+          if (isContextMenuOpen()) return;
+          if (composerRef.current?.isModelPickerOpen()) return;
+          if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return;
+        }
         event.preventDefault();
         event.stopPropagation();
         if (event.repeat) return;

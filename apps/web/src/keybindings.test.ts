@@ -226,6 +226,38 @@ describe("settle thread shortcut", () => {
   });
 });
 
+describe("stop thread shortcut", () => {
+  it("resolves Esc outside the terminal", () => {
+    assert.equal(
+      resolveShortcutCommand(event({ key: "Escape" }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "thread.stop",
+    );
+  });
+
+  it("does not intercept the terminal", () => {
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "Escape" }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("labels the stop shortcut as Esc", () => {
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "thread.stop", "MacIntel"),
+      "Esc",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "thread.stop", "Win32"),
+      "Esc",
+    );
+  });
+});
+
 describe("copy thread reference shortcut", () => {
   it("resolves Cmd+Shift+C on macOS and Ctrl+Shift+C elsewhere", () => {
     assert.equal(

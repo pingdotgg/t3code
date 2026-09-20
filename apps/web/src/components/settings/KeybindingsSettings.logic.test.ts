@@ -29,6 +29,7 @@ describe("KeybindingsSettings.logic", () => {
       "modelPicker.previousProvider",
       "modelPicker.nextProvider",
       "thread.copyReference",
+      "thread.stop",
       "pullRequest.copyNumber",
     ]) {
       expect(rows.find((row) => row.command === command)).toMatchObject({
@@ -247,7 +248,7 @@ describe("KeybindingsSettings.logic", () => {
       ]),
     );
     expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === "thread.stop")).toBe(
-      false,
+      true,
     );
   });
 
