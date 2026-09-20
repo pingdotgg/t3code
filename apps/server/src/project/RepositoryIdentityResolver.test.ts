@@ -39,6 +39,45 @@ const makeRepositoryIdentityResolverTestLayer = (options: {
   ).pipe(Layer.provide(ProcessRunner.layer));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+  it.effect.each([
+    ["https://github.com/team/repo.git", "github", "github.com/team/repo"],
+    ["git@github.com:team/repo.git", "github", "github.com/team/repo"],
+    [
+      "https://org.visualstudio.com/DefaultCollection/Project/_git/repo",
+      "azure-devops",
+      "org.visualstudio.com/defaultcollection/project/_git/repo",
+    ],
+  ] as const)(
+    "resolves partial-clone repository identity for %s",
+    ([remoteUrl, provider, canonicalKey]) =>
+      Effect.gen(function* () {
+        const resolver = yield* RepositoryIdentityResolver.make().pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.succeed({
+                stdout: input.args.includes("rev-parse")
+                  ? "/repo\r\n"
+                  : `origin\t${remoteUrl} (fetch) [blob:none]\r\norigin\t${remoteUrl} (push)\r\n`,
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              }),
+          }),
+        );
+
+        expect(yield* resolver.resolve("/repo")).toMatchObject({
+          provider,
+          canonicalKey,
+          name: "repo",
+          locator: { remoteName: "origin", remoteUrl },
+        });
+      }),
+  );
+
   it.effect("refreshes the Git root only when requested", () => {
     const calls: Array<ReadonlyArray<string>> = [];
     let rootPath = "/repo";
