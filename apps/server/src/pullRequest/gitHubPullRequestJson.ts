@@ -1854,7 +1854,7 @@ export function decodePullRequestStatsJson(
  */
 const PULL_REQUEST_SUMMARY_SELECTION =
   "number title url state isDraft mergeable reviewDecision additions deletions changedFiles " +
-  "updatedAt mergedAt closedAt headRefName baseRefName " +
+  "updatedAt mergedAt closedAt headRefName headRefOid baseRefName " +
   "author { __typename login avatarUrl ... on User { name } } " +
   "latestReviews(first: 20) { nodes { state author { login } } } " +
   "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }";
@@ -1881,6 +1881,7 @@ export function buildPullRequestSummariesGraphQlQuery(
 }
 
 const RawSummarySchema = Schema.Struct({
+  headRefOid: Schema.optional(Schema.NullOr(Schema.String)),
   ...RawSearchItemSchema.fields,
   changedFiles: Schema.optional(Schema.NullOr(Schema.Int)),
   additions: Schema.optional(Schema.NullOr(Schema.Int)),
@@ -1903,6 +1904,7 @@ const decodeSummaries = decodeJsonResult(
 const decodeSummaryEntry = Schema.decodeUnknownExit(RawSummarySchema);
 
 export interface GitHubPullRequestSummary {
+  readonly headSha?: string;
   readonly number: number;
   readonly title: string;
   readonly url: string;
@@ -1943,6 +1945,7 @@ export function decodePullRequestSummariesJson(
       title: pr.title,
       url: pr.url,
       headBranch: pr.headRefName,
+      ...(pr.headRefOid ? { headSha: pr.headRefOid } : {}),
       baseBranch: pr.baseRefName,
       state: toState(pr),
       isDraft: pr.isDraft ?? false,

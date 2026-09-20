@@ -67,7 +67,7 @@ export interface ProjectionFullThreadDiffContext {
 /** The thread fields pull request sync reads, for a thread with at least one link. */
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationThreadShell,
-  "id" | "projectId" | "settledOverride" | "settledAt" | "pullRequests"
+  "id" | "projectId" | "settledOverride" | "settledAt" | "pullRequests" | "branchPullRequest"
 >;
 
 export interface ProjectionThreadDetailQuery {
@@ -142,8 +142,8 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
-   * Read active (not deleted, not archived) threads that have at least one pull
-   * request link, in shell snapshot order. Skips repository identity, so no
+   * Read non-deleted threads with explicit or legacy pull request links, including
+   * archived threads that retain a worktree. Skips repository identity, so no
    * legacy `linkedPullRequest` is derived.
    */
   readonly listThreadsWithPullRequests: () => Effect.Effect<

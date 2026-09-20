@@ -87,6 +87,7 @@ export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOpti
 }
 
 export type GitBranchPullRequest = NonNullable<VcsStatusResult["pr"]> & {
+  readonly headSha?: string;
   readonly repositoryKey: string | null;
   readonly updatedAt: string | null;
   readonly closedAt?: string | null;
@@ -113,7 +114,7 @@ export class GitManager extends Context.Service<
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     /** Resolve the PR for a saved branch without changing the current checkout. */
     readonly branchPullRequest: (
-      input: { readonly cwd: string; readonly branch: string },
+      input: { readonly cwd: string; readonly branch: string; readonly reference?: string },
       options?: { readonly refresh?: boolean },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -188,6 +189,7 @@ interface OpenPrInfo {
 }
 
 interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
+  headSha?: string | undefined;
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
   closedAt?: string | null;
@@ -452,6 +454,7 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     url: summary.url,
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
+    ...(summary.headSha ? { headSha: summary.headSha } : {}),
     state: summary.state ?? "open",
     ...(summary.isDraft === true ? { isDraft: true } : {}),
     closedAt: summary.closedAt ?? null,
@@ -2142,7 +2145,20 @@ export const make = Effect.gen(function* () {
   });
   const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
     "branchPullRequest",
-  )(function* ({ cwd, branch }, options) {
+  )(function* ({ cwd, branch, reference }, options) {
+    if (reference !== undefined) {
+      // Cleanup reads an identified PR afresh, rather than selecting a reused branch's PR.
+      const latest = toPullRequestInfo(
+        yield* (yield* sourceControlProvider(cwd)).getChangeRequest({ cwd, reference }),
+      );
+      return {
+        ...toStatusPr(latest),
+        ...(latest.headSha ? { headSha: latest.headSha } : {}),
+        closedAt: latest.closedAt ?? null,
+        mergedAt: latest.mergedAt ?? null,
+        repositoryKey: pullRequestRepositoryKey(latest.url),
+      };
+    }
     const cacheCwd = yield* normalizeStatusCacheKey(cwd);
     const remotes = yield* gitCore.execute({
       operation: "GitManager.branchPullRequest.remotes",
@@ -2286,6 +2302,7 @@ export const make = Effect.gen(function* () {
     }
     return {
       ...toStatusPr(latest),
+      ...(latest.headSha ? { headSha: latest.headSha } : {}),
       closedAt: latest.closedAt ?? null,
       mergedAt: latest.mergedAt ?? null,
       // Hosting CLIs can select an upstream repository instead of origin.

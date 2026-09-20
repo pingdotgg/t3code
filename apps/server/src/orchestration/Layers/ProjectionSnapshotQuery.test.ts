@@ -3547,12 +3547,13 @@ it.effect(
         ('t-deleted', 'github.com', 'acme/web', 6, 'https://github.com/acme/web/pull/6', 'manual', '2026-09-02T00:00:00Z', NULL)`;
       const expected = (yield* query.getShellSnapshot()).threads
         .filter((thread) => thread.pullRequests.length > 0)
-        .map(({ id, projectId, settledOverride, settledAt, pullRequests }) => ({
+        .map(({ id, projectId, settledOverride, settledAt, pullRequests, branchPullRequest }) => ({
           id,
           projectId,
           settledOverride,
           settledAt,
           pullRequests,
+          branchPullRequest,
         }));
       resolved.length = 0;
 
@@ -3570,6 +3571,26 @@ it.effect(
       );
       assert.deepStrictEqual(threads, expected);
       assert.strictEqual(counter.count(), 1);
+      assert.deepStrictEqual(resolved, []);
+
+      const legacy = {
+        projectId: "p1",
+        repository: "acme/web",
+        number: 7,
+        url: "https://github.com/acme/web/pull/7",
+      };
+      yield* sql`UPDATE projection_threads SET branch_pull_request_json = '{"projectId":"p1","repository":"acme/web","number":7,"url":"https://github.com/acme/web/pull/7"}' 
+        WHERE thread_id IN ('t-plain', 't-deleted')`;
+      yield* sql`UPDATE projection_threads SET worktree_path = '/worktrees/archived'
+        WHERE thread_id = 't-archived'`;
+      const eligible = yield* query.listThreadsWithPullRequests();
+      assert.deepStrictEqual(
+        eligible.map((thread) => thread.id),
+        ["t-archived", "t-first", "t-plain", "t-late", "t-early"],
+      );
+      const legacyThread = eligible.find((thread) => thread.id === "t-plain");
+      assert.deepStrictEqual(legacyThread?.branchPullRequest, legacy);
+      assert.deepStrictEqual(legacyThread?.pullRequests, []);
       assert.deepStrictEqual(resolved, []);
     }).pipe(Effect.provide(layer));
   },

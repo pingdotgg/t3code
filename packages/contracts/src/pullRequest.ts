@@ -724,6 +724,8 @@ export type PullRequestPreview = typeof PullRequestPreview.Type;
  * status check never loads permissions, repository settings, checks, or base comparison data.
  */
 export const PullRequestSummary = Schema.Struct({
+  /** Immutable PR head observed by the host; absent when the provider cannot supply it. */
+  headSha: Schema.optional(TrimmedNonEmptyString),
   provider: SourceControlProviderKind,
   projectId: ProjectId,
   repository: TrimmedNonEmptyString,
@@ -821,6 +823,7 @@ export const PullRequestInvalidateInput = Schema.Struct({
 export type PullRequestInvalidateInput = typeof PullRequestInvalidateInput.Type;
 
 export const PullRequestDetail = Schema.Struct({
+  headSha: Schema.optional(TrimmedNonEmptyString),
   provider: SourceControlProviderKind,
   capabilities: PullRequestCapabilities,
   /** What this viewer may do, which `capabilities` says nothing about. Both narrow the page. */

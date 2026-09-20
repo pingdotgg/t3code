@@ -1,4 +1,4 @@
-import { siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { parseChangeRequestUrl, siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   CommandId,
   type PullRequestSummary,
@@ -44,6 +44,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     state: summary.state,
     title: summary.title,
     headBranch: summary.headBranch,
+    ...(summary.headSha ? { headSha: summary.headSha } : {}),
     baseBranch: summary.baseBranch,
     isDraft: summary.isDraft ?? false,
     updatedAt: summary.updatedAt,
@@ -64,6 +65,7 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     left.state === right.state &&
     left.title === right.title &&
     left.headBranch === right.headBranch &&
+    left.headSha === right.headSha &&
     left.baseBranch === right.baseBranch &&
     left.isDraft === right.isDraft &&
     left.updatedAt === right.updatedAt &&
@@ -138,7 +140,13 @@ export const make = Effect.gen(function* () {
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
     if (requested.has(key) || retryStacks.has(key)) return true;
     if (entries.some((entry) => entry.link.snapshot === null)) return true;
-    if (entries.every((entry) => entry.link.snapshot?.state === "merged")) return false;
+    if (entries.every((entry) => entry.link.snapshot?.state === "merged")) {
+      const last = lastSyncedAt.get(key);
+      return (
+        entries.some((entry) => !entry.link.snapshot?.headSha) &&
+        (last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS)
+      );
+    }
     if (entries.some((entry) => entry.link.snapshot?.state === "open" && isUnsettled(entry.thread)))
       return true;
     // Closed requests can reopen on the host, including after the thread settles.
@@ -159,7 +167,35 @@ export const make = Effect.gen(function* () {
 
     const groups = new Map<string, Array<LinkEntry>>();
     for (const thread of threads) {
-      for (const link of visibleThreadPullRequests(thread.pullRequests)) {
+      const links = [...visibleThreadPullRequests(thread.pullRequests)];
+      const legacy = thread.branchPullRequest;
+      const identity = legacy ? parseChangeRequestUrl(legacy.url) : null;
+      if (
+        legacy &&
+        identity &&
+        !thread.pullRequests.some((link) => threadPullRequestKeysEqual(link, identity))
+      ) {
+        const uuid = yield* crypto.randomUUIDv4;
+        yield* engine.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`server:legacy-pr-link:${thread.id}:${uuid}`),
+          threadId: thread.id,
+          host: identity.host,
+          repository: identity.repository,
+          number: identity.number,
+          url: legacy.url,
+          source: "agent",
+        });
+        links.push({
+          ...identity,
+          url: legacy.url,
+          source: "agent",
+          linkedAt: nowIso,
+          snapshot: null,
+          stack: null,
+        });
+      }
+      for (const link of links) {
         const key = threadPullRequestKeyOf(link);
         const entries = groups.get(key) ?? [];
         entries.push({ thread, link });
@@ -242,8 +278,15 @@ export const make = Effect.gen(function* () {
         number: first.link.number,
       };
       const generation = requested.get(key);
-      if (generation !== undefined) yield* pullRequests.invalidate({ reference: ref });
-      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
+      const needsHeadEvidence = entries.some(
+        (entry) => entry.link.snapshot?.state === "merged" && !entry.link.snapshot.headSha,
+      );
+      if (generation !== undefined || needsHeadEvidence)
+        yield* pullRequests.invalidate({ reference: ref });
+      const summary = yield* pullRequests.summary(
+        needsHeadEvidence ? { ...ref, allowStale: false } : ref,
+        { recoverTransientFailure: false },
+      );
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         generation !== undefined ||

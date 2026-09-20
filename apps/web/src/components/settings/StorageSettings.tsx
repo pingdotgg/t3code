@@ -21,12 +21,10 @@ function RetentionControl({
   label,
   value,
   onChange,
-  showOffLabel = true,
 }: {
   label: string;
   value: number | null;
   onChange: (value: number | null) => void;
-  showOffLabel?: boolean;
 }) {
   return (
     <div className="flex items-center gap-3">
@@ -38,9 +36,9 @@ function RetentionControl({
           label={`${label} in days`}
           onCommit={onChange}
         />
-      ) : showOffLabel ? (
+      ) : (
         <span className="text-xs text-muted-foreground">Off</span>
-      ) : null}
+      )}
       <Switch
         aria-label={label}
         checked={value !== null}
@@ -225,37 +223,53 @@ function StorageSettingsEditor() {
                 !isProjectScope || (!mixedModes && mode === "custom")
                   ? {
                       deleted: (
-                        <Switch
-                          aria-label="Remove worktrees left by deleted threads"
-                          checked={settings.worktreeOnDelete}
-                          onCheckedChange={(worktreeOnDelete) =>
-                            updateWorktree({ worktreeOnDelete })
-                          }
-                        />
+                        <div className="flex items-center gap-3">
+                          {!settings.worktreeOnDelete && (
+                            <span className="text-xs text-muted-foreground">Off</span>
+                          )}
+                          <Switch
+                            aria-label="Remove worktrees left by deleted threads"
+                            checked={settings.worktreeOnDelete}
+                            onCheckedChange={(worktreeOnDelete) =>
+                              updateWorktree({ worktreeOnDelete })
+                            }
+                          />
+                        </div>
                       ),
                       inactive: (
                         <RetentionControl
-                          label="Remove inactive worktrees"
-                          showOffLabel={false}
+                          label="Remove settled worktrees"
                           value={settings.worktreeAfterDays}
                           onChange={(worktreeAfterDays) => updateWorktree({ worktreeAfterDays })}
                         />
                       ),
                       merged: (
-                        <Switch
-                          aria-label="Remove merged worktrees"
-                          checked={settings.worktreeOnMerge}
-                          onCheckedChange={(worktreeOnMerge) => updateWorktree({ worktreeOnMerge })}
-                        />
+                        <div className="flex items-center gap-3">
+                          {!settings.worktreeOnMerge && (
+                            <span className="text-xs text-muted-foreground">Off</span>
+                          )}
+                          <Switch
+                            aria-label="Remove merged worktrees"
+                            checked={settings.worktreeOnMerge}
+                            onCheckedChange={(worktreeOnMerge) =>
+                              updateWorktree({ worktreeOnMerge })
+                            }
+                          />
+                        </div>
                       ),
                       unchanged: (
-                        <Switch
-                          aria-label="Remove worktrees with no unique commits"
-                          checked={settings.worktreeUnchanged}
-                          onCheckedChange={(worktreeUnchanged) =>
-                            updateWorktree({ worktreeUnchanged })
-                          }
-                        />
+                        <div className="flex items-center gap-3">
+                          {!settings.worktreeUnchanged && (
+                            <span className="text-xs text-muted-foreground">Off</span>
+                          )}
+                          <Switch
+                            aria-label="Remove worktrees with no unique commits"
+                            checked={settings.worktreeUnchanged}
+                            onCheckedChange={(worktreeUnchanged) =>
+                              updateWorktree({ worktreeUnchanged })
+                            }
+                          />
+                        </div>
                       ),
                     }
                   : undefined

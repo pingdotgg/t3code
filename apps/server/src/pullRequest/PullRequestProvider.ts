@@ -69,6 +69,7 @@ export interface PullRequestProviderFailure {
 
 /** A change request as the provider sees it, before the service attaches project context. */
 export interface ProviderChangeRequest {
+  readonly headSha?: string | null;
   readonly stack?: PullRequestStackMembership;
   readonly number: number;
   readonly title: string;
@@ -97,6 +98,7 @@ export interface ProviderChangeRequest {
 
 /** The fields needed to keep a linked thread's pull request status live. */
 export interface ProviderChangeRequestSummary {
+  readonly headSha?: string | null;
   readonly number: number;
   readonly title: string;
   readonly url: string;

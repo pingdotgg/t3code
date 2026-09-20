@@ -734,6 +734,8 @@ export type ThreadPullRequestLinkSource = typeof ThreadPullRequestLinkSource.Typ
  * written before they existed still decode.
  */
 export const ThreadPullRequestSnapshot = Schema.Struct({
+  /** Immutable PR head observed by the host; absent when the provider cannot supply it. */
+  headSha: Schema.optional(TrimmedNonEmptyString),
   state: PullRequestState,
   title: TrimmedNonEmptyString,
   headBranch: TrimmedNonEmptyString,
