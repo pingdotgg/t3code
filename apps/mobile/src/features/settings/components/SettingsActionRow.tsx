@@ -31,6 +31,7 @@ export function SettingsActionRow(props: {
   if (Platform.OS === "android") {
     return (
       <MaterialListRow
+        className="bg-grouped-card"
         title={props.label}
         titleClassName={textClassName}
         leading={icon}
