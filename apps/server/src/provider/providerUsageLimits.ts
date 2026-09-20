@@ -29,7 +29,13 @@ export function makeUsageLimits(input: {
   readonly checkedAt: string;
   readonly windows: Iterable<ServerProviderUsageWindow>;
 }): ServerProviderUsageLimits {
-  return { checkedAt: input.checkedAt, windows: sortWindows(input.windows) };
+  return {
+    checkedAt: input.checkedAt,
+    windows: sortWindows(input.windows),
+    // Snapshots built here carry the send-gating contract fields, so clients
+    // may gate sends on them; snapshots without the flag predate it.
+    sendGating: true,
+  };
 }
 
 export function makeUnavailableUsageLimits(input: {

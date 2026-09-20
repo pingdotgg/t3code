@@ -506,10 +506,10 @@ function modelScopeCovers(
  * instance, or null when the selection can send. An unscoped window gates
  * every model; a `modelScope`d window gates only the model it names; windows
  * marked `blocksSends: false` are sub-meters that only inform. A snapshot
- * that is unavailable, and an exhausted window whose reset has already
- * passed (a stale read the next probe replaces), do not block. When several
- * exhausted windows apply, the one that frees last is the binding constraint
- * for this selection.
+ * that is unavailable, that predates `sendGating`, or whose exhausted window
+ * reset has already passed (a stale read the next probe replaces) does not
+ * block. When several exhausted windows apply, the one that frees last is
+ * the binding constraint for this selection.
  */
 export function usageLimitSendBlock(
   provider: Pick<ServerProvider, "models" | "usageLimits"> | null | undefined,
@@ -518,6 +518,10 @@ export function usageLimitSendBlock(
 ): UsageLimitSendBlock | null {
   const limits = provider?.usageLimits;
   if (!provider || limits === undefined || limits.unavailable !== undefined) return null;
+  // Only snapshots that mark their scoped and sub-meter windows may gate:
+  // an older server's unscoped-looking row can be a scoped one that predates
+  // the contract.
+  if (limits.sendGating !== true) return null;
   let block: UsageLimitSendBlock | null = null;
   for (const window of limits.windows) {
     if (window.blocksSends === false || window.usedPercent < 100) continue;

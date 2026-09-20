@@ -64,6 +64,7 @@ describe("claudeUsageResponseToLimits", () => {
             resetsAt: "2026-07-24T08:59:00.000Z",
           },
         ],
+        sendGating: true,
       },
     });
   });

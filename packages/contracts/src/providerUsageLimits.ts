@@ -77,6 +77,14 @@ export const ServerProviderUsageLimits = Schema.Struct({
       message: Schema.optional(TrimmedNonEmptyString),
     }),
   ),
+  /**
+   * Set on snapshots from a server that marks which windows gate sends
+   * (`modelScope`, `blocksSends`). Clients only block on those: a snapshot
+   * from an older server can carry windows that predate the scoping
+   * contract, so gating stays off rather than a stale or unscoped read
+   * blocking every model on the account.
+   */
+  sendGating: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 
