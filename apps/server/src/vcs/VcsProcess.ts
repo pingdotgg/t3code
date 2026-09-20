@@ -62,7 +62,7 @@ const GITHUB_PROCESS_CONCURRENCY = 4;
 
 export const CHECKPOINT_CAPTURE_OPERATION = "GitVcsDriver.checkpoints.captureCheckpoint";
 
-const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
+export const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
 
   if (
@@ -100,7 +100,11 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
         normalized.includes("404"))) ||
     (command === "az" &&
       normalized.includes("pull request") &&
-      (normalized.includes("not found") || normalized.includes("does not exist")))
+      (normalized.includes("not found") || normalized.includes("does not exist"))) ||
+    (command === "jj" &&
+      (normalized.includes("there is no jj repo in") ||
+        normalized.includes("doesn't exist") ||
+        normalized.includes("no such bookmark")))
   ) {
     return "not-found";
   }
@@ -206,7 +210,8 @@ export const make = Effect.gen(function* () {
     const bounded = vcsProcesses.withPermits(1)(runUnbounded(input));
     if (
       input.command === "git" &&
-      input.operation === CHECKPOINT_CAPTURE_OPERATION &&
+      (input.operation === CHECKPOINT_CAPTURE_OPERATION ||
+        input.operation === "JjVcsDriver.checkpoints.captureCheckpoint") &&
       input.onStdoutChunk === undefined
     ) {
       // Retry the failed command, retaining the private index/tree and recovery's outer deadline.

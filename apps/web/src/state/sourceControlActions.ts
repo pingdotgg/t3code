@@ -16,6 +16,7 @@ import type {
   SourceControlCloneProtocol,
   SourceControlRepositoryVisibility,
   ThreadId,
+  VcsDriverKind,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -140,24 +141,27 @@ export function useSourceControlActionRunning(
 
 export function useVcsInitAction(scope: SourceControlActionScope) {
   const init = useAtomCommand(vcsEnvironment.init, { reportFailure: false });
-  const action = useCallback(async () => {
-    const target = resolveScope(scope);
-    if (target === null) {
-      return AsyncResult.failure<never, VcsActionUnavailableError>(
-        Cause.fail(
-          new VcsActionUnavailableError({
-            operation: "init",
-            environmentId: scope.environmentId,
-            cwd: scope.cwd,
-          }),
-        ),
-      );
-    }
-    return init({
-      environmentId: target.environmentId,
-      input: { cwd: target.cwd },
-    });
-  }, [init, scope]);
+  const action = useCallback(
+    async (kind?: VcsDriverKind) => {
+      const target = resolveScope(scope);
+      if (target === null) {
+        return AsyncResult.failure<never, VcsActionUnavailableError>(
+          Cause.fail(
+            new VcsActionUnavailableError({
+              operation: "init",
+              environmentId: scope.environmentId,
+              cwd: scope.cwd,
+            }),
+          ),
+        );
+      }
+      return init({
+        environmentId: target.environmentId,
+        input: { cwd: target.cwd, ...(kind ? { kind } : {}) },
+      });
+    },
+    [init, scope],
+  );
   return useAction({ kind: "init", label: "Initializing repository", scope, action });
 }
 

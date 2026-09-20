@@ -12,6 +12,7 @@ import { cn } from "~/lib/utils";
 import { parsePullRequestReference } from "~/pullRequestReference";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useEnvironmentQuery } from "~/state/query";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { vcsEnvironment } from "~/state/vcs";
 import { Button } from "./ui/button";
 import {
@@ -67,6 +68,7 @@ export function PullRequestThreadDialog({
     [gitStatus?.sourceControlProvider],
   );
   const terminology = sourceControlPresentation.terminology;
+  const vcsTerminology = resolveVcsTerminology(gitStatus);
   const SourceControlIcon = sourceControlPresentation.Icon;
 
   useEffect(() => {
@@ -295,7 +297,9 @@ export function PullRequestThreadDialog({
               preparePullRequestThreadAction.isPending
             }
           >
-            {preparingMode === "worktree" ? "Preparing worktree..." : "Worktree"}
+            {preparingMode === "worktree"
+              ? `Preparing ${vcsTerminology.workspaceNoun}...`
+              : vcsTerminology.workspaceNounTitle}
           </Button>
         </DialogFooter>
       </DialogPopup>

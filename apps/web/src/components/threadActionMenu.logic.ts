@@ -1,4 +1,5 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { DEFAULT_VCS_TERMINOLOGY, type VcsTerminology } from "@t3tools/shared/vcs";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 
 /**
@@ -38,6 +39,7 @@ export interface ThreadActionMenuState {
     /** True when the list is already scoped to this thread's project. */
     readonly isActive: boolean;
   } | null;
+  readonly terminology?: VcsTerminology;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
@@ -139,7 +141,13 @@ export function buildThreadActionMenuItems(
       children: [
         { id: "copy-path", label: "Path", icon: "folder" },
         ...(state.branch
-          ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
+          ? [
+              {
+                id: "copy-branch" as const,
+                label: (state.terminology ?? DEFAULT_VCS_TERMINOLOGY).refNounTitle,
+                icon: "git-branch",
+              },
+            ]
           : []),
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],

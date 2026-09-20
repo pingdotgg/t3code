@@ -126,50 +126,57 @@ describe("VcsProcess.run", () => {
       }),
   );
 
-  it.effect.each([
-    {
-      name: "recovers after two lock failures",
-      failures: 2,
-      attempts: 3,
-      transient: true,
-      capture: true,
-      streaming: false,
-    },
-    {
-      name: "bounds persistent lock failures",
-      failures: Infinity,
-      attempts: 3,
-      transient: true,
-      capture: true,
-      streaming: false,
-    },
-    {
-      name: "does not retry unknown exits",
-      failures: Infinity,
-      attempts: 1,
-      transient: false,
-      capture: true,
-      streaming: false,
-    },
-    {
-      name: "leaves other operations unchanged",
-      failures: Infinity,
-      attempts: 1,
-      transient: true,
-      capture: false,
-      streaming: false,
-    },
-    {
-      name: "does not replay stdout callbacks",
-      failures: Infinity,
-      attempts: 1,
-      transient: true,
-      capture: true,
-      streaming: true,
-    },
-  ])(
-    "checkpoint command retry $name",
-    ({ failures, attempts: expectedAttempts, transient, capture, streaming }) =>
+  it.effect.each(
+    [
+      {
+        name: "recovers after two lock failures",
+        failures: 2,
+        attempts: 3,
+        transient: true,
+        capture: true,
+        streaming: false,
+      },
+      {
+        name: "bounds persistent lock failures",
+        failures: Infinity,
+        attempts: 3,
+        transient: true,
+        capture: true,
+        streaming: false,
+      },
+      {
+        name: "does not retry unknown exits",
+        failures: Infinity,
+        attempts: 1,
+        transient: false,
+        capture: true,
+        streaming: false,
+      },
+      {
+        name: "leaves other operations unchanged",
+        failures: Infinity,
+        attempts: 1,
+        transient: true,
+        capture: false,
+        streaming: false,
+      },
+      {
+        name: "does not replay stdout callbacks",
+        failures: Infinity,
+        attempts: 1,
+        transient: true,
+        capture: true,
+        streaming: true,
+      },
+    ].flatMap((testCase) =>
+      (testCase.capture
+        ? [VcsProcess.CHECKPOINT_CAPTURE_OPERATION, "JjVcsDriver.checkpoints.captureCheckpoint"]
+        : [baseInput.operation]
+      ).map((operation) => ({ ...testCase, operation })),
+    ),
+  )(
+    "checkpoint command retry $name ($operation)",
+    ({ failures, attempts: expectedAttempts, transient, operation, streaming }) =>
       Effect.gen(function* () {
         let attempts = 0;
         const service = yield* VcsProcess.make.pipe(
@@ -198,7 +205,7 @@ describe("VcsProcess.run", () => {
         const fiber = yield* service
           .run({
             ...baseInput,
-            operation: capture ? VcsProcess.CHECKPOINT_CAPTURE_OPERATION : baseInput.operation,
+            operation,
             ...(streaming ? { onStdoutChunk: () => {} } : {}),
           })
           .pipe(Effect.exit, Effect.forkScoped);
