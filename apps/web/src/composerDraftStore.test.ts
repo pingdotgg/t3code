@@ -66,10 +66,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
+  beginBackgroundDraftSubmissionByRef,
   clearComposerDraftsEnvironment,
   composerDraftHasUserContent,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
+  restoreFailedBackgroundDraftThread,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
@@ -436,7 +438,9 @@ describe("composerDraftStore file attachments", () => {
 
   it("persists uploaded file references without including file contents", () => {
     const store = useComposerDraftStore.getState();
-    store.addFiles(threadRef, [makeFile("file-1")]);
+    store.addFiles(threadRef, [
+      { ...makeFile("file-1"), source: { _tag: "pasted-text" as const } },
+    ]);
     store.setFileUpload(threadRef, "file-1", TEST_ENVIRONMENT_ID, "pending-report-pdf");
 
     const persistApi = useComposerDraftStore.persist as unknown as {
@@ -459,6 +463,7 @@ describe("composerDraftStore file attachments", () => {
           sizeBytes: 6,
           attachmentId: "pending-report-pdf",
           environmentId: TEST_ENVIRONMENT_ID,
+          source: { _tag: "pasted-text" },
         },
       ],
     );
@@ -474,6 +479,7 @@ describe("composerDraftStore file attachments", () => {
         file: null,
         uploadedAttachmentId: "pending-report-pdf",
         uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+        source: { _tag: "pasted-text" },
       },
     ]);
   });
@@ -1333,6 +1339,45 @@ describe("composerDraftStore project draft thread mapping", () => {
     );
   });
 
+  it.each([false, true])(
+    "restores a failed background draft without replacing the next draft (finalized: %s)",
+    (finalized) => {
+      const store = useComposerDraftStore.getState();
+      const nextDraftId = DraftId.make("next-draft");
+      const retryThreadId = ThreadId.make("retry-thread");
+      const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+      store.setProjectDraftThreadId(projectRef, draftId, {
+        threadId,
+        branch: "main",
+        envMode: "worktree",
+        startFromOrigin: true,
+      });
+      const sentDraft = store.getDraftSession(draftId)!;
+      markPromotedDraftThreadByRef(threadRef);
+      store.setProjectDraftThreadId(projectRef, nextDraftId, {
+        threadId: ThreadId.make("next-thread"),
+      });
+      store.setPrompt(nextDraftId, "My next task");
+      const nextDraft = store.getDraftSession(nextDraftId);
+      if (finalized) finalizePromotedDraftThreadByRef(threadRef);
+
+      restoreFailedBackgroundDraftThread(draftId, sentDraft, retryThreadId);
+      store.setPrompt(draftId, "Retry the first task");
+
+      expect(store.getDraftThreadByProjectRef(projectRef)?.draftId).toBe(nextDraftId);
+      expect(store.getDraftSession(nextDraftId)).toBe(nextDraft);
+      expect(store.getComposerDraft(nextDraftId)?.prompt).toBe("My next task");
+      expect(store.getDraftSession(draftId)).toMatchObject({
+        threadId: retryThreadId,
+        promotedTo: null,
+        branch: "main",
+        envMode: "worktree",
+        startFromOrigin: true,
+      });
+      expect(store.getComposerDraft(draftId)?.prompt).toBe("Retry the first task");
+    },
+  );
+
   it("clears only matching project draft mapping entries", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
@@ -1582,6 +1627,28 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
     expect(draftByKey(draftId)).toBeUndefined();
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("typed during setup");
+  });
+
+  it("cleans up a completed background draft without replacing the active draft", () => {
+    const store = useComposerDraftStore.getState();
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    const nextDraftId = DraftId.make("next-draft");
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    beginBackgroundDraftSubmissionByRef(threadRef);
+    markPromotedDraftThreadByRef(threadRef);
+    store.setProjectDraftThreadId(projectRef, nextDraftId, {
+      threadId: ThreadId.make("next-thread"),
+    });
+    store.setPrompt(nextDraftId, "Keep my next task");
+
+    finalizePromotedDraftThreadByRef(threadRef);
+
+    expect(store.getDraftSession(draftId)).toBeNull();
+    expect(store.getDraftThreadByProjectRef(projectRef)?.draftId).toBe(nextDraftId);
+    expect(store.getComposerDraft(nextDraftId)?.prompt).toBe("Keep my next task");
+    expect(
+      useComposerDraftStore.getState().backgroundSubmissionThreadKeys[scopedThreadKey(threadRef)],
+    ).toBeUndefined();
   });
 
   it("finalizes a matching materialized draft even when promotion was not pre-marked", () => {

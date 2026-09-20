@@ -2,7 +2,7 @@
 import { Card } from "../components/Card.tsx";
 
 // A server component: renders in the Worker on every request. With the
-// `nodejs_compat` compatibility flag, the `env` declared in
+// date-default Node.js compatibility, the `env` declared in
 // alchemy.run.ts is populated onto `process.env`.
 const Component = () => {
   const greeting = process.env.GREETING ?? "Hello!";

@@ -31,7 +31,7 @@ const logLevel = Effect.provideService(
 const fixtureDir = pathe.resolve(import.meta.dirname, "staticsite-fixture");
 const workerEntry = pathe.resolve(import.meta.dirname, "fixtures/worker.ts");
 
-// Read back through `Config.string` by the #796 test below. Set at module
+// Read back through `Config.String` by the #796 test below. Set at module
 // load (collection time): `ConfigProvider.fromEnv` snapshots `process.env`
 // when the test harness constructs the provider — BEFORE a test body runs —
 // so setting this inside the test only ever satisfied the NEXT attempt
@@ -777,7 +777,7 @@ describe.concurrent("StaticSite", () => {
               workersDev: false,
               env: {
                 FROM_STRING: "plain",
-                FROM_CONFIG: Config.string("STATICSITE_ENV_TEST"),
+                FROM_CONFIG: Config.String("STATICSITE_ENV_TEST"),
                 FROM_OUTPUT: dep.outdir,
                 FROM_OUTPUT_OBJECT: Output.map(dep.outdir, (dir) => ({ dir })),
                 // JS callers can pass `null`; it must serialize, not throw.

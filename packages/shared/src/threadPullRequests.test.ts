@@ -3,7 +3,7 @@ import {
   type ThreadPullRequestLink,
   type ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   legacyLinkedPullRequestOf,
@@ -14,6 +14,22 @@ import {
   resolveThreadPullRequestBadge,
   threadPullRequestKeysEqual,
 } from "./threadPullRequests.ts";
+
+// Match Hermes: these ES2023 array methods are absent on mobile, and this module runs in
+// the home thread list on every launch.
+beforeEach(() => {
+  const methods = ["toSorted", "toReversed", "toSpliced"] as const;
+  const descriptors = methods.map((method) =>
+    Object.getOwnPropertyDescriptor(Array.prototype, method),
+  );
+  for (const method of methods) Reflect.deleteProperty(Array.prototype, method);
+  return () => {
+    for (const [index, method] of methods.entries()) {
+      const descriptor = descriptors[index];
+      if (descriptor) Reflect.defineProperty(Array.prototype, method, descriptor);
+    }
+  };
+});
 
 function snapshot(input: Partial<ThreadPullRequestSnapshot> = {}): ThreadPullRequestSnapshot {
   return {
@@ -46,6 +62,28 @@ function link(
 }
 
 describe("threadPullRequestKeysEqual", () => {
+  it("recovers Forgejo ports from old stored URLs and keeps separate servers distinct", () => {
+    const old = link(1, {
+      host: "forge.example",
+      repository: "team/repo",
+      url: "http://forge.example:3000/team/repo/pulls/1",
+    });
+    expect(threadPullRequestKeysEqual(old, { ...old, host: "forge.example:3000" })).toBe(true);
+    expect(
+      threadPullRequestKeysEqual(old, {
+        host: "forge.example:3000",
+        repository: "team/repo",
+        number: 1,
+      }),
+    ).toBe(true);
+    expect(
+      threadPullRequestKeysEqual(old, {
+        ...old,
+        url: "http://forge.example:4000/team/repo/pulls/1",
+      }),
+    ).toBe(false);
+  });
+
   it("ignores host and repository case", () => {
     expect(
       threadPullRequestKeysEqual(

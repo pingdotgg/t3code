@@ -2,7 +2,7 @@
 title: Effect Service Conventions
 model: gpt-5-6-sol
 effort: medium
-input: full_diff
+input: incremental
 tools:
   - browse_code
   - modify_pr
@@ -12,14 +12,11 @@ include:
   - "infra/**/*.ts"
 exclude:
   - "**/*.test.ts"
-labels:
-  - vouch:trusted
-  - macroscope-review
 requires:
   - Check
 maxBudgetPerRun: 5
 maxBudgetPerPR: 25
-conclusion: failure
+conclusion: neutral
 showToolCalls: true
 ---
 

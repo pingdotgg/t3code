@@ -6,6 +6,7 @@ import {
   ensureInlineContextReferences,
   formatInlineContextReference,
   insertInlineContextReference,
+  inlineContextReferenceReplacement,
   removeInlineContextReference,
   stripInlineContextReferences,
   toComposerContextId,
@@ -18,6 +19,17 @@ const reviewLink = "[a.ts L4](t3-context://v1/review-comment/rc-1)";
 const previewLink = "[Checkout](t3-context://v1/preview-annotation/pa-1)";
 
 describe("composerContextReferences", () => {
+  it.each([
+    { prompt: "before selected after", start: 7, end: 15, expected: `before ${reviewLink} after` },
+    { prompt: "selected", start: 0, end: 8, expected: `${reviewLink} ` },
+    { prompt: "aSELECTb", start: 1, end: 7, expected: `a ${reviewLink} b` },
+  ])(
+    "replaces selected text in '$prompt' with the attachment chip",
+    ({ prompt, start, end, expected }) => {
+      const edit = inlineContextReferenceReplacement(prompt, { start, end }, [review]);
+      expect(`${prompt.slice(0, edit.start)}${edit.text}${prompt.slice(edit.end)}`).toBe(expected);
+    },
+  );
   it("formats, collects and strips references of any kind", () => {
     expect(formatInlineContextReference(review)).toBe(reviewLink);
     const prompt = `x ${reviewLink} y ${previewLink} ${reviewLink}`;
