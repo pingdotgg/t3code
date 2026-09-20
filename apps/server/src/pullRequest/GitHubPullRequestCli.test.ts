@@ -461,6 +461,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         author: { __typename: "User", login: "octocat", name: "Octo Cat", avatarUrl: null },
         baseRefName: "main",
         headRefName: `feat/${number}`,
+        headRefOid: "a".repeat(40),
         state: "OPEN",
         isDraft: false,
         mergeable: "MERGEABLE",
@@ -505,6 +506,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
           number: seven?.number,
           state: seven?.state,
           headBranch: seven?.headBranch,
+          headSha: seven?.headSha,
           author: seven?.author?.login,
           changedFiles: seven?.changedFiles,
           reviewDecision: seven?.reviewDecision,
@@ -515,6 +517,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
           number: 7,
           state: "open",
           headBranch: "feat/7",
+          headSha: "a".repeat(40),
           author: "octocat",
           changedFiles: 2,
           reviewDecision: "approved",
@@ -547,6 +550,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
                 author: { login: "octocat", name: "Octo Cat" },
                 baseRefName: "main",
                 headRefName: "feat/summary",
+                headRefOid: "b".repeat(40),
                 state: "OPEN",
                 isDraft: false,
                 mergeable: "MERGEABLE",
@@ -580,6 +584,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       const summary = yield* Fiber.join(read);
 
       assert.strictEqual(summary.headBranch, "feat/summary");
+      assert.strictEqual(summary.headSha, "b".repeat(40));
       assert.strictEqual(summary.checksState, "passing");
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
       expect(callAt(1).args).toEqual([

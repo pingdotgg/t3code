@@ -159,6 +159,7 @@ interface HarnessOptions {
   readonly onDispatch?: (command: SyncCommand | LinkCommand) => Effect.Effect<void>;
   readonly invalidate?: PullRequestService["Service"]["invalidate"];
   readonly snapshot: OrchestrationShellSnapshot;
+  readonly archivedSnapshot?: OrchestrationShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestSummary, PullRequestOperationError>;
@@ -213,7 +214,11 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
       listThreadsWithPullRequests: () =>
         Queue.offer(snapshotReads, undefined).pipe(
           Effect.andThen(Ref.get(snapshots)),
-          Effect.map((snapshot) => snapshot.threads),
+          Effect.map((snapshot) =>
+            [...snapshot.threads, ...(options.archivedSnapshot?.threads ?? [])].filter(
+              (thread) => thread.archivedAt === null || thread.worktreePath !== null,
+            ),
+          ),
         ),
       getShellSnapshot: () =>
         Ref.update(shellSnapshotReads, (count) => count + 1).pipe(
@@ -660,7 +665,9 @@ describe("PullRequestSyncReactor", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([
-            makeThread("merged", { pullRequests: [makeLink(1, { state: "merged" })] }),
+            makeThread("merged", {
+              pullRequests: [makeLink(1, { state: "merged", headSha: "a".repeat(40) })],
+            }),
           ]),
         });
 
@@ -886,3 +893,70 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 });
+
+for (const legacy of [false, true]) {
+  it.effect(
+    `backfills merged head evidence (${legacy ? "legacy link" : "existing snapshot"})`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const sha = "a".repeat(40);
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([
+              makeThread(
+                "backfill",
+                legacy
+                  ? {
+                      branchPullRequest: {
+                        projectId: PROJECT_ID,
+                        repository: "owner/repository",
+                        number: 1,
+                        url: "https://github.com/owner/repository/pull/1",
+                      },
+                    }
+                  : { pullRequests: [makeLink(1, { state: "merged" })] },
+              ),
+            ]),
+            summary: (input) =>
+              Effect.succeed(makeSummary(input, { state: "merged", headSha: sha, mergedAt: NOW })),
+          });
+          yield* Effect.gen(function* () {
+            yield* startAndSweep(fixture);
+            const commands = yield* Ref.get(fixture.syncCommands);
+            assert.strictEqual(commands[0]?.snapshot.headSha, sha);
+            assert.strictEqual(commands[0]?.snapshot.state, "merged");
+            assert.strictEqual((yield* Ref.get(fixture.linkCommands)).length, legacy ? 1 : 0);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+}
+
+it.effect(
+  "syncs archived worktree PRs while leaving archived threads without worktrees alone",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          archivedSnapshot: makeSnapshot([
+            makeThread("archived-worktree", {
+              archivedAt: NOW,
+              worktreePath: "/worktree",
+              pullRequests: [makeLink(1)],
+            }),
+            makeThread("archived-local", { archivedAt: NOW, pullRequests: [makeLink(2)] }),
+          ]),
+        });
+        yield* Effect.gen(function* () {
+          yield* startAndSweep(fixture);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number),
+            [1],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+);

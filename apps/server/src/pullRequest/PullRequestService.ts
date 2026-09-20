@@ -1571,6 +1571,7 @@ export const make = Effect.gen(function* () {
             url: changeRequest.url,
             state: changeRequest.state,
             headBranch: changeRequest.headBranch,
+            ...(changeRequest.headSha ? { headSha: changeRequest.headSha } : {}),
             baseBranch: changeRequest.baseBranch,
             closedAt: changeRequest.closedAt ?? null,
             mergedAt: changeRequest.mergedAt ?? null,
@@ -1670,6 +1671,7 @@ export const make = Effect.gen(function* () {
             deletions: changeRequest.deletions,
             changedFiles: changeRequest.changedFiles,
             headBranch: changeRequest.headBranch,
+            ...(changeRequest.headSha ? { headSha: changeRequest.headSha } : {}),
             ...(changeRequest.headRepositoryNameWithOwner === undefined
               ? {}
               : { headRepositoryNameWithOwner: changeRequest.headRepositoryNameWithOwner }),
@@ -2903,6 +2905,7 @@ export const make = Effect.gen(function* () {
     changedFiles: detail.changedFiles,
     mergeability: detail.mergeability,
     headBranch: detail.headBranch,
+    headSha: detail.headSha,
     baseBranch: detail.baseBranch,
     closedAt: detail.closedAt,
     mergedAt: detail.mergedAt,

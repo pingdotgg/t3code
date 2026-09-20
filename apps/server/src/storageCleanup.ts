@@ -24,6 +24,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import * as Semaphore from "effect/Semaphore";
+import * as StorageCleanupGit from "./storageCleanupGit.ts";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as StorageCleanupSize from "./storageCleanupSize.ts";
 import * as TxRef from "effect/TxRef";
 import * as Schedule from "effect/Schedule";
@@ -316,6 +318,7 @@ export const make = Effect.gen(function* () {
         const old =
           !preview &&
           !deleted &&
+          thread.settledOverride === "settled" &&
           settings.worktreeAfterDays !== null &&
           storageCleanupActivityAt(thread) < now - settings.worktreeAfterDays * DAY_MS;
         const protectedWorktree =
@@ -354,73 +357,87 @@ export const make = Effect.gen(function* () {
           if (!status.isRepo || status.branch !== thread.branch || status.hasWorkingTreeChanges)
             return;
           const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-          const ignored = yield* git.execute({
-            operation: "StorageCleanup.ignoredFiles",
-            cwd: worktreePath,
-            args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-            maxOutputBytes: 64 * 1024,
-          });
-          // Ignored files can contain secrets or local datasets. Dependency installs
-          // are reproducible; every other ignored path prevents automatic removal.
-          if (
-            ignored.stdoutTruncated ||
-            ignored.stdout
-              .split("\0")
-              .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
-          )
-            return;
           // Cache safety and Git classification independently of the draft retention
           // period, so changing days only recalculates the summary.
-          if (previewFolder && !deleted) {
+          if (previewFolder && !deleted && thread.settledOverride === "settled") {
             previewFolder.inactiveActivityAt = storageCleanupActivityAt(thread);
           }
           let category: StorageCleanupCategory = deleted ? "deleted" : old ? "inactive" : "kept";
           let eligible = deleted || old;
           if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
-            const repositoryCwd = path.resolve(project.workspaceRoot);
-            const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
-            const branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
-            if (branch === null) return;
-            const defaultRef = `refs/remotes/${remote}/${branch}`;
-            const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
-            if (!preview && !refreshed.has(defaultRef)) {
-              yield* git.fetchRemoteTrackingBranch({
-                cwd: repositoryCwd,
-                remoteName: remote,
-                remoteBranch: branch,
-              });
-              refreshed.add(defaultRef);
-              refreshedDefaultRefs.set(repositoryCwd, refreshed);
-            }
-            const base = yield* git.resolveCommit({
-              cwd: worktreePath,
-              revision: defaultRef,
-            });
-            const ancestor = yield* git.execute({
-              operation: "StorageCleanup.integratedBranch",
-              cwd: worktreePath,
-              args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
-              allowNonZeroExit: true,
-            });
-            if (ancestor.exitCode !== 0) return;
-            eligible = settings.worktreeUnchanged;
-            if (preview && eligible) {
-              // Preview uses already-synced PR metadata; opening Settings must not query every forge.
-              category =
-                !deleted &&
-                thread.pullRequests.some(
-                  (pr) =>
-                    pr.snapshot?.state === "merged" && pr.snapshot.headBranch === thread.branch,
-                )
-                  ? "merged"
-                  : "unchanged";
-            }
-            if (!eligible && settings.worktreeOnMerge && thread.branch !== null) {
-              const pullRequest = yield* gitManager.branchPullRequest(
-                { cwd: worktreePath, branch: thread.branch },
-                { refresh: true },
+            const links = deleted ? [] : visibleThreadPullRequests(thread.pullRequests);
+            const cachedMerged = links.find(
+              (pr) =>
+                pr.snapshot?.state === "merged" &&
+                pr.snapshot.headBranch === thread.branch &&
+                pr.snapshot.headSha === head.commitSha,
+            );
+            const linked =
+              cachedMerged ??
+              links.find((pr) => pr.snapshot?.headBranch === thread.branch) ??
+              links.find((pr) => pr.snapshot === null);
+            const reference = linked?.url ?? (!deleted ? thread.branchPullRequest?.url : undefined);
+            // Preview reads persisted evidence; deletion always asks the host afresh.
+            const pullRequest =
+              !preview &&
+              thread.branch !== null &&
+              (settings.worktreeOnMerge || reference !== undefined)
+                ? yield* gitManager.branchPullRequest(
+                    {
+                      cwd: worktreePath,
+                      branch: thread.branch,
+                      ...(reference ? { reference } : {}),
+                    },
+                    { refresh: true },
+                  )
+                : null;
+            const mergedHead = preview
+              ? cachedMerged !== undefined
+              : pullRequest?.state === "merged" &&
+                pullRequest.headRef === thread.branch &&
+                pullRequest.headSha === head.commitSha;
+            if (settings.worktreeOnMerge && mergedHead) {
+              eligible = true;
+              category = "merged";
+            } else {
+              const repositoryCwd = path.resolve(project.workspaceRoot);
+              const target = pullRequest
+                ? { url: pullRequest.url, baseBranch: pullRequest.baseRef }
+                : linked?.snapshot
+                  ? { url: linked.url, baseBranch: linked.snapshot.baseBranch }
+                  : undefined;
+              const resolved = yield* StorageCleanupGit.resolveBaseRef(repositoryCwd, target).pipe(
+                Effect.provideService(GitVcsDriver.GitVcsDriver, git),
               );
-              eligible = pullRequest?.state === "merged";
+              if (resolved === null) return;
+              const { remote, branch } = resolved;
+              const defaultRef = `refs/remotes/${remote}/${branch}`;
+              const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
+              if (!preview && !refreshed.has(defaultRef)) {
+                yield* git.fetchRemoteTrackingBranch({
+                  cwd: repositoryCwd,
+                  remoteName: remote,
+                  remoteBranch: branch,
+                });
+                refreshed.add(defaultRef);
+                refreshedDefaultRefs.set(repositoryCwd, refreshed);
+              }
+              const base = yield* git.resolveCommit({ cwd: worktreePath, revision: defaultRef });
+              const ancestor = yield* git.execute({
+                operation: "StorageCleanup.integratedBranch",
+                cwd: worktreePath,
+                args: ["merge-base", "--is-ancestor", head.commitSha, base.commitSha],
+                allowNonZeroExit: true,
+              });
+              if (ancestor.exitCode !== 0) return;
+              const merged = preview
+                ? links.some(
+                    (pr) =>
+                      pr.snapshot?.state === "merged" && pr.snapshot.headBranch === thread.branch,
+                  )
+                : pullRequest?.state === "merged" && pullRequest.headRef === thread.branch;
+              eligible = settings.worktreeUnchanged || (settings.worktreeOnMerge && merged);
+              category = merged ? "merged" : "unchanged";
             }
           }
           if (!eligible) return;
@@ -474,6 +491,7 @@ export const make = Effect.gen(function* () {
             latest.length !== 1 ||
             latest[0]!.id !== thread.id ||
             !storageCleanupThreadIdle(latest[0]!, now) ||
+            (old && latest[0]!.settledOverride !== "settled") ||
             storageCleanupActivityAt(latest[0]!) !== storageCleanupActivityAt(thread)
           )
             return;
@@ -487,19 +505,6 @@ export const make = Effect.gen(function* () {
           if (
             (yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" })).commitSha !==
             head.commitSha
-          )
-            return;
-          const finalIgnored = yield* git.execute({
-            operation: "StorageCleanup.ignoredFiles",
-            cwd: worktreePath,
-            args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
-            maxOutputBytes: 64 * 1024,
-          });
-          if (
-            finalIgnored.stdoutTruncated ||
-            finalIgnored.stdout
-              .split("\0")
-              .some((entry) => entry !== "" && !/(^|\/)node_modules\/$/.test(entry))
           )
             return;
           const current = resolveWorktreeCleanup(
@@ -785,7 +790,7 @@ export const make = Effect.gen(function* () {
       return { ...previous, scanning: true, ...progress };
     }
     const total = { folders: 0, measured: 0, bytes: 0 };
-    const kinds = ["deleted", "inactive", "merged", "unchanged", "kept", "unchecked"] as const;
+    const kinds = ["deleted", "merged", "unchanged", "inactive", "kept", "unchecked"] as const;
     const categories = kinds.map((kind) => ({ kind, folders: 0, measured: 0, bytes: 0 }));
     const projectIds = new Set<ProjectId>();
     let scanning = entry.running;
@@ -795,7 +800,9 @@ export const make = Effect.gen(function* () {
         input.inactiveAfterDays ??
         resolveWorktreeCleanup(settings, folder.projectId).worktreeAfterDays ??
         8;
+      // Specific Git outcomes take precedence over age in the display only.
       const kind =
+        folder.category === "kept" &&
         folder.inactiveActivityAt !== undefined &&
         folder.inactiveActivityAt < entry.at - inactiveAfterDays * DAY_MS
           ? "inactive"

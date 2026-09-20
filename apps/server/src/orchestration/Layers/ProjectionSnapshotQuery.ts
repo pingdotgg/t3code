@@ -811,23 +811,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  // One row per link, in the shell snapshot's thread order and link order.
-  const listActiveThreadPullRequestSyncRows = SqlSchema.findAll({
+  const pullRequestSyncThreadFields = {
+    threadId: ProjectionThread.fields.threadId,
+    projectId: ProjectionThread.fields.projectId,
+    settledOverride: ProjectionThread.fields.settledOverride,
+    settledAt: ProjectionThread.fields.settledAt,
+    branchPullRequest: ProjectionThreadDbRowSchema.fields.branchPullRequest,
+  };
+
+  // A left join retains legacy-only links without loading full shell snapshots.
+  const listThreadPullRequestSyncRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: ProjectionThreadPullRequestDbRowSchema.mapFields(
-      Struct.assign({
-        projectId: ProjectionThread.fields.projectId,
-        settledOverride: ProjectionThread.fields.settledOverride,
-        settledAt: ProjectionThread.fields.settledAt,
-      }),
-    ),
+    Result: Schema.Union([
+      ProjectionThreadPullRequestDbRowSchema.mapFields(Struct.assign(pullRequestSyncThreadFields)),
+      Schema.Struct({ ...pullRequestSyncThreadFields, host: Schema.Null }),
+    ]),
     execute: () =>
       sql`
         SELECT
-          links.thread_id AS "threadId",
+          threads.thread_id AS "threadId",
           threads.project_id AS "projectId",
           threads.settled_override AS "settledOverride",
           threads.settled_at AS "settledAt",
+          threads.branch_pull_request_json AS "branchPullRequest",
           links.host,
           links.repository,
           links.number,
@@ -836,11 +842,12 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           links.linked_at AS "linkedAt",
           links.snapshot_json AS "snapshot",
           links.stack_json AS "stack"
-        FROM projection_thread_pull_requests links
-        INNER JOIN projection_threads threads
+        FROM projection_threads threads
+        LEFT JOIN projection_thread_pull_requests links
           ON threads.thread_id = links.thread_id
         WHERE threads.deleted_at IS NULL
-          AND threads.archived_at IS NULL
+          AND (threads.archived_at IS NULL OR threads.worktree_path IS NOT NULL)
+          AND (links.thread_id IS NOT NULL OR threads.branch_pull_request_json IS NOT NULL)
         ORDER BY threads.project_id ASC, threads.created_at ASC, threads.thread_id ASC,
           links.linked_at ASC, links.number ASC
       `,
@@ -2828,7 +2835,7 @@ pending_approval_requests AS (
 
   const listThreadsWithPullRequests: ProjectionSnapshotQueryShape["listThreadsWithPullRequests"] =
     () =>
-      listActiveThreadPullRequestSyncRows(undefined).pipe(
+      listThreadPullRequestSyncRows(undefined).pipe(
         Effect.map((rows) => {
           const threads = new Map<
             ThreadId,
@@ -2840,9 +2847,10 @@ pending_approval_requests AS (
               projectId: row.projectId,
               settledOverride: row.settledOverride,
               settledAt: row.settledAt,
+              branchPullRequest: row.branchPullRequest,
               pullRequests: [],
             };
-            thread.pullRequests.push(mapPullRequestRow(row));
+            if (row.host !== null) thread.pullRequests.push(mapPullRequestRow(row));
             threads.set(row.threadId, thread);
           }
           return [...threads.values()];

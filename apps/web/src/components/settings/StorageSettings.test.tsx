@@ -117,7 +117,7 @@ describe("saving cleanup rules", () => {
   it("keeps a committed day-count edit as a draft until Save is activated", async () => {
     await act(async () =>
       renderer.root
-        .findByProps({ "aria-label": "Remove inactive worktrees" })
+        .findByProps({ "aria-label": "Remove settled worktrees" })
         .props.onCheckedChange(true),
     );
     await act(async () =>

@@ -8,7 +8,7 @@ import {
   Trash2Icon,
   CircleHelpIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { Button } from "../ui/button";
@@ -27,21 +27,13 @@ const CATEGORIES = {
     detail:
       "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.",
   },
-  inactive: {
-    label: "Inactive",
-    icon: Clock3Icon,
-    color: "text-amber-400",
-    bar: "bg-amber-400",
-    detail:
-      "Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept.",
-  },
   merged: {
     label: "Merged",
     icon: PullRequestGlyph.merged,
     color: "text-violet-400",
     bar: "bg-violet-400",
     detail:
-      "Remove worktrees whose pull request is merged and whose commits are included in the default branch.",
+      "Remove worktrees whose current commit was merged through a pull request, including squash merges.",
   },
   unchanged: {
     label: "No unique commits",
@@ -50,13 +42,21 @@ const CATEGORIES = {
     bar: "bg-sky-400",
     detail: "Remove worktrees with no commits beyond the default branch.",
   },
+  inactive: {
+    label: "Settled threads",
+    icon: Clock3Icon,
+    color: "text-amber-400",
+    bar: "bg-amber-400",
+    detail:
+      "Remove worktrees for settled threads after this many days without activity. Branches and thread history are kept.",
+  },
   kept: {
     label: "Other worktrees",
     icon: ShieldCheckIcon,
     color: "text-muted-foreground",
     bar: "bg-muted-foreground",
     detail:
-      "Active or shared worktrees, worktrees with local changes or protected files, and those outside the cleanup rules.",
+      "Active or shared worktrees, worktrees with local changes, and those outside the cleanup rules.",
   },
   unchecked: {
     label: "Not classified",
@@ -105,9 +105,24 @@ export function StorageCleanupPreviewPanel({
   const initialLoading = isPending && data === null;
   const scanning = data?.scanning === true;
   const loading = isPending || scanning;
+  const [progressDisplay, setProgressDisplay] = useState({ loading, visible: loading });
+  if (progressDisplay.loading !== loading) {
+    setProgressDisplay({ loading, visible: loading || progressDisplay.visible });
+  }
+  useEffect(() => {
+    if (loading) return;
+    // Let the storage segments finish their 300ms transition before hiding progress.
+    const timeout = window.setTimeout(
+      () => setProgressDisplay({ loading: false, visible: false }),
+      500,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [loading]);
+  const showProgress = loading || (progressDisplay.visible && data !== null && failed.length === 0);
   const progress = scanning ? data.progress : undefined;
-  const scanPercent =
-    progress && progress.total > 0
+  const scanPercent = !loading
+    ? 100
+    : progress && progress.total > 0
       ? Math.min(99, Math.floor((progress.completed / progress.total) * 100))
       : undefined;
   const chartCategories =
@@ -156,7 +171,13 @@ export function StorageCleanupPreviewPanel({
                   {space(data?.total, partialScan)}
                 </p>
               )}
-              <p className="text-xs text-muted-foreground">used by worktrees</p>
+              <p className="text-xs tabular-nums text-muted-foreground">
+                {showProgress
+                  ? scanPercent === undefined
+                    ? "Preparing scan…"
+                    : `${scanPercent}% scanned`
+                  : "used by worktrees"}
+              </p>
             </div>
             <Tooltip>
               <TooltipTrigger
@@ -182,44 +203,41 @@ export function StorageCleanupPreviewPanel({
             </Tooltip>
           </div>
         </div>
-        {initialLoading ? (
-          <Skeleton className="h-6 w-full rounded-md" />
-        ) : (
-          <div
-            className="flex h-6 overflow-hidden rounded-md bg-muted ring-1 ring-inset ring-border/60"
-            aria-hidden="true"
-          >
-            {data &&
-              data.total.bytes > 0 &&
-              chartCategories.map((category) => (
-                <div
-                  key={category.kind}
-                  className={`${scanning && category.kind === "unchecked" ? CATEGORIES.kept.bar : CATEGORIES[category.kind].bar} h-full shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none`}
-                  style={{ width: `${(category.bytes / data.total.bytes) * 100}%` }}
-                />
-              ))}
-          </div>
-        )}
-        {loading && (
-          <div className="space-y-1.5">
+        <div className="relative">
+          {initialLoading ? (
+            <Skeleton className="h-6 w-full rounded-md" />
+          ) : (
+            <div
+              className="flex h-6 overflow-hidden rounded-md bg-muted ring-1 ring-inset ring-border/60"
+              aria-hidden="true"
+            >
+              {data &&
+                data.total.bytes > 0 &&
+                chartCategories.map((category) => (
+                  <div
+                    key={category.kind}
+                    className={`${scanning && category.kind === "unchecked" ? CATEGORIES.kept.bar : CATEGORIES[category.kind].bar} h-full shrink-0 transition-[width] duration-300 ease-in-out motion-reduce:transition-none`}
+                    style={{ width: `${(category.bytes / data.total.bytes) * 100}%` }}
+                  />
+                ))}
+            </div>
+          )}
+          {showProgress && (
             <div
               role="progressbar"
               aria-label="Storage scan progress"
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={scanPercent}
-              className="h-1 overflow-hidden rounded-full bg-muted"
+              className="absolute inset-x-0 top-full mt-1 h-1 overflow-hidden rounded-full bg-muted"
             >
               <div
                 className="h-full rounded-full bg-primary transition-[width] duration-300 ease-in-out motion-reduce:transition-none"
                 style={{ width: `${scanPercent ?? 0}%` }}
               />
             </div>
-            <p className="text-right text-xs tabular-nums text-muted-foreground">
-              {scanPercent === undefined ? "Preparing scan…" : `${scanPercent}% scanned`}
-            </p>
-          </div>
-        )}
+          )}
+        </div>
         {!data && isPending && (
           <div className="flex gap-5 overflow-hidden" aria-hidden="true">
             {Object.keys(CATEGORIES)
@@ -268,11 +286,16 @@ export function StorageCleanupPreviewPanel({
           Usage and rules follow {scope.label}. Changes apply to connected machines.
         </p>
       )}
-      <div className="pb-3">
+      <div>
         {controls && (
-          <div className="mb-1 hidden justify-between px-4 text-[11px] text-muted-foreground sm:flex">
-            <span>Space by category</span>
-            <span>Automatic cleanup</span>
+          <div className="@container/storage-headings px-3 sm:px-4">
+            <div className="hidden items-center gap-8 border-b border-border/60 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70 @min-[32rem]/storage-headings:flex">
+              <span className="min-w-0 flex-1">Category</span>
+              <div className="flex shrink-0 gap-4 text-right">
+                <span className="w-20">Space used</span>
+                <span className="w-44">Automatic cleanup</span>
+              </div>
+            </div>
           </div>
         )}
         {(Object.keys(CATEGORIES) as StorageCleanupCategory[]).map((kind) => {

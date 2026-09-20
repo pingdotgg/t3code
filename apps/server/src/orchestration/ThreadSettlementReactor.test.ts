@@ -1558,6 +1558,9 @@ describe("storage cleanup", () => {
   for (const protection of [
     "preview-many",
     "preview-days",
+    "never-settled",
+    "kept-active",
+    "unsettled-during-cleanup",
     "preview-project-queued",
     "preview-paused",
     "preview-discovery",
@@ -1575,6 +1578,9 @@ describe("storage cleanup", () => {
     "terminal-worktree",
     "recent",
     "merged",
+    "squash-merged",
+    "squash-extra",
+    "squash-stale",
     "unmerged",
     "unchanged",
     "unchanged-two-worktrees",
@@ -1639,13 +1645,28 @@ describe("storage cleanup", () => {
           const recent = DateTime.toDateUtc(DateTime.makeUnsafe(NOW));
           yield* fs.utimes(recentImage, recent, recent);
           const thread = makeThread("storage-thread", {
+            settledOverride:
+              protection === "never-settled" ||
+              protection === "merged" ||
+              protection === "unchanged"
+                ? null
+                : protection === "kept-active"
+                  ? "active"
+                  : "settled",
             branch: "feature",
             worktreePath,
-            latestUserMessageAt: ["recent", "merged", "unmerged", "unchanged"].includes(protection)
+            latestUserMessageAt: [
+              "recent",
+              "squash-merged",
+              "squash-extra",
+              "squash-stale",
+              "unmerged",
+              "unchanged",
+            ].includes(protection)
               ? "2026-08-26T00:00:00.000Z"
               : "2026-08-01T00:00:00.000Z",
             pullRequests:
-              protection === "merged"
+              protection === "merged" || protection.startsWith("squash-")
                 ? [
                     {
                       host: "example.test",
@@ -1658,6 +1679,9 @@ describe("storage cleanup", () => {
                       snapshot: {
                         state: "merged",
                         title: "Merged fixture",
+                        ...(protection.startsWith("squash-")
+                          ? { headSha: (protection === "squash-extra" ? "c" : "a").repeat(40) }
+                          : {}),
                         headBranch: "feature",
                         baseBranch: "main",
                         isDraft: false,
@@ -1702,7 +1726,10 @@ describe("storage cleanup", () => {
           const deleteRule = protection.startsWith("deleted");
           let tombstoned = deleteRule && protection !== "deleted-event";
           const removals: string[] = [];
-          const mergeRule = protection === "merged" || protection === "unmerged";
+          const mergeRule =
+            protection === "merged" ||
+            protection === "unmerged" ||
+            protection.startsWith("squash-");
           const unchangedRule =
             protection === "unchanged" ||
             protection === "unchanged-two-worktrees" ||
@@ -1843,7 +1870,13 @@ describe("storage cleanup", () => {
                             protection === "deleted-project-custom"
                               ? []
                               : [makeProject(PROJECT_ID, config.baseDir)];
-                          const threads = tombstoned ? [] : [thread];
+                          const threads = tombstoned
+                            ? []
+                            : [
+                                protection === "unsettled-during-cleanup" && snapshotReads > 1
+                                  ? { ...thread, settledOverride: "active" as const }
+                                  : thread,
+                              ];
                           if (protection === "shared")
                             projects.push(makeProject(LINKED_PROJECT_ID, config.baseDir));
                           if (protection === "deleted-shared")
@@ -1907,9 +1940,19 @@ describe("storage cleanup", () => {
                   invalidateStatus: () => Effect.void,
                   branchPullRequest: (_input, options) => {
                     assert.strictEqual(options?.refresh, true);
-                    return Effect.succeed(
-                      makeBranchPullRequest(protection === "unmerged" ? "open" : "merged"),
-                    );
+                    return Effect.succeed({
+                      ...makeBranchPullRequest(protection === "unmerged" ? "open" : "merged"),
+                      headRef: "feature",
+                      url: "https://example.test/owner/repo/pull/42",
+                      ...(protection.startsWith("squash-")
+                        ? {
+                            headSha: (protection === "squash-extra" || protection === "squash-stale"
+                              ? "c"
+                              : "a"
+                            ).repeat(40),
+                          }
+                        : {}),
+                    });
                   },
                 }),
                 Layer.mock(OrchestrationEngineService)({
@@ -1969,7 +2012,33 @@ describe("storage cleanup", () => {
                             ? "c".repeat(40)
                             : "a".repeat(40),
                       };
-                    }),
+                    }).pipe(
+                      Effect.tap(() =>
+                        (protection.startsWith("policy-") ||
+                          protection === "project-policy-disabled") &&
+                        headReads > 1
+                          ? settingsService
+                              .updateSettings({
+                                ...(protection === "project-policy-disabled"
+                                  ? {
+                                      projectSettingsOverrides: {
+                                        [PROJECT_ID]: { worktreeCleanup: { mode: "off" as const } },
+                                      },
+                                    }
+                                  : {}),
+                                ...(protection === "project-policy-disabled"
+                                  ? {}
+                                  : {
+                                      storageCleanup: {
+                                        worktreeAfterDays:
+                                          protection === "policy-disabled" ? null : 60,
+                                      },
+                                    }),
+                              })
+                              .pipe(Effect.orDie)
+                          : Effect.void,
+                      ),
+                    ),
                   statusDetailsLocal: (cwd) =>
                     Effect.gen(function* () {
                       if (
@@ -1998,46 +2067,25 @@ describe("storage cleanup", () => {
                     Effect.succeed({
                       exitCode: ChildProcessSpawner.ExitCode(
                         input.operation === "StorageCleanup.integratedBranch" &&
-                          (protection === "diverged" || input.args.at(-1) !== "b".repeat(40))
+                          (protection === "diverged" ||
+                            protection === "preview-days" ||
+                            protection === "never-settled" ||
+                            protection === "kept-active" ||
+                            protection.startsWith("squash-") ||
+                            input.args.at(-1) !== "b".repeat(40))
                           ? 1
                           : 0,
                       ),
                       stdout:
-                        protection === "ignored" || protection === "deleted-ignored"
-                          ? ".env\0"
-                          : protection === "ignored-directory"
-                            ? ".cache/\0"
+                        input.operation === "StorageCleanup.remotes"
+                          ? "origin\n"
+                          : input.operation === "StorageCleanup.remoteUrl"
+                            ? "https://example.test/owner/repo.git\n"
                             : "",
                       stderr: "",
                       stdoutTruncated: false,
                       stderrTruncated: false,
-                    }).pipe(
-                      Effect.tap(() =>
-                        (protection.startsWith("policy-") ||
-                          protection === "project-policy-disabled") &&
-                        headReads > 1
-                          ? settingsService
-                              .updateSettings({
-                                ...(protection === "project-policy-disabled"
-                                  ? {
-                                      projectSettingsOverrides: {
-                                        [PROJECT_ID]: { worktreeCleanup: { mode: "off" as const } },
-                                      },
-                                    }
-                                  : {}),
-                                ...(protection === "project-policy-disabled"
-                                  ? {}
-                                  : {
-                                      storageCleanup: {
-                                        worktreeAfterDays:
-                                          protection === "policy-disabled" ? null : 60,
-                                      },
-                                    }),
-                              })
-                              .pipe(Effect.orDie)
-                          : Effect.void,
-                      ),
-                    ),
+                    }),
                   removeWorktree: (input) => {
                     assert.strictEqual(input.force, false);
                     removals.push(input.path);
@@ -2250,6 +2298,8 @@ describe("storage cleanup", () => {
           if (
             [
               "none",
+              "never-settled",
+              "kept-active",
               "dirty",
               "ignored",
               "shared",
@@ -2260,6 +2310,9 @@ describe("storage cleanup", () => {
               "deleted-provider",
               "unchanged",
               "merged",
+              "squash-merged",
+              "squash-extra",
+              "squash-stale",
               "unmerged",
             ].includes(protection)
           ) {
@@ -2269,6 +2322,7 @@ describe("storage cleanup", () => {
             const preview = yield* settledPreview(input);
             const removable = [
               "none",
+              "ignored",
               "deleted",
               "project-off",
               "recent",
@@ -2279,12 +2333,14 @@ describe("storage cleanup", () => {
             const category =
               protection === "deleted"
                 ? "deleted"
-                : protection === "merged"
-                  ? "merged"
-                  : ["recent", "unchanged", "unmerged"].includes(protection)
-                    ? "unchanged"
+                : protection === "squash-extra"
+                  ? "kept"
+                  : protection === "merged" ||
+                      protection === "squash-merged" ||
+                      protection === "squash-stale"
+                    ? "merged"
                     : removable
-                      ? "inactive"
+                      ? "unchanged"
                       : "kept";
             assert.strictEqual(
               preview.categories.find((entry) => entry.kind === category)?.folders,
@@ -2321,8 +2377,9 @@ describe("storage cleanup", () => {
             if (protection === "none") {
               assert.ok(preview.total.bytes > 0);
               assert.strictEqual(
-                preview.categories.find((category) => category.kind === "inactive")?.folders,
+                preview.categories.find((category) => category.kind === "unchanged")?.folders,
                 1,
+                "Git classification takes precedence even when only age-based cleanup is enabled",
               );
               assert.deepStrictEqual(
                 (yield* cleanup.preview({ ...input, inactiveAfterDays: null })).categories,
@@ -2416,6 +2473,9 @@ describe("storage cleanup", () => {
             yield* cleanup.drain;
           }
           const removed =
+            protection === "ignored" ||
+            protection === "ignored-directory" ||
+            protection === "deleted-ignored" ||
             protection === "project-custom" ||
             protection === "deleted-project-custom" ||
             protection === "none" ||
@@ -2425,6 +2485,7 @@ describe("storage cleanup", () => {
             protection === "files-disabled" ||
             protection === "files-extended" ||
             protection === "merged" ||
+            protection === "squash-merged" ||
             protection === "unchanged" ||
             protection === "unchanged-two-worktrees";
           assert.strictEqual(yield* fs.exists(worktreePath), !removed);
@@ -2436,7 +2497,10 @@ describe("storage cleanup", () => {
                 ? [worktreePath]
                 : [],
           );
-          assert.strictEqual(fetches, mergeRule || unchangedRule ? 1 : 0);
+          assert.strictEqual(
+            fetches,
+            protection === "squash-merged" ? 0 : mergeRule || unchangedRule ? 1 : 0,
+          );
           assert.strictEqual(thread.worktreePath, worktreePath);
           assert.strictEqual(thread.branch, "feature");
           assert.strictEqual(yield* fs.exists(oldImage), protection.startsWith("files-"));
