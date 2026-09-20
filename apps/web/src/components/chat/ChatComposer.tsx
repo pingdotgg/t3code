@@ -48,12 +48,14 @@ import {
   pastedTextDisposition,
   wouldTextPasteExceedLimit,
 } from "@t3tools/client-runtime/text-paste";
+import { parseCodexFeedbackCommand } from "@t3tools/client-runtime/state/threads";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   USAGE_LIMITS_COMMAND,
   formatUsageLimitSendBlock,
+  isUsageLimitsCommand,
   usageLimitSendBlock,
 } from "@t3tools/shared/usageLimits";
 import {
@@ -1931,48 +1933,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectModelSelection: activeProjectDefaultModelSelection,
     settings,
   });
-  // A provider whose reported quota for the selection is spent blocks the
-  // send until the window resets or the selection changes. The minute clock
-  // re-arms the check so a reset banner clears itself.
-  const nowMinute = useNowMinute();
-  const usageLimitBlockReason = useMemo(() => {
-    const now = Date.parse(nowMinute);
-    const blockFor = (entry: ProviderInstanceEntry | undefined, model: string): string | null => {
-      const block = usageLimitSendBlock(entry?.snapshot, model, now);
-      return block === null
-        ? null
-        : formatUsageLimitSendBlock(entry?.displayName ?? "This provider", block, now);
-    };
-    if (multipleModelSelections !== null) {
-      for (const selection of multipleModelSelections) {
-        const reason = blockFor(
-          providerInstanceEntries.find((entry) => entry.instanceId === selection.instanceId),
-          selection.model,
-        );
-        if (reason !== null) return reason;
-      }
-      return null;
-    }
-    return blockFor(selectedProviderEntry, selectedModel);
-  }, [
-    nowMinute,
-    multipleModelSelections,
-    providerInstanceEntries,
-    selectedProviderEntry,
-    selectedModel,
-  ]);
-  const providerSendBlockReason =
-    multipleModelSelections === null
-      ? (getAntigravitySendBlockReason(selectedProviderEntry?.snapshot, selectedModel) ??
-        usageLimitBlockReason)
-      : usageLimitBlockReason;
-  const sendDisabledReason =
-    externalSendDisabledReason ??
-    (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
-    (activePendingProgress
-      ? attachmentBlockReason
-      : (attachmentBlockReason ?? providerSendBlockReason));
-  const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
@@ -2277,6 +2237,70 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       prompt,
     ],
   );
+  // Commands that never reach the provider must not sit behind the quota
+  // gate: `/feedback` uploads without spending a turn, and `/usage-limits`
+  // opens the local Limits panel. ChatView applies the same exemptions.
+  const nonTurnCommandDraft =
+    (props.onUsageLimitsCommand !== undefined &&
+      isUsageLimitsCommand(prompt) &&
+      multipleModelSelections === null) ||
+    (selectedProvider === "codex" &&
+      multipleModelSelections === null &&
+      composerImages.length === 0 &&
+      composerFiles.length === 0 &&
+      composerSendState.sendableTerminalContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0 &&
+      parseCodexFeedbackCommand(composerSendState.trimmedPrompt) !== null);
+  // A provider whose reported quota for the selection is spent blocks the
+  // send until the window resets or the selection changes. The minute clock
+  // re-arms the check so a reset banner clears itself; its UTC-shaped string
+  // needs the offset restored before it parses as anything but local time.
+  const nowMinute = useNowMinute();
+  const usageLimitBlockReason = useMemo(() => {
+    if (nonTurnCommandDraft) return null;
+    const now = Date.parse(`${nowMinute}:00Z`);
+    const providerLocked = lockedProvider !== null && multipleModelSelections === null;
+    const blockFor = (entry: ProviderInstanceEntry | undefined, model: string): string | null => {
+      const block = usageLimitSendBlock(entry?.snapshot, model, now);
+      return block === null
+        ? null
+        : formatUsageLimitSendBlock(entry?.displayName ?? "This provider", block, now, {
+            providerLocked,
+          });
+    };
+    if (multipleModelSelections !== null) {
+      for (const selection of multipleModelSelections) {
+        const reason = blockFor(
+          providerInstanceEntries.find((entry) => entry.instanceId === selection.instanceId),
+          selection.model,
+        );
+        if (reason !== null) return reason;
+      }
+      return null;
+    }
+    return blockFor(selectedProviderEntry, selectedModel);
+  }, [
+    nowMinute,
+    nonTurnCommandDraft,
+    lockedProvider,
+    multipleModelSelections,
+    providerInstanceEntries,
+    selectedProviderEntry,
+    selectedModel,
+  ]);
+  const providerSendBlockReason =
+    multipleModelSelections === null
+      ? (getAntigravitySendBlockReason(selectedProviderEntry?.snapshot, selectedModel) ??
+        usageLimitBlockReason)
+      : usageLimitBlockReason;
+  const sendDisabledReason =
+    externalSendDisabledReason ??
+    (multipleModelSelections?.length === 0 ? "Select at least one model." : null) ??
+    (activePendingProgress
+      ? attachmentBlockReason
+      : (attachmentBlockReason ?? providerSendBlockReason));
+  const isSendDisabled = sendDisabledReason !== null;
   // ------------------------------------------------------------------
   // Derived: composer trigger / menu
   // ------------------------------------------------------------------

@@ -15,6 +15,7 @@ import {
   type ServerConfig as T3ServerConfig,
   type UsageLimitsReport,
 } from "@t3tools/contracts";
+import { parseCodexFeedbackCommand } from "@t3tools/client-runtime/state/threads";
 import {
   collectProviderUsageLimits,
   formatUsageLimitSendBlock,
@@ -430,16 +431,28 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         : null,
     [props.connectionState, selectedProviderStatus, currentModelSelection.model, nowMinute],
   );
+  // Commands that never reach the provider must not sit behind the quota
+  // gate: `/feedback` uploads without spending a turn, and `/usage-limits`
+  // opens the local Limits panel. The send path applies the same exemptions.
+  const nonTurnCommandDraft =
+    props.draftAttachments.length === 0 &&
+    ((usageLimitsOffered && isUsageLimitsCommand(props.draftMessage)) ||
+      ((selectedProviderStatus?.driver === "codex" ||
+        props.selectedThread.session?.providerName === "codex") &&
+        parseCodexFeedbackCommand(props.draftMessage) !== null));
   const usageLimitBlockReason = useMemo(
     () =>
-      usageLimitBlock === null || selectedProviderStatus === null
+      usageLimitBlock === null || selectedProviderStatus === null || nonTurnCommandDraft
         ? null
         : formatUsageLimitSendBlock(
             providerDisplayLabel(selectedProviderStatus),
             usageLimitBlock,
             nowMinute,
+            // A started thread is bound to its provider instance: the picker
+            // only offers that provider's own models.
+            { providerLocked: true },
           ),
-    [usageLimitBlock, selectedProviderStatus, nowMinute],
+    [usageLimitBlock, selectedProviderStatus, nonTurnCommandDraft, nowMinute],
   );
   const sendBlockedReason =
     props.sendBlockedReason ??
@@ -504,7 +517,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     if (
       voiceInput.blocksSubmission ||
       pendingPastedTextAttachmentCountRef.current > 0 ||
-      usageLimitBlock !== null
+      usageLimitBlockReason !== null
     ) {
       return;
     }
@@ -549,7 +562,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.environmentLabel,
     props.selectedThread.id,
     props.selectedThread.title,
-    usageLimitBlock,
+    usageLimitBlockReason,
     voiceInput.blocksSubmission,
   ]);
 

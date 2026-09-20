@@ -388,18 +388,6 @@ export function useThreadComposerState() {
     const provider = serverConfig?.providers.find(
       (entry) => entry.instanceId === modelSelection.instanceId,
     );
-    // The composer's flag is a render-time check; this is the send-time one,
-    // covering a quota that was spent between the two.
-    if (provider !== undefined && selectedEnvironmentRuntime?.connectionState === "connected") {
-      const usageBlock = usageLimitSendBlock(provider, modelSelection.model, Date.now());
-      if (usageBlock !== null) {
-        Alert.alert(
-          "Out of tokens",
-          formatUsageLimitSendBlock(providerDisplayLabel(provider), usageBlock, Date.now()),
-        );
-        return null;
-      }
-    }
     const feedbackCommand =
       attachments.length === 0 &&
       (provider?.driver === "codex" || thread.session?.providerName === "codex")
@@ -440,6 +428,22 @@ export function useThreadComposerState() {
           }),
       });
       return null;
+    }
+
+    // The composer's flag is a render-time check; this is the send-time one,
+    // covering a quota that was spent between the two. `/feedback` handled
+    // above never spends a turn, so it stays reachable while a limit holds.
+    if (provider !== undefined && selectedEnvironmentRuntime?.connectionState === "connected") {
+      const usageBlock = usageLimitSendBlock(provider, modelSelection.model, Date.now());
+      if (usageBlock !== null) {
+        Alert.alert(
+          "Out of tokens",
+          formatUsageLimitSendBlock(providerDisplayLabel(provider), usageBlock, Date.now(), {
+            providerLocked: true,
+          }),
+        );
+        return null;
+      }
     }
 
     const metadata = makeQueuedMessageMetadata();

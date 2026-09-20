@@ -544,21 +544,26 @@ export function usageLimitSendBlock(
 /**
  * The sentence the composer shows above the input while `usageLimitSendBlock`
  * holds: which model or account is spent, when it frees, and the move that
- * sends sooner.
+ * sends sooner. `providerLocked` drops the provider-switch advice on
+ * composers bound to a started thread, where the picker only offers the
+ * current provider's own models.
  */
 export function formatUsageLimitSendBlock(
   providerLabel: string,
   block: UsageLimitSendBlock,
   now: number,
+  options?: { readonly providerLocked?: boolean },
 ): string {
   const subject = block.window.scopeLabel ?? block.modelScope ?? providerLabel;
   const resetsIn = formatResetsIn(block.window, now);
   const kind = block.window.kind === "other" ? "usage" : block.window.kind;
   const detail = resetsIn ? `its ${kind} limit ${resetsIn}` : `its ${kind} limit is spent`;
   const advice =
-    block.modelScope === undefined
-      ? "Pick another provider to send."
-      : "Pick another model to send.";
+    block.modelScope !== undefined
+      ? "Pick another model to send."
+      : options?.providerLocked === true
+        ? "Wait for the limit to reset."
+        : "Pick another provider to send.";
   return `${subject} is out of tokens: ${detail}. ${advice}`;
 }
 

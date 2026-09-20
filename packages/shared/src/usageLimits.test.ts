@@ -1189,4 +1189,23 @@ describe("usageLimitSendBlock", () => {
       ),
     ).toBe("Claude is out of tokens: its session limit is spent. Pick another provider to send.");
   });
+
+  it("drops the provider-switch advice where the composer cannot switch", () => {
+    const account = usageLimitSendBlock(
+      provider({ ...claude, usageLimits: limits([{ ...window, usedPercent: 100 }]) }),
+      "claude-fable-5-1",
+      now,
+    )!;
+    expect(formatUsageLimitSendBlock("Claude", account, now, { providerLocked: true })).toBe(
+      "Claude is out of tokens: its session limit resets in 2h 0m. Wait for the limit to reset.",
+    );
+    const scoped = usageLimitSendBlock(
+      provider({ ...claude, usageLimits: limits([fableWeekly]) }),
+      "claude-fable-5-1",
+      now,
+    )!;
+    expect(formatUsageLimitSendBlock("Claude", scoped, now, { providerLocked: true })).toBe(
+      "Fable is out of tokens: its weekly limit resets in 7d 0h. Pick another model to send.",
+    );
+  });
 });

@@ -645,7 +645,11 @@ function usageLimitBlockReason(
   const block = usageLimitSendBlock(provider, selection.model, Date.now());
   return block === null || provider === undefined
     ? null
-    : formatUsageLimitSendBlock(providerDisplayLabel(provider), block, Date.now());
+    : formatUsageLimitSendBlock(providerDisplayLabel(provider), block, Date.now(), {
+        // A queued send is bound to the thread's provider; switching is not
+        // an option the restore can offer.
+        providerLocked: true,
+      });
 }
 
 export function useThreadOutboxDrain(): void {

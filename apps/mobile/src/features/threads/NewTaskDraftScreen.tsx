@@ -212,6 +212,14 @@ export function NewTaskDraftScreen(props: {
       (environment) => environment.environmentId === selectedProject.environmentId,
     )?.connectionState === "connected";
   const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
+  // T3 owns /usage-limits only where Limits has data for the selected provider.
+  const offersUsageLimits =
+    flow.selectedProviderStatus !== null &&
+    hasProviderUsageLimits(
+      flow.selectedProviderStatus.driver,
+      selectedEnvironmentServerConfig?.providers ?? [],
+      selectedEnvironmentServerConfig?.usageLimitSources ?? [],
+    );
   // A provider whose reported quota for the selection is spent cannot start
   // the task; the flag above the prompt opens the model settings so another
   // model or provider is one tap away. The minute clock re-arms the check so
@@ -227,16 +235,20 @@ export function NewTaskDraftScreen(props: {
         : null,
     [environmentConnected, flow.selectedModel, usageLimitProvider, nowMinute],
   );
+  // `/usage-limits` never reaches the provider, so a spent quota must not
+  // gate it; the Start handler gives the command its own alert instead.
+  const usageLimitsCommandDraft =
+    offersUsageLimits && flow.attachments.length === 0 && isUsageLimitsCommand(flow.prompt);
   const usageLimitBlockReason = useMemo(
     () =>
-      usageLimitBlock === null || usageLimitProvider === undefined
+      usageLimitBlock === null || usageLimitProvider === undefined || usageLimitsCommandDraft
         ? null
         : formatUsageLimitSendBlock(
             providerDisplayLabel(usageLimitProvider),
             usageLimitBlock,
             nowMinute,
           ),
-    [usageLimitBlock, usageLimitProvider, nowMinute],
+    [usageLimitBlock, usageLimitProvider, usageLimitsCommandDraft, nowMinute],
   );
   // A project added by cloning exists before its files do: the prompt can be
   // written meanwhile, but Start waits for the clone.
@@ -459,14 +471,6 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareTransferPending || flow.submitting || isImportingContext;
   // Also guard while a submit is in flight: an Android back press or iOS
   // Cancel would otherwise abandon the screen while the task still starts.
-  // T3 owns /usage-limits only where Limits has data for the selected provider.
-  const offersUsageLimits =
-    flow.selectedProviderStatus !== null &&
-    hasProviderUsageLimits(
-      flow.selectedProviderStatus.driver,
-      selectedEnvironmentServerConfig?.providers ?? [],
-      selectedEnvironmentServerConfig?.usageLimitSources ?? [],
-    );
   const composerWorkspaceCwd =
     (flow.workspaceMode === "worktree"
       ? selectedProject?.workspaceRoot
@@ -1241,6 +1245,20 @@ export function NewTaskDraftScreen(props: {
       );
       return;
     }
+    // T3's own limits command is answered by the thread composer; a new task would
+    // send it to the agent. A provider's same-named command, or a prompt carrying
+    // attachments, goes through as usual.
+    if (
+      offersUsageLimits &&
+      isUsageLimitsCommand(initialMessageText) &&
+      draft.attachments.length === 0
+    ) {
+      Alert.alert(
+        "Usage limits",
+        "Send /usage-limits inside a thread, or open Settings → Usage → Limits.",
+      );
+      return;
+    }
     // The flag is a render-time check; quota can be spent between it and the
     // tap, so Start re-reads it. The queued creation would only restore the
     // draft with the same reason.
@@ -1256,20 +1274,6 @@ export function NewTaskDraftScreen(props: {
         );
         return;
       }
-    }
-    // T3's own limits command is answered by the thread composer; a new task would
-    // send it to the agent. A provider's same-named command, or a prompt carrying
-    // attachments, goes through as usual.
-    if (
-      offersUsageLimits &&
-      isUsageLimitsCommand(initialMessageText) &&
-      draft.attachments.length === 0
-    ) {
-      Alert.alert(
-        "Usage limits",
-        "Send /usage-limits inside a thread, or open Settings → Usage → Limits.",
-      );
-      return;
     }
     // A failed-send restore can leave the draft over the cap on purpose (it
     // never drops the user's files); starting anyway would upload everything
