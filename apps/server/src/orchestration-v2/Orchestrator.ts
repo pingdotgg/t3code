@@ -1,3 +1,4 @@
+import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import {
   normalizeThreadPullRequestKey,
@@ -70,6 +71,7 @@ import {
 import {
   applyToProjection,
   emptyProjection,
+  threadShellFromProjection,
   isTurnItemAtOrBeforeRun,
   ProjectionStoreV2,
   type ProjectionCheckpointContext,
@@ -2225,6 +2227,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : null;
 
     const now = yield* DateTime.now;
+    if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
+      const projection = yield* loadProjectionForCommand(command);
+      const run = projection.runs.at(-1) ?? null;
+      const failure = latestRootProviderFailure(run, projection.turnItems);
+      if (
+        thread.archivedAt !== null ||
+        thread.settledOverride === "settled" ||
+        run?.id !== command.limitRecovery.runId ||
+        failure?.class !== "usage_limit" ||
+        failure.resetAt !== command.limitRecovery.resetAt ||
+        Date.parse(command.limitRecovery.resetAt) <=
+          DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
+        projection.runtimeRequests.some((request) => request.status === "pending") ||
+        projection.runs.some((candidate) => candidate.status === "queued")
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The provider limit changed before recovery could be configured.",
+        });
+      }
+    }
     let snoozedUntil: DateTime.Utc | null = null;
     if (command.type === "thread.snooze") {
       const projection = yield* loadProjectionForCommand(command);
@@ -2382,6 +2406,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
+            ...(command.limitRecovery === undefined
+              ? {}
+              : { limitRecovery: command.limitRecovery }),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined
@@ -3754,6 +3781,40 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      if (command.usageLimitContinuationOfRunId !== undefined) {
+        const run = projection.runs.at(-1) ?? null;
+        const failure = latestRootProviderFailure(run, projection.turnItems);
+        const recovery = projection.thread.limitRecovery;
+        const now = yield* DateTime.now;
+        if (
+          run?.id !== command.usageLimitContinuationOfRunId ||
+          failure?.class !== "usage_limit" ||
+          threadShellFromProjection(projection).lastErrorClass !== "usage_limit" ||
+          !recovery?.autoResume ||
+          recovery.runId !== run.id ||
+          recovery.resetAt !== failure.resetAt ||
+          Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now) ||
+          projection.thread.archivedAt !== null ||
+          projection.thread.deletedAt !== null ||
+          projection.thread.settledOverride === "settled" ||
+          projection.thread.providerInstanceId !== run.providerInstanceId ||
+          projection.runtimeRequests.some((request) => request.status === "pending") ||
+          (projection.thread.snoozedUntil != null &&
+            DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now))
+        ) {
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "thread.metadata-updated",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: projection.thread,
+          });
+          return;
+        }
+      }
+
       if (command.restartContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
         if (

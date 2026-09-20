@@ -138,6 +138,13 @@ for custom configuration.
 keeps the provider's explanation. Retry after the limit resets, or switch to
 another provider instance.
 
+When the provider reports a reset time, choose **Resume at reset** to schedule a
+continuation. You can cancel it from the thread. Enable **Auto-resume limited
+threads** in thread behavior settings to schedule new limit stops by default.
+The environment must be running when the reset arrives; it resumes overdue
+continuations after a restart. Sending a new message, archiving, or settling the
+thread prevents a pending continuation from starting.
+
 On web and desktop, use **Agents** to follow work delegated to subagents.
 
 Expand a tool call in the conversation to see its full command and output.

@@ -1,3 +1,4 @@
+import { limitRecoveryCommand } from "./UsageLimitRecoveryService.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -3012,5 +3013,196 @@ it.layer(SharedApplicationDataPlaneTestLayer)("shared application data plane", (
       `;
       assert.equal(retiredWrites[0]?.count, 0);
     }),
+  );
+});
+
+it.layer(TestLayer)("usage-limit recovery", (it) => {
+  it.effect.each(["resume", "cancel", "new-message", "archive", "settle", "replacement"] as const)(
+    "guards a scheduled usage-limit continuation against %s",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* OrchestratorV2;
+        const events = yield* EventSinkV2;
+        const threadId = ThreadId.make(`recovery:${scenario}`);
+        const projects = yield* ProjectionProjectRepository;
+        const projectId = ProjectId.make(`recovery:project:${scenario}`);
+        const projectAt = DateTime.formatIso(yield* DateTime.now);
+        yield* projects.upsert({
+          projectId,
+          title: "Recovery project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          defaultThreadEnvMode: null,
+          autoPull: false,
+          scripts: [],
+          createdAt: projectAt,
+          updatedAt: projectAt,
+          deletedAt: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`recovery:create:${scenario}`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`recovery:message:${scenario}`),
+          threadId,
+          messageId: MessageId.make(`recovery:message:${scenario}`),
+          text: "Work on this.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const run = projection.runs[0]!;
+        const now = yield* DateTime.now;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+        yield* events.write({
+          commandId: CommandId.make(`recovery:failure:${scenario}`),
+          events: [
+            {
+              id: EventId.make(`recovery:run:${scenario}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make(`recovery:error:${scenario}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`recovery:error:${scenario}`),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        assert.isNull(limitRecoveryCommand(shell, false, DateTime.toEpochMillis(now)));
+        const arm = limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now));
+        assert.isNotNull(arm);
+        yield* orchestrator.dispatch(arm!);
+        const armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        assert.deepEqual(armedShell.limitRecovery, { runId: run.id, resetAt, autoResume: true });
+        assert.isNull(limitRecoveryCommand(armedShell, true, DateTime.toEpochMillis(now)));
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`recovery:early:${scenario}`),
+          messageId: MessageId.make(`recovery:early:${scenario}`),
+          threadId,
+          usageLimitContinuationOfRunId: run.id,
+          text: "Continue where you left off.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "server",
+        });
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        yield* TestClock.adjust("1 minute");
+        const resume = limitRecoveryCommand(
+          armedShell,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        assert.isNotNull(resume);
+        if (scenario === "cancel")
+          yield* orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`recovery:cancel:${scenario}`),
+            threadId,
+            limitRecovery: { runId: run.id, resetAt, autoResume: false },
+          });
+        if (scenario === "archive")
+          yield* orchestrator.dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make(`recovery:archive:${scenario}`),
+            threadId,
+          });
+        if (scenario === "new-message")
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`recovery:new-message:${scenario}`),
+            threadId,
+            messageId: MessageId.make(`recovery:new-message:${scenario}`),
+            text: "I will continue manually.",
+            attachments: [],
+            dispatchMode: { type: "defer_start" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        if (scenario === "settle")
+          yield* orchestrator.dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make(`recovery:settle:${scenario}`),
+            threadId,
+          });
+        if (scenario === "replacement") {
+          const current = yield* orchestrator.getThreadProjection(threadId);
+          const error = current.turnItems.find((item) => item.type === "error")!;
+          if (error.type !== "error") throw new Error("Expected provider error");
+          yield* events.write({
+            commandId: CommandId.make(`recovery:replacement:${scenario}`),
+            events: [
+              {
+                id: EventId.make(`recovery:replacement:${scenario}`),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...error,
+                  failure: {
+                    ...error.failure,
+                    class: "provider_error",
+                    message: "A replacement failure.",
+                  },
+                },
+              },
+            ],
+          });
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        yield* orchestrator.dispatch(resume!);
+        yield* orchestrator.dispatch(resume!);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(after.runs, before.runs.length + (scenario === "resume" ? 1 : 0));
+        assert.lengthOf(after.messages, before.messages.length + (scenario === "resume" ? 1 : 0));
+      }),
   );
 });

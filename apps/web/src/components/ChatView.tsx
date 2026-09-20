@@ -1,3 +1,4 @@
+import { UsageLimitRecoveryCard } from "./chat/UsageLimitRecoveryCard";
 import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
@@ -10355,6 +10356,24 @@ export default function ChatView(props: ChatViewProps) {
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
                 onOpenProviderSetup={openProviderSetup}
               />
+              {serverRuntime?.status === "failed" &&
+              serverRuntime.lastErrorClass === "usage_limit" &&
+              activeThreadShell?.latestRun ? (
+                <UsageLimitRecoveryCard
+                  key={activeThreadShell.latestRun.runId}
+                  stoppedAt={activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt}
+                  runId={activeThreadShell.latestRun.runId}
+                  resetAt={serverRuntime.usageLimitResetAt ?? null}
+                  recovery={activeThreadShell.limitRecovery ?? null}
+                  onChange={async (limitRecovery) => {
+                    const result = await updateThreadMetadata({
+                      environmentId,
+                      input: { threadId: activeThread.id, limitRecovery },
+                    });
+                    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                  }}
+                />
+              ) : null}
               <ThreadErrorBanner
                 error={visibleThreadError}
                 errorClass={

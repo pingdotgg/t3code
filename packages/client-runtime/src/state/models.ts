@@ -119,6 +119,7 @@ export interface EnvironmentThreadShell {
   readonly unsettledAt: string | null;
   readonly snoozedUntil: string | null;
   readonly snoozedAt: string | null;
+  readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
   /** Slot in the user-arranged pinned order; null for keyless (legacy) pins. */
   readonly pinOrderKey: string | null;
@@ -251,6 +252,7 @@ export function presentThreadShell(
     unsettledAt: nullableIso(thread.unsettledAt ?? null),
     snoozedUntil: nullableIso(thread.snoozedUntil ?? null),
     snoozedAt: nullableIso(thread.snoozedAt ?? null),
+    limitRecovery: thread.limitRecovery ?? null,
     pinnedAt: nullableIso(thread.pinnedAt ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
