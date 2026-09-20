@@ -151,7 +151,7 @@ export const makeRetryHandler = Effect.gen(function* () {
         text: PROVIDER_BUSY_RETRY_TEXT,
         attachments: [],
       },
-      modelSelection: thread.modelSelection,
+      // No modelSelection: the turn uses whatever the thread has when it is decided.
       runtimeMode: thread.runtimeMode,
       interactionMode: thread.interactionMode,
       // The engine re-checks this atomically, closing the gap since the read above.

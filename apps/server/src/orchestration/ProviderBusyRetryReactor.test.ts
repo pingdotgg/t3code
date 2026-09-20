@@ -107,6 +107,8 @@ it.effect("continues the turn once after the delay, ignoring duplicate failure r
     assert.lengthOf(starts, 1);
     assert.equal(starts[0]!.message.text, PROVIDER_BUSY_RETRY_TEXT);
     assert.equal(starts[0]!.runtimeMode, "full-access");
+    // Naming a model would override one the user picks while the retry is in flight.
+    assert.isUndefined(starts[0]!.modelSelection);
     // The engine re-checks the observed state, so a user message that lands first wins.
     assert.deepEqual(starts[0]!.onlyIfUnchanged, {
       latestTurnId: TurnId.make("turn-1"),
