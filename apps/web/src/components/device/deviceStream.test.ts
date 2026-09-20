@@ -6,7 +6,7 @@ import {
   avcCodecString,
   parseSemuPacket,
   scanAccessUnit,
-} from "./deviceStream";
+} from "@t3tools/client-runtime/device/stream";
 
 const envelope = (tag: number, payload: number[]) => {
   const length = 1 + payload.length;
@@ -41,6 +41,171 @@ describe("AvccDemuxer", () => {
     expect(avcCodecString(new Uint8Array([1, 0x64, 0x00, 0x1f]))).toBe("avc1.64001f");
     expect(avcCodecString(new Uint8Array([1]))).toBe("avc1.42E01E");
   });
+});
+
+describe("native device stream transport", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function setup(platform: "ios" | "android") {
+    vi.useFakeTimers();
+    vi.stubGlobal("VideoDecoder", vi.fn());
+    vi.stubGlobal("EncodedVideoChunk", vi.fn());
+    let resolveOpened!: (socket: FakeSocket) => void;
+    const waitForSocket = () =>
+      new Promise<FakeSocket>((resolve) => {
+        resolveOpened = resolve;
+      });
+    const opened = waitForSocket();
+    class FakeSocket {
+      static OPEN = 1;
+      readyState = 1;
+      binaryType = "";
+      onopen: (() => void) | null = null;
+      onclose: ((event: { code: number; reason: string }) => void) | null = null;
+      send = vi.fn();
+      close = vi.fn();
+      readonly url: string;
+      constructor(url: string) {
+        this.url = url;
+        resolveOpened(this);
+      }
+    }
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const fetch = vi.fn(() => Promise.resolve(new Response("frame")));
+    vi.stubGlobal("fetch", fetch);
+    const events = {
+      onStatus: vi.fn(),
+      onScreen: vi.fn(),
+      onUnauthorized: vi.fn(),
+      onMjpegFallback: vi.fn(),
+      onInputConnected: vi.fn(),
+    };
+    const client = createDeviceStreamClient(
+      {
+        platform,
+        deviceId: "test device",
+        preferMjpeg: platform === "ios",
+        access: {
+          httpBase: "https://environment.test/api/device-hub",
+          wsBase: "wss://environment.test/api/device-hub",
+          credentials: false,
+          query: { wsTicket: "stream-ticket", hostId: "ssh-host" },
+        },
+      },
+      { getContext: () => null } as unknown as HTMLCanvasElement,
+      events,
+    );
+    return { client, opened, waitForSocket, events, fetch };
+  }
+
+  it("uses authenticated iOS MJPEG and forwards controls without a cross-origin video fetch", async () => {
+    const { client, opened, events, fetch } = setup("ios");
+    client.start();
+    const socket = await opened;
+    const imageUrl = new URL(events.onMjpegFallback.mock.calls[0]![0] as string);
+    expect(imageUrl.pathname).toContain("test%20device/stream.mjpeg");
+    expect(imageUrl.searchParams.get("wsTicket")).toBe("stream-ticket");
+    expect(imageUrl.searchParams.get("hostId")).toBe("ssh-host");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    socket.onopen?.();
+    client.pressButton("home");
+    client.sendTouch("begin", 0.25, 0.75);
+    const messages = socket.send.mock.calls.slice(1).map(([bytes]) => {
+      const packet = bytes as Uint8Array;
+      return {
+        tag: packet[0],
+        body: JSON.parse(new TextDecoder().decode(packet.subarray(1))) as unknown,
+      };
+    });
+    expect(messages).toEqual([
+      { tag: 0x04, body: { button: "home" } },
+      { tag: 0x03, body: { type: "begin", x: 0.25, y: 0.75 } },
+    ]);
+    client.stop();
+    expect(socket.close).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("forwards Android gestures and device controls through the ticketed host socket", async () => {
+    const { client, opened } = setup("android");
+    client.start();
+    const socket = await opened;
+    const url = new URL(socket.url);
+    expect(url.searchParams.get("device")).toBe("test device");
+    expect(url.searchParams.get("wsTicket")).toBe("stream-ticket");
+    expect(url.searchParams.get("hostId")).toBe("ssh-host");
+    client.sendTouch("begin", 0.2, 0.8);
+    client.sendTouch("move", 0.2, 0.4);
+    client.sendTouch("end", 0.2, 0.1);
+    client.pressButton("home");
+    client.pressButton("appSwitcher");
+    expect(
+      socket.send.mock.calls.map(([message]) => JSON.parse(message as string) as unknown),
+    ).toEqual([
+      { type: "touch", action: "down", x: 0.2, y: 0.8 },
+      { type: "touch", action: "move", x: 0.2, y: 0.4 },
+      { type: "touch", action: "up", x: 0.2, y: 0.1 },
+      { type: "home" },
+      { type: "recents" },
+    ]);
+    client.stop();
+    expect(socket.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("renews an expired Android ticket when the HTTP upgrade is rejected instead of retrying it forever", async () => {
+    const { client, opened, events } = setup("android");
+    client.start();
+    const socket = await opened;
+    socket.onclose?.({ code: 1006, reason: "" });
+    expect(events.onUnauthorized).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    client.stop();
+  });
+
+  it.each(["ios", "android"] as const)(
+    "keeps a restarted %s stream connected when the discarded socket closes late",
+    async (platform) => {
+      const { client, opened, waitForSocket, events } = setup(platform);
+      client.start();
+      const discarded = await opened;
+      client.stop();
+      const reopened = waitForSocket();
+      client.start();
+      const replacement = await reopened;
+      replacement.onopen?.();
+      replacement.send.mockClear();
+      events.onInputConnected.mockClear();
+
+      discarded.onclose?.({ code: 1006, reason: "" });
+
+      expect(events.onUnauthorized).not.toHaveBeenCalled();
+      expect(events.onInputConnected).not.toHaveBeenCalled();
+      expect(replacement.close).not.toHaveBeenCalled();
+      client.pressButton("home");
+      expect(replacement.send).toHaveBeenCalledTimes(1);
+      client.stop();
+      expect(replacement.close).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each(["ios", "android"] as const)(
+    "does not renew credentials or reconnect a stopped %s stream",
+    async (platform) => {
+      const { client, opened, events } = setup(platform);
+      client.start();
+      const socket = await opened;
+      events.onInputConnected.mockClear();
+      client.stop();
+      socket.onclose?.({ code: 1006, reason: "" });
+      expect(events.onUnauthorized).not.toHaveBeenCalled();
+      expect(events.onInputConnected).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 });
 
 describe("serve-emu frames", () => {

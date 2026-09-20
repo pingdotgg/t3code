@@ -15,7 +15,6 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
-  msgpackr-extract: set this to true or false
   msw: false
   node-pty: true
   sharp: true
@@ -73,7 +72,7 @@ minimumReleaseAgeExclude:
   - "@effect/platform-node@4.0.0-rc.115"
   - "@effect/sql-pg@4.0.0-rc.115"
   - "@effect/vitest@4.0.0-rc.115"
-  - alchemy@2.0.0-beta.78
+  - alchemy@2.0.0-beta.79
   - effect@4.0.0-rc.115
   - "@legendapp/list@3.3.5"
   - "@expo/cli@57.0.20"
@@ -85,11 +84,11 @@ minimumReleaseAgeExclude:
   - expo-updates@57.0.19
   - expo@57.0.18
   - expo-widgets@57.0.15
-  - electron@44.1.0
-  - "@anthropic-ai/claude-agent-sdk@0.3.260"
-  - "@alchemy.run/cloudflare-runtime@2.0.0-beta.78"
-  - "@alchemy.run/floci@2.0.0-beta.78"
-  - "@alchemy.run/node-utils@2.0.0-beta.78"
+  - electron@44.4.2
+  - "@anthropic-ai/claude-agent-sdk@0.3.276"
+  - "@alchemy.run/cloudflare-runtime@2.0.0-beta.79"
+  - "@alchemy.run/floci@2.0.0-beta.79"
+  - "@alchemy.run/node-utils@2.0.0-beta.79"
   - "@distilled.cloud/fly-io@1.0.0-rc.12"
   - "@distilled.cloud/hetzner@1.0.0-rc.12"
   - "@distilled.cloud/prisma@1.0.0-rc.12"
@@ -117,6 +116,10 @@ overrides:
   "@alchemy.run/sigil>react": "-"
   "@alchemy.run/sigil>react-reconciler": "-"
   "@alchemy.run/sigil>scheduler": "-"
+  # Alchemy only reaches @prisma/dev through a lazy import inside the Prisma
+  # database provider, which the relay never deploys. Its exact hono/valibot
+  # pins are also the bulk of our open dependency advisories.
+  "alchemy>@prisma/dev": "-"
   "@clerk/backend": "catalog:"
   "@clerk/clerk-js": "catalog:"
   "@clerk/clerk-js>@base-org/account": "-"
@@ -139,6 +142,8 @@ overrides:
   "@expo/dom-webview": 57.0.1
   "@expo/metro-config": 57.0.12
   expo-constants: 57.0.16
+  # Keep fresh resolution on the version carrying the permissions registry fix.
+  expo-modules-core: 57.0.14
   "@pierre/diffs>@shikijs/transformers": ^4.2.0
   # Keep one copy of these native-binary packages. lightningcss ships 11 platform binaries per
   # version, and the workspaces' tailwindcss ^4 ranges drift into two 4.3.x copies of the family.
@@ -183,6 +188,8 @@ patchedDependencies:
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   effect@4.0.0-rc.115: patches/effect@4.0.0-rc.115.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
+  expo-modules-core@57.0.14: patches/expo-modules-core@57.0.14.patch
+  expo-notifications@57.0.15: patches/expo-notifications@57.0.15.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
   expo-widgets@57.0.15: patches/expo-widgets@57.0.15.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
