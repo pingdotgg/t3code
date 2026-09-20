@@ -802,7 +802,7 @@ export function PreviewView({
         desktopOverlay &&
         !showEmptyState &&
         !isUnreachable &&
-        !recordingRuntimeTabId ? (
+        !activeRecordingTabIds.has(runtimeTabId) ? (
           <AgentBrowserCursor
             tabId={runtimeTabId}
             zoomFactor={desktopOverlay.zoomFactor}
