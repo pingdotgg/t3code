@@ -1615,11 +1615,14 @@ const make = Effect.gen(function* () {
     }
     const hasSession = thread.session && thread.session.status !== "stopped";
     if (!hasSession) {
+      // Same dead-session shape as user-input below: the approval callback only
+      // lives in the provider process, so report it through the stale path and let
+      // projections and clients clear the card.
       return yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.approval.respond.failed",
         summary: "Provider approval response failed",
-        detail: "No active provider session is bound to this thread.",
+        detail: stalePendingRequestDetail("approval", event.payload.requestId),
         turnId: null,
         createdAt: event.payload.createdAt,
         requestId: event.payload.requestId,
@@ -1659,11 +1662,15 @@ const make = Effect.gen(function* () {
       }
       const hasSession = thread.session && thread.session.status !== "stopped";
       if (!hasSession) {
+        // The pending request only lives in the provider process (e.g. an OOM-killed
+        // OpenCode ACP server or a pre-restart session), so there is nothing to answer
+        // anymore. Report it through the stale path so projections and clients clear
+        // the question card instead of leaving the thread stuck.
         return yield* appendProviderFailureActivity({
           threadId: event.payload.threadId,
           kind: "provider.user-input.respond.failed",
           summary: "Provider user input response failed",
-          detail: "No active provider session is bound to this thread.",
+          detail: stalePendingRequestDetail("user-input", event.payload.requestId),
           turnId: null,
           createdAt: event.payload.createdAt,
           requestId: event.payload.requestId,

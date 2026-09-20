@@ -4251,6 +4251,197 @@ describe("ProviderCommandReactor", () => {
     expect(resolvedActivity).toBeUndefined();
   });
 
+  it("surfaces approval answers without an active provider session as stale failures", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-stopped-for-approval"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "stopped",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-approval-requested-no-session"),
+        threadId: ThreadId.make("thread-1"),
+        activity: {
+          id: EventId.make("activity-approval-requested-no-session"),
+          tone: "approval",
+          kind: "approval.requested",
+          summary: "Command approval requested",
+          payload: {
+            requestId: "approval-request-1",
+            requestKind: "command",
+          },
+          turnId: null,
+          createdAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.approval.respond",
+        commandId: CommandId.make("cmd-approval-respond-no-session"),
+        threadId: ThreadId.make("thread-1"),
+        requestId: asApprovalRequestId("approval-request-1"),
+        decision: "acceptForSession",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      if (!thread) return false;
+      return thread.activities.some(
+        (activity) => activity.kind === "provider.approval.respond.failed",
+      );
+    });
+
+    // No provider session means no provider call: the request is already dead.
+    expect(harness.respondToRequest).not.toHaveBeenCalled();
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread).toBeDefined();
+
+    const failureActivity = thread?.activities.find(
+      (activity) => activity.kind === "provider.approval.respond.failed",
+    );
+    expect(failureActivity).toBeDefined();
+    expect(failureActivity?.payload).toMatchObject({
+      requestId: "approval-request-1",
+      detail: expect.stringContaining("Stale pending approval request: approval-request-1"),
+    });
+
+    await harness.drain();
+    const shell = await harness.runEffect(
+      harness.snapshotQuery
+        .getThreadShellById(ThreadId.make("thread-1"))
+        .pipe(Effect.map(Option.getOrThrow)),
+    );
+    expect(shell.hasPendingApprovals).toBe(false);
+  });
+
+  it("surfaces user-input answers without an active provider session as stale failures", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-stopped-for-user-input"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "stopped",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-user-input-requested-no-session"),
+        threadId: ThreadId.make("thread-1"),
+        activity: {
+          id: EventId.make("activity-user-input-requested-no-session"),
+          tone: "info",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          payload: {
+            requestId: "user-input-request-1",
+            questions: [
+              {
+                id: "sandbox_mode",
+                header: "Sandbox",
+                question: "Which mode should be used?",
+                options: [
+                  {
+                    label: "workspace-write",
+                    description: "Allow workspace writes only",
+                  },
+                ],
+              },
+            ],
+          },
+          turnId: null,
+          createdAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.user-input.respond",
+        commandId: CommandId.make("cmd-user-input-respond-no-session"),
+        threadId: ThreadId.make("thread-1"),
+        requestId: asApprovalRequestId("user-input-request-1"),
+        answers: {
+          sandbox_mode: "workspace-write",
+        },
+        // Answered after the request: keeps lifecycle ordering deterministic.
+        createdAt: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      if (!thread) return false;
+      return thread.activities.some(
+        (activity) => activity.kind === "provider.user-input.respond.failed",
+      );
+    });
+
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread).toBeDefined();
+
+    // No provider session means no provider call: the request is already dead.
+    expect(harness.respondToUserInput).not.toHaveBeenCalled();
+
+    const failureActivity = thread?.activities.find(
+      (activity) => activity.kind === "provider.user-input.respond.failed",
+    );
+    expect(failureActivity).toBeDefined();
+    expect(failureActivity?.payload).toMatchObject({
+      requestId: "user-input-request-1",
+      detail: expect.stringContaining("Stale pending user-input request: user-input-request-1"),
+    });
+
+    await harness.drain();
+    const shell = await harness.runEffect(
+      harness.snapshotQuery
+        .getThreadShellById(ThreadId.make("thread-1"))
+        .pipe(Effect.map(Option.getOrThrow)),
+    );
+    expect(shell.hasPendingUserInput).toBe(false);
+  });
+
   effectIt.effect("stops a provider session without reading unrelated message bodies", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() => createHarness({ unreadableHistory: true }));
