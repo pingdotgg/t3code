@@ -1302,6 +1302,17 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  /**
+   * Server-authored turns only. The command is rejected unless the thread is
+   * still in the state the server observed, so a user message that lands
+   * first always wins.
+   */
+  onlyIfUnchanged: Schema.optional(
+    Schema.Struct({
+      latestTurnId: Schema.NullOr(TurnId),
+      latestUserMessageAt: Schema.NullOr(IsoDateTime),
+    }),
+  ),
   createdAt: IsoDateTime,
 });
 

@@ -135,3 +135,55 @@ it.layer(NodeServices.layer)("thread.message.user.append", (it) => {
     }),
   );
 });
+
+it.layer(NodeServices.layer)("thread.turn.start onlyIfUnchanged", (it) => {
+  const serverTurn = {
+    ...turnStartCommand,
+    commandId: CommandId.make("command-server-turn"),
+    message: { ...turnStartCommand.message, messageId: MessageId.make("message-server-turn") },
+    createdAt: "2026-08-24T10:05:00.000Z",
+  };
+
+  it.effect("starts the turn while the thread is still as the server observed it", () =>
+    Effect.gen(function* () {
+      const readModel = yield* readModelWithThread;
+      const planned = yield* decideOrchestrationCommand({
+        command: {
+          ...serverTurn,
+          onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: null },
+        },
+        readModel,
+      });
+      const events = Array.isArray(planned) ? planned : [planned];
+      expect(events.map((event) => event.type)).toContain("thread.turn-start-requested");
+    }),
+  );
+
+  it.effect("rejects the turn once a user message has landed first", () =>
+    Effect.gen(function* () {
+      const readModel = yield* readModelWithThread;
+      const appended = yield* decideOrchestrationCommand({ command: appendCommand, readModel });
+      const appendedEvent = Array.isArray(appended) ? appended[0]! : appended;
+      const withUserMessage = yield* projectEvent(readModel, { ...appendedEvent, sequence: 3 });
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({
+          command: {
+            ...serverTurn,
+            onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: null },
+          },
+          readModel: withUserMessage,
+        }),
+      );
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      // The same command is accepted when it names the state that now holds.
+      const planned = yield* decideOrchestrationCommand({
+        command: {
+          ...serverTurn,
+          onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: createdAt },
+        },
+        readModel: withUserMessage,
+      });
+      expect(Array.isArray(planned) ? planned.length : 1).toBeGreaterThan(0);
+    }),
+  );
+});

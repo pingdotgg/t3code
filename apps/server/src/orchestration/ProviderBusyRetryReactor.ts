@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -15,19 +16,27 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Scope from "effect/Scope";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
-import { forkParked } from "../../serverActivation.ts";
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../Services/OrchestrationEngine.ts";
-import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
-import {
+import { forkParked } from "../serverActivation.ts";
+import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
+
+/**
+ * Retries turns that failed because the provider was temporarily overloaded.
+ * After a delay it asks the agent to continue; a user message sent in the
+ * meantime always wins over the automatic retry.
+ */
+export class ProviderBusyRetryReactor extends Context.Service<
   ProviderBusyRetryReactor,
-  type ProviderBusyRetryReactorShape,
-} from "../Services/ProviderBusyRetryReactor.ts";
+  {
+    /** Must run in a scope so pending retries are cancelled on shutdown. */
+    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
+    /** Resolves when the processing queue is idle. For tests, in place of sleeps. */
+    readonly drain: Effect.Effect<void>;
+  }
+>()("t3/orchestration/ProviderBusyRetryReactor") {}
 
 type ThreadSessionSetEvent = Extract<OrchestrationEvent, { type: "thread.session-set" }>;
 
@@ -96,17 +105,20 @@ function busyRetryStillWanted(
 
 /**
  * Builds the session-set handler. Kept apart from the stream wiring so tests
- * can drive it directly and advance the clock instead of sleeping.
+ * can drive it directly and advance the clock instead of sleeping. Pending
+ * retries are forked into the surrounding scope, so closing it cancels them.
  */
-export const makeProviderBusyRetryHandler = (deps: {
-  readonly dispatch: OrchestrationEngineShape["dispatch"];
-  readonly readThread: (threadId: ThreadId) => Effect.Effect<OrchestrationThreadShell | undefined>;
-  readonly makeId: Effect.Effect<string>;
-  readonly scope: Scope.Scope;
-}) => {
+/** @internal Exported for tests. */
+export const makeRetryHandler = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const scope = yield* Effect.scope;
+  // A failed read fails the step; only a successful miss means the thread is gone.
+  const readThread = (threadId: ThreadId) =>
+    projectionSnapshotQuery.getThreadShellById(threadId).pipe(Effect.map(Option.getOrUndefined));
   const retryStates = new Map<ThreadId, RetryState>();
   const pending = new Map<ThreadId, FailureIdentity & { fiber?: Fiber.Fiber<void, unknown> }>();
-  const { readThread } = deps;
 
   // Budget state only matters while the thread can still be retried.
   const forgetGoneThread = (threadId: ThreadId, thread: OrchestrationThreadShell | undefined) => {
@@ -122,14 +134,14 @@ export const makeProviderBusyRetryHandler = (deps: {
       forgetGoneThread(input.threadId, thread);
       return;
     }
-    const id = yield* deps.makeId;
+    const id = yield* crypto.randomUUIDv4;
     // A failed delivery still spends the attempt, so a rejected dispatch cannot loop.
     retryStates.set(input.threadId, {
       attempt: input.attempt,
       retryMessageAt: input.latestUserMessageAt,
       exhausted: false,
     });
-    yield* deps.dispatch({
+    yield* orchestrationEngine.dispatch({
       type: "thread.turn.start",
       commandId: CommandId.make(`server:provider-busy-retry:${id}`),
       threadId: input.threadId,
@@ -142,6 +154,11 @@ export const makeProviderBusyRetryHandler = (deps: {
       modelSelection: thread.modelSelection,
       runtimeMode: thread.runtimeMode,
       interactionMode: thread.interactionMode,
+      // The engine re-checks this atomically, closing the gap since the read above.
+      onlyIfUnchanged: {
+        latestTurnId: input.turnId,
+        latestUserMessageAt: input.latestUserMessageAt,
+      },
       createdAt,
     });
     retryStates.set(input.threadId, {
@@ -209,21 +226,20 @@ export const makeProviderBusyRetryHandler = (deps: {
           if (pending.get(threadId) === entry) pending.delete(threadId);
         }),
       ),
-      Effect.forkIn(deps.scope),
+      Effect.forkIn(scope),
     );
   });
 
   return processSessionSet;
-};
+});
 
-const make = Effect.gen(function* () {
-  const crypto = yield* Crypto.Crypto;
-  const orchestrationEngine = yield* OrchestrationEngineService;
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-  let processSessionSet: ReturnType<typeof makeProviderBusyRetryHandler> | undefined;
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.gen(function* () {
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const processSessionSet = yield* makeRetryHandler;
 
   const processSessionSetSafely = (event: ThreadSessionSetEvent) =>
-    (processSessionSet?.(event) ?? Effect.void).pipe(
+    processSessionSet(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.failCause(cause);
@@ -237,17 +253,7 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processSessionSetSafely);
 
-  const start: ProviderBusyRetryReactorShape["start"] = Effect.fn("start")(function* () {
-    processSessionSet = makeProviderBusyRetryHandler({
-      dispatch: orchestrationEngine.dispatch,
-      makeId: crypto.randomUUIDv4.pipe(Effect.orDie),
-      readThread: (threadId) =>
-        projectionSnapshotQuery.getThreadShellById(threadId).pipe(
-          Effect.map(Option.getOrUndefined),
-          Effect.orElseSucceed(() => undefined),
-        ),
-      scope: yield* Effect.scope,
-    });
+  const start: ProviderBusyRetryReactor["Service"]["start"] = Effect.fn("start")(function* () {
     // Subscribe before forking so an event published while the consumer parks is not lost.
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(
@@ -260,10 +266,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return {
-    start,
-    drain: worker.drain,
-  } satisfies ProviderBusyRetryReactorShape;
+  return ProviderBusyRetryReactor.of({ start, drain: worker.drain });
 });
 
-export const ProviderBusyRetryReactorLive = Layer.effect(ProviderBusyRetryReactor, make);
+export const layer = Layer.effect(ProviderBusyRetryReactor, make);

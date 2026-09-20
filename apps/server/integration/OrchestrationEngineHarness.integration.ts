@@ -64,8 +64,8 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../src/orchestration/Services/OrchestrationEngine.ts";
-import { ProviderBusyRetryReactor } from "../src/orchestration/Services/ProviderBusyRetryReactor.ts";
 import { ThreadDeletionReactor } from "../src/orchestration/Services/ThreadDeletionReactor.ts";
+import * as ProviderBusyRetryReactor from "../src/orchestration/ProviderBusyRetryReactor.ts";
 import * as ThreadSettlementReactor from "../src/orchestration/ThreadSettlementReactor.ts";
 import * as PullRequestSyncReactor from "../src/orchestration/PullRequestSyncReactor.ts";
 import * as ThreadPullRequestReactor from "../src/orchestration/ThreadPullRequestReactor.ts";
@@ -404,7 +404,7 @@ export const makeOrchestrationIntegrationHarness = (
         }),
       ),
       Layer.provideMerge(
-        Layer.succeed(ProviderBusyRetryReactor, {
+        Layer.succeed(ProviderBusyRetryReactor.ProviderBusyRetryReactor, {
           start: () => Effect.void,
           drain: Effect.void,
         }),

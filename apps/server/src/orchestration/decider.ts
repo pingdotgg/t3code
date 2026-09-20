@@ -1377,6 +1377,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.onlyIfUnchanged !== undefined) {
+        // Mirrors the projection's latestUserMessageAt: newest non-imported user message.
+        let latestUserMessageAt: string | null = null;
+        for (const message of targetThread.messages) {
+          if (message.role !== "user" || isImportedAgentSessionMessageId(message.id)) continue;
+          if (latestUserMessageAt === null || message.createdAt > latestUserMessageAt) {
+            latestUserMessageAt = message.createdAt;
+          }
+        }
+        if (
+          (targetThread.latestTurn?.turnId ?? null) !== command.onlyIfUnchanged.latestTurnId ||
+          latestUserMessageAt !== command.onlyIfUnchanged.latestUserMessageAt
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Thread '${command.threadId}' changed since this server-authored turn was scheduled.`,
+          });
+        }
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({

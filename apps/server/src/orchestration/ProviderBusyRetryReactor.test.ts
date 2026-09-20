@@ -6,15 +6,20 @@ import {
   type OrchestrationEvent,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
   isProviderBusyError,
-  makeProviderBusyRetryHandler,
+  makeRetryHandler,
   PROVIDER_BUSY_RETRY_TEXT,
 } from "./ProviderBusyRetryReactor.ts";
+import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
 const threadId = ThreadId.make("thread-provider-busy");
 const busyError = "Selected model is at capacity. Please try a different model.";
@@ -48,18 +53,31 @@ const setup = Effect.gen(function* () {
   const state = { thread: makeThread("turn-1", "2026-01-01T00:00:00.000Z") };
   const starts: Array<Extract<OrchestrationCommand, { type: "thread.turn.start" }>> = [];
   const control = { rejectDispatch: false, ids: 0 };
-  const handle = makeProviderBusyRetryHandler({
-    scope: yield* Effect.scope,
-    readThread: () => Effect.succeed(state.thread),
-    makeId: Effect.sync(() => `id-${++control.ids}`),
-    dispatch: (command) =>
-      control.rejectDispatch
-        ? Effect.fail(new Error("rejected") as never)
-        : Effect.sync(() => {
-            if (command.type === "thread.turn.start") starts.push(command);
-            return { sequence: starts.length };
+  const handle = yield* makeRetryHandler.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(ProjectionSnapshotQuery)({
+          getThreadShellById: () => Effect.succeed(Option.fromNullishOr(state.thread)),
+        }),
+        Layer.mock(OrchestrationEngineService)({
+          dispatch: (command) =>
+            control.rejectDispatch
+              ? Effect.fail(new Error("rejected") as never)
+              : Effect.sync(() => {
+                  if (command.type === "thread.turn.start") starts.push(command);
+                  return { sequence: starts.length };
+                }),
+        }),
+        Layer.succeed(
+          Crypto.Crypto,
+          Crypto.make({
+            randomBytes: (size) => new Uint8Array(size).fill(++control.ids),
+            digest: () => Effect.die("unused"),
           }),
-  });
+        ),
+      ),
+    ),
+  );
   return { state, starts, handle, control };
 });
 
@@ -89,6 +107,11 @@ it.effect("continues the turn once after the delay, ignoring duplicate failure r
     assert.lengthOf(starts, 1);
     assert.equal(starts[0]!.message.text, PROVIDER_BUSY_RETRY_TEXT);
     assert.equal(starts[0]!.runtimeMode, "full-access");
+    // The engine re-checks the observed state, so a user message that lands first wins.
+    assert.deepEqual(starts[0]!.onlyIfUnchanged, {
+      latestTurnId: TurnId.make("turn-1"),
+      latestUserMessageAt: "2026-01-01T00:00:00.000Z",
+    });
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );
 
