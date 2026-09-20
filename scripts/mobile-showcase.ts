@@ -26,8 +26,6 @@ import showcaseConfig, {
 import {
   SHOWCASE_ENVIRONMENTS,
   SHOWCASE_PROJECTS,
-  SHOWCASE_TERMINAL_ID,
-  SHOWCASE_THREAD_ID,
   seedShowcaseEnvironment,
 } from "./mobile-showcase-environment.ts";
 
@@ -666,17 +664,6 @@ function buildShowcasePairingUrl(host: string, port: number, credential: string)
   const url = new URL(`http://${host}:${port}/`);
   url.hash = new URLSearchParams([["token", credential]]).toString();
   return url.toString();
-}
-
-export function showcaseSceneUrl(scene: ShowcaseScene, environmentId: string): string {
-  if (scene === "threads") return `${APP_SCHEME}://`;
-  if (scene === "environments") return `${APP_SCHEME}://settings/environments`;
-  const threadPath = `threads/${encodeURIComponent(environmentId)}/${SHOWCASE_THREAD_ID}`;
-  if (scene === "thread") return `${APP_SCHEME}://${threadPath}`;
-  if (scene === "terminal") {
-    return `${APP_SCHEME}://${threadPath}/terminal?terminalId=${SHOWCASE_TERMINAL_ID}`;
-  }
-  return `${APP_SCHEME}://${threadPath}/review`;
 }
 
 export function encodeAndroidPairingUrls(pairingUrls: ReadonlyArray<string>): string {
