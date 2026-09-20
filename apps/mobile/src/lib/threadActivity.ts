@@ -238,6 +238,17 @@ const activityEntriesCache = new WeakMap<
   ReadonlyArray<OrchestrationThreadActivity>,
   ReadonlyArray<Extract<RawThreadFeedEntry, { readonly type: "activity" }>>
 >();
+// Activity arrays change on every tool update; their unchanged rows must not
+// repeatedly parse old output or invalidate the rendered work log.
+const derivedActivityCache = new WeakMap<OrchestrationThreadActivity, DerivedWorkLogEntry>();
+const mergedWorkEntriesCache = new WeakMap<
+  DerivedWorkLogEntry,
+  WeakMap<DerivedWorkLogEntry, DerivedWorkLogEntry>
+>();
+const activityEntryCache = new WeakMap<
+  DerivedWorkLogEntry,
+  Extract<RawThreadFeedEntry, { readonly type: "activity" }>
+>();
 const messageEntriesCache = new WeakMap<
   OrchestrationThread["messages"][number],
   Extract<RawThreadFeedEntry, { readonly type: "message" }>
@@ -476,6 +487,8 @@ function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): bool
 const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttachmentAnswerPayload);
 
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
+  const cached = derivedActivityCache.get(activity);
+  if (cached) return cached;
   const payload =
     activity.payload && typeof activity.payload === "object"
       ? (activity.payload as Record<string, unknown>)
@@ -630,6 +643,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (collapseKey) {
     entry.collapseKey = collapseKey;
   }
+  derivedActivityCache.set(activity, entry);
   return entry;
 }
 
@@ -867,6 +881,9 @@ function mergeDerivedWorkLogEntries(
   previous: DerivedWorkLogEntry,
   next: DerivedWorkLogEntry,
 ): DerivedWorkLogEntry {
+  let byPrevious = mergedWorkEntriesCache.get(next);
+  const cached = byPrevious?.get(previous);
+  if (cached) return cached;
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
   const detail = next.detail ?? previous.detail;
   const viewedImagePath = next.viewedImagePath ?? previous.viewedImagePath;
@@ -882,7 +899,7 @@ function mergeDerivedWorkLogEntries(
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolData = next.toolData ?? previous.toolData;
-  return {
+  const merged = {
     ...previous,
     ...next,
     id: previous.id,
@@ -903,6 +920,12 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
   };
+  if (byPrevious === undefined) {
+    byPrevious = new WeakMap();
+    mergedWorkEntriesCache.set(next, byPrevious);
+  }
+  byPrevious.set(previous, merged);
+  return merged;
 }
 
 function mergeChangedFiles(
@@ -2459,6 +2482,8 @@ function getThreadFeedActivityEntries(activities: ReadonlyArray<OrchestrationThr
 function toThreadFeedActivityEntry(
   entry: DerivedWorkLogEntry,
 ): Extract<RawThreadFeedEntry, { readonly type: "activity" }> {
+  const cached = activityEntryCache.get(entry);
+  if (cached) return cached;
   const summary = workEntryHeading(entry);
   const detail = workEntryPreview(entry);
   const getFullDetail = memoizeValue(() => buildWorkEntryExpandedBody(entry));
@@ -2478,7 +2503,7 @@ function toThreadFeedActivityEntry(
       })
       .join("\n");
   });
-  return {
+  const result: Extract<RawThreadFeedEntry, { readonly type: "activity" }> = {
     type: "activity",
     id: entry.id,
     createdAt: entry.createdAt,
@@ -2499,4 +2524,6 @@ function toThreadFeedActivityEntry(
       workEntry: entry,
     },
   };
+  activityEntryCache.set(entry, result);
+  return result;
 }
