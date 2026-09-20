@@ -459,6 +459,105 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
 }
 
+/**
+ * An exhausted window that currently gates a send, with the provider's own
+ * name for the model it applies to (`undefined` for an account-wide window).
+ */
+export interface UsageLimitSendBlock {
+  readonly window: ServerProviderUsageWindow;
+  readonly modelScope: string | undefined;
+}
+
+function modelScopeCovers(
+  provider: Pick<ServerProvider, "models">,
+  model: string,
+  modelScope: string,
+): boolean {
+  const compact = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const wanted = compact(modelScope);
+  const wantedTokens = modelScope
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  // A provider names the scoped model by display name ("Fable"), not by the
+  // catalog slug, so the catalog entry's name, shortName, and aliases all
+  // count as spellings of the selection.
+  const candidates = [model];
+  const entry = provider.models.find((candidate) => candidate.slug === model);
+  if (entry) {
+    candidates.push(entry.name);
+    if (entry.shortName) candidates.push(entry.shortName);
+    candidates.push(...(entry.aliases ?? []));
+  }
+  return candidates.some((candidate) => {
+    if (compact(candidate) === wanted) return true;
+    const tokens = new Set(
+      candidate
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean),
+    );
+    return wantedTokens.length > 0 && wantedTokens.every((token) => tokens.has(token));
+  });
+}
+
+/**
+ * The exhausted window that would refuse a send to `model` on this provider
+ * instance, or null when the selection can send. An unscoped window gates
+ * every model; a `modelScope`d window gates only the model it names; windows
+ * marked `blocksSends: false` are sub-meters that only inform. A snapshot
+ * that is unavailable, and an exhausted window whose reset has already
+ * passed (a stale read the next probe replaces), do not block. When several
+ * exhausted windows apply, the one that frees last is the binding constraint
+ * for this selection.
+ */
+export function usageLimitSendBlock(
+  provider: Pick<ServerProvider, "models" | "usageLimits"> | null | undefined,
+  model: string,
+  now: number,
+): UsageLimitSendBlock | null {
+  const limits = provider?.usageLimits;
+  if (!provider || limits === undefined || limits.unavailable !== undefined) return null;
+  let block: UsageLimitSendBlock | null = null;
+  for (const window of limits.windows) {
+    if (window.blocksSends === false || window.usedPercent < 100) continue;
+    const resetsAt = resetMillis(window);
+    if (resetsAt !== null && resetsAt <= now) continue;
+    if (window.modelScope !== undefined && !modelScopeCovers(provider, model, window.modelScope)) {
+      continue;
+    }
+    if (
+      block === null ||
+      (resetsAt ?? Number.POSITIVE_INFINITY) >
+        (resetMillis(block.window) ?? Number.POSITIVE_INFINITY)
+    ) {
+      block = { window, modelScope: window.modelScope };
+    }
+  }
+  return block;
+}
+
+/**
+ * The sentence the composer shows above the input while `usageLimitSendBlock`
+ * holds: which model or account is spent, when it frees, and the move that
+ * sends sooner.
+ */
+export function formatUsageLimitSendBlock(
+  providerLabel: string,
+  block: UsageLimitSendBlock,
+  now: number,
+): string {
+  const subject = block.window.scopeLabel ?? block.modelScope ?? providerLabel;
+  const resetsIn = formatResetsIn(block.window, now);
+  const kind = block.window.kind === "other" ? "usage" : block.window.kind;
+  const detail = resetsIn ? `its ${kind} limit ${resetsIn}` : `its ${kind} limit is spent`;
+  const advice =
+    block.modelScope === undefined
+      ? "Pick another provider to send."
+      : "Pick another model to send.";
+  return `${subject} is out of tokens: ${detail}. ${advice}`;
+}
+
 /** Limit commands are served by T3 from the same snapshots as Usage → Limits. */
 export const USAGE_LIMITS_COMMAND = {
   name: "usage-limits",

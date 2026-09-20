@@ -3,8 +3,10 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
+  formatUsageLimitSendBlock,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
+  usageLimitSendBlock,
 } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
@@ -7759,7 +7761,12 @@ export default function ChatView(props: ChatViewProps) {
         setThreadError(threadIdForSend, `Provider for ${selection.model} is unavailable.`);
         return;
       }
-      const providerBlockReason = getAntigravitySendBlockReason(provider.snapshot, selection.model);
+      const usageBlock = usageLimitSendBlock(provider.snapshot, selection.model, Date.now());
+      const providerBlockReason =
+        getAntigravitySendBlockReason(provider.snapshot, selection.model) ??
+        (usageBlock === null
+          ? null
+          : formatUsageLimitSendBlock(provider.displayName, usageBlock, Date.now()));
       if (providerBlockReason) {
         setThreadError(threadIdForSend, providerBlockReason);
         return;

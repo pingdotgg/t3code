@@ -17,8 +17,10 @@ import {
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
+  formatUsageLimitSendBlock,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
+  usageLimitSendBlock,
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
@@ -48,6 +50,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
+import { useNowMinute } from "../../lib/useNowMinute";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
@@ -85,6 +88,7 @@ import {
   buildModelOptions,
   groupByProvider,
   isModelSelectionUnavailable,
+  providerDisplayLabel,
 } from "../../lib/modelOptions";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
@@ -414,10 +418,34 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     states: uploadStates,
   });
   const contextImports = useAtomValue(composerContextImportsAtom);
+  // A provider whose reported quota for the selection is spent blocks the
+  // send until the window resets or the selection changes. The flag opens
+  // the Limits panel so the spent window is one tap away. The minute clock
+  // re-arms the check so a reset banner clears itself.
+  const nowMinute = useNowMinute();
+  const usageLimitBlock = useMemo(
+    () =>
+      props.connectionState === "connected"
+        ? usageLimitSendBlock(selectedProviderStatus, currentModelSelection.model, nowMinute)
+        : null,
+    [props.connectionState, selectedProviderStatus, currentModelSelection.model, nowMinute],
+  );
+  const usageLimitBlockReason = useMemo(
+    () =>
+      usageLimitBlock === null || selectedProviderStatus === null
+        ? null
+        : formatUsageLimitSendBlock(
+            providerDisplayLabel(selectedProviderStatus),
+            usageLimitBlock,
+            nowMinute,
+          ),
+    [usageLimitBlock, selectedProviderStatus, nowMinute],
+  );
   const sendBlockedReason =
     props.sendBlockedReason ??
     (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
-    attachmentBlockReason;
+    attachmentBlockReason ??
+    usageLimitBlockReason;
   const canSend =
     hasContent &&
     !contextImports[composerOwnerKey] &&
@@ -473,7 +501,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     onEditorFocusChange?.(false);
   }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
   const handleSend = useCallback(async () => {
-    if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
+    if (
+      voiceInput.blocksSubmission ||
+      pendingPastedTextAttachmentCountRef.current > 0 ||
+      usageLimitBlock !== null
+    ) {
+      return;
+    }
     // Typed out in full rather than picked from the menu. Attachments mean the
     // user is sending a prompt, so those go through as usual.
     if (
@@ -515,6 +549,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.environmentLabel,
     props.selectedThread.id,
     props.selectedThread.title,
+    usageLimitBlock,
     voiceInput.blocksSubmission,
   ]);
 
@@ -671,6 +706,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         {modelUnavailable ? (
           <Pressable accessibilityRole="button" className="px-3 py-2" onPress={openSettings}>
             <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
+          </Pressable>
+        ) : null}
+
+        {usageLimitBlockReason !== null ? (
+          <Pressable
+            accessibilityRole={usageLimitsOffered ? "button" : undefined}
+            className="px-3 py-2"
+            onPress={usageLimitsOffered ? () => void openUsageLimits() : undefined}
+          >
+            <Text className="text-xs text-foreground">{usageLimitBlockReason}</Text>
           </Pressable>
         ) : null}
 

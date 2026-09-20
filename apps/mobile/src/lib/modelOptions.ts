@@ -1,7 +1,9 @@
-import type {
-  ModelCapabilities,
-  ModelSelection,
-  ServerConfig as T3ServerConfig,
+import {
+  PROVIDER_DISPLAY_NAMES,
+  isProviderDriverKind,
+  type ModelCapabilities,
+  type ModelSelection,
+  type ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
@@ -28,15 +30,16 @@ export type ProviderGroup = {
   readonly models: ReadonlyArray<ModelOption>;
 };
 
-function providerDisplayLabel(provider: {
+export function providerDisplayLabel(provider: {
   readonly displayName?: string | undefined;
   readonly driver: string;
   readonly instanceId: string;
 }): string {
   if (provider.displayName) return provider.displayName;
-  if (provider.driver === "codex") return "Codex";
-  if (provider.driver === "claudeAgent") return "Claude";
-  return provider.instanceId;
+  return (
+    (isProviderDriverKind(provider.driver) ? PROVIDER_DISPLAY_NAMES[provider.driver] : undefined) ??
+    provider.instanceId
+  );
 }
 
 function normalizeSelectionOptions(

@@ -25,6 +25,7 @@ import {
 } from "react-native-keyboard-controller";
 import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useNowMinute } from "../../lib/useNowMinute";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
 import {
@@ -64,7 +65,12 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import {
+  formatUsageLimitSendBlock,
+  hasProviderUsageLimits,
+  isUsageLimitsCommand,
+  usageLimitSendBlock,
+} from "@t3tools/shared/usageLimits";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
@@ -110,6 +116,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectCloneBanner } from "../../components/ProjectCloneBanner";
 import {
   isModelSelectionUnavailable,
+  providerDisplayLabel,
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
@@ -205,6 +212,32 @@ export function NewTaskDraftScreen(props: {
       (environment) => environment.environmentId === selectedProject.environmentId,
     )?.connectionState === "connected";
   const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
+  // A provider whose reported quota for the selection is spent cannot start
+  // the task; the flag above the prompt opens the model settings so another
+  // model or provider is one tap away. The minute clock re-arms the check so
+  // a reset banner clears itself.
+  const nowMinute = useNowMinute();
+  const usageLimitProvider = selectedEnvironmentServerConfig?.providers.find(
+    (provider) => provider.instanceId === flow.selectedModel?.instanceId,
+  );
+  const usageLimitBlock = useMemo(
+    () =>
+      environmentConnected && flow.selectedModel !== null
+        ? usageLimitSendBlock(usageLimitProvider, flow.selectedModel.model, nowMinute)
+        : null,
+    [environmentConnected, flow.selectedModel, usageLimitProvider, nowMinute],
+  );
+  const usageLimitBlockReason = useMemo(
+    () =>
+      usageLimitBlock === null || usageLimitProvider === undefined
+        ? null
+        : formatUsageLimitSendBlock(
+            providerDisplayLabel(usageLimitProvider),
+            usageLimitBlock,
+            nowMinute,
+          ),
+    [usageLimitBlock, usageLimitProvider, nowMinute],
+  );
   // A project added by cloning exists before its files do: the prompt can be
   // written meanwhile, but Start waits for the clone.
   const projectCloneState = useProjectClone(
@@ -1208,6 +1241,22 @@ export function NewTaskDraftScreen(props: {
       );
       return;
     }
+    // The flag is a render-time check; quota can be spent between it and the
+    // tap, so Start re-reads it. The queued creation would only restore the
+    // draft with the same reason.
+    if (environmentConnected) {
+      const provider = selectedEnvironmentServerConfig?.providers.find(
+        (entry) => entry.instanceId === modelSelection.instanceId,
+      );
+      const usageBlock = usageLimitSendBlock(provider, modelSelection.model, Date.now());
+      if (usageBlock !== null && provider !== undefined) {
+        Alert.alert(
+          "Out of tokens",
+          formatUsageLimitSendBlock(providerDisplayLabel(provider), usageBlock, Date.now()),
+        );
+        return;
+      }
+    }
     // T3's own limits command is answered by the thread composer; a new task would
     // send it to the agent. A provider's same-named command, or a prompt carrying
     // attachments, goes through as usual.
@@ -1339,6 +1388,7 @@ export function NewTaskDraftScreen(props: {
     !cloneBlocksStart &&
     attachmentBlockReason === null &&
     !modelUnavailable &&
+    usageLimitBlockReason === null &&
     Boolean(flow.selectedProject) &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
@@ -1597,6 +1647,17 @@ export function NewTaskDraftScreen(props: {
           onPress={settingsSheetPresentation.open}
         >
           <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
+        </Pressable>
+      ) : null}
+
+      {usageLimitBlockReason !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          className="px-3 py-2"
+          disabled={isComposerInteractionLocked}
+          onPress={settingsSheetPresentation.open}
+        >
+          <Text className="text-xs text-foreground">{usageLimitBlockReason}</Text>
         </Pressable>
       ) : null}
 

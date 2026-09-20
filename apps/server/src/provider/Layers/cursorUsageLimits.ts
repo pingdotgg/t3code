@@ -51,6 +51,10 @@ export function cursorUsageResponseToLimits(
         kind: "monthly",
         label,
         usedPercent: clampPercent(usedPercent),
+        // The Auto/API split is one meter of the monthly total each: a split
+        // can sit at 100% while the other still serves the selection, so only
+        // the total gates sends.
+        ...(key === "totalPercentUsed" ? {} : { blocksSends: false }),
         ...(resetsAt ? { resetsAt } : {}),
       });
     }

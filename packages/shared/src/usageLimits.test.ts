@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderUsageWindow,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -18,10 +19,12 @@ import {
   collectLimitPools,
   elapsedShare,
   formatResetsIn,
+  formatUsageLimitSendBlock,
   limitsNotice,
   paceOf,
   providersWithLimits,
   remainingPercent,
+  usageLimitSendBlock,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -1006,5 +1009,172 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("usageLimitSendBlock", () => {
+  const fable = {
+    slug: "claude-fable-5-1",
+    name: "Claude Fable 5.1",
+    shortName: "Fable",
+    aliases: ["fable"],
+    isCustom: false,
+    isDefault: true,
+    capabilities: null,
+  } as const;
+  const opus = {
+    ...fable,
+    slug: "claude-opus-4-5",
+    name: "Claude Opus 4.5",
+    shortName: "Opus",
+    aliases: ["opus"],
+    isDefault: false,
+  } as const;
+  const claude = provider({
+    instanceId: ProviderInstanceId.make("claude"),
+    driver: ProviderDriverKind.make("claude"),
+    models: [fable, opus],
+  });
+  const fableWeekly = {
+    id: "seven_day_fable",
+    kind: "weekly",
+    label: "Weekly · Fable",
+    usedPercent: 100,
+    windowDurationMins: 10080,
+    modelScope: "Fable",
+    resetsAt: "2026-09-10T12:00:00.000Z",
+  } as const;
+  const limits = (windows: readonly ServerProviderUsageWindow[]) => ({
+    checkedAt: "2026-09-03T11:00:00.000Z",
+    windows: [...windows],
+  });
+
+  it("returns null without a provider, without limits, or on an unavailable snapshot", () => {
+    expect(usageLimitSendBlock(null, "claude-fable-5-1", now)).toBeNull();
+    expect(usageLimitSendBlock(claude, "claude-fable-5-1", now)).toBeNull();
+    expect(
+      usageLimitSendBlock(
+        {
+          ...claude,
+          usageLimits: {
+            checkedAt: "2026-09-03T11:00:00.000Z",
+            windows: [{ ...window, usedPercent: 100 }],
+            unavailable: { reason: "probeFailed" },
+          },
+        },
+        "claude-fable-5-1",
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it("blocks every model on an exhausted account window", () => {
+    const spent = provider({
+      ...claude,
+      usageLimits: limits([{ ...window, usedPercent: 100 }]),
+    });
+    for (const model of ["claude-fable-5-1", "claude-opus-4-5"]) {
+      const block = usageLimitSendBlock(spent, model, now);
+      expect(block?.window.id).toBe("five_hour");
+      expect(block?.modelScope).toBeUndefined();
+    }
+  });
+
+  it("gates only the model a scoped window names, matching slug, name, and alias", () => {
+    const spent = provider({ ...claude, usageLimits: limits([fableWeekly]) });
+    expect(usageLimitSendBlock(spent, "claude-fable-5-1", now)?.modelScope).toBe("Fable");
+    expect(usageLimitSendBlock(spent, "claude-opus-4-5", now)).toBeNull();
+  });
+
+  it("scopes OpenCode Go meters to Zen models and never to BYOK ones", () => {
+    const goWindow = {
+      id: "rolling",
+      kind: "session",
+      label: "Go · Session",
+      usedPercent: 100,
+      windowDurationMins: 300,
+      modelScope: "opencode",
+      scopeLabel: "Go",
+      resetsAt: "2026-09-10T12:00:00.000Z",
+    } as const;
+    const zen = {
+      slug: "opencode/kimi-k3",
+      name: "Kimi K3",
+      isCustom: false,
+      isDefault: true,
+      capabilities: null,
+    } as const;
+    const byok = {
+      ...zen,
+      slug: "anthropic/claude-opus-4-5",
+      name: "Claude Opus 4.5",
+      isDefault: false,
+    } as const;
+    const opencode = provider({
+      instanceId: ProviderInstanceId.make("opencode-go"),
+      driver: ProviderDriverKind.make("opencode"),
+      models: [zen, byok],
+      usageLimits: limits([goWindow]),
+    });
+    expect(usageLimitSendBlock(opencode, "opencode/kimi-k3", now)?.modelScope).toBe("opencode");
+    expect(usageLimitSendBlock(opencode, "anthropic/claude-opus-4-5", now)).toBeNull();
+  });
+
+  it("treats a spent window whose reset passed as a stale read", () => {
+    const spent = provider({
+      ...claude,
+      usageLimits: limits([{ ...window, usedPercent: 100, resetsAt: "2026-09-03T10:00:00.000Z" }]),
+    });
+    expect(usageLimitSendBlock(spent, "claude-fable-5-1", now)).toBeNull();
+  });
+
+  it("ignores sub-meters and unfilled windows", () => {
+    const spent = provider({
+      ...claude,
+      usageLimits: limits([
+        { ...window, id: "auto", usedPercent: 100, blocksSends: false },
+        { ...window, id: "monthly", usedPercent: 99 },
+      ]),
+    });
+    expect(usageLimitSendBlock(spent, "claude-fable-5-1", now)).toBeNull();
+  });
+
+  it("reports the window that frees last when several apply", () => {
+    const spent = provider({
+      ...claude,
+      usageLimits: limits([{ ...window, usedPercent: 100 }, { ...fableWeekly }]),
+    });
+    expect(usageLimitSendBlock(spent, "claude-fable-5-1", now)?.window.id).toBe("seven_day_fable");
+    expect(usageLimitSendBlock(spent, "claude-opus-4-5", now)?.window.id).toBe("five_hour");
+  });
+
+  it("phrases the block with the scope, reset, and the move that sends sooner", () => {
+    const spent = provider({ ...claude, usageLimits: limits([fableWeekly]) });
+    const block = usageLimitSendBlock(spent, "claude-fable-5-1", now)!;
+    expect(formatUsageLimitSendBlock("Claude", block, now)).toBe(
+      "Fable is out of tokens: its weekly limit resets in 7d 0h. Pick another model to send.",
+    );
+    const account = usageLimitSendBlock(
+      provider({ ...claude, usageLimits: limits([{ ...window, usedPercent: 100 }]) }),
+      "claude-fable-5-1",
+      now,
+    )!;
+    expect(formatUsageLimitSendBlock("Claude", account, now)).toBe(
+      "Claude is out of tokens: its session limit resets in 2h 0m. Pick another provider to send.",
+    );
+    expect(
+      formatUsageLimitSendBlock(
+        "Claude",
+        usageLimitSendBlock(
+          provider({
+            ...claude,
+            usageLimits: limits([{ ...window, usedPercent: 100, resetsAt: undefined }]),
+          }),
+          "claude-fable-5-1",
+          now,
+        )!,
+        now,
+      ),
+    ).toBe("Claude is out of tokens: its session limit is spent. Pick another provider to send.");
   });
 });

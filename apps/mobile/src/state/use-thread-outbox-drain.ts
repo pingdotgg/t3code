@@ -10,8 +10,11 @@ import {
   DEFAULT_RUNTIME_MODE,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type MessageId,
+  type ModelSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+import { formatUsageLimitSendBlock, usageLimitSendBlock } from "@t3tools/shared/usageLimits";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -23,7 +26,7 @@ import { buildProjectThreadStartTurnInput } from "../lib/projectThreadStartTurn"
 import { serializeComposerMessageForServer, uploadedComposerContext } from "../lib/composerContext";
 import { prepareTurnAttachments, type PreparedTurnAttachments } from "../lib/attachmentUpload";
 import { randomHex } from "../lib/uuid";
-import { isModelSelectionUnavailable } from "../lib/modelOptions";
+import { isModelSelectionUnavailable, providerDisplayLabel } from "../lib/modelOptions";
 import {
   retainAcknowledgedThreadMessage,
   forgetAcknowledgedThreadMessage,
@@ -629,6 +632,22 @@ async function preserveUploadedAttachmentsForEditor(
   }
 }
 
+/**
+ * The send gate the composer could not hold: a quota spent between enqueue
+ * and delivery. The message goes back to the draft with the reason rather
+ * than dying in a turn the provider would refuse.
+ */
+function usageLimitBlockReason(
+  providers: readonly ServerProvider[],
+  selection: ModelSelection,
+): string | null {
+  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+  const block = usageLimitSendBlock(provider, selection.model, Date.now());
+  return block === null || provider === undefined
+    ? null
+    : formatUsageLimitSendBlock(providerDisplayLabel(provider), block, Date.now());
+}
+
 export function useThreadOutboxDrain(): void {
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -786,6 +805,13 @@ export function useThreadOutboxDrain(): void {
           "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
         );
       }
+      const usageBlockReason = usageLimitBlockReason(
+        serverConfig.providers,
+        settings.modelSelection,
+      );
+      if (usageBlockReason !== null) {
+        return restoreQueuedMessage(queuedMessage, usageBlockReason);
+      }
       const { reportFailure } = makeDeliveryHelpers(queuedMessage);
 
       if (!modelSelectionsEqual(settings.modelSelection, thread.modelSelection)) {
@@ -879,6 +905,13 @@ export function useThreadOutboxDrain(): void {
           "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
         );
       }
+      const currentUsageBlockReason = usageLimitBlockReason(
+        currentConfig.providers,
+        settings.modelSelection,
+      );
+      if (currentUsageBlockReason !== null) {
+        return restoreQueuedMessage(persistedMessage, currentUsageBlockReason);
+      }
       const sendSettings = resolveQueuedThreadSettings(
         queuedMessage,
         settings,
@@ -963,6 +996,13 @@ export function useThreadOutboxDrain(): void {
           "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
         );
       }
+      const usageBlockReason = usageLimitBlockReason(
+        serverConfig.providers,
+        settings.modelSelection,
+      );
+      if (usageBlockReason !== null) {
+        return restoreQueuedMessage(queuedMessage, usageBlockReason);
+      }
       let prepared: PreparedTurnAttachments;
       let persistedMessage: QueuedThreadMessage;
       let deliveryRevision: number;
@@ -1006,6 +1046,13 @@ export function useThreadOutboxDrain(): void {
           persistedMessage,
           "Antigravity model unavailable. Set it up on web or desktop, or choose another model.",
         );
+      }
+      const currentUsageBlockReason = usageLimitBlockReason(
+        currentConfig.providers,
+        settings.modelSelection,
+      );
+      if (currentUsageBlockReason !== null) {
+        return restoreQueuedMessage(persistedMessage, currentUsageBlockReason);
       }
       const sendSettings = resolveQueuedThreadSettings(
         queuedMessage,
