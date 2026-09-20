@@ -1,3 +1,5 @@
+import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
+import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { composerContextEditorTokens } from "../lib/composerContext";
 import { requireNativeView } from "expo";
@@ -12,7 +14,7 @@ import {
   type Ref,
 } from "react";
 import type { NativeSyntheticEvent, ViewProps } from "react-native";
-import { Image, StyleSheet } from "react-native";
+import { Image, Platform, StyleSheet } from "react-native";
 
 import { markdownFileIconSource } from "@t3tools/mobile-markdown-text/file-icons";
 import {
@@ -55,6 +57,13 @@ type NativePasteImagesEvent = NativeSyntheticEvent<{
   readonly uris: ReadonlyArray<string>;
 }>;
 
+type NativePasteTextEvent = NativeSyntheticEvent<{
+  readonly value: string;
+  readonly eventCount: number;
+  readonly text: string;
+  readonly selection: ComposerEditorSelection;
+}>;
+
 interface NativeComposerEditorRef {
   focus: () => Promise<void>;
   blur: () => Promise<void>;
@@ -85,8 +94,11 @@ interface NativeComposerEditorProps extends ViewProps {
     event: NativeSyntheticEvent<{ source: string; start: number; end: number }>,
   ) => void;
   readonly onComposerPasteContext?: (
-    event: NativeSyntheticEvent<{ text: string; fragment: string; html: string }>,
+    event: NativePasteTextEvent & NativeSyntheticEvent<{ fragment: string; html: string }>,
   ) => void;
+  readonly textPasteThresholdBytes: number;
+  readonly maxInputChars: number;
+  readonly onComposerPasteText?: (event: NativePasteTextEvent) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
 }
@@ -111,6 +123,7 @@ export function ComposerEditor({
   onChangeText,
   onSelectionChange,
   onPasteImages,
+  onPasteText,
   onFocus,
   onBlur,
   contentInsetVertical = 0,
@@ -246,7 +259,7 @@ export function ComposerEditor({
   );
   const { systemColorsActive } = useAppearancePreferences();
   const themeJson = JSON.stringify({
-    selection: systemColorsActive ? theme["--color-primary"] : null,
+    selection: Platform.OS === "android" || systemColorsActive ? theme["--color-primary"] : null,
     text: theme["--color-foreground"],
     placeholder: theme["--color-placeholder"],
     chipBackground: theme["--color-subtle"],
@@ -291,6 +304,8 @@ export function ComposerEditor({
         autoFocus={props.autoFocus ?? false}
         autoCorrect={props.autoCorrect ?? true}
         spellCheck={props.spellCheck ?? true}
+        textPasteThresholdBytes={onPasteText ? PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES : 0}
+        maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
         style={{ flex: 1, minHeight: 0 }}
         onComposerChange={(event) => {
           const acknowledgedEventCount = acceptNativeEvent(
@@ -325,7 +340,36 @@ export function ComposerEditor({
         }}
         onComposerPasteImages={(event) => onPasteImages?.(event.nativeEvent.uris)}
         onComposerContextPress={(event) => props.onContextPress?.(event.nativeEvent)}
-        onComposerPasteContext={(event) => props.onPasteContext?.(event.nativeEvent)}
+        onComposerPasteContext={(event) => {
+          const paste = event.nativeEvent;
+          const acknowledgedEventCount = acceptNativeEvent(
+            paste.eventCount,
+            paste.value,
+            paste.selection,
+          );
+          if (acknowledgedEventCount === false) return;
+          onChangeText(paste.value);
+          onSelectionChange?.(paste.selection);
+          props.onPasteContext?.(paste);
+          setMostRecentEventCount(acknowledgedEventCount);
+          forceNativeEventRender((sequence) => sequence + 1);
+        }}
+        onComposerPasteText={(event) => {
+          const paste = event.nativeEvent;
+          const acknowledgedEventCount = acceptNativeEvent(
+            paste.eventCount,
+            paste.value,
+            paste.selection,
+          );
+          if (acknowledgedEventCount === false) return;
+          // Synchronize the draft before an async paste captures its insertion target.
+          // React props can still precede the last native keystroke.
+          onChangeText(paste.value);
+          onSelectionChange?.(paste.selection);
+          onPasteText?.(paste);
+          setMostRecentEventCount(acknowledgedEventCount);
+          forceNativeEventRender((sequence) => sequence + 1);
+        }}
         onComposerFocus={onFocus}
         onComposerBlur={onBlur}
       />
@@ -337,4 +381,5 @@ export type {
   ComposerEditorHandle,
   ComposerEditorProps,
   ComposerEditorSelection,
+  ComposerTextPaste,
 } from "./T3ComposerEditor.types";

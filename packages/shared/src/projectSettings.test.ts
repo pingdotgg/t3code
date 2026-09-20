@@ -10,6 +10,7 @@ import {
   clearProjectSettingsOverrides,
   hasProjectSettingsOverrides,
   resolveProjectSettings,
+  resolveWorktreeCleanup,
   withProjectSettingsOverrides,
 } from "./projectSettings.ts";
 import { applyServerSettingsPatch } from "./serverSettings.ts";
@@ -25,6 +26,14 @@ describe("resolveProjectSettings", () => {
       expect(resolved.sources[key]).toBe("environment");
     }
     expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null).settings).toBe(
+      DEFAULT_SERVER_SETTINGS,
+    );
+  });
+
+  it("treats a null project like an absent one before the shell snapshot arrives", () => {
+    // The mobile new-task flow resolves settings while its selected project is
+    // still null; reading the aggregate's legacy fields off null crashed launch.
+    expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null, null).settings).toBe(
       DEFAULT_SERVER_SETTINGS,
     );
   });
@@ -204,5 +213,62 @@ describe("projectSettingsOverrides patches", () => {
       ...settings.projectSettingsOverrides,
       [otherProjectId]: { defaultThreadEnvMode: "worktree" },
     });
+  });
+});
+
+describe("resolveWorktreeCleanup", () => {
+  it("inherits machine rules, disables one project and keeps custom rules isolated", () => {
+    const machine = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { worktreeAfterDays: 8, worktreeOnDelete: true, logsAfterDays: 3 },
+    });
+    const inherited = resolveWorktreeCleanup(machine, projectId);
+    const off = applyServerSettingsPatch(machine, {
+      projectSettingsOverrides: {
+        [projectId]: { worktreeCleanup: { mode: "off" } },
+      },
+    });
+    expect(resolveWorktreeCleanup(off, projectId)).toEqual({
+      worktreeAfterDays: null,
+      worktreeOnDelete: false,
+      worktreeOnMerge: false,
+      worktreeUnchanged: false,
+    });
+    expect(resolveWorktreeCleanup(off, otherProjectId)).toEqual(inherited);
+    const custom = applyServerSettingsPatch(off, {
+      projectSettingsOverrides: {
+        [projectId]: {
+          worktreeCleanup: { mode: "custom", rules: { ...inherited, worktreeAfterDays: 15 } },
+        },
+      },
+    });
+    expect(resolveWorktreeCleanup(custom, projectId).worktreeAfterDays).toBe(15);
+    expect(custom.storageCleanup.logsAfterDays).toBe(3);
+    const reset = applyServerSettingsPatch(custom, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(custom, projectId, ["worktreeCleanup"]),
+      },
+    });
+    expect(resolveWorktreeCleanup(reset, projectId)).toEqual(inherited);
+  });
+  it("completes partial machine custom rules and preserves them across edits", () => {
+    const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { worktreeAfterDays: 8, worktreeOnDelete: true },
+    });
+    const custom = applyServerSettingsPatch(initial, {
+      worktreeCleanup: { mode: "custom", rules: { worktreeOnMerge: true } },
+    });
+    const edited = applyServerSettingsPatch(custom, {
+      worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 15 } },
+    });
+    expect(resolveWorktreeCleanup(edited, null)).toEqual({
+      worktreeAfterDays: 15,
+      worktreeOnDelete: true,
+      worktreeOnMerge: true,
+      worktreeUnchanged: false,
+    });
+    expect(
+      resolveWorktreeCleanup(applyServerSettingsPatch(edited, { worktreeCleanup: null }), null)
+        .worktreeAfterDays,
+    ).toBe(8);
   });
 });

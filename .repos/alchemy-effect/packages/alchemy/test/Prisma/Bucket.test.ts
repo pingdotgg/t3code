@@ -1,3 +1,4 @@
+import * as Provider from "@/Provider";
 import { Bucket, BucketProvider, type BucketProps } from "@/Prisma/Bucket";
 import {
   BucketAccessKey,
@@ -15,6 +16,11 @@ import type {
   BucketKeyWithSecret,
 } from "@/Prisma/Types";
 import { describe, expect, it } from "alchemy-test";
+import {
+  dispatchTo,
+  makeFakeManagementApi,
+  unhandled,
+} from "./fixtures/FakeManagementApi.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -74,7 +80,7 @@ const persistedKeyAttrs = (id: string): BucketAccessKey["Attributes"] => ({
   bucketName: "user-bucket-1",
 });
 
-const notFound = (path: string) =>
+const apiNotFound = (path: string) =>
   new PrismaApiError({
     method: "GET",
     path,
@@ -88,16 +94,54 @@ const liveProviderContext = Layer.succeed(AlchemyContext, {
   adopt: false,
 });
 
+/**
+ * Serve the Management API's bucket routes from the same hermetic
+ * client-shaped handlers this suite already declares. `dispatchTo` maps each
+ * handler's result onto the wire (see the fixture).
+ */
+const bucketApi = (client: any) =>
+  makeFakeManagementApi((request) => {
+    // segments[0] is the "v1" prefix.
+    const [head, bucketId, tail, keyId] = request.pathname
+      .split("/")
+      .filter((segment) => segment.length > 0)
+      .slice(1);
+    const body = request.bodyJson as any;
+    const { call, callVoid, list } = dispatchTo(request);
+
+    if (head !== "buckets") return unhandled(request);
+    if (bucketId === undefined) {
+      return request.method === "GET"
+        ? call(client.listBuckets, [], list)
+        : call(client.createBucket, [body]);
+    }
+    if (tail === "keys") {
+      if (keyId !== undefined) {
+        return callVoid(client.deleteBucketKey, [bucketId, keyId]);
+      }
+      return request.method === "GET"
+        ? call(client.listBucketKeys, [bucketId, { limit: 100 }], list)
+        : call(client.createBucketKey, [bucketId, body]);
+    }
+    if (request.method === "GET") return call(client.getBucket, [bucketId]);
+    if (request.method === "DELETE") {
+      return callVoid(client.deleteBucket, [bucketId]);
+    }
+    return unhandled(request);
+  });
+
 const bucketLayer = (client: PrismaManagementClient) =>
   BucketProvider().pipe(
     Layer.provide(Layer.succeed(PrismaClient, client)),
     Layer.provide(liveProviderContext),
+    Layer.provideMerge(bucketApi(client).layer),
   );
 
 const bucketKeyLayer = (client: PrismaManagementClient) =>
   BucketAccessKeyProvider().pipe(
     Layer.provide(Layer.succeed(PrismaClient, client)),
     Layer.provide(liveProviderContext),
+    Layer.provideMerge(bucketApi(client).layer),
   );
 
 const reconcileInput = <Props, Attributes>(
@@ -218,7 +262,7 @@ describe("Prisma Bucket provider", () => {
   it.effect("recreates the bucket when the persisted one is gone", () => {
     let creates = 0;
     const client = {
-      getBucket: (id: string) => Effect.fail(notFound(`/v1/buckets/${id}`)),
+      getBucket: (id: string) => Effect.fail(apiNotFound(`/v1/buckets/${id}`)),
       createBucket: () =>
         Effect.sync(() => {
           creates += 1;
@@ -246,11 +290,11 @@ describe("Prisma Bucket provider", () => {
       getBucket: (id: string) =>
         id === "bucket-1"
           ? Effect.succeed(apiBucket(id, "uploads"))
-          : Effect.fail(notFound(`/v1/buckets/${id}`)),
+          : Effect.fail(apiNotFound(`/v1/buckets/${id}`)),
     } as unknown as PrismaManagementClient;
 
     return Effect.gen(function* () {
-      const provider = yield* Bucket.Provider;
+      const provider = yield* Provider.findProvider(Bucket);
       const observed = yield* provider.read!({
         id: "Bucket",
         fqn: "Bucket",
@@ -321,11 +365,11 @@ describe("Prisma Bucket provider", () => {
       getBucket: (id: string) =>
         id === "bucket-1"
           ? Effect.succeed(apiBucket(id, "uploads"))
-          : Effect.fail(notFound(`/v1/buckets/${id}`)),
+          : Effect.fail(apiNotFound(`/v1/buckets/${id}`)),
       deleteBucket: (id: string) =>
         Effect.sync(() => {
           deletes += 1;
-        }).pipe(Effect.andThen(Effect.fail(notFound(`/v1/buckets/${id}`)))),
+        }).pipe(Effect.andThen(Effect.fail(apiNotFound(`/v1/buckets/${id}`)))),
     } as unknown as PrismaManagementClient;
 
     return Effect.gen(function* () {
@@ -490,7 +534,7 @@ describe("Prisma BucketAccessKey provider", () => {
       const persisted = persistedKeyAttrs("key-1");
 
       return Effect.gen(function* () {
-        const provider = yield* BucketAccessKey.Provider;
+        const provider = yield* Provider.findProvider(BucketAccessKey);
         const attrs = yield* provider.reconcile(
           reconcileInput(
             "BucketAccessKey",
@@ -531,7 +575,7 @@ describe("Prisma BucketAccessKey provider", () => {
     const persisted = persistedKeyAttrs("key-1");
 
     return Effect.gen(function* () {
-      const provider = yield* BucketAccessKey.Provider;
+      const provider = yield* Provider.findProvider(BucketAccessKey);
 
       const observed = yield* provider.read!({
         id: "BucketAccessKey",
@@ -612,7 +656,7 @@ describe("Prisma BucketAccessKey provider", () => {
           expect(keyId).toBe("key-1");
         }).pipe(
           Effect.andThen(
-            Effect.fail(notFound("/v1/buckets/bucket-1/keys/key-1")),
+            Effect.fail(apiNotFound("/v1/buckets/bucket-1/keys/key-1")),
           ),
         ),
     } as unknown as PrismaManagementClient;
