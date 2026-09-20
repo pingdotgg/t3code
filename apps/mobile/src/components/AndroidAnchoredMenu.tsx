@@ -1,7 +1,7 @@
 import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { StyleProp, ViewStyle } from "react-native";
+import type { AccessibilityProps, StyleProp, ViewStyle } from "react-native";
 import { BackHandler, Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
@@ -33,7 +33,10 @@ type OverlayFrame = {
   readonly height: number;
 };
 
-export type AndroidAnchoredMenuProps = {
+export type AndroidAnchoredMenuProps = Pick<
+  AccessibilityProps,
+  "accessible" | "accessibilityLabel" | "accessibilityRole"
+> & {
   readonly actions: readonly MenuAction[];
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
@@ -180,7 +183,9 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
       ) : (
         <Pressable
           ref={anchorRef}
-          accessibilityRole="button"
+          accessible={props.accessible}
+          accessibilityLabel={props.accessibilityLabel}
+          accessibilityRole={props.accessibilityRole ?? "button"}
           className={props.className}
           collapsable={false}
           style={props.style}

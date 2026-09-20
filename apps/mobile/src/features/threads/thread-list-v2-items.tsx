@@ -1136,35 +1136,71 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
         threadTitle={thread.title}
       >
-        {(close) => (
-          <ControlPillMenu
-            actions={[
-              ...(thread.branch
-                ? [
-                    {
-                      id: "new-thread-on-branch",
-                      title: getThreadListV2NewBranchMenuTitle(thread.branch),
-                      image: "square.and.pencil",
-                    },
-                  ]
-                : []),
-              { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
-              ...(snoozedRow
-                ? snoozedMenuActions
-                : !props.settlementSupported
-                  ? legacyMenuActions
-                  : canUnsettle
-                    ? slimMenuActions
-                    : swipeActions.secondary === "snooze"
-                      ? snoozableCardMenuActions
-                      : cardMenuActions),
-            ]}
-            onPressAction={handleMenuAction}
-            shouldOpenOnLongPress
-          >
-            {rowContent(close)}
-          </ControlPillMenu>
-        )}
+        {(close) => {
+          const row = (
+            <ControlPillMenu
+              actions={[
+                ...(thread.branch
+                  ? [
+                      {
+                        id: "new-thread-on-branch",
+                        title: getThreadListV2NewBranchMenuTitle(thread.branch),
+                        image: "square.and.pencil",
+                      },
+                    ]
+                  : []),
+                { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+                ...(snoozedRow
+                  ? snoozedMenuActions
+                  : !props.settlementSupported
+                    ? legacyMenuActions
+                    : canUnsettle
+                      ? slimMenuActions
+                      : swipeActions.secondary === "snooze"
+                        ? snoozableCardMenuActions
+                        : cardMenuActions),
+              ]}
+              onPressAction={handleMenuAction}
+              shouldOpenOnLongPress
+            >
+              {rowContent(close)}
+            </ControlPillMenu>
+          );
+          const recoveryActions = snoozedRow
+            ? props.snoozeSupported
+              ? snoozedMenuActions
+              : null
+            : canUnsettle && props.settlementSupported
+              ? slimMenuActions
+              : null;
+          if (recoveryActions === null) return row;
+          return (
+            <View
+              className="flex-row items-center"
+              style={{ backgroundColor: rowAppearance.swipeBackgroundColor }}
+            >
+              <View className="min-w-0 flex-1">{row}</View>
+              <ControlPillMenu
+                accessible
+                accessibilityLabel={`Actions for ${thread.title}`}
+                accessibilityRole="button"
+                actions={recoveryActions}
+                onPressAction={(event) => {
+                  close();
+                  handleMenuAction(event);
+                }}
+              >
+                <View className="h-11 w-11 items-center justify-center">
+                  <SymbolView
+                    name="ellipsis"
+                    size={18}
+                    tintColorClassName={rowAppearance.mutedIconTintClassName}
+                  />
+                </View>
+              </ControlPillMenu>
+            </View>
+          );
+        }}
       </ThreadSwipeable>
     </View>
   );

@@ -24,6 +24,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { AppText as Text } from "../../components/AppText";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
@@ -223,7 +224,7 @@ function ArchivedThreadRow(props: {
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
     >
-      {() => (
+      {(close) => (
         <View
           className={`flex-row items-center gap-3 bg-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
         >
@@ -265,6 +266,29 @@ function ArchivedThreadRow(props: {
               </View>
             ) : null}
           </View>
+          <ControlPillMenu
+            accessible
+            accessibilityLabel={`Actions for ${props.thread.title}`}
+            accessibilityRole="button"
+            actions={[
+              { id: "unarchive", title: "Unarchive", image: "arrow.uturn.backward" },
+              {
+                id: "delete",
+                title: "Delete",
+                image: "trash",
+                attributes: { destructive: true },
+              },
+            ]}
+            onPressAction={({ nativeEvent }) => {
+              close();
+              if (nativeEvent.event === "unarchive") props.onUnarchive();
+              if (nativeEvent.event === "delete") props.onDelete();
+            }}
+          >
+            <View className="h-11 w-11 items-center justify-center rounded-full bg-subtle">
+              <SymbolView name="ellipsis" size={18} tintColorClassName="accent-icon-subtle" />
+            </View>
+          </ControlPillMenu>
         </View>
       )}
     </ThreadSwipeable>
