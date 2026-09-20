@@ -78,8 +78,13 @@ import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { pullRequestEnvironment } from "~/state/pullRequests";
-import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/pullRequests";
+import {
+  pullRequestEnvironment,
+  pullRequestListEntryToSummary,
+  newestPullRequestSummary,
+  usePullRequestTurnRefresh,
+  useSharedPullRequestSummary,
+} from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
@@ -116,6 +121,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
+import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
@@ -135,6 +141,7 @@ import {
   handoffPrompt,
   handoffReviewComments,
   latestPullRequestReviewOutcomes,
+  loadingPullRequestCheckoutCommand,
   isStackedPullRequestBase,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
@@ -167,6 +174,7 @@ import {
   PullRequestMetaLine,
   PullRequestReviewOutcomeIcon,
   pullRequestChecksState,
+  pullRequestChecksStatePresentation,
   pullRequestReviewOutcomeToneClassName,
   resolvePullRequestState,
   summarizePullRequestChecks,
@@ -320,68 +328,6 @@ const openNumberContextMenu = (
   });
 };
 
-function PullRequestCopyableCode({
-  value,
-  target,
-  copyLabel,
-  copiedLabel,
-  className,
-  tooltipSide = "top",
-  onError,
-}: {
-  readonly value: string;
-  readonly target: string;
-  readonly copyLabel: string;
-  readonly copiedLabel: string;
-  readonly className?: string;
-  readonly tooltipSide?: "top" | "bottom";
-  readonly onError?: (error: Error) => void;
-}) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({
-    target,
-    timeout: 1600,
-    ...(onError ? { onError } : {}),
-  });
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className={cn(
-              "relative grid w-fit min-w-0 max-w-full shrink cursor-pointer rounded px-1 py-0.5 text-left outline-none transition-colors pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 hover:bg-accent/45 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-              className,
-            )}
-            aria-label={isCopied ? copiedLabel : copyLabel}
-            onClick={() => copyToClipboard(value)}
-          />
-        }
-      >
-        <code
-          className={cn(
-            "col-start-1 row-start-1 min-w-0 truncate transition-opacity duration-150 motion-reduce:transition-none",
-            isCopied ? "opacity-0" : "opacity-100",
-          )}
-        >
-          {value}
-        </code>
-        <span
-          aria-hidden="true"
-          className={cn(
-            "col-start-1 row-start-1 truncate text-center transition-opacity duration-150 motion-reduce:transition-none",
-            isCopied ? "opacity-100" : "opacity-0",
-          )}
-        >
-          Copied
-        </span>
-      </TooltipTrigger>
-      <TooltipPopup className="max-w-96 wrap-anywhere font-mono" side={tooltipSide}>
-        {`${isCopied ? "Copied" : copyLabel}: ${value}`}
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
-
 /**
  * The stale-branch warning, said beside the branch it is about rather than as a bar of its own.
  * The banner this replaces held a row of chrome open across the top of every pull request that
@@ -521,10 +467,11 @@ export function PullRequestDetailPanel({
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
-  const repositoryIdentity = projects.find(
+  const project = projects.find(
     (project) =>
       project.id === requestedReference.projectId && project.environmentId === environmentId,
-  )?.repositoryIdentity;
+  );
+  const repositoryIdentity = project?.repositoryIdentity;
   const supportsThreadPullRequests =
     environmentConfigs.get(environmentId)?.environment.capabilities.threadPullRequests === true;
   const reference = useMemo(
@@ -542,6 +489,8 @@ export function PullRequestDetailPanel({
   const matchingListEntry =
     listEntry?.projectId === reference.projectId &&
     listEntry.repository.toLowerCase() === reference.repository.toLowerCase() &&
+    (reference.host === undefined ||
+      listEntry.host.toLowerCase() === reference.host.toLowerCase()) &&
     listEntry.number === reference.number
       ? listEntry
       : null;
@@ -675,14 +624,47 @@ export function PullRequestDetailPanel({
     cached: cachedDetail,
     reference,
   });
-  const sharedSummary = useSharedPullRequestSummary(environmentId, reference, resolvedCoreDetail);
+  const listSummary = useMemo(
+    () => (matchingListEntry === null ? null : pullRequestListEntryToSummary(matchingListEntry)),
+    [matchingListEntry],
+  );
+  const detailSummary = useMemo(
+    () =>
+      detailQuery.data === null
+        ? null
+        : {
+            ...detailQuery.data,
+            checksState: pullRequestChecksState(detailQuery.data.checks),
+          },
+    [detailQuery.data],
+  );
+  const observedSummary = useSharedPullRequestSummary(
+    environmentId,
+    reference,
+    detailSummary,
+    detailQuery.dataUpdatedAt,
+  );
+  // The list row is also published to the shared cache, but only after this commit's layout
+  // effects run, so it is compared directly rather than trusted to be there already.
+  const sharedSummary = useMemo(
+    () =>
+      newestPullRequestSummary(
+        resolvedCoreDetail,
+        newestPullRequestSummary(observedSummary, listSummary),
+      ),
+    [resolvedCoreDetail, observedSummary, listSummary],
+  );
   const coreDetail = useMemo(
     () =>
       resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
         ? resolvedCoreDetail
         : {
             ...resolvedCoreDetail,
-            ...sharedSummary,
+            title: sharedSummary.title,
+            state: sharedSummary.state,
+            headBranch: sharedSummary.headBranch,
+            baseBranch: sharedSummary.baseBranch,
+            updatedAt: sharedSummary.updatedAt,
             author: sharedSummary.author ?? resolvedCoreDetail.author,
             additions: sharedSummary.additions ?? resolvedCoreDetail.additions,
             deletions: sharedSummary.deletions ?? resolvedCoreDetail.deletions,
@@ -720,6 +702,7 @@ export function PullRequestDetailPanel({
           },
     [activity, coreDetail],
   );
+  const handoffSummary = detail ?? sharedSummary;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
     target: "pull request reference",
@@ -761,15 +744,22 @@ export function PullRequestDetailPanel({
     repositoryUrl !== null
       ? new URL(`/${encodeURIComponent(detail.author.login)}`, repositoryUrl).toString()
       : null;
-  const checkoutCommand = detail
+  const checkoutCommand = handoffSummary
     ? pullRequestCheckoutCommand(
-        detail.provider,
-        detail.number,
-        detail.headBranch,
-        detail.headRepositoryNameWithOwner,
-        repositoryUrl,
+        handoffSummary.provider,
+        handoffSummary.number,
+        handoffSummary.headBranch,
+        detail?.headRepositoryNameWithOwner,
+        changeRequestRepositoryUrl(handoffSummary.url),
       )
-    : null;
+    : loadingPullRequestCheckoutCommand(reference, repositoryIdentity);
+  const onCheckoutCommandError = useCallback((error: Error) => {
+    toastManager.add({
+      type: "error",
+      title: "Could not copy checkout command",
+      description: error.message,
+    });
+  }, []);
   const branchRefsQuery = useEnvironmentQuery(
     detail === null
       ? null
@@ -945,9 +935,11 @@ export function PullRequestDetailPanel({
   const acting =
     pickableEnvironments.find((entry) => entry.environmentId === chosenEnvironmentId) ?? null;
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
+  const checkoutRoot =
+    acting?.workspaceRoot ?? detail?.workspaceRoot ?? project?.workspaceRoot ?? null;
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId: actingEnvironmentId,
-    cwd: acting?.workspaceRoot ?? detail?.workspaceRoot ?? null,
+    cwd: checkoutRoot,
   });
 
   const finishAction = async (
@@ -1178,7 +1170,7 @@ export function PullRequestDetailPanel({
     // already work — and it moves the branch under everything else that is open there.
     mode: "worktree" | "local" = "worktree",
   ) => {
-    if (!detail || handoff !== null) return;
+    if (!handoffSummary || handoff !== null) return;
     if (attachTarget !== null && task !== null) {
       writeTaskToComposer(attachTarget, task);
       toastManager.add({
@@ -1188,6 +1180,7 @@ export function PullRequestDetailPanel({
       });
       return;
     }
+    if (checkoutRoot === null) return;
     setHandoff(kind);
     // The menu closes on the press and takes its "Preparing..." label with it, so this is the
     // only thing answering for the checkout. It carries no timeout of its own: a loading toast
@@ -1198,7 +1191,10 @@ export function PullRequestDetailPanel({
     });
     // Wherever the reader chose to act: the thread, the checkout it is pointed at and the composer
     // the task lands in are all one server's, and picking another one moves all three.
-    const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
+    const projectRef = scopeProjectRef(
+      actingEnvironmentId,
+      acting?.projectId ?? handoffSummary.projectId,
+    );
     // The thread is opened before the checkout rather than after it, because the project's setup
     // script only runs for a checkout that knows which thread it is for — and a worktree with no
     // dependencies installed is not something anyone can test.
@@ -1219,7 +1215,7 @@ export function PullRequestDetailPanel({
       return;
     }
     const prepared = await prepareThread.run({
-      reference: detail.url,
+      reference: handoffSummary.url,
       mode,
       threadId: opened.threadId,
     });
@@ -1348,7 +1344,7 @@ export function PullRequestDetailPanel({
   };
 
   const startCheckout = (mode: "worktree" | "local") => {
-    if (!detail) return;
+    if (!handoffSummary) return;
     void startHandoff(`checkout:${mode}`, null, mode);
   };
 
@@ -1380,20 +1376,20 @@ export function PullRequestDetailPanel({
         baseBranch: detail.baseBranch,
         reviewThreads: detail.reviewThreads,
         comments: detail.comments,
-        checks: detail.checks,
+        checks: checksStale ? [] : detail.checks,
         commentsTruncated: detail.commentsTruncated,
       }),
     );
   };
 
   const startResolveConflicts = () => {
-    if (!detail) return;
+    if (!handoffSummary) return;
     void startHandoff("conflicts", {
       prompt: buildResolveConflictsPrompt({
-        number: detail.number,
-        url: detail.url,
-        headBranch: detail.headBranch,
-        baseBranch: detail.baseBranch,
+        number: handoffSummary.number,
+        url: handoffSummary.url,
+        headBranch: handoffSummary.headBranch,
+        baseBranch: handoffSummary.baseBranch,
       }),
     });
   };
@@ -1426,8 +1422,9 @@ export function PullRequestDetailPanel({
   // Out of date with the base, and still cleanly mergeable — the one pairing an update button
   // exists for. Null everywhere else, including hosts that cannot compare at all.
   const freshness = detail === null ? null : resolveBaseFreshness(detail);
-  // A host that cannot produce a patch has no Code tab to open. The tabs themselves stay hidden
-  // until the detail arrives, so the loading ghost is the panel's only unfinished UI.
+  // A host that cannot produce a patch has no Code tab to open. While detail is loading the ghost
+  // uses this optimistic tab set to reserve the same chrome; a host without a patch removes Code
+  // when its capabilities arrive.
   const visibleTabs = TABS.filter(
     (item) => item.value !== "code" || detail === null || detail.capabilities.diff,
   );
@@ -1443,7 +1440,17 @@ export function PullRequestDetailPanel({
   const can = (action: PullRequestAction) =>
     detail?.capabilities.actions.includes(action) === true &&
     detail.viewerPermissions.actions.includes(action);
-  const checksState = detail ? pullRequestChecksState(detail.checks) : null;
+  const detailChecksState = detail ? pullRequestChecksState(detail.checks) : null;
+  const latestChecksState =
+    sharedSummary?.checksState === undefined ? detailChecksState : sharedSummary.checksState;
+  // List rollups can omit workflows awaiting approval. Only refreshed detail can clear those.
+  const checksState =
+    latestChecksState !== "failing" &&
+    detail?.checks.some((check) => check.status === "action-required")
+      ? "pending"
+      : latestChecksState;
+  // A newer rollup cannot tell us which runs changed or how many passed.
+  const checksStale = checksState !== detailChecksState;
   // The merge state remains in one stable slot from waiting through completion. Conflicts take
   // the slot while they need a person; the armed badge remains beside them so that state is not lost.
   const primaryAction = detail
@@ -1494,7 +1501,13 @@ export function PullRequestDetailPanel({
   const statePresentation = detail
     ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
     : null;
-  const checksSummary = detail ? summarizePullRequestChecks(detail.checks) : null;
+  const checksSummary = checksStale
+    ? checksState === null
+      ? "No checks reported"
+      : pullRequestChecksStatePresentation(checksState).label
+    : detail
+      ? summarizePullRequestChecks(detail.checks)
+      : null;
   // Approvals that still stand, and only those. A superseded one is dimmed beside the reviewer
   // who gave it, so counting it here would have the header assert in a number what the row next
   // to it has just qualified.
@@ -1509,10 +1522,115 @@ export function PullRequestDetailPanel({
         ).length
       : 0;
 
+  const checkoutControl =
+    context === "page" ? (
+      <Menu>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                disabled={handoff !== null || checkoutRoot === null}
+                render={
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    aria-label={handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
+                  >
+                    <GitBranchIcon aria-hidden className="size-3.5" />
+                    <span className="@max-[35rem]/pr-header:hidden">
+                      {handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
+                    </span>
+                    <ChevronDownIcon aria-hidden className="size-3.5 text-muted-foreground" />
+                  </Button>
+                }
+              />
+            }
+          />
+          <TooltipPopup>Check out this pull request</TooltipPopup>
+        </Tooltip>
+        <MenuPopup align="end" side="bottom" className="min-w-72">
+          <MenuItem onClick={() => startCheckout("worktree")}>
+            <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
+            <span className="flex min-w-0 flex-col">
+              <span>In a separate worktree</span>
+              <span className="text-xs text-muted-foreground">
+                Its own folder and thread. Nothing you have open moves.
+              </span>
+            </span>
+          </MenuItem>
+          <MenuItem onClick={() => startCheckout("local")}>
+            <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start" />
+            <span className="flex min-w-0 flex-col">
+              <span>In this repository</span>
+              <span className="text-xs text-muted-foreground">
+                Switches the branch you are working in, like `gh pr checkout`.
+              </span>
+            </span>
+          </MenuItem>
+          {pickableEnvironments.length > 0 ? (
+            <ActOnEnvironmentPicker
+              environments={pickableEnvironments}
+              value={actingEnvironmentId}
+              onChange={(next) => setActingScope({ pullRequestKey, environmentId: next })}
+              disabled={handoff !== null}
+            />
+          ) : null}
+        </MenuPopup>
+      </Menu>
+    ) : null;
+
+  const resolveConflictsControl = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="inline-flex shrink-0">
+            <Button
+              size="xs"
+              variant="destructive-outline"
+              disabled={handoff !== null || (attachTarget === null && checkoutRoot === null)}
+              onClick={startResolveConflicts}
+              aria-label={handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"}
+            >
+              <PullRequestGlyph.conflicting aria-hidden className="size-3.5" />
+              <span className="@max-[30rem]/pr-header:hidden">
+                {handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"}
+              </span>
+            </Button>
+          </span>
+        }
+      />
+      <TooltipPopup side="top">
+        {handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"}
+      </TooltipPopup>
+    </Tooltip>
+  );
+
   // The list already has the pull request's identity and summary. Keep them on screen
   // and let the richer detail read replace the remaining placeholders in place.
   if (detailQuery.isPending && !detail) {
-    return <PullRequestDetailGhost seed={matchingListEntry} />;
+    return (
+      <PullRequestDetailGhost
+        seed={matchingListEntry}
+        summary={sharedSummary}
+        checkoutCommand={checkoutCommand}
+        onCheckoutError={onCheckoutCommandError}
+        number={reference.number}
+        tabs={visibleTabs}
+        activeTab={tab}
+        {...(onBack ? { onBack } : {})}
+        {...(onClose ? { onClose } : {})}
+        actions={
+          handoffSummary ? (
+            <TooltipProvider delay={150} closeDelay={150} timeout={400}>
+              {checkoutControl}
+              {handoffSummary.state === "open" && handoffSummary.mergeability === "conflicting"
+                ? resolveConflictsControl
+                : null}
+            </TooltipProvider>
+          ) : undefined
+        }
+      />
+    );
   }
 
   return (
@@ -1720,71 +1838,7 @@ export function PullRequestDetailPanel({
                   threadRef={null}
                 />
               ) : null}
-              {/* Checking a pull request out is the reason to open one here at all, so it is a
-                  button of its own rather than a side effect of asking an agent for something.
-                  It asks where, because the two answers are not interchangeable: one leaves your
-                  work where it is, the other moves the repository you are standing in. Only on
-                  the page: beside a thread the branch is already checked out right there. */}
-              {context === "page" ? (
-                <Menu>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <MenuTrigger
-                          disabled={handoff !== null}
-                          render={
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              aria-label={
-                                handoff?.startsWith("checkout") ? "Checking out..." : "Check out"
-                              }
-                            >
-                              <GitBranchIcon aria-hidden className="size-3.5" />
-                              <span className="@max-[35rem]/pr-header:hidden">
-                                {handoff?.startsWith("checkout") ? "Checking out..." : "Check out"}
-                              </span>
-                              <ChevronDownIcon
-                                aria-hidden
-                                className="size-3.5 text-muted-foreground"
-                              />
-                            </Button>
-                          }
-                        />
-                      }
-                    />
-                    <TooltipPopup>Check out this pull request</TooltipPopup>
-                  </Tooltip>
-                  <MenuPopup align="end" side="bottom" className="min-w-72">
-                    <MenuItem onClick={() => startCheckout("worktree")}>
-                      <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
-                      <span className="flex min-w-0 flex-col">
-                        <span>In a separate worktree</span>
-                        <span className="text-xs text-muted-foreground">
-                          Its own folder and thread. Nothing you have open moves.
-                        </span>
-                      </span>
-                    </MenuItem>
-                    <MenuItem onClick={() => startCheckout("local")}>
-                      <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start" />
-                      <span className="flex min-w-0 flex-col">
-                        <span>In this repository</span>
-                        <span className="text-xs text-muted-foreground">
-                          Switches the branch you are working in, like `gh pr checkout`.
-                        </span>
-                      </span>
-                    </MenuItem>
-                    {pickableEnvironments.length > 0 ? (
-                      <ActOnEnvironmentPicker
-                        environments={pickableEnvironments}
-                        value={actingEnvironmentId}
-                        onChange={(next) => setActingScope({ pullRequestKey, environmentId: next })}
-                        disabled={handoff !== null}
-                      />
-                    ) : null}
-                  </MenuPopup>
-                </Menu>
-              ) : null}
+              {checkoutControl}
               {/* Said where the Merge button is, because it is the answer to why nobody has
                   pressed it: the merge is already asked for, and the host is holding it. */}
               {autoMergeArmed && primaryAction !== "auto-merge-armed" ? (
@@ -1809,31 +1863,7 @@ export function PullRequestDetailPanel({
                 </Tooltip>
               ) : null}
               {primaryAction === "resolve" ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="inline-flex shrink-0">
-                        <Button
-                          size="xs"
-                          variant="destructive-outline"
-                          disabled={handoff !== null}
-                          onClick={startResolveConflicts}
-                          aria-label={
-                            handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"
-                          }
-                        >
-                          <PullRequestGlyph.conflicting aria-hidden className="size-3.5" />
-                          <span className="@max-[30rem]/pr-header:hidden">
-                            {handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"}
-                          </span>
-                        </Button>
-                      </span>
-                    }
-                  />
-                  <TooltipPopup side="top">
-                    {handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"}
-                  </TooltipPopup>
-                </Tooltip>
+                resolveConflictsControl
               ) : primaryAction === "ready" ? (
                 <Tooltip>
                   <TooltipTrigger
@@ -2296,7 +2326,7 @@ export function PullRequestDetailPanel({
             {detail ? (
               <div className="col-span-2 mt-1 min-w-0 px-4 pb-4">
                 {titleDraft === null ? (
-                  <div className="group flex min-w-0 items-center gap-1">
+                  <div className="group flex min-h-7 min-w-0 items-center gap-1 sm:min-h-6">
                     <Tooltip>
                       <TooltipTrigger
                         render={
@@ -2357,7 +2387,7 @@ export function PullRequestDetailPanel({
                     </div>
                   </div>
                 )}
-                <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                <div className="mt-2 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
                     <PullRequestActorLabel
                       actor={detail.author}
@@ -2375,18 +2405,12 @@ export function PullRequestDetailPanel({
                       copiedLabel="Checkout command copied"
                       className="ml-auto font-mono"
                       tooltipSide="bottom"
-                      onError={(error) =>
-                        toastManager.add({
-                          type: "error",
-                          title: "Could not copy checkout command",
-                          description: error.message,
-                        })
-                      }
+                      onError={onCheckoutCommandError}
                     />
                   ) : null}
                 </div>
 
-                <div className="mt-4 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                <div className="mt-4 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
                   <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
                     <Tooltip>
                       <TooltipTrigger
@@ -2429,7 +2453,7 @@ export function PullRequestDetailPanel({
                     />
                   </span>
                   <span className="ml-auto inline-flex shrink-0 items-center justify-end gap-2">
-                    <span className="inline-flex items-center gap-1.5 tabular-nums">
+                    <span className="inline-flex min-w-16 items-center justify-end gap-1.5 tabular-nums">
                       <FileDiffIcon className="size-3.5" />
                       {detail.changedFiles.toLocaleString()}{" "}
                       {detail.changedFiles === 1 ? "file" : "files"}
@@ -2474,7 +2498,7 @@ export function PullRequestDetailPanel({
             </ToggleGroup>
             {tab === "summary" ? (
               <span className="ml-auto inline-flex shrink-0 items-center">
-                {workflowApprovalsRequired > 0 && can("approve-workflows") ? (
+                {workflowApprovalsRequired > 0 && !checksStale && can("approve-workflows") ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -2516,6 +2540,7 @@ export function PullRequestDetailPanel({
                     {checksState !== null ? (
                       <PullRequestChecksPopover
                         checks={detail.checks}
+                        stale={checksStale}
                         checksState={checksState}
                         threadRef={threadRef}
                       />
@@ -2649,12 +2674,14 @@ export function PullRequestDetailPanel({
                   reference={reference}
                   detail={detail}
                   activityPending={activityPending}
+                  checksStale={checksStale}
                   activityError={activityError}
                   pendingFinding={handoff}
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
                   onFixFinding={startFixFinding}
                   onRefresh={refreshDetail}
+                  onRefreshChecks={refreshFromHost}
                 />
               </div>
             ) : null}
