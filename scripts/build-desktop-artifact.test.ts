@@ -91,6 +91,10 @@ import {
   WslRuntimeArchiveMissingError,
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
+import {
+  ReleasePackageManifestError,
+  releasePackageFiles,
+} from "./update-release-package-versions.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -250,7 +254,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect(
-    "passes the artifact version into the client build without changing package versions",
+    "aligns client and server build versions and restores manifests after success or failure",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -262,16 +266,47 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "scripts": { "build:desktop": "node build.cjs" }
         }`;
         yield* fs.writeFileString(path.join(root, "package.json"), packageJson);
-        // Exercise a real build subprocess and the same environment/package fallback
-        // used by the web build, without compiling the full desktop in a unit test.
+        const originalManifest = '{ "version": "0.0.42", "private": true }\n';
+        for (const relativePath of releasePackageFiles) {
+          const filePath = path.join(root, relativePath);
+          yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+          yield* fs.writeFileString(filePath, originalManifest);
+        }
+        // Exercise both version sources in a real child process: the client
+        // build environment and the server's imported package manifest.
         yield* fs.writeFileString(
           path.join(root, "build.cjs"),
-          `require("node:fs").writeFileSync("version.txt", process.env.APP_VERSION?.trim() || require("./package.json").version);`,
+          `require("node:fs").writeFileSync("version.txt", [
+            process.env.APP_VERSION?.trim() || require("./apps/web/package.json").version,
+            require("./apps/server/package.json").version
+          ].join("\\n"));`,
         );
         for (const version of ["0.0.43-nightly.20260920.2018", "0.0.43"]) {
           yield* buildDesktopBundles(root, version, false);
-          assert.equal(yield* fs.readFileString(path.join(root, "version.txt")), version);
+          assert.equal(
+            yield* fs.readFileString(path.join(root, "version.txt")),
+            `${version}\n${version}`,
+          );
+          for (const relativePath of releasePackageFiles) {
+            assert.equal(yield* fs.readFileString(path.join(root, relativePath)), originalManifest);
+          }
           assert.equal(yield* fs.readFileString(path.join(root, "package.json")), packageJson);
+        }
+        yield* fs.writeFileString(path.join(root, "build.cjs"), "process.exit(1);");
+        const failure = yield* Effect.flip(buildDesktopBundles(root, "0.0.44", false));
+        assert.instanceOf(failure, BuildCommandFailedError);
+        for (const relativePath of releasePackageFiles) {
+          assert.equal(yield* fs.readFileString(path.join(root, relativePath)), originalManifest);
+        }
+        const invalidPath = releasePackageFiles[releasePackageFiles.length - 1]!;
+        yield* fs.writeFileString(path.join(root, invalidPath), "invalid manifest");
+        const alignmentFailure = yield* Effect.flip(buildDesktopBundles(root, "0.0.44", false));
+        assert.instanceOf(alignmentFailure, ReleasePackageManifestError);
+        for (const relativePath of releasePackageFiles) {
+          assert.equal(
+            yield* fs.readFileString(path.join(root, relativePath)),
+            relativePath === invalidPath ? "invalid manifest" : originalManifest,
+          );
         }
       }),
   );

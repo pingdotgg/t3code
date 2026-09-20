@@ -22,6 +22,10 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
+import {
+  releasePackageFiles,
+  updateReleasePackageVersions,
+} from "./update-release-package-versions.ts";
 import { applyWebBrandAssets } from "./apply-web-brand-assets.ts";
 import {
   BRAND_ASSET_PATHS,
@@ -1691,22 +1695,42 @@ const runCommand = Effect.fn("runCommand")(function* (
   }
 });
 
-// The packaged web client must use the same version as the desktop manifest,
-// even when a direct build does not rewrite the workspace package versions.
+// Match the release workflow's version alignment for every bundled package.
+// Restore the caller's manifests even if alignment or compilation fails.
 export const buildDesktopBundles = Effect.fn("buildDesktopBundles")(function* (
   repoRoot: string,
   appVersion: string,
   verbose: boolean,
 ) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
-  yield* runCommand(
-    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-      cwd: repoRoot,
-      shell: spawnCommand.shell,
-      env: { APP_VERSION: appVersion },
-      extendEnv: true,
+  yield* Effect.acquireUseRelease(
+    Effect.forEach(releasePackageFiles, (relativePath) => {
+      const filePath = path.join(repoRoot, relativePath);
+      return fs.readFileString(filePath).pipe(Effect.map((contents) => ({ filePath, contents })));
     }),
-    { label: "vp run build:desktop", verbose },
+    () =>
+      Effect.gen(function* () {
+        yield* updateReleasePackageVersions(appVersion, { rootDir: repoRoot });
+        yield* runCommand(
+          ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+            cwd: repoRoot,
+            shell: spawnCommand.shell,
+            env: { APP_VERSION: appVersion },
+            extendEnv: true,
+          }),
+          { label: "vp run build:desktop", verbose },
+        );
+      }),
+    (originals) =>
+      Effect.forEach(
+        originals,
+        ({ filePath, contents }) => fs.writeFileString(filePath, contents),
+        {
+          discard: true,
+        },
+      ).pipe(Effect.orDie),
   );
 });
 
