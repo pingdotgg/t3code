@@ -9,15 +9,12 @@ type RecoveryProps = {
   resetAt: string | null;
   stoppedAt: string;
   recovery: OrchestrationV2LimitRecovery | null;
-  explanation: string | null;
   onChange: (recovery: OrchestrationV2LimitRecovery) => Promise<void>;
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
-  const { runId, resetAt, stoppedAt, recovery, explanation } = props;
+  const { runId, resetAt, stoppedAt } = props;
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
-  const scheduled =
-    recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
   return {
     id: `usage-limit-recovery:${runId}`,
     variant: "warning",
@@ -27,12 +24,6 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     description: resetAt
       ? `Resets ${new Date(resetAt).toLocaleString()}`
       : "Reset time unavailable; retry manually",
-    children: (
-      <div className="space-y-1 text-xs text-muted-foreground">
-        {explanation ? <p>{explanation}</p> : null}
-        {scheduled ? <p>Auto-resume is scheduled for the reset.</p> : null}
-      </div>
-    ),
     actions: canSchedule ? <RecoveryActions key={runId} {...props} /> : null,
   };
 }
