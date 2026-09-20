@@ -121,7 +121,7 @@ export interface VisitThreadInput extends ThreadCommandInput {
 export type MarkThreadUnreadInput = ThreadCommandInput;
 
 export interface UpdateThreadMetadataInput extends ThreadCommandInput {
-  readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
+  readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecoveryUpdate | null;
   readonly title?: string;
   readonly modelSelection?: ModelSelection;
   readonly branch?: string | null;

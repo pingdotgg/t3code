@@ -41,6 +41,10 @@ export function UsageLimitRecoveryCard({
     Date.parse(thread.snoozedUntil) === Date.parse(resetAt);
   async function toggle(action: "resume" | "snooze") {
     if (!resetAt || !runId || !canSchedule) return;
+    if (action === "snooze" && !snoozed && Date.parse(resetAt) <= Date.now()) {
+      setError("The reset time has passed. Retry the thread manually.");
+      return;
+    }
     setPending(true);
     setError(null);
     try {
@@ -51,8 +55,7 @@ export function UsageLimitRecoveryCard({
           limitRecovery: {
             runId,
             resetAt,
-            autoResume: action === "resume" ? !scheduled : Boolean(scheduled),
-            snooze: action === "snooze" ? !snoozed : snoozed,
+            ...(action === "resume" ? { autoResume: !scheduled } : { snooze: !snoozed }),
           },
         },
       });

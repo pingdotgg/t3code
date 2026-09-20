@@ -335,6 +335,15 @@ export const OrchestrationV2LimitRecovery = Schema.Struct({
 });
 export type OrchestrationV2LimitRecovery = typeof OrchestrationV2LimitRecovery.Type;
 
+/** A choice update preserves omitted options for this same run and reset. */
+export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
+  runId: RunId,
+  resetAt: IsoDateTime,
+  autoResume: Schema.optional(Schema.Boolean),
+  snooze: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -2340,7 +2349,7 @@ export const OrchestrationV2Command = Schema.Union([
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
-    limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+    limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
     /** Link (object) or unlink (null) a pull request (#8160); absent leaves it unchanged. */
     linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   }),

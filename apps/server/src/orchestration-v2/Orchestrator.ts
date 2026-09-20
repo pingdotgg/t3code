@@ -2232,6 +2232,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const run = projection.runs.at(-1) ?? null;
       const failure = latestRootProviderFailure(run, projection.turnItems);
       if (
+        command.limitRecovery.snooze === true &&
+        Date.parse(command.limitRecovery.resetAt) <= DateTime.toEpochMillis(now)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The reset time has passed. Retry the thread manually.",
+        });
+      }
+      if (
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
@@ -2402,22 +2412,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
-        case "thread.metadata.update":
+        case "thread.metadata.update": {
+          const previousRecovery =
+            thread.limitRecovery?.runId === command.limitRecovery?.runId &&
+            thread.limitRecovery?.resetAt === command.limitRecovery?.resetAt
+              ? thread.limitRecovery
+              : null;
+          const limitRecovery =
+            command.limitRecovery === undefined
+              ? thread.limitRecovery
+              : command.limitRecovery === null
+                ? null
+                : {
+                    ...command.limitRecovery,
+                    autoResume:
+                      command.limitRecovery.autoResume ?? previousRecovery?.autoResume ?? false,
+                    snooze: command.limitRecovery.snooze ?? previousRecovery?.snooze ?? false,
+                    requestId: command.commandId,
+                  };
           return {
             ...thread,
             ...(command.title === undefined ? {} : { title: command.title }),
-            ...(command.limitRecovery === undefined
-              ? {}
-              : {
-                  limitRecovery:
-                    command.limitRecovery === null
-                      ? null
-                      : { ...command.limitRecovery, requestId: command.commandId },
-                }),
-            ...(command.limitRecovery?.snooze === true &&
-            Date.parse(command.limitRecovery.resetAt) > DateTime.toEpochMillis(now)
+            ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
+            ...(command.limitRecovery !== undefined &&
+            limitRecovery?.snooze === true &&
+            Date.parse(limitRecovery.resetAt) > DateTime.toEpochMillis(now)
               ? {
-                  snoozedUntil: DateTime.makeUnsafe(command.limitRecovery.resetAt),
+                  snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt),
                   // Recovery changes acknowledge the same stopped run; keep its
                   // metadata timestamp from appearing as a fresh failure wake.
                   snoozedAt: now,
@@ -2476,6 +2497,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             updatedAt: now,
           };
+        }
         case "thread.pull-request.link":
         case "thread.pull-request.unlink":
         case "thread.pull-request-link.sync": {
