@@ -141,7 +141,7 @@ interface ProviderModelsSectionProps {
    * write to the correct storage (legacy `settings.providers[kind]` vs.
    * `providerInstances[id].config`).
    */
-  readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => void;
+  readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => Promise<boolean>;
   readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
@@ -171,6 +171,14 @@ export function ProviderModelsSection({
   onFavoriteModelsChange,
   onModelOrderChange,
 }: ProviderModelsSectionProps) {
+  const pendingSave = useRef<object | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  useEffect(
+    () => () => {
+      pendingSave.current = null;
+    },
+    [],
+  );
   const [input, setInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [filter, setFilter] = useState("");
@@ -220,10 +228,35 @@ export function ProviderModelsSection({
     if (!row) return;
     scrollToSlugRef.current = null;
     row.scrollIntoView({ block: "nearest" });
-  }, [displayModels]);
+  }, [displayModels, isAdding]);
 
-  const handleAdd = () => {
-    if (driverKind === "antigravity") return;
+  const save = async (next: ReadonlyArray<CustomModelDefinition>) => {
+    if (pendingSave.current !== null) return false;
+    const submission = {};
+    pendingSave.current = submission;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const saved = await onChange(next);
+      if (pendingSave.current !== submission) return false;
+      if (!saved)
+        setError("Could not save custom models. Check the environment connection and try again.");
+      return saved;
+    } catch {
+      if (pendingSave.current === submission) {
+        setError("Could not save custom models. Check the environment connection and try again.");
+      }
+      return false;
+    } finally {
+      if (pendingSave.current === submission) {
+        pendingSave.current = null;
+        setIsSaving(false);
+      }
+    }
+  };
+
+  const handleAdd = async () => {
+    if (driverKind === "antigravity" || pendingSave.current !== null) return;
     const normalized = normalizeCustomModelSlug(input);
     if (!normalized) {
       setError("Enter a model slug.");
@@ -242,32 +275,37 @@ export function ProviderModelsSection({
       return;
     }
 
+    if (
+      !(await save([...customModels, { slug: normalized, name: normalized, capabilities: null }]))
+    )
+      return;
     // Clear the filter so the new row renders even when it does not match,
     // which is also what lets the pending scroll target resolve and clear.
     scrollToSlugRef.current = normalized;
     setFilter("");
-    onChange([...customModels, { slug: normalized, name: normalized, capabilities: null }]);
     setInput("");
     setError(null);
     setIsAdding(false);
   };
 
   const cancelAdd = () => {
+    if (pendingSave.current !== null) return;
     setInput("");
     setError(null);
     setIsAdding(false);
   };
 
-  const handleRemove = (slug: string) => {
+  const handleRemove = async (slug: string) => {
+    if (!(await save(customModels.filter((entry) => entry.slug !== slug)))) return;
     if (editingSlug === slug) setEditingSlug(null);
-    onChange(customModels.filter((entry) => entry.slug !== slug));
     onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
     setError(null);
   };
 
-  const handleSaveEdit = (next: CustomModelDefinition) => {
-    onChange(customModels.map((entry) => (entry.slug === next.slug ? next : entry)));
+  const handleSaveEdit = async (next: CustomModelDefinition) => {
+    if (!(await save(customModels.map((entry) => (entry.slug === next.slug ? next : entry)))))
+      return;
     setEditingSlug(null);
   };
 
@@ -500,7 +538,10 @@ export function ProviderModelsSection({
   );
 
   return (
-    <div className="lg:flex lg:h-full lg:min-h-0 lg:flex-col">
+    <fieldset
+      disabled={isSaving}
+      className="m-0 min-w-0 border-0 p-0 lg:flex lg:h-full lg:min-h-0 lg:flex-col"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         {showFilter ? (
           <Input
@@ -583,8 +624,11 @@ export function ProviderModelsSection({
                   driverKind={driverKind}
                   entry={editingEntry}
                   builtInModels={builtInModels}
+                  disabled={isSaving}
                   onSave={handleSaveEdit}
-                  onCancel={() => setEditingSlug(null)}
+                  onCancel={() => {
+                    if (pendingSave.current === null) setEditingSlug(null);
+                  }}
                 />
               ) : null}
             </div>
@@ -600,6 +644,7 @@ export function ProviderModelsSection({
             autoFocus
             value={input}
             onChange={(event) => {
+              if (pendingSave.current !== null) return;
               setInput(event.target.value);
               if (error) setError(null);
             }}
@@ -627,9 +672,16 @@ export function ProviderModelsSection({
         </div>
       ) : null}
 
-      {driverKind !== "antigravity" && error ? (
-        <p className="mt-2 text-xs text-destructive">{error}</p>
+      {isSaving ? (
+        <p role="status" className="mt-2 text-xs text-muted-foreground">
+          Saving…
+        </p>
       ) : null}
-    </div>
+      {driverKind !== "antigravity" && error ? (
+        <p role="alert" className="mt-2 text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </fieldset>
   );
 }

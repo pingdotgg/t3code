@@ -1,3 +1,5 @@
+import { AsyncResult } from "effect/unstable/reactivity";
+import { Cause } from "effect";
 import type { ReactElement } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
@@ -17,11 +19,13 @@ const atoms = vi.hoisted(() => ({
   providersAtom: Symbol("providers"),
   refreshProviders: Symbol("refreshProviders"),
   updateProvider: Symbol("updateProvider"),
+  updateSettings: Symbol("updateSettings"),
 }));
 
 const commands = vi.hoisted(() => ({
   refresh: vi.fn(),
   updateProvider: vi.fn(),
+  saveSettings: vi.fn(),
 }));
 
 const settingsState = vi.hoisted(() => ({
@@ -74,12 +78,17 @@ vi.mock("../../state/server", () => ({
     providersValueAtom: () => atoms.providersAtom,
     refreshProviders: atoms.refreshProviders,
     updateProvider: atoms.updateProvider,
+    updateSettings: atoms.updateSettings,
   },
 }));
 
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (atom: symbol) =>
-    atom === atoms.refreshProviders ? commands.refresh : commands.updateProvider,
+    atom === atoms.refreshProviders
+      ? commands.refresh
+      : atom === atoms.updateSettings
+        ? commands.saveSettings
+        : commands.updateProvider,
 }));
 
 vi.mock("../../hooks/useSettings", () => ({
@@ -180,6 +189,7 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.updateClientSettings.mockReset();
     settingsSearchState.targetId = null;
     settingsSearchState.effects = [];
+    commands.saveSettings.mockReset();
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
   });
@@ -388,5 +398,37 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(Object.keys(resetPatch ?? {}).sort()).toEqual(["providerInstances", "providers"]);
     expect(resetPatch).not.toHaveProperty("favorites");
     expect(resetPatch).not.toHaveProperty("providerModelPreferences");
+  });
+  it("acknowledges custom model writes only on the selected environment's success", async () => {
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: { [codexId]: { driver: ProviderDriverKind.make("codex"), enabled: true } },
+    };
+    const panel = renderPanel();
+    const card = visitElements(
+      panel,
+      (element) => element.props.instanceId === codexId && element.props.mode === "editor",
+    );
+    const save = card!.props.onSaveCustomModels as (
+      next: Record<string, unknown>,
+    ) => Promise<boolean>;
+    const next = {
+      driver: ProviderDriverKind.make("codex"),
+      config: { customModels: ["synthetic-model"] },
+    };
+    commands.saveSettings.mockResolvedValueOnce(AsyncResult.failure(Cause.interrupt(1)));
+    expect(await save(next)).toBe(false);
+    commands.saveSettings.mockResolvedValueOnce(AsyncResult.success(null));
+    expect(await save(next)).toBe(true);
+    expect(commands.saveSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        environmentId,
+        input: {
+          patch: expect.objectContaining({
+            providerInstances: expect.objectContaining({ [codexId]: next }),
+          }),
+        },
+      }),
+    );
   });
 });
