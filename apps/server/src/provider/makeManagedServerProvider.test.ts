@@ -579,6 +579,7 @@ describe("makeManagedServerProvider", () => {
               resetsAt: "2026-04-17T00:00:00.000Z",
             },
           ],
+          sendGating: true,
         });
         assert.deepStrictEqual(yield* provider.getSnapshot, update);
       }),
