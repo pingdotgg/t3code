@@ -98,6 +98,7 @@ import {
   type ComposerSendPresentation,
 } from "./composerSendPresentation";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
+import { ComposerFollowUpMenu } from "./ComposerFollowUpMenu";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -284,6 +285,21 @@ function SendActionButton(props: {
   const actions = [presentation.action, presentation.alternate].filter(
     (action): action is ActiveTurnComposerAction => action !== null,
   );
+  if (Platform.OS === "ios") {
+    return (
+      <ComposerFollowUpMenu
+        accessibilityLabel={props.accessibilityLabel}
+        icon={presentation.icon}
+        actions={actions.map((action) => ({
+          id: action,
+          title: FOLLOW_UP_ACTION_LABEL[action],
+          subtitle: FOLLOW_UP_ACTION_SUBTITLE[action],
+        }))}
+        selectedAction={presentation.action}
+        onSend={props.onSend}
+      />
+    );
+  }
   return (
     <ControlPillMenu
       accessibilityLabel="Choose how to send this message"
