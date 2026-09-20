@@ -1,12 +1,13 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, PullRequestRef, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import { CheckIcon, LinkIcon, MessageSquareIcon, UnlinkIcon } from "lucide-react";
+import { CheckIcon, MessageSquareIcon } from "lucide-react";
 import { useState } from "react";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 
 import { parseChangeRequestUrl } from "~/lib/openPullRequestLink";
+import { normalizeThreadPullRequestKey } from "@t3tools/shared/threadPullRequests";
 import { useProjects, useServerConfigs, useThreadShell, useThreadShells } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -17,6 +18,7 @@ import { Command, CommandInput, CommandItem, CommandList } from "../ui/command";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { MenuItem } from "../ui/menu";
 import { toastManager } from "../ui/toast";
+import { PullRequestGlyph } from "./pullRequestIcons";
 
 interface PullRequestThreadLinksProps {
   environmentId: EnvironmentId;
@@ -56,7 +58,10 @@ function EnabledPullRequestThreadLinks({
     linking.mode === "multiple" && display !== "menu-item"
       ? pullRequestEnvironment.linkedThreads({
           environmentId,
-          input: parsed === null ? reference : { ...reference, ...parsed },
+          input:
+            parsed === null
+              ? reference
+              : { ...reference, ...normalizeThreadPullRequestKey(parsed) },
         })
       : null,
   );
@@ -85,7 +90,10 @@ function EnabledPullRequestThreadLinks({
     }
     if (linking.mode === "multiple") {
       appAtomRegistry.refresh(
-        pullRequestEnvironment.linkedThreads({ environmentId, input: { ...reference, ...parsed } }),
+        pullRequestEnvironment.linkedThreads({
+          environmentId,
+          input: { ...reference, ...normalizeThreadPullRequestKey(parsed) },
+        }),
       );
     }
     onPickerOpenChange?.(false);
@@ -137,9 +145,9 @@ function EnabledPullRequestThreadLinks({
           }}
         >
           {linkedHere ? (
-            <UnlinkIcon aria-hidden className="size-3.5" />
+            <PullRequestGlyph.unlink aria-hidden className="size-3.5" />
           ) : (
-            <LinkIcon aria-hidden className="size-3.5" />
+            <PullRequestGlyph.link aria-hidden className="size-3.5" />
           )}
           {linkedHere
             ? "Unlink from this thread"

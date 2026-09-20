@@ -72,6 +72,74 @@ function codeButton(renderer: ReactTestRenderer, label: string) {
   return button.props as ComponentProps<typeof Button>;
 }
 
+describe("ChatMarkdown context references", () => {
+  it("renders text and image references through the chip renderer, with readable fallback", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text =
+      "See [Terminal output](t3-context://v1/terminal/term-1) and ![Error image](t3-context://v1/image/img-1).";
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text={text}
+            renderContextReference={({ kind, label }) => (
+              <button>
+                {kind}: {label}
+              </button>
+            )}
+          />,
+        );
+      });
+      expect(
+        renderer!.root.findAllByType("button").map((button) => button.children.join("")),
+      ).toEqual(["terminal: Terminal output", "image: Error image"]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      expect(renderer!.root.findAllByType("a")).toHaveLength(0);
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd={undefined} text={text} />);
+      });
+      expect(renderer!.root.findAllByType("span").map((span) => span.children.join(""))).toEqual([
+        "Terminal output",
+        "Error image",
+      ]);
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reads formatted context labels through nested markup instead of the context id", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const seen: Array<string> = [];
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd={undefined}
+            text="See [**Bold** `code`](t3-context://v1/terminal/term-1)."
+            renderContextReference={({ kind, label }) => {
+              seen.push(`${kind}: ${label}`);
+              return <button>{label}</button>;
+            }}
+          />,
+        );
+      });
+      expect(seen).toEqual(["terminal: Bold code"]);
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("ChatMarkdown favicon privacy", () => {
   it("suppresses private link images while preserving public links across updates", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -110,13 +178,36 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
+  it("does not retokenize completed lines when streaming finishes", async () => {
+    const highlighter = await getSyntaxHighlighterPromise("typescript");
+    const highlight = vi.spyOn(highlighter, "codeToHast");
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    const text = "```typescript\nconst completed = 1;\nconst current = 2;";
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
+      });
+      expect(highlight).toHaveBeenCalled();
+      highlight.mockClear();
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text + "\n```"} />);
+      });
+      expect(highlight.mock.calls.every(([code]) => !code.includes("const completed"))).toBe(true);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
   it("recovers highlighting after a failed fence changes without resetting its controls", async () => {
     const highlighter = await getSyntaxHighlighterPromise("text");
-    const codeToHtml = highlighter.codeToHtml.bind(highlighter);
+    const codeToHast = highlighter.codeToHast.bind(highlighter);
     let fail = true;
-    vi.spyOn(highlighter, "codeToHtml").mockImplementation((...args) => {
+    vi.spyOn(highlighter, "codeToHast").mockImplementation((...args) => {
       if (fail) throw new Error("Temporary highlighter failure");
-      return codeToHtml(...args);
+      return codeToHast(...args);
     });
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -156,7 +247,7 @@ describe("ChatMarkdown streaming", () => {
 
   it("preserves code controls and details without highlighting an unchanged fence again", async () => {
     const highlighter = await getSyntaxHighlighterPromise("text");
-    const highlight = vi.spyOn(highlighter, "codeToHtml");
+    const highlight = vi.spyOn(highlighter, "codeToHast");
     const writeText = vi.fn(async (_text: string) => {});
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -600,6 +691,28 @@ describe("ChatMarkdown artifact-template cards", () => {
 
     expect(html.match(/::artifact-template/g)).toHaveLength(2);
     expect(html).not.toContain("chat-markdown-artifact-template");
+  });
+});
+
+describe("ChatMarkdown heading levels", () => {
+  it("exposes headings below the host heading without changing their tags", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"# Top\n\n## Section\n\n###### Fine print"}
+        headingLevelOffset={3}
+      />,
+    );
+
+    expect(html).toContain('<h1 aria-level="4">Top</h1>');
+    expect(html).toContain('<h2 aria-level="5">Section</h2>');
+    expect(html).toContain('<h6 aria-level="6">Fine print</h6>');
+  });
+
+  it("leaves heading levels alone when the markdown is not nested", () => {
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="# Top" />);
+
+    expect(html).toContain("<h1>Top</h1>");
   });
 });
 

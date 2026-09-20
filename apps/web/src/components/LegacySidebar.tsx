@@ -1,10 +1,5 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
-import { GitPullRequestIcon } from "lucide-react";
-import { LinkBranchPullRequestButton } from "./pullRequest/LinkBranchPullRequestButton";
-import {
-  resolveThreadCurrentPullRequestLink,
-  visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,
@@ -218,6 +213,7 @@ import {
   type SidebarProjectGroupMember,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -395,6 +391,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         addFiles: (files) => {
           onFileDropThreads(threadRef, files);
         },
+        addFolders: () => {},
       }),
     [onFileDropThreads, threadRef],
   );
@@ -761,14 +758,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               className="text-muted-foreground"
               aria-label={`PR #${currentLinkedPr.number}, status pending`}
             >
-              <GitPullRequestIcon className="size-3" />
+              <PullRequestGlyph.pullRequest className="size-3" />
             </a>
-          ) : null}
-          {pr &&
-          (supportsMultiplePullRequests
-            ? visibleThreadPullRequests(thread.pullRequests).length === 0
-            : thread.linkedPullRequest == null) ? (
-            <LinkBranchPullRequestButton threadRef={threadRef} url={pr.url} />
           ) : null}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
           {renamingThreadKey === threadKey ? (

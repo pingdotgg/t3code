@@ -15,7 +15,10 @@ const QueueShimForwardWorker = {
       "#cloudflare-runtime-core-worker/bindings/queue/QueueShimForward.worker",
     ),
 };
-import { SERVICE_USER_WORKER } from "../../internal/constants.ts";
+import {
+  DEFAULT_COMPATIBILITY_DATE,
+  SERVICE_USER_WORKER,
+} from "../../internal/constants.ts";
 import { formatInternalWorkerModules } from "../../internal/internal-modules.ts";
 import * as Plugin from "../../Plugin.ts";
 import * as PluginContext from "../../PluginContext.ts";
@@ -34,8 +37,6 @@ import {
   BINDING_QUEUE_PRODUCERS,
   BINDING_QUEUE_USER_WORKER,
 } from "./QueueOptions.shared.ts";
-
-const BROKER_COMPATIBILITY_DATE = "2024-10-22";
 
 export class Queue extends Plugin.Service<
   Queue,
@@ -161,7 +162,7 @@ export const QueueLive = Layer.effect(
           return {
             name: queueServiceName(consumer.queueName),
             worker: {
-              compatibilityDate: BROKER_COMPATIBILITY_DATE,
+              compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
               compatibilityFlags: [
                 "experimental",
                 "service_binding_extra_handlers",
@@ -224,7 +225,7 @@ export const QueueLive = Layer.effect(
           return {
             name: remoteShimServiceName(props.binding),
             worker: {
-              compatibilityDate: BROKER_COMPATIBILITY_DATE,
+              compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
               modules: formatInternalWorkerModules(
                 yield* Effect.promise(QueueShimForwardWorker.worker),
               ),

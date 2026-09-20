@@ -1,3 +1,5 @@
+import type { NavigationState } from "@react-navigation/native";
+
 export type AdaptiveNavigationAction = "push" | "replace" | "set-params";
 
 const BASE_THREAD_ROUTE_PATTERN = /^\/threads\/[^/]+\/[^/]+\/?$/;
@@ -21,6 +23,33 @@ export function resolveThreadSelectionNavigationAction(input: {
   }
 
   return isBaseThreadRoute(input.pathname) ? "set-params" : "replace";
+}
+
+/** Dismiss sheets and select their underlying workspace destination in one stack update. */
+export function resolveThreadSelectionOverlayState(input: {
+  readonly state: NavigationState | undefined;
+  readonly workspaceRouteKey: string | undefined;
+  readonly action: AdaptiveNavigationAction;
+  readonly params: ReactNavigation.RootParamList["Thread"];
+}) {
+  if (input.state === undefined) return null;
+  const workspaceIndex = input.state.routes.findIndex(
+    (route) => route.key === input.workspaceRouteKey,
+  );
+  if (workspaceIndex < 0 || workspaceIndex >= input.state.index) return null;
+
+  const workspaceRoute = input.state.routes[workspaceIndex];
+  const routes = input.state.routes.slice(0, workspaceIndex + (input.action === "push" ? 1 : 0));
+  return {
+    ...input.state,
+    index: routes.length,
+    routes: [
+      ...routes,
+      input.action === "set-params" && workspaceRoute?.name === "Thread"
+        ? { ...workspaceRoute, params: { ...workspaceRoute.params, ...input.params } }
+        : { name: "Thread", params: input.params },
+    ],
+  };
 }
 
 /**

@@ -24,8 +24,10 @@ import {
   TurnId,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import { ServerConfig } from "../../config.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import {
   grokPromptSettlementBelongsToContext,
   isGrokEnterPlanModeToolCall,
@@ -33,8 +35,7 @@ import {
   nextGrokPlanModeActive,
   selectGrokPermissionOptionId,
 } from "./GrokAdapter.ts";
-import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+
 const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -212,7 +213,86 @@ it("requires a settlement to match the live Grok turn", () => {
 });
 
 it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
-  it.effect("sends runtime context with the current model without changing saved prompts", () =>
+  it.effect("rejects rollback without discarding the provider conversation", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-unsupported-rollback");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "Remember this turn" });
+      const originalTurns = [...(yield* adapter.readThread(threadId)).turns];
+      assert.isFalse(adapter.capabilities.supportsConversationRollback);
+      const error = yield* adapter.rollbackThread(threadId, 1).pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterRequestError");
+      assert.deepStrictEqual((yield* adapter.readThread(threadId)).turns, originalTurns);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  for (const taskType of ["monitor", "shell"] as const) {
+    it.effect(`emits the ${taskType} background lifecycle`, () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(`grok-background-${taskType}`);
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockGrokWrapper({
+            [taskType === "monitor"
+              ? "T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL"
+              : "T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED"]: "1",
+          }),
+        );
+        const adapter = yield* makeTestAdapter(wrapperPath);
+        const events: ProviderRuntimeEvent[] = [];
+        const finished = yield* Deferred.make<void>();
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.gen(function* () {
+            events.push(event);
+            if (event.type === (taskType === "monitor" ? "task.completed" : "turn.completed")) {
+              yield* Deferred.succeed(finished, undefined);
+            }
+          }),
+        ).pipe(Effect.forkChild);
+        yield* adapter.startSession({ threadId, cwd: process.cwd(), runtimeMode: "full-access" });
+        yield* adapter.sendTurn({ threadId, input: "watch the unit" });
+        yield* Deferred.await(finished).pipe(Effect.timeout("3 seconds"));
+
+        const started = events.find((event) => event.type === "task.started");
+        const taskId =
+          taskType === "monitor"
+            ? "01a05f41-5107-7550-821e-79e8d1cd7687"
+            : "call-fb9d0000-0000-0000-0000-000000000026";
+        assert.equal(started?.payload.taskType, taskType);
+        assert.equal(started?.payload.taskId, taskId);
+        if (taskType === "monitor") {
+          const completed = events.find((event) => event.type === "task.completed");
+          const turnEnd = events.findIndex((event) => event.type === "turn.completed");
+          assert.equal(completed?.payload.status, "completed");
+          assert.equal(completed?.payload.taskId, taskId);
+          assert.equal(completed?.turnId, undefined);
+          assert.isAtLeast(turnEnd, 0);
+          assert.isAbove(
+            events.findIndex((event) => event.type === "task.completed"),
+            turnEnd,
+          );
+          assert.deepEqual(
+            events
+              .slice(turnEnd + 1)
+              .filter((event) => event.type === "item.updated" || event.type === "item.completed"),
+            [],
+          );
+        } else {
+          assert.equal(started?.payload.description, "sleep 40; echo done-a");
+        }
+        yield* Fiber.interrupt(eventsFiber);
+        yield* adapter.stopSession(threadId);
+      }).pipe(TestClock.withLive),
+    );
+  }
+
+  it.effect("keeps runtime context out of native command arguments", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-runtime-context");
       const tempDir = yield* Effect.promise(() =>
@@ -257,6 +337,14 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           ],
         ],
       );
+      const permissionError = yield* adapter
+        .sendTurn({ threadId, input: "/always-approve on" })
+        .pipe(Effect.flip);
+      if (permissionError._tag !== "ProviderAdapterRequestError") {
+        assert.fail(`Unexpected error: ${permissionError._tag}`);
+      }
+      assert.include(permissionError.detail, "permission selector");
+      yield* adapter.sendTurn({ threadId, input: "/goal status" });
       yield* adapter.stopSession(threadId);
       const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
       const prompts = requests
@@ -264,7 +352,8 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         .map(
           (request) => (request.params as { prompt: Array<{ type: string; text: string }> }).prompt,
         );
-      assert.equal(prompts.length, 2);
+      assert.equal(prompts.length, 3);
+      assert.deepEqual(prompts[2], [{ type: "text", text: "/goal status" }]);
       assert.deepEqual(prompts[0]?.[0], { type: "text", text: "First prompt" });
       assert.include(prompts[0]?.[1]?.text, "Grok harness, as grok-mock-alt");
       assert.deepEqual(prompts[1]?.[0], { type: "text", text: "Second prompt" });
@@ -491,13 +580,19 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const turnCompleted = yield* Deferred.make<void>();
+      const secondTurnCompleted = yield* Deferred.make<void>();
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
         Effect.sync(() => {
           runtimeEvents.push(event);
         }).pipe(
-          Effect.andThen(
+          Effect.andThen(() =>
             event.type === "turn.completed"
-              ? Deferred.succeed(turnCompleted, undefined)
+              ? Deferred.succeed(
+                  runtimeEvents.filter((entry) => entry.type === "turn.completed").length === 2
+                    ? secondTurnCompleted
+                    : turnCompleted,
+                  undefined,
+                )
               : Effect.void,
           ),
         ),
@@ -563,6 +658,44 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.equal(turnCompletedEvent?.payload.stopReason, "end_turn");
       assert.equal(readySession?.status, "ready");
       assert.isUndefined(readySession?.activeTurnId);
+
+      const firstItemCompletion = runtimeEvents.findIndex(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "assistant_message",
+      );
+      assert.isAtLeast(firstItemCompletion, 0);
+      assert.isBelow(firstItemCompletion, terminalIndex);
+
+      const secondTurn = yield* adapter.sendTurn({ threadId, input: "/goal status" });
+      yield* Deferred.await(secondTurnCompleted);
+      const assistantItems = runtimeEvents.filter(
+        (event) =>
+          (event.type === "item.started" || event.type === "item.completed") &&
+          event.payload.itemType === "assistant_message",
+      );
+      const startedItems = assistantItems.filter((event) => event.type === "item.started");
+      const completedItems = assistantItems.filter((event) => event.type === "item.completed");
+      assert.equal(completedItems.length, startedItems.length);
+      assert.equal(new Set(startedItems.map((event) => event.itemId)).size, startedItems.length);
+      for (const turnId of [sendTurnResult.turnId, secondTurn.turnId]) {
+        assert.lengthOf(
+          startedItems.filter((event) => event.turnId === turnId),
+          1,
+        );
+      }
+      for (const started of startedItems) {
+        const completions = completedItems.filter((event) => event.itemId === started.itemId);
+        assert.lengthOf(completions, 1);
+        const completed = completions[0]!;
+        assert.equal(completed.turnId, started.turnId);
+        assert.isAbove(runtimeEvents.indexOf(completed), runtimeEvents.indexOf(started));
+        assert.isBelow(
+          runtimeEvents.indexOf(completed),
+          runtimeEvents.findIndex(
+            (event) => event.type === "turn.completed" && event.turnId === started.turnId,
+          ),
+        );
+      }
 
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);
@@ -1589,6 +1722,7 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const activeTurnIdRef = yield* Ref.make<TurnId | undefined>(undefined);
       const trailingChunkTurnId = yield* Deferred.make<TurnId>();
+      let receivedText = "";
       const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
         Effect.gen(function* () {
           runtimeEvents.push(event);
@@ -1598,7 +1732,11 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
           if (event.type === "turn.started") {
             yield* Ref.set(activeTurnIdRef, event.turnId);
           }
-          if (event.type !== "content.delta" || event.payload.delta !== "mock") {
+          if (event.type !== "content.delta") {
+            return;
+          }
+          receivedText += event.payload.delta;
+          if (receivedText !== "hello from mock") {
             return;
           }
           const turnId = event.turnId ?? (yield* Ref.get(activeTurnIdRef));

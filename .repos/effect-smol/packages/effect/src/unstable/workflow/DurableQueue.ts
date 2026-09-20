@@ -8,6 +8,14 @@
  * records the handler's `Exit` through that token so the original workflow can
  * continue with the typed success or error.
  *
+ * Delivery is at-least-once: a crash between handler success and the
+ * acknowledgement redelivers the item, so handlers must be idempotent. When an
+ * item exhausts its persisted queue attempts it is dead-lettered: the
+ * `DurableDeferred` never resolves and the workflow stays parked until the
+ * item is requeued out of band, while the id-based de-duplication prevents
+ * replays from resurrecting the failed item. Deployments should run
+ * `PersistedQueue.layerCleanup` in one instance to prune old completed items.
+ *
  * @since 4.0.0
  */
 import * as Effect from "../../Effect.ts"

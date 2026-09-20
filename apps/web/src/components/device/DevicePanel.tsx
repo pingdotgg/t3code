@@ -7,6 +7,7 @@ import type {
 import {
   ChevronLeft,
   Home,
+  PictureInPicture2,
   Power,
   RotateCcw,
   SlidersHorizontal,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
@@ -114,6 +116,19 @@ export function DevicePanel(props: {
     } finally {
       setPendingDevice(null);
     }
+  };
+
+  // Floating the device closes the panel, like the browser's floating preview.
+  const floatActive = () => {
+    if (!activeDevice) return;
+    usePreviewMiniPlayerStore.getState().open(props.threadRef, {
+      kind: "device",
+      hostId: activeDevice.hostId,
+      deviceId: activeDevice.id,
+      platform: activeDevice.platform,
+      name: activeDevice.name,
+    });
+    useRightPanelStore.getState().close(props.threadRef);
   };
 
   const closeActive = (powerOff: boolean) => {
@@ -218,6 +233,9 @@ export function DevicePanel(props: {
             >
               <SlidersHorizontal />
             </Toggle>
+            <DeviceButton label="Float device over chat" onClick={floatActive}>
+              <PictureInPicture2 />
+            </DeviceButton>
             <DeviceButton label="Power off" onClick={() => closeActive(true)}>
               <Power />
             </DeviceButton>
@@ -371,7 +389,7 @@ export function DevicePanel(props: {
               ) : null}
               {loaded && !hostBusy ? (
                 <Button
-                  className="self-start"
+                  className={grouped.length > 0 ? "self-start" : "self-center"}
                   variant={grouped.length > 0 ? "ghost" : "outline"}
                   size="sm"
                   onClick={() => void list({ environmentId, input: {} })}

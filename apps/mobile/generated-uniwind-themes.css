@@ -59,6 +59,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 12%);
       --color-adaptive-zinc-500-400: oklch(55.2% 0.016 285.938);
       --color-adaptive-zinc-600-300: oklch(44.2% 0.017 285.786);
+      --color-clerk-page: #f2f2f7;
+      --color-clerk-foreground: #262626;
+      --color-clerk-foreground-muted: #737373;
+      --color-clerk-border: rgba(229, 229, 234, 0.06);
+      --color-clerk-danger: #dc2626;
     }
 
     @variant dark {
@@ -119,6 +124,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 16%);
       --color-adaptive-zinc-500-400: oklch(70.5% 0.015 286.067);
       --color-adaptive-zinc-600-300: oklch(87.1% 0.006 286.286);
+      --color-clerk-page: #0e0e0e;
+      --color-clerk-foreground: #f5f5f5;
+      --color-clerk-foreground-muted: #a3a3a3;
+      --color-clerk-border: rgba(42, 42, 42, 0.06);
+      --color-clerk-danger: #fca5a5;
     }
 
     @variant t3-chat-light {
@@ -254,6 +264,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 12%);
       --color-adaptive-zinc-500-400: oklch(55.2% 0.016 285.938);
       --color-adaptive-zinc-600-300: oklch(44.2% 0.017 285.786);
+      --color-clerk-page: #f2f2f7;
+      --color-clerk-foreground: #262626;
+      --color-clerk-foreground-muted: #737373;
+      --color-clerk-border: rgba(229, 229, 234, 0.06);
+      --color-clerk-danger: #dc2626;
     }
 
     @variant t3-chat-dark {
@@ -389,6 +404,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 16%);
       --color-adaptive-zinc-500-400: oklch(70.5% 0.015 286.067);
       --color-adaptive-zinc-600-300: oklch(87.1% 0.006 286.286);
+      --color-clerk-page: #0e0e0e;
+      --color-clerk-foreground: #f5f5f5;
+      --color-clerk-foreground-muted: #a3a3a3;
+      --color-clerk-border: rgba(42, 42, 42, 0.06);
+      --color-clerk-danger: #fca5a5;
     }
 
     @variant grove-light {
@@ -524,6 +544,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 12%);
       --color-adaptive-zinc-500-400: oklch(55.2% 0.016 285.938);
       --color-adaptive-zinc-600-300: oklch(44.2% 0.017 285.786);
+      --color-clerk-page: #f2f2f7;
+      --color-clerk-foreground: #262626;
+      --color-clerk-foreground-muted: #737373;
+      --color-clerk-border: rgba(229, 229, 234, 0.06);
+      --color-clerk-danger: #dc2626;
     }
 
     @variant grove-dark {
@@ -659,6 +684,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 16%);
       --color-adaptive-zinc-500-400: oklch(70.5% 0.015 286.067);
       --color-adaptive-zinc-600-300: oklch(87.1% 0.006 286.286);
+      --color-clerk-page: #0e0e0e;
+      --color-clerk-foreground: #f5f5f5;
+      --color-clerk-foreground-muted: #a3a3a3;
+      --color-clerk-border: rgba(42, 42, 42, 0.06);
+      --color-clerk-danger: #fca5a5;
     }
 
     @variant ocean-light {
@@ -794,6 +824,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 12%);
       --color-adaptive-zinc-500-400: oklch(55.2% 0.016 285.938);
       --color-adaptive-zinc-600-300: oklch(44.2% 0.017 285.786);
+      --color-clerk-page: #f2f2f7;
+      --color-clerk-foreground: #262626;
+      --color-clerk-foreground-muted: #737373;
+      --color-clerk-border: rgba(229, 229, 234, 0.06);
+      --color-clerk-danger: #dc2626;
     }
 
     @variant ocean-dark {
@@ -929,6 +964,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 16%);
       --color-adaptive-zinc-500-400: oklch(70.5% 0.015 286.067);
       --color-adaptive-zinc-600-300: oklch(87.1% 0.006 286.286);
+      --color-clerk-page: #0e0e0e;
+      --color-clerk-foreground: #f5f5f5;
+      --color-clerk-foreground-muted: #a3a3a3;
+      --color-clerk-border: rgba(42, 42, 42, 0.06);
+      --color-clerk-danger: #fca5a5;
     }
 
     @variant ember-light {
@@ -1064,6 +1104,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 12%);
       --color-adaptive-zinc-500-400: oklch(55.2% 0.016 285.938);
       --color-adaptive-zinc-600-300: oklch(44.2% 0.017 285.786);
+      --color-clerk-page: #f2f2f7;
+      --color-clerk-foreground: #262626;
+      --color-clerk-foreground-muted: #737373;
+      --color-clerk-border: rgba(229, 229, 234, 0.06);
+      --color-clerk-danger: #dc2626;
     }
 
     @variant ember-dark {
@@ -1199,6 +1244,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 16%);
       --color-adaptive-zinc-500-400: oklch(70.5% 0.015 286.067);
       --color-adaptive-zinc-600-300: oklch(87.1% 0.006 286.286);
+      --color-clerk-page: #0e0e0e;
+      --color-clerk-foreground: #f5f5f5;
+      --color-clerk-foreground-muted: #a3a3a3;
+      --color-clerk-border: rgba(42, 42, 42, 0.06);
+      --color-clerk-danger: #fca5a5;
     }
 
     @variant iris-light {
@@ -1334,6 +1384,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 12%);
       --color-adaptive-zinc-500-400: oklch(55.2% 0.016 285.938);
       --color-adaptive-zinc-600-300: oklch(44.2% 0.017 285.786);
+      --color-clerk-page: #f2f2f7;
+      --color-clerk-foreground: #262626;
+      --color-clerk-foreground-muted: #737373;
+      --color-clerk-border: rgba(229, 229, 234, 0.06);
+      --color-clerk-danger: #dc2626;
     }
 
     @variant iris-dark {
@@ -1469,6 +1524,11 @@
       --color-adaptive-zinc-500-a12-a16: oklch(55.2% 0.016 285.938 / 16%);
       --color-adaptive-zinc-500-400: oklch(70.5% 0.015 286.067);
       --color-adaptive-zinc-600-300: oklch(87.1% 0.006 286.286);
+      --color-clerk-page: #0e0e0e;
+      --color-clerk-foreground: #f5f5f5;
+      --color-clerk-foreground-muted: #a3a3a3;
+      --color-clerk-border: rgba(42, 42, 42, 0.06);
+      --color-clerk-danger: #fca5a5;
     }
   }
 }

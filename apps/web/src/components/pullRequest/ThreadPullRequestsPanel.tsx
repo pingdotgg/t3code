@@ -3,13 +3,7 @@ import {
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
-import {
-  GitPullRequestArrow,
-  LayersIcon,
-  LinkIcon,
-  MoreHorizontalIcon,
-  PlusIcon,
-} from "lucide-react";
+import { ArrowUpRightIcon, LinkIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -28,10 +22,13 @@ import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
 import { pullRequestListLines, type PullRequestListLine } from "./pullRequestListLines";
 import {
   PullRequestActorAvatar,
+  PullRequestConflictGlyph,
   PullRequestDiffStat,
+  PullRequestApprovalGlyph,
   PullRequestStateGlyph,
   pullRequestChecksStatePresentation,
 } from "./pullRequestPresentation";
+import { PullRequestGlyph } from "./pullRequestIcons";
 
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   manual: "Linked by you",
@@ -83,12 +80,20 @@ function LinkRow({
     >
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
       {snapshot === null ? (
-        <GitPullRequestArrow
+        <PullRequestGlyph.pullRequest
           aria-label="Waiting for host state"
           className="size-4 shrink-0 text-muted-foreground"
         />
       ) : (
-        <PullRequestStateGlyph state={snapshot.state} isDraft={snapshot.isDraft} />
+        <span className="flex shrink-0 items-center gap-1">
+          <PullRequestStateGlyph state={snapshot.state} isDraft={snapshot.isDraft} />
+          <PullRequestConflictGlyph
+            state={snapshot.state}
+            isDraft={snapshot.isDraft}
+            baseBranch={snapshot.baseBranch}
+            {...(snapshot.mergeability ? { mergeability: snapshot.mergeability } : {})}
+          />
+        </span>
       )}
       <a
         href={link.url}
@@ -111,27 +116,20 @@ function LinkRow({
           <span className="min-w-0 flex-1 truncate text-sm">
             {snapshot?.title ?? link.repository}
           </span>
-          {/* Right-aligned signals, in the order a reviewer scans them: are checks green,
-              has someone ruled, how big is it. Each is absent rather than neutral when the
+          {/* Match the full PR list: review verdict, checks, then diff counts.
+              Each is absent rather than neutral when the
               host said nothing, so a row without them reads as unknown, not as fine. */}
           <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px]">
-            {snapshot?.checksState ? <ChecksGlyph state={snapshot.checksState} /> : null}
             {snapshot?.state === "open" &&
             (snapshot.reviewDecision === "approved" ||
               snapshot.reviewDecision === "changes-requested") ? (
-              <span
-                className={cn(
-                  snapshot.reviewDecision === "approved"
-                    ? "text-emerald-600/90 dark:text-emerald-400/80"
-                    : "text-amber-600/90 dark:text-amber-400/80",
-                )}
-              >
-                {snapshot.reviewDecision === "approved" ? "Approved" : "Changes requested"}
-              </span>
+              snapshot.reviewDecision === "approved" ? (
+                <PullRequestApprovalGlyph />
+              ) : (
+                <span className="text-amber-600/90 dark:text-amber-400/80">Changes requested</span>
+              )
             ) : null}
-            {snapshot?.state === "open" && snapshot.mergeability === "conflicting" ? (
-              <span className="text-destructive">Conflicts</span>
-            ) : null}
+            {snapshot?.checksState ? <ChecksGlyph state={snapshot.checksState} /> : null}
             <PullRequestDiffStat
               additions={snapshot?.additions ?? 0}
               deletions={snapshot?.deletions ?? 0}
@@ -147,11 +145,7 @@ function LinkRow({
                   <span className="inline-flex shrink-0 items-center gap-0.5 text-foreground/70" />
                 }
               >
-                {stack.kind === "native" ? (
-                  <LayersIcon aria-hidden className="size-3" />
-                ) : (
-                  <GitPullRequestArrow aria-hidden className="size-3" />
-                )}
+                <PullRequestGlyph.stack aria-hidden className="size-3" />
                 {stack.size}
               </TooltipTrigger>
               <TooltipPopup>
@@ -173,7 +167,7 @@ function LinkRow({
               : `${link.host}/${link.repository}`}
           </span>
           {snapshot?.updatedAt ? (
-            <span className="shrink-0">· {formatRelativeTimeLabel(snapshot.updatedAt)}</span>
+            <span className="ml-auto shrink-0">{formatRelativeTimeLabel(snapshot.updatedAt)}</span>
           ) : null}
         </span>
       </a>
@@ -193,9 +187,16 @@ function LinkRow({
           }
         />
         <MenuPopup align="end" side="bottom">
-          <MenuItem onClick={() => void writeTextToClipboard(link.url, "link")}>Copy link</MenuItem>
-          <MenuItem onClick={(event) => openPrLink(event, link.url, threadRef)}>Open</MenuItem>
+          <MenuItem onClick={() => void writeTextToClipboard(link.url, "link")}>
+            <LinkIcon className="size-3.5" />
+            Copy link
+          </MenuItem>
+          <MenuItem onClick={(event) => openPrLink(event, link.url, threadRef)}>
+            <ArrowUpRightIcon className="size-3.5" />
+            Open
+          </MenuItem>
           <MenuItem onClick={() => onUnlink(link)}>
+            <PullRequestGlyph.unlink className="size-3.5" />
             {link.source === "stack" ? "Dismiss from thread" : "Unlink from thread"}
           </MenuItem>
         </MenuPopup>
@@ -253,7 +254,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   if (links.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-        <LinkIcon aria-hidden className="size-6 text-muted-foreground/60" />
+        <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />
         <p className="text-sm font-medium">No linked pull requests</p>
         <p className="max-w-60 text-xs text-muted-foreground">
           Pull requests the agent opens from this thread land here. Link one yourself from a URL or

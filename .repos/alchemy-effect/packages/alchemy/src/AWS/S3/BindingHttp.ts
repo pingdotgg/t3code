@@ -1,7 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Binding from "../../Binding.ts";
 import * as Output from "../../Output.ts";
-import { isBindingHost } from "../Lambda/Function.ts";
+import {
+  hostAwsAccess,
+  withRuntimeCredentials,
+} from "../Lambda/BindingHttp.ts";
 import type { Bucket } from "./Bucket.ts";
 
 /**
@@ -14,8 +17,11 @@ import type { Bucket } from "./Bucket.ts";
  *
  * - the deploy-time half registers `Allow(host, tag(bucket))` with the
  *   requested actions on the bound bucket (object-level `${arn}/*` or the
- *   bucket ARN itself, per `iamResources`);
- * - the runtime callable injects the resolved bucket name as `Bucket`.
+ *   bucket ARN itself, per `iamResources`). On a Lambda host the statements
+ *   go on the function's role; on a Cloudflare Worker host they go on the
+ *   least-privilege role the Worker assumes (see `workerAwsAccess`);
+ * - the runtime callable injects the resolved bucket name as `Bucket` and,
+ *   on a Worker host, signs with the assumed role in the bucket's region.
  *
  * Genuinely-different bindings stay bespoke: `PresignGetObject` /
  * `PresignPutObject` (SigV4 presigners, not API operations).
@@ -28,8 +34,13 @@ export const makeBucketHttpBinding = <
 >(options: {
   /** Fully-qualified binding tag, e.g. `AWS.S3.GetObject`. */
   tag: string;
-  /** The distilled operation; `Bucket` is injected from the bound bucket. */
-  operation: Effect.Effect<(input: I) => Effect.Effect<A, E>, never, R>;
+  /**
+   * The distilled operation, called per request; `Bucket` is injected from
+   * the bound bucket. Its requirements (`Credentials`, `Region`,
+   * `HttpClient`) are ambient on a Lambda host and provided around each
+   * call on a Worker host.
+   */
+  operation: (input: I) => Effect.Effect<A, E, R>;
   /** IAM actions granted on the bound bucket. */
   actions: readonly string[];
   /**
@@ -49,43 +60,41 @@ export const makeBucketHttpBinding = <
   listBucket?: boolean;
 }) =>
   Effect.gen(function* () {
-    const op = yield* options.operation;
-
     return Effect.fn(function* <B extends Bucket>(bucket: B) {
       const BucketName = yield* bucket.bucketName;
-      if (!globalThis.__ALCHEMY_RUNTIME__) {
-        const host = yield* Binding.Host;
-        if (isBindingHost(host)) {
-          yield* host.bind`Allow(${host}, ${options.tag}(${bucket}))`({
-            policyStatements: [
-              {
-                Effect: "Allow",
-                Action: [...options.actions],
-                Resource:
-                  options.iamResources === "bucket"
-                    ? [bucket.bucketArn]
-                    : [Output.interpolate`${bucket.bucketArn}/*`],
-              },
-              ...(options.listBucket
-                ? [
-                    {
-                      Effect: "Allow" as const,
-                      Action: ["s3:ListBucket"],
-                      Resource: [bucket.bucketArn],
-                    },
-                  ]
-                : []),
-            ],
-          });
-        }
-      }
+      const BucketRegion = yield* bucket.region;
+      const host = yield* Binding.Host;
+      const access = yield* hostAwsAccess(host, () => ({
+        label: `Allow(${host?.LogicalId}, ${options.tag}(${bucket.LogicalId}))`,
+        policyStatements: [
+          {
+            Effect: "Allow",
+            Action: [...options.actions],
+            Resource:
+              options.iamResources === "bucket"
+                ? [bucket.bucketArn]
+                : [Output.interpolate`${bucket.bucketArn}/*`],
+          },
+          ...(options.listBucket
+            ? [
+                {
+                  Effect: "Allow" as const,
+                  Action: ["s3:ListBucket"],
+                  Resource: [bucket.bucketArn],
+                },
+              ]
+            : []),
+        ],
+      }));
       return Effect.fn(`${options.tag}(${bucket.LogicalId})`)(function* (
         request?: Omit<I, "Bucket">,
       ) {
-        return yield* op({
-          ...request,
-          Bucket: yield* BucketName,
-        } as I);
+        const Bucket = yield* BucketName;
+        return yield* withRuntimeCredentials(
+          access,
+          BucketRegion,
+          options.operation({ ...request, Bucket } as I),
+        ) as Effect.Effect<A, E>;
       });
     });
   });
