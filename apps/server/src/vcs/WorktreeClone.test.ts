@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { T3ProjectFile } from "@t3tools/contracts";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem has no forced-clone flag.
 import * as NodeFSP from "node:fs/promises";
@@ -16,6 +16,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
 import { ServerConfig } from "../config.ts";
+import { makeWorktreeDependencies } from "./WorktreeDependencies.ts";
 import { makeWorktreeClone } from "./WorktreeClone.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -90,8 +91,21 @@ const fixture = Effect.fn("fixture")(function* () {
       ),
     ));
   const clone = yield* makeWorktreeClone(driver.execute);
+  const warmDependencies = yield* makeWorktreeDependencies();
   const claim = () => git(cwd, ["worktree", "add", "--no-checkout", "-b", "feature", target]);
-  return { fs, path, driver, cwd, target, git, write, clone, claim, supportsClones };
+  return {
+    fs,
+    path,
+    driver,
+    cwd,
+    target,
+    git,
+    write,
+    clone,
+    warmDependencies,
+    claim,
+    supportsClones,
+  };
 });
 
 it.layer(TestLayer)("Worktree cloning", (it) => {
@@ -102,7 +116,10 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
         Effect.provideService(HostProcessPlatform, "freebsd"),
       );
       assert.equal(yield* clone.prepare(f.cwd, "HEAD"), null);
-      yield* clone.warmDependencies(f.cwd, f.target);
+      const warmDependencies = yield* makeWorktreeDependencies().pipe(
+        Effect.provideService(HostProcessPlatform, "freebsd"),
+      );
+      yield* warmDependencies(f.cwd, f.target);
       assert.isFalse(yield* f.fs.exists(f.target));
     }),
   );
@@ -273,6 +290,71 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
       }),
     );
 
+    it.effect("matches fresh Git checkout bytes for line endings and ident expansion", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.write(".gitattributes", "source.txt text eol=crlf\nident.txt ident\n");
+        yield* f.write("ident.txt", "$Id$\n");
+        yield* f.git(f.cwd, ["add", "."]);
+        yield* f.git(f.cwd, ["commit", "-m", "checkout conversions"]);
+        assert.equal((yield* f.git(f.cwd, ["status", "--porcelain"])).stdout, "");
+        const baseline = f.path.join(f.cwd, "..", "baseline");
+        yield* f.git(f.cwd, ["worktree", "add", "--detach", baseline, "HEAD"]);
+        const plan = yield* f.clone.prepare(f.cwd, "HEAD");
+        assert.isNotNull(plan);
+        assert.include(plan!.files, "large.bin");
+        yield* f.claim();
+        yield* f.clone.checkout(plan!, f.target);
+        for (const name of ["source.txt", "ident.txt"]) {
+          assert.equal(
+            yield* f.fs.readFileString(f.path.join(f.target, name)),
+            yield* f.fs.readFileString(f.path.join(baseline, name)),
+          );
+        }
+      }),
+    );
+
+    it.effect("uses ordinary checkout for automatic line-ending conversion", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.git(f.cwd, ["config", "core.autocrlf", "true"]);
+        yield* f.driver.createWorktree({
+          cwd: f.cwd,
+          path: f.target,
+          refName: "main",
+          newRefName: "feature",
+        });
+        assert.equal(
+          yield* f.fs.readFileString(f.path.join(f.target, "source.txt")),
+          "original\r\n",
+        );
+      }),
+    );
+
+    it.effect("uses Git file permissions instead of ignored source permission changes", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.git(f.cwd, ["config", "core.filemode", "false"]);
+        yield* f.fs.chmod(f.path.join(f.cwd, "source.txt"), 0o755);
+        yield* f.fs.chmod(f.path.join(f.cwd, "large.bin"), 0o444);
+        const baseline = f.path.join(f.cwd, "..", "baseline");
+        yield* f.git(f.cwd, ["worktree", "add", "--detach", baseline, "HEAD"]);
+        yield* f.driver.createWorktree({
+          cwd: f.cwd,
+          path: f.target,
+          refName: "main",
+          newRefName: "feature",
+        });
+        for (const name of ["source.txt", "large.bin"]) {
+          assert.equal(
+            (yield* f.fs.stat(f.path.join(f.target, name))).mode & 0o777,
+            (yield* f.fs.stat(f.path.join(baseline, name))).mode & 0o777,
+          );
+        }
+        assert.equal((yield* f.fs.stat(f.path.join(f.cwd, "source.txt"))).mode & 0o777, 0o755);
+      }),
+    );
+
     it.effect("uses Git for filters activated only in the destination worktree", () =>
       Effect.gen(function* () {
         const f = yield* fixture();
@@ -298,6 +380,49 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
       }),
     );
 
+    it.effect.skipIf(HostProcessPlatform.defaultValue() !== "darwin")(
+      "falls back without inheriting immutable APFS file flags",
+      () =>
+        Effect.gen(function* () {
+          const f = yield* fixture();
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const source = f.path.join(f.cwd, "source.txt");
+          const target = f.path.join(f.target, "source.txt");
+          yield* Effect.addFinalizer(() =>
+            spawner
+              .exitCode(
+                ChildProcess.make("/usr/bin/chflags", ["nouchg", source, target], {
+                  stderr: "ignore",
+                }),
+              )
+              .pipe(Effect.ignore),
+          );
+          yield* spawner.exitCode(ChildProcess.make("/usr/bin/chflags", ["uchg", source]));
+          yield* f.driver.createWorktree({
+            cwd: f.cwd,
+            path: f.target,
+            refName: "main",
+            newRefName: "feature",
+          });
+          yield* f.fs.writeFileString(target, "editable");
+          assert.equal(yield* f.fs.readFileString(source), "original\n");
+        }),
+    );
+
+    it.effect("does not seed dependencies when worktree creation does not run setup", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        yield* f.write("node_modules/pkg/index.js", "source");
+        yield* f.driver.createWorktree({
+          cwd: f.cwd,
+          path: f.target,
+          refName: "main",
+          newRefName: "feature",
+        });
+        assert.isFalse(yield* f.fs.exists(f.path.join(f.target, "node_modules")));
+      }),
+    );
+
     it.effect("seeds opted-in dependencies and relative links but rebuilds caches and shims", () =>
       Effect.gen(function* () {
         const f = yield* fixture();
@@ -312,6 +437,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
           refName: "main",
           newRefName: "feature",
         });
+        yield* f.warmDependencies(f.cwd, f.target);
         if (!f.supportsClones) {
           assert.isFalse(yield* f.fs.exists(f.path.join(f.target, "node_modules")));
           assert.isFalse(yield* f.fs.exists(f.path.join(f.target, "packages/child/node_modules")));
@@ -321,6 +447,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
           assert.equal((yield* f.git(f.target, ["status", "--porcelain"])).stdout, "");
           return;
         }
+
         assert.equal(
           yield* f.fs.readFileString(f.path.join(f.target, "node_modules/pkg/index.js")),
           "module.exports = 1",
@@ -360,13 +487,14 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
             refName: "main",
             newRefName: "feature",
           });
+          yield* f.warmDependencies(f.cwd, f.target);
           assert.isFalse(yield* f.fs.exists(f.path.join(f.target, "node_modules")));
           assert.isFalse(
             (yield* f.fs.readDirectory(f.target)).some((name) => name.startsWith(".t3-deps-")),
           );
           yield* f.fs.makeDirectory(f.path.join(f.target, "node_modules"));
           yield* f.fs.writeFileString(f.path.join(f.target, "node_modules/marker"), "hook");
-          yield* f.clone.warmDependencies(f.cwd, f.target);
+          yield* f.warmDependencies(f.cwd, f.target);
           assert.equal(
             yield* f.fs.readFileString(f.path.join(f.target, "node_modules/marker")),
             "hook",
@@ -384,7 +512,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
           { worktreeCloneDependencies: true },
         ]) {
           yield* f.fs.writeFileString(f.path.join(f.target, "t3.json"), encodeProject(config));
-          yield* f.clone.warmDependencies(f.cwd, f.target);
+          yield* f.warmDependencies(f.cwd, f.target);
           assert.isFalse(yield* f.fs.exists(f.path.join(f.target, "node_modules")));
         }
       }),
