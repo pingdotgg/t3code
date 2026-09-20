@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { afterAll, assert, beforeAll, describe, it, vi } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,6 +13,11 @@ import { ServerConfig } from "../config.ts";
 import { makeWorktreeDependencies } from "./WorktreeDependencies.ts";
 import { makeWorktreeClone } from "./WorktreeClone.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+
+// These tests deliberately vary repository config; suite-wide environment
+// overrides would otherwise mask core.autocrlf and core.filemode regressions.
+beforeAll(() => vi.stubEnv("GIT_CONFIG_COUNT", "0"));
+afterAll(() => vi.unstubAllEnvs());
 
 const encodeProject = Schema.encodeSync(Schema.fromJsonString(T3ProjectFile));
 
