@@ -354,6 +354,11 @@ describe("instance-scoped model selection", () => {
       availableModel: "gemini-3.1-pro",
       missingModel: "gemini-3.1-pro-high",
     },
+    {
+      driverName: "muse",
+      availableModel: "muse-spark-1.3-contributor",
+      missingModel: "muse-retired-model",
+    },
   ])("$driverName catalog gaps", ({ driverName, availableModel, missingModel }) => {
     it("preserves a selected model when a catalog refresh no longer contains it", () => {
       const providers = [
@@ -569,68 +574,74 @@ describe("instance-scoped model selection", () => {
     expect(state.modelOptions?.[instanceId]).toEqual(draftSelection.options);
   });
 
-  it("preserves the Antigravity model in drafts and existing threads after sign-out", () => {
-    const instanceId = ProviderInstanceId.make("antigravity_work");
-    const driver = ProviderDriverKind.make("antigravity");
-    const saved = createModelSelection(instanceId, "gemini-3.1-pro-high");
-    const providers = [
-      {
-        ...provider({ provider: driver, instanceId, models: [] }),
-        status: "error" as const,
-        auth: { status: "unauthenticated" as const },
-      },
-    ];
-    for (const draft of [
-      null,
-      { activeProvider: instanceId, modelSelectionByProvider: { [instanceId]: saved } },
-    ]) {
-      const state = deriveEffectiveComposerModelState({
-        draft,
-        providers,
-        selectedProvider: driver,
-        selectedInstanceId: instanceId,
-        threadModelSelection: saved,
-        projectModelSelection: null,
-        settings: settingsWithProviderInstances(),
-      });
-      expect(state.selectedModel).toBe(saved.model);
-    }
-  });
-
-  it("does not borrow a default model while a new Antigravity account has no catalog", () => {
-    const driver = ProviderDriverKind.make("antigravity");
-    const instanceId = ProviderInstanceId.make("antigravity_work");
-    const providers = [
-      provider({ instanceId: "codex", models: ["gpt-5.6-sol"] }),
-      provider({ provider: driver, instanceId: "antigravity", models: ["gemini-other-account"] }),
-      provider({ provider: driver, instanceId, models: [] }),
-    ];
-
-    const otherAccountId = ProviderInstanceId.make("antigravity");
-    for (const draft of [
-      null,
-      {
-        activeProvider: instanceId,
-        modelSelectionByProvider: {
-          [otherAccountId]: createModelSelection(otherAccountId, "gemini-other-account"),
+  it.each(["antigravity", "muse"])(
+    "preserves the %s model in drafts and existing threads after sign-out",
+    (driverName) => {
+      const instanceId = ProviderInstanceId.make(`${driverName}_work`);
+      const driver = ProviderDriverKind.make(driverName);
+      const saved = createModelSelection(instanceId, "gemini-3.1-pro-high");
+      const providers = [
+        {
+          ...provider({ provider: driver, instanceId, models: [] }),
+          status: "error" as const,
+          auth: { status: "unauthenticated" as const },
         },
-      },
-    ]) {
-      const state = deriveEffectiveComposerModelState({
-        draft,
-        providers,
-        selectedProvider: driver,
-        selectedInstanceId: instanceId,
-        threadModelSelection: null,
-        projectModelSelection: createModelSelection(
-          ProviderInstanceId.make("codex"),
-          "gpt-5.6-sol",
-        ),
-        settings: settingsWithProviderInstances(),
-      });
-      expect(state.selectedModel).toBe("");
-    }
-  });
+      ];
+      for (const draft of [
+        null,
+        { activeProvider: instanceId, modelSelectionByProvider: { [instanceId]: saved } },
+      ]) {
+        const state = deriveEffectiveComposerModelState({
+          draft,
+          providers,
+          selectedProvider: driver,
+          selectedInstanceId: instanceId,
+          threadModelSelection: saved,
+          projectModelSelection: null,
+          settings: settingsWithProviderInstances(),
+        });
+        expect(state.selectedModel).toBe(saved.model);
+      }
+    },
+  );
+
+  it.each(["antigravity", "muse"])(
+    "does not borrow a default model while a new %s account has no catalog",
+    (driverName) => {
+      const driver = ProviderDriverKind.make(driverName);
+      const instanceId = ProviderInstanceId.make(`${driverName}_work`);
+      const providers = [
+        provider({ instanceId: "codex", models: ["gpt-5.6-sol"] }),
+        provider({ provider: driver, instanceId: driverName, models: ["gemini-other-account"] }),
+        provider({ provider: driver, instanceId, models: [] }),
+      ];
+
+      const otherAccountId = ProviderInstanceId.make(driverName);
+      for (const draft of [
+        null,
+        {
+          activeProvider: instanceId,
+          modelSelectionByProvider: {
+            [otherAccountId]: createModelSelection(otherAccountId, "gemini-other-account"),
+          },
+        },
+      ]) {
+        const state = deriveEffectiveComposerModelState({
+          draft,
+          providers,
+          selectedProvider: driver,
+          selectedInstanceId: instanceId,
+          threadModelSelection: null,
+          projectModelSelection: createModelSelection(
+            ProviderInstanceId.make("codex"),
+            "gpt-5.6-sol",
+          ),
+          settings: settingsWithProviderInstances(),
+        });
+        expect(state.selectedModel).toBe("");
+      }
+    },
+  );
 
   it("offers only account catalog models for Antigravity despite custom model settings", () => {
     const driver = ProviderDriverKind.make("antigravity");
