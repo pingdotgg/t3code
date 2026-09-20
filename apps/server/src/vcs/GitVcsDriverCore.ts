@@ -3056,7 +3056,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+    const worktreePath = path.resolve(
+      input.cwd,
+      input.path ?? path.join(worktreesDir, repoName, sanitizedBranch),
+    );
     const clonePlan = yield* worktreeClone.prepare(input.cwd, input.refName);
     const checkoutArgs = clonePlan ? ["--no-checkout"] : [];
     const args = input.newRefName
