@@ -49,6 +49,7 @@ export const layer = Layer.effect(
             return next;
           }),
       );
+      yield* run;
     });
     const tick = Ref.get(sources).pipe(
       Effect.flatMap((current) =>

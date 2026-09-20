@@ -17,8 +17,8 @@ it.effect("keeps other sources running after a source defects", () =>
       Queue.offer(receipts, "broken").pipe(Effect.andThen(Effect.die("fixture failure"))),
     );
     yield* scheduler.register("healthy", Queue.offer(receipts, "healthy").pipe(Effect.asVoid));
-    for (let tick = 0; tick < 2; tick += 1) {
-      yield* TestClock.adjust("5 seconds");
+    for (let tick = 0; tick < 3; tick += 1) {
+      if (tick > 0) yield* TestClock.adjust("5 seconds");
       assert.deepEqual([yield* Queue.take(receipts), yield* Queue.take(receipts)].sort(), [
         "broken",
         "healthy",
@@ -42,7 +42,6 @@ it.effect("does not overlap slow work or hold up another source", () =>
       ),
     );
     yield* scheduler.register("healthy", Queue.offer(receipts, undefined).pipe(Effect.asVoid));
-    yield* TestClock.adjust("5 seconds");
     yield* Deferred.await(started);
     yield* Queue.take(receipts);
     yield* TestClock.adjust("10 seconds");
@@ -74,12 +73,12 @@ it.effect("unregisters closed sources and interrupts their in-flight work", () =
         )
         .pipe(Effect.andThen(Effect.never)),
     ).pipe(Effect.forkChild);
-    yield* TestClock.adjust("5 seconds");
     yield* Deferred.await(started);
     yield* Fiber.interrupt(registration);
     yield* Deferred.await(stopped);
     const receipts = yield* Queue.unbounded<void>();
     yield* scheduler.register("remaining", Queue.offer(receipts, undefined).pipe(Effect.asVoid));
+    yield* Queue.take(receipts);
     yield* TestClock.adjust("5 seconds");
     yield* Queue.take(receipts);
     assert.equal(yield* Ref.get(runs), 1);
