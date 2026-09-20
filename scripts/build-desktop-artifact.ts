@@ -1691,6 +1691,25 @@ const runCommand = Effect.fn("runCommand")(function* (
   }
 });
 
+// The packaged web client must use the same version as the desktop manifest,
+// even when a direct build does not rewrite the workspace package versions.
+export const buildDesktopBundles = Effect.fn("buildDesktopBundles")(function* (
+  repoRoot: string,
+  appVersion: string,
+  verbose: boolean,
+) {
+  const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
+  yield* runCommand(
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      cwd: repoRoot,
+      shell: spawnCommand.shell,
+      env: { APP_VERSION: appVersion },
+      extendEnv: true,
+    }),
+    { label: "vp run build:desktop", verbose },
+  );
+});
+
 const desktopBuildProbeSucceeds = Effect.fn("desktopBuildProbeSucceeds")(function* (
   command: ChildProcess.Command,
   label: string,
@@ -3414,14 +3433,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
-    const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
-    yield* runCommand(
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        cwd: repoRoot,
-        shell: spawnCommand.shell,
-      }),
-      { label: "vp run build:desktop", verbose: options.verbose },
-    );
+    yield* buildDesktopBundles(repoRoot, appVersion, options.verbose);
   }
 
   const requiredBuildInputs = [
