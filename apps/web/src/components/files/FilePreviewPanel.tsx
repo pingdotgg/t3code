@@ -21,6 +21,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
+import { fileBasename } from "@t3tools/client-runtime/markdown-links";
 import { Code2, Eye, FolderTree, Globe2, Table2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -949,9 +950,12 @@ export default function FilePreviewPanel({
   // A chat link cannot tell a folder from a file, so a folder arrives here as
   // a file surface and the read fails. Keep the breadcrumbs, drop the preview
   // pane, and let the tree fill the surface with the folder revealed. Mutation
-  // refresh stays on so the surface notices if the path becomes a file. A host
-  // path cannot be revealed in the workspace tree, so it keeps the read error.
-  const isDirectory = file.isNotFile && !isHostFile;
+  // refresh stays on so the surface notices if the path becomes a file. Host
+  // directories get their own explorer root; child links must stay absolute
+  // because the chat still belongs to the original workspace.
+  const isDirectory = file.isNotFile && attachment === undefined;
+  const hostDirectory = isDirectory && isHostFile ? relativePath : null;
+  const explorerCwd = hostDirectory ?? cwd;
   // Everything preview-related keys off previewPath; a folder has no preview.
   const previewPath = isDirectory ? null : relativePath;
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
@@ -1292,11 +1296,12 @@ export default function FilePreviewPanel({
             )}
           >
             <FileBrowserPanel
-              key={`${environmentId}:${cwd}`}
+              key={`${environmentId}:${explorerCwd}`}
               environmentId={environmentId}
-              cwd={cwd}
-              projectName={projectName}
-              selectedPath={relativePath}
+              cwd={explorerCwd}
+              projectName={hostDirectory ? fileBasename(hostDirectory) : projectName}
+              absolutePaths={hostDirectory !== null}
+              selectedPath={hostDirectory !== null ? null : relativePath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}

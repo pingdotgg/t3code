@@ -7,7 +7,7 @@ import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
@@ -27,11 +27,14 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+import { resolvePathLinkTarget } from "~/terminal-links";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  /** An explorer outside the chat workspace emits absolute file and mention paths. */
+  absolutePaths?: boolean;
   /** Entry currently open in the surface; revealed and selected in the tree. A directory is expanded. */
   selectedPath: string | null;
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
@@ -98,6 +101,7 @@ export default function FileBrowserPanel({
   environmentId,
   cwd,
   projectName,
+  absolutePaths = false,
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
@@ -107,6 +111,10 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
+  const resolveEntryPath = useCallback(
+    (path: string) => (absolutePaths ? resolvePathLinkTarget(path, cwd) : path),
+    [absolutePaths, cwd],
+  );
   const {
     entries: directoryEntries,
     load,
@@ -170,7 +178,7 @@ export default function FileBrowserPanel({
       return;
     }
     const relativePath = item.path.replace(/\/$/, "");
-    const mention = serializeComposerFileLink(relativePath);
+    const mention = serializeComposerFileLink(resolveEntryPath(relativePath));
     const pointer = contextMenuPointerRef.current;
     const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
     const anchorRect = context.anchorElement.getBoundingClientRect();
@@ -243,8 +251,9 @@ export default function FileBrowserPanel({
     () =>
       createFileTreeDragMentionController({
         deselect: (path) => treeModelRef.current?.getItem(path)?.deselect(),
+        resolvePath: resolveEntryPath,
       }),
-    [],
+    [resolveEntryPath, treeModelRef],
   );
   const { model } = useFileTree({
     composition: {
@@ -278,7 +287,7 @@ export default function FileBrowserPanel({
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
         treeSelectionPathRef.current = selectedPath;
-        onOpenFile(selectedPath);
+        onOpenFile(resolveEntryPath(selectedPath));
       }
     },
     paths: [],
@@ -465,7 +474,7 @@ export default function FileBrowserPanel({
   const panelRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     treeModelRef.current = model;
-  }, [model]);
+  }, [model, treeModelRef]);
   useEffect(() => {
     const panel = panelRef.current;
     if (panel === null) {
