@@ -8,15 +8,12 @@ import {
   type EnvironmentMachineKind,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import type { MenuAction } from "@react-native-menu/menu";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
-import { SymbolView } from "../../components/AppSymbol";
 import { useNavigation } from "@react-navigation/native";
+import { ScreenHeader } from "../../components/ScreenHeader";
+import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useMemo, useRef, type ComponentProps } from "react";
 import {
-  TextInput,
   ActivityIndicator,
-  Platform,
   Pressable,
   RefreshControl,
   useWindowDimensions,
@@ -26,25 +23,98 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { AppText as Text } from "../../components/AppText";
-import { ControlPillMenu } from "../../components/ControlPill";
 import { EmptyState } from "../../components/EmptyState";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import {
-  createNativeMailSearchToolbarItem,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
-} from "../layout/native-mail-search-toolbar";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
 
 export interface ArchivedThreadsHeaderEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+}
+
+function ArchivedThreadsHeader(props: {
+  readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
+  readonly searchQuery: string;
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly sortOrder: ArchivedThreadSortOrder;
+  readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
+  readonly onRefresh: () => void;
+  readonly onSearchQueryChange: (query: string) => void;
+  readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
+}) {
+  const navigation = useNavigation();
+  const { width } = useWindowDimensions();
+  const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
+  return (
+    <ScreenHeader
+      title="Archived threads"
+      sidebar={false}
+      onBack={() => navigation.goBack()}
+      search={{
+        value: props.searchQuery,
+        onChangeText: props.onSearchQueryChange,
+        placeholder: "Search archived threads",
+        compactPlaceholder: "Search",
+        mode: "inline",
+        compactToolbar: width < 700,
+        onRefresh: props.onRefresh,
+        refreshInToolbar: true,
+        refreshAccessibilityLabel: "Refresh archived threads",
+      }}
+      menus={[
+        {
+          title: "Archived thread options",
+          icon: hasCustomFilter
+            ? "line.3.horizontal.decrease.circle.fill"
+            : "line.3.horizontal.decrease.circle",
+          items: [
+            {
+              id: "environment",
+              title: "Environment",
+              items: [
+                {
+                  id: "environment:all",
+                  title: "All environments",
+                  selected: props.selectedEnvironmentId === null,
+                  onPress: () => props.onEnvironmentChange(null),
+                },
+                ...props.environments.map((environment) => ({
+                  id: `environment:${environment.environmentId}`,
+                  title: environment.label,
+                  selected: props.selectedEnvironmentId === environment.environmentId,
+                  onPress: () => props.onEnvironmentChange(environment.environmentId),
+                })),
+              ],
+            },
+            {
+              id: "sort",
+              title: "Sort by archived date",
+              items: [
+                {
+                  id: "sort:newest",
+                  title: "Newest first",
+                  selected: props.sortOrder === "newest",
+                  onPress: () => props.onSortOrderChange("newest"),
+                },
+                {
+                  id: "sort:oldest",
+                  title: "Oldest first",
+                  selected: props.sortOrder === "oldest",
+                  onPress: () => props.onSortOrderChange("oldest"),
+                },
+              ],
+            },
+          ],
+        },
+      ]}
+    />
+  );
 }
 
 type ArchivedThreadListItem =
@@ -63,309 +133,6 @@ type ArchivedThreadListItem =
       readonly isLast: boolean;
       readonly thread: EnvironmentThreadShell;
     };
-
-function ArchivedThreadsHeader(props: {
-  readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
-  readonly searchQuery: string;
-  readonly selectedEnvironmentId: EnvironmentId | null;
-  readonly sortOrder: ArchivedThreadSortOrder;
-  readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
-  readonly onRefresh: () => void;
-  readonly onSearchQueryChange: (query: string) => void;
-  readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
-}) {
-  const { width } = useWindowDimensions();
-  const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
-  const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
-  const usesNativeChrome = Platform.OS === "ios";
-  const usesCompactMailToolbar =
-    Platform.OS === "ios" && width < 700 && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
-  const androidFilterActions = useMemo<MenuAction[]>(
-    () => [
-      {
-        id: "environment",
-        title: "Environment",
-        subactions: [
-          {
-            id: "environment:all",
-            title: "All environments",
-            state: props.selectedEnvironmentId === null ? ("on" as const) : undefined,
-          },
-          ...props.environments.map((environment) => ({
-            id: `environment:${environment.environmentId}`,
-            title: environment.label,
-            state:
-              props.selectedEnvironmentId === environment.environmentId
-                ? ("on" as const)
-                : undefined,
-          })),
-        ],
-      },
-      {
-        id: "sort",
-        title: "Sort by archived date",
-        subactions: [
-          {
-            id: "sort:newest",
-            title: "Newest first",
-            state: props.sortOrder === "newest" ? ("on" as const) : undefined,
-          },
-          {
-            id: "sort:oldest",
-            title: "Oldest first",
-            state: props.sortOrder === "oldest" ? ("on" as const) : undefined,
-          },
-        ],
-      },
-    ],
-    [props.environments, props.selectedEnvironmentId, props.sortOrder],
-  );
-  const handleAndroidFilterAction = useCallback(
-    (event: { nativeEvent: { event: string } }) => {
-      const action = event.nativeEvent.event;
-      if (action === "environment:all") {
-        props.onEnvironmentChange(null);
-      } else if (action.startsWith("environment:")) {
-        props.onEnvironmentChange(action.slice("environment:".length) as EnvironmentId);
-      } else if (action === "sort:newest") {
-        props.onSortOrderChange("newest");
-      } else if (action === "sort:oldest") {
-        props.onSortOrderChange("oldest");
-      }
-    },
-    [props.onEnvironmentChange, props.onSortOrderChange],
-  );
-
-  if (Platform.OS === "android") {
-    // Single header row matching the app's Android chrome (AndroidScreenHeader
-    // palette): back chevron, inline search, filter menu.
-    return (
-      <>
-        <NativeStackScreenOptions options={{ headerShown: false }} />
-        <View
-          className="border-b border-header-border bg-header px-3 pb-2.5"
-          style={{
-            paddingTop: Math.max(insets.top, 12),
-            borderBottomWidth: 0,
-          }}
-        >
-          <View className="min-h-12 flex-row items-center gap-2">
-            <Pressable
-              accessibilityLabel="Navigate up"
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => navigation.goBack()}
-              className="size-11 items-center justify-center"
-            >
-              <SymbolView
-                name="chevron.left"
-                size={24}
-                tintColorClassName="accent-foreground"
-                type="monochrome"
-              />
-            </Pressable>
-            <View className="min-h-11 flex-1 flex-row items-center gap-2.5 rounded-2xl bg-input px-3.5">
-              <SymbolView
-                name="magnifyingglass"
-                size={17}
-                tintColorClassName="accent-icon"
-                type="monochrome"
-              />
-              <TextInput
-                accessibilityLabel="Search archived threads"
-                autoCapitalize="none"
-                onChangeText={props.onSearchQueryChange}
-                value={props.searchQuery}
-                placeholder="Search archived threads"
-                placeholderTextColorClassName="accent-placeholder"
-                className="flex-1 py-2 text-base font-sans text-foreground"
-              />
-            </View>
-            <ControlPillMenu
-              actions={androidFilterActions}
-              isAnchoredToRight
-              onPressAction={handleAndroidFilterAction}
-            >
-              <Pressable
-                accessibilityLabel="Filter and sort archived threads"
-                accessibilityRole="button"
-                className="size-11 items-center justify-center rounded-full bg-subtle"
-              >
-                <SymbolView
-                  name={
-                    hasCustomFilter
-                      ? "line.3.horizontal.decrease.circle.fill"
-                      : "line.3.horizontal.decrease.circle"
-                  }
-                  size={16}
-                  tintColorClassName="accent-icon"
-                  type="monochrome"
-                />
-              </Pressable>
-            </ControlPillMenu>
-          </View>
-        </View>
-      </>
-    );
-  }
-  const archiveFilterMenu = {
-    title: "Archived thread options",
-    items: [
-      {
-        type: "submenu" as const,
-        title: "Environment",
-        items: [
-          {
-            type: "action" as const,
-            title: "All environments",
-            state: props.selectedEnvironmentId === null ? ("on" as const) : ("off" as const),
-            onPress: () => props.onEnvironmentChange(null),
-          },
-          ...props.environments.map((environment) => ({
-            type: "action" as const,
-            title: environment.label,
-            state:
-              props.selectedEnvironmentId === environment.environmentId
-                ? ("on" as const)
-                : ("off" as const),
-            onPress: () => props.onEnvironmentChange(environment.environmentId),
-          })),
-        ],
-      },
-      {
-        type: "submenu" as const,
-        title: "Sort by archived date",
-        items: [
-          {
-            type: "action" as const,
-            title: "Newest first",
-            state: props.sortOrder === "newest" ? ("on" as const) : ("off" as const),
-            onPress: () => props.onSortOrderChange("newest"),
-          },
-          {
-            type: "action" as const,
-            title: "Oldest first",
-            state: props.sortOrder === "oldest" ? ("on" as const) : ("off" as const),
-            onPress: () => props.onSortOrderChange("oldest"),
-          },
-        ],
-      },
-    ],
-  };
-
-  return (
-    <>
-      {/* Static header config (glass preset + title) lives in Stack.tsx; only
-          dynamic toolbar/search wiring is set here. */}
-      <NativeStackScreenOptions
-        options={{
-          unstable_headerToolbarItems: usesCompactMailToolbar
-            ? () => [
-                createNativeMailSearchToolbarItem({
-                  composeButtonId: "archived-refresh",
-                  composeSystemImageName: "arrow.clockwise",
-                  filterMenu: archiveFilterMenu,
-                  filterButtonId: "archived-filter",
-                  filterSystemImageName: hasCustomFilter
-                    ? "line.3.horizontal.decrease.circle.fill"
-                    : "line.3.horizontal.decrease",
-                  onComposePress: props.onRefresh,
-                  onSearchTextChange: props.onSearchQueryChange,
-                  placeholder: "Search",
-                  searchTextChangeId: "archived-search-text",
-                }),
-              ]
-            : undefined,
-          headerSearchBarOptions: usesCompactMailToolbar
-            ? undefined
-            : {
-                ...(usesNativeChrome
-                  ? {
-                      allowToolbarIntegration: true,
-                      // "integratedButton" is an iOS 26 search-bar placement;
-                      // pre-glass iOS keeps the default pull-down placement.
-                      ...(NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
-                        ? { placement: "integratedButton" as const }
-                        : null),
-                    }
-                  : {
-                      placement: "stacked" as const,
-                    }),
-                autoCapitalize: "none",
-                hideNavigationBar: false,
-                obscureBackground: false,
-                placeholder: "Search archived threads",
-                onChangeText: (event) => {
-                  props.onSearchQueryChange(event.nativeEvent.text);
-                },
-                onCancelButtonPress: () => {
-                  props.onSearchQueryChange("");
-                },
-              },
-        }}
-      />
-
-      {usesCompactMailToolbar ? null : (
-        <NativeHeaderToolbar placement="right">
-          {usesNativeChrome ? (
-            <NativeHeaderToolbar.Button
-              accessibilityLabel="Refresh archived threads"
-              icon="arrow.clockwise"
-              onPress={props.onRefresh}
-              separateBackground
-            />
-          ) : null}
-          <NativeHeaderToolbar.Menu
-            accessibilityLabel="Filter and sort archived threads"
-            icon={
-              hasCustomFilter
-                ? "line.3.horizontal.decrease.circle.fill"
-                : "line.3.horizontal.decrease.circle"
-            }
-            separateBackground
-            title="Archived thread options"
-          >
-            <NativeHeaderToolbar.Menu title="Environment">
-              <NativeHeaderToolbar.Label>Environment</NativeHeaderToolbar.Label>
-              <NativeHeaderToolbar.MenuAction
-                isOn={props.selectedEnvironmentId === null}
-                onPress={() => props.onEnvironmentChange(null)}
-              >
-                <NativeHeaderToolbar.Label>All environments</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
-              {props.environments.map((environment) => (
-                <NativeHeaderToolbar.MenuAction
-                  key={environment.environmentId}
-                  isOn={props.selectedEnvironmentId === environment.environmentId}
-                  onPress={() => props.onEnvironmentChange(environment.environmentId)}
-                >
-                  <NativeHeaderToolbar.Label>{environment.label}</NativeHeaderToolbar.Label>
-                </NativeHeaderToolbar.MenuAction>
-              ))}
-            </NativeHeaderToolbar.Menu>
-
-            <NativeHeaderToolbar.Menu title="Sort by archived date">
-              <NativeHeaderToolbar.Label>Sort by archived date</NativeHeaderToolbar.Label>
-              <NativeHeaderToolbar.MenuAction
-                isOn={props.sortOrder === "newest"}
-                onPress={() => props.onSortOrderChange("newest")}
-              >
-                <NativeHeaderToolbar.Label>Newest first</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
-              <NativeHeaderToolbar.MenuAction
-                isOn={props.sortOrder === "oldest"}
-                onPress={() => props.onSortOrderChange("oldest")}
-              >
-                <NativeHeaderToolbar.Label>Oldest first</NativeHeaderToolbar.Label>
-              </NativeHeaderToolbar.MenuAction>
-            </NativeHeaderToolbar.Menu>
-          </NativeHeaderToolbar.Menu>
-        </NativeHeaderToolbar>
-      )}
-    </>
-  );
-}
 
 function ProjectGroupLabel(props: {
   readonly environmentLabel: string | null;
@@ -636,7 +403,9 @@ export function ArchivedThreadsScreen(props: {
   }, [isFiltered, isInitialLoad]);
 
   return (
-    <View className="flex-1 bg-sheet">
+    // Keep the list inside this native container. Form-sheet resizing otherwise
+    // treats the flattened background as a header and shrinks the list to zero.
+    <View collapsable={false} className="flex-1 bg-sheet">
       <ArchivedThreadsHeader
         environments={props.environments}
         searchQuery={props.searchQuery}

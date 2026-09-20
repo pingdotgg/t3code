@@ -31,6 +31,7 @@ import type {
   PullRequestReviewerKind,
   PullRequestLabelCandidateList,
   PullRequestState,
+  PullRequestPreview,
   PullRequestUpdateMethod,
   PullRequestViewerPermissions,
   SourceControlProviderKind,
@@ -399,6 +400,14 @@ export interface PullRequestProviderApi {
   readonly getChangeRequest: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
+
+  /** Hosts without a narrow read use their existing detail response for hover cards. */
+  readonly getChangeRequestPreview?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<
+    Omit<PullRequestPreview, "projectId" | "repository">,
+    PullRequestProviderError
+  >;
 
   /**
    * The cheap live fields used by linked threads. Optional because a provider without a narrow

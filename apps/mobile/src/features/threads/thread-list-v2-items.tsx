@@ -1,3 +1,11 @@
+import {
+  THREAD_LIST_V2_MONO_FONT as MONO_FONT,
+  THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
+  THREAD_LIST_V2_ROW_DIVIDERS,
+  selectedThreadRowColors,
+  getThreadListV2NewBranchMenuTitle,
+  getThreadListV2RowAppearance,
+} from "./thread-list-v2-row-appearance";
 import { RowPressable } from "../../components/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -13,7 +21,7 @@ import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/t
 import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
-import { Alert, Platform, Pressable, useWindowDimensions, View } from "react-native";
+import { Alert, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -48,12 +56,6 @@ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
  * long-press actions. State reads through colored status labels and text
  * hierarchy rather than card fills.
  */
-
-const MONO_FONT = Platform.select({
-  ios: "Menlo",
-  android: "monospace",
-  default: "monospace",
-});
 
 // Status hues follow the system-wide convention set by sidebar v1 and the
 // Live Activity/widgets (amber approval, indigo input, sky working) so a
@@ -477,23 +479,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const pr = useThreadPr(thread);
 
   const theme = useUniwindTheme();
-  const screenColor = theme["--color-screen"];
-  const drawerColor = theme["--color-drawer"];
-  const selectedBackgroundColor =
-    theme[Platform.OS === "android" ? "--color-thread-selected" : "--color-user-bubble"];
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
-  // The provider badge's border blends into the row's own surface, which
-  // differs by pane and (for the sidebar pane) selection: the sidebar row
-  // background becomes the selected fill or the drawer surface, while the
-  // flat "screen" pane rows always sit on the screen background.
-  const providerIconSurfaceColor = sidebarPane
-    ? selected
-      ? selectedBackgroundColor
-      : Platform.OS === "android"
-        ? screenColor
-        : drawerColor
-    : screenColor;
+  const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
   const status = resolveThreadListV2Status(thread);
   const statusLabel = STATUS_LABEL_BY_STATUS[status];
@@ -788,11 +776,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         <Text
           className={cn(
             "flex-1 text-sm font-t3-medium",
-            selected
-              ? Platform.OS === "android"
-                ? "text-thread-selected-foreground-muted"
-                : "text-user-bubble-foreground-muted"
-              : "text-foreground-muted",
+            selected ? selectedThreadRowColors.mutedForegroundClassName : "text-foreground-muted",
           )}
           numberOfLines={1}
         >
@@ -811,9 +795,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           className={cn(
             "text-xs tabular-nums",
             selected
-              ? Platform.OS === "android"
-                ? "text-thread-selected-foreground"
-                : "text-user-bubble-foreground"
+              ? selectedThreadRowColors.foregroundClassName
               : (statusLabel?.className ?? "text-foreground-tertiary"),
           )}
         >
@@ -823,11 +805,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       <Text
         className={cn(
           "mt-1 text-base font-t3-medium",
-          selected
-            ? Platform.OS === "android"
-              ? "text-thread-selected-foreground"
-              : "text-user-bubble-foreground"
-            : "text-foreground",
+          selected ? selectedThreadRowColors.foregroundClassName : "text-foreground",
         )}
         numberOfLines={2}
       >
@@ -848,9 +826,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             className={cn(
               "flex-1 text-xs",
               selected
-                ? Platform.OS === "android"
-                  ? "text-thread-selected-foreground-muted"
-                  : "text-user-bubble-foreground-muted"
+                ? selectedThreadRowColors.mutedForegroundClassName
                 : "text-danger-foreground",
             )}
             numberOfLines={1}
@@ -869,9 +845,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               className={cn(
                 "shrink text-xs",
                 selected
-                  ? Platform.OS === "android"
-                    ? "text-thread-selected-foreground-muted"
-                    : "text-user-bubble-foreground-muted"
+                  ? selectedThreadRowColors.mutedForegroundClassName
                   : "text-foreground-muted",
               )}
               numberOfLines={1}
@@ -881,9 +855,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   className={cn(
                     "text-xs",
                     selected
-                      ? Platform.OS === "android"
-                        ? "text-thread-selected-foreground-muted"
-                        : "text-user-bubble-foreground-muted"
+                      ? selectedThreadRowColors.mutedForegroundClassName
                       : "text-foreground-muted",
                   )}
                   style={{ fontFamily: MONO_FONT }}
@@ -897,9 +869,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   className={cn(
                     "text-xs",
                     selected
-                      ? Platform.OS === "android"
-                        ? "text-thread-selected-foreground-muted"
-                        : "text-user-bubble-foreground-muted"
+                      ? selectedThreadRowColors.mutedForegroundClassName
                       : "text-foreground-tertiary",
                   )}
                 >
@@ -913,9 +883,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 size={11}
                 tintColorClassName={
                   selected
-                    ? Platform.OS === "android"
-                      ? "accent-thread-selected-foreground-muted"
-                      : "accent-user-bubble-foreground-muted"
+                    ? selectedThreadRowColors.mutedIconTintClassName
                     : "accent-foreground-tertiary"
                 }
               />
@@ -932,9 +900,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 size={12}
                 tintColorClassName={
                   selected
-                    ? Platform.OS === "android"
-                      ? "accent-thread-selected-foreground"
-                      : "accent-user-bubble-foreground"
+                    ? selectedThreadRowColors.iconTintClassName
                     : pr.state === null || pr.isDraft
                       ? "accent-foreground-muted"
                       : pr.state === "open"
@@ -949,11 +915,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               accessibilityLabel={pr.accessibilityLabel}
               className={cn(
                 "text-xs",
-                selected
-                  ? Platform.OS === "android"
-                    ? "text-thread-selected-foreground"
-                    : "text-user-bubble-foreground"
-                  : pr.textClassName,
+                selected ? selectedThreadRowColors.foregroundClassName : pr.textClassName,
               )}
               style={{ fontFamily: MONO_FONT }}
             >
@@ -968,7 +930,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             displayName={props.providerInstance.displayName}
             accentColor={props.providerInstance.accentColor}
             showBadge={props.providerInstance.showBadge}
-            surfaceColor={providerIconSurfaceColor}
+            surfaceColor={rowAppearance.providerIconSurfaceColor}
           />
         ) : null}
       </View>
@@ -979,14 +941,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     variant === "card" ? (
       <RowPressable
         key={`${thread.environmentId}:${thread.id}`}
-        interactionClassName={
-          selected && (sidebarPane || Platform.OS === "android")
-            ? Platform.OS === "android"
-              ? "bg-thread-selected-foreground"
-              : "bg-user-bubble-foreground"
-            : "bg-primary"
-        }
-        className={sidebarPane || Platform.OS === "android" ? undefined : "bg-screen"}
+        interactionClassName={rowAppearance.interactionClassName}
+        className={rowAppearance.className}
         accessibilityHint={swipeAccessibilityHint}
         accessibilityLabel={
           props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
@@ -997,19 +953,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           close();
           onSelectThread(thread);
         }}
-        style={
-          sidebarPane || Platform.OS === "android"
-            ? {
-                backgroundColor: selected
-                  ? selectedBackgroundColor
-                  : sidebarPane && Platform.OS !== "android"
-                    ? drawerColor
-                    : screenColor,
-                borderRadius: Platform.OS === "android" ? 20 : SIDEBAR_V2_ROW_RADIUS,
-                ...(sidebarPane ? { paddingHorizontal: 12, paddingVertical: 10 } : null),
-              }
-            : undefined
-        }
+        style={rowAppearance.cardStyle}
       >
         {sidebarPane ? (
           cardContent
@@ -1019,10 +963,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
              separates rows. The opaque screen background stays so swipe
              actions reveal behind the row. */
           <View>
-            <View className={Platform.OS === "android" ? "px-3 py-2.5" : "px-5 py-2.5"}>
-              {cardContent}
-            </View>
-            {Platform.OS !== "android" && props.showTrailingDivider !== false ? (
+            <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{cardContent}</View>
+            {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
               <View className="ml-5 h-px bg-border-subtle" />
             ) : null}
           </View>
@@ -1031,36 +973,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ) : (
       <RowPressable
         key={`${thread.environmentId}:${thread.id}`}
-        interactionClassName={
-          selected && (sidebarPane || Platform.OS === "android")
-            ? Platform.OS === "android"
-              ? "bg-thread-selected-foreground"
-              : "bg-user-bubble-foreground"
-            : "bg-primary"
-        }
+        interactionClassName={rowAppearance.interactionClassName}
         accessibilityHint={swipeAccessibilityHint}
         accessibilityLabel={
           props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
         }
         accessibilityRole="button"
         accessibilityState={{ selected }}
-        className={sidebarPane || Platform.OS === "android" ? undefined : "bg-screen"}
+        className={rowAppearance.className}
         onPress={() => {
           close();
           onSelectThread(thread);
         }}
-        style={
-          sidebarPane || Platform.OS === "android"
-            ? {
-                backgroundColor: selected
-                  ? selectedBackgroundColor
-                  : sidebarPane && Platform.OS !== "android"
-                    ? drawerColor
-                    : screenColor,
-                borderRadius: Platform.OS === "android" ? 20 : SIDEBAR_V2_ROW_RADIUS,
-              }
-            : undefined
-        }
+        style={rowAppearance.style}
       >
         {/* Settled history recedes: dimmed favicon + muted title. */}
         <View
@@ -1084,11 +1009,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             <Text
               className={cn(
                 "text-base",
-                selected
-                  ? Platform.OS === "android"
-                    ? "text-thread-selected-foreground"
-                    : "text-user-bubble-foreground"
-                  : "text-foreground-muted",
+                selected ? selectedThreadRowColors.foregroundClassName : "text-foreground-muted",
               )}
               numberOfLines={1}
             >
@@ -1107,9 +1028,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             className={cn(
               "text-sm tabular-nums",
               selected
-                ? Platform.OS === "android"
-                  ? "text-thread-selected-foreground-muted"
-                  : "text-user-bubble-foreground-muted"
+                ? selectedThreadRowColors.mutedForegroundClassName
                 : snoozedRow
                   ? "text-foreground-secondary"
                   : "text-foreground-tertiary",
@@ -1131,15 +1050,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       )}
       <ThreadSwipeable
         threadKey={`${thread.environmentId}:${thread.id}`}
-        backgroundColor={sidebarPane && Platform.OS !== "android" ? drawerColor : screenColor}
+        backgroundColor={rowAppearance.swipeBackgroundColor}
         compactActions={variant === "slim"}
-        containerStyle={
-          Platform.OS === "android"
-            ? { borderRadius: 20, overflow: "hidden", marginHorizontal: 8, marginVertical: 2 }
-            : sidebarPane
-              ? { borderRadius: SIDEBAR_V2_ROW_RADIUS, overflow: "hidden" }
-              : undefined
-        }
+        containerStyle={rowAppearance.swipeContainerStyle}
         enableTrackpadSwipe
         // Full swipe commits the advertised lifecycle action (Settle /
         // Un-settle), never the secondary snooze action.
@@ -1161,10 +1074,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 ? [
                     {
                       id: "new-thread-on-branch",
-                      title:
-                        Platform.OS === "ios"
-                          ? "New thread on branch"
-                          : `New thread on ${thread.branch}`,
+                      title: getThreadListV2NewBranchMenuTitle(thread.branch),
                       image: "square.and.pencil",
                     },
                   ]

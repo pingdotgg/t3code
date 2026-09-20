@@ -1,9 +1,7 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { NativeHeaderToolbar } from "../../native/StackHeader";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
-import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -82,6 +80,7 @@ export function SettingsEnvironmentsRouteScreen() {
         {
           accessibilityLabel: "Add environment",
           icon: "plus",
+          tintColor: headerIconColor,
           onPress: () =>
             navigation.navigate("SettingsSheet", {
               screen: "SettingsContent",
@@ -90,21 +89,6 @@ export function SettingsEnvironmentsRouteScreen() {
         },
       ]}
     >
-      {Platform.OS !== "android" ? (
-        <NativeHeaderToolbar placement="right">
-          <NativeHeaderToolbar.Button
-            icon="plus"
-            onPress={() =>
-              navigation.navigate("SettingsSheet", {
-                screen: "SettingsContent",
-                params: { screen: "SettingsEnvironmentNew" },
-              })
-            }
-            separateBackground
-            tintColor={headerIconColor}
-          />
-        </NativeHeaderToolbar>
-      ) : null}
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
