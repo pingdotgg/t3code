@@ -7,7 +7,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
+import { Scheduler } from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -104,17 +104,12 @@ const makeSweep = Effect.gen(function* () {
   });
 });
 
-// The schedule is derived from persisted failures and thread recovery choices,
-// so restarts need no timer restoration and disconnected clients need not run it.
+// The shared scheduler derives due work from persisted failures and recovery
+// choices, so restarts need no timer restoration or connected client.
 export const workerLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const sweep = yield* makeSweep;
-    yield* sweep().pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("orchestration-v2.limit-recovery.sweep-failed", { cause }),
-      ),
-      Effect.repeat(Schedule.spaced("30 seconds")),
-      Effect.forkScoped,
-    );
+    const scheduler = yield* Scheduler;
+    yield* scheduler.register("usage-limit-recovery", sweep());
   }),
 );

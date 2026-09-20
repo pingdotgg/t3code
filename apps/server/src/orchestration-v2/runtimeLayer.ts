@@ -1,4 +1,5 @@
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
+import { layer as schedulerLayer } from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
 import {
   OrchestrationEventInfrastructureLayerLive,
@@ -301,4 +302,4 @@ export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
   ),
   providerContinuationWorkerProvided,
   agentSessionImporterProvided,
-).pipe(Layer.provideMerge(OrchestrationLayerLive));
+).pipe(Layer.provide(schedulerLayer), Layer.provideMerge(OrchestrationLayerLive));
