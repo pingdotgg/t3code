@@ -311,6 +311,45 @@ const restoreAllSchemes = (
   runPowercfg(["/setactive", SCHEME_CURRENT_ALIAS]);
 };
 
+// Read back one scheme and confirm every overridden value is 0 (never /
+// Do Nothing). powercfg writes fail silently without elevation, and
+// reporting success then would leave the toggle lying about protection
+// the machine does not have.
+const verifySchemeForced = (
+  runPowercfg: (args: ReadonlyArray<string>) => string,
+  scheme: string,
+): boolean => {
+  const forced = querySchemeSettings(runPowercfg, scheme);
+  return (
+    forced.lidAc === 0 &&
+    forced.lidDc === 0 &&
+    forced.sleepAc === 0 &&
+    forced.sleepDc === 0 &&
+    forced.hibAc === 0 &&
+    forced.hibDc === 0
+  );
+};
+
+// Confirm one scheme matches the originals we recorded. Only used after a
+// restore, where a mismatch yields a warning — disable is best-effort,
+// since there is nothing sensible to roll back to.
+const verifySchemeRestored = (
+  runPowercfg: (args: ReadonlyArray<string>) => string,
+  scheme: string,
+  saved: KeepAwakeSavedSettings,
+): boolean => {
+  const current = querySchemeSettings(runPowercfg, scheme);
+  const fields = [
+    [current.lidAc, saved.lidAc],
+    [current.lidDc, saved.lidDc],
+    [current.sleepAc, saved.sleepAc],
+    [current.sleepDc, saved.sleepDc],
+    [current.hibAc, saved.hibAc],
+    [current.hibDc, saved.hibDc],
+  ] as const;
+  return fields.every(([actual, expected]) => expected === undefined || actual === expected);
+};
+
 // --- Crash-recovery file (Electron userData) --------------------------------
 
 const resolveUserDataDir = (override: string | null | undefined): string | null => {
@@ -564,11 +603,16 @@ export const make = (
         yield* Effect.sync(() => writeRecoveryFile(getRecoveryFile(), next));
       });
 
-    const enableWindowsPower: Effect.Effect<void, never, never> = Effect.gen(function* () {
+    // Returns true when the force landed. A false means the powercfg
+    // writes did not take effect (e.g. no elevation) — callers roll back
+    // rather than claim protection the machine does not have.
+    const enableWindowsPower: Effect.Effect<boolean, never, never> = Effect.gen(function* () {
       const scheme = getActiveSchemeGuid(runPowercfg) ?? SCHEME_CURRENT_ALIAS;
       yield* ensureSchemeSaved(scheme);
       yield* Effect.sync(() => forceSchemeSettings(runPowercfg, scheme));
+      const forced = yield* Effect.sync(() => verifySchemeForced(runPowercfg, scheme));
       yield* Effect.ignore(applyExecutionState(true));
+      return forced;
     });
 
     // Restore every touched scheme to its own originals + /setactive, clear
@@ -576,10 +620,22 @@ export const make = (
     // Callers must hold the transition mutex.
     const restoreWindowsPower: Effect.Effect<void, never, never> = Effect.gen(function* () {
       const saved = yield* Ref.getAndSet(savedByScheme, new Map<string, KeepAwakeSavedSettings>());
-      yield* Effect.sync(() => {
+      const unverified = yield* Effect.sync(() => {
         restoreAllSchemes(runPowercfg, saved);
         deleteRecoveryFile(getRecoveryFile());
+        const bad: Array<string> = [];
+        for (const [scheme, settings] of saved) {
+          if (!verifySchemeRestored(runPowercfg, scheme, settings)) {
+            bad.push(scheme);
+          }
+        }
+        return bad;
       });
+      if (unverified.length > 0) {
+        yield* Effect.logWarning(
+          `[keep-awake] Restored power settings but could not confirm ${unverified.length} scheme(s); values may still be forced.`,
+        );
+      }
       yield* Effect.ignore(applyExecutionState(false));
     });
 
@@ -649,7 +705,10 @@ export const make = (
             // happen, but forced power without restore data must never stand).
             const saved = yield* Ref.get(savedByScheme);
             if (saved.size === 0) {
-              yield* enableWindowsPower;
+              const forced = yield* enableWindowsPower;
+              if (!forced) {
+                yield* restoreWindowsPower;
+              }
             }
           }
           // Idempotent re-enable: keep holding the live blocker.
@@ -662,7 +721,16 @@ export const make = (
       // Defensive: never hold two blockers at once.
       yield* stopCurrent;
       if (isWindows) {
-        yield* enableWindowsPower;
+        const forced = yield* enableWindowsPower;
+        if (!forced) {
+          // The powercfg writes did not land (e.g. no elevation): roll back
+          // so a failed enable never claims protection the machine lacks.
+          yield* Effect.logWarning(
+            "[keep-awake] Could not force power settings (powercfg writes need elevation); rolled back.",
+          );
+          yield* restoreWindowsPower;
+          return yield* readState;
+        }
       }
       let id: number | null = null;
       try {

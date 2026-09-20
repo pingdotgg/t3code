@@ -7,6 +7,7 @@ import {
   setKeepAwakeEnabled,
   type KeepAwakeBridge,
 } from "~/state/keepAwakeState";
+import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -57,6 +58,31 @@ export function KeepAwakeRow({
 
   // Desktop-only row: the browser build has no power-inhibition backend.
   if (!desktopBridge) return null;
+
+  // Load failed: keep a recovery row (with retry) visible instead of an
+  // interactive switch stuck at off — with unknown state a click would send
+  // `true` while the machine may already be awake, stranding the user with
+  // no way to turn it off from this row.
+  if (keepAwake.error) {
+    return (
+      <SettingsRow
+        id="keep-awake"
+        title="Keep Awake"
+        description="Couldn't load the Keep Awake state."
+        status={<span className="block text-destructive">{keepAwake.error}</span>}
+        control={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={refreshKeepAwakeState}
+            disabled={keepAwake.isPending}
+          >
+            {keepAwake.isPending ? "Retrying…" : "Retry"}
+          </Button>
+        }
+      />
+    );
+  }
 
   const bridgeSupportsKeepAwake =
     typeof keepAwakeBridge?.getKeepAwakeState === "function" &&
@@ -124,7 +150,7 @@ export function KeepAwakeRow({
         <KeepAwakeSwitch
           ariaLabel="Keep this computer awake"
           checked={state?.enabled ?? false}
-          disabled={disabledReason !== null || isBusy}
+          disabled={disabledReason !== null || isBusy || state === null}
           disabledReason={disabledReason}
           onCheckedChange={(enabled) => void updateKeepAwake(enabled)}
         />
