@@ -1,9 +1,12 @@
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
+  SourceControlProviderDiscoveryItem,
+  SourceControlProviderInfo,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import * as Option from "effect/Option";
 import {
   DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
   getChangeRequestTerminology,
@@ -51,6 +54,46 @@ function resolveChangeRequestTerminology(
     : DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
 }
 
+export interface ChangeRequestProviderReadiness {
+  readonly ready: boolean;
+  readonly hint: string | null;
+}
+
+export const READY_CHANGE_REQUEST_PROVIDER: ChangeRequestProviderReadiness = {
+  ready: true,
+  hint: null,
+};
+
+export function resolveChangeRequestProviderReadiness(
+  sourceControlProvider: SourceControlProviderInfo | undefined,
+  discoveredProviders: ReadonlyArray<SourceControlProviderDiscoveryItem> | null,
+): ChangeRequestProviderReadiness {
+  // Only gate when we positively know the provider CLI is unusable; while
+  // discovery is loading (or the provider is unrecognized) assume ready so the
+  // actions don't flash disabled.
+  if (!sourceControlProvider || discoveredProviders === null) {
+    return READY_CHANGE_REQUEST_PROVIDER;
+  }
+  const discovered = discoveredProviders.find(
+    (provider) => provider.kind === sourceControlProvider.kind,
+  );
+  if (!discovered) {
+    return READY_CHANGE_REQUEST_PROVIDER;
+  }
+  if (discovered.status !== "available") {
+    return { ready: false, hint: discovered.installHint };
+  }
+  if (discovered.auth.status === "unauthenticated") {
+    return {
+      ready: false,
+      hint:
+        Option.getOrNull(discovered.auth.detail) ??
+        `${discovered.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
+    };
+  }
+  return READY_CHANGE_REQUEST_PROVIDER;
+}
+
 export function buildGitActionProgressStages(input: {
   action: GitStackedAction;
   hasCustomCommitMessage: boolean;
@@ -95,6 +138,7 @@ export function buildMenuItems(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
   hasPrimaryRemote = true,
+  providerReadiness: ChangeRequestProviderReadiness = READY_CHANGE_REQUEST_PROVIDER,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
   const terminology = resolveChangeRequestTerminology(gitStatus);
@@ -119,6 +163,7 @@ export function buildMenuItems(
     !hasOpenPr &&
     hasDefaultBranchDelta &&
     !isBehind &&
+    providerReadiness.ready &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
 
@@ -169,6 +214,7 @@ export function resolveQuickAction(
   isBusy: boolean,
   isDefaultRef = false,
   hasPrimaryRemote = true,
+  providerReadiness: ChangeRequestProviderReadiness = READY_CHANGE_REQUEST_PROVIDER,
 ): GitQuickAction {
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
@@ -205,7 +251,7 @@ export function resolveQuickAction(
     if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
-    if (hasOpenPr || isDefaultRef) {
+    if (hasOpenPr || isDefaultRef || !providerReadiness.ready) {
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
@@ -238,7 +284,7 @@ export function resolveQuickAction(
         hint: "No local commits to push.",
       };
     }
-    if (hasOpenPr || isDefaultRef) {
+    if (hasOpenPr || isDefaultRef || !providerReadiness.ready) {
       return {
         label: "Push",
         disabled: false,
@@ -272,7 +318,7 @@ export function resolveQuickAction(
   }
 
   if (isAhead) {
-    if (hasOpenPr || isDefaultRef) {
+    if (hasOpenPr || isDefaultRef || !providerReadiness.ready) {
       return {
         label: "Push",
         disabled: false,
@@ -293,6 +339,15 @@ export function resolveQuickAction(
   }
 
   if (hasDefaultBranchDelta && !isDefaultRef) {
+    if (!providerReadiness.ready) {
+      return {
+        label: `Create ${terminology.shortLabel}`,
+        disabled: true,
+        kind: "show_hint",
+        hint:
+          providerReadiness.hint ?? `Creating a ${terminology.singular} is currently unavailable.`,
+      };
+    }
     return {
       label: `Create ${terminology.shortLabel}`,
       disabled: false,
