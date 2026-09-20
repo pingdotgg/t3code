@@ -2246,8 +2246,8 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           serverScoped
-          title="Snooze limited threads"
-          description="Snooze new usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake."
+          {...searchableSetting("snooze-limited-threads")}
+          description="Snooze usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake."
           settingKeys={["snoozeLimitedThreads"]}
           control={
             <ScopedSwitch

@@ -32,7 +32,10 @@ export function UsageLimitRecoveryCard({
     !runId
   )
     return null;
-  const snoozed = resetAt !== null && thread.snoozedUntil === resetAt;
+  const snoozed =
+    resetAt !== null &&
+    thread.snoozedUntil !== null &&
+    Date.parse(thread.snoozedUntil) === Date.parse(resetAt);
   async function toggle(action: "resume" | "snooze") {
     if (!resetAt || !runId || !canSchedule) return;
     setPending(true);

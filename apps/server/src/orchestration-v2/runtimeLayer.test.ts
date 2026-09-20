@@ -3149,7 +3149,10 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const run = projection.runs[0]!;
       const now = yield* DateTime.now;
-      const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+      const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 })).replace(
+        "Z",
+        scenario === "wake" ? "+00:00" : "Z",
+      );
       yield* events.write({
         commandId: CommandId.make(`recovery:failure:${scenario}`),
         events: [
@@ -3211,7 +3214,8 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         snooze,
         requestId: arm!.commandId,
       });
-      if (snooze) assert.equal(DateTime.formatIso(armedShell.snoozedUntil!), resetAt);
+      if (snooze)
+        assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
       if (scenario === "wake") {
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",
