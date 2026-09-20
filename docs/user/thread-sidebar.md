@@ -146,6 +146,13 @@ The environment must be running when the reset arrives; it resumes overdue
 continuations after a restart. Sending a new message, archiving, or settling the
 thread prevents a pending continuation from starting.
 
+Choose **Snooze until reset** to hide the thread until its allowance returns.
+Snooze and auto-resume are independent: snooze alone wakes the thread without
+sending a message; enabling both wakes and continues it. **Wake now** cancels
+the snooze. Enable **Snooze limited threads** in thread behavior settings to
+snooze new limit stops by default. Providers without a reset time offer manual
+retry and the normal snooze choices.
+
 On web and desktop, use **Agents** to follow work delegated to subagents.
 
 Expand a tool call in the conversation to see its full command and output.

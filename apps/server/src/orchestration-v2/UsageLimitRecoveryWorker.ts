@@ -17,6 +17,7 @@ export function limitRecoveryCommand(
   thread: OrchestrationV2ThreadShell,
   autoResume: boolean,
   nowMs: number,
+  snooze = false,
 ): OrchestrationV2Command | null {
   if (
     thread.status !== "failed" ||
@@ -38,12 +39,17 @@ export function limitRecoveryCommand(
   const identity = `${thread.id}:${thread.latestRunId}:${resetMs}`;
   const recovery = thread.limitRecovery;
   if (recovery?.runId !== thread.latestRunId || recovery.resetAt !== thread.usageLimitResetAt) {
-    if (!autoResume) return null;
+    if (!autoResume && (!snooze || resetMs <= nowMs)) return null;
     return {
       type: "thread.metadata.update",
       commandId: CommandId.make(`limit-arm:${identity}`),
       threadId: thread.id,
-      limitRecovery: { runId: thread.latestRunId, resetAt: thread.usageLimitResetAt, autoResume },
+      limitRecovery: {
+        runId: thread.latestRunId,
+        resetAt: thread.usageLimitResetAt,
+        autoResume,
+        snooze: snooze && resetMs > nowMs,
+      },
     };
   }
   if (
@@ -79,7 +85,12 @@ const makeSweep = Effect.gen(function* () {
     const snapshot = yield* projections.getShellSnapshot();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     for (const thread of snapshot.threads) {
-      const command = limitRecoveryCommand(thread, preferences.autoResumeLimitedThreads, nowMs);
+      const command = limitRecoveryCommand(
+        thread,
+        preferences.autoResumeLimitedThreads,
+        nowMs,
+        preferences.snoozeLimitedThreads,
+      );
       if (command === null) continue;
       yield* threads.dispatch(command).pipe(
         Effect.catchCause((cause) =>

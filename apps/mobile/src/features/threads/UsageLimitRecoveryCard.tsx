@@ -32,14 +32,23 @@ export function UsageLimitRecoveryCard({
     !runId
   )
     return null;
-  async function toggle() {
+  const snoozed = resetAt !== null && thread.snoozedUntil === resetAt;
+  async function toggle(action: "resume" | "snooze") {
     if (!resetAt || !runId || !canSchedule) return;
     setPending(true);
     setError(null);
     try {
       const result = await updateMetadata({
         environmentId,
-        input: { threadId: thread.id, limitRecovery: { runId, resetAt, autoResume: !scheduled } },
+        input: {
+          threadId: thread.id,
+          limitRecovery: {
+            runId,
+            resetAt,
+            autoResume: action === "resume" ? !scheduled : Boolean(scheduled),
+            snooze: action === "snooze" ? !snoozed : snoozed,
+          },
+        },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     } catch (cause) {
@@ -56,16 +65,28 @@ export function UsageLimitRecoveryCard({
           : "The provider did not report a reset time. Retry manually when your limit is available."}
       </Text>
       {canSchedule ? (
-        <Pressable
-          accessibilityRole="button"
-          disabled={pending}
-          onPress={() => void toggle()}
-          className="self-start rounded-lg bg-subtle px-3 py-2 active:opacity-70"
-        >
-          <Text className="text-sm text-foreground">
-            {scheduled ? "Cancel auto-resume" : "Resume at reset"}
-          </Text>
-        </Pressable>
+        <View className="flex-row flex-wrap gap-2">
+          <Pressable
+            accessibilityRole="button"
+            disabled={pending}
+            onPress={() => void toggle("resume")}
+            className="self-start rounded-lg bg-subtle px-3 py-2 active:opacity-70"
+          >
+            <Text className="text-sm text-foreground">
+              {scheduled ? "Cancel auto-resume" : "Resume at reset"}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            disabled={pending || (!snoozed && Date.parse(resetAt!) <= Date.now())}
+            onPress={() => void toggle("snooze")}
+            className="self-start rounded-lg bg-subtle px-3 py-2 active:opacity-70"
+          >
+            <Text className="text-sm text-foreground">
+              {snoozed ? "Wake now" : "Snooze until reset"}
+            </Text>
+          </Pressable>
+        </View>
       ) : null}
       {error ? (
         <Text accessibilityRole="alert" className="text-sm text-destructive">

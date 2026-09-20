@@ -331,6 +331,7 @@ export const OrchestrationV2LimitRecovery = Schema.Struct({
   runId: RunId,
   resetAt: IsoDateTime,
   autoResume: Schema.Boolean,
+  snooze: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2LimitRecovery = typeof OrchestrationV2LimitRecovery.Type;
 

@@ -2270,6 +2270,30 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
             dispatchMode: { type: "queue_after_active" },
           });
 
+          if (scenario === "rearm") {
+            yield* orchestrator.dispatch(resume!);
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`recovery:rearm:${scenario}`),
+              threadId,
+              limitRecovery: { runId: run.id, resetAt, autoResume: true },
+            });
+            yield* orchestrator.dispatch(resume!);
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+            const rearmedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+              (thread) => thread.id === threadId,
+            )!;
+            const freshResume = limitRecoveryCommand(
+              rearmedShell,
+              true,
+              DateTime.toEpochMillis(yield* DateTime.now),
+            );
+            assert.isNotNull(freshResume);
+            assert.notEqual(freshResume!.commandId, resume!.commandId);
+            yield* orchestrator.dispatch(freshResume!);
+            yield* orchestrator.dispatch(freshResume!);
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+          }
           const before = yield* orchestrator.getThreadProjection(threadId);
           const activeRun = before.runs.find((run) => run.status === "starting");
           const queuedRuns = before.runs
@@ -2441,6 +2465,30 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
               dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
             });
           }
+          if (scenario === "rearm") {
+            yield* orchestrator.dispatch(resume!);
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`recovery:rearm:${scenario}`),
+              threadId,
+              limitRecovery: { runId: run.id, resetAt, autoResume: true },
+            });
+            yield* orchestrator.dispatch(resume!);
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+            const rearmedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+              (thread) => thread.id === threadId,
+            )!;
+            const freshResume = limitRecoveryCommand(
+              rearmedShell,
+              true,
+              DateTime.toEpochMillis(yield* DateTime.now),
+            );
+            assert.isNotNull(freshResume);
+            assert.notEqual(freshResume!.commandId, resume!.commandId);
+            yield* orchestrator.dispatch(freshResume!);
+            yield* orchestrator.dispatch(freshResume!);
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+          }
           const before = yield* orchestrator.getThreadProjection(threadId);
           const queued = before.runs.filter((run) => run.status === "queued");
           assert.equal(queued.length, 2);
@@ -2556,6 +2604,30 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
         dispatchMode: { type: "queue_after_active" },
       });
 
+      if (scenario === "rearm") {
+        yield* orchestrator.dispatch(resume!);
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`recovery:rearm:${scenario}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+        yield* orchestrator.dispatch(resume!);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+        const rearmedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const freshResume = limitRecoveryCommand(
+          rearmedShell,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        assert.isNotNull(freshResume);
+        assert.notEqual(freshResume!.commandId, resume!.commandId);
+        yield* orchestrator.dispatch(freshResume!);
+        yield* orchestrator.dispatch(freshResume!);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+      }
       const before = yield* orchestrator.getThreadProjection(threadId);
       const queuedRun = before.runs.find((run) => run.status === "queued");
       assert.isDefined(queuedRun);
@@ -3026,6 +3098,9 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
     "archive",
     "settle",
     "replacement",
+    "snooze-only",
+    "snooze-resume",
+    "wake",
   ] as const)("guards a scheduled usage-limit continuation against %s", (scenario) =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
@@ -3121,7 +3196,9 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         (thread) => thread.id === threadId,
       )!;
       assert.isNull(limitRecoveryCommand(shell, false, DateTime.toEpochMillis(now)));
-      const arm = limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now));
+      const snooze = ["snooze-only", "snooze-resume", "wake"].includes(scenario);
+      const autoResume = scenario !== "snooze-only" && scenario !== "wake";
+      const arm = limitRecoveryCommand(shell, autoResume, DateTime.toEpochMillis(now), snooze);
       assert.isNotNull(arm);
       yield* orchestrator.dispatch(arm!);
       const armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
@@ -3130,9 +3207,20 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
       assert.deepEqual(armedShell.limitRecovery, {
         runId: run.id,
         resetAt,
-        autoResume: true,
+        autoResume,
+        snooze,
         requestId: arm!.commandId,
       });
+      if (snooze) assert.equal(DateTime.formatIso(armedShell.snoozedUntil!), resetAt);
+      if (scenario === "wake") {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`recovery:wake:${scenario}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: false, snooze: false },
+        });
+        assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.snoozedUntil);
+      }
       assert.isNull(limitRecoveryCommand(armedShell, true, DateTime.toEpochMillis(now)));
       yield* orchestrator.dispatch({
         type: "message.dispatch",
@@ -3153,7 +3241,8 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         true,
         DateTime.toEpochMillis(yield* DateTime.now),
       );
-      assert.isNotNull(resume);
+      if (autoResume) assert.isNotNull(resume);
+      else assert.isNull(resume);
       if (scenario === "snooze-race") {
         const wakeAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
         yield* orchestrator.dispatch({
@@ -3259,11 +3348,19 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
       }
       const before = yield* orchestrator.getThreadProjection(threadId);
-      yield* orchestrator.dispatch(resume!);
-      yield* orchestrator.dispatch(resume!);
+      if (resume !== null) {
+        yield* orchestrator.dispatch(resume);
+        yield* orchestrator.dispatch(resume);
+      }
       const after = yield* orchestrator.getThreadProjection(threadId);
-      assert.lengthOf(after.runs, before.runs.length + (scenario === "resume" ? 1 : 0));
-      assert.lengthOf(after.messages, before.messages.length + (scenario === "resume" ? 1 : 0));
+      assert.lengthOf(
+        after.runs,
+        before.runs.length + (scenario === "resume" || scenario === "snooze-resume" ? 1 : 0),
+      );
+      assert.lengthOf(
+        after.messages,
+        before.messages.length + (scenario === "resume" || scenario === "snooze-resume" ? 1 : 0),
+      );
     }),
   );
 });

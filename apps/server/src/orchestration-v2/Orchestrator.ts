@@ -2414,6 +2414,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       ? null
                       : { ...command.limitRecovery, requestId: command.commandId },
                 }),
+            ...(command.limitRecovery?.snooze === true &&
+            Date.parse(command.limitRecovery.resetAt) > DateTime.toEpochMillis(now)
+              ? {
+                  snoozedUntil: DateTime.makeUnsafe(command.limitRecovery.resetAt),
+                  snoozedAt:
+                    thread.snoozedUntil != null &&
+                    DateTime.formatIso(thread.snoozedUntil) === command.limitRecovery.resetAt
+                      ? (thread.snoozedAt ?? now)
+                      : now,
+                }
+              : command.limitRecovery !== undefined &&
+                  thread.limitRecovery?.snooze &&
+                  thread.snoozedUntil != null &&
+                  DateTime.formatIso(thread.snoozedUntil) === thread.limitRecovery.resetAt
+                ? { snoozedUntil: null, snoozedAt: null }
+                : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined

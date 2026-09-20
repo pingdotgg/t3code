@@ -87,7 +87,10 @@ function AutoSettleSettingsRows() {
   }
 
   const writeToAll = (
-    patch: Partial<AutoSettleSettings> & { autoResumeLimitedThreads?: boolean },
+    patch: Partial<AutoSettleSettings> & {
+      autoResumeLimitedThreads?: boolean;
+      snoozeLimitedThreads?: boolean;
+    },
   ) => {
     if (writeInFlight.current) return;
     const writes = planMobileScopedSettingsPatch(syncTargets, projectSelected, patch);
@@ -174,6 +177,13 @@ function AutoSettleSettingsRows() {
             value={referenceSettings.autoResumeLimitedThreads}
             disabled={disabled}
             onValueChange={(value) => writeToAll({ autoResumeLimitedThreads: value })}
+          />
+          <SettingsSwitchRow
+            icon="clock"
+            label="Snooze limited threads"
+            value={referenceSettings.snoozeLimitedThreads}
+            disabled={disabled}
+            onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
         </SettingsSection>
       ) : null}

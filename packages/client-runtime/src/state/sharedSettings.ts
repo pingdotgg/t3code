@@ -26,6 +26,7 @@ const SHARED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleOnMerge",
   "autoResumeLimitedThreads",
+  "snoozeLimitedThreads",
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
   "textGenerationModelSelection",

@@ -8,6 +8,8 @@ type RecoveryProps = {
   runId: RunId;
   resetAt: string | null;
   stoppedAt: string;
+  snoozedUntil: string | null;
+  nowMs: number;
   recovery: OrchestrationV2LimitRecovery | null;
   onChange: (recovery: OrchestrationV2LimitRecovery) => Promise<void>;
 };
@@ -28,17 +30,21 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
   };
 }
 
-function RecoveryActions({ runId, resetAt, recovery, onChange }: RecoveryProps) {
+function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, nowMs, onChange }: RecoveryProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scheduled =
     recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
-  async function toggle() {
+  const snoozed = recovery?.snooze === true && recovery.runId === runId && recovery.resetAt === resetAt && resetAt !== null && snoozedUntil !== null && Date.parse(snoozedUntil) === Date.parse(resetAt);
+  async function toggle(action: "resume" | "snooze") {
     if (resetAt === null) return;
     setPending(true);
     setError(null);
     try {
-      await onChange({ runId, resetAt, autoResume: !scheduled });
+      await onChange({ runId, resetAt,
+        autoResume: action === "resume" ? !scheduled : Boolean(scheduled),
+        snooze: action === "snooze" ? !snoozed : snoozed,
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not change limit recovery.");
     } finally {
@@ -47,8 +53,11 @@ function RecoveryActions({ runId, resetAt, recovery, onChange }: RecoveryProps) 
   }
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle()}>
+      <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
         {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
+      </Button>
+      <Button size="xs" variant="ghost" disabled={pending || (!snoozed && Date.parse(resetAt!) <= nowMs)} onClick={() => void toggle("snooze")}>
+        {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
       </Button>
       {error ? (
         <p role="alert" className="basis-full text-xs text-destructive">

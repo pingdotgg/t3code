@@ -2244,6 +2244,22 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          serverScoped
+          title="Snooze limited threads"
+          description="Snooze new usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake."
+          settingKeys={["snoozeLimitedThreads"]}
+          control={
+            <ScopedSwitch
+              settingKeys={["snoozeLimitedThreads"]}
+              checked={settings.snoozeLimitedThreads}
+              onCheckedChange={(checked) =>
+                updateSettings({ snoozeLimitedThreads: Boolean(checked) })
+              }
+              aria-label="Snooze limited threads"
+            />
+          }
+        />
         {supportsAutoSettlement ? (
           <>
             <SettingsRow
