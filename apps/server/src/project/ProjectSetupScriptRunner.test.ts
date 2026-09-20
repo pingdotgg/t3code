@@ -1,15 +1,28 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
-import { type OrchestrationProject, ProjectId, type TerminalEvent } from "@t3tools/contracts";
+import {
+  type OrchestrationProject,
+  ProjectId,
+  T3ProjectFile,
+  type TerminalEvent,
+} from "@t3tools/contracts";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { ServerConfig } from "../config.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { makeFileClone } from "../vcs/FileClone.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
+
+const encodeProjectFile = Schema.encodeEffect(Schema.fromJsonString(T3ProjectFile));
 
 const isProjectSetupScriptOperationError = Schema.is(
   ProjectSetupScriptRunner.ProjectSetupScriptOperationError,
@@ -72,6 +85,11 @@ const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
     ...overrides,
   });
 
+const GitTestLayer = GitVcsDriver.layer.pipe(
+  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-setup-test-" })),
+  Layer.provideMerge(NodeServices.layer),
+);
+
 const testLayer = (
   project: OrchestrationProject,
   terminal: TerminalOverrides,
@@ -81,9 +99,126 @@ const testLayer = (
     Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
     Layer.provideMerge(makeTerminalManagerLayer(terminal)),
     Layer.provide(settings),
+    Layer.provideMerge(GitTestLayer),
   );
 
 describe("ProjectSetupScriptRunner", () => {
+  it.effect(
+    "seeds dependencies before setup launch only when an effective setup script exists",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-no-setup-" });
+        const source = path.join(root, "source");
+        const target = path.join(root, "target");
+        yield* fs.makeDirectory(path.join(source, "node_modules", "pkg"), { recursive: true });
+        yield* fs.writeFileString(path.join(source, "node_modules", "pkg", "index.js"), "source");
+        yield* fs.writeFileString(path.join(source, ".gitignore"), "node_modules/\n");
+        yield* fs.writeFileString(path.join(source, "package.json"), '{"name":"fixture"}');
+        yield* fs.writeFileString(path.join(source, "package-lock.json"), '{"lockfileVersion":3}');
+        yield* fs.writeFileString(
+          path.join(source, "t3.json"),
+          yield* encodeProjectFile({
+            worktreeCloneDependencies: true,
+            scripts: [{ name: "Install", command: "npm ci", runOnWorktreeCreate: true }],
+          }),
+        );
+        for (const args of [
+          ["init", "--initial-branch=main"],
+          ["config", "user.name", "Test"],
+          ["config", "user.email", "test@example.com"],
+          ["add", "."],
+          ["commit", "-m", "fixture"],
+        ])
+          yield* driver.execute({ operation: "test", cwd: source, args });
+        yield* driver.createWorktree({
+          cwd: source,
+          refName: "main",
+          newRefName: "feature",
+          path: target,
+        });
+        const project = { ...makeProject([]), workspaceRoot: source };
+        const result = yield* Effect.gen(function* () {
+          const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+          return yield* runner.runForThread({
+            threadId: "thread-1",
+            projectId: project.id,
+            worktreePath: target,
+          });
+        }).pipe(
+          Effect.provide(
+            testLayer(
+              project,
+              {
+                open: () => Effect.die("setup must not launch"),
+                write: () => Effect.die("setup must not launch"),
+              },
+              ServerSettings.layerTest({
+                projectSettingsOverrides: { [project.id]: { defaultProjectScripts: [] } },
+              }),
+            ),
+          ),
+        );
+        expect(result.status).toBe("no-script");
+        expect(yield* fs.exists(path.join(target, "node_modules"))).toBe(false);
+        const fileClone = yield* makeFileClone();
+        const probe = yield* fileClone
+          .clone([path.join(source, "package.json")], root)
+          .pipe(Effect.result);
+        const setup = {
+          id: "install",
+          name: "Install",
+          command: "npm ci",
+          icon: "configure" as const,
+          runOnWorktreeCreate: true,
+        };
+        const started = yield* Effect.gen(function* () {
+          const runner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+          return yield* runner.runForThread({
+            threadId: "thread-1",
+            projectId: project.id,
+            worktreePath: target,
+          });
+        }).pipe(
+          Effect.provide(
+            testLayer(
+              project,
+              {
+                open: () =>
+                  Effect.gen(function* () {
+                    expect(
+                      yield* fs
+                        .exists(path.join(target, "node_modules", "pkg", "index.js"))
+                        .pipe(Effect.orDie),
+                    ).toBe(probe._tag === "Success");
+                    return {
+                      threadId: "thread-1",
+                      terminalId: "setup-install",
+                      cwd: target,
+                      worktreePath: target,
+                      status: "running" as const,
+                      pid: 123,
+                      history: "",
+                      exitCode: null,
+                      exitSignal: null,
+                      label: "setup-install",
+                      updatedAt: "2026-01-01T00:00:00.000Z",
+                    };
+                  }),
+                write: () => Effect.void,
+              },
+              ServerSettings.layerTest({
+                projectSettingsOverrides: { [project.id]: { defaultProjectScripts: [setup] } },
+              }),
+            ),
+          ),
+        );
+        expect(started.status).toBe("started");
+      }).pipe(Effect.provide(GitTestLayer)),
+  );
+
   it.effect("runs the inherited machine setup action in the checkout's worktree", () => {
     const open = vi.fn(() =>
       Effect.succeed({
