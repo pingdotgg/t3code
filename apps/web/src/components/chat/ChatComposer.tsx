@@ -1,3 +1,5 @@
+import { useFileContextMenu } from "../../fileContextMenu";
+import { composerMentionMenuTarget } from "./composerMentionMenuTarget";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
@@ -1624,6 +1626,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const openPrLink = useOpenPrLink(routeThreadRef);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const previewFile = composerFiles.find((file) => file.id === previewFileId);
+  const mentionMenu = useFileContextMenu(environmentId);
   const composerContextActions = useMemo(
     () => ({
       expandImage: (imageId: string) => {
@@ -1632,6 +1635,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       openFile: setPreviewFileId,
       openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
+      showMentionMenu: (path: string, position?: { x: number; y: number }) => {
+        const target = composerMentionMenuTarget(environmentId, gitCwd, path);
+        if (target) void mentionMenu.show(target, position);
+      },
       expandVideo: (fileId: string) => {
         const file = composerFiles.find((candidate) => candidate.id === fileId);
         if (!file || !isVideoAttachment(file)) return;
@@ -1656,7 +1663,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         openPrLink(event, url);
       },
     }),
-    [composerFiles, composerImages, environmentId, onExpandImage, openPrLink, routeThreadRef],
+    [
+      composerFiles,
+      composerImages,
+      environmentId,
+      gitCwd,
+      mentionMenu,
+      onExpandImage,
+      openPrLink,
+      routeThreadRef,
+    ],
   );
   const composerContextRecords = useMemo(
     () =>

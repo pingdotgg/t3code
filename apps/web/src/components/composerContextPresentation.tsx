@@ -70,6 +70,7 @@ export interface ComposerContextActions {
   expandVideo: (fileId: string) => void;
   openFile: (fileId: string) => void;
   openMention: (path: string) => void;
+  showMentionMenu?: (path: string, position?: { x: number; y: number }) => void;
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
 }
 
