@@ -76,15 +76,24 @@ export function useLinkedThreadPullRequest(
   );
   const fallback =
     current === null ? ((!supportsLinks ? linkedPullRequest : null) ?? branchPullRequest) : null;
-  const host = fallback == null ? undefined : parseChangeRequestUrl(fallback.url)?.host;
-  const reference =
-    fallback == null ? null : { ...fallback, ...(host === undefined ? {} : { host }) };
+  // Stable per link: the shared summary effect keys on this object, and a sidebar row must not
+  // touch the cache on every render.
+  const reference = useMemo(() => {
+    if (fallback == null) return null;
+    const host = parseChangeRequestUrl(fallback.url)?.host;
+    return { ...fallback, ...(host === undefined ? {} : { host }) };
+  }, [fallback]);
   const queried = useEnvironmentQuery(
     !enabled || environmentId === null || reference === null
       ? null
       : linkedPullRequestDetailAtom({ environmentId, input: reference }),
-  ).data;
-  const detail = useSharedPullRequestSummary(environmentId, reference, queried);
+  );
+  const detail = useSharedPullRequestSummary(
+    environmentId,
+    reference,
+    queried.data,
+    queried.dataUpdatedAt,
+  );
 
   return useMemo(() => {
     if (current !== null) return linkedPullRequestSnapshotStatus(current);

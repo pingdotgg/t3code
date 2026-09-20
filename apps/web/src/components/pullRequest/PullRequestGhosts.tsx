@@ -7,8 +7,9 @@
  * both themes) and the single `animate-skeleton` pulse, applied once on the container so any
  * number of bars costs one opacity animation.
  */
-import type { PullRequestListEntry } from "@t3tools/contracts";
+import type { PullRequestListEntry, PullRequestSummary } from "@t3tools/contracts";
 import { ArrowLeftIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -72,16 +73,33 @@ export function PullRequestListGhost({
  * boundaries in the ghost prevents the loaded pull request from replacing one layout with
  * another a moment later.
  */
-export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry | null }) {
+export function PullRequestDetailGhost({
+  seed: entry,
+  summary,
+  actions,
+}: {
+  seed?: PullRequestListEntry | null;
+  summary?: PullRequestSummary | null;
+  actions?: ReactNode;
+}) {
+  const seed = summary
+    ? {
+        ...entry,
+        ...summary,
+        isDraft: summary.isDraft ?? entry?.isDraft,
+      }
+    : entry;
   const statePresentation = seed
     ? resolvePullRequestState({
         state: seed.state,
-        isDraft: seed.isDraft,
+        isDraft: seed.isDraft ?? false,
       })
     : null;
-  const checksPresentation = seed?.checksState
-    ? pullRequestChecksStatePresentation(seed.checksState)
-    : null;
+  // Passing list rollups can omit workflows awaiting approval; wait for detail to claim success.
+  const checksPresentation =
+    seed?.checksState === "failing" || seed?.checksState === "pending"
+      ? pullRequestChecksStatePresentation(seed.checksState)
+      : null;
 
   return (
     <div
@@ -92,7 +110,7 @@ export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry |
         !seed && "motion-safe:animate-skeleton",
       )}
     >
-      <div className="shrink-0 border-b border-border/60">
+      <div className="@container/pr-header shrink-0 border-b border-border/60">
         <div className="flex h-7 items-center justify-between gap-3 px-4">
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
             {seed && statePresentation ? (
@@ -114,8 +132,8 @@ export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry |
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <GhostBar className="h-5 w-16 rounded-md" />
-            <GhostBar className="size-5 rounded-md" />
+            {actions ?? <GhostBar className="h-5 w-16 rounded-md" />}
+            <GhostBar className="size-6 rounded-md" />
           </div>
         </div>
 
@@ -129,7 +147,7 @@ export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry |
             {seed ? (
               <>
                 <PullRequestActorLabel
-                  actor={seed.author}
+                  actor={seed.author ?? null}
                   className="font-medium"
                   tooltip={false}
                 />
@@ -165,8 +183,8 @@ export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry |
               <GhostBar className="w-10" />
               {seed ? (
                 <PullRequestDiffStat
-                  additions={seed.additions}
-                  deletions={seed.deletions}
+                  additions={seed.additions ?? 0}
+                  deletions={seed.deletions ?? 0}
                   className="font-mono text-xs"
                 />
               ) : (
@@ -217,7 +235,7 @@ export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry |
               <GhostBar className="w-10" />
             </div>
             <div className="flex items-center gap-1">
-              {seed ? (
+              {seed?.labels ? (
                 seed.labels.slice(0, 3).map((label) => {
                   const color = pullRequestLabelColor(label.color);
                   return (
