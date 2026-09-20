@@ -24,9 +24,7 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
-import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
-import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
-import { uuidv4 } from "../lib/uuid";
+import { composerContextSendBlockReason } from "../lib/composerContext";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
@@ -48,6 +46,7 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import {
   appendComposerDraftAttachments,
+  appendComposerDraftReviewComment,
   captureComposerDraftInsertion,
   countComposerDraftAttachmentsAfterSelection,
   insertComposerDraftText,
@@ -81,30 +80,19 @@ export function appendReviewCommentToDraft(input: {
   readonly threadId: ThreadId;
   readonly text: string;
   readonly attachments?: ReadonlyArray<DraftComposerImageAttachment>;
-}): void {
-  const threadKey = scopedThreadKey(input.environmentId, input.threadId);
-  const upgraded = upgradeLegacyContextMessage(input.text);
-  if (
-    !insertComposerDraftContext(
-      threadKey,
-      reidentifyComposerContext(upgraded.text, upgraded.records, uuidv4),
-    )
-  ) {
-    Alert.alert("Too many context items", "Remove some context from the draft and try again.");
-    return;
+}): boolean {
+  const inserted = appendComposerDraftReviewComment(
+    scopedThreadKey(input.environmentId, input.threadId),
+    input.text,
+    input.attachments,
+  );
+  if (!inserted) {
+    Alert.alert(
+      "Comment not added",
+      "Remove some attachments or context from the draft and try again.",
+    );
   }
-  if (input.attachments && input.attachments.length > 0) {
-    // Capped: a review comment is new content, not a send-failure restore, so
-    // it must not push the draft over the send limit. Overflow is released.
-    const rejectedCount = appendComposerDraftAttachments(threadKey, input.attachments, {
-      appendReference: true,
-    });
-    if (rejectedCount > 0) {
-      setPendingConnectionError(
-        `${rejectedCount} comment attachment${rejectedCount === 1 ? " was" : "s were"} not added. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
-      );
-    }
-  }
+  return inserted;
 }
 
 export function useThreadDraftForThread(input: {

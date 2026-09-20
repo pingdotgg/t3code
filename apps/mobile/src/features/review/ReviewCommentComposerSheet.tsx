@@ -22,7 +22,7 @@ import {
   formatReviewCommentContext,
   getReviewUnifiedLineNumber,
   getSelectedReviewCommentLines,
-  useReviewCommentTarget,
+  getReviewCommentTarget,
 } from "./reviewCommentSelection";
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
@@ -31,6 +31,9 @@ import {
   highlightReviewSelectedLines,
   type ReviewHighlightedToken,
 } from "./shikiReviewHighlighter";
+
+import { useReviewCommentDismissal } from "./useReviewCommentDismissal";
+import { useReviewCommentSubmission } from "./useReviewCommentSubmission";
 
 const REVIEW_COMMENT_PREVIEW_MAX_LINES = 5;
 
@@ -45,14 +48,18 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const { themeAppearance: selectedTheme } = useAppearancePreferences();
-  const target = useReviewCommentTarget();
+  // Freeze the target and destination together for this editor instance.
+  const [{ target, environmentId, threadId }] = useState(() => ({
+    target: getReviewCommentTarget(),
+    ...props.route.params,
+  }));
   const { codeSurface } = useAppearanceCodeSurface();
-  const { environmentId, threadId } = props.route.params;
   const [commentText, setCommentText] = useState("");
   const [highlightedLinesById, setHighlightedLinesById] = useState<
     Record<string, ReadonlyArray<ReviewHighlightedToken>>
   >({});
   const [attachments, setAttachments] = useState<ReadonlyArray<DraftComposerImageAttachment>>([]);
+  const [pendingImages, setPendingImages] = useState(0);
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
 
   const selectedLines = useMemo(
@@ -78,11 +85,25 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
     codeSurface.rowHeight,
   );
   const previewViewportWidth = Math.max(width - 40, 280);
-  const dismissComposer = useCallback(() => {
-    clearReviewCommentTarget();
-    navigation.goBack();
-  }, [navigation]);
+  const { submitted, submit, accepted } = useReviewCommentSubmission();
+  useReviewCommentDismissal({
+    commentText,
+    attachmentCount: attachments.length,
+    pendingImages,
+    submitted,
+    accepted,
+  });
+  useEffect(
+    () => () => {
+      // A newer selection belongs to another editor, even if this route is removed later.
+      if (getReviewCommentTarget() === target) clearReviewCommentTarget();
+    },
+    [target],
+  );
+  const dismissComposer = useCallback(() => navigation.goBack(), [navigation]);
   const handleNativePaste = useNativePaste((uris) => {
+    if (submitted) return;
+    setPendingImages((count) => count + 1);
     void (async () => {
       try {
         const images = await convertPastedImagesToAttachments({
@@ -94,6 +115,8 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
         }
       } catch (error) {
         console.error("[review comment] error converting pasted images", error);
+      } finally {
+        setPendingImages((count) => count - 1);
       }
     })();
   });
@@ -127,12 +150,18 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   }, [selectedLines, selectedTheme, target]);
 
   async function handlePickImages(): Promise<void> {
-    const result = await pickComposerImages({ existingCount: attachments.length });
-    if (result.images.length > 0) {
-      setAttachments((current) => [...current, ...result.images]);
-    }
-    if (result.error) {
-      setPendingConnectionError(result.error);
+    if (submitted) return;
+    setPendingImages((count) => count + 1);
+    try {
+      const result = await pickComposerImages({ existingCount: attachments.length });
+      if (result.images.length > 0) {
+        setAttachments((current) => [...current, ...result.images]);
+      }
+      if (result.error) {
+        setPendingConnectionError(result.error);
+      }
+    } finally {
+      setPendingImages((count) => count - 1);
     }
   }
 
@@ -141,15 +170,20 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
       return;
     }
 
-    appendReviewCommentToDraft({
-      environmentId,
-      threadId,
-      text: formatReviewCommentContext(target, commentText),
-      attachments,
-    });
-    setAttachments([]);
-    dismissComposer();
-  }, [attachments, commentText, dismissComposer, environmentId, target, threadId]);
+    if (submitted || pendingImages > 0) return;
+    try {
+      submit(() =>
+        appendReviewCommentToDraft({
+          environmentId,
+          threadId,
+          text: formatReviewCommentContext(target, commentText),
+          attachments,
+        }),
+      );
+    } catch {
+      setPendingConnectionError("Could not add the comment. Your input has been kept; try again.");
+    }
+  }, [attachments, commentText, environmentId, pendingImages, submit, submitted, target, threadId]);
 
   return (
     <View className="flex-1 bg-sheet">
@@ -256,6 +290,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
                     <TextInputWrapper onPaste={handleNativePaste} style={{ flex: 1, minHeight: 0 }}>
                       <TextInput
                         autoFocus
+                        editable={!submitted}
                         multiline
                         scrollEnabled
                         placeholder="Leave a comment..."
@@ -291,6 +326,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
           <View className="flex-row items-center gap-3 bg-sheet px-5 py-2">
             <ControlPill
               accessibilityLabel="Add image"
+              disabled={submitted || pendingImages > 0}
               icon="plus"
               onPress={() => void handlePickImages()}
             />
@@ -300,7 +336,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
               icon="arrow.up"
               label="Comment"
               variant="primary"
-              disabled={!canSubmit}
+              disabled={!canSubmit || submitted || pendingImages > 0}
               onPress={handleSubmit}
             />
           </View>
@@ -317,6 +353,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
           >
             <ControlPill
               accessibilityLabel="Add image"
+              disabled={submitted || pendingImages > 0}
               icon="plus"
               onPress={() => void handlePickImages()}
             />
@@ -326,7 +363,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
               icon="arrow.up"
               label="Comment"
               variant="primary"
-              disabled={!canSubmit}
+              disabled={!canSubmit || submitted || pendingImages > 0}
               onPress={handleSubmit}
             />
           </View>

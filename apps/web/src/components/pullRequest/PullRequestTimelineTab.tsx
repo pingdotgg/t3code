@@ -1,3 +1,4 @@
+import { reviewEditorKey, usePullRequestReviewStore } from "./pullRequestReviewStore";
 import type {
   EnvironmentId,
   PullRequestActor,
@@ -208,6 +209,12 @@ function ConversationCard({
       toastManager.add({ type: "error", title: "Could not save the comment" });
       return;
     }
+    usePullRequestReviewStore
+      .getState()
+      .clearEditorDraft(
+        reviewEditorKey(reactions.environmentId, reactions.reference, `comment:${editable.id}`),
+        body,
+      );
     setEditing(false);
     reactions.onRefresh();
   };
@@ -256,6 +263,11 @@ function ConversationCard({
       {editing && editable !== null ? (
         <div className="px-2 pb-2 pt-3">
           <PullRequestMarkdownEditor
+            draftKey={reviewEditorKey(
+              reactions.environmentId,
+              reactions.reference,
+              `comment:${editable.id}`,
+            )}
             value={editable.body}
             cwd={cwd}
             environmentId={reactions.environmentId}

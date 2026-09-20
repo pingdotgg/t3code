@@ -1,6 +1,8 @@
 import { MessageCircle, Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
+import { ensureLocalApi } from "~/localApi";
+
 import { Button } from "~/components/ui/button";
 import { Textarea } from "~/components/ui/textarea";
 
@@ -24,6 +26,7 @@ interface DiffCommentAnnotationProps {
   placeholder?: string;
   submitLabel?: string;
   pending?: boolean;
+  submitDisabled?: boolean;
   secondaryAction?: DiffCommentSecondaryAction;
   focusOnMount?: boolean;
 }
@@ -40,12 +43,30 @@ export function DiffCommentAnnotation({
   placeholder = "Add a comment…",
   submitLabel = "Comment",
   pending = false,
+  submitDisabled = false,
   secondaryAction,
   focusOnMount = true,
 }: DiffCommentAnnotationProps) {
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
   const trimmedText = displayedText.trim();
+  const dismissing = useRef(false);
+  const cancel = async () => {
+    if (pending || dismissing.current) return;
+    dismissing.current = true;
+    try {
+      if (
+        displayedText.length === 0 ||
+        (await ensureLocalApi().dialogs.confirm(
+          "Discard this comment? Your text has not been added to the draft.",
+          { variant: "destructive" },
+        ))
+      )
+        onCancel();
+    } finally {
+      dismissing.current = false;
+    }
+  };
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useLayoutEffect(() => {
@@ -104,9 +125,10 @@ export function DiffCommentAnnotation({
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();
-            onCancel();
+            event.stopPropagation();
+            void cancel();
           }
-          if (isCommentSubmitShortcut(event, trimmedText, pending)) {
+          if (isCommentSubmitShortcut(event, trimmedText, pending || submitDisabled)) {
             event.preventDefault();
             onComment(trimmedText);
           }
@@ -114,21 +136,25 @@ export function DiffCommentAnnotation({
       />
       <div className="mt-1.5 flex items-center gap-1">
         <span className="mr-auto text-3xs text-muted-foreground/70">⌘/Ctrl Enter to send</span>
-        <Button variant="ghost-muted" size="xs" onClick={onCancel}>
+        <Button variant="ghost-muted" size="xs" disabled={pending} onClick={() => void cancel()}>
           Cancel
         </Button>
         {secondaryAction ? (
           <Button
             size="xs"
             variant="outline"
-            disabled={!secondaryAction.allowEmpty && !trimmedText}
+            disabled={pending || submitDisabled || (!secondaryAction.allowEmpty && !trimmedText)}
             onClick={() => secondaryAction.onAction(trimmedText)}
           >
             {secondaryAction.icon}
             {secondaryAction.label}
           </Button>
         ) : null}
-        <Button size="xs" disabled={pending || !trimmedText} onClick={() => onComment(trimmedText)}>
+        <Button
+          size="xs"
+          disabled={pending || submitDisabled || !trimmedText}
+          onClick={() => onComment(trimmedText)}
+        >
           {submitLabel}
         </Button>
       </div>

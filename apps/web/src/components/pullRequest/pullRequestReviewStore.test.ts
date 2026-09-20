@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
-import { ProjectId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import {
   type PendingReviewComment,
   pullRequestReviewKey,
+  reviewEditorKey,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
 
@@ -13,7 +14,70 @@ function comment(id: string, body = id): PendingReviewComment {
 
 describe("pull request review drafts", () => {
   beforeEach(() => {
-    usePullRequestReviewStore.setState({ drafts: {}, summaries: {} });
+    usePullRequestReviewStore.setState({
+      drafts: {},
+      summaries: {},
+      editorDrafts: {},
+      inlineDrafts: {},
+      lineDrafts: {},
+    });
+  });
+
+  it("retains editor text across unmount and isolates environment, review and subject", () => {
+    const reference = { projectId: ProjectId.make("project"), repository: "owner/repo", number: 7 };
+    const key = reviewEditorKey(EnvironmentId.make("one"), reference, "comment:42");
+    usePullRequestReviewStore.getState().setEditorDraft(key, "Unsent edit");
+    expect(usePullRequestReviewStore.getState().editorDrafts[key]).toBe("Unsent edit");
+    expect(
+      usePullRequestReviewStore.getState().editorDrafts[
+        reviewEditorKey(EnvironmentId.make("two"), reference, "comment:42")
+      ],
+    ).toBeUndefined();
+    expect(
+      usePullRequestReviewStore.getState().editorDrafts[
+        reviewEditorKey(EnvironmentId.make("one"), reference, "comment:43")
+      ],
+    ).toBeUndefined();
+    expect(
+      usePullRequestReviewStore.getState().editorDrafts[
+        reviewEditorKey(EnvironmentId.make("one"), { ...reference, number: 8 }, "comment:42")
+      ],
+    ).toBeUndefined();
+  });
+
+  it("clears only a submitted editor snapshot and keeps a newer edit", () => {
+    const store = usePullRequestReviewStore.getState();
+    store.setEditorDraft("reply", "Submitted");
+    store.setEditorDraft("reply", "Newer input");
+    store.clearEditorDraft("reply", "Submitted");
+    expect(usePullRequestReviewStore.getState().editorDrafts.reply).toBe("Newer input");
+    store.clearEditorDraft("reply", "Newer input");
+    expect(usePullRequestReviewStore.getState().editorDrafts.reply).toBeUndefined();
+  });
+
+  it("retains an inline PR draft's file and line with its text when another review is opened", () => {
+    const draft = {
+      fileKey: "file-a",
+      path: "src/a.ts",
+      oldPath: null,
+      position: { kind: "added" as const, newLine: 5 },
+      range: { start: 5, end: 5, side: "additions" as const },
+      text: "Keep this input",
+    };
+    const store = usePullRequestReviewStore.getState();
+    store.setLineDraft("environment-a/review-a", draft);
+    store.setLineDraft("environment-a/review-b", {
+      ...draft,
+      path: "src/b.ts",
+      text: "Other input",
+    });
+    store.setLineDraft("environment-a/review-b", null);
+    expect(usePullRequestReviewStore.getState().lineDrafts["environment-a/review-a"]).toEqual(
+      draft,
+    );
+    expect(
+      usePullRequestReviewStore.getState().lineDrafts["environment-a/review-b"],
+    ).toBeUndefined();
   });
 
   it("removes only the line comments included in a submitted snapshot", () => {
