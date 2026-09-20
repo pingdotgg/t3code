@@ -20,6 +20,17 @@ const envelope = (tag: number, payload: number[]) => {
   ];
 };
 
+const semuFrame = (payload: number[], isKey: boolean, timestamp = 0) => {
+  const buffer = new ArrayBuffer(16 + payload.length);
+  const view = new DataView(buffer);
+  view.setUint32(0, 0x53454d55);
+  view.setUint8(4, 1);
+  view.setUint8(5, isKey ? 1 : 0);
+  view.setBigUint64(8, BigInt(timestamp));
+  new Uint8Array(buffer).set(payload, 16);
+  return buffer;
+};
+
 describe("AvccDemuxer", () => {
   it("reassembles envelopes split across reads", () => {
     const demuxer = new AvccDemuxer();
@@ -64,6 +75,7 @@ describe("native device stream transport", () => {
       readyState = 1;
       binaryType = "";
       onopen: (() => void) | null = null;
+      onmessage: ((event: { data: string | ArrayBuffer }) => void) | null = null;
       onclose: ((event: { code: number; reason: string }) => void) | null = null;
       send = vi.fn();
       close = vi.fn();
@@ -155,6 +167,34 @@ describe("native device stream transport", () => {
     expect(socket.close).toHaveBeenCalledTimes(1);
   });
 
+  it("decodes the Android keyframe used to configure the decoder without resetting the stream", async () => {
+    // Annex-B SPS (High profile, level 3.1) followed by an IDR slice.
+    const sps = [0, 0, 0, 1, 0x67, 0x64, 0, 0x1f];
+    const idr = [0, 0, 0, 1, 0x65, 0xaa];
+    const h264KeyframeWithSps = [...sps, ...idr];
+    let decoder!: FakeVideoDecoder;
+    class FakeVideoDecoder {
+      static isConfigSupported = vi.fn(async () => ({ supported: true }));
+      state: "unconfigured" | "configured" | "closed" = "unconfigured";
+      decodeQueueSize = 0;
+      configure = vi.fn(() => (this.state = "configured"));
+      close = vi.fn(() => (this.state = "closed"));
+      decode = vi.fn();
+      constructor() {
+        decoder = this;
+      }
+    }
+    const { client, opened } = setup("android");
+    vi.stubGlobal("VideoDecoder", FakeVideoDecoder);
+    client.start();
+    const socket = await opened;
+    socket.onmessage?.({ data: semuFrame(h264KeyframeWithSps, true) });
+    await vi.waitFor(() => expect(decoder.decode).toHaveBeenCalledOnce());
+    expect(decoder.configure).toHaveBeenCalledTimes(1);
+    expect(socket.send).not.toHaveBeenCalled();
+    client.stop();
+  });
+
   it("renews an expired Android ticket when the HTTP upgrade is rejected instead of retrying it forever", async () => {
     const { client, opened, events } = setup("android");
     client.start();
@@ -210,14 +250,7 @@ describe("native device stream transport", () => {
 
 describe("serve-emu frames", () => {
   it("strips the SEMU header and reads the keyframe flag and timestamp", () => {
-    const buffer = new ArrayBuffer(16 + 3);
-    const view = new DataView(buffer);
-    view.setUint32(0, 0x53454d55);
-    view.setUint8(4, 1);
-    view.setUint8(5, 1);
-    view.setBigUint64(8, 123456n);
-    new Uint8Array(buffer).set([7, 8, 9], 16);
-    const packet = parseSemuPacket(buffer);
+    const packet = parseSemuPacket(semuFrame([7, 8, 9], true, 123456));
     expect(packet.isKey).toBe(true);
     expect(packet.timestamp).toBe(123456);
     expect(Array.from(packet.data)).toEqual([7, 8, 9]);

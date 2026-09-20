@@ -579,7 +579,11 @@ export function createDeviceStreamClient(
         void configureDecoder({ codec: avcCodecString(scanned.sps) }).then((configured) => {
           configuring = false;
           awaitingKeyframe = true;
-          if (configured) requestKeyframe();
+          if (configured) {
+            // The hub prefixes every keyframe with its codec configuration.
+            if (isKey) decode(true, packet.data, packet.timestamp);
+            else requestKeyframe();
+          }
         });
         return;
       }
