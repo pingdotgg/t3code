@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { makeWorktreeDependencies } from "../vcs/WorktreeDependencies.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 
 export interface ProjectSetupScriptRunnerResultNoScript {
@@ -192,6 +193,7 @@ function wrapCommandForCompletion(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
+  const warmDependencies = yield* makeWorktreeDependencies();
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const terminalManager = yield* TerminalManager.TerminalManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -343,6 +345,8 @@ export const make = Effect.gen(function* () {
         status: "no-script",
       } as const;
     }
+
+    yield* warmDependencies(project.workspaceRoot, input.worktreePath);
 
     const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
     const cwd = input.worktreePath;

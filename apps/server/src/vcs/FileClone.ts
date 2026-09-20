@@ -34,6 +34,27 @@ export const makeFileClone = Effect.fn("makeFileClone")(function* () {
         detail: "Filesystem cloning is unavailable on this platform",
       });
     }
+    if (platform === "darwin") {
+      // APFS clones inherit immutable flags. Reject these sources before copying
+      // so Git fallback and cancellation can still remove every created file.
+      const immutable = yield* spawner
+        .string(
+          ChildProcess.make(
+            "/usr/bin/find",
+            ["-P", ...sources, "-flags", "+uchg,schg", "-print", "-quit"],
+            { stderr: "ignore" },
+          ),
+        )
+        .pipe(Effect.timeout(300_000));
+      if (immutable.length > 0) {
+        return yield* new GitCommandError({
+          operation: "FileClone.copy",
+          command: "/bin/cp",
+          cwd: destination,
+          detail: "Immutable source files require ordinary checkout",
+        });
+      }
+    }
     const command =
       platform === "win32"
         ? ChildProcess.make(

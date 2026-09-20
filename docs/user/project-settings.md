@@ -64,7 +64,8 @@ filesystems, including Windows NTFS, use Git as usual.
 To seed dependencies too, set `"worktreeCloneDependencies": true` in `t3.json` and
 keep a `runOnWorktreeCreate` script that installs dependencies. T3 copies ignored
 `node_modules` directories when the source and new worktree are clean and at the
-same commit. Setup still runs to reconcile dependencies and rebuild executable
+same commit, just before running the effective setup action. Worktree creation
+that skips setup does not seed dependencies. Setup still runs to reconcile dependencies and rebuild executable
 shims; path-sensitive caches and non-portable symlinks are not reused. Set the
 option to `false` or remove it to disable dependency copying. This runs on the
 machine hosting the environment, including when you connect remotely.
