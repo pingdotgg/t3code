@@ -7,7 +7,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { Scheduler } from "../scheduling/Scheduler.ts";
+import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -109,7 +109,7 @@ const makeSweep = Effect.gen(function* () {
 export const workerLive = Layer.effectDiscard(
   Effect.gen(function* () {
     const sweep = yield* makeSweep;
-    const scheduler = yield* Scheduler;
+    const scheduler = yield* Scheduler.Scheduler;
     yield* scheduler.register("usage-limit-recovery", sweep());
   }),
 );

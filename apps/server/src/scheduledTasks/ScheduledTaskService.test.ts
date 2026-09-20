@@ -1,4 +1,4 @@
-import { layer as schedulerLayer } from "../scheduling/Scheduler.ts";
+import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as NodeUtil from "node:util";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -212,7 +212,7 @@ it.effect(
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                 NodeCrypto.layer,
-                schedulerLayer,
+                Scheduler.layer,
               ),
             ),
           );
@@ -317,7 +317,7 @@ it.effect(
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                 NodeCrypto.layer,
-                schedulerLayer,
+                Scheduler.layer,
               ),
             ),
           );

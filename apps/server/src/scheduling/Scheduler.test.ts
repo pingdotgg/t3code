@@ -6,11 +6,11 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
-import { Scheduler, layer } from "./Scheduler.ts";
+import * as Scheduler from "./Scheduler.ts";
 
 it.effect("keeps other sources running after a source defects", () =>
   Effect.gen(function* () {
-    const scheduler = yield* Scheduler;
+    const scheduler = yield* Scheduler.Scheduler;
     const receipts = yield* Queue.unbounded<string>();
     yield* scheduler.register(
       "broken",
@@ -24,12 +24,12 @@ it.effect("keeps other sources running after a source defects", () =>
         "healthy",
       ]);
     }
-  }).pipe(Effect.provide(layer)),
+  }).pipe(Effect.provide(Scheduler.layer)),
 );
 
 it.effect("does not overlap slow work or hold up another source", () =>
   Effect.gen(function* () {
-    const scheduler = yield* Scheduler;
+    const scheduler = yield* Scheduler.Scheduler;
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     const runs = yield* Ref.make(0);
@@ -52,12 +52,12 @@ it.effect("does not overlap slow work or hold up another source", () =>
     yield* TestClock.adjust("5 seconds");
     yield* Queue.take(receipts);
     assert.equal(yield* Ref.get(runs), 2);
-  }).pipe(Effect.provide(layer)),
+  }).pipe(Effect.provide(Scheduler.layer)),
 );
 
 it.effect("unregisters closed sources and interrupts their in-flight work", () =>
   Effect.gen(function* () {
-    const scheduler = yield* Scheduler;
+    const scheduler = yield* Scheduler.Scheduler;
     const started = yield* Deferred.make<void>();
     const stopped = yield* Deferred.make<void>();
     const runs = yield* Ref.make(0);
@@ -82,5 +82,5 @@ it.effect("unregisters closed sources and interrupts their in-flight work", () =
     yield* TestClock.adjust("5 seconds");
     yield* Queue.take(receipts);
     assert.equal(yield* Ref.get(runs), 1);
-  }).pipe(Effect.provide(layer)),
+  }).pipe(Effect.provide(Scheduler.layer)),
 );

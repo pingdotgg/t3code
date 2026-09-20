@@ -25,7 +25,7 @@ import { workerLive as recoveryWorker } from "../orchestration-v2/UsageLimitReco
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ScheduledTasks from "../scheduledTasks/ScheduledTaskService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { layer as schedulerLayer } from "./Scheduler.ts";
+import * as Scheduler from "./Scheduler.ts";
 
 it.effect.each(["on time", "after restart"])(
   "runs Scheduled Tasks and a persisted limit retry through the same scheduler %s",
@@ -118,7 +118,7 @@ it.effect.each(["on time", "after restart"])(
       );
       const workers = Layer.mergeAll(ScheduledTasks.layer, recoveryWorker).pipe(
         Layer.provide(dependencies),
-        Layer.provide(schedulerLayer),
+        Layer.provide(Scheduler.layer),
       );
       yield* Effect.gen(function* () {
         const tasks = yield* ScheduledTasks.ScheduledTaskService;
