@@ -1,3 +1,4 @@
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -16,6 +17,7 @@ export function UsageLimitRecoveryCard({
 }) {
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const resetAt = thread.runtime?.usageLimitResetAt ?? null;
   const canSchedule =
     resetAt !== null &&
@@ -33,11 +35,15 @@ export function UsageLimitRecoveryCard({
   async function toggle() {
     if (!resetAt || !runId || !canSchedule) return;
     setPending(true);
+    setError(null);
     try {
-      await updateMetadata({
+      const result = await updateMetadata({
         environmentId,
         input: { threadId: thread.id, limitRecovery: { runId, resetAt, autoResume: !scheduled } },
       });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not change limit recovery.");
     } finally {
       setPending(false);
     }
@@ -60,6 +66,11 @@ export function UsageLimitRecoveryCard({
             {scheduled ? "Cancel auto-resume" : "Resume at reset"}
           </Text>
         </Pressable>
+      ) : null}
+      {error ? (
+        <Text accessibilityRole="alert" className="text-sm text-destructive">
+          {error}
+        </Text>
       ) : null}
     </View>
   );
