@@ -23,7 +23,7 @@ export function SettingsProjectOverridesSection(props: {
             onPress={props.onClear}
             className="px-2 py-2 active:opacity-70"
           >
-            <Text className="text-sm font-t3-medium text-primary">Use defaults</Text>
+            <Text className="text-sm font-t3-medium text-primary-text">Use defaults</Text>
           </Pressable>
         ) : null}
       </View>

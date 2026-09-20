@@ -151,6 +151,10 @@ const LIST_CACHE_CAPACITY = 64;
 const LIST_STATS_CACHE_CAPACITY = 32;
 const DETAIL_CACHE_CAPACITY = 128;
 const DIFF_CACHE_CAPACITY = 128;
+// Each diff cache can retain at most 64 MiB of patch text, counting UTF-16 storage.
+const MAX_CACHED_DIFF_PATCH_BYTES = 512 * 1024;
+const canCacheDiff = (value: PullRequestDiffResult) =>
+  value.patch.length * 2 <= MAX_CACHED_DIFF_PATCH_BYTES;
 const FILES_VIEWED_CACHE_CAPACITY = 128;
 const VIEWER_CACHE_CAPACITY = 32;
 
@@ -2507,6 +2511,7 @@ export const make = Effect.gen(function* () {
     const record = (key: string, value: PullRequestDiffResult) =>
       Effect.map(Clock.currentTimeMillis, (at) => {
         held.delete(key);
+        if (!canCacheDiff(value)) return;
         if (held.size >= DIFF_CACHE_CAPACITY) {
           const oldest = held.keys().next().value;
           if (oldest !== undefined) held.delete(oldest);
@@ -2977,7 +2982,21 @@ export const make = Effect.gen(function* () {
         ? (lastGoodSummary.peek(refCacheKey(input))?.updatedAt ?? null)
         : null,
     ]);
-    return staleDiff(key, Cache.get(diffCache, key));
+    const read = Cache.get(diffCache, key).pipe(
+      Effect.tap((value) =>
+        canCacheDiff(value)
+          ? Effect.void
+          : Cache.getSuccess(diffCache, key).pipe(
+              Effect.flatMap((current) =>
+                Option.isSome(current) && current.value === value
+                  ? Cache.invalidate(diffCache, key)
+                  : Effect.void,
+              ),
+              Effect.uninterruptible,
+            ),
+      ),
+    );
+    return staleDiff(key, read);
   };
 
   const filesViewedCache = yield* Cache.makeWith(
