@@ -2427,23 +2427,23 @@ export function buildThreadFeed(
         : [],
     ),
   );
-  const entries = Arr.sortWith(
-    [
-      ...messages
-        .filter((message) => message.role !== "user" || !foldedAnswerMessageIds.has(message.id))
-        .map((message) => {
-          let entry = messageEntriesCache.get(message);
-          if (!entry) {
-            entry = { type: "message", id: message.id, createdAt: message.createdAt, message };
-            messageEntriesCache.set(message, entry);
-          }
-          return entry;
-        }),
-      ...activityEntries,
-    ],
-    (s) => new Date(s.createdAt),
-    Order.Date,
-  );
+  // Numeric keys avoid Date wrappers and repeated getTime calls during sorting.
+  const entries = [
+    ...messages
+      .filter((message) => message.role !== "user" || !foldedAnswerMessageIds.has(message.id))
+      .map((message) => {
+        let entry = messageEntriesCache.get(message);
+        if (!entry) {
+          entry = { type: "message", id: message.id, createdAt: message.createdAt, message };
+          messageEntriesCache.set(message, entry);
+        }
+        return entry;
+      }),
+    ...activityEntries,
+  ]
+    .map((entry) => ({ entry, timestamp: Date.parse(entry.createdAt) }))
+    .sort((left, right) => Order.Number(left.timestamp, right.timestamp))
+    .map(({ entry }) => entry);
 
   return groupAdjacentActivities(entries);
 }
