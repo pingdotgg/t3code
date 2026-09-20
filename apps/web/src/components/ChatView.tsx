@@ -10356,24 +10356,6 @@ export default function ChatView(props: ChatViewProps) {
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
                 onOpenProviderSetup={openProviderSetup}
               />
-              {serverRuntime?.status === "failed" &&
-              serverRuntime.lastErrorClass === "usage_limit" &&
-              activeThreadShell?.latestRun ? (
-                <UsageLimitRecoveryCard
-                  key={activeThreadShell.latestRun.runId}
-                  stoppedAt={activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt}
-                  runId={activeThreadShell.latestRun.runId}
-                  resetAt={serverRuntime.usageLimitResetAt ?? null}
-                  recovery={activeThreadShell.limitRecovery ?? null}
-                  onChange={async (limitRecovery) => {
-                    const result = await updateThreadMetadata({
-                      environmentId,
-                      input: { threadId: activeThread.id, limitRecovery },
-                    });
-                    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-                  }}
-                />
-              ) : null}
               <ThreadErrorBanner
                 error={visibleThreadError}
                 errorClass={
@@ -10523,6 +10505,26 @@ export default function ChatView(props: ChatViewProps) {
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-3xl"
                 >
+                  {serverRuntime?.status === "failed" &&
+                  serverRuntime.lastErrorClass === "usage_limit" &&
+                  activeThreadShell?.latestRun ? (
+                    <UsageLimitRecoveryCard
+                      key={activeThreadShell.latestRun.runId}
+                      stoppedAt={
+                        activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt
+                      }
+                      runId={activeThreadShell.latestRun.runId}
+                      resetAt={serverRuntime.usageLimitResetAt ?? null}
+                      recovery={activeThreadShell.limitRecovery ?? null}
+                      onChange={async (limitRecovery) => {
+                        const result = await updateThreadMetadata({
+                          environmentId,
+                          input: { threadId: activeThread.id, limitRecovery },
+                        });
+                        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+                      }}
+                    />
+                  ) : null}
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full">
                       <div

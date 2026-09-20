@@ -34,7 +34,7 @@ export function UsageLimitRecoveryCard({
     }
   }
   return (
-    <div className="pointer-events-auto mx-auto mt-3 max-w-[min(48rem,calc(100%-2rem))] rounded-lg border border-amber-500/25 bg-background/95 px-3 py-2 text-sm">
+    <div className="pointer-events-auto mb-2 w-full rounded-lg border border-amber-500/25 bg-background/95 px-3 py-2 text-sm">
       <p>
         {resetAt
           ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
