@@ -1109,13 +1109,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       return;
     }
 
+    const contentElement =
+      timelineViewportElement.querySelector<HTMLElement>("[data-timeline-root]");
     const measure = () => {
       const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
       // Without a mounted row, treat the column as full width so the strip stays inert.
-      const contentWidth =
-        timelineViewportElement
-          .querySelector<HTMLElement>("[data-timeline-root]")
-          ?.getBoundingClientRect().width ?? viewportWidth;
+      const contentWidth = contentElement?.getBoundingClientRect().width ?? viewportWidth;
       const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(
         viewportWidth,
         contentWidth,
@@ -1131,12 +1130,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
     const observer = new ResizeObserver(measure);
     observer.observe(timelineViewportElement);
+    if (contentElement) {
+      // Width can change without resizing the viewport when the header control
+      // or the Appearance setting changes the shared content-column cap.
+      observer.observe(contentElement);
+    }
 
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
+  }, [timelineViewportElement, rows.length, listIdentityKey, reportContentOverflow, chatWidth]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
