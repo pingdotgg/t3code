@@ -1,3 +1,4 @@
+import { ThreadSearchStatus } from "./ThreadSearchStatus";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -2671,10 +2672,7 @@ export default function Sidebar() {
     [activeThreads, pinnedThreads, settledThreads, snoozedThreads],
   );
   const searchEnvironmentIds = useMemo(
-    () =>
-      environments
-        .filter((environment) => environment.connection.phase === "connected")
-        .map((environment) => environment.environmentId),
+    () => environments.map((environment) => environment.environmentId),
     [environments],
   );
   // useThreadSearch owns the debounce and the two-character floor.
@@ -4604,6 +4602,9 @@ export default function Sidebar() {
       >
         <SidebarGroup className="flex-1" role="presentation">
           {isSearchingThreads ? (
+            <ThreadSearchStatus sources={threadSearch.sources} retry={threadSearch.retry} />
+          ) : null}
+          {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <TooltipProvider
                 key="sidebar-thread-search-tooltips-150"
@@ -4666,7 +4667,11 @@ export default function Sidebar() {
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                {threadSearch.isPending ? "Searching thread messages…" : "No threads found"}
+                {threadSearch.isPending
+                  ? "Searching thread messages…"
+                  : threadSearch.sources.some((source) => source.status !== "complete")
+                    ? "No matches in available results"
+                    : "No threads found"}
               </p>
             )
           ) : null}

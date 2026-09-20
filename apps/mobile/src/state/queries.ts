@@ -10,8 +10,10 @@ import type {
 } from "@t3tools/contracts";
 import {
   createThreadSearchResultsAtomFamily,
+  THREAD_SEARCH_LIMIT,
   makeThreadSearchKey,
   type EnvironmentThreadSearchMatch,
+  type ThreadSearchSource,
 } from "@t3tools/client-runtime/state/thread-search";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
@@ -20,6 +22,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
+import { environmentPresentations } from "./presentation";
 import { orchestrationEnvironment } from "./orchestration";
 import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
@@ -39,16 +42,19 @@ const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
 const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
+const EMPTY_THREAD_SEARCH_SOURCES: ReadonlyArray<ThreadSearchSource> = [];
 const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
   isLoading: false,
+  sources: EMPTY_THREAD_SEARCH_SOURCES,
 }).pipe(Atom.withLabel("mobile:thread-search:empty"));
 
 const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
+  getEnvironmentAtom: environmentPresentations.presentationAtom,
   getSearchAtom: (environmentId, query) =>
     orchestrationEnvironment.threadSearch({
       environmentId,
-      input: { query },
+      input: { query, limit: THREAD_SEARCH_LIMIT },
     }),
   labelPrefix: "mobile:thread-search",
 });
@@ -160,10 +166,13 @@ export function useThreadSearch(
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly isPending: boolean;
+  readonly sources: ReadonlyArray<ThreadSearchSource>;
+  readonly retry: () => void;
 } {
   const normalizedQuery = query.trim();
   const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
-  const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
+  const canSearch =
+    environmentIds.length > 0 && normalizedQuery.length >= 2 && normalizedQuery.length <= 200;
   const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
   const searchKey = useMemo(
     () => (settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery)),
@@ -174,6 +183,20 @@ export function useThreadSearch(
   );
   const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
   return {
+    sources: result.sources,
+    retry: () => {
+      if (settledQuery === null) return;
+      for (const source of result.sources) {
+        if (source.status === "failed") {
+          appAtomRegistry.refresh(
+            orchestrationEnvironment.threadSearch({
+              environmentId: source.environmentId,
+              input: { query: settledQuery, limit: THREAD_SEARCH_LIMIT },
+            }),
+          );
+        }
+      }
+    },
     matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
     isPending: canSearch && (isDebouncing || result.isLoading),
   };

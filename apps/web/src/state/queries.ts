@@ -5,8 +5,10 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import {
   createThreadSearchResultsAtomFamily,
+  THREAD_SEARCH_LIMIT,
   makeThreadSearchKey,
   type EnvironmentThreadSearchMatch,
+  type ThreadSearchSource,
 } from "@t3tools/client-runtime/state/thread-search";
 import { type VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
@@ -23,6 +25,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentPresentations } from "./presentation";
 import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
@@ -39,16 +42,19 @@ const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
 const EMPTY_CONTENT_MATCHES: ReadonlyArray<ProjectContentMatch> = [];
 const INITIAL_BRANCH_CURSORS = [undefined] as const;
 const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> = Object.freeze([]);
+const EMPTY_THREAD_SEARCH_SOURCES: ReadonlyArray<ThreadSearchSource> = [];
 const EMPTY_THREAD_SEARCH_ATOM = Atom.make({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
   isLoading: false,
+  sources: EMPTY_THREAD_SEARCH_SOURCES,
 }).pipe(Atom.withLabel("web:thread-search:empty"));
 
 const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
+  getEnvironmentAtom: environmentPresentations.presentationAtom,
   getSearchAtom: (environmentId, query) =>
     orchestrationEnvironment.threadSearch({
       environmentId,
-      input: { query },
+      input: { query, limit: THREAD_SEARCH_LIMIT },
     }),
   labelPrefix: "web:thread-search",
 });
@@ -82,10 +88,13 @@ export function useThreadSearch(
 ): {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly isPending: boolean;
+  readonly sources: ReadonlyArray<ThreadSearchSource>;
+  readonly retry: () => void;
 } {
   const normalizedQuery = query.trim();
   const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
-  const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
+  const canSearch =
+    environmentIds.length > 0 && normalizedQuery.length >= 2 && normalizedQuery.length <= 200;
   const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
   const searchKey = useMemo(
     () => (settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery)),
@@ -96,6 +105,20 @@ export function useThreadSearch(
   );
   const isDebouncing = canSearch && normalizedQuery !== debouncedQuery;
   return {
+    sources: result.sources,
+    retry: () => {
+      if (settledQuery === null) return;
+      for (const source of result.sources) {
+        if (source.status === "failed") {
+          appAtomRegistry.refresh(
+            orchestrationEnvironment.threadSearch({
+              environmentId: source.environmentId,
+              input: { query: settledQuery, limit: THREAD_SEARCH_LIMIT },
+            }),
+          );
+        }
+      }
+    },
     matches: isDebouncing ? EMPTY_THREAD_SEARCH_MATCHES : result.matches,
     isPending: canSearch && (isDebouncing || result.isLoading),
   };
