@@ -35,7 +35,7 @@ type ThreadSessionSetEvent = Extract<OrchestrationEvent, { type: "thread.session
  * Delay before each automatic retry. The length is the retry budget; once it
  * is spent the failure stays terminal until the user sends a message.
  */
-export const PROVIDER_BUSY_RETRY_DELAYS = [
+const PROVIDER_BUSY_RETRY_DELAYS = [
   Duration.minutes(1),
   Duration.minutes(5),
   Duration.minutes(15),
@@ -73,16 +73,19 @@ interface FailureIdentity {
 }
 
 /** Whether the thread is still sitting, unparked, on the busy failure the retry was scheduled for. */
-export function busyRetryStillWanted(
+function busyRetryStillWanted(
   thread: OrchestrationThreadShell | undefined,
   expected: FailureIdentity,
+  nowIso: string,
 ): thread is OrchestrationThreadShell {
+  const snoozedUntil = thread?.snoozedUntil ?? null;
   return (
     thread !== undefined &&
     thread.archivedAt === null &&
     // Settling or snoozing parks the thread; only the user un-parks it.
+    // An expired snooze no longer parks it.
     thread.settledOverride !== "settled" &&
-    (thread.snoozedUntil ?? null) === null &&
+    (snoozedUntil === null || Date.parse(snoozedUntil) <= Date.parse(nowIso)) &&
     thread.session?.status === "error" &&
     isProviderBusyError(thread.session.lastError ?? "") &&
     thread.latestTurn?.state === "error" &&
@@ -105,12 +108,20 @@ export const makeProviderBusyRetryHandler = (deps: {
   const pending = new Map<ThreadId, FailureIdentity & { fiber?: Fiber.Fiber<void, unknown> }>();
   const { readThread } = deps;
 
+  // Budget state only matters while the thread can still be retried.
+  const forgetGoneThread = (threadId: ThreadId, thread: OrchestrationThreadShell | undefined) => {
+    if (thread === undefined || thread.archivedAt !== null) retryStates.delete(threadId);
+  };
+
   const deliverRetry = Effect.fn("deliverProviderBusyRetry")(function* (
     input: FailureIdentity & { readonly threadId: ThreadId; readonly attempt: number },
   ) {
     const thread = yield* readThread(input.threadId);
-    if (!busyRetryStillWanted(thread, input)) return;
     const createdAt = DateTime.formatIso(yield* DateTime.now);
+    if (!busyRetryStillWanted(thread, input, createdAt)) {
+      forgetGoneThread(input.threadId, thread);
+      return;
+    }
     const id = yield* deps.makeId;
     // A failed delivery still spends the attempt, so a rejected dispatch cannot loop.
     retryStates.set(input.threadId, {
@@ -146,6 +157,7 @@ export const makeProviderBusyRetryHandler = (deps: {
     const { threadId, session } = event.payload;
     if (session.status !== "error" || !isProviderBusyError(session.lastError ?? "")) return;
     const thread = yield* readThread(threadId);
+    forgetGoneThread(threadId, thread);
     // A busy-looking error after a turn that finished is not a stopped turn.
     if (
       thread === undefined ||

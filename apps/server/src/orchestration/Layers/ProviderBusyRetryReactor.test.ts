@@ -158,6 +158,19 @@ it.effect.each([
   }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
 );
 
+it.effect("delivers once a snooze has expired", () =>
+  Effect.gen(function* () {
+    const { state, starts, handle } = yield* setup;
+    yield* handle(sessionSet(busyError));
+    // The test clock starts at the epoch, so any 1969 time is in the past.
+    state.thread = makeThread("turn-1", "2026-01-01T00:00:00.000Z", {
+      snoozedUntil: "1969-12-31T00:00:00.000Z",
+    });
+    yield* TestClock.adjust(Duration.minutes(1));
+    assert.lengthOf(starts, 1);
+  }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+);
+
 it.effect("ignores a busy-looking error after a turn that completed", () =>
   Effect.gen(function* () {
     const { state, starts, handle } = yield* setup;
