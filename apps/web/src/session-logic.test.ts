@@ -32,6 +32,7 @@ import {
   selectMessageImageResources,
   createMessageAttachmentPreviewProjector,
   providerErrorPresentation,
+  workEntryIsProviderBusy,
   type TimelineEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
@@ -111,6 +112,28 @@ describe("V2 session presentation", () => {
         failure: { ...busyItem.failure, class: "provider_error" as const },
       }),
     ).toMatchObject({ label: "Provider error" });
+
+    const entry = {
+      id: "entry-busy",
+      createdAt: "2026-06-20T00:00:00.000Z",
+      runId: busyItem.runId,
+      tone: "info" as const,
+      itemType: "error" as const,
+      toolLifecycleStatus: "failed" as const,
+      structuredPayload: busyItem,
+      label: "Provider busy",
+      detail: busyItem.failure.message,
+    };
+    expect(workEntryIsProviderBusy(entry)).toBe(true);
+    expect(
+      workEntryIsProviderBusy({
+        ...entry,
+        structuredPayload: {
+          ...busyItem,
+          failure: { ...busyItem.failure, class: "provider_error" as const },
+        },
+      }),
+    ).toBe(false);
   });
 
   it("labels provider retry progress, delay, recovery, and exhaustion", () => {

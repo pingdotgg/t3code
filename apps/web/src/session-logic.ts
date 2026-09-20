@@ -152,13 +152,12 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
 
 /** Severe failures keep the red treatment ordinary tool failures lost: provider
  *  runtime errors mean the turn or a core side effect broke, not that a
- *  command exited nonzero. Provider-busy failures are transient capacity that
- *  the server retries, so they keep the calm row treatment. */
+ *  command exited nonzero. */
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
-  return entry.itemType === "error" && !workEntryIsProviderBusy(entry);
+  return entry.itemType === "error";
 }
 
-/** A failure the server retries on its own: shown as failed, never in the destructive style. */
+/** Transient capacity the server retries on its own: shown as failed, never in the destructive style. */
 export function workEntryIsProviderBusy(entry: WorkLogEntry): boolean {
   return (
     entry.structuredPayload?.type === "error" &&
