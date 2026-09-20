@@ -3026,6 +3026,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
     "archive",
     "settle",
     "replacement",
+    "manual-snooze",
     "snooze-only",
     "snooze-resume",
     "wake",
@@ -3144,6 +3145,32 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
       });
       if (snooze)
         assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
+      if (scenario === "manual-snooze") {
+        yield* orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`recovery:manual-snooze:${scenario}`),
+          threadId,
+          snoozedUntil: resetAt,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`recovery:manual-cancel:${scenario}`),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: false, snooze: false },
+        });
+        assert.equal(
+          DateTime.toEpochMillis(
+            (yield* orchestrator.getThreadProjection(threadId)).thread.snoozedUntil!,
+          ),
+          Date.parse(resetAt),
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.unsnooze",
+          commandId: CommandId.make(`recovery:manual-wake:${scenario}`),
+          threadId,
+        });
+        assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.snoozedUntil);
+      }
       if (scenario === "wake") {
         yield* orchestrator.dispatch({
           type: "thread.metadata.update",

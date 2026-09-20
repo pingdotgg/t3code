@@ -33,6 +33,9 @@ export function UsageLimitRecoveryCard({
   )
     return null;
   const snoozed =
+    recovery?.snooze === true &&
+    recovery.runId === runId &&
+    recovery.resetAt === resetAt &&
     resetAt !== null &&
     thread.snoozedUntil !== null &&
     Date.parse(thread.snoozedUntil) === Date.parse(resetAt);
