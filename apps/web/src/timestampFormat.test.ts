@@ -10,6 +10,7 @@ import {
   formatRelativeTimeUntilLabel,
   formatShortTimestamp,
   formatTimestamp,
+  formatUpcomingTimestamp,
   getRelativeTimeState,
   resolveTimestampLocale,
 } from "./timestampFormat";
@@ -190,6 +191,28 @@ describe("formatDayAwareTimestamp", () => {
 
   it("returns an empty string for invalid input", () => {
     expect(formatDayAwareTimestamp("not-a-date", "12-hour", now)).toBe("");
+  });
+});
+
+describe("formatUpcomingTimestamp", () => {
+  const now = new Date(2026, 7, 14, 12, 0).getTime();
+
+  it.each([
+    [14, ""],
+    [15, "tomorrow at "],
+    [13, "yesterday at "],
+  ])("keeps the reset day visible for day %i", (day, prefix) => {
+    const resetAt = new Date(2026, 7, day, 14, 30).toISOString();
+    expect(formatUpcomingTimestamp(resetAt, "12-hour", now)).toBe(
+      `${prefix}${formatShortTimestamp(resetAt, "12-hour")}`,
+    );
+  });
+
+  it("preserves the date of an older reset in the transcript", () => {
+    const resetAt = new Date(2026, 7, 12, 14, 30).toISOString();
+    expect(formatUpcomingTimestamp(resetAt, "12-hour", now)).toBe(
+      formatDayAwareTimestamp(resetAt, "12-hour", now),
+    );
   });
 });
 

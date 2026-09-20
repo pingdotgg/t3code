@@ -41,15 +41,21 @@ type RowContent = {
   icon?: ReactNode;
   label: ReactNode;
   trailing?: ReactNode;
+  wrapLabel?: boolean;
 };
 
-function WorkLogLine({ icon, label, trailing }: RowContent) {
+function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
   return (
     <div className="flex min-h-6 min-w-0 items-center gap-1.5 text-sm leading-relaxed select-none [&_*]:select-none">
       {icon ? (
         <span className="relative flex size-6 shrink-0 items-center justify-center">{icon}</span>
       ) : null}
-      <div className="min-w-0 flex-1 truncate text-secondary-label [&_*]:whitespace-nowrap">
+      <div
+        className={cn(
+          "min-w-0 flex-1 text-secondary-label",
+          !wrapLabel && "truncate [&_*]:whitespace-nowrap",
+        )}
+      >
         {label}
       </div>
       {trailing}
@@ -74,12 +80,13 @@ export function WorkLogButton({
   icon,
   label,
   trailing,
+  wrapLabel = false,
   ...buttonProps
 }: RowContent & Omit<ComponentProps<"button">, "className" | "style" | "children">) {
   const className = useRowClassName(true);
   return (
     <button {...buttonProps} type="button" className={className}>
-      <WorkLogLine icon={icon} label={label} trailing={trailing} />
+      <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
     </button>
   );
 }
@@ -89,13 +96,14 @@ export function WorkLogRow({
   icon,
   label,
   trailing,
+  wrapLabel = false,
   children,
   ...rowProps
 }: RowContent & Omit<ComponentProps<"div">, "className" | "style">) {
   const className = useRowClassName(rowProps.onClick !== undefined);
   return (
     <div {...rowProps} className={className}>
-      <WorkLogLine icon={icon} label={label} trailing={trailing} />
+      <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
       {children}
     </div>
   );

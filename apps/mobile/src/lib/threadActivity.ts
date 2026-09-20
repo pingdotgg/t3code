@@ -825,7 +825,7 @@ interface ThreadFeedRunFold {
   readonly label: string;
 }
 
-function failedFeedRunIds(
+export function failedFeedRunIds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
 ) {

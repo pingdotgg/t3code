@@ -184,7 +184,8 @@ export function formatUpcomingTimestamp(
   const startOfTargetDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   const dayDiff = Math.round((startOfTargetDay - startOfToday) / 86_400_000);
 
-  if (dayDiff <= 0) return time;
+  if (dayDiff < 0) return formatDayAwareTimestamp(isoDate, timestampFormat, nowMs);
+  if (dayDiff === 0) return time;
   if (dayDiff === 1) return `tomorrow at ${time}`;
   const dateFormatter =
     date.getFullYear() === now.getFullYear() ? numericDateFormatter : numericDateWithYearFormatter;

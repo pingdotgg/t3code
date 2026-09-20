@@ -944,7 +944,12 @@ function attachTrailingToolGroupsToAssistant(
       ) {
         if (
           !candidate.isExpandedToolGroup &&
-          candidate.groupedEntries.some(workLogEntryIsToolLike)
+          candidate.groupedEntries.some(
+            (entry) =>
+              workLogEntryIsToolLike(entry) ||
+              (entry.projectedItem?.item.type === "error" &&
+                entry.projectedItem.item.status === "failed"),
+          )
         ) {
           hasTrailingToolGroup = true;
         }

@@ -4157,6 +4157,42 @@ describe("failed turn transcript", () => {
       expect(work.map((entry) => entry.id)).toEqual(["command", "failure"]);
       expect(work.at(-1)?.detail).toBe("The provider stopped this turn.\nRetry later.");
       expect(work.at(-1)?.createdAt).toBe("2026-09-20T12:00:00.000Z");
+      const entriesWithoutTools = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: items.filter((row) => row.item.type !== "command_execution"),
+        optimisticMessages: [],
+      });
+      entriesWithoutTools.splice(1, 0, {
+        kind: "message",
+        id: "assistant-before-failure",
+        createdAt: DateTime.formatIso(at),
+        message: {
+          id: MessageId.make("assistant-before-failure"),
+          role: "assistant",
+          runId,
+          text: "Checking the workspace.",
+          createdAt: DateTime.formatIso(at),
+          updatedAt: DateTime.formatIso(at),
+          streaming: false,
+        },
+      });
+      const compactRows = deriveMessagesTimelineRows({
+        timelineEntries: entriesWithoutTools,
+        isWorking: false,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(compactRows.map((row) => row.kind)).toEqual([
+        "message",
+        "message",
+        "work",
+        "assistant-meta",
+      ]);
+      expect(compactRows[1]).toMatchObject({ showAssistantMeta: false });
+      expect(compactRows.at(-1)).toMatchObject({
+        kind: "assistant-meta",
+        showAssistantCopyButton: true,
+        message: { id: "assistant-before-failure" },
+      });
     },
   );
 });
