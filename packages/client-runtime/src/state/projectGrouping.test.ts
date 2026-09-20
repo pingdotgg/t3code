@@ -27,8 +27,8 @@ describe("load balancing shared project machines", () => {
       { environmentId: "idle", resources, weight: 1 },
       { environmentId: "preferred", resources: { ...resources, cpuCount: 4 }, weight: 3 },
     ];
-    expect(chooseLoadBalancedEnvironment(candidates, now)).toBe("preferred");
-    expect(chooseLoadBalancedEnvironment(candidates.slice(0, 2), now)).toBe("idle");
+    expect(chooseLoadBalancedEnvironment(candidates, now).environmentId).toBe("preferred");
+    expect(chooseLoadBalancedEnvironment(candidates.slice(0, 2), now).environmentId).toBe("idle");
   });
 
   it("rejects stale, unknown, excluded and saturated machines", () => {
@@ -59,7 +59,7 @@ describe("load balancing shared project machines", () => {
           },
         ],
         now,
-      ),
+      ).environmentId,
     ).toBeNull();
   });
 
@@ -70,8 +70,53 @@ describe("load balancing shared project machines", () => {
       receivedAt: now,
       weight: 1,
     };
-    expect(chooseLoadBalancedEnvironment([candidate], now)).toBe("different-clock");
-    expect(chooseLoadBalancedEnvironment([candidate], now + 15_001)).toBeNull();
+    expect(chooseLoadBalancedEnvironment([candidate], now).environmentId).toBe("different-clock");
+    expect(chooseLoadBalancedEnvironment([candidate], now + 15_001).environmentId).toBeNull();
+  });
+
+  it("distinguishes no eligible machines from missing readings and resource limits", () => {
+    const candidate = { environmentId: "remote", resources, weight: 50 };
+    expect(chooseLoadBalancedEnvironment([], now).status).toBe("no-candidates");
+    expect(chooseLoadBalancedEnvironment([{ ...candidate, weight: 0 }], now).status).toBe(
+      "no-candidates",
+    );
+    for (const snapshot of [
+      null,
+      { ...resources, sampledAt: now - 15_001 },
+      { ...resources, sampledAt: now + 5_001 },
+      { ...resources, cpuUtilization: null },
+      { ...resources, cpuCount: 0 },
+      { ...resources, totalMemoryBytes: 0 },
+    ]) {
+      expect(
+        chooseLoadBalancedEnvironment([{ ...candidate, resources: snapshot }], now).status,
+      ).toBe("unavailable");
+    }
+    for (const snapshot of [
+      { ...resources, cpuUtilization: 0.95 },
+      { ...resources, availableMemoryBytes: resources.totalMemoryBytes * 0.05 },
+    ]) {
+      expect(
+        chooseLoadBalancedEnvironment([{ ...candidate, resources: snapshot }], now).status,
+      ).toBe("at-capacity");
+    }
+    expect(chooseLoadBalancedEnvironment([candidate], now).status).toBe("selected");
+  });
+
+  it("does not claim all hosts are busy when a host's reading is unavailable", () => {
+    const busy = {
+      environmentId: "busy",
+      resources: { ...resources, cpuUtilization: 1 },
+      weight: 50,
+    };
+    const unknown = { environmentId: "unknown", resources: null, weight: 50 };
+    expect(chooseLoadBalancedEnvironment([busy, unknown], now).status).toBe("unavailable");
+    expect(
+      chooseLoadBalancedEnvironment(
+        [busy, unknown, { environmentId: "healthy", resources, weight: 50 }],
+        now,
+      ),
+    ).toEqual({ environmentId: "healthy", status: "selected" });
   });
 });
 const repositoryIdentity = {

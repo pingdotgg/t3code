@@ -3892,7 +3892,7 @@ export default function ChatView(props: ChatViewProps) {
       ? "Auto balance"
       : loadBalancing.pending
         ? "Checking machines…"
-        : loadBalancing.failed
+        : loadBalancing.status === "unavailable" || loadBalancing.status === "no-candidates"
           ? "Auto balance unavailable"
           : "Auto balance"
     : undefined;
@@ -7325,12 +7325,32 @@ export default function ChatView(props: ChatViewProps) {
     if (needsLoadBalancing) {
       toastManager.add({
         type: "warning",
-        title: loadBalancing.pending
-          ? "Checking machine resources"
-          : "Choose a machine to continue",
-        description: loadBalancing.pending
-          ? "Resource checks are still running. You can choose a machine in the composer."
-          : "No eligible machine has available resources. Choose a machine in the composer to override.",
+        ...{
+          checking: {
+            title: "Checking machine resources",
+            description:
+              "Resource checks are still running. You can choose a machine in the composer.",
+          },
+          selected: {
+            title: "Selecting a machine",
+            description: "A machine is ready. Try sending again in a moment.",
+          },
+          "no-candidates": {
+            title: "No eligible machines",
+            description:
+              "No connected machine for this project has the selected provider available and auto balancing enabled. Check Connections and auto-balance preferences, or choose a machine in the composer.",
+          },
+          unavailable: {
+            title: "Machine resources unavailable",
+            description:
+              "Some machine resource readings are missing, outdated, or failed. Retrying automatically. You can choose a machine in the composer.",
+          },
+          "at-capacity": {
+            title: "Machines are busy",
+            description:
+              "All eligible machines have at least 95% CPU usage or at most 5% available memory. Retrying automatically. Choose a machine in the composer to override.",
+          },
+        }[loadBalancing.status],
       });
       return;
     }
