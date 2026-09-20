@@ -287,6 +287,9 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
       Effect.gen(function* () {
         const f = yield* fixture();
         yield* f.git(f.cwd, ["config", "core.autocrlf", "true"]);
+        assert.equal(yield* f.clone.prepare(f.cwd, "HEAD"), null);
+        const baseline = f.path.join(f.cwd, "..", "baseline");
+        yield* f.git(f.cwd, ["worktree", "add", "--detach", baseline, "HEAD"]);
         yield* f.driver.createWorktree({
           cwd: f.cwd,
           path: f.target,
@@ -295,7 +298,7 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
         });
         assert.equal(
           yield* f.fs.readFileString(f.path.join(f.target, "source.txt")),
-          "original\r\n",
+          yield* f.fs.readFileString(f.path.join(baseline, "source.txt")),
         );
       }),
     );
@@ -364,7 +367,10 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
             )
             .pipe(Effect.ignore),
         );
-        yield* spawner.exitCode(ChildProcess.make("/usr/bin/chflags", ["uchg", source]));
+        const exitCode = yield* spawner.exitCode(
+          ChildProcess.make("/usr/bin/chflags", ["uchg", source]),
+        );
+        assert.equal(exitCode, 0, "failed to set the immutable flag");
         yield* f.driver.createWorktree({
           cwd: f.cwd,
           path: f.target,
