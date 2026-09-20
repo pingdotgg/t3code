@@ -20,6 +20,7 @@ import {
   EventId,
   MessageId,
   OrchestrationThreadShell,
+  OrchestrationThread,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderDriverKind,
@@ -417,6 +418,7 @@ function makeProviderServiceLayer(
   input: {
     readonly directory?: ProviderSessionDirectory.ProviderSessionDirectory["Service"];
     readonly supportsConversationRollback?: boolean;
+    readonly projectionLayer?: Layer.Layer<ProjectionSnapshotQuery.ProjectionSnapshotQuery>;
     readonly analyticsLayer?: Layer.Layer<AnalyticsService.AnalyticsService>;
     readonly registry?: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"];
   } = {},
@@ -449,6 +451,7 @@ function makeProviderServiceLayer(
       makeProviderServiceLive().pipe(
         Layer.provide(NodeServices.layer),
         Layer.provide(providerAdapterLayer),
+        Layer.provide(input.projectionLayer ?? Layer.empty),
         Layer.provide(directoryLayer),
         Layer.provide(defaultServerSettingsLayer),
         Layer.provide(serverConfigTestLayer),
@@ -5149,4 +5152,168 @@ describe("agent browser access", () => {
       assert.deepEqual(issued, [{ threadId, capabilities: ["preview", "pull-requests"] }]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
+
+const sideAdapters = ["codex", "claudeAgent", "cursor", "grok", "opencode", "antigravity"].map(
+  (name) => ({
+    instanceId: ProviderInstanceId.make(name),
+    fake: makeFakeCodexAdapter(ProviderDriverKind.make(name), false),
+  }),
+);
+const largeSideText = "OLDEST " + '\\"\n😀'.repeat(50_000) + " LATEST STATUS";
+const sideFixture = Schema.decodeUnknownSync(OrchestrationThread)({
+  id: "branch",
+  projectId: "project",
+  title: "Diet plan (2)",
+  modelSelection: { instanceId: "codex", model: "gpt-5" },
+  runtimeMode: "full-access",
+  branch: null,
+  worktreePath: null,
+  latestTurn: null,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  deletedAt: null,
+  messages: [
+    {
+      id: "conversation-side:retained",
+      role: "user",
+      text: "Remember cobalt",
+      context: {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            contextId: "terminal-retained",
+            kind: "terminal",
+            label: "Terminal 1",
+            terminalId: "default",
+            terminalLabel: "Terminal 1",
+            lineStart: 1,
+            lineEnd: 1,
+            text: "retained inline payload",
+          },
+        ],
+      },
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ],
+  activities: [],
+  checkpoints: [],
+  session: null,
+});
+const sideProjectionLayer = Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+  listActivitiesByKind: () => Effect.die("unused"),
+  getDeletedWorktreeThreads: () => Effect.die("unused"),
+  getProjectShells: () => Effect.die("unused"),
+  getTurnStartMessage: () => Effect.die("unused"),
+  getImportedAgentSessionSources: () => Effect.die("unused"),
+  getUserInputActivity: () => Effect.die("unused"),
+  getCommandReadModel: () => Effect.die("unused"),
+  getSnapshot: () => Effect.die("unused"),
+  getShellSnapshot: () => Effect.die("unused"),
+  getArchivedShellSnapshot: () => Effect.die("unused"),
+  getSnapshotSequence: () => Effect.die("unused"),
+  getCounts: () => Effect.die("unused"),
+  getEventReplayStats: () => Effect.die("unused"),
+  getActiveProjectByWorkspaceRoot: () => Effect.die("unused"),
+  getProjectShellById: () => Effect.die("unused"),
+  getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+  getThreadCheckpointContext: () => Effect.die("unused"),
+  getFullThreadDiffContext: () => Effect.die("unused"),
+  getThreadRuntimeContext: () => Effect.die("unused"),
+  getThreadShellById: () => Effect.succeed(Option.none()),
+  getThreadDetailById: (threadId) =>
+    Effect.succeed(
+      Option.some({
+        ...sideFixture,
+        id: threadId,
+        ...(threadId.startsWith("side-")
+          ? {
+              sideChatOf: ThreadId.make("main"),
+              messages: threadId.startsWith("side-empty")
+                ? []
+                : sideFixture.messages.map((message) => ({
+                    ...message,
+                    id: MessageId.make("conversation-side:retained"),
+                    ...(threadId.startsWith("side-long") ? { text: largeSideText } : {}),
+                  })),
+            }
+          : {}),
+      }),
+    ),
+  getThreadDetailSnapshot: () => Effect.die("unused"),
+  searchThreads: () => Effect.die("unused"),
+});
+
+const sideProvider = makeProviderServiceLayer({
+  registry: makeStaticInstanceRegistry(
+    sideAdapters.map(({ instanceId, fake }) => [instanceId, fake.adapter]),
+  ),
+  projectionLayer: sideProjectionLayer,
+});
+sideProvider.layer("side conversation provider context", (it) => {
+  for (const { instanceId, fake } of sideAdapters) {
+    it.effect(`fits oversized ${instanceId} side snapshots before adapter dispatch`, () =>
+      Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const threadId = ThreadId.make(`side-long-${instanceId}`);
+        fake.sendTurn.mockClear();
+        yield* provider.startSession(threadId, {
+          threadId,
+          providerInstanceId: instanceId,
+          cwd: fixtureCwd("project"),
+          runtimeMode: "full-access",
+        });
+        yield* provider.sendTurn({ threadId, input: "What remains?" });
+        const input = fake.sendTurn.mock.calls[0]?.[0].input ?? "";
+        assert.isAtMost(input.length, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+        assert.include(input, "LATEST STATUS");
+        assert.include(input, "Do not resume the main task");
+        assert.isTrue(input.endsWith("New user message:\nWhat remains?"));
+        const match = input.match(/saved at ("(?:[^"\\]|\\.)*")/);
+        assert.isNotNull(match);
+        const location = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.String))(
+          match![1]!,
+        );
+        const saved = NodeFS.readFileSync(location, "utf8");
+        assert.equal(
+          (yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(Schema.Array(Schema.Struct({ text: Schema.String }))),
+          )(saved.slice(saved.indexOf("\n") + 1)))[0]!.text,
+          largeSideText,
+        );
+        yield* provider.sendTurn({ threadId, input: "Follow-up" });
+        assert.equal(fake.sendTurn.mock.calls.at(-1)?.[0].input, "Follow-up");
+        NodeFS.unlinkSync(location);
+      }),
+    );
+    for (const empty of [false, true]) {
+      it.effect(`separates ${instanceId} side context once, empty=${empty}`, () =>
+        Effect.gen(function* () {
+          const provider = yield* ProviderService.ProviderService;
+          const threadId = ThreadId.make(`side-${empty ? "empty-" : ""}${instanceId}`);
+          fake.startSession.mockClear();
+          fake.sendTurn.mockClear();
+          yield* provider.startSession(threadId, {
+            threadId,
+            providerInstanceId: instanceId,
+            cwd: fixtureCwd("project"),
+            runtimeMode: "full-access",
+          });
+          assert.equal(fake.startSession.mock.calls[0]?.[0].resumeCursor, undefined);
+          yield* provider.sendTurn({ threadId, input: "Explain that term" });
+          const input = fake.sendTurn.mock.calls[0]?.[0].input ?? "";
+          assert.include(input, "temporary side chat");
+          assert.include(input, "Do not resume the main task");
+          assert.include(input, "Explain that term");
+          if (!empty) assert.include(input, "Remember cobalt");
+          yield* provider.sendTurn({ threadId, input: "A follow-up" });
+          assert.equal(fake.sendTurn.mock.calls.at(-1)?.[0].input, "A follow-up");
+        }),
+      );
+    }
+  }
 });

@@ -2127,3 +2127,242 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 });
+
+describe("temporary side conversations", () => {
+  it("freezes streaming context, persists the source link, and keeps or discards without altering the source", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-side-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    const projectId = ProjectId.make("side-project");
+    const sourceId = ThreadId.make("side-source");
+    const sideId = ThreadId.make("side-temporary");
+    const dispatch = (command: OrchestrationCommand) => system.run(system.engine.dispatch(command));
+    try {
+      await dispatch({
+        type: "project.create",
+        commandId: CommandId.make("sp"),
+        projectId,
+        title: "Side test",
+        workspaceRoot: directory,
+        createdAt: now(),
+      });
+      await dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("st"),
+        threadId: sourceId,
+        projectId,
+        title: "Running main task",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6-astra",
+          options: [{ id: "reasoningEffort", value: "medium" }],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: now(),
+      });
+      await dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("sd1"),
+        threadId: sourceId,
+        messageId: MessageId.make("partial"),
+        delta: "So far: cobalt",
+        createdAt: now(),
+      });
+      await dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("side-main-running"),
+        threadId: sourceId,
+        session: {
+          threadId: sourceId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("main-active-turn"),
+          lastError: null,
+          updatedAt: now(),
+        },
+        createdAt: now(),
+      });
+      const before = Option.getOrThrow(await system.readThread(sourceId));
+      const command: OrchestrationCommand = {
+        type: "thread.side.create",
+        commandId: CommandId.make("ss"),
+        threadId: sideId,
+        sourceThreadId: sourceId,
+        createdAt: now(),
+      };
+      await dispatch(command);
+      await dispatch(command);
+      const side = Option.getOrThrow(await system.readThread(sideId));
+      expect(side.sideChatOf).toBe(sourceId);
+      expect(side.messages).toHaveLength(1);
+      expect(side.messages[0]).toMatchObject({
+        text: "So far: cobalt\n[This answer was still in progress when the side chat opened.]",
+        streaming: false,
+        turnId: null,
+      });
+      expect(side.session).toBeNull();
+      expect(side.latestTurn).toBeNull();
+      expect(side.modelSelection).toEqual(before.modelSelection);
+      expect(Option.getOrThrow(await system.readThread(sourceId))).toEqual(before);
+      await dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("sd2"),
+        threadId: sourceId,
+        messageId: MessageId.make("partial"),
+        delta: ". Later: amber",
+        createdAt: now(),
+      });
+      expect(Option.getOrThrow(await system.readThread(sideId)).messages).toEqual(side.messages);
+      const laterSideId = ThreadId.make("later-side-snapshot");
+      await dispatch({
+        ...command,
+        commandId: CommandId.make("later-side-create"),
+        threadId: laterSideId,
+      });
+      expect(Option.getOrThrow(await system.readThread(laterSideId)).messages[0]?.text).toContain(
+        "So far: cobalt. Later: amber",
+      );
+      expect(Option.getOrThrow(await system.readThread(sideId)).messages[0]?.text).not.toContain(
+        "Later: amber",
+      );
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      expect(Option.getOrThrow(await system.readThread(sideId)).sideChatOf).toBe(sourceId);
+      await dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("sk"),
+        threadId: sideId,
+        sideChatOf: null,
+        title: "Kept investigation",
+      });
+      const keptTitleState = {
+        source: "manual",
+        version: CommandId.make("sk"),
+        needsRefinement: false,
+      };
+      expect(Option.getOrThrow(await system.readThread(sideId))).toMatchObject({
+        sideChatOf: null,
+        title: "Kept investigation",
+        titleState: keptTitleState,
+      });
+      // Keeping and renaming must survive SQL projection reload together.
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      expect(Option.getOrThrow(await system.readThread(sideId))).toMatchObject({
+        sideChatOf: null,
+        title: "Kept investigation",
+        titleState: keptTitleState,
+      });
+      expect(Option.getOrThrow(await system.readThread(laterSideId)).sideChatOf).toBe(sourceId);
+      const continuedSource = Option.getOrThrow(await system.readThread(sourceId));
+      await dispatch({ type: "thread.delete", commandId: CommandId.make("sx"), threadId: sideId });
+      expect(Option.isNone(await system.readThread(sideId))).toBe(true);
+      expect(Option.getOrThrow(await system.readThread(sourceId))).toEqual(continuedSource);
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+it("persists inline context through side snapshots and projection restart", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-context-branch-"));
+  const databasePath = NodePath.join(directory, "state.sqlite");
+  let system = await createOrchestrationSystem(databasePath);
+  const projectId = ProjectId.make("context-project");
+  const threadId = ThreadId.make("context-source");
+  const targetId = ThreadId.make("context-branch");
+  const createdAt = "2026-01-01T00:00:00.000Z";
+  const context = {
+    version: 1,
+    records: [
+      {
+        version: 1,
+        contextId: "terminal-retained" as never,
+        kind: "terminal",
+        label: "Terminal 1",
+        terminalId: "default",
+        terminalLabel: "Terminal 1",
+        lineStart: 1,
+        lineEnd: 1,
+        text: "retained inline payload",
+      },
+    ],
+  } as const;
+  const dispatch = (command: OrchestrationCommand) => system.run(system.engine.dispatch(command));
+  try {
+    await dispatch({
+      type: "project.create",
+      commandId: CommandId.make("cp"),
+      projectId,
+      title: "Context",
+      workspaceRoot: directory,
+      createdAt,
+    });
+    await dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("ct"),
+      threadId,
+      projectId,
+      title: "Context",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt,
+    });
+    await dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make("cu"),
+      threadId,
+      message: {
+        messageId: MessageId.make("user"),
+        role: "user",
+        text: "Read [terminal](t3-context://v1/terminal/terminal-retained)",
+        attachments: [],
+        context,
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt,
+    });
+    await dispatch({
+      type: "thread.message.assistant.delta",
+      commandId: CommandId.make("ca"),
+      threadId,
+      messageId: MessageId.make("answer"),
+      delta: "Read it",
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    await dispatch({
+      type: "thread.message.assistant.complete",
+      commandId: CommandId.make("cc"),
+      threadId,
+      messageId: MessageId.make("answer"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    await dispatch({
+      type: "thread.side.create",
+      commandId: CommandId.make("cb"),
+      threadId: targetId,
+      sourceThreadId: threadId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    expect(Option.getOrThrow(await system.readThread(targetId)).messages[0]?.context).toEqual(
+      context,
+    );
+    await system.dispose();
+    system = await createOrchestrationSystem(databasePath);
+    expect(Option.getOrThrow(await system.readThread(targetId)).messages[0]?.context).toEqual(
+      context,
+    );
+  } finally {
+    await system.dispose();
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});

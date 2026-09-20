@@ -346,6 +346,10 @@
     "./gitPatchPath": {
       "types": "./src/gitPatchPath.ts",
       "import": "./src/gitPatchPath.ts"
+    },
+    "./sideChat": {
+      "types": "./src/sideChat.ts",
+      "import": "./src/sideChat.ts"
     }
   },
   "scripts": {

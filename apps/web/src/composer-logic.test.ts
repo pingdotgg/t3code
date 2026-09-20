@@ -1,4 +1,5 @@
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
+import { parseSideChatPrompt } from "./composer-logic";
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -735,4 +736,76 @@ describe("parseStandaloneComposerSlashCommand", () => {
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
   });
+});
+
+describe("local side chat commands", () => {
+  it("opens an empty side chat or carries a question into its composer", () => {
+    expect(parseSideChatPrompt("/side")).toBe("");
+    expect(parseSideChatPrompt("  /side explain the last step\nand its tradeoffs  ")).toBe(
+      "explain the last step\nand its tradeoffs",
+    );
+  });
+  it("does not intercept similarly named commands or a mention in ordinary prose", () => {
+    expect(parseSideChatPrompt("/sideshow")).toBeNull();
+    expect(parseSideChatPrompt("What does /side mean?")).toBeNull();
+    expect(parseSideChatPrompt("/side-effect test")).toBeNull();
+  });
+});
+
+it("keeps pull-request completion and inline context intact within a side prompt", () => {
+  const prompt = "/side compare [Terminal 1](t3-context://v1/terminal/terminal-one) with #42";
+  const trigger = detectComposerTrigger(prompt, prompt.length)!;
+  expect(trigger.kind).toBe("pull-request");
+  const selected = replaceTextRange(
+    prompt,
+    trigger.rangeStart,
+    trigger.rangeEnd,
+    "[#42](t3-context://v1/review-comment/pr-42)",
+  );
+  expect(parseSideChatPrompt(selected.text)).toBe(
+    "compare [Terminal 1](t3-context://v1/terminal/terminal-one) with [#42](t3-context://v1/review-comment/pr-42)",
+  );
+  expect(parseStandaloneComposerSlashCommand(selected.text)).toBeNull();
+});
+
+it("carries inline context payloads into the plain-text side composer", () => {
+  const prompt = parseSideChatPrompt(
+    "/side explain [terminal](t3-context://v1/terminal/terminal-one)",
+    [
+      {
+        version: 1,
+        contextId: "terminal-one" as never,
+        kind: "terminal",
+        label: "terminal",
+        terminalId: "default",
+        terminalLabel: "Terminal 1",
+        lineStart: 1,
+        lineEnd: 1,
+        text: "build failure details",
+      },
+    ],
+  );
+  expect(prompt).toContain("build failure details");
+  expect(prompt).not.toContain("t3-context://");
+});
+
+it("preserves a commented assistant citation when transferring a multiline side question", () => {
+  const quoted = { ...citation, comment: "Explain the tradeoff\nand the alternative." };
+  const prompt = `/side ${serializeAssistantCitation(quoted)}\nHow does this affect the fix?`;
+  const sidePrompt = parseSideChatPrompt(prompt)!;
+  expect(collectAssistantCitations(sidePrompt).map((entry) => entry.citation)).toEqual([quoted]);
+  expect(expandAssistantCitationsForProvider(sidePrompt)).toContain(JSON.stringify(quoted.comment));
+  expect(expandAssistantCitationsForProvider(sidePrompt)).toContain(
+    "How does this affect the fix?",
+  );
+  expect(
+    composerSubmissionIntentForEnter({
+      isMobileViewport: false,
+      shiftKey: false,
+      modifierKey: false,
+      isDraftThread: false,
+      sendShortcut: "mod-enter-multiline",
+      prompt,
+    }),
+  ).toBeNull();
 });

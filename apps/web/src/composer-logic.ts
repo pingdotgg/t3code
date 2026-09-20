@@ -1,4 +1,6 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
+import type { ComposerContextRecord } from "@t3tools/contracts";
+import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import type { AssistantCitation } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
@@ -10,7 +12,7 @@ import {
 } from "./composer-editor-mentions";
 
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "side";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {
@@ -279,7 +281,7 @@ export function composerStateAtPromptEnd(text: string): {
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
+): Exclude<ComposerSlashCommand, "model" | "side"> | null {
   const match = /^\/(plan|default)\s*$/i.exec(text.trim());
   if (!match) {
     return null;
@@ -299,4 +301,15 @@ export function replaceTextRange(
   const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
   const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
   return { text: nextText, cursor: safeStart + replacement.length };
+}
+
+/** Only a leading standalone /side command is consumed locally; prose mentioning it is a normal prompt. */
+export function parseSideChatPrompt(
+  prompt: string,
+  records: ReadonlyArray<ComposerContextRecord> = [],
+): string | null {
+  const match = /^\/side(?:\s+([\s\S]*))?$/.exec(prompt.trim());
+  if (!match) return null;
+  const text = match[1]?.trim() ?? "";
+  return records.length ? serializeLegacyContextMessage({ text, records }) : text;
 }

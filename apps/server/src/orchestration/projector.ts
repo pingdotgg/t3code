@@ -424,6 +424,7 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            sideChatOf: payload.sideChatOf ?? null,
             title: payload.title,
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
@@ -613,6 +614,7 @@ export function projectEvent(
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
+              ...(payload.sideChatOf === null ? { sideChatOf: null } : {}),
               ...(payload.title !== undefined ? { title: payload.title } : {}),
               ...(payload.titleState !== undefined ? { titleState: payload.titleState } : {}),
               ...(payload.titleRegeneration !== undefined

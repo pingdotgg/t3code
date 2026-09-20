@@ -241,3 +241,32 @@ describe("panel width storage changes", () => {
     expect(result.width).toBe(400);
   });
 });
+
+it("clamps and persists keyboard-driven width changes", async () => {
+  await act(async () => result.setWidth(9999));
+  expect(result.width).toBe(800);
+  expect(setItem).toHaveBeenLastCalledWith("test-panel-width", "800");
+  await act(async () => result.setWidth(-1));
+  expect(result.width).toBe(200);
+});
+
+it("keeps keyboard widths independent across thread switches and subsequent drags", async () => {
+  await act(() => result.setWidth(520));
+  await act(() => renderer.update(<Panel storageKey="thread-b" />));
+  expect(result.width).toBe(400);
+  await act(() => result.setWidth(640));
+  await act(() => renderer.update(<Panel />));
+  expect(result.width).toBe(520);
+  await act(() => {
+    result.handlers.onPointerDown(pointer());
+    result.handlers.onPointerUp(pointer(50));
+  });
+  expect(result.width).toBe(570);
+  await act(() => renderer.update(<Panel storageKey="thread-b" />));
+  expect(result.width).toBe(640);
+  await act(() => renderer.unmount());
+  await act(() => {
+    renderer = create(<Panel />);
+  });
+  expect(result.width).toBe(570);
+});

@@ -1,6 +1,7 @@
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { buildMessageContext } from "../../lib/composerContextRecords";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
@@ -8,6 +9,7 @@ import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
+import { parseSideChatPrompt } from "../../composer-logic";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   questionAttachmentDraftId,
@@ -1036,7 +1038,7 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null) {
   return { controlsRef, hiddenBlockCount: layout.hiddenCount, controlsVisible: layout.visible };
 }
 
-const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
+export const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
@@ -1410,6 +1412,7 @@ export interface ChatComposerProps {
 
   // Callbacks
   onCompactContext: () => void;
+  onSideChat?: (prompt?: string) => void;
   onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -1527,6 +1530,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onPageScrollRelease,
     onCompactContext,
     onSend,
+    onSideChat,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -2318,6 +2322,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
+        ...(onSideChat
+          ? [
+              {
+                id: "slash:side",
+                type: "slash-command" as const,
+                command: "side" as const,
+                label: "/side",
+                description: "Ask in a temporary side chat · Ctrl+Alt+S",
+              },
+            ]
+          : []),
         {
           id: "slash:model",
           type: "slash-command",
@@ -2454,6 +2469,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestProjectId,
     pullRequestRepository,
     pullRequestTriggerNumber,
+    onSideChat,
     selectedProvider,
     selectedProviderSkills,
     selectedProviderSlashCommands,
@@ -3573,6 +3589,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "slash-command") {
+        if (item.command === "side" && onSideChat) {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+            focusEditorAfterReplace: false,
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+            onSideChat();
+          }
+          return;
+        }
         if (item.command === "model") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -3678,6 +3705,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerDraftTarget,
       handleInteractionModeChange,
       planModeUiEnabled,
+      onSideChat,
       onUsageLimitsCommand,
       resolveActiveComposerTrigger,
     ],
@@ -3753,6 +3781,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
+      const side = parseSideChatPrompt(promptRef.current);
+      if (side !== null && onSideChat) {
+        event?.preventDefault();
+        const prompt = promptRef.current;
+        if (
+          applyPromptReplacement(0, prompt.length, "", {
+            expectedText: prompt,
+            focusEditorAfterReplace: false,
+          })
+        )
+          onSideChat(
+            parseSideChatPrompt(
+              prompt,
+              buildMessageContext({
+                terminalContexts: composerTerminalContexts,
+                reviewComments: composerReviewComments,
+                previewAnnotations: composerPreviewAnnotations,
+              })?.records,
+            ) ?? side,
+          );
+        return;
+      }
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
         return;
@@ -3810,6 +3860,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isSendDisabled,
       noProviderAvailable,
       onSend,
+      onSideChat,
+      composerTerminalContexts,
+      composerReviewComments,
+      composerPreviewAnnotations,
+      applyPromptReplacement,
       promptRef,
       shouldBlurMobileComposerOnSubmit,
     ],

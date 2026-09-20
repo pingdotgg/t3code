@@ -578,6 +578,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          side_chat_of AS "sideChatOf",
           archived_at AS "archivedAt",
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
@@ -619,6 +620,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          side_chat_of AS "sideChatOf",
           archived_at AS "archivedAt",
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
@@ -692,6 +694,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          side_chat_of AS "sideChatOf",
           archived_at AS "archivedAt",
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
@@ -1089,6 +1092,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ON projects.project_id = threads.project_id
           WHERE threads.deleted_at IS NULL
             AND threads.archived_at IS NULL
+            AND (threads.side_chat_of IS NULL OR NOT EXISTS (
+              SELECT 1 FROM projection_threads AS parent
+              WHERE parent.thread_id = threads.side_chat_of
+                AND parent.deleted_at IS NULL AND parent.archived_at IS NULL
+            ))
             AND projects.deleted_at IS NULL
             AND messages.is_streaming = 0
             -- Only these two roles are searchable, and the CASE above depends
@@ -1186,6 +1194,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE project_id = ${projectId}
           AND deleted_at IS NULL
           AND archived_at IS NULL
+          AND (side_chat_of IS NULL OR NOT EXISTS (
+            SELECT 1 FROM projection_threads AS parent
+            WHERE parent.thread_id = projection_threads.side_chat_of
+              AND parent.deleted_at IS NULL AND parent.archived_at IS NULL
+          ))
         ORDER BY created_at ASC, thread_id ASC
         LIMIT 1
       `,
@@ -1257,6 +1270,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
+          side_chat_of AS "sideChatOf",
           archived_at AS "archivedAt",
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
@@ -2332,6 +2346,7 @@ pending_approval_requests AS (
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
+                sideChatOf: row.sideChatOf ?? null,
                 archivedAt: row.archivedAt,
                 settledOverride: row.settledOverride,
                 settledAt: row.settledAt,
@@ -2577,6 +2592,7 @@ pending_approval_requests AS (
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
+                  sideChatOf: row.sideChatOf ?? null,
                   archivedAt: row.archivedAt,
                   settledOverride: row.settledOverride,
                   settledAt: row.settledAt,
@@ -2733,6 +2749,7 @@ pending_approval_requests AS (
                         latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                         createdAt: row.createdAt,
                         updatedAt: row.updatedAt,
+                        sideChatOf: row.sideChatOf ?? null,
                         archivedAt: row.archivedAt,
                         settledOverride: row.settledOverride,
                         settledAt: row.settledAt,
@@ -2896,6 +2913,7 @@ pending_approval_requests AS (
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
+                  sideChatOf: row.sideChatOf ?? null,
                   archivedAt: row.archivedAt,
                   settledOverride: row.settledOverride,
                   settledAt: row.settledAt,
@@ -3252,6 +3270,7 @@ pending_approval_requests AS (
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
+        sideChatOf: threadRow.value.sideChatOf ?? null,
         archivedAt: threadRow.value.archivedAt,
         settledOverride: threadRow.value.settledOverride,
         settledAt: threadRow.value.settledAt,
@@ -3553,6 +3572,7 @@ pending_approval_requests AS (
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
+        sideChatOf: threadRow.value.sideChatOf ?? null,
         archivedAt: threadRow.value.archivedAt,
         settledOverride: threadRow.value.settledOverride,
         settledAt: threadRow.value.settledAt,

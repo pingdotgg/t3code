@@ -1,3 +1,4 @@
+import { environmentSnapshotAtom } from "../state/shell";
 import {
   parseScopedThreadKey,
   scopeProjectRef,
@@ -31,7 +32,6 @@ import {
   readEnvironmentSupportsActiveReorder,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
-  readEnvironmentThreadRefs,
   readProject,
   readThreadShell,
   readThreadShells,
@@ -328,10 +328,9 @@ export function useThreadActions() {
         return result;
       }
       const { thread, threadRef } = resolved;
-      const threads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
-        const shell = readThreadShell(ref);
-        return shell === null ? [] : [shell];
-      });
+      // Hidden side chats still own the shared worktree.
+      const threads =
+        appAtomRegistry.get(environmentSnapshotAtom(threadRef.environmentId))?.threads ?? [];
       const threadProject = readProject({
         environmentId: threadRef.environmentId,
         projectId: thread.projectId,

@@ -63,6 +63,7 @@ import {
   unsettleThread,
   unsnoozeThread,
   updateThreadMetadata,
+  createSideChat,
 } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
@@ -233,6 +234,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     dismissUserInput: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:dismiss-user-input",
       execute: (input: DismissThreadUserInputInput) => dismissThreadUserInput(input),
+      scheduler,
+      concurrency,
+    }),
+    createSideChat: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:create-side-chat",
+      execute: createSideChat,
       scheduler,
       concurrency,
     }),

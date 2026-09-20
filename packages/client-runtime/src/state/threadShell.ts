@@ -72,10 +72,20 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-thread-index:${environmentId}`)),
   );
 
+  const visibleEnvironmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const threads = get(environmentThreadsAtom(environmentId));
+      const parents = new Set(
+        threads.filter((thread) => !thread.archivedAt).map((thread) => thread.id),
+      );
+      return threads.filter((thread) => !thread.sideChatOf || !parents.has(thread.sideChatOf));
+    }),
+  );
+
   const environmentThreadRefsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyArray<ScopedThreadRef> = [];
     return Atom.make((get) => {
-      const next = get(environmentThreadsAtom(environmentId)).map((thread) => ({
+      const next = get(visibleEnvironmentThreadsAtom(environmentId)).map((thread) => ({
         environmentId,
         threadId: thread.id,
       }));
@@ -94,7 +104,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     > = EMPTY_THREAD_REFS_BY_PROJECT;
     return Atom.make((get) => {
       const grouped = new Map<ProjectId, ScopedThreadRef[]>();
-      for (const thread of get(environmentThreadsAtom(environmentId))) {
+      for (const thread of get(visibleEnvironmentThreadsAtom(environmentId))) {
         const refs = grouped.get(thread.projectId);
         const ref = { environmentId, threadId: thread.id };
         if (refs === undefined) {
@@ -188,7 +198,7 @@ export function createEnvironmentThreadShellAtoms(input: {
   const threadShellsAtom = Atom.make((get) => {
     const next: EnvironmentThreadShell[] = [];
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
-      for (const thread of get(environmentThreadsAtom(environmentId))) {
+      for (const thread of get(visibleEnvironmentThreadsAtom(environmentId))) {
         next.push(scopedThread(environmentId, thread));
       }
     }

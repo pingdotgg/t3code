@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type ThreadId,
   ORCHESTRATION_WS_METHODS,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
@@ -375,5 +376,17 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
     type: "thread.session.stop",
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
+  });
+});
+
+export const createSideChat = Effect.fn("EnvironmentCommands.createSideChat")(function* (input: {
+  threadId: ThreadId;
+  sourceThreadId: ThreadId;
+}) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.side.create",
+    commandId: yield* commandId({}),
+    createdAt: DateTime.formatIso(yield* DateTime.now),
   });
 });

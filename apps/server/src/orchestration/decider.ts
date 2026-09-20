@@ -20,6 +20,7 @@ import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
 } from "@t3tools/shared/threadPullRequests";
+import { SIDE_MESSAGE_PREFIX } from "@t3tools/shared/sideChat";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -212,10 +213,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   command,
   readModel,
   userInputActivity,
+  sideChatSource,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
+  readonly sideChatSource?: OrchestrationThread;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -398,6 +401,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          sideChatOf: command.sideChatOf ?? null,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
@@ -408,6 +412,67 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.side.create": {
+      const source = yield* requireThread({ readModel, command, threadId: command.sourceThreadId });
+      yield* requireThreadAbsent({ readModel, command, threadId: command.threadId });
+      const detail = sideChatSource ?? source;
+      if (detail.id !== source.id) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The source conversation no longer exists.",
+        });
+      }
+      const title = `Side chat · ${source.title}`;
+      const created = yield* decideOrchestrationCommand({
+        readModel,
+        command: {
+          type: "thread.create",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          projectId: source.projectId,
+          title,
+          sideChatOf: source.id,
+          modelSelection: source.modelSelection,
+          runtimeMode: source.runtimeMode,
+          interactionMode: "default",
+          branch: source.branch,
+          worktreePath: source.worktreePath,
+          createdAt: command.createdAt,
+          historyImport: true,
+        },
+      });
+      const events: Array<PlannedOrchestrationEvent> = Array.isArray(created)
+        ? [...created]
+        : [created];
+      for (const [position, message] of detail.messages.entries()) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+            metadata: { historyImport: true },
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId: MessageId.make(
+              `${SIDE_MESSAGE_PREFIX}${command.threadId}:${String(position).padStart(12, "0")}`,
+            ),
+            role: message.role,
+            text: message.text,
+            attachments: message.attachments ?? [],
+            ...(message.context !== undefined ? { context: message.context } : {}),
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.updatedAt,
+          },
+        });
+      }
+      return events;
     }
 
     case "thread.delete": {
@@ -993,6 +1058,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.meta-updated",
         payload: {
           threadId: command.threadId,
+          ...(command.sideChatOf === null ? { sideChatOf: null } : {}),
           ...(command.title !== undefined
             ? {
                 title: command.title,

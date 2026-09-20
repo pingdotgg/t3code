@@ -22,6 +22,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  MessageSquarePlus,
   Plus,
   TerminalSquare,
   Volume2,
@@ -108,6 +109,7 @@ interface RightPanelTabsProps {
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
   onCopyFilePath: (relativePath: string) => void;
+  onAddSideChat?: (() => void) | undefined;
   onAddBrowser: () => void;
   /**
    * Separate from `onAddBrowser` on purpose: that one is passed directly as a
@@ -315,6 +317,7 @@ function SurfaceMenuItem(props: {
  * surfaces stay visible with a one-line reason.
  */
 function RightPanelEmptyState(props: {
+  onAddSideChat?: (() => void) | undefined;
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -339,6 +342,16 @@ function RightPanelEmptyState(props: {
   const [highlight, setHighlight] = useState(-1);
 
   const actions = [
+    {
+      label: "Side chat",
+      description: "Ask about this conversation in a separate side chat.",
+      icon: MessageSquarePlus,
+      shortcut: "S",
+      available: Boolean(props.onAddSideChat),
+      disabledReason: "Save this thread by sending a message before starting a side chat.",
+      onClick: () => props.onAddSideChat?.(),
+      badgeCount: 0,
+    },
     {
       label: "Browser",
       icon: Globe2,
@@ -874,6 +887,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   const addSurfaceActions = [
     {
+      label: "Side chat",
+      description: "Ask about this conversation in a separate side chat.",
+      icon: MessageSquarePlus,
+      shortcut: "S",
+      available: Boolean(props.onAddSideChat),
+      disabledReason: "Save this thread by sending a message before starting a side chat.",
+      onClick: () => props.onAddSideChat?.(),
+      badgeCount: 0,
+    },
+    {
       label: "Browser",
       icon: Globe2,
       shortcut: "B",
@@ -1399,6 +1422,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
+            onAddSideChat={props.onAddSideChat}
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}

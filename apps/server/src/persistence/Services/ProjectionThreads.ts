@@ -27,6 +27,7 @@ import type * as Effect from "effect/Effect";
 import type { ProjectionRepositoryError } from "../Errors.ts";
 
 export const ProjectionThread = Schema.Struct({
+  sideChatOf: Schema.optional(Schema.NullOr(ThreadId)),
   threadId: ThreadId,
   projectId: ProjectId,
   title: Schema.String,

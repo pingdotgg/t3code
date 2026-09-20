@@ -1,3 +1,5 @@
+import { readProject } from "../state/entities";
+import { SideChat, type SideChatRequest } from "./chat/SideChatPanel";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -1987,6 +1989,33 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const [sideChats, setSideChats] = useState<
+    Record<
+      string,
+      {
+        source: NonNullable<typeof activeThread>;
+        request: SideChatRequest;
+        open: boolean;
+      }
+    >
+  >({});
+  const currentSideChat = activeThreadKey ? sideChats[activeThreadKey] : undefined;
+  const sideChatVisible = currentSideChat?.open ?? false;
+  const openSideChat = useCallback(
+    (prompt = "") => {
+      if (!activeThreadKey || !activeThread || !isServerThread) return;
+      if (activeThreadRef) useRightPanelStore.getState().close(activeThreadRef);
+      setSideChats((current) => ({
+        ...current,
+        [activeThreadKey]: {
+          source: activeThread,
+          request: { serial: (current[activeThreadKey]?.request.serial ?? 0) + 1, prompt },
+          open: true,
+        },
+      }));
+    },
+    [activeThreadKey, activeThread, activeThreadRef, isServerThread],
+  );
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -5014,12 +5043,20 @@ export default function ChatView(props: ChatViewProps) {
   );
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
+    if (activeThreadKey && currentSideChat) {
+      useRightPanelStore.getState().close(activeThreadRef);
+      setSideChats((current) => ({
+        ...current,
+        [activeThreadKey]: { ...current[activeThreadKey]!, open: !current[activeThreadKey]!.open },
+      }));
+      return;
+    }
     if (rightPanelOpen) {
       closePreviewPanel();
       return;
     }
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
-  }, [activeThreadRef, closePreviewPanel, rightPanelOpen]);
+  }, [activeThreadRef, activeThreadKey, currentSideChat, closePreviewPanel, rightPanelOpen]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
@@ -6661,6 +6698,13 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.ctrlKey && event.altKey && event.code === "KeyS" && isServerThread) {
+        event.preventDefault();
+        event.stopPropagation();
+        openSideChat();
+        return;
+      }
+      if (event.target instanceof Element && event.target.closest("[data-side-chat]")) return;
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
         return;
@@ -6906,6 +6950,7 @@ export default function ChatView(props: ChatViewProps) {
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, [
+    openSideChat,
     activeProject,
     activeRightPanelSurface,
     activeProjectScripts,
@@ -6957,6 +7002,7 @@ export default function ChatView(props: ChatViewProps) {
       }
     };
     const handler = (event: ClipboardEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-side-chat]")) return;
       if (!activeThreadId || isCommandPaletteOpen()) return;
       if (getTerminalFocusOwner() !== null) return;
       if (composerRef.current?.isModelPickerOpen()) return;
@@ -9540,11 +9586,12 @@ export default function ChatView(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
+      showTerminalControl={!sideChatVisible}
       terminalAvailable={activeProject !== null}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
       rightPanelAvailable={activeProject !== null}
-      rightPanelOpen={rightPanelOpen}
+      rightPanelOpen={rightPanelOpen || sideChatVisible}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       // Suppressed while the Agents surface is visible: the roster itself is
       // on screen, so the toggle badge would be pointing at nothing.
@@ -9818,7 +9865,7 @@ export default function ChatView(props: ChatViewProps) {
             }
             keybindings={keybindings}
             availableEditors={availableEditors}
-            rightPanelOpen={rightPanelOpen}
+            rightPanelOpen={rightPanelOpen || sideChatVisible}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
             {...(activeDraftLogicalProjectKey
@@ -10041,6 +10088,7 @@ export default function ChatView(props: ChatViewProps) {
                               true
                             }
                             onMultipleModelSelectionsChange={setMultipleModelSelections}
+                            {...(isServerThread ? { onSideChat: openSideChat } : {})}
                             composerRef={composerRef}
                             composerDraftTarget={composerDraftTarget}
                             environmentId={environmentId}
@@ -10334,6 +10382,14 @@ export default function ChatView(props: ChatViewProps) {
           onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onCopyFilePath={copyRightPanelFilePath}
+          onAddSideChat={
+            isServerThread
+              ? () => {
+                  if (activeThreadRef) useRightPanelStore.getState().close(activeThreadRef);
+                  openSideChat();
+                }
+              : undefined
+          }
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurface}
           onAddTerminal={addTerminalSurface}
@@ -10392,6 +10448,14 @@ export default function ChatView(props: ChatViewProps) {
             onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
             onCopyFilePath={copyRightPanelFilePath}
+            onAddSideChat={
+              isServerThread
+                ? () => {
+                    if (activeThreadRef) useRightPanelStore.getState().close(activeThreadRef);
+                    openSideChat();
+                  }
+                : undefined
+            }
             onAddBrowser={() => createBrowserSurface()}
             onAddBrowserInProfile={createBrowserSurface}
             onAddTerminal={addTerminalSurface}
@@ -10459,6 +10523,30 @@ export default function ChatView(props: ChatViewProps) {
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
+      {Object.entries(sideChats).map(([key, entry]) => (
+        <SideChat
+          key={key}
+          source={key === activeThreadKey ? activeThread : entry.source}
+          cwd={
+            entry.source.worktreePath ??
+            readProject({
+              environmentId: entry.source.environmentId,
+              projectId: entry.source.projectId,
+            })?.workspaceRoot
+          }
+          request={entry.request}
+          visible={key === activeThreadKey && entry.open}
+          settings={settings}
+          instanceEntries={providerInstanceEntries}
+          onClose={() =>
+            setSideChats((current) => {
+              const next = { ...current };
+              delete next[key];
+              return next;
+            })
+          }
+        />
+      ))}
       <LinkPullRequestDialogHost />
       {expandedImage && (
         <ExpandedImageDialog

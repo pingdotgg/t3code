@@ -1,3 +1,5 @@
+import * as FileSystem from "effect/FileSystem";
+import { ServerConfig } from "../../config.ts";
 import type {
   OrchestrationClientOrigin,
   OrchestrationEvent,
@@ -40,6 +42,7 @@ import {
   type OrchestrationDispatchError,
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
+import { snapshotSideChat } from "../SideChatSnapshot.ts";
 import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
@@ -83,6 +86,8 @@ function commandToAggregateRef(command: OrchestrationCommand): {
 
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const sideChatFileSystem = yield* FileSystem.FileSystem;
+  const sideChatServerConfig = yield* Effect.serviceOption(ServerConfig);
   const eventStore = yield* OrchestrationEventStore;
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -242,9 +247,35 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        const sideChatSource =
+          envelope.command.type === "thread.side.create"
+            ? yield* Effect.gen(function* () {
+                const command = envelope.command;
+                if (command.type !== "thread.side.create") return undefined;
+                const source = yield* projectionSnapshotQuery.getThreadDetailById(
+                  command.sourceThreadId,
+                  { activityKinds: [] },
+                );
+                if (Option.isNone(source))
+                  return yield* new OrchestrationCommandInvariantError({
+                    commandType: command.type,
+                    detail: "The source conversation no longer exists.",
+                  });
+                if (Option.isNone(sideChatServerConfig))
+                  return yield* new OrchestrationCommandInvariantError({
+                    commandType: command.type,
+                    detail: "Side chats need the server attachment store.",
+                  });
+                return yield* snapshotSideChat(source.value, command.threadId).pipe(
+                  Effect.provideService(FileSystem.FileSystem, sideChatFileSystem),
+                  Effect.provideService(ServerConfig, sideChatServerConfig.value),
+                );
+              })
+            : undefined;
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
+          ...(sideChatSource !== undefined ? { sideChatSource } : {}),
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),

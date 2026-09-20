@@ -551,3 +551,62 @@ describe("environment entity projections", () => {
     expect(harness.registry.get(activitiesAtom)).toBe(activities);
   });
 });
+
+it("hides temporary side chats from navigation but retains point reads, then reveals kept chats", () => {
+  const harness = makeHarness();
+  const ref = { environmentId: ENVIRONMENT_ID, threadId: OTHER_THREAD_ID };
+  const refs = harness.threadShells.environmentThreadRefsAtom(ENVIRONMENT_ID);
+  const point = harness.threadShells.threadShellAtom(ref);
+  const setSide = (sideChatOf: ThreadId | null) =>
+    harness.registry.set(
+      harness.shellStateAtom,
+      AsyncResult.success(
+        shellState({
+          ...SNAPSHOT,
+          threads: SNAPSHOT.threads.map((thread) =>
+            thread.id === OTHER_THREAD_ID ? { ...thread, sideChatOf } : thread,
+          ),
+        }),
+      ),
+    );
+  setSide(THREAD_ID);
+  expect(harness.registry.get(refs).map((thread) => thread.threadId)).toEqual([THREAD_ID]);
+  expect(
+    harness.registry.get(harness.threadShells.threadShellsAtom).map((thread) => thread.id),
+  ).toEqual([THREAD_ID]);
+  expect(
+    harness.registry
+      .get(harness.threadShells.environmentThreadRefsByProjectAtom(ENVIRONMENT_ID))
+      .has(OTHER_PROJECT_ID),
+  ).toBe(false);
+  expect(harness.registry.get(point)?.sideChatOf).toBe(THREAD_ID);
+  setSide(null);
+  expect(harness.registry.get(refs).map((thread) => thread.threadId)).toEqual([
+    THREAD_ID,
+    OTHER_THREAD_ID,
+  ]);
+  expect(harness.registry.get(point)?.sideChatOf).toBeNull();
+});
+
+it("reveals side chats when their parent disappears so temporary work is not stranded", () => {
+  const harness = makeHarness();
+  harness.registry.set(
+    harness.shellStateAtom,
+    AsyncResult.success(
+      shellState({
+        ...SNAPSHOT,
+        threads: SNAPSHOT.threads
+          .filter((thread) => thread.id === OTHER_THREAD_ID)
+          .map((thread) => ({ ...thread, sideChatOf: THREAD_ID })),
+      }),
+    ),
+  );
+  expect(
+    harness.registry
+      .get(harness.threadShells.environmentThreadRefsAtom(ENVIRONMENT_ID))
+      .map((ref) => ref.threadId),
+  ).toEqual([OTHER_THREAD_ID]);
+  expect(
+    harness.registry.get(harness.threadShells.threadShellsAtom).map((thread) => thread.id),
+  ).toEqual([OTHER_THREAD_ID]);
+});
