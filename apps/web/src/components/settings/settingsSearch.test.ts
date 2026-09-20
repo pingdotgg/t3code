@@ -235,11 +235,19 @@ describe("searchSettings", () => {
   });
 
   it("sends commands without a default binding to the section", () => {
-    expect(searchSettings("thread.stop")[0]).toMatchObject({
-      id: "keybinding-thread.stop",
+    expect(searchSettings("rightPanel.toggleMaximized")[0]).toMatchObject({
+      id: "keybinding-rightPanel.toggleMaximized",
       targetId: "keybindings",
     });
     expect(searchSettings("sidebar.toggle")[0]?.targetId).toBeUndefined();
+  });
+
+  it("routes thread.stop to its default binding", () => {
+    expect(searchSettings("thread.stop")[0]).toMatchObject({
+      id: "keybinding-thread.stop",
+    });
+    expect(searchSettings("thread.stop")[0]?.targetId).toBeUndefined();
+    expect(searchSettings("esc").map((item) => item.id)).toContain("keybinding-thread.stop");
   });
 
   it("keeps catalog result ids unique", () => {
