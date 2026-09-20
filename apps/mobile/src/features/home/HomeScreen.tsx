@@ -1,3 +1,4 @@
+import { ThreadSearchStatus } from "../threads/ThreadSearchStatus";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { computeThreadMoveAvailability } from "../threads/threadOrder";
 import { LegendList } from "@legendapp/list/react-native";
@@ -217,13 +218,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const searchEnvironmentIds = useMemo(
     () =>
       props.selectedEnvironmentId === null
-        ? props.environments
-            .filter((environment) => environment.connectionState === "connected")
-            .map((environment) => environment.environmentId)
+        ? props.environments.map((environment) => environment.environmentId)
         : props.environments.some(
-              (environment) =>
-                environment.environmentId === props.selectedEnvironmentId &&
-                environment.connectionState === "connected",
+              (environment) => environment.environmentId === props.selectedEnvironmentId,
             )
           ? [props.selectedEnvironmentId]
           : [],
@@ -824,7 +821,7 @@ export function HomeScreen(props: HomeScreenProps) {
     projectCount: props.projects.length,
   });
 
-  if (!hasAnyThreads) {
+  if (!hasAnyThreads && !hasSearchQuery) {
     return (
       <View className="flex-1 bg-screen android:bg-header">
         <View
@@ -867,7 +864,15 @@ export function HomeScreen(props: HomeScreenProps) {
     );
   }
 
-  const listHeader = Platform.OS === "ios" ? null : <HomeTopContentSpacer />;
+  const searchStatus = (
+    <ThreadSearchStatus sources={threadSearch.sources} retry={threadSearch.retry} />
+  );
+  const listHeader = (
+    <>
+      {Platform.OS === "ios" ? null : <HomeTopContentSpacer />}
+      {searchStatus}
+    </>
+  );
 
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
@@ -878,8 +883,16 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
       <EmptyState
-        title="No results"
-        detail={`No threads matching "${props.searchQuery}".`}
+        title={
+          threadSearch.sources.some((source) => source.status !== "complete")
+            ? "No matches in available results"
+            : "No results"
+        }
+        detail={
+          threadSearch.sources.some((source) => source.status !== "complete")
+            ? "Message search may be incomplete."
+            : `No threads matching "${props.searchQuery}".`
+        }
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (
@@ -909,6 +922,7 @@ export function HomeScreen(props: HomeScreenProps) {
           className="flex-1 items-center justify-center overflow-hidden rounded-t-[28px] bg-screen px-4"
           style={{ paddingBottom: insets.bottom }}
         >
+          {searchStatus}
           {v2ListEmpty}
         </View>
       </View>

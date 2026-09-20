@@ -1,5 +1,7 @@
 "use client";
 
+import { ThreadSearchStatus } from "./ThreadSearchStatus";
+
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -807,10 +809,7 @@ function OpenCommandPaletteDialog(props: {
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
   const environmentIds = useMemo(
-    () =>
-      environments
-        .filter((environment) => environment.connection.phase === "connected")
-        .map((environment) => environment.environmentId),
+    () => environments.map((environment) => environment.environmentId),
     [environments],
   );
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
@@ -3003,6 +3002,7 @@ function OpenCommandPaletteDialog(props: {
           </div>
         </div>
       ) : null}
+      <ThreadSearchStatus sources={threadSearch.sources} retry={threadSearch.retry} />
       <CommandPaletteResults
         groups={displayedGroups}
         highlightedItemValue={highlightedItemValue}
@@ -3026,7 +3026,9 @@ function OpenCommandPaletteDialog(props: {
                   }
                 : threadSearch.isPending
                   ? { emptyStateMessage: "Searching thread messages…" }
-                  : {})}
+                  : threadSearch.sources.some((source) => source.status !== "complete")
+                    ? { emptyStateMessage: "No matches in available results" }
+                    : {})}
       />
     </CommandPaletteContent>
   );

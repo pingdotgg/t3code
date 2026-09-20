@@ -1,3 +1,4 @@
+import { ThreadSearchStatus } from "./ThreadSearchStatus";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { computeThreadMoveAvailability } from "./threadOrder";
 import type {
@@ -175,13 +176,9 @@ function ThreadNavigationSidebarPane(
   const searchEnvironmentIds = useMemo(
     () =>
       options.selectedEnvironmentId === null
-        ? workspaceEnvironments
-            .filter((environment) => environment.connectionState === "connected")
-            .map((environment) => environment.environmentId)
+        ? workspaceEnvironments.map((environment) => environment.environmentId)
         : workspaceEnvironments.some(
-              (environment) =>
-                environment.environmentId === options.selectedEnvironmentId &&
-                environment.connectionState === "connected",
+              (environment) => environment.environmentId === options.selectedEnvironmentId,
             )
           ? [options.selectedEnvironmentId]
           : [],
@@ -899,7 +896,9 @@ function ThreadNavigationSidebarPane(
           : props.searchQuery.trim().length > 0
             ? threadSearch.isPending
               ? "Searching thread messages…"
-              : "No matching threads"
+              : threadSearch.sources.some((source) => source.status !== "complete")
+                ? "No matches in available results"
+                : "No matching threads"
             : selectedProjectScope !== null
               ? `No threads in ${selectedProjectScope.title}`
               : "No threads yet"}
@@ -972,6 +971,13 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={
+                  <ThreadSearchStatus
+                    sources={threadSearch.sources}
+                    retry={threadSearch.retry}
+                    onOpenConnections={props.onOpenEnvironmentSettings}
+                  />
+                }
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>
@@ -1037,6 +1043,13 @@ function ThreadNavigationSidebarPane(
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}
                 style={styles.threadList}
+                ListHeaderComponent={
+                  <ThreadSearchStatus
+                    sources={threadSearch.sources}
+                    retry={threadSearch.retry}
+                    onOpenConnections={props.onOpenEnvironmentSettings}
+                  />
+                }
                 ListEmptyComponent={listEmpty}
               />
             </GestureDetector>

@@ -1,3 +1,4 @@
+import { ThreadSearchStatus } from "../threads/ThreadSearchStatus";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
@@ -155,10 +156,7 @@ export function CommandPalette(props: {
   const listRef = useRef<FlatList<CommandPaletteItem>>(null);
   const { width, height } = useWindowDimensions();
   const searchEnvironmentIds = useMemo(
-    () =>
-      environments
-        .filter((environment) => environment.connectionState === "connected")
-        .map((environment) => environment.environmentId),
+    () => environments.map((environment) => environment.environmentId),
     [environments],
   );
   const search = useThreadSearch(searchEnvironmentIds, query.startsWith(">") ? "" : query);
@@ -460,6 +458,18 @@ export function CommandPalette(props: {
                   />
                 </View>
               </View>
+              <ThreadSearchStatus
+                sources={search.sources}
+                retry={search.retry}
+                onOpenConnections={() =>
+                  close(() =>
+                    navigation.navigate("SettingsSheet", {
+                      screen: "SettingsContent",
+                      params: { screen: "SettingsEnvironments" },
+                    }),
+                  )
+                }
+              />
               <FlatList
                 ref={listRef}
                 data={results}
@@ -474,7 +484,11 @@ export function CommandPalette(props: {
                 contentContainerClassName="pb-2"
                 ListEmptyComponent={
                   <Text className="p-5 text-center text-foreground-muted">
-                    {search.isPending ? "Searching…" : "No results"}
+                    {search.isPending
+                      ? "Searching…"
+                      : search.sources.some((source) => source.status !== "complete")
+                        ? "No matches in available results"
+                        : "No results"}
                   </Text>
                 }
                 renderItem={({ item, index }) => (
