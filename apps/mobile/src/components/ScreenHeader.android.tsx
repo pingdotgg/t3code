@@ -53,7 +53,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
           <SymbolView
             name={menu.icon}
             size={16}
-            tintColorClassName="accent-icon"
+            tintColorClassName="accent-header-foreground"
             type="monochrome"
           />
         </Pressable>
@@ -95,7 +95,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
                 <SymbolView
                   name="chevron.left"
                   size={24}
-                  tintColorClassName="accent-foreground"
+                  tintColorClassName="accent-header-foreground"
                   type="monochrome"
                 />
               </Pressable>
@@ -104,7 +104,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
               <SymbolView
                 name="magnifyingglass"
                 size={17}
-                tintColorClassName="accent-icon"
+                tintColorClassName="accent-header-foreground"
                 type="monochrome"
               />
               <TextInput
@@ -114,7 +114,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
                 value={search.value}
                 placeholder={search.placeholder}
                 placeholderTextColorClassName="accent-placeholder"
-                className="flex-1 py-2 text-base font-sans text-foreground"
+                className="flex-1 py-2 text-base font-sans text-header-foreground"
               />
             </View>
             {menuView}
@@ -138,7 +138,7 @@ export function ScreenHeader(props: ScreenHeaderProps) {
                 icon: "magnifyingglass",
                 onPress: () => setSearchOpen(true),
               },
-              ...(search.onRefresh
+              ...(search.refreshInToolbar && search.onRefresh
                 ? [
                     {
                       accessibilityLabel: search.refreshAccessibilityLabel ?? "Refresh",
