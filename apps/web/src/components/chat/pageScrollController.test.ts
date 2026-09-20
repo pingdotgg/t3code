@@ -80,6 +80,39 @@ class TestClock {
   }
 }
 
+describe("page scroll motion preference", () => {
+  test("reaches the same page immediately after the preference changes", () => {
+    const clock = new TestClock();
+    const container = {
+      clientHeight: 600,
+      scrollHeight: 4_000,
+      scrollTop: 0,
+      getBoundingClientRect: () => ({ height: 600 }),
+    };
+    let reducedMotion = false;
+    const controller = createPageScrollController({
+      getContainer: () => container,
+      getScrollPaddingBottomPx: () => 24,
+      isReducedMotion: () => reducedMotion,
+      env: clock.env,
+    });
+    controller.handleKeyDown("PageDown");
+    controller.handleKeyUp("PageDown");
+    expect(container.scrollTop).toBe(0);
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
+    const destination = container.scrollTop;
+    expect(destination).toBeGreaterThan(0);
+    container.scrollTop = 0;
+    reducedMotion = true;
+    controller.handleKeyDown("PageDown");
+    controller.handleKeyUp("PageDown");
+    expect(container.scrollTop).toBe(destination);
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
+    expect(container.scrollTop).toBe(destination);
+    controller.dispose();
+  });
+});
+
 describe("page scroll helpers", () => {
   const composerPageScrollEvent = (
     overrides: Partial<Parameters<typeof getTimelinePageScrollKey>[0]> = {},

@@ -1,3 +1,4 @@
+import { prefersReducedMotion as readReducedMotion } from "../../lib/reducedMotion";
 import { ArrowUpIcon, ClockIcon } from "lucide-react";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -1340,7 +1341,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               onManualNavigation();
               void listRef.current?.scrollToIndex({
                 index: item.rowIndex,
-                animated: true,
+                animated: !readReducedMotion(),
                 viewOffset: 24,
               });
             }}

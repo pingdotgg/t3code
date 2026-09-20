@@ -1,3 +1,4 @@
+import { prefersReducedMotion as readReducedMotion } from "../lib/reducedMotion";
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
@@ -853,7 +854,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const scrollTabs = useCallback((direction: -1 | 1) => {
     const viewport = tabScrollViewport(tabListRef.current);
     if (!viewport) return;
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduceMotion = readReducedMotion();
     viewport.scrollBy({
       left: direction * Math.max(120, viewport.clientWidth * 0.75),
       behavior: reduceMotion ? "auto" : "smooth",

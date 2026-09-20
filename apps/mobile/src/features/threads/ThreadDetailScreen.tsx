@@ -40,6 +40,7 @@ import {
   useState,
 } from "react";
 import {
+  AccessibilityInfo,
   Alert,
   AppState,
   Keyboard,
@@ -730,14 +731,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       // leaves the keyboard padding permanently applied — overshooting the
       // anchor and leaving a phantom bottom inset once the reply streams in.
       void KeyboardController.dismiss()
-        .then(() => {
+        .then(() => AccessibilityInfo.isReduceMotionEnabled().catch(() => true))
+        .then((reducedMotion) => {
           if (
             selectedThreadKeyRef.current !== targetThreadKey ||
             lastScrolledSubmittedMessageIdRef.current !== submittedMessageId
           ) {
             return;
           }
-          return scrollMessageToEnd({ animated: true, closeKeyboard: false });
+          return scrollMessageToEnd({ animated: !reducedMotion, closeKeyboard: false });
         })
         .catch(() => {
           if (
@@ -835,10 +837,17 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
   const handleScrollToEnd = useCallback(() => {
     void Haptics.selectionAsync();
-    void scrollMessageToEnd({ animated: true, closeKeyboard: false }).catch(() => {
-      freeze.set(false);
-    });
-  }, [freeze, scrollMessageToEnd]);
+    const targetThreadKey = selectedThreadKey;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .catch(() => true)
+      .then((reducedMotion) => {
+        if (selectedThreadKeyRef.current !== targetThreadKey) return;
+        return scrollMessageToEnd({ animated: !reducedMotion, closeKeyboard: false });
+      })
+      .catch(() => {
+        if (selectedThreadKeyRef.current === targetThreadKey) freeze.set(false);
+      });
+  }, [freeze, scrollMessageToEnd, selectedThreadKey]);
 
   const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
   const { themeAppearance } = useAppearancePreferences();
