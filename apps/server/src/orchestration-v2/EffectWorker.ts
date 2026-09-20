@@ -31,7 +31,7 @@ import { RuntimeRequestServiceV2 } from "./RuntimeRequestService.ts";
 import { ThreadTitleRegenerationService } from "./ThreadTitleRegenerationService.ts";
 import { ThreadManagementService } from "./ThreadManagementService.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { continueRestartedRun } from "./RestartContinuation.ts";
+import { continueRestartedRun, retryProviderBusyRun } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -118,6 +118,22 @@ export const executorLayer: Layer.Layer<
             }).pipe(
               Effect.provideService(ThreadManagementService, threads),
               Effect.provideService(ServerSettingsService, settings),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationEffectExecutionError({
+                    effectId: effect.id,
+                    effectType: effect.request.type,
+                    cause,
+                  }),
+              ),
+            );
+          case "provider-busy.retry":
+            return retryProviderBusyRun({
+              threadId: effect.threadId,
+              sourceRunId: effect.request.sourceRunId,
+              attempt: effect.request.attempt,
+            }).pipe(
+              Effect.provideService(ThreadManagementService, threads),
               Effect.mapError(
                 (cause) =>
                   new OrchestrationEffectExecutionError({

@@ -68,6 +68,51 @@ describe("V2 session presentation", () => {
     ).toBe(false);
   });
 
+  it("labels provider-busy failures calmly, from the failure class", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const busyItem = {
+      id: TurnItemId.make("item-provider-busy"),
+      threadId: ThreadId.make("thread-provider-busy"),
+      runId: RunId.make("run-provider-busy"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "failed" as const,
+      // An older server persisted this title; the class must drive the label.
+      title: "Provider error",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "error" as const,
+      failure: {
+        class: "provider_busy" as const,
+        message: "Selected model is at capacity. Please try a different model.",
+        code: "serverOverloaded",
+        retryable: true,
+      },
+    } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
+
+    expect(providerErrorPresentation(busyItem)).toEqual({
+      label: "Provider busy",
+      detail: "Selected model is at capacity. Please try a different model.",
+    });
+    expect(
+      providerErrorPresentation({
+        ...busyItem,
+        retry: { attempt: 3, maxAttempts: 5, retryDelayMs: null },
+      }),
+    ).toMatchObject({ label: "Provider busy after 3/5 retries" });
+    expect(
+      providerErrorPresentation({
+        ...busyItem,
+        failure: { ...busyItem.failure, class: "provider_error" as const },
+      }),
+    ).toMatchObject({ label: "Provider error" });
+  });
+
   it("labels provider retry progress, delay, recovery, and exhaustion", () => {
     const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const retryItem = {

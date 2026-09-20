@@ -356,6 +356,37 @@ describe("buildThreadFeed", () => {
     expect(presented.some((entry) => entry.type === "run-fold")).toBe(false);
   });
 
+  it("presents provider-busy failures as neutral rows", () => {
+    const busyItem = {
+      ...base("item-provider-busy", "2026-06-20T00:00:02.000Z", 1),
+      type: "error" as const,
+      status: "failed" as const,
+      title: "Provider busy",
+      failure: {
+        class: "provider_busy" as const,
+        message: "Selected model is at capacity.",
+        code: "serverOverloaded",
+        retryable: true,
+      },
+    };
+    const busyActivity = buildThreadFeed([projected(busyItem, 0)]).find(
+      (entry) => entry.type === "activity-group",
+    )?.activities[0];
+    expect(busyActivity).toMatchObject({ summary: "Provider busy", status: "neutral" });
+
+    const errorActivity = buildThreadFeed([
+      projected(
+        {
+          ...busyItem,
+          title: "Provider error",
+          failure: { ...busyItem.failure, class: "provider_error" as const },
+        },
+        0,
+      ),
+    ]).find((entry) => entry.type === "activity-group")?.activities[0];
+    expect(errorActivity).toMatchObject({ summary: "Provider error", status: "failure" });
+  });
+
   it("presents a usage-limit stop as a warning while preserving its explanation", () => {
     const message = "Plan usage limit reached. Try again after reset.";
     const entries = buildThreadFeed([

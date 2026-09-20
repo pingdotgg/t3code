@@ -2666,7 +2666,9 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
         tone:
           item.status === "completed"
             ? "success"
-            : item.status === "running" || item.failure.class === "usage_limit"
+            : item.status === "running" ||
+                item.failure.class === "usage_limit" ||
+                item.failure.class === "provider_busy"
               ? "warning"
               : "danger",
         icon: CircleAlertIcon,

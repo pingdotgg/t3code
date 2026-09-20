@@ -370,8 +370,13 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
 function itemStatus(item: OrchestrationV2TurnItem): ThreadFeedActivity["status"] {
   if (item.type === "notification") return item.outcome === "failed" ? "failure" : null;
   if (item.type === "error") {
-    if (item.status === "failed")
-      return item.failure.class === "usage_limit" ? "neutral" : "failure";
+    // Usage-limit stops and provider-busy failures are expected pauses, not defects.
+    if (
+      item.status === "failed" &&
+      item.failure.class !== "usage_limit" &&
+      item.failure.class !== "provider_busy"
+    )
+      return "failure";
     return item.status === "completed" ? "success" : "neutral";
   }
   if (!itemIsToolLike(item)) return null;
@@ -501,7 +506,10 @@ function itemSummary(
     case "run_interrupt_result":
       return "Run interrupted";
     case "error":
-      return item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error";
+      if (item.failure.class === "usage_limit") return "Usage limit reached";
+      return item.failure.class === "provider_busy" && item.status === "failed"
+        ? "Provider busy"
+        : "Provider error";
     case "handoff":
       return "Context handed off";
     case "fork":
@@ -687,7 +695,8 @@ function toFeedActivity(
     toolLike: itemIsToolLike(item),
     prominent: itemIsProminent(item) || (item.type === "error" && item.status === "failed"),
     status:
-      item.type === "error" && item.failure.class === "usage_limit"
+      item.type === "error" &&
+      (item.failure.class === "usage_limit" || item.failure.class === "provider_busy")
         ? itemStatus(item)
         : workEntryDisplayIndicatesToolFailure(workEntry)
           ? "failure"
