@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFs from "node:fs";
@@ -40,17 +41,28 @@ import * as Electron from "electron";
  * Safety net around the global side effects:
  *
  * - The six overridden values (lid AC/DC, sleep-after AC/DC,
- *   hibernate-after AC/DC) are queried and saved ONLY on the off→on
- *   transition (guarded by a `Ref`, so re-enable never clobbers the
- *   originals with our own forced values), then restored on disable.
+ *   hibernate-after AC/DC) are saved per power scheme GUID on first touch
+ *   (guarded by a `Ref` map, so re-enable and the reassert loop never
+ *   clobber the originals with our own forced values), then each touched
+ *   scheme is restored to its own originals on disable. Saving by scheme —
+ *   never by the `SCHEME_CURRENT` alias — is what keeps a mid-session power
+ *   plan switch from permanently corrupting the previous plan.
  * - The saved values are also persisted to a JSON recovery file under
  *   Electron `userData` (`app.getPath("userData")`, best-effort — skipped
  *   when unavailable), deleted on clean disable/restore. If a previous
- *   session crashed or was killed while enabled, service init finds the file,
- *   best-effort restores those values + `/setactive`, deletes it, and logs.
+ *   session crashed or was killed while enabled, the first service use
+ *   finds the file, best-effort restores those values + `/setactive`,
+ *   deletes it, and logs. The check is deferred to first use (not layer
+ *   construction) because layers build before `DesktopApp` sets Electron's
+ *   final `userData` path — an init-time lookup would read the wrong
+ *   directory and miss the file.
+ * - Every power/blocker transition (enable, disable, reassert tick, quit
+ *   finalizer) is serialized through a 1-permit semaphore: `setEnabled`
+ *   suspends on the `ffi-rs` load, so overlapping toggles could otherwise
+ *   double-start blockers and orphan one.
  * - A `forkScoped` 25 s re-assert loop re-applies the forced values and the
- *   execution state while still enabled (checks the `Ref`; dies with the
- *   layer scope).
+ *   execution state while still enabled (checks the `Ref` map, tracking
+ *   newly switched-to plans as it goes; dies with the layer scope).
  * - The layer-scope-close finalizer runs the same restore path when still
  *   enabled and can never throw.
  */
@@ -101,6 +113,13 @@ export interface KeepAwakeSavedSettings {
   readonly hibAc?: number | undefined;
   readonly hibDc?: number | undefined;
 }
+
+/**
+ * Original power values per scheme: scheme GUID (or the
+ * `SCHEME_CURRENT` alias when the GUID was unresolvable) → settings.
+ * Keying by scheme is what makes a mid-session power plan switch safe.
+ */
+export type KeepAwakeSavedByScheme = ReadonlyMap<string, KeepAwakeSavedSettings>;
 
 /** Name of the JSON crash-recovery file inside Electron `userData`. */
 export const KEEP_AWAKE_RECOVERY_FILE_NAME = "keep-awake-recovery.json";
@@ -175,63 +194,121 @@ const parseFirstHex = (out: string): number | undefined => {
   return undefined;
 };
 
-// Read the current AC and DC index for one power setting.
+// Every helper below targets an explicit scheme: either a GUID resolved
+// from `/getactivescheme` or the `SCHEME_CURRENT` alias as a last resort.
+// Saving and restoring by scheme — never by alias — is what keeps a
+// mid-session power plan switch from permanently corrupting the previous
+// plan: each touched scheme is restored to its own originals.
+const SCHEME_CURRENT_ALIAS = "SCHEME_CURRENT";
+
+const SCHEME_GUID_PATTERN =
+  /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+// Resolve the active power scheme GUID (`powercfg /getactivescheme` prints
+// `Power Scheme GUID: <guid> (<name>)`). Undefined when powercfg fails or
+// the output is unparseable — callers fall back to the `SCHEME_CURRENT`
+// alias for that operation only.
+const getActiveSchemeGuid = (
+  runPowercfg: (args: ReadonlyArray<string>) => string,
+): string | undefined => {
+  const out = runPowercfg(["/getactivescheme"]);
+  if (out.length === 0) {
+    return undefined;
+  }
+  const match =
+    /\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/.exec(out);
+  return match?.[0];
+};
+
+// Read the current AC and DC index for one power setting on one scheme.
 const querySetting = (
   runPowercfg: (args: ReadonlyArray<string>) => string,
+  scheme: string,
   sub: string,
   setting: string,
 ): readonly [number | undefined, number | undefined] => {
-  const acOut = runPowercfg(["/getacvalueindex", "SCHEME_CURRENT", sub, setting]);
-  const dcOut = runPowercfg(["/getdcvalueindex", "SCHEME_CURRENT", sub, setting]);
+  const acOut = runPowercfg(["/getacvalueindex", scheme, sub, setting]);
+  const dcOut = runPowercfg(["/getdcvalueindex", scheme, sub, setting]);
   return [parseFirstHex(acOut), parseFirstHex(dcOut)];
+};
+
+// Read all three overridden settings on one scheme.
+const querySchemeSettings = (
+  runPowercfg: (args: ReadonlyArray<string>) => string,
+  scheme: string,
+): KeepAwakeSavedSettings => {
+  const [lidAc, lidDc] = querySetting(runPowercfg, scheme, SUB_BUTTONS, LIDACTION);
+  const [sleepAc, sleepDc] = querySetting(runPowercfg, scheme, SUB_SLEEP, STANDBYIDLE);
+  const [hibAc, hibDc] = querySetting(runPowercfg, scheme, SUB_SLEEP, HIBERNATEIDLE);
+  return { lidAc, lidDc, sleepAc, sleepDc, hibAc, hibDc };
 };
 
 // Set one power setting's AC and DC index (no /setactive — caller batches it).
 const setSetting = (
   runPowercfg: (args: ReadonlyArray<string>) => string,
+  scheme: string,
   sub: string,
   setting: string,
   value: number,
 ): void => {
   const v = value.toString();
-  runPowercfg(["/setacvalueindex", "SCHEME_CURRENT", sub, setting, v]);
-  runPowercfg(["/setdcvalueindex", "SCHEME_CURRENT", sub, setting, v]);
+  runPowercfg(["/setacvalueindex", scheme, sub, setting, v]);
+  runPowercfg(["/setdcvalueindex", scheme, sub, setting, v]);
 };
 
 // Restore one setting's AC/DC index if we recorded originals for it.
 const restoreSetting = (
   runPowercfg: (args: ReadonlyArray<string>) => string,
+  scheme: string,
   sub: string,
   setting: string,
   ac: number | undefined,
   dc: number | undefined,
 ): void => {
   if (ac !== undefined) {
-    runPowercfg(["/setacvalueindex", "SCHEME_CURRENT", sub, setting, ac.toString()]);
+    runPowercfg(["/setacvalueindex", scheme, sub, setting, ac.toString()]);
   }
   if (dc !== undefined) {
-    runPowercfg(["/setdcvalueindex", "SCHEME_CURRENT", sub, setting, dc.toString()]);
+    runPowercfg(["/setdcvalueindex", scheme, sub, setting, dc.toString()]);
   }
 };
 
-// Force lid=Do Nothing and sleep/hibernate timeouts to 0 (never), batched
-// with a single /setactive like Brutal Awake.
-const forcePowerSettings = (runPowercfg: (args: ReadonlyArray<string>) => string): void => {
-  setSetting(runPowercfg, SUB_BUTTONS, LIDACTION, 0); // 0 = Do nothing on lid close
-  setSetting(runPowercfg, SUB_SLEEP, STANDBYIDLE, 0); // 0 = never sleep
-  setSetting(runPowercfg, SUB_SLEEP, HIBERNATEIDLE, 0); // 0 = never hibernate
-  runPowercfg(["/setactive", "SCHEME_CURRENT"]);
+// Force lid=Do Nothing and sleep/hibernate timeouts to 0 (never) on one
+// scheme, batched with a single /setactive like Brutal Awake.
+const forceSchemeSettings = (
+  runPowercfg: (args: ReadonlyArray<string>) => string,
+  scheme: string,
+): void => {
+  setSetting(runPowercfg, scheme, SUB_BUTTONS, LIDACTION, 0); // 0 = Do nothing on lid close
+  setSetting(runPowercfg, scheme, SUB_SLEEP, STANDBYIDLE, 0); // 0 = never sleep
+  setSetting(runPowercfg, scheme, SUB_SLEEP, HIBERNATEIDLE, 0); // 0 = never hibernate
+  runPowercfg(["/setactive", SCHEME_CURRENT_ALIAS]);
 };
 
-// Put every overridden power setting back to what the user had.
-const restorePowerSettings = (
+// Put one scheme's overridden settings back to what the user had (no
+// /setactive — the caller batches one after restoring every scheme).
+const restoreSchemeSettings = (
   runPowercfg: (args: ReadonlyArray<string>) => string,
+  scheme: string,
   saved: KeepAwakeSavedSettings,
 ): void => {
-  restoreSetting(runPowercfg, SUB_BUTTONS, LIDACTION, saved.lidAc, saved.lidDc);
-  restoreSetting(runPowercfg, SUB_SLEEP, STANDBYIDLE, saved.sleepAc, saved.sleepDc);
-  restoreSetting(runPowercfg, SUB_SLEEP, HIBERNATEIDLE, saved.hibAc, saved.hibDc);
-  runPowercfg(["/setactive", "SCHEME_CURRENT"]);
+  restoreSetting(runPowercfg, scheme, SUB_BUTTONS, LIDACTION, saved.lidAc, saved.lidDc);
+  restoreSetting(runPowercfg, scheme, SUB_SLEEP, STANDBYIDLE, saved.sleepAc, saved.sleepDc);
+  restoreSetting(runPowercfg, scheme, SUB_SLEEP, HIBERNATEIDLE, saved.hibAc, saved.hibDc);
+};
+
+// Restore every touched scheme to its own originals, then reactivate once.
+const restoreAllSchemes = (
+  runPowercfg: (args: ReadonlyArray<string>) => string,
+  saved: KeepAwakeSavedByScheme,
+): void => {
+  if (saved.size === 0) {
+    return;
+  }
+  for (const [scheme, settings] of saved) {
+    restoreSchemeSettings(runPowercfg, scheme, settings);
+  }
+  runPowercfg(["/setactive", SCHEME_CURRENT_ALIAS]);
 };
 
 // --- Crash-recovery file (Electron userData) --------------------------------
@@ -258,12 +335,12 @@ const resolveUserDataDir = (override: string | null | undefined): string | null 
 const recoveryFilePath = (userDataDir: string | null): string | null =>
   userDataDir === null ? null : NodePath.join(userDataDir, KEEP_AWAKE_RECOVERY_FILE_NAME);
 
-const writeRecoveryFile = (file: string | null, saved: KeepAwakeSavedSettings): void => {
+const writeRecoveryFile = (file: string | null, saved: KeepAwakeSavedByScheme): void => {
   if (file === null) {
     return;
   }
   try {
-    NodeFs.writeFileSync(file, JSON.stringify(saved), "utf8");
+    NodeFs.writeFileSync(file, JSON.stringify(Object.fromEntries(saved)), "utf8");
   } catch {
     // Best-effort: without the file we just lose crash recovery for this session.
   }
@@ -300,6 +377,23 @@ const sanitizeSavedSettings = (input: unknown): KeepAwakeSavedSettings | null =>
   };
 };
 
+const sanitizeSavedByScheme = (input: unknown): KeepAwakeSavedByScheme | null => {
+  if (typeof input !== "object" || input === null) {
+    return null;
+  }
+  const result = new Map<string, KeepAwakeSavedSettings>();
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!SCHEME_GUID_PATTERN.test(key) && key !== SCHEME_CURRENT_ALIAS) {
+      continue;
+    }
+    const saved = sanitizeSavedSettings(value);
+    if (saved !== null) {
+      result.set(key, saved);
+    }
+  }
+  return result;
+};
+
 /**
  * Best-effort restore for a previous session that died while enabled.
  * Returns true when a recovery file existed (so the caller logs it).
@@ -321,11 +415,11 @@ const recoverPreviousSession = (
     return false;
   }
   try {
-    const saved = sanitizeSavedSettings(
+    const saved = sanitizeSavedByScheme(
       JSON.parse(NodeFs.readFileSync(recoveryFile, "utf8")) as unknown,
     );
     if (saved !== null) {
-      restorePowerSettings(runPowercfg, saved);
+      restoreAllSchemes(runPowercfg, saved);
     }
   } catch {
     // Corrupt file: fall through to delete + log below.
@@ -406,22 +500,34 @@ export const make = (
       recoveryFilePath(resolveUserDataDir(options?.userDataDir));
 
     const currentId = yield* Ref.make(Option.none<number>());
-    // Present while enabled on Windows: the user's original power values.
-    // Doubles as the off→on save guard — re-enable never re-saves our own
-    // forced values over the originals.
-    const savedSettings = yield* Ref.make<KeepAwakeSavedSettings | null>(null);
-
-    // Crash recovery: a previous session died while enabled and left its
-    // recovery file behind. Restore those values + /setactive, delete the
-    // file, log it. Fresh sessions start disabled either way.
-    const recovered = yield* Effect.sync(() =>
-      isWindows ? recoverPreviousSession(runPowercfg, getRecoveryFile()) : false,
-    );
-    if (recovered) {
-      yield* Effect.logWarning(
-        "[keep-awake] Restored power settings left behind by a previous session and removed the recovery file.",
+    // Original power values keyed by scheme GUID, non-empty while enabled
+    // on Windows. Doubles as the save guard — re-enable and the reassert
+    // loop never re-save our own forced values over the originals.
+    const savedByScheme = yield* Ref.make(new Map<string, KeepAwakeSavedSettings>());
+    // Serializes every power/blocker transition: setEnabled suspends on the
+    // ffi-rs load, so overlapping toggles could otherwise double-start
+    // blockers and orphan one. All entry points below take this lock.
+    const transitionMutex = yield* Semaphore.make(1);
+    // Crash-recovery check, deferred to first use instead of layer
+    // construction: layers build before DesktopApp sets Electron's final
+    // userData path, so an init-time lookup would read the wrong directory
+    // and miss the file. The first IPC call necessarily happens after
+    // setPath. Idempotent — runs at most once per process.
+    const recoveryChecked = yield* Ref.make(false);
+    const ensureRecoveryChecked: Effect.Effect<void, never, never> = Effect.gen(function* () {
+      const done = yield* Ref.getAndSet(recoveryChecked, true);
+      if (done || !isWindows) {
+        return;
+      }
+      const recovered = yield* Effect.sync(() =>
+        recoverPreviousSession(runPowercfg, getRecoveryFile()),
       );
-    }
+      if (recovered) {
+        yield* Effect.logWarning(
+          "[keep-awake] Restored power settings left behind by a previous session and removed the recovery file.",
+        );
+      }
+    });
 
     // Best-effort stop that can never fail: teardown paths (disable, app quit)
     // must not crash. (A crash mid-session is covered by the recovery file.)
@@ -441,53 +547,67 @@ export const make = (
       }
     });
 
-    // Save originals only on the off→on transition, persist the recovery
-    // file, then force lid=Do Nothing + sleep/hibernate=never and assert the
-    // thread execution state. All native calls are best-effort.
+    // Save one scheme's originals on first touch (guarded by the map, so we
+    // never record our own forced values), persist the recovery file, then
+    // force lid=Do Nothing + sleep/hibernate=never on the active scheme and
+    // assert the thread execution state. All native calls are best-effort.
+    // Callers must hold the transition mutex.
+    const ensureSchemeSaved = (scheme: string): Effect.Effect<void, never, never> =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.get(savedByScheme);
+        if (saved.has(scheme)) {
+          return;
+        }
+        const next = new Map(saved);
+        next.set(scheme, querySchemeSettings(runPowercfg, scheme));
+        yield* Ref.set(savedByScheme, next);
+        yield* Effect.sync(() => writeRecoveryFile(getRecoveryFile(), next));
+      });
+
     const enableWindowsPower: Effect.Effect<void, never, never> = Effect.gen(function* () {
-      const existing = yield* Ref.get(savedSettings);
-      if (existing === null) {
-        const [lidAc, lidDc] = querySetting(runPowercfg, SUB_BUTTONS, LIDACTION);
-        const [sleepAc, sleepDc] = querySetting(runPowercfg, SUB_SLEEP, STANDBYIDLE);
-        const [hibAc, hibDc] = querySetting(runPowercfg, SUB_SLEEP, HIBERNATEIDLE);
-        const saved: KeepAwakeSavedSettings = { lidAc, lidDc, sleepAc, sleepDc, hibAc, hibDc };
-        yield* Ref.set(savedSettings, saved);
-        yield* Effect.sync(() => writeRecoveryFile(getRecoveryFile(), saved));
-      }
-      yield* Effect.sync(() => forcePowerSettings(runPowercfg));
+      const scheme = getActiveSchemeGuid(runPowercfg) ?? SCHEME_CURRENT_ALIAS;
+      yield* ensureSchemeSaved(scheme);
+      yield* Effect.sync(() => forceSchemeSettings(runPowercfg, scheme));
       yield* Effect.ignore(applyExecutionState(true));
     });
 
-    // Restore all six saved values + /setactive, clear the guard, delete the
-    // recovery file, and release the thread execution state.
+    // Restore every touched scheme to its own originals + /setactive, clear
+    // the guard, delete the recovery file, release the execution state.
+    // Callers must hold the transition mutex.
     const restoreWindowsPower: Effect.Effect<void, never, never> = Effect.gen(function* () {
-      const existing = yield* Ref.getAndSet(savedSettings, null);
+      const saved = yield* Ref.getAndSet(savedByScheme, new Map<string, KeepAwakeSavedSettings>());
       yield* Effect.sync(() => {
-        if (existing !== null) {
-          restorePowerSettings(runPowercfg, existing);
-        }
+        restoreAllSchemes(runPowercfg, saved);
         deleteRecoveryFile(getRecoveryFile());
       });
       yield* Effect.ignore(applyExecutionState(false));
     });
 
     // Re-assert while enabled: something else (or the user) can rewrite the
-    // power plan or clear the thread state out from under us. Scoped to the
-    // layer, so the loop dies with the service and never outlives the app.
+    // power plan or clear the thread state out from under us — including
+    // switching plans, which we then track as a newly touched scheme.
+    // Scoped to the layer, so the loop dies with the service.
     yield* Effect.forkScoped(
       Effect.gen(function* () {
         while (true) {
           yield* Effect.sleep(reassertInterval);
-          const saved = yield* Ref.get(savedSettings);
-          if (saved !== null) {
-            yield* Effect.sync(() => forcePowerSettings(runPowercfg));
-            yield* Effect.ignore(applyExecutionState(true));
-          }
+          yield* transitionMutex.withPermits(1)(
+            Effect.gen(function* () {
+              const saved = yield* Ref.get(savedByScheme);
+              if (saved.size === 0) {
+                return;
+              }
+              yield* Effect.ignore(applyExecutionState(true));
+              const scheme = getActiveSchemeGuid(runPowercfg) ?? SCHEME_CURRENT_ALIAS;
+              yield* ensureSchemeSaved(scheme);
+              yield* Effect.sync(() => forceSchemeSettings(runPowercfg, scheme));
+            }),
+          );
         }
       }),
     );
 
-    const getState: Effect.Effect<DesktopKeepAwakeState, never, never> = Effect.gen(function* () {
+    const readState: Effect.Effect<DesktopKeepAwakeState, never, never> = Effect.gen(function* () {
       const current = yield* Ref.get(currentId);
       return {
         enabled: supported && Option.isSome(current),
@@ -496,7 +616,15 @@ export const make = (
       };
     });
 
-    const setEnabled = Effect.fn("desktop.keepAwake.setEnabled")(function* (enabled: boolean) {
+    const getState: Effect.Effect<DesktopKeepAwakeState, never, never> =
+      transitionMutex.withPermits(1)(
+        Effect.gen(function* () {
+          yield* ensureRecoveryChecked;
+          return yield* readState;
+        }),
+      );
+
+    const runTransition = Effect.fn("desktop.keepAwake.transition")(function* (enabled: boolean) {
       if (!supported || blocker === null) {
         return unsupportedState;
       }
@@ -505,7 +633,7 @@ export const make = (
         if (isWindows) {
           yield* restoreWindowsPower;
         }
-        return yield* getState;
+        return yield* readState;
       }
       const current = yield* Ref.get(currentId);
       if (Option.isSome(current)) {
@@ -519,13 +647,13 @@ export const make = (
           if (isWindows) {
             // Self-heal: blocker held but no saved originals (should not
             // happen, but forced power without restore data must never stand).
-            const saved = yield* Ref.get(savedSettings);
-            if (saved === null) {
+            const saved = yield* Ref.get(savedByScheme);
+            if (saved.size === 0) {
               yield* enableWindowsPower;
             }
           }
           // Idempotent re-enable: keep holding the live blocker.
-          return yield* getState;
+          return yield* readState;
         }
         // Stale id (e.g. the OS released it out from under us) — drop it and
         // acquire a fresh blocker below.
@@ -552,29 +680,31 @@ export const make = (
         return unsupportedState;
       }
       yield* Ref.set(currentId, Option.some(id));
-      return yield* getState;
+      return yield* readState;
+    });
+
+    const setEnabled = Effect.fn("desktop.keepAwake.setEnabled")(function* (enabled: boolean) {
+      return yield* transitionMutex.withPermits(1)(
+        Effect.gen(function* () {
+          yield* ensureRecoveryChecked;
+          return yield* runTransition(enabled);
+        }),
+      );
     });
 
     // Restore on layer-scope close (app quit): the same restore path as
     // disable, and it can never throw.
     yield* Effect.acquireRelease(Effect.void, () =>
-      Effect.gen(function* () {
-        const previous = yield* Ref.getAndSet(currentId, Option.none<number>());
-        if (Option.isSome(previous)) {
-          const id = previous.value;
-          yield* Effect.sync(() => stopId(id));
-        }
-        if (isWindows) {
-          const existing = yield* Ref.getAndSet(savedSettings, null);
-          yield* Effect.sync(() => {
-            if (existing !== null) {
-              restorePowerSettings(runPowercfg, existing);
+      transitionMutex
+        .withPermits(1)(
+          Effect.gen(function* () {
+            yield* stopCurrent;
+            if (isWindows) {
+              yield* restoreWindowsPower;
             }
-            deleteRecoveryFile(getRecoveryFile());
-          });
-          yield* Effect.ignore(applyExecutionState(false));
-        }
-      }).pipe(Effect.ignoreCause),
+          }),
+        )
+        .pipe(Effect.ignoreCause),
     );
 
     return DesktopKeepAwake.of({ getState, setEnabled });
