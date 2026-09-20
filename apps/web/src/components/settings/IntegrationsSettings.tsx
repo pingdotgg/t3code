@@ -470,6 +470,44 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
   );
 }
 
+function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolean }) {
+  const showKeys = useClientSettings((settings) => settings.browserRecordingShowKeyPresses);
+  const showMouse = useClientSettings((settings) => settings.browserRecordingShowMousePresses);
+  const updateSettings = useUpdatePrimarySettings();
+  return (
+    <>
+      <SettingsRow
+        {...searchableSetting("browser-recording-key-presses")}
+        description="Show pressed keys and shortcuts in new recordings. Password fields are excluded."
+        control={
+          <Switch
+            disabled={disabled}
+            checked={showKeys}
+            aria-label="Show key presses in recordings"
+            onCheckedChange={(checked) =>
+              updateSettings({ browserRecordingShowKeyPresses: Boolean(checked) })
+            }
+          />
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("browser-recording-mouse-presses")}
+        description="Highlight mouse presses and held buttons in new recordings."
+        control={
+          <Switch
+            disabled={disabled}
+            checked={showMouse}
+            aria-label="Show mouse presses in recordings"
+            onCheckedChange={(checked) =>
+              updateSettings({ browserRecordingShowMousePresses: Boolean(checked) })
+            }
+          />
+        }
+      />
+    </>
+  );
+}
+
 function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boolean }) {
   const frameRate = useClientSettings((settings) => settings.browserRecordingFrameRate);
   const updateSettings = useUpdatePrimarySettings();
@@ -1326,6 +1364,7 @@ export function IntegrationsSettingsPanel() {
       <BrowserZoomSetting disabled={previewDefaultsDisabled} />
       <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />
       <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />
+      <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
       <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />
       <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
     </>

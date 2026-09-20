@@ -1,6 +1,7 @@
 import type {
   DesktopBridge,
   DesktopPreviewPointerEvent,
+  DesktopPreviewRecordingInputEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
@@ -327,6 +328,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.invoke(IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL, { tabId }),
     },
     recording: {
+      onInput: (listener) => {
+        const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
+          if (typeof event !== "object" || event === null) return;
+          listener(event as DesktopPreviewRecordingInputEvent);
+        };
+        ipcRenderer.on(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, wrappedListener);
+        return () =>
+          ipcRenderer.removeListener(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, wrappedListener);
+      },
       startScreencast: (tabId) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, { tabId }),
       stopScreencast: (tabId) =>

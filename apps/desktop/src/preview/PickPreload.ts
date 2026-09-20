@@ -16,6 +16,8 @@ import type {
 
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { installRecordingCursor } from "./RecordingCursor.ts";
+import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
@@ -23,6 +25,11 @@ import {
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
+  RECORDING_CURSOR_CHANNEL,
+  RECORDING_POINTER_CHANNEL,
+  RECORDING_KEY_CHANNEL,
+  RECORDING_INPUT_CHANNEL,
+  RECORDING_CONTROLLER_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
@@ -34,6 +41,80 @@ const MAX_MARQUEE_ELEMENTS = 20;
 const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
+
+let recordingCursor: ReturnType<typeof installRecordingCursor> | null = null;
+ipcRenderer.on(
+  RECORDING_CURSOR_CHANNEL,
+  (_event, active: unknown, inputOptions: unknown, controller: unknown) => {
+    if (active === true) {
+      const options =
+        typeof inputOptions === "object" && inputOptions !== null
+          ? {
+              showKeyPresses:
+                "showKeyPresses" in inputOptions && inputOptions.showKeyPresses === true,
+              showMousePresses:
+                "showMousePresses" in inputOptions && inputOptions.showMousePresses === true,
+            }
+          : DEFAULT_RECORDING_INPUT_OPTIONS;
+      recordingCursor ??= installRecordingCursor(document, window, options, (input) =>
+        ipcRenderer.send(RECORDING_INPUT_CHANNEL, input),
+      );
+      recordingCursor.setTheme(annotationTheme);
+      if (controller === "agent" || controller === "human" || controller === "none")
+        recordingCursor.setController(controller);
+    } else {
+      recordingCursor?.dispose();
+      recordingCursor = null;
+    }
+  },
+);
+ipcRenderer.on(RECORDING_CONTROLLER_CHANNEL, (_event, controller: unknown, point: unknown) => {
+  const humanPoint =
+    typeof point === "object" &&
+    point !== null &&
+    "x" in point &&
+    typeof point.x === "number" &&
+    Number.isFinite(point.x) &&
+    "y" in point &&
+    typeof point.y === "number" &&
+    Number.isFinite(point.y)
+      ? { x: point.x, y: point.y }
+      : undefined;
+  if (controller === "agent" || controller === "human" || controller === "none")
+    recordingCursor?.setController(controller, humanPoint);
+});
+ipcRenderer.on(RECORDING_KEY_CHANNEL, (_event, input: unknown) => {
+  if (
+    typeof input !== "object" ||
+    input === null ||
+    !("key" in input) ||
+    typeof input.key !== "string"
+  )
+    return;
+  recordingCursor?.keyPress({
+    key: input.key,
+    metaKey: "metaKey" in input && input.metaKey === true,
+    ctrlKey: "ctrlKey" in input && input.ctrlKey === true,
+    altKey: "altKey" in input && input.altKey === true,
+    shiftKey: "shiftKey" in input && input.shiftKey === true,
+  });
+});
+ipcRenderer.on(RECORDING_POINTER_CHANNEL, (_event, point: unknown) => {
+  if (
+    typeof point === "object" &&
+    point !== null &&
+    "x" in point &&
+    typeof point.x === "number" &&
+    Number.isFinite(point.x) &&
+    "y" in point &&
+    typeof point.y === "number" &&
+    Number.isFinite(point.y)
+  )
+    recordingCursor?.move(
+      { x: point.x, y: point.y },
+      "phase" in point && point.phase === "click" ? "click" : "move",
+    );
+});
 
 type AnnotationTool = "select" | "marquee" | "draw" | "erase";
 
@@ -1361,6 +1442,7 @@ ipcRenderer.on(START_PICK_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme
 });
 ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme) => {
   annotationTheme = theme;
+  recordingCursor?.setTheme(theme);
   activeSession?.applyTheme(theme);
 });
 ipcRenderer.on(CANCEL_PICK_CHANNEL, () => activeSession?.teardown(false));
