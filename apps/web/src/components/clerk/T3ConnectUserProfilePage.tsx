@@ -8,6 +8,7 @@ import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { ServerIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
+import { copyErrorTraceId } from "../../cloud/copyErrorTraceId";
 import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
@@ -180,7 +181,7 @@ export function T3ConnectUserProfilePage() {
         ? {
             secondaryActionProps: {
               children: "Copy trace ID",
-              onClick: () => void navigator.clipboard?.writeText(traceId),
+              onClick: () => copyErrorTraceId(traceId),
             },
           }
         : undefined,

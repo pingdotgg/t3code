@@ -1537,6 +1537,13 @@ function CommandBlock({
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     timeout: 1500,
     target: "command",
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not copy command",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    },
   });
   return (
     <div

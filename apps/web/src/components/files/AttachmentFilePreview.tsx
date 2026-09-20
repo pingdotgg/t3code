@@ -77,7 +77,16 @@ export function AttachmentFilePreview(props: {
   const renderedMode =
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
   const attachmentId = props.asset?.attachmentId;
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.name });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: props.name,
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not copy contents",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    },
+  });
   const resource = useMemo(
     () =>
       attachmentId

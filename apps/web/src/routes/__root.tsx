@@ -398,12 +398,18 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
 
 /** Copies the full error report and swaps to a check mark for a moment as confirmation. */
 function CopyErrorButton({ report }: { report: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-report" });
+  // This page renders no toast host, so a refused write answers in place instead.
+  const [copyFailed, setCopyFailed] = useState(false);
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "error-report",
+    onCopy: () => setCopyFailed(false),
+    onError: () => setCopyFailed(true),
+  });
 
   return (
     <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
-      {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
-      {isCopied ? "Copied" : "Copy error"}
+      {isCopied && !copyFailed ? <CheckIcon className="text-success" /> : <CopyIcon />}
+      {copyFailed ? "Copy failed — select the report below" : isCopied ? "Copied" : "Copy error"}
     </Button>
   );
 }

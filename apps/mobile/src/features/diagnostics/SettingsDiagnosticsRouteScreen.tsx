@@ -2,7 +2,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollVie
 import Constants from "expo-constants";
 import * as Updates from "expo-updates";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
@@ -70,7 +70,11 @@ export function SettingsDiagnosticsRouteScreen() {
     const ok = await tryCopyTextWithHaptic(formatStartupCrashReport(records, appIdentity()), {
       target: "crash report",
     });
-    if (ok) setCopied(true);
+    if (ok) {
+      setCopied(true);
+    } else {
+      Alert.alert("Could not copy", "Try again.");
+    }
   };
 
   return (

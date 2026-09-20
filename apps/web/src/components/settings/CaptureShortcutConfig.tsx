@@ -35,7 +35,16 @@ export function CaptureShortcutConfig({
 }) {
   const bridge = getDesktopSnapShotBridge();
   const { resolvedTheme } = useTheme();
-  const { copyToClipboard, isCopied } = useCopyToClipboard();
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "shortcut binding",
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not copy shortcut",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    },
+  });
   const [preview, setPreview] = useState<DesktopCaptureConfigPreview | null>(null);
   const [result, setResult] = useState<DesktopCaptureConfigApplied | null>(null);
   const [error, setError] = useState<{ message: string; detail?: string } | null>(null);

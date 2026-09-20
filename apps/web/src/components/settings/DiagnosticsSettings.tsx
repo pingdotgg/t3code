@@ -212,6 +212,13 @@ function TraceIdCell({ traceId }: { traceId: string }) {
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
     target: "trace ID",
     timeout: 1_200,
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not copy trace ID",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    },
   });
 
   return (

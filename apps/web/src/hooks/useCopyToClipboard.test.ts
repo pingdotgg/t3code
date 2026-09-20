@@ -1,10 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { COMPOSER_CONTEXT_CLIPBOARD_MIME } from "@t3tools/shared/composerContextClipboard";
 
 import {
   ClipboardApiUnavailableError,
   ClipboardWriteError,
+  useCopyToClipboard,
   writeTextToClipboard,
 } from "./useCopyToClipboard";
 
@@ -177,4 +180,167 @@ describe("writeTextToClipboard", () => {
       expect(execCommand).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("useCopyToClipboard", () => {
+  let root: Root;
+  let latest: ReturnType<typeof useCopyToClipboard<undefined>> | null;
+  let onCopy: ReturnType<typeof vi.fn<() => void>>;
+  let onError: ReturnType<typeof vi.fn<(error: Error) => void>>;
+  let execCommand: ReturnType<typeof vi.fn>;
+  let textarea: {
+    value: string;
+    style: Record<string, string>;
+    setAttribute: ReturnType<typeof vi.fn>;
+    addEventListener: ReturnType<typeof vi.fn>;
+    removeEventListener: ReturnType<typeof vi.fn>;
+    focus: ReturnType<typeof vi.fn>;
+    select: ReturnType<typeof vi.fn>;
+    setSelectionRange: ReturnType<typeof vi.fn>;
+    remove: ReturnType<typeof vi.fn>;
+  };
+
+  function Probe() {
+    // timeout: 0 keeps the copied state from resetting itself mid-assertion.
+    latest = useCopyToClipboard<undefined>({ onCopy, onError, timeout: 0 });
+    return null;
+  }
+
+  beforeEach(() => {
+    execCommand = vi.fn(() => true);
+    textarea = {
+      value: "",
+      style: {},
+      setAttribute: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      focus: vi.fn(),
+      select: vi.fn(),
+      setSelectionRange: vi.fn(),
+      remove: vi.fn(),
+    };
+    // One fake document serves both ReactDOM's event target and the
+    // execCommand fallback the hook reaches on plain-HTTP pages.
+    const document = {
+      nodeType: 9,
+      addEventListener() {},
+      removeEventListener() {},
+      activeElement: { focus: vi.fn() },
+      body: { appendChild: vi.fn() },
+      createElement: vi.fn(() => textarea),
+      execCommand,
+    };
+    const container = {
+      nodeType: 1,
+      tagName: "DIV",
+      namespaceURI: "http://www.w3.org/1999/xhtml",
+      ownerDocument: document,
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", { document, HTMLIFrameElement: EventTarget });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    onCopy = vi.fn();
+    onError = vi.fn();
+    latest = null;
+    root = createRoot(container as unknown as HTMLElement);
+  });
+
+  afterEach(async () => {
+    await act(() => root.unmount());
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("does not report copied until the write resolves", async () => {
+    let resolveWrite!: () => void;
+    const writeText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    await act(async () => {
+      root.render(createElement(Probe));
+    });
+
+    await act(async () => {
+      latest!.copyToClipboard("report", undefined);
+    });
+
+    expect(writeText).toHaveBeenCalledWith("report");
+    expect(latest!.isCopied).toBe(false);
+    expect(onCopy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveWrite();
+    });
+
+    expect(latest!.isCopied).toBe(true);
+    expect(onCopy).toHaveBeenCalledOnce();
+  });
+
+  it("passes a rejected write to onError without a copied state or contents", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"));
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await act(async () => {
+      root.render(createElement(Probe));
+    });
+
+    await act(async () => {
+      latest!.copyToClipboard("sensitive report body", undefined);
+    });
+
+    expect(latest!.isCopied).toBe(false);
+    expect(onCopy).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ _tag: "ClipboardWriteError", target: "text" }),
+      undefined,
+    );
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain("sensitive report body");
+  });
+
+  it("copies the same value again on retry after a failure", async () => {
+    const writeText = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("denied"))
+      .mockResolvedValueOnce(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await act(async () => {
+      root.render(createElement(Probe));
+    });
+
+    await act(async () => {
+      latest!.copyToClipboard("trace-123", undefined);
+    });
+    expect(latest!.isCopied).toBe(false);
+
+    await act(async () => {
+      latest!.copyToClipboard("trace-123", undefined);
+    });
+
+    expect(writeText).toHaveBeenNthCalledWith(2, "trace-123");
+    expect(latest!.isCopied).toBe(true);
+    expect(onCopy).toHaveBeenCalledOnce();
+  });
+
+  it("reports copied through the execCommand fallback used over plain HTTP", async () => {
+    vi.stubGlobal("navigator", {});
+    await act(async () => {
+      root.render(createElement(Probe));
+    });
+
+    await act(async () => {
+      latest!.copyToClipboard("remote command", undefined);
+    });
+
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(textarea.value).toBe("remote command");
+    expect(latest!.isCopied).toBe(true);
+    expect(onCopy).toHaveBeenCalledOnce();
+  });
 });

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
+import { Alert } from "react-native";
 
 export class CopyTextClipboardWriteError extends Schema.TaggedError<CopyTextClipboardWriteError>()(
   "CopyTextClipboardWriteError",
@@ -41,8 +42,7 @@ export async function tryCopyTextWithHaptic(
 
   const clipboardWrite = (async () => {
     try {
-      await Clipboard.setStringAsync(value);
-      return true;
+      return await Clipboard.setStringAsync(value);
     } catch (cause) {
       const error = new CopyTextClipboardWriteError({ target, cause });
       console.error(error.message, { _tag: error._tag, target, stack: error.stack });
@@ -67,5 +67,8 @@ export async function tryCopyTextWithHaptic(
 }
 
 export function copyTextWithHaptic(value: string, options: CopyTextWithHapticOptions = {}): void {
-  void tryCopyTextWithHaptic(value, options);
+  void tryCopyTextWithHaptic(value, options).then((didCopy) => {
+    // A refused write must still answer the tap — silence reads as success.
+    if (!didCopy) Alert.alert("Could not copy", "Try again.");
+  });
 }

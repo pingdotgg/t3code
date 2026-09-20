@@ -21,6 +21,7 @@ import type {
 import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useEffectEvent, useState } from "react";
 
+import { copyErrorTraceId } from "~/cloud/copyErrorTraceId";
 import { environmentCatalog } from "~/connection/catalog";
 import { cn } from "~/lib/utils";
 import { relayEnvironmentDiscovery } from "~/state/relay";
@@ -174,7 +175,7 @@ export function CloudEnvironmentConnectRows({
         ? {
             secondaryActionProps: {
               children: "Copy trace ID",
-              onClick: () => void navigator.clipboard?.writeText(traceId),
+              onClick: () => copyErrorTraceId(traceId),
             },
           }
         : undefined,

@@ -119,7 +119,16 @@ function handleToastDismissClick(
 }
 
 function CopyErrorButton({ text }: { text: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-message" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "error-message",
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not copy error message",
+        description: error.message,
+      });
+    },
+  });
   const label = isCopied ? "Copied error" : "Copy error";
 
   return (

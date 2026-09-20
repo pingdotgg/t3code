@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
+  alert: vi.fn(),
   impactAsync: vi.fn(),
   selectionAsync: vi.fn(),
   setStringAsync: vi.fn(),
@@ -16,6 +17,10 @@ vi.mock("expo-haptics", () => ({
   },
   impactAsync: mocks.impactAsync,
   selectionAsync: mocks.selectionAsync,
+}));
+
+vi.mock("react-native", () => ({
+  Alert: { alert: mocks.alert },
 }));
 
 import { copyTextWithHaptic, tryCopyTextWithHaptic } from "./copyTextWithHaptic";
@@ -51,9 +56,14 @@ describe("copyTextWithHaptic", () => {
   });
 
   it("reports whether the clipboard write succeeded", async () => {
-    mocks.setStringAsync.mockResolvedValueOnce(undefined);
+    mocks.setStringAsync.mockResolvedValueOnce(true);
 
     await expect(tryCopyTextWithHaptic("thread-123")).resolves.toBe(true);
+  });
+
+  it("returns false when the platform refuses the write", async () => {
+    mocks.setStringAsync.mockResolvedValueOnce(false);
+    await expect(tryCopyTextWithHaptic("text")).resolves.toBe(false);
   });
 
   it("returns false when the clipboard write fails", async () => {
@@ -88,5 +98,34 @@ describe("copyTextWithHaptic", () => {
     expect(diagnostics).not.toContain("private-state");
     expect(diagnostics).not.toContain("private-code");
     expect(diagnostics).not.toContain("cause");
+  });
+
+  it("fires the haptic immediately but alerts only once the write fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let rejectWrite!: (cause: unknown) => void;
+    mocks.setStringAsync.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectWrite = reject;
+      }),
+    );
+
+    copyTextWithHaptic("trace-123");
+
+    expect(mocks.impactAsync).toHaveBeenCalledWith("light");
+    expect(mocks.alert).not.toHaveBeenCalled();
+
+    rejectWrite(new Error("native clipboard failure"));
+    await vi.waitFor(() => {
+      expect(mocks.alert).toHaveBeenCalledWith("Could not copy", "Try again.");
+    });
+  });
+
+  it("does not alert when the fire-and-forget write succeeds", async () => {
+    mocks.setStringAsync.mockResolvedValueOnce(true);
+
+    copyTextWithHaptic("trace-123");
+
+    await new Promise<boolean>((resolve) => setTimeout(resolve, 0));
+    expect(mocks.alert).not.toHaveBeenCalled();
   });
 });

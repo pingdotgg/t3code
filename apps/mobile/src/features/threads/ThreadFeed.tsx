@@ -93,7 +93,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { copyTextWithHaptic, tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
@@ -1950,6 +1950,7 @@ function ThreadFeedPlaceholder(props: {
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const navigation = useNavigation();
   const { themeAppearance } = useAppearancePreferences();
+  const copyAttemptRef = useRef(0);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
@@ -2412,6 +2413,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // ThreadId, and keying resets (or the list mount) on the bare id would
   // carry stale scroll/follow state across an environment switch.
   const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
+  useEffect(() => {
+    setInteractionState((current) =>
+      current.copiedRowId === null ? current : { ...current, copiedRowId: null },
+    );
+    return () => {
+      copyAttemptRef.current += 1;
+      if (copyFeedbackTimeoutRef.current) clearTimeout(copyFeedbackTimeoutRef.current);
+    };
+  }, [feedThreadKey]);
   // Virtualized groups can unmount without losing the reader's place. This cache
   // belongs to this thread view only and never causes per-scroll React updates.
   const workGroupScrollPositions = useMemo(
@@ -2612,20 +2622,29 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
 
   const onCopyWorkRow = useCallback((rowId: string, value: string) => {
-    copyTextWithHaptic(value, {
+    const attempt = ++copyAttemptRef.current;
+    setInteractionState((current) => ({ ...current, copiedRowId: null }));
+    if (copyFeedbackTimeoutRef.current) clearTimeout(copyFeedbackTimeoutRef.current);
+    void tryCopyTextWithHaptic(value, {
       target: "thread-work-row",
       feedback: "selection",
+    }).then((didCopy) => {
+      if (attempt !== copyAttemptRef.current) return;
+      if (!didCopy) {
+        Alert.alert("Could not copy", "Try again.");
+        return;
+      }
+      setInteractionState((current) => ({ ...current, copiedRowId: rowId }));
+      if (copyFeedbackTimeoutRef.current) {
+        clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+      copyFeedbackTimeoutRef.current = setTimeout(() => {
+        setInteractionState((current) =>
+          current.copiedRowId === rowId ? { ...current, copiedRowId: null } : current,
+        );
+        copyFeedbackTimeoutRef.current = null;
+      }, 1200);
     });
-    setInteractionState((current) => ({ ...current, copiedRowId: rowId }));
-    if (copyFeedbackTimeoutRef.current) {
-      clearTimeout(copyFeedbackTimeoutRef.current);
-    }
-    copyFeedbackTimeoutRef.current = setTimeout(() => {
-      setInteractionState((current) =>
-        current.copiedRowId === rowId ? { ...current, copiedRowId: null } : current,
-      );
-      copyFeedbackTimeoutRef.current = null;
-    }, 1200);
   }, []);
 
   const onToggleWorkGroup = useCallback(
