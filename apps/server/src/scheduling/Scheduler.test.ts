@@ -50,6 +50,9 @@ it.effect("does not overlap slow work or hold up another source", () =>
     yield* Queue.take(receipts);
     assert.equal(yield* Ref.get(runs), 1);
     yield* Deferred.succeed(release, undefined);
+    yield* TestClock.adjust("5 seconds");
+    yield* Queue.take(receipts);
+    assert.equal(yield* Ref.get(runs), 2);
   }).pipe(Effect.provide(layer)),
 );
 
