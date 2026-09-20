@@ -110,6 +110,22 @@ it.layer(TestLayer)("Worktree cloning", (it) => {
       }),
     );
 
+    it.effect("resolves an explicit relative worktree path against the source repository", () =>
+      Effect.gen(function* () {
+        const f = yield* fixture();
+        const relative = `relative-${f.path.basename(f.path.dirname(f.cwd))}`;
+        const target = f.path.join(f.cwd, relative);
+        yield* f.driver.createWorktree({
+          cwd: f.cwd,
+          path: relative,
+          refName: "main",
+          newRefName: "feature",
+        });
+        assert.equal(yield* f.fs.readFileString(f.path.join(target, "source.txt")), "original\n");
+        assert.equal((yield* f.git(target, ["status", "--porcelain"])).stdout, "");
+      }),
+    );
+
     it.effect("repairs source changes that race with cloning", () =>
       Effect.gen(function* () {
         const f = yield* fixture();
