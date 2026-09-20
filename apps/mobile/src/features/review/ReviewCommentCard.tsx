@@ -110,8 +110,9 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     () => JSON.stringify(nativeReviewDiffTheme),
     [nativeReviewDiffTheme],
   );
+  // The card's height is sized from its row count, so its snippet stays unwrapped.
   const nativeStyleJson = useMemo(
-    () => JSON.stringify(nativeReviewDiffStyle),
+    () => JSON.stringify({ ...nativeReviewDiffStyle, wordWrap: false }),
     [nativeReviewDiffStyle],
   );
   const nativeDiffHeight = useMemo(
