@@ -72,6 +72,14 @@ when it resets, when Codex reports them. Send the message again after the reset.
 message also says whether your workspace owner needs to add credits or raise the
 spend limit to continue sooner.
 
+## The thread says the provider is busy
+
+When a model is overloaded or at capacity, the turn stops with that error. T3
+Code asks the agent to continue for you after one minute, then five, then
+fifteen. Sending your own message first cancels the automatic retry. If the
+provider is still busy after the third try, send a message when you want to
+continue, or switch the thread to another account or model.
+
 ## Send feedback to OpenAI
 
 In an existing Codex thread, send `/feedback` with an optional description, for

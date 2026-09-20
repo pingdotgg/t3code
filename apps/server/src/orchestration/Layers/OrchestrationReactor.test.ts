@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
+import { ProviderBusyRetryReactor } from "../Services/ProviderBusyRetryReactor.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
 import * as ThreadSettlementReactor from "../ThreadSettlementReactor.ts";
 import * as PullRequestSyncReactor from "../PullRequestSyncReactor.ts";
@@ -87,6 +88,15 @@ describe("OrchestrationReactor", () => {
           }),
         ),
         Layer.provideMerge(
+          Layer.succeed(ProviderBusyRetryReactor, {
+            start: () => {
+              started.push("provider-busy-retry-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
           Layer.succeed(ThreadSettlementReactor.ThreadSettlementReactor, {
             start: () => {
               started.push("thread-settlement-reactor");
@@ -126,6 +136,7 @@ describe("OrchestrationReactor", () => {
       "provider-command-reactor",
       "checkpoint-reactor",
       "thread-deletion-reactor",
+      "provider-busy-retry-reactor",
       "thread-pull-request-reactor",
       "thread-settlement-reactor",
       "pull-request-sync-reactor",
