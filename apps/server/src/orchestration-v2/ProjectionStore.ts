@@ -3204,9 +3204,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         // column's bound bytes can differ (lone surrogates fold to U+FFFD).
         const hiddenTurnItemIds = new Set(
           windowedTurnItemRows.flatMap((row, index) =>
-            "in_window" in row && row.in_window === 0
-              ? [String(turnItems[index]!.id)]
-              : [],
+            "in_window" in row && row.in_window === 0 ? [String(turnItems[index]!.id)] : [],
           ),
         );
         const cohortJson = (field: string) =>
