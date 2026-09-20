@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import { DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -917,7 +918,7 @@ describe("DesktopWindow", () => {
         yield* Deferred.await(previewStarted);
         yield* Ref.set(desktopState.quitting, true);
         yield* Deferred.succeed(releasePreview, undefined);
-        yield* Fiber.join(creation);
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(creation)));
 
         assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
         assert.equal(yield* Ref.get(destroyCount), 1);
@@ -939,6 +940,31 @@ describe("DesktopWindow", () => {
         yield* Ref.set(desktopState.quitting, true);
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
 
+        assert.equal(yield* Ref.get(createCount), 0);
+        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("cancels direct window creation paths once shutdown starts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+        yield* Ref.set(desktopState.quitting, true);
+
+        for (const creation of [
+          desktopWindow.createMain,
+          desktopWindow.ensureMain,
+          desktopWindow.revealOrCreateMain,
+        ]) {
+          assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(creation)));
+        }
         assert.equal(yield* Ref.get(createCount), 0);
         assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
       }).pipe(Effect.provide(layer));

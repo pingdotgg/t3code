@@ -843,10 +843,11 @@ export const make = Effect.gen(function* () {
   });
 
   const createMain = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return yield* Effect.interrupt;
     const window = yield* createWindow();
     if (yield* Ref.get(desktopState.quitting)) {
       yield* electronWindow.destroyAll;
-      return window;
+      return yield* Effect.interrupt;
     }
     yield* electronWindow.setMain(window);
     yield* logWindowInfo("main window created");
