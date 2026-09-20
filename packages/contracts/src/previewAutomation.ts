@@ -289,39 +289,70 @@ const PreviewAutomationDiagnosticsSampleMs = Schema.Int.check(
   Schema.isGreaterThanOrEqualTo(0),
 ).check(Schema.isLessThanOrEqualTo(5_000));
 
-export const PreviewAutomationDiagnosticsInput = Schema.Union([
-  Schema.Struct({
-    ...PreviewAutomationTabTargetFields,
-    kind: Schema.Literal("console"),
-    limit: Schema.optional(PreviewAutomationDiagnosticsLimit),
+export const PreviewAutomationDiagnosticsInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  kind: Schema.Literals(["console", "network", "performance", "memory"]).annotate({
+    description:
+      "Diagnostic evidence to read: console logs, completed network records, performance metrics, or memory usage.",
   }),
-  Schema.Struct({
-    ...PreviewAutomationTabTargetFields,
-    kind: Schema.Literal("network"),
-    limit: Schema.optional(PreviewAutomationDiagnosticsLimit),
-    requestId: Schema.optional(PreviewAutomationDiagnosticsRequestId),
-    includeResponseBody: Schema.optional(Schema.Boolean),
-  }).check(
-    Schema.makeFilter(
-      (input) =>
-        input.includeResponseBody !== true ||
-        input.requestId !== undefined ||
-        "includeResponseBody requires requestId.",
-    ),
-  ),
-  Schema.Struct({
-    ...PreviewAutomationTabTargetFields,
-    kind: Schema.Literal("performance"),
-    sampleMs: Schema.optional(PreviewAutomationDiagnosticsSampleMs),
+  limit: Schema.optional(PreviewAutomationDiagnosticsLimit).annotate({
+    description:
+      "Maximum console entries or network records to return, from 1 through 100. Allowed only for console and network diagnostics.",
   }),
-  Schema.Struct({
-    ...PreviewAutomationTabTargetFields,
-    kind: Schema.Literal("memory"),
+  requestId: Schema.optional(PreviewAutomationDiagnosticsRequestId).annotate({
+    description:
+      "Exact completed network request ID to inspect. Allowed only for network diagnostics.",
   }),
-]).annotate({
-  description:
-    "Read-only DevTools-grade evidence from the exact collaborative preview tab. Console and network limits default to 50; performance sampling defaults to 0ms.",
-});
+  includeResponseBody: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Whether to include the selected network response body. Allowed only for network diagnostics and requires requestId when true.",
+  }),
+  sampleMs: Schema.optional(PreviewAutomationDiagnosticsSampleMs).annotate({
+    description:
+      "Performance sampling duration in milliseconds, from 0 through 5000. Allowed only for performance diagnostics.",
+  }),
+})
+  .check(
+    Schema.makeFilter((input) => {
+      if (input.kind === "console") {
+        return (
+          (input.requestId === undefined &&
+            input.includeResponseBody === undefined &&
+            input.sampleMs === undefined) ||
+          "Console diagnostics only accept limit."
+        );
+      }
+      if (input.kind === "network") {
+        if (input.sampleMs !== undefined) {
+          return "Network diagnostics do not accept sampleMs.";
+        }
+        return (
+          input.includeResponseBody !== true ||
+          input.requestId !== undefined ||
+          "includeResponseBody requires requestId."
+        );
+      }
+      if (input.kind === "performance") {
+        return (
+          (input.limit === undefined &&
+            input.requestId === undefined &&
+            input.includeResponseBody === undefined) ||
+          "Performance diagnostics only accept sampleMs."
+        );
+      }
+      return (
+        (input.limit === undefined &&
+          input.requestId === undefined &&
+          input.includeResponseBody === undefined &&
+          input.sampleMs === undefined) ||
+        "Memory diagnostics do not accept kind-specific options."
+      );
+    }),
+  )
+  .annotate({
+    description:
+      "Read-only DevTools-grade evidence from the exact collaborative preview tab. Console and network limits default to 50; performance sampling defaults to 0ms.",
+  });
 export type PreviewAutomationDiagnosticsInput = typeof PreviewAutomationDiagnosticsInput.Type;
 
 const Locator = TrimmedNonEmptyString.annotate({

@@ -76,12 +76,18 @@ describe("PreviewAutomationDiagnostics", () => {
     });
   });
 
-  it("rejects invalid bounds and body-selection contradictions", () => {
+  it("rejects invalid bounds, body-selection contradictions, and cross-kind options", () => {
     expect(() => decodeDiagnosticsInput({ kind: "console", limit: 0 })).toThrow();
     expect(() => decodeDiagnosticsInput({ kind: "network", limit: 101 })).toThrow();
     expect(() => decodeDiagnosticsInput({ kind: "performance", sampleMs: 5001 })).toThrow();
     expect(() => decodeDiagnosticsInput({ kind: "network", includeResponseBody: true })).toThrow();
     expect(() => decodeDiagnosticsInput({ kind: "network", requestId: "r".repeat(257) })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "console", requestId: "request-1" })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "console", includeResponseBody: false })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "network", sampleMs: 0 })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "performance", limit: 10 })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "memory", limit: 10 })).toThrow();
+    expect(() => decodeDiagnosticsInput({ kind: "memory", requestId: "request-1" })).toThrow();
   });
 
   it("round-trips representative result schemas and backward-compatible console entries", () => {
