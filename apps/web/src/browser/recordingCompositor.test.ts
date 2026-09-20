@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { createRecordingCompositor, RecordingDecorations } from "./recordingCompositor";
 
+const primaryColor = "oklch(0.65 0.2 310)";
+vi.mock("./annotationTheme", () => ({
+  readPreviewAnnotationTheme: () => ({ primary: "oklch(0.65 0.2 310)" }),
+}));
+
 const options = { showKeyPresses: true, showMousePresses: true, frameRate: 30 };
 const pointer = (
   phase: "move" | "down" | "up" | "click",
@@ -27,16 +32,20 @@ const context = () => ({
   drawImage: vi.fn(),
   measureText: () => ({ width: 40 }),
   globalAlpha: 1,
+  strokeStyle: "",
+  fillStyle: "",
 });
 
 describe("recording decorations", () => {
   it("keeps rings aligned through dragging and stops following the cursor after release", () => {
-    const decorations = new RecordingDecorations(options);
+    const decorations = new RecordingDecorations(options, primaryColor);
     const ctx = context();
     decorations.apply(pointer("down"), 0);
     decorations.apply(pointer("move", 120), 10);
     decorations.draw(ctx as unknown as CanvasRenderingContext2D, 1600, 1200, 10);
     expect(ctx.ellipse.mock.calls[0]?.slice(0, 4)).toEqual([240, 160, 40, 40]);
+    expect(ctx.strokeStyle).toBe(primaryColor);
+    expect(ctx.fillStyle).toBe(primaryColor);
     expect(decorations.nextRedraw(10)).toBeNull();
     decorations.apply(pointer("up", 130), 20);
     decorations.apply(pointer("move", 300), 30);
@@ -49,7 +58,7 @@ describe("recording decorations", () => {
   });
 
   it("pulses agent clicks and clears decorations on blur or navigation", () => {
-    const decorations = new RecordingDecorations(options);
+    const decorations = new RecordingDecorations(options, primaryColor);
     const ctx = context();
     decorations.apply(pointer("click"), 0);
     decorations.draw(ctx as unknown as CanvasRenderingContext2D, 800, 600, 300);
@@ -62,7 +71,7 @@ describe("recording decorations", () => {
   });
 
   it("holds shortcut badges until release, then expires them even on a static page", () => {
-    const decorations = new RecordingDecorations(options);
+    const decorations = new RecordingDecorations(options, primaryColor);
     const ctx = context();
     const key = { type: "key" as const, label: "⌘C", held: true, width: 800 };
     decorations.apply(key, 0);
@@ -76,7 +85,7 @@ describe("recording decorations", () => {
   });
 
   it("removes the previous key badge on password focus", () => {
-    const decorations = new RecordingDecorations(options);
+    const decorations = new RecordingDecorations(options, primaryColor);
     const ctx = context();
     decorations.apply({ type: "key", label: "A", held: true, width: 800 }, 0);
     decorations.apply({ type: "key", label: null, held: true, width: 800 }, 1);
@@ -85,7 +94,10 @@ describe("recording decorations", () => {
   });
 
   it("honors independent opt-in flags", () => {
-    const decorations = new RecordingDecorations({ ...options, showMousePresses: false });
+    const decorations = new RecordingDecorations(
+      { ...options, showMousePresses: false },
+      primaryColor,
+    );
     const ctx = context();
     decorations.apply(pointer("down"), 0);
     decorations.apply({ type: "key", label: "⌘C", held: true, width: 800 }, 0);

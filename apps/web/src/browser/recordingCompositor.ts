@@ -1,5 +1,7 @@
 import type { DesktopPreviewRecordingInput } from "@t3tools/contracts";
 
+import { readPreviewAnnotationTheme } from "./annotationTheme";
+
 interface RecordingDecorationOptions {
   readonly showKeyPresses: boolean;
   readonly showMousePresses: boolean;
@@ -23,7 +25,7 @@ export async function createRecordingCompositor(
   const settings = source.getVideoTracks()[0]?.getSettings();
   canvas.width = settings?.width ?? 1920;
   canvas.height = settings?.height ?? 1080;
-  const decorations = new RecordingDecorations(options);
+  const decorations = new RecordingDecorations(options, readPreviewAnnotationTheme().primary);
   let disposed = false;
   let frameId: number | undefined;
   let timer: number | undefined;
@@ -84,7 +86,10 @@ export class RecordingDecorations {
   } | null = null;
   private key: { label: string; width: number; expiresAt: number | null } | null = null;
 
-  constructor(private readonly options: RecordingDecorationOptions) {}
+  constructor(
+    private readonly options: RecordingDecorationOptions,
+    private readonly primaryColor: string,
+  ) {}
 
   apply(input: DesktopPreviewRecordingInput, now: number) {
     if (input.type === "clear") {
@@ -140,9 +145,9 @@ export class RecordingDecorations {
     if (ring && (ring.held || (ring.releasedAt !== null && now < ring.releasedAt + 600))) {
       const progress = ring.releasedAt === null ? 0 : Math.min(1, (now - ring.releasedAt) / 600);
       context.save();
-      context.globalAlpha = 0.9 * (1 - progress);
-      context.strokeStyle = "#ffb454";
-      context.fillStyle = "rgba(255,180,84,.15)";
+      const opacity = 0.9 * (1 - progress);
+      context.strokeStyle = this.primaryColor;
+      context.fillStyle = this.primaryColor;
       context.lineWidth = 2 * scale;
       context.beginPath();
       context.ellipse(
@@ -154,7 +159,9 @@ export class RecordingDecorations {
         0,
         Math.PI * 2,
       );
+      context.globalAlpha = opacity * 0.15;
       context.fill();
+      context.globalAlpha = opacity;
       context.stroke();
       context.restore();
     }
