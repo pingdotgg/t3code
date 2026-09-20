@@ -1859,11 +1859,24 @@ it.each(["provider_error", "usage_limit"] as const)(
       output: "",
       exitCode: 0,
     };
+    const sourceFeed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command, 1),
+      projected(error, 2),
+    ]);
     const feed = deriveThreadFeedPresentation(
-      buildThreadFeed([projected(userMessage(), 0), projected(command, 1), projected(error, 2)]),
+      sourceFeed,
       { runId: RunId.make("newer-run"), status: "completed", startedAt: at, completedAt: at },
       new Set(),
     );
+    const whileWorking = deriveThreadFeedPresentation(
+      sourceFeed,
+      { runId: RunId.make("newer-run"), status: "running", startedAt: at, completedAt: null },
+      new Set(),
+    );
+    for (const entry of feed) {
+      expect(whileWorking.find((row) => row.id === entry.id)).toBe(entry);
+    }
     expect(feed.some((entry) => entry.type === "run-fold" || entry.type === "work-toggle")).toBe(
       false,
     );

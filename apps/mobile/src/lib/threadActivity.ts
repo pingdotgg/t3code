@@ -230,6 +230,10 @@ const localMessageEntriesCache = new WeakMap<
   Extract<RawThreadFeedEntry, { readonly type: "message" }>
 >();
 const activityGroupsCache = new WeakMap<ThreadFeedActivity, ThreadFeedActivityGroup>();
+const failedActivityGroupsCache = new WeakMap<
+  ThreadFeedActivityGroup,
+  ReadonlyArray<ThreadFeedActivityGroup>
+>();
 const presentedActivityGroupsCache = new WeakMap<
   ThreadFeedActivityGroup,
   {
@@ -1031,15 +1035,21 @@ export function deriveThreadFeedPresentation(
         entry.runId !== null &&
         failedRunIds.has(entry.runId)
       ) {
-        for (const activity of entry.activities) {
-          result.push({
-            type: "activity-group",
-            id: activity.id,
-            createdAt: activity.createdAt,
-            runId: activity.runId,
-            activities: [activity],
-          });
+        let rows = failedActivityGroupsCache.get(entry);
+        if (!rows) {
+          rows =
+            entry.activities.length === 1
+              ? [entry]
+              : entry.activities.map((activity) => ({
+                  type: "activity-group" as const,
+                  id: activity.id,
+                  createdAt: activity.createdAt,
+                  runId: activity.runId,
+                  activities: [activity],
+                }));
+          failedActivityGroupsCache.set(entry, rows);
         }
+        result.push(...rows);
         continue;
       }
       appendPresentedFeedEntry(
