@@ -48,6 +48,7 @@ import {
   alertForNewlyTerminal,
   alertForTerminalAggregate,
   newlyTerminalRows,
+  rowPhasesChanged,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
 export {
@@ -180,6 +181,11 @@ function shouldUpdateLiveActivity(input: {
   // new start land in the same window, activeCount is unchanged and the Done
   // transition (and its alert) would otherwise be suppressed.
   if (newlyTerminalRows(input.previousAggregate, input.nextAggregate, true).length > 0) {
+    return true;
+  }
+  // Connecting -> Working and similar transitions are the content the card
+  // exists to show; only timestamp/ordering churn is subject to the throttle.
+  if (rowPhasesChanged(input.previousAggregate, input.nextAggregate)) {
     return true;
   }
   if (JSON.stringify(input.previousAggregate) === JSON.stringify(input.nextAggregate)) {

@@ -650,6 +650,53 @@ describe("ApnsDeliveries", () => {
     },
   );
 
+  it.effect("queues an update inside the throttle window when a row changes phase", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
+    // The server publishes "starting" (Connecting) when a session boots and
+    // "running" (Working) seconds later, then stays silent while the phase
+    // holds. Dropping the second update strands the card on Connecting.
+    const startingAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activities: [
+        {
+          ...aggregate.activities[0]!,
+          phase: "starting",
+          status: "Connecting",
+        },
+      ],
+    };
+    const runningAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      updatedAt: "1970-01-01T00:00:04.000Z",
+      activities: [{ ...aggregate.activities[0]!, updatedAt: "1970-01-01T00:00:04.000Z" }],
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          last_aggregate_json: JSON.stringify(startingAggregate),
+          last_live_activity_delivery_at: "1970-01-01T00:00:04.000Z",
+        },
+        aggregate: runningAggregate,
+        nowMs: 5_000,
+      });
+
+      expect(result?.kind).toBe("live_activity_update");
+      expect(queuedJobs).toMatchObject([
+        {
+          payload: {
+            kind: "live_activity_update",
+            aggregate: { activities: [{ phase: "running", status: "Working" }] },
+          },
+        },
+      ]);
+      expect(attempts).toEqual([]);
+    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+  });
+
   it.effect("queues an end for an active Live Activity when Live Activities are disabled", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
     const queuedJobs: Array<SignedApnsDeliveryJob> = [];
