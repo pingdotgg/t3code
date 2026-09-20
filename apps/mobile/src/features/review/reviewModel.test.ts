@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  applyReviewDiffMetadata,
   buildReviewParsedDiff,
   buildReviewSectionItems,
   getDefaultReviewSectionId,
@@ -84,7 +85,7 @@ describe("buildReviewSectionItems", () => {
       },
     ];
 
-    const loadedTurnId = getReviewSectionIdForCheckpoint(checkpoints[0]);
+    const loadedTurnId = getReviewSectionIdForCheckpoint(checkpoints[0]!);
     const items = buildReviewSectionItems({
       checkpoints,
       gitSections,
@@ -92,7 +93,7 @@ describe("buildReviewSectionItems", () => {
         [loadedTurnId]: "diff --git a/loaded.ts b/loaded.ts",
       },
       loadingTurnIds: {
-        [getReviewSectionIdForCheckpoint(checkpoints[1])]: true,
+        [getReviewSectionIdForCheckpoint(checkpoints[1]!)]: true,
       },
       loadingGitSections: false,
     });
@@ -135,6 +136,35 @@ describe("buildReviewSectionItems", () => {
 });
 
 describe("buildReviewParsedDiff", () => {
+  it.each([
+    ["a/example.ts", "a/example.ts"],
+    ["b/example.ts", "b/example.ts"],
+    ["a/before.ts", "b/after.ts"],
+  ])("preserves repository paths from %s to %s", (previousPath, path) => {
+    const parsed = buildReviewParsedDiff(
+      [
+        `diff --git a/${previousPath} b/${path}`,
+        ...(previousPath === path
+          ? []
+          : ["similarity index 50%", `rename from ${previousPath}`, `rename to ${path}`]),
+        `--- a/${previousPath}`,
+        `+++ b/${path}`,
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+      ].join("\n"),
+      "repository-paths",
+    );
+    expect(parsed.kind).toBe("files");
+    if (parsed.kind !== "files") return;
+    expect(parsed.files[0]).toMatchObject({
+      path,
+      previousPath: previousPath === path ? null : previousPath,
+      additions: 1,
+      deletions: 1,
+    });
+  });
+
   it("builds renderable rows from a unified patch", () => {
     const parsed = buildReviewParsedDiff(
       [
@@ -269,5 +299,36 @@ describe("buildReviewParsedDiff", () => {
       title: "Large diff",
       actionLabel: "Load diff",
     });
+  });
+});
+
+describe("applyReviewDiffMetadata", () => {
+  it("uses complete counts even when the preview contains only part of one file", () => {
+    const parsed = buildReviewParsedDiff(
+      [
+        "diff --git a/large.txt b/large.txt",
+        "--- a/large.txt",
+        "+++ b/large.txt",
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+      ].join("\n"),
+      "partial",
+    );
+    const result = applyReviewDiffMetadata(parsed, {
+      truncated: true,
+      files: [
+        { path: "large.txt", previousPath: null, additions: 4000, deletions: 3000 },
+        { path: "unseen.txt", previousPath: null, additions: 100, deletions: 20 },
+      ],
+    });
+    expect(result.kind).toBe("files");
+    if (result.kind !== "files") return;
+    expect(result.fileCount).toBe(2);
+    expect(result.additions).toBe(4100);
+    expect(result.deletions).toBe(3020);
+    expect(result.files[0]?.additions).toBe(4000);
+    expect(result.notice).toContain("Counts include all changes");
+    expect(applyReviewDiffMetadata(parsed, null)).toEqual(parsed);
   });
 });

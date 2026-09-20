@@ -478,6 +478,8 @@ export class UnknownSubcommand extends Schema.TaggedError<UnknownSubcommand>(
 /**
  * Error wrapper for user handler failures in the CLI error channel.
  *
+ * **Details**
+ *
  * `userMessage` can provide safe, user-facing text independently of the
  * underlying cause. When omitted or empty, `message` uses a non-empty string
  * cause or `Error.message`, then falls back to `"An error occurred"`.

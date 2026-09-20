@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // demo.video.ts imports "tcut", which only resolves inside the tcut binary,
+  // so it is deliberately left out of the program.
+  "include": ["alchemy.run.ts", "src/**/*.ts"],
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "target": "ESNext"
+  },
+  "references": [
+    {
+      "path": "../../packages/alchemy/tsconfig.json"
+    }
+  ]
+}

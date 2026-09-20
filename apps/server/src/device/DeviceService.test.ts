@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import { type DeviceService, makeWithHosts, stateStream } from "./DeviceService.ts";
 
@@ -61,6 +62,7 @@ const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string,
   failListAfterShutdown = false,
+  runtimeFailure?: NodeRuntimeUnavailableError,
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -88,12 +90,14 @@ const fixture = Effect.fn("fixture")(function* (
     platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
     ensureReady: (onPhase) =>
       Effect.gen(function* () {
+        if (runtimeFailure) return yield* runtimeFailure;
         starts.push("start");
         yield* onPhase("starting");
         return ready;
       }),
     ensureAgentReady: (onPhase) =>
       Effect.gen(function* () {
+        if (runtimeFailure) return yield* runtimeFailure;
         agentStarts.push("start");
         yield* onPhase("starting");
         return {
@@ -188,6 +192,43 @@ const fixture = Effect.fn("fixture")(function* (
 });
 
 describe("device setup consent", () => {
+  it.effect(
+    "preserves missing-runtime guidance and causes through manual and agent readiness",
+    () =>
+      Effect.gen(function* () {
+        const underlying = new Error("private lookup diagnostics");
+        const runtimeFailure = new NodeRuntimeUnavailableError({
+          feature: "Local device support",
+          cause: underlying,
+        });
+        const { service, settings, requests } = yield* fixture(
+          Effect.void,
+          undefined,
+          false,
+          runtimeFailure,
+        );
+        yield* Ref.update(settings, (current) => ({
+          ...current,
+          enableDeviceSupport: true,
+          enableAgentDeviceAccess: true,
+        }));
+        for (const readiness of [service.readiness(), service.agentReadinessIfSupported()]) {
+          const error = yield* readiness.pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "DeviceHostUnavailableError",
+            reason: expect.stringContaining("Install Node.js"),
+            cause: runtimeFailure,
+          });
+          expect(error.message).not.toContain(underlying.message);
+        }
+        expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toMatchObject({
+          status: "failed",
+          detail: expect.stringContaining("Install Node.js"),
+        });
+        expect(requests).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("listing and provider startup do not start helpers before consent", () =>
     Effect.gen(function* () {
       const { service, starts, requests } = yield* fixture();

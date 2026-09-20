@@ -9,6 +9,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import { useLocation } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -26,7 +27,7 @@ import {
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -65,7 +66,7 @@ import {
   whenNodeRemoveLabel,
 } from "./KeybindingsSettings.logic";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -823,7 +824,11 @@ interface KeybindingRowActions {
   onRemove: (row: KeybindingRow) => void;
 }
 
-type KeybindingRowProps = KeybindingRowActions & { row: KeybindingRow; isSaving: boolean };
+type KeybindingRowProps = KeybindingRowActions & {
+  row: KeybindingRow;
+  isSaving: boolean;
+  anchorId?: string | undefined;
+};
 
 /** Shortcut pill that turns into a capture input when clicked, plus Save once the draft changes. */
 function KeybindingKeyControl({
@@ -1034,11 +1039,12 @@ function KeybindingHoverRowMenu(props: {
 
 /** One binding as a settings row: pills flush right, actions fading in beside them on hover. */
 function KeybindingSettingsRow(props: KeybindingRowProps) {
-  const { row, isSaving, allRows, variables, onSave, onReset, onRemove } = props;
+  const { row, isSaving, anchorId, allRows, variables, onSave, onReset, onRemove } = props;
   const editor = useKeybindingRowEditor({ row, allRows, onSave });
 
   return (
     <SettingsRow
+      id={anchorId}
       className="group/row rounded-none"
       title={<KeybindingRowTitle row={row} />}
       description={<KeybindingRowWhen row={row} editor={editor} variables={variables} />}
@@ -1296,6 +1302,17 @@ function KeybindingsList(props: KeybindingsListProps) {
     onSave: rowActions.onSave,
     onCancel: onCancelAdd,
   };
+  // Settings search jumps to a command, so only its first row anchors.
+  const anchorIds = useMemo(() => {
+    const ids = new Map<string, string>();
+    const seen = new Set<KeybindingCommand>();
+    for (const row of rows) {
+      if (seen.has(row.command)) continue;
+      seen.add(row.command);
+      ids.set(row.id, keybindingSearchAnchorId(row.command));
+    }
+    return ids;
+  }, [rows]);
   return (
     <div>
       {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
@@ -1303,6 +1320,7 @@ function KeybindingsList(props: KeybindingsListProps) {
         <KeybindingSettingsRow
           key={row.id}
           row={row}
+          anchorId={anchorIds.get(row.id)}
           isSaving={savingCommand === row.command}
           {...rowActions}
         />
@@ -1334,7 +1352,11 @@ export function KeybindingsSettingsPanel() {
   // fan out to every connected environment in the selection, so one
   // shortcut change reaches each machine the user runs T3 Code on.
   const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
-  const keybindings = primaryEnvironment?.serverConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
+  const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
+  const keybindings = useMemo(
+    () => mergeWithDefaultKeybindings(serverKeybindings ?? []),
+    [serverKeybindings],
+  );
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
   const availableEditors = primaryEnvironment?.serverConfig?.availableEditors ?? [];
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
@@ -1353,6 +1375,16 @@ export function KeybindingsSettingsPanel() {
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
   const rows = useMemo(() => buildKeybindingRows(keybindings, query), [keybindings, query]);
+  // The search-target context is provided by this panel's own page container,
+  // so the jump target is read from the route hash here.
+  const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
+  const [handledSearchTargetId, setHandledSearchTargetId] = useState(searchTargetId);
+
+  // A settings-search jump must not be hidden by the page's own filter.
+  if (searchTargetId !== handledSearchTargetId) {
+    setHandledSearchTargetId(searchTargetId);
+    if (searchTargetId.startsWith("keybinding-")) setQuery("");
+  }
   const commandOptions = useMemo(() => buildKeybindingCommandOptions(keybindings), [keybindings]);
   const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
 

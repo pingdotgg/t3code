@@ -109,11 +109,7 @@ export type BindingServices =
 
 export type RuntimeServices = Runtime.Runtime | BindingServices;
 
-export const layerProxy = () =>
-  Layer.provide(
-    WorkerProxy.WorkerProxyLive,
-    Layer.mergeAll(Internet.InternetLive, Workerd.WorkerdLive),
-  );
+export const layerProxy = () => WorkerProxy.WorkerProxyLive;
 
 export const layerRegistry = () =>
   RegistryProxy.RegistryProxyLive.pipe(Layer.provide(Registry.RegistryLive));

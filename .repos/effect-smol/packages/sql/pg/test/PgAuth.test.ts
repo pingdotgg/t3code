@@ -106,6 +106,7 @@ describe("PgAuth", () => {
           `r=${nonce},s=AA==,i=-1`,
           `r=${nonce},s=AA==,i=1.5`,
           `r=${nonce},s=AA==,i=1e3`,
+          `r=${nonce},s=AA==,i=1000001`,
           `r=${nonce},s=AA==,i=2147483648`
         ]
       ) {

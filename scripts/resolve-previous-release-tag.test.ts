@@ -65,6 +65,23 @@ it.effect("accepts legacy nightly tags when selecting the previous nightly", () 
   }),
 );
 
+it.effect("keeps preview tags in their own series", () =>
+  Effect.gen(function* () {
+    const previous = yield* resolvePreviousReleaseTag("preview", "v1.2.0-preview.20260620.2", [
+      "v1.2.0-nightly.20260620.3",
+      "v1.2.0-preview.20260620.1",
+      "v1.1.9",
+    ]);
+    assert.equal(previous, "v1.2.0-preview.20260620.1");
+
+    const stable = yield* resolvePreviousReleaseTag("stable", "v1.2.0", [
+      "v1.1.9",
+      "v1.2.0-preview.20260620.1",
+    ]);
+    assert.equal(stable, "v1.1.9");
+  }),
+);
+
 it.effect("reports the invalid tag with its release channel", () =>
   Effect.gen(function* () {
     const error = yield* resolvePreviousReleaseTag("nightly", "v1.2.0", []).pipe(Effect.flip);

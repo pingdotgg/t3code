@@ -36,6 +36,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
+import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
 import { ensureAgentDevice } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
@@ -58,6 +59,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerSettings from "../serverSettings.ts";
+import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -261,7 +263,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             setHostStatus(host.id, { status: "failed", detail: error.message }),
           ),
           Effect.mapError(
-            (error) => new DeviceHostUnavailableError({ hostId: host.id, reason: error.message }),
+            (error) =>
+              new DeviceHostUnavailableError({
+                hostId: host.id,
+                reason:
+                  error._tag === "NodeRuntimeUnavailableError"
+                    ? nodeRuntimeUnavailableMessage("Local device support")
+                    : `Device host ${error.hostId} failed while ${error.step}.`,
+                cause: error,
+              }),
           ),
         );
       if (hosts.get(host.id) !== host)
@@ -304,7 +314,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             setHostStatus(host.id, { status: "failed", detail: error.message }),
           ),
           Effect.mapError(
-            (error) => new DeviceHostUnavailableError({ hostId: host.id, reason: error.message }),
+            (error) =>
+              new DeviceHostUnavailableError({
+                hostId: host.id,
+                reason:
+                  error._tag === "NodeRuntimeUnavailableError"
+                    ? nodeRuntimeUnavailableMessage("Local device support")
+                    : error._tag === "DeviceHostTimeoutError"
+                      ? `Device host ${error.hostId} did not start agent tools within ${error.timeoutMs} ms.`
+                      : `Device host ${error.hostId} failed while ${error.step}.`,
+                cause: error,
+              }),
           ),
         );
       const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
@@ -892,11 +912,17 @@ export const make = Effect.gen(function* () {
   };
   const probeContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.probe>>>();
+  const localTargetContext =
+    yield* Effect.context<Effect.Services<ReturnType<typeof isLocalSshDeviceHost>>>();
   const service = yield* makeWithHosts(
     hosts,
     (host) =>
-      SshDeviceHost.probe(host).pipe(
-        Effect.provide(probeContext),
+      Effect.gen(function* () {
+        if (yield* isLocalSshDeviceHost(host).pipe(Effect.provide(localTargetContext))) {
+          return yield* localHost.summary;
+        }
+        return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
+      }).pipe(
         Effect.mapError(
           (error) =>
             new DeviceOperationError({
@@ -911,8 +937,11 @@ export const make = Effect.gen(function* () {
   const hostContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
   const configured = new Map<string, { config: SshDeviceHostConfig; scope: Scope.Closeable }>();
-  const reconcile = (next: ReadonlyArray<SshDeviceHostConfig>) =>
+  const reconcile = (configuredHosts: ReadonlyArray<SshDeviceHostConfig>) =>
     Effect.gen(function* () {
+      const next = yield* remoteSshDeviceHosts(configuredHosts).pipe(
+        Effect.provide(localTargetContext),
+      );
       const removed = yield* service.withLifecycleLock(
         Effect.gen(function* () {
           const removed: Array<{ id: string; scope: Scope.Closeable }> = [];
@@ -993,18 +1022,24 @@ export const make = Effect.gen(function* () {
   );
   return {
     ...service,
-    agentCli: ensureAgentDevice(config.baseDir).pipe(
+    agentCli: resolveNodeExecutable("Device automation").pipe(
+      Effect.flatMap(() => ensureAgentDevice(config.baseDir)),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.map((tool) => tool.entryPath),
-      Effect.mapError(
-        (error) =>
-          new DeviceOperationError({
-            operation: "install agent CLI",
-            reason: "command_failed",
-            cause: error,
-          }),
+      Effect.mapError((error) =>
+        error._tag === "NodeRuntimeUnavailableError"
+          ? new DeviceHostUnavailableError({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              reason: nodeRuntimeUnavailableMessage("Device automation"),
+              cause: error,
+            })
+          : new DeviceOperationError({
+              operation: "install agent CLI",
+              reason: "command_failed",
+              cause: error,
+            }),
       ),
     ),
   };
