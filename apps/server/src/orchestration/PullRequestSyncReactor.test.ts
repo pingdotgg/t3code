@@ -337,6 +337,49 @@ describe("PullRequestSyncReactor", () => {
       }),
     ),
   );
+  it.effect("isolates a failed legacy link and retries it on the next sweep", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        let failLegacy = true;
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("legacy", {
+              branchPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 1,
+                url: "https://github.com/owner/repository/pull/1",
+              },
+              pullRequests: [makeLink(2)],
+            }),
+            makeThread("other", { pullRequests: [makeLink(3)] }),
+          ]),
+          onDispatch: (command) =>
+            command.type === "thread.pull-request.link" && failLegacy
+              ? Effect.die("legacy link rejected")
+              : Effect.void,
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const syncedNumbers = () =>
+            Ref.get(fixture.syncCommands).pipe(
+              Effect.map((commands) => commands.map((command) => command.number).sort()),
+            );
+          assert.deepStrictEqual(yield* syncedNumbers(), [2, 3]);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.number).sort(),
+            [2, 3],
+          );
+          failLegacy = false;
+          yield* sweepAgain(fixture, reactor);
+          assert.include(yield* syncedNumbers(), 1);
+          assert.strictEqual((yield* Ref.get(fixture.linkCommands)).length, 2);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("retries a failed stack read after the summary becomes terminal", () =>
     Effect.scoped(
       Effect.gen(function* () {
