@@ -1,3 +1,4 @@
+import { useThreadConversationMenu } from "./ThreadConversationMenu";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
@@ -107,6 +108,10 @@ function ThreadHeader(
   const { layout, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
   const { onOpenTerminal } = props.gitControls;
   const native = useThreadHeaderOptions(props);
+  const optionsVersion = useMemo(
+    () => [props.gitControls.projectScripts, props.lifecycleMenu],
+    [props.gitControls.projectScripts, props.lifecycleMenu],
+  );
   const androidHeaderActions = useMemo<ReadonlyArray<ScreenHeaderAction>>(() => {
     const actions: ScreenHeaderAction[] = [];
     if (props.onReturnToThread) {
@@ -157,7 +162,8 @@ function ThreadHeader(
         subtitle={props.subtitle}
         sidebar={native.sidebar}
         options={native.options}
-        optionsVersion={props.gitControls.projectScripts}
+        optionsVersion={optionsVersion}
+        menus={props.lifecycleMenu ? [props.lifecycleMenu] : undefined}
         trailing={
           props.fileInspectorSupported && props.hasThreadCwd ? (
             <ScreenHeaderButton
@@ -351,6 +357,7 @@ function ThreadRouteContent(
     };
   }, [selectedThread, selectedThreadDetailState]);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const lifecycle = useThreadConversationMenu(selectedThreadDetail ? selectedThread : null);
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -1044,6 +1051,7 @@ function ThreadRouteContent(
     <>
       {activeInspectorRenderer ? <InspectorPaneRoleActivation /> : null}
       <ThreadHeader
+        lifecycleMenu={lifecycle.menu}
         title={selectedThread.title}
         subtitle={headerSubtitle}
         headerColor={headerColor}
@@ -1059,6 +1067,7 @@ function ThreadRouteContent(
         onReturnToThread={props.onReturnToThread}
       />
 
+      {lifecycle.sheet}
       {renderThreadRouteBody()}
     </>
   );
