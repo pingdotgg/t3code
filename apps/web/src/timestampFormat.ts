@@ -87,8 +87,9 @@ const timestampFormatterCache = new Map<string, Intl.DateTimeFormat>();
 function getTimestampFormatter(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
+  includeDate = false,
 ): Intl.DateTimeFormat {
-  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}`;
+  const cacheKey = `${timestampFormat}:${includeSeconds ? "seconds" : "minutes"}:${includeDate}`;
   const cachedFormatter = timestampFormatterCache.get(cacheKey);
   if (cachedFormatter) {
     return cachedFormatter;
@@ -96,7 +97,13 @@ function getTimestampFormatter(
 
   const formatter = new Intl.DateTimeFormat(
     timestampLocale,
-    getTimestampFormatOptions(timestampFormat, includeSeconds),
+    includeDate
+      ? {
+          dateStyle: "medium",
+          timeStyle: includeSeconds ? "medium" : "short",
+          ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
+        }
+      : getTimestampFormatOptions(timestampFormat, includeSeconds),
   );
   timestampFormatterCache.set(cacheKey, formatter);
   return formatter;
@@ -144,10 +151,25 @@ export function formatChatTimestampTooltip(
   return `${time}, ${day}${ordinalSuffix(day)} ${month} ${year}`;
 }
 
-export function formatShortTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
+export function formatShortTimestamp(
+  isoDate: string,
+  timestampFormat: TimestampFormat,
+  includeSeconds = false,
+): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
-  return getTimestampFormatter(timestampFormat, false).format(date);
+  return getTimestampFormatter(timestampFormat, includeSeconds).format(date);
+}
+
+/** Full local date and time for details that must remain unambiguous across years. */
+export function formatFullTimestamp(
+  isoDate: string,
+  timestampFormat: TimestampFormat,
+  includeSeconds = true,
+): string {
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  return getTimestampFormatter(timestampFormat, includeSeconds, true).format(date);
 }
 
 const numericDateFormatter = new Intl.DateTimeFormat(timestampLocale, {

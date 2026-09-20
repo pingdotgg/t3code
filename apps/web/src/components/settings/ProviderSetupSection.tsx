@@ -14,6 +14,8 @@ import {
 import { useRef, useState } from "react";
 import { Trash2Icon } from "lucide-react";
 
+import { useClientSettings } from "../../hooks/useSettings";
+import { formatShortTimestamp } from "../../timestampFormat";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
 import { useEnvironmentQuery } from "../../state/query";
@@ -130,6 +132,7 @@ function ProviderSetupActions({
   readonly provider: ServerProvider;
   readonly authMethod: AntigravityAuthMethod;
 }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const target = { environmentId, input: { instanceId } };
   const usesBrowser = authMethod === "oauth-personal" || authMethod === "oauth-business";
   const phaseLabels = usesBrowser ? AUTH_PHASE_LABELS : CREDENTIAL_PHASE_LABELS;
@@ -465,10 +468,7 @@ function ProviderSetupActions({
                   <p className="text-muted-foreground">
                     Link expires at{" "}
                     <time dateTime={auth.expiresAt}>
-                      {new Date(auth.expiresAt).toLocaleTimeString([], {
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
+                      {formatShortTimestamp(auth.expiresAt, timestampFormat) || "Invalid Date"}
                     </time>
                     .
                   </p>

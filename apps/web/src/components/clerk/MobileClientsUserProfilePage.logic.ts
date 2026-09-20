@@ -1,9 +1,7 @@
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 
-const mobileClientUpdatedAtFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
+import { formatFullTimestamp } from "../../timestampFormat";
 
 const NOTIFICATION_PREFERENCES = [
   ["notifyOnApproval", "approvals"],
@@ -37,9 +35,10 @@ export function mobileClientNotificationDetail(device: RelayClientDeviceRecord):
     : "Push notifications are enabled, but no alert types are selected.";
 }
 
-export function mobileClientUpdatedAtLabel(updatedAt: string): string {
-  const date = new Date(updatedAt);
-  return Number.isNaN(date.getTime())
-    ? "Update time unavailable"
-    : `Updated ${mobileClientUpdatedAtFormatter.format(date)}`;
+export function mobileClientUpdatedAtLabel(
+  updatedAt: string,
+  timestampFormat: TimestampFormat,
+): string {
+  const timestamp = formatFullTimestamp(updatedAt, timestampFormat, false);
+  return timestamp ? `Updated ${timestamp}` : "Update time unavailable";
 }

@@ -71,6 +71,6 @@ describe("mobile client presentation", () => {
       "iOS · T3 Code 1.2.3",
     );
     expect(mobileClientPlatformLabel(device({ appVersion: null }))).toBe("iOS 18");
-    expect(mobileClientUpdatedAtLabel("not-a-date")).toBe("Update time unavailable");
+    expect(mobileClientUpdatedAtLabel("not-a-date", "24-hour")).toBe("Update time unavailable");
   });
 });
