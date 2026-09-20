@@ -757,6 +757,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
+    id: "keep-awake",
+    localEnvironmentOnly: true,
+    title: "Keep Awake",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: [
+      "awake sleep power insomnia caffeinate prevent suspend lid display remote agent work",
+    ],
+    desktopOnly: true,
+    localBackendManagementOnly: true,
+  },
+  {
     id: "connections-environment",
     title: "This machine",
     to: "/settings/connections",

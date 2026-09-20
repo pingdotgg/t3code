@@ -660,6 +660,18 @@ export const DesktopWslStateSchema = Schema.Struct({
   preflightError: Schema.NullOr(Schema.String),
 });
 
+export const DesktopKeepAwakeStateSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+  supported: Schema.Boolean,
+  blockerType: Schema.Literal("prevent-display-sleep"),
+});
+
+export interface DesktopKeepAwakeState {
+  readonly enabled: boolean;
+  readonly supported: boolean;
+  readonly blockerType: "prevent-display-sleep";
+}
+
 /**
  * Renderer-facing snapshot of a desktop preview tab. Mirrors the main-process
  * PreviewTabState shape but uses serialisable primitives only.
@@ -1287,6 +1299,8 @@ export interface DesktopBridge {
   setWslBackendEnabled: (enabled: boolean) => Promise<DesktopWslState>;
   setWslDistro: (distro: string | null) => Promise<DesktopWslState>;
   setWslOnly: (enabled: boolean) => Promise<DesktopWslState>;
+  getKeepAwakeState?: () => Promise<DesktopKeepAwakeState>;
+  setKeepAwakeEnabled?: (enabled: boolean) => Promise<DesktopKeepAwakeState>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   /** Optional while older desktop shells can host a newer web client. */
   pickProjectFavicon?: (initialPath?: string) => Promise<string | null>;

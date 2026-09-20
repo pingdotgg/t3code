@@ -67,6 +67,7 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
+import { KeepAwakeRow } from "./KeepAwakeRow";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import {
@@ -3362,6 +3363,7 @@ export function ConnectionsSettings() {
                 {renderTailscaleRow()}
                 {renderWslRow()}
                 <CloudLinkRow canManageRelay={canManageRelay} />
+                <KeepAwakeRow canManageLocalBackend={canManageLocalBackend} />
               </>
             ) : canManageLocalBackend ? (
               <>

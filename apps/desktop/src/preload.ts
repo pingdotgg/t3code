@@ -166,6 +166,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.SET_WSL_BACKEND_ENABLED_CHANNEL, enabled),
   setWslDistro: (distro) => ipcRenderer.invoke(IpcChannels.SET_WSL_DISTRO_CHANNEL, distro),
   setWslOnly: (enabled) => ipcRenderer.invoke(IpcChannels.SET_WSL_ONLY_CHANNEL, enabled),
+  getKeepAwakeState: () => ipcRenderer.invoke(IpcChannels.GET_KEEP_AWAKE_STATE_CHANNEL),
+  setKeepAwakeEnabled: (enabled) =>
+    ipcRenderer.invoke(IpcChannels.SET_KEEP_AWAKE_ENABLED_CHANNEL, { enabled }),
   pickFolder: (options) => ipcRenderer.invoke(IpcChannels.PICK_FOLDER_CHANNEL, options),
   pickProjectFavicon: (initialPath) =>
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
