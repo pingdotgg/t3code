@@ -79,17 +79,10 @@ import SourceFilePreview from "./ReadOnlySourcePreview";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey, projectFileEditorCacheKey } from "./fileContentRevision";
-import {
-  isMarkdownPreviewFile,
-  setMarkdownTaskChecked,
-  shouldShowFileExplorer,
-} from "./filePreviewMode";
+import { isMarkdownPreviewFile, shouldShowFileExplorer } from "./filePreviewMode";
+import { changeMarkdownTask } from "./changeMarkdownTask";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
-import {
-  getOptimisticProjectFileQueryData,
-  setProjectFileQueryData,
-  useProjectFileQuery,
-} from "./projectFilesQueryState";
+import { setProjectFileQueryData, useProjectFileQuery } from "./projectFilesQueryState";
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -874,13 +867,15 @@ function RenderedMarkdownSurface({
           readOnly
             ? undefined
             : ({ markerOffset, checked }) => {
-                const currentContents =
-                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-                  contents;
-                const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-                if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                saveCoordinator.change(nextContents);
+                changeMarkdownTask({
+                  environmentId,
+                  cwd,
+                  relativePath,
+                  readOnly,
+                  markerOffset,
+                  checked,
+                  change: (nextContents) => saveCoordinator.change(nextContents),
+                });
               }
         }
       />
@@ -1246,7 +1241,7 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 threadRef={threadRef}
                 contents={file.data.contents}
-                readOnly={isHostFile}
+                readOnly={file.data.truncated || isHostFile}
                 onPendingChange={onPendingChange}
               />
             ) : tableDelimiter && renderTable ? (

@@ -83,6 +83,18 @@ export function getOptimisticProjectFileQueryData(
   return appAtomRegistry.get(optimisticFileAtom(environmentId, cwd, relativePath))?.data ?? null;
 }
 
+// A refreshed partial read must not gain write authority from an older draft.
+export function getProjectFileQueryData(
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+): ProjectReadFileResult | null {
+  const result = appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath));
+  const data = Option.getOrNull(AsyncResult.value(result));
+  if (!data || data.truncated) return data;
+  return getOptimisticProjectFileQueryData(environmentId, cwd, relativePath) ?? data;
+}
+
 export function confirmProjectFileQueryData(
   environmentId: EnvironmentId,
   cwd: string,
