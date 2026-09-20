@@ -191,7 +191,7 @@ type AppListener = (...args: ReadonlyArray<unknown>) => void | Promise<void>;
 type IpcHandler = (raw: unknown, event: DesktopIpc.DesktopIpcInvokeEvent) => Effect.Effect<unknown>;
 
 interface FakeSender {
-  readonly sender: DesktopIpc.DesktopIpcSenderWebContents;
+  readonly sender: DesktopDeepLink.DeepLinkSender;
   readonly send: ReturnType<typeof vi.fn>;
   readonly isDestroyed: ReturnType<typeof vi.fn>;
   readonly destroy: () => void;
@@ -328,6 +328,27 @@ const settleDelivery = (harness: TestHarness) =>
 
 describe("DesktopDeepLink", () => {
   it.effect(
+    "keeps a link buffered when an ID-only IPC sender tries to subscribe or acknowledge",
+    () => {
+      const harness = makeHarness();
+      const renderer = makeSender(7);
+      return Effect.gen(function* () {
+        yield* configureWith(makeServices(harness), {
+          processArguments: ["t3code", `t3code://threads/${ENVIRONMENT_ID}/${THREAD_ID}`],
+        });
+        const event = { sender: { id: 7 } };
+        assert.deepEqual(
+          yield* harness.ipcHandlers.get(DEEP_LINK_SUBSCRIBE_CHANNEL)!(undefined, event),
+          { payload: null, generation: 1 },
+        );
+        yield* harness.ipcHandlers.get(DEEP_LINK_ACK_CHANNEL)!(1, event);
+        yield* harness.ipcHandlers.get(DEEP_LINK_UNSUBSCRIBE_CHANNEL)!(undefined, event);
+        assert.deepEqual(yield* subscribeAs(harness, renderer), PAYLOAD);
+      });
+    },
+  );
+
+  it.effect(
     "keeps the real preload subscribed across a remount with a delayed subscribe reply",
     () =>
       Effect.gen(function* () {
@@ -364,6 +385,10 @@ describe("DesktopDeepLink", () => {
           calls.push(call);
           return call;
         });
+        yield* Effect.acquireRelease(
+          Effect.sync(() => vi.stubGlobal("window", { addEventListener: vi.fn() })),
+          () => Effect.sync(() => vi.unstubAllGlobals()),
+        );
         yield* Effect.promise(() => import("../preload.ts"));
         const bridge = preloadElectron.exposeInMainWorld.mock.calls.find(
           ([name]) => name === "desktopBridge",

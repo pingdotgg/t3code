@@ -223,7 +223,7 @@ const readTSConfig = (fileName: string): Effect.Effect<
   })
 
 const loadCompilerOptions = (configKey: string) =>
-  Config.string(configKey).pipe(
+  Config.String(configKey).pipe(
     Effect.flatMap((config) =>
       Schema.decodeUnknownEffect(JsonRecordSchema)(config).pipe(Effect.orElseSucceed(() => config))
     )
@@ -297,7 +297,7 @@ export const load = (args: {
     // Resolve the excluded files
     const exclude = yield* Array.match(args.exclude, {
       onEmpty: () =>
-        Effect.result(Config.schema(Config.Array(Schema.String), "exclude")).pipe(
+        Effect.result(Config.Array(Schema.String, "exclude")).pipe(
           Effect.map((configured) =>
             Result.isSuccess(configured)
               ? configured.success

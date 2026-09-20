@@ -1,0 +1,575 @@
+name: Desktop macOS Preview Publish
+
+# Trusted half of the macOS preview. Runs from main with secrets and a write
+# token, so it must never execute PR code: the PR's JS bundle is only data that
+# gets packaged into the app. Everything that runs here (packaging, signing,
+# notarization, publishing) is main's code.
+#
+# Gate, in order: the completed build run belongs to an open PR that still
+# carries the preview:mac label and whose head is the built commit, and the PR
+# author is trusted by the vouch list. A maintainer applying the label alone is
+# not enough, since the bundle gets signed with the Developer ID certificate.
+#
+# The label is consumed here once the gate passes, so it only ever covers the
+# one commit a maintainer applied it to. A later push builds nothing until the
+# label is applied again.
+
+on:
+  workflow_run:
+    workflows: [Desktop macOS Preview]
+    types: [completed]
+  # The way out: closing the PR deletes its download, and removing the label
+  # before it is consumed cancels the preview. pull_request_target gives this a
+  # write token for fork PRs; it never checks out PR code.
+  pull_request_target:
+    types: [closed, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Verify preview eligibility
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    # The build workflow completes for every PR push (its label gate is on the
+    # job), so this runs often and usually finds nothing. Keep it cheap.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      # write only to consume the label; nothing here runs PR code.
+      pull-requests: write
+    outputs:
+      eligible: ${{ steps.gate.outputs.eligible }}
+      pr_number: ${{ steps.pr.outputs.pr_number }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      version: ${{ steps.version.outputs.version }}
+      clerk_publishable_key: ${{ steps.version.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ steps.version.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ steps.version.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ steps.version.outputs.relay_url }}
+    steps:
+      - id: pr
+        name: Resolve the pull request behind the build
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const { owner, repo } = context.repo;
+
+            // The build workflow also completes (with every job skipped) for
+            // label events that are not the preview label. Only a run that
+            // produced a bundle is worth resolving.
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner,
+              repo,
+              run_id: run.id,
+              per_page: 100,
+            });
+            const bundles = artifacts.filter((artifact) => artifact.name === "js-bundle" && !artifact.expired);
+            if (bundles.length !== 1) {
+              core.info(`Expected one js-bundle artifact; found ${bundles.length}. Skipping.`);
+              core.setOutput("eligible", "false");
+              return;
+            }
+
+            // workflow_run.pull_requests is empty for fork PRs, so resolve the
+            // PR from the built commit instead and require exactly one open PR
+            // from the same head repository and branch. The build baked its
+            // PR number into the version, so two candidates would mean the
+            // asset name could belong to either.
+            const associated = await github.paginate(
+              github.rest.repos.listPullRequestsAssociatedWithCommit,
+              { owner, repo, commit_sha: run.head_sha, per_page: 100 },
+            );
+            const matching = associated.filter(
+              (candidate) =>
+                candidate.state === "open" &&
+                candidate.head.sha === run.head_sha &&
+                candidate.head.ref === run.head_branch &&
+                candidate.head.repo?.full_name === run.head_repository?.full_name,
+            );
+            if (matching.length !== 1) {
+              core.info(`Expected one open PR for ${run.head_sha}; found ${matching.length}. Skipping.`);
+              core.setOutput("eligible", "false");
+              return;
+            }
+            const { data: pull } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: matching[0].number,
+            });
+
+            if (pull.state !== "open") {
+              core.info(`PR #${pull.number} is not open. Skipping.`);
+              core.setOutput("eligible", "false");
+              return;
+            }
+            if (pull.head.sha !== run.head_sha) {
+              core.info(`PR #${pull.number} moved to ${pull.head.sha} after ${run.head_sha} was built. Skipping.`);
+              core.setOutput("eligible", "false");
+              return;
+            }
+            if (!pull.labels.some((label) => label.name === "preview:mac")) {
+              core.info(`PR #${pull.number} no longer carries the preview:mac label. Skipping.`);
+              core.setOutput("eligible", "false");
+              return;
+            }
+
+            core.setOutput("artifact_id", String(bundles[0].id));
+            core.setOutput("eligible", "true");
+            core.setOutput("pr_number", String(pull.number));
+            core.setOutput("head_sha", pull.head.sha);
+            core.setOutput("author", pull.user.login);
+
+      # Reads VOUCHED.td from the default branch through the API, so a PR
+      # cannot vouch for itself.
+      - id: vouch
+        name: Check PR author trust
+        if: steps.pr.outputs.eligible == 'true'
+        uses: mitchellh/vouch/action/check-user@d66fa29a64600490892131ad87597c30c91fcac4 # v1
+        with:
+          user: ${{ steps.pr.outputs.author }}
+          allow-fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The label authorized exactly this build, so take it now, before the
+      # long signing job. Removing it with GITHUB_TOKEN does not fire the
+      # unlabeled cleanup below (workflow-token events never start runs), so
+      # the download this run publishes survives. If a maintainer removed the
+      # label first, that removal wins: the 404 makes this run ineligible.
+      - id: consume
+        name: Consume the preview label
+        if: steps.pr.outputs.eligible == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: Number(process.env.PR_NUMBER),
+                name: "preview:mac",
+              });
+              core.setOutput("consumed", "true");
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info("The preview:mac label was removed before this build could consume it. Skipping.");
+              core.setOutput("consumed", "false");
+            }
+
+      - id: gate
+        name: Decide eligibility
+        shell: bash
+        env:
+          PR_ELIGIBLE: ${{ steps.pr.outputs.eligible }}
+          LABEL_CONSUMED: ${{ steps.consume.outputs.consumed }}
+          VOUCH_STATUS: ${{ steps.vouch.outputs.status }}
+          AUTHOR: ${{ steps.pr.outputs.author }}
+        run: |
+          set -euo pipefail
+          if [[ "$PR_ELIGIBLE" != "true" || "$LABEL_CONSUMED" != "true" ]]; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$VOUCH_STATUS" in
+            bot|collaborator|vouched)
+              echo "Author $AUTHOR is trusted ($VOUCH_STATUS)."
+              echo "eligible=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Author $AUTHOR is not vouched ($VOUCH_STATUS). Add them to .github/VOUCHED.td to allow signed previews."
+              echo "eligible=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      # Same inputs as the build workflow, read from the built commit through
+      # the contents API as data: the desktop manifest's base version plus the
+      # build run's number reproduces the version baked into the bundle, and
+      # .env.example holds the public T3 Connect identifiers the bundle was
+      # compiled with, which the signed app's passkey entitlement must match.
+      # Both are validated before they reach a file name or an entitlement.
+      - id: version
+        name: Resolve preview version and public configuration
+        if: steps.gate.outputs.eligible == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BUILD_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+        run: |
+          set -euo pipefail
+          head_file() {
+            gh api "repos/${GITHUB_REPOSITORY}/contents/$1?ref=${HEAD_SHA}" --jq '.content' | base64 --decode
+          }
+
+          base_version="$(head_file apps/desktop/package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
+          # The committed desktop version is always a plain X.Y.Z; every
+          # prerelease identifier is added by a release run. Anything else
+          # would also let a foreign -pr.N. marker into the asset name, which
+          # is what publish and cleanup key on.
+          if [[ ! "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected desktop version '$base_version' at $HEAD_SHA; expected X.Y.Z." >&2
+            exit 1
+          fi
+          echo "version=${base_version}-pr.${PR_NUMBER}.${BUILD_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+          head_file .env.example > "$RUNNER_TEMP/head.env.example"
+          for key in clerk_publishable_key:T3CODE_CLERK_PUBLISHABLE_KEY clerk_jwt_template:T3CODE_CLERK_JWT_TEMPLATE clerk_cli_oauth_client_id:T3CODE_CLERK_CLI_OAUTH_CLIENT_ID relay_url:T3CODE_RELAY_URL; do
+            output="${key%%:*}"
+            name="${key##*:}"
+            value="$(sed -n "s/^${name}=//p" "$RUNNER_TEMP/head.env.example" | head -n 1)"
+            if [[ ! "$value" =~ ^[A-Za-z0-9._:/-]+$ ]]; then
+              echo "$name is missing or malformed in .env.example at $HEAD_SHA." >&2
+              exit 1
+            fi
+            echo "${output}=${value}" >> "$GITHUB_OUTPUT"
+          done
+
+      # Only the default-branch revision that owns this workflow supplies the
+      # validator. Never check out the PR in a workflow_run job.
+      - name: Checkout trusted artifact validator
+        if: steps.gate.outputs.eligible == 'true'
+        shell: bash
+        env:
+          CHECKOUT_REF: ${{ github.sha }}
+          GIT_TERMINAL_PROMPT: "0"
+        # Anonymous fetch avoids checkout's credential cleanup, which fails on
+        # orphaned gitlinks in .repos even when that directory is excluded.
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git sparse-checkout set .github/scripts
+          git checkout --detach FETCH_HEAD
+
+      # Fetch the archive as bytes. Extracting it over the checkout, even with
+      # download-artifact, could replace code that runs with signing secrets.
+      - name: Download and validate PR JS bundle
+        if: steps.gate.outputs.eligible == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.pr.outputs.artifact_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > "$RUNNER_TEMP/js-bundle.zip"
+          python3 .github/scripts/stage-preview-bundle.py "$RUNNER_TEMP/js-bundle.zip" "$RUNNER_TEMP/js-bundle"
+
+      # Only validated bundle files cross into the signing job's artifact.
+      - name: Stage JS bundle for packaging
+        if: steps.gate.outputs.eligible == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: js-bundle
+          path: ${{ runner.temp }}/js-bundle
+          if-no-files-found: error
+          # Re-running this workflow re-uploads under the same run.
+          overwrite: true
+          retention-days: 1
+
+  build:
+    name: Package and sign macOS arm64 preview
+    needs: resolve
+    if: needs.resolve.outputs.eligible == 'true'
+    concurrency:
+      group: desktop-macos-preview-${{ needs.resolve.outputs.pr_number }}-build
+      cancel-in-progress: true
+    uses: ./.github/workflows/release-desktop.yml
+    secrets:
+      CSC_LINK: ${{ secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
+    with:
+      version: ${{ needs.resolve.outputs.version }}
+      ref: ${{ github.sha }}
+      release_channel: preview
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ needs.resolve.outputs.clerk_publishable_key }}
+      clerk_jwt_template: ${{ needs.resolve.outputs.clerk_jwt_template }}
+      clerk_cli_oauth_client_id: ${{ needs.resolve.outputs.clerk_cli_oauth_client_id }}
+      relay_url: ${{ needs.resolve.outputs.relay_url }}
+      label: macOS arm64 preview
+      runner: blacksmith-12vcpu-macos-26
+      platform: mac
+      target: dmg
+      arch: arm64
+      rust_target: aarch64-apple-darwin
+      resource_key: darwin-arm64
+      cli_archive: false
+
+  # Release assets download without a GitHub account, unlike workflow
+  # artifacts. All preview DMGs live on one rolling prerelease tagged
+  # "desktop-preview" (release.yml only matches v*.*.* tags), so publishing a
+  # build never notifies release watchers.
+  publish:
+    name: Publish anonymous download
+    needs: [resolve, build]
+    if: needs.resolve.outputs.eligible == 'true' && needs.build.result == 'success'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    # Its own group, so a publish never cancels a newer commit's signing job
+    # (they would share the build group) and is never cancelled mid-upload.
+    # preview_eligible's head check keeps a superseded publish from landing.
+    concurrency:
+      group: desktop-macos-preview-${{ needs.resolve.outputs.pr_number }}-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: desktop-mac-arm64
+          path: release
+
+      - id: upload
+        name: Upload DMG to the rolling preview release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          tag="desktop-preview"
+
+          # True while the PR is open and still points at the commit this
+          # build came from. The label was consumed in resolve, so it is not
+          # part of this check. A push does not cancel an already-running
+          # signing job, so this is what keeps a superseded commit's DMG off
+          # the release.
+          preview_eligible() {
+            [[ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+              --json state,headRefOid \
+              --jq '.state + " " + .headRefOid')" == "OPEN $HEAD_SHA" ]]
+          }
+
+          # The build ran for many minutes. If the PR closed or moved on
+          # meanwhile, cleanup already ran in its own concurrency group or a
+          # newer build owns the asset, so publishing now would resurrect a
+          # deleted download or clobber a newer one.
+          if ! preview_eligible; then
+            echo "PR closed or head moved while building. Skipping publish."
+            exit 0
+          fi
+
+          shopt -s nullglob
+          dmg_files=(release/*.dmg)
+          if (( ${#dmg_files[@]} != 1 )); then
+            printf 'Expected one DMG, found %s.\n' "${#dmg_files[@]}" >&2
+            exit 1
+          fi
+          dmg_path="${dmg_files[0]}"
+
+          # Requiring this PR's marker keeps a build from clobbering or
+          # deleting another PR's asset, since those names carry a different
+          # -pr.N. marker.
+          if [[ "$(basename "$dmg_path")" != *"-pr.${PR_NUMBER}."* ]]; then
+            echo "DMG name '$(basename "$dmg_path")' does not carry this PR's -pr.${PR_NUMBER}. marker. Refusing to publish." >&2
+            exit 1
+          fi
+
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # "|| true" tolerates a concurrent publish job creating the
+            # release between the check and the create.
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$DEFAULT_BRANCH" \
+              --prerelease \
+              --title "Desktop preview builds" \
+              --notes "Rolling desktop builds from pull requests with a preview label. Each download is removed when its pull request closes or loses the label. Install stable builds from the latest release instead." \
+              || true
+          fi
+
+          # Keep one DMG per PR: drop this PR's older builds first. The
+          # trailing dot keeps -pr.12. from matching -pr.123. builds.
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | { grep -F -- "-pr.${PR_NUMBER}." || true; } \
+            | while read -r asset; do
+                gh release delete-asset "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --yes \
+                  || echo "Asset $asset was already removed by a concurrent run."
+              done
+
+          gh release upload "$tag" "$dmg_path" --repo "$GITHUB_REPOSITORY" --clobber
+
+          # Re-check after uploading. A cleanup run that started during the
+          # upload listed assets before ours existed, so it cannot delete it.
+          # Whichever writer acts last sees the final PR state; if the preview
+          # became ineligible, delete what we just uploaded.
+          if ! preview_eligible; then
+            gh release delete-asset "$tag" "$(basename "$dmg_path")" --repo "$GITHUB_REPOSITORY" --yes \
+              || echo "Asset was already removed by a concurrent run."
+            echo "PR closed or head moved during upload. Removed the download."
+            exit 0
+          fi
+
+          echo "dmg_name=$(basename "$dmg_path")" >> "$GITHUB_OUTPUT"
+          echo "download_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/$(basename "$dmg_path")" >> "$GITHUB_OUTPUT"
+
+      - name: Comment download link
+        if: steps.upload.outputs.download_url != ''
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          DOWNLOAD_URL: ${{ steps.upload.outputs.download_url }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          PREVIEW_VERSION: ${{ needs.resolve.outputs.version }}
+        with:
+          script: |
+            const prNumber = Number(process.env.PR_NUMBER);
+            const { data: pullRequest } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            if (pullRequest.head.sha !== process.env.HEAD_SHA || pullRequest.state !== "open") {
+              core.info("Skipping the outdated macOS preview comment.");
+              return;
+            }
+
+            const marker = "<!-- desktop-macos-preview -->";
+            const body = [
+              marker,
+              "### macOS preview",
+              "",
+              `[Download Apple Silicon DMG](${process.env.DOWNLOAD_URL})`,
+              "",
+              `Version: ${process.env.PREVIEW_VERSION}`,
+              `Commit: ${process.env.HEAD_SHA.slice(0, 7)}`,
+              "",
+              "Signed and notarized, with T3 Connect enabled. The app bundle (server, web client, Electron main) is built from this PR; packaging, native helpers, and desktop dependencies come from `main`.",
+              "",
+              "No GitHub sign-in is needed. The download stays available until this PR closes. The `preview:mac` label was consumed by this build; a maintainer applies it again to build a newer commit.",
+            ].join("\n");
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const existing = comments.find(
+              (comment) => comment.user?.login === "github-actions[bot]" && comment.body?.includes(marker),
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+            }
+
+  cleanup:
+    name: Remove preview download
+    # A published preview no longer carries the label (resolve consumed it),
+    # so every close must look for assets; the -pr.N. filter below makes
+    # that a cheap no-op for PRs that never had one. A manual unlabel before
+    # the build consumed it withdraws the request and drops any older
+    # download too.
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      (github.event.action == 'closed' ||
+      (github.event.action == 'unlabeled' && github.event.label.name == 'preview:mac'))
+    # Runs on every PR close and usually finds nothing. Keep it cheap.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Cleanup runs must complete: a close event right after an unlabel queues
+    # behind the running cleanup instead of canceling it mid-delete.
+    concurrency:
+      group: desktop-macos-preview-${{ github.event.pull_request.number }}-cleanup
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - id: delete
+        name: Delete this PR's preview assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          tag="desktop-preview"
+
+          # A stale cleanup must not delete a download that became valid
+          # again. If the PR is open and labeled once more, the next publish
+          # owns this PR's assets and replaces them itself.
+          if [[ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json state,labels \
+            --jq '.state + " " + (.labels | map(.name) | contains(["preview:mac"]) | tostring)')" == "OPEN true" ]]; then
+            echo "PR is open and labeled again. Skipping cleanup."
+            echo "removed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "removed=true" >> "$GITHUB_OUTPUT"
+
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "No preview release exists. Nothing to clean up."
+            exit 0
+          fi
+
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | { grep -F -- "-pr.${PR_NUMBER}." || true; } \
+            | while read -r asset; do
+                gh release delete-asset "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --yes \
+                  || echo "Asset $asset was already removed by a concurrent run."
+              done
+
+      - name: Mark the preview comment as removed
+        if: steps.delete.outputs.removed == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const marker = "<!-- desktop-macos-preview -->";
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const existing = comments.find(
+              (comment) => comment.user?.login === "github-actions[bot]" && comment.body?.includes(marker),
+            );
+            if (!existing) {
+              return;
+            }
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body: [
+                marker,
+                "### macOS preview",
+                "",
+                "The preview download was removed because this PR closed or the preview label was removed.",
+              ].join("\n"),
+            });

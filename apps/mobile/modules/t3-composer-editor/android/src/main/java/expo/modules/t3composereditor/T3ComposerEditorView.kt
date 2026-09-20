@@ -1,7 +1,8 @@
 package expo.modules.t3composereditor
 
-import android.content.Context
+import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Color
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -11,6 +12,7 @@ import android.text.Editable
 import android.text.InputType
 import android.text.InputFilter
 import android.text.Spanned
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
@@ -48,6 +50,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private val onComposerPasteImages by EventDispatcher()
   private val onComposerContextPress by EventDispatcher()
   private val onComposerPasteContext by EventDispatcher()
+  private val onComposerPasteText by EventDispatcher()
   private val onComposerContentSizeChange by EventDispatcher()
   private var applyingNativeValue = false
   private var desiredLineHeightPx = 0
@@ -86,7 +89,16 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.pasteImagesListener = { uris ->
       onComposerPasteImages(mapOf("uris" to uris))
     }
-    editor.pasteContextListener = { payload -> onComposerPasteContext(payload) }
+    editor.pasteContextListener = { payload ->
+      nativeEventCount += 1
+      onComposerPasteContext(
+        payload + mapOf(
+          "value" to editor.text.toString(),
+          "eventCount" to nativeEventCount,
+          "selection" to currentSelectionPayload(),
+        )
+      )
+    }
     val contextGestures =
       GestureDetector(
         context,
@@ -119,6 +131,17 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.setOnTouchListener { _, event ->
       contextGestures.onTouchEvent(event)
       false
+    }
+    editor.pasteTextListener = { text, start, end ->
+      nativeEventCount += 1
+      onComposerPasteText(
+        mapOf(
+          "value" to editor.text.toString(),
+          "eventCount" to nativeEventCount,
+          "text" to text,
+          "selection" to currentSelectionPayload(start, end),
+        ),
+      )
     }
     editor.setOnFocusChangeListener { _, hasFocus ->
       if (hasFocus) {
@@ -232,7 +255,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun setPlaceholder(placeholder: String) {
-    editor.hint = placeholder
+    editor.placeholder = placeholder
   }
 
   fun setClipboardFragment(fragment: String) {
@@ -245,12 +268,14 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     } else {
       Typeface.DEFAULT
     }
+    editor.applyPlaceholder()
   }
 
   fun setFontSize(fontSize: Float) {
     editor.textSize = fontSize
     applyLineHeight()
     applyTokenSpans()
+    editor.applyPlaceholder()
   }
 
   fun setLineHeight(lineHeight: Float) {
@@ -303,6 +328,14 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   fun setSpellCheck(spellCheck: Boolean) {
     this.spellCheck = spellCheck
     updateInputFlags()
+  }
+
+  fun setTextPasteThresholdBytes(threshold: Int) {
+    editor.textPasteThresholdBytes = threshold
+  }
+
+  fun setMaxInputChars(maxInputChars: Int) {
+    editor.maxInputChars = maxInputChars
   }
 
   fun focusEditor() {
@@ -365,10 +398,13 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     editor.highlightColor = defaultHighlightColor
   }
 
-  private fun currentSelectionPayload(): Map<String, Int> =
+  private fun currentSelectionPayload(
+    start: Int = editor.selectionStart,
+    end: Int = editor.selectionEnd
+  ): Map<String, Int> =
     mapOf(
-      "start" to editor.selectionStart.coerceAtLeast(0),
-      "end" to editor.selectionEnd.coerceAtLeast(0),
+      "start" to minOf(start, end).coerceAtLeast(0),
+      "end" to maxOf(start, end).coerceAtLeast(0),
     )
 
   private fun emitSelectionChange(start: Int, end: Int) {
@@ -379,7 +415,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     onComposerSelectionChange(
       mapOf(
         "value" to editor.text.toString(),
-        "selection" to mapOf("start" to start, "end" to end),
+        "selection" to currentSelectionPayload(start, end),
         "eventCount" to nativeEventCount,
       ),
     )
@@ -544,12 +580,46 @@ private fun parseTokens(value: String): List<ComposerToken> = try {
   emptyList()
 }
 
-private class SelectionAwareEditText(context: Context) : EditText(context) {
+internal class SelectionAwareEditText(context: Context) : EditText(context) {
   var readOnly = false
   var selectionListener: ((Int, Int) -> Unit)? = null
   var pasteImagesListener: ((List<String>) -> Unit)? = null
   var pasteContextListener: ((Map<String, String>) -> Unit)? = null
+  var pasteTextListener: ((String, Int, Int) -> Unit)? = null
+  var textPasteThresholdBytes = 0
+  var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
+
+  /**
+   * Placeholder shown while the draft is empty. An editable TextView never ellipsizes its hint,
+   * so a long placeholder wraps once a wide system font or a large font scale (Samsung defaults)
+   * runs out of width, and the resting composer grows to two lines. The hint is instead cut to
+   * one line with an ellipsis for whatever width the editor is measured at.
+   */
+  var placeholder = ""
+    set(value) {
+      field = value
+      applyPlaceholder()
+    }
+
+  fun applyPlaceholder(availableWidth: Int = width - compoundPaddingLeft - compoundPaddingRight) {
+    val next =
+      if (availableWidth > 0) {
+        TextUtils.ellipsize(placeholder, paint, availableWidth.toFloat(), TextUtils.TruncateAt.END)
+      } else {
+        placeholder
+      }
+    if (hint?.toString() != next.toString()) hint = next
+  }
+
+  override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED) {
+      applyPlaceholder(
+        MeasureSpec.getSize(widthMeasureSpec) - compoundPaddingLeft - compoundPaddingRight
+      )
+    }
+    super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+  }
 
   private fun deleteChip(backwards: Boolean): Boolean {
     val content = text
@@ -602,7 +672,6 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
         super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
     }
   }
-
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
@@ -615,6 +684,10 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
     }
     val handled = when {
       id == android.R.id.copy || id == android.R.id.cut -> copyContext(id == android.R.id.cut)
+      id == android.R.id.pasteAsPlainText -> {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        pasteInterceptedText(clipboard?.primaryClip, foldLargeText = false)
+      }
       pasting -> pasteContextOrImages()
       else -> false
     }
@@ -636,6 +709,10 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
       pasteContextListener?.invoke(payload)
       return true
     }
+    return pasteImagesOrInterceptedText()
+  }
+
+  private fun pasteImagesOrInterceptedText(): Boolean {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
     val clip = clipboard?.primaryClip
     val imageUris = buildList {
@@ -648,7 +725,48 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
         }
       }
     }
-    if (imageUris.isNotEmpty()) pasteImagesListener?.invoke(imageUris)
-    return imageUris.isNotEmpty()
+    return when {
+      imageUris.isNotEmpty() -> {
+        pasteImagesListener?.invoke(imageUris)
+        true
+      }
+      else -> pasteInterceptedText(clip)
+    }
+  }
+
+  private fun pasteInterceptedText(clip: ClipData?, foldLargeText: Boolean = true): Boolean {
+    val text = if (textPasteThresholdBytes > 0) clip?.plainText() else null
+    if (text.isNullOrEmpty()) return false
+    val start = minOf(selectionStart, selectionEnd).coerceIn(0, length())
+    val end = maxOf(selectionStart, selectionEnd).coerceIn(start, length())
+    val exceedsInputLimit = length().toLong() - (end - start) + text.length > maxInputChars
+    val shouldFold = foldLargeText && (
+      text.length >= textPasteThresholdBytes ||
+        text.toByteArray(Charsets.UTF_8).size >= textPasteThresholdBytes
+      )
+    val shouldIntercept = exceedsInputLimit || shouldFold
+    if (shouldIntercept) {
+      pasteTextListener?.invoke(text, start, end)
+    }
+    // Let EditText perform ordinary pastes, retaining its native undo history.
+    return shouldIntercept
+  }
+
+  // coerceToText opens content: URIs synchronously. Leave URI-backed
+  // clipboard items to Android's normal paste path so the UI thread never
+  // reads an arbitrary provider just to measure a text paste.
+  private fun ClipData.plainText(): String? =
+    takeIf { itemCount > 0 }
+      ?.getItemAt(0)
+      ?.takeIf { it.uri == null }
+      ?.coerceToText(context)
+      ?.toString()
+      ?.takeIf(String::isNotEmpty)
+
+  override fun onKeyShortcut(keyCode: Int, event: KeyEvent): Boolean {
+    if (keyCode == KeyEvent.KEYCODE_V && event.isCtrlPressed && event.isShiftPressed) {
+      return onTextContextMenuItem(android.R.id.pasteAsPlainText)
+    }
+    return super.onKeyShortcut(keyCode, event)
   }
 }

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Modal, Pressable, View } from "react-native";
+import { Platform, Modal, Pressable, TextInput, View } from "react-native";
 
 import { cn } from "../lib/cn";
 import { AppText } from "./AppText";
+import { MaterialConfirmDialog } from "./MaterialConfirmDialog";
 
 export type ConfirmDialogRequest = {
   readonly title: string;
@@ -14,7 +15,20 @@ export type ConfirmDialogRequest = {
   readonly onCancel?: () => void;
 };
 
-let presentRequest: ((request: ConfirmDialogRequest) => void) | null = null;
+export type TextInputDialogRequest = {
+  readonly title: string;
+  readonly initialValue: string;
+  readonly cancelText?: string;
+  readonly confirmText: string;
+  readonly onConfirm: (value: string) => void;
+  readonly onCancel?: () => void;
+};
+
+type DialogRequest =
+  | { readonly kind: "confirm"; readonly request: ConfirmDialogRequest }
+  | { readonly kind: "text-input"; readonly request: TextInputDialogRequest };
+
+let presentRequest: ((request: DialogRequest) => void) | null = null;
 
 /**
  * Imperative confirm dialog, Alert.alert-shaped. Native iOS alerts already
@@ -23,7 +37,11 @@ let presentRequest: ((request: ConfirmDialogRequest) => void) | null = null;
  * once. Requires ConfirmDialogHost to be mounted at the app root.
  */
 export function showConfirmDialog(request: ConfirmDialogRequest): void {
-  presentRequest?.(request);
+  presentRequest?.({ kind: "confirm", request });
+}
+
+export function showTextInputDialog(request: TextInputDialogRequest): void {
+  presentRequest?.({ kind: "text-input", request });
 }
 
 /**
@@ -33,42 +51,82 @@ export function showConfirmDialog(request: ConfirmDialogRequest): void {
  * button color and a dimmer message than the title.
  */
 export function ConfirmDialogHost() {
-  const [request, setRequest] = useState<ConfirmDialogRequest | null>(null);
+  const [presented, setPresented] = useState<DialogRequest | null>(null);
+  const [inputValue, setInputValue] = useState("");
   useEffect(() => {
-    presentRequest = setRequest;
+    presentRequest = (request) => {
+      setInputValue(request.kind === "text-input" ? request.request.initialValue : "");
+      setPresented(request);
+    };
     return () => {
       presentRequest = null;
     };
   }, []);
 
   const handleCancel = useCallback(() => {
-    request?.onCancel?.();
-    setRequest(null);
-  }, [request]);
+    presented?.request.onCancel?.();
+    setPresented(null);
+  }, [presented]);
 
-  const handleConfirm = useCallback(() => {
-    request?.onConfirm();
-    setRequest(null);
-  }, [request]);
+  const handleConfirm = useCallback(
+    (nativeInputValue?: string) => {
+      if (presented?.kind === "confirm") {
+        presented.request.onConfirm();
+      } else if (presented?.kind === "text-input") {
+        presented.request.onConfirm(nativeInputValue ?? inputValue);
+      }
+      setPresented(null);
+    },
+    [inputValue, presented],
+  );
+
+  const confirmDisabled = presented?.kind === "text-input" && inputValue.trim().length === 0;
+
+  if (Platform.OS === "android")
+    return presented ? (
+      <MaterialConfirmDialog
+        key={`${presented.kind}:${presented.request.title}:${presented.kind === "text-input" ? presented.request.initialValue : ""}`}
+        request={presented.request}
+        inputInitialValue={
+          presented.kind === "text-input" ? presented.request.initialValue : undefined
+        }
+        onInputChange={setInputValue}
+        confirmDisabled={confirmDisabled}
+        onCancel={handleCancel}
+        onConfirm={handleConfirm}
+      />
+    ) : null;
 
   return (
     <Modal
-      visible={request !== null}
+      visible={presented !== null}
       transparent
       animationType="fade"
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={handleCancel}
     >
-      {request === null ? null : (
+      {presented === null ? null : (
         <View className="flex-1 items-center justify-center bg-backdrop px-8">
           <View className="w-full rounded-[24px] bg-card px-6 pb-4 pt-5">
-            <AppText className="text-lg font-t3-medium">{request.title}</AppText>
-            {request.message === undefined ? null : (
+            <AppText className="text-lg font-t3-medium">{presented.request.title}</AppText>
+            {presented.kind === "confirm" && presented.request.message !== undefined ? (
               <AppText className="mt-2 text-sm text-foreground-secondary">
-                {request.message}
+                {presented.request.message}
               </AppText>
-            )}
+            ) : null}
+            {presented.kind === "text-input" ? (
+              <TextInput
+                accessibilityLabel={presented.request.title}
+                autoFocus
+                className="mt-4 rounded-xl border border-border bg-screen px-3 py-2.5 text-base text-foreground"
+                onChangeText={setInputValue}
+                onSubmitEditing={confirmDisabled ? undefined : () => handleConfirm()}
+                returnKeyType="done"
+                selectTextOnFocus
+                value={inputValue}
+              />
+            ) : null}
             <View className="mt-5 flex-row justify-end gap-1">
               <View className="overflow-hidden rounded-full">
                 <Pressable
@@ -77,23 +135,27 @@ export function ConfirmDialogHost() {
                   onPress={handleCancel}
                 >
                   <AppText className="text-base font-t3-medium">
-                    {request.cancelText ?? "Cancel"}
+                    {presented.request.cancelText ?? "Cancel"}
                   </AppText>
                 </Pressable>
               </View>
               <View className="overflow-hidden rounded-full">
                 <Pressable
                   accessibilityRole="button"
+                  disabled={confirmDisabled}
                   className="min-h-10 items-center justify-center px-4 active:bg-subtle"
-                  onPress={handleConfirm}
+                  onPress={() => handleConfirm()}
                 >
                   <AppText
                     className={cn(
                       "text-base font-t3-medium",
-                      request.destructive && "text-danger-foreground",
+                      presented.kind === "confirm" &&
+                        presented.request.destructive &&
+                        "text-danger-foreground",
+                      confirmDisabled && "text-foreground-tertiary",
                     )}
                   >
-                    {request.confirmText}
+                    {presented.request.confirmText}
                   </AppText>
                 </Pressable>
               </View>

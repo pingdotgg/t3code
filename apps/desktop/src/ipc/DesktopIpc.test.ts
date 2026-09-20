@@ -60,9 +60,7 @@ describe("DesktopIpc", () => {
           },
         }),
       );
-      const sender = {
-        sender: { id: 7, isDestroyed: () => false, send: () => undefined, once: () => undefined },
-      };
+      const sender = { sender: { id: 7 } };
       let received: DesktopIpc.DesktopIpcInvokeEvent | undefined;
 
       yield* Effect.scoped(

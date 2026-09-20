@@ -140,6 +140,30 @@ export function captureEarlyOpenUrls(source: EarlyOpenUrlSource): EarlyOpenUrlCa
   };
 }
 
+// Only deep-link subscribers need the live WebContents operations; ordinary
+// IPC methods keep the upstream ID-only sender contract.
+export interface DeepLinkSender {
+  readonly id: number;
+  isDestroyed(): boolean;
+  send(channel: string, ...args: ReadonlyArray<unknown>): void;
+  once(event: "destroyed", listener: () => void): unknown;
+}
+
+function deepLinkSender(sender: { readonly id: number } | undefined): DeepLinkSender | undefined {
+  if (
+    sender !== undefined &&
+    "isDestroyed" in sender &&
+    typeof sender.isDestroyed === "function" &&
+    "send" in sender &&
+    typeof sender.send === "function" &&
+    "once" in sender &&
+    typeof sender.once === "function"
+  ) {
+    return sender as DeepLinkSender;
+  }
+  return undefined;
+}
+
 export class DesktopDeepLink extends Context.Service<
   DesktopDeepLink,
   {
@@ -168,17 +192,17 @@ export const make = Effect.gen(function* () {
   // unsubscribes when its listener tears down (e.g. navigating to /connect or
   // /pair, which unmounts the deep-link component while the webContents stays
   // alive), the webContents fires destroyed, or a stale entry is pruned on use.
-  const subscribers: DesktopIpc.DesktopIpcSenderWebContents[] = [];
-  const observedSenders = new WeakSet<DesktopIpc.DesktopIpcSenderWebContents>();
+  const subscribers: DeepLinkSender[] = [];
+  const observedSenders = new WeakSet<DeepLinkSender>();
 
-  const removeSubscriber = (sender: DesktopIpc.DesktopIpcSenderWebContents) => {
+  const removeSubscriber = (sender: DeepLinkSender) => {
     const index = subscribers.indexOf(sender);
     if (index !== -1) {
       subscribers.splice(index, 1);
     }
   };
 
-  const latestLiveSubscriber = (): DesktopIpc.DesktopIpcSenderWebContents | null => {
+  const latestLiveSubscriber = (): DeepLinkSender | null => {
     for (let index = subscribers.length - 1; index >= 0; index -= 1) {
       const subscriber = subscribers[index];
       if (subscriber === undefined || subscriber.isDestroyed()) {
@@ -190,7 +214,7 @@ export const make = Effect.gen(function* () {
     return null;
   };
 
-  const subscribe = (sender: DesktopIpc.DesktopIpcSenderWebContents | undefined) =>
+  const subscribe = (sender: DeepLinkSender | undefined) =>
     Effect.gen(function* () {
       const currentGeneration = yield* Ref.get(generation);
       if (sender === undefined || sender.isDestroyed()) {
@@ -216,7 +240,7 @@ export const make = Effect.gen(function* () {
   // down. Without it a reloaded or route-unmounted renderer would stay in the
   // registry with a live webContents but no listener, so a link would be
   // pushed into a void and lost instead of buffered for the next subscriber.
-  const unsubscribe = (sender: DesktopIpc.DesktopIpcSenderWebContents | undefined) =>
+  const unsubscribe = (sender: DeepLinkSender | undefined) =>
     Effect.sync(() => {
       if (sender !== undefined) {
         removeSubscriber(sender);
@@ -275,7 +299,11 @@ export const make = Effect.gen(function* () {
           handler: (raw, event) =>
             Effect.gen(function* () {
               if (typeof raw !== "number" || !Number.isSafeInteger(raw)) return null;
-              if (event?.sender === undefined || !subscribers.includes(event.sender)) return null;
+              if (
+                event?.sender === undefined ||
+                !subscribers.some((sender) => sender === event.sender)
+              )
+                return null;
               if ((yield* Ref.get(generation)) === raw) yield* Ref.set(pending, Option.none());
               return null;
             }),
@@ -292,7 +320,7 @@ export const make = Effect.gen(function* () {
       yield* ipc
         .handle({
           channel: DEEP_LINK_SUBSCRIBE_CHANNEL,
-          handler: (_raw, event) => subscribe(event?.sender),
+          handler: (_raw, event) => subscribe(deepLinkSender(event?.sender)),
         })
         .pipe(
           // Deep links must never block startup.
@@ -309,7 +337,7 @@ export const make = Effect.gen(function* () {
       yield* ipc
         .handle({
           channel: DEEP_LINK_UNSUBSCRIBE_CHANNEL,
-          handler: (_raw, event) => unsubscribe(event?.sender),
+          handler: (_raw, event) => unsubscribe(deepLinkSender(event?.sender)),
         })
         .pipe(
           Effect.catch((error) =>

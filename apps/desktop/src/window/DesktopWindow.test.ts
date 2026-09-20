@@ -77,6 +77,7 @@ function makeFakeBrowserWindow() {
     isDestroyed: vi.fn(() => false),
     getURL: vi.fn(() => "t3code-dev://app/"),
     getZoomLevel: vi.fn(() => zoomLevel),
+    getZoomFactor: vi.fn(() => 1.2 ** zoomLevel),
     setZoomLevel: vi.fn((level: number) => {
       zoomLevel = level;
     }),
@@ -118,6 +119,7 @@ function makeFakeBrowserWindow() {
     setOpacity: vi.fn(),
     setTitle: vi.fn(),
     setTitleBarOverlay: vi.fn(),
+    setWindowButtonPosition: vi.fn(),
     show: vi.fn(),
     webContents,
   };
@@ -136,6 +138,7 @@ function makeFakeBrowserWindow() {
     reload: webContents.reload,
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
+    setWindowButtonPosition: window.setWindowButtonPosition,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
@@ -253,6 +256,7 @@ function makeTestLayer(input: {
     setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
     setWslDistro: () => Effect.die("unexpected WSL distro change"),
     setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+    setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
     applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
     applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
   } satisfies DesktopAppSettings.DesktopAppSettings["Service"]);
@@ -631,6 +635,37 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect(
+    "opens and reopens the window without backend readiness when local execution is disabled",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = makeTestLayer({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          createdWindowOptions: [],
+          desktopSettings: {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: false,
+          },
+        });
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createMainIfBackendReady;
+          assert.equal(yield* Ref.get(createCount), 1);
+          yield* Ref.set(mainWindow, Option.none());
+          yield* desktopWindow.activate;
+          assert.equal(yield* Ref.get(createCount), 2);
+          yield* Ref.set(mainWindow, Option.none());
+          yield* desktopWindow.dispatchMenuAction("new-thread");
+          assert.equal(yield* Ref.get(createCount), 3);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
   it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
@@ -708,6 +743,39 @@ describe("DesktopWindow", () => {
         // Recorded after the window level moved, so the preview is put back at
         // its own zoom on every step rather than left on the inherited one.
         assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("keeps macOS window buttons centered when zooming and leaving fullscreen", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = makeTestLayer({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        for (const direction of ["in", "in", "out", "reset", "out"] as const) {
+          yield* desktopWindow.zoomMain(direction);
+          const position = fakeWindow.setWindowButtonPosition.mock.lastCall?.[0];
+          assert.isDefined(position);
+          // The 14-point native buttons should share the zoomed 52px header's center.
+          const headerCenter = 26 * fakeWindow.window.webContents.getZoomFactor();
+          assert.isAtMost(Math.abs(position.y + 7 - headerCenter), 0.5);
+          assert.equal(position.x, 16);
+        }
+
+        fakeWindow.isFullScreen.mockReturnValue(true);
+        fakeWindow.setWindowButtonPosition.mockClear();
+        yield* desktopWindow.zoomMain("reset");
+        assert.equal(fakeWindow.setWindowButtonPosition.mock.calls.length, 0);
+
+        fakeWindow.isFullScreen.mockReturnValue(false);
+        fakeWindow.windowListeners.get("leave-full-screen")?.();
+        assert.deepEqual(fakeWindow.setWindowButtonPosition.mock.lastCall, [{ x: 16, y: 19 }]);
       }).pipe(Effect.provide(layer));
     }),
   );

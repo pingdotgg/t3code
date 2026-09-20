@@ -20,13 +20,6 @@ import {
   snapShotRelativeFrame,
 } from "./snapShot.ts";
 
-const ipcSender = (id: number) => ({
-  id,
-  isDestroyed: () => false,
-  send: () => undefined,
-  once: () => undefined,
-});
-
 describe("window capture IPC", () => {
   const configPreview = {
     id: "12345678-1234-1234-1234-123456789abc",
@@ -42,24 +35,24 @@ describe("window capture IPC", () => {
     return Effect.gen(function* () {
       const request = { operation: "install" as const, chooseFile: false };
       const untrustedRead = yield* Effect.exit(
-        previewSnapShotConfig.handler(request, { sender: ipcSender(8) }),
+        previewSnapShotConfig.handler(request, { sender: { id: 8 } }),
       );
       const untrustedWrite = yield* Effect.exit(
-        applySnapShotConfig.handler(configPreview.id, { sender: ipcSender(8) }),
+        applySnapShotConfig.handler(configPreview.id, { sender: { id: 8 } }),
       );
       assert(Exit.isFailure(untrustedRead));
       assert(Exit.isFailure(untrustedWrite));
       assert.deepEqual(calls, []);
-      yield* previewSnapShotConfig.handler(request, { sender: ipcSender(7) });
+      yield* previewSnapShotConfig.handler(request, { sender: { id: 7 } });
       assert.deepEqual(calls, ["read"]);
-      yield* applySnapShotConfig.handler(configPreview.id, { sender: ipcSender(7) });
+      yield* applySnapShotConfig.handler(configPreview.id, { sender: { id: 7 } });
       assert.deepEqual(calls, ["read", configPreview.id]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
             main: Effect.succeed(Option.some({ webContents: { id: 7 } })),
-          } as unknown as ElectronWindow.ElectronWindow["Service"]),
+          } as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             previewConfig: () =>
               Effect.sync(() => {
@@ -86,7 +79,7 @@ describe("window capture IPC", () => {
     return Effect.gen(function* () {
       const preview = yield* previewSnapShotConfig.handler(
         { operation: "install", chooseFile: true },
-        { sender: ipcSender(7) },
+        { sender: { id: 7 } },
       );
       assert.isNull(preview);
       assert.isFalse(read);
@@ -95,7 +88,7 @@ describe("window capture IPC", () => {
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
             main: Effect.succeed(Option.some({ webContents: { id: 7 } })),
-          } as unknown as ElectronWindow.ElectronWindow["Service"]),
+          } as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             state: Effect.succeed({
               linuxBackend: "niri",
@@ -120,7 +113,7 @@ describe("window capture IPC", () => {
     return Effect.gen(function* () {
       yield* previewSnapShotConfig.handler(
         { operation: "install", chooseFile: true },
-        { sender: ipcSender(7) },
+        { sender: { id: 7 } },
       );
       assert.equal(path, "/chosen/config.kdl");
     }).pipe(
@@ -128,7 +121,7 @@ describe("window capture IPC", () => {
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
             main: Effect.succeed(Option.some({ webContents: { id: 7 } })),
-          } as unknown as ElectronWindow.ElectronWindow["Service"]),
+          } as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             state: Effect.succeed({ linuxBackend: "niri" }),
             previewConfig: (_: unknown, selected: string) =>
@@ -158,7 +151,7 @@ describe("window capture IPC", () => {
 
   it.effect("forwards a trusted renderer animation destination in screen coordinates", () => {
     let received: unknown;
-    const webContents = { ...ipcSender(7), getZoomFactor: () => 1.25 };
+    const webContents = { id: 7, getZoomFactor: () => 1.25 };
     const layer = Layer.mergeAll(
       Layer.succeed(
         ElectronWindow.ElectronWindow,
@@ -170,7 +163,7 @@ describe("window capture IPC", () => {
               webContents,
             }),
           ),
-        } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        } as ElectronWindow.ElectronWindow["Service"]),
       ),
       Layer.succeed(
         DesktopSnapShot.DesktopSnapShot,
@@ -222,13 +215,13 @@ describe("window capture IPC", () => {
 
   it.effect("forwards the accessibility permission preference from a trusted renderer", () => {
     let includeAccessibility: boolean | undefined;
-    const webContents = { ...ipcSender(7) };
+    const webContents = { id: 7 };
     const layer = Layer.mergeAll(
       Layer.succeed(
         ElectronWindow.ElectronWindow,
         ElectronWindow.ElectronWindow.of({
           main: Effect.succeed(Option.some({ webContents })),
-        } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        } as ElectronWindow.ElectronWindow["Service"]),
       ),
       Layer.succeed(
         DesktopSnapShot.DesktopSnapShot,
@@ -250,7 +243,7 @@ describe("window capture IPC", () => {
   it.effect("rejects an untrusted renderer at the IPC boundary", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        requestSnapShotPermissions.handler(false, { sender: ipcSender(8) }),
+        requestSnapShotPermissions.handler(false, { sender: { id: 8 } }),
       );
       assert(Exit.isFailure(exit));
       const failure = Cause.findErrorOption(exit.cause);
@@ -264,7 +257,7 @@ describe("window capture IPC", () => {
         ElectronWindow.ElectronWindow,
         ElectronWindow.ElectronWindow.of({
           main: Effect.succeed(Option.some({ webContents: { id: 7 } })),
-        } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        } as ElectronWindow.ElectronWindow["Service"]),
       ),
       Effect.provideService(DesktopSnapShot.DesktopSnapShot, null as never),
     ),
@@ -273,10 +266,10 @@ describe("window capture IPC", () => {
   it.effect("allows capture setup only from the trusted main renderer", () => {
     const actions: string[] = [];
     return Effect.gen(function* () {
-      yield* setupSnapShot.handler("install-extension", { sender: ipcSender(7) });
+      yield* setupSnapShot.handler("install-extension", { sender: { id: 7 } });
       assert.deepEqual(actions, ["install-extension"]);
       const rejected = yield* Effect.exit(
-        setupSnapShot.handler("enable-extension", { sender: ipcSender(8) }),
+        setupSnapShot.handler("enable-extension", { sender: { id: 8 } }),
       );
       assert(Exit.isFailure(rejected));
       assert.deepEqual(actions, ["install-extension"]);
@@ -285,7 +278,7 @@ describe("window capture IPC", () => {
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
             main: Effect.succeed(Option.some({ webContents: { id: 7 } })),
-          } as unknown as ElectronWindow.ElectronWindow["Service"]),
+          } as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             setup: (action: string) =>
               Effect.sync(() => {
@@ -303,7 +296,7 @@ describe("window capture IPC", () => {
         ElectronWindow.ElectronWindow,
         ElectronWindow.ElectronWindow.of({
           main: Effect.succeed(Option.some({ webContents: { id: 7 } })),
-        } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        } as ElectronWindow.ElectronWindow["Service"]),
       ),
       Layer.succeed(
         DesktopSnapShot.DesktopSnapShot,
@@ -316,7 +309,7 @@ describe("window capture IPC", () => {
     return Effect.gen(function* () {
       const result = yield* checkSnapShotShortcut.handler(
         { kind: "both-shift-keys" },
-        { sender: ipcSender(7) },
+        { sender: { id: 7 } },
       );
       assert.deepEqual(result, { available: true, message: null });
     }).pipe(Effect.provide(layer));
@@ -328,7 +321,7 @@ describe("window capture IPC", () => {
         ElectronWindow.ElectronWindow,
         ElectronWindow.ElectronWindow.of({
           main: Effect.succeed(Option.some({ webContents: { id: 7 } })),
-        } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        } as ElectronWindow.ElectronWindow["Service"]),
       ),
       Layer.succeed(
         DesktopSnapShot.DesktopSnapShot,
@@ -342,7 +335,7 @@ describe("window capture IPC", () => {
     );
 
     return Effect.gen(function* () {
-      yield* setSnapShotShortcutSuppressed.handler(true, { sender: ipcSender(7) });
+      yield* setSnapShotShortcutSuppressed.handler(true, { sender: { id: 7 } });
       assert.isTrue(suppressed);
     }).pipe(Effect.provide(layer));
   });

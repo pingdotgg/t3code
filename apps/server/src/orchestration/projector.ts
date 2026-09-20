@@ -13,6 +13,7 @@ import {
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
+  WORKTREE_SETUP_ACTIVITY_KIND,
 } from "@t3tools/contracts";
 import {
   legacyLinkedPullRequestOf,
@@ -76,7 +77,13 @@ function retainThreadActivities(activities: OrchestrationThread["activities"]) {
   }
   const pendingActivities = new Set(pending.values());
   return activities.filter(
-    (activity, index) => index >= recentStart || pendingActivities.has(activity),
+    (activity, index) =>
+      index >= recentStart ||
+      pendingActivities.has(activity) ||
+      // The worktree setup record is upserted under one id for the thread's
+      // whole life and is the only durable copy of a running setup; an async
+      // setup script can outlast a chatty first turn.
+      activity.kind === WORKTREE_SETUP_ACTIVITY_KIND,
   );
 }
 
@@ -607,6 +614,7 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               ...(payload.title !== undefined ? { title: payload.title } : {}),
+              ...(payload.titleState !== undefined ? { titleState: payload.titleState } : {}),
               ...(payload.titleRegeneration !== undefined
                 ? { titleRegeneration: payload.titleRegeneration }
                 : {}),
