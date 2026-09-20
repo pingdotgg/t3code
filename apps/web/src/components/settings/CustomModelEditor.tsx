@@ -34,6 +34,7 @@ interface CustomModelEditorProps {
   readonly entry: CustomModelDefinition;
   /** Built-in models whose descriptors can be copied as a starting point. */
   readonly builtInModels: ReadonlyArray<ServerProviderModel>;
+  readonly disabled?: boolean;
   readonly onSave: (next: CustomModelDefinition) => void;
   readonly onCancel: () => void;
 }
@@ -48,10 +49,14 @@ export function CustomModelEditor({
   driverKind,
   entry,
   builtInModels,
+  disabled = false,
   onSave,
   onCancel,
 }: CustomModelEditorProps) {
-  const [draft, setDraft] = useState<CustomModelDraft>(() => draftFromDefinition(entry));
+  const [draft, setDraftState] = useState<CustomModelDraft>(() => draftFromDefinition(entry));
+  const setDraft: typeof setDraftState = (next) => {
+    if (!disabled) setDraftState(next);
+  };
   const [error, setError] = useState<string | null>(null);
   const presets = useMemo(
     () => (driverKind ? (DESCRIPTOR_PRESETS_BY_KIND[driverKind] ?? []) : []),
@@ -136,6 +141,7 @@ export function CustomModelEditor({
   };
 
   const handleSave = () => {
+    if (disabled) return;
     const problem = validateDraft(draft);
     if (problem) {
       setError(problem);
@@ -204,6 +210,7 @@ export function CustomModelEditor({
         <span className="w-14 shrink-0 text-2xs text-muted-foreground">Option {index + 1}</span>
         {presets.length > 0 ? (
           <Select
+            disabled={disabled}
             value={idSelectValue(descriptor)}
             onValueChange={(value) => applyPresetId(descriptor, value)}
           >
@@ -246,6 +253,7 @@ export function CustomModelEditor({
           aria-label="Option label"
         />
         <Select
+          disabled={disabled}
           value={descriptor.type}
           onValueChange={(value) =>
             updateDescriptor(descriptor.key, { type: value === "boolean" ? "boolean" : "select" })
@@ -294,7 +302,7 @@ export function CustomModelEditor({
     <div
       className="mx-2 mt-1 mb-2 flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-3"
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && !disabled) {
           event.preventDefault();
           onCancel();
         }
@@ -320,7 +328,7 @@ export function CustomModelEditor({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs text-muted-foreground">Options shown in the composer</span>
           {startFromCandidates.length > 0 ? (
-            <Select value={START_FROM_NONE} onValueChange={handleStartFrom}>
+            <Select disabled={disabled} value={START_FROM_NONE} onValueChange={handleStartFrom}>
               <SelectTrigger
                 size="compact"
                 className="w-44"
@@ -377,10 +385,10 @@ export function CustomModelEditor({
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
       <div className="flex gap-2">
-        <Button size="sm" variant="outline" onClick={handleSave}>
+        <Button disabled={disabled} size="sm" variant="outline" onClick={handleSave}>
           Save
         </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>
+        <Button disabled={disabled} size="sm" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
       </div>

@@ -371,6 +371,8 @@ interface ProviderInstanceCardProps {
   readonly onSelect?: (() => void) | undefined;
   readonly readOnly?: boolean | undefined;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
+  /** Custom-model editors close only after this write is acknowledged. */
+  readonly onSaveCustomModels: (nextInstance: ProviderInstanceConfig) => Promise<boolean>;
   /**
    * Pass `undefined` to hide the delete footer entirely. Built-in default
    * instance slots use `undefined` — they can't be deleted without losing
@@ -427,6 +429,7 @@ export function ProviderInstanceCard({
   onSelect,
   readOnly = false,
   onUpdate,
+  onSaveCustomModels,
   onDelete,
   headerAction,
   setup,
@@ -549,7 +552,7 @@ export function ProviderInstanceCard({
       next.map(toCustomModelSetting),
     );
     const { config: _omit, ...rest } = instance;
-    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+    return onSaveCustomModels({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };
 
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
