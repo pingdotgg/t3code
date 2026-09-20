@@ -6,6 +6,7 @@ import { Switch } from "../ui/switch";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 
+/** Adjust conversation width and optional table wrapping without leaving the thread. */
 export function ThreadWidthControl() {
   const [expansion, setExpansion] = useThreadWidth();
   const sliderId = useId();

@@ -137,7 +137,7 @@ function FitReader({ secondary = false }: { secondary?: boolean }) {
   }, [secondary, value]);
   return null;
 }
-it("fits tables by default and synchronizes existing tables with the toolbar", async () => {
+it("preserves existing table behavior by default and synchronizes opt-in across consumers", async () => {
   await act(() => {
     renderer = create(
       <>
@@ -147,36 +147,41 @@ it("fits tables by default and synchronizes existing tables with the toolbar", a
       </>,
     );
   });
-  expect(fit[0]).toBe(true);
-  await act(() => fit[1](false));
-  expect(otherFit[0]).toBe(false);
-  expect(saved.get(FIT_TABLES_STORAGE_KEY)).toBe("false");
+  expect(fit[0]).toBe(false);
+  await act(() => fit[1](true));
+  expect(otherFit[0]).toBe(true);
+  expect(saved.get(FIT_TABLES_STORAGE_KEY)).toBe("true");
   expect(current[0]).toBe(0);
-  await act(() => otherFit[1](true));
-  expect(fit[0]).toBe(true);
-});
-it("preserves an explicit Fit tables off choice across navigation and restart", async () => {
-  await act(() => {
-    renderer = create(<FitReader />);
-  });
-  await act(() => fit[1](false));
-  await act(() => renderer!.unmount());
-  await act(() => {
-    renderer = create(<FitReader />);
-  });
+  await act(() => otherFit[1](false));
   expect(fit[0]).toBe(false);
 });
+it.each([true, false])(
+  "preserves an explicit Fit tables %s choice across navigation and restart",
+  async (enabled) => {
+    saved.set(FIT_TABLES_STORAGE_KEY, JSON.stringify(enabled));
+    await act(() => {
+      renderer = create(<FitReader />);
+    });
+    expect(fit[0]).toBe(enabled);
+    await act(() => fit[1](!enabled));
+    await act(() => renderer!.unmount());
+    await act(() => {
+      renderer = create(<FitReader />);
+    });
+    expect(fit[0]).toBe(!enabled);
+  },
+);
 it("updates tables when another window changes the fit preference", async () => {
   await act(() => {
     renderer = create(<FitReader />);
   });
-  saved.set(FIT_TABLES_STORAGE_KEY, "false");
+  saved.set(FIT_TABLES_STORAGE_KEY, "true");
   await act(() => {
     const event = new Event("storage");
     Object.defineProperty(event, "key", { value: FIT_TABLES_STORAGE_KEY });
     events.dispatchEvent(event);
   });
-  expect(fit[0]).toBe(false);
+  expect(fit[0]).toBe(true);
 });
 it.each(["{}", "null", '"false"'])(
   "defaults safely with invalid Fit tables storage %s",
@@ -185,8 +190,8 @@ it.each(["{}", "null", '"false"'])(
     await act(() => {
       renderer = create(<FitReader />);
     });
-    expect(fit[0]).toBe(true);
-    await act(() => fit[1](false));
     expect(fit[0]).toBe(false);
+    await act(() => fit[1](true));
+    expect(fit[0]).toBe(true);
   },
 );
