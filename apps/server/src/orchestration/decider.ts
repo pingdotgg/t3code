@@ -1386,7 +1386,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             latestUserMessageAt = message.createdAt;
           }
         }
+        // Settling, snoozing, archiving, or deleting the thread does not move
+        // either cursor, so park state is checked too: a server-authored turn
+        // must never un-park a thread the user just put away.
+        const parkedOrGone =
+          targetThread.archivedAt !== null ||
+          targetThread.deletedAt !== null ||
+          targetThread.settledOverride === "settled" ||
+          (targetThread.snoozedUntil != null && targetThread.snoozedUntil > (yield* nowIso));
         if (
+          parkedOrGone ||
           (targetThread.latestTurn?.turnId ?? null) !== command.onlyIfUnchanged.latestTurnId ||
           latestUserMessageAt !== command.onlyIfUnchanged.latestUserMessageAt
         ) {

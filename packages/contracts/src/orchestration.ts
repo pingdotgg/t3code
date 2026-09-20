@@ -1305,7 +1305,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   /**
    * Server-authored turns only. The command is rejected unless the thread is
    * still in the state the server observed, so a user message that lands
-   * first always wins.
+   * first always wins, and so does parking or removing the thread.
    */
   onlyIfUnchanged: Schema.optional(
     Schema.Struct({

@@ -4,11 +4,14 @@ import {
   CommandId,
   EventId,
   MessageId,
+  type OrchestrationEvent,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
@@ -184,6 +187,117 @@ it.layer(NodeServices.layer)("thread.turn.start onlyIfUnchanged", (it) => {
         readModel: withUserMessage,
       });
       expect(Array.isArray(planned) ? planned.length : 1).toBeGreaterThan(0);
+    }),
+  );
+
+  // Parking or removing the thread leaves both cursors untouched, so the guard
+  // must reject on lifecycle state too: a retry must never un-park a thread.
+  const parkedEvents: ReadonlyArray<{
+    readonly name: string;
+    // Distributes over the event union so each row keeps its payload type.
+    readonly event: OrchestrationEvent extends infer E
+      ? E extends OrchestrationEvent
+        ? Pick<E, "type" | "payload">
+        : never
+      : never;
+  }> = [
+    {
+      name: "settled",
+      event: {
+        type: "thread.settled",
+        payload: { threadId, settledAt: createdAt, updatedAt: createdAt },
+      },
+    },
+    {
+      name: "snoozed",
+      event: {
+        type: "thread.snoozed",
+        payload: {
+          threadId,
+          snoozedUntil: "2099-01-01T00:00:00.000Z",
+          snoozedAt: createdAt,
+          updatedAt: createdAt,
+        },
+      },
+    },
+    {
+      name: "archived",
+      event: {
+        type: "thread.archived",
+        payload: { threadId, archivedAt: createdAt, updatedAt: createdAt },
+      },
+    },
+    {
+      name: "deleted",
+      event: {
+        type: "thread.deleted",
+        payload: { threadId, deletedAt: createdAt },
+      },
+    },
+  ];
+
+  it.effect.each(parkedEvents)(
+    "rejects the turn after the thread was $name in the meantime",
+    ({ event }) =>
+      Effect.gen(function* () {
+        const readModel = yield* readModelWithThread;
+        const parked = yield* projectEvent(readModel, {
+          sequence: 3,
+          eventId: EventId.make(`event-${event.type}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make(`command-${event.type}`),
+          causationEventId: null,
+          correlationId: CommandId.make(`command-${event.type}`),
+          metadata: {},
+          ...event,
+        });
+        const error = yield* Effect.flip(
+          decideOrchestrationCommand({
+            command: {
+              ...serverTurn,
+              onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: null },
+            },
+            readModel: parked,
+          }),
+        );
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      }),
+  );
+
+  it.effect("still starts the turn once the snooze has expired", () =>
+    Effect.gen(function* () {
+      const readModel = yield* readModelWithThread;
+      const expiredSnooze = yield* projectEvent(readModel, {
+        sequence: 3,
+        eventId: EventId.make("event-thread.snoozed"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.snoozed",
+        occurredAt: createdAt,
+        commandId: CommandId.make("command-thread.snoozed"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-thread.snoozed"),
+        metadata: {},
+        payload: {
+          threadId,
+          // The test clock sits at the epoch; this lapses one second in.
+          snoozedUntil: "1970-01-01T00:00:01.000Z",
+          snoozedAt: createdAt,
+          updatedAt: createdAt,
+        },
+      });
+      yield* TestClock.adjust(Duration.seconds(2));
+      const planned = yield* decideOrchestrationCommand({
+        command: {
+          ...serverTurn,
+          onlyIfUnchanged: { latestTurnId: null, latestUserMessageAt: null },
+        },
+        readModel: expiredSnooze,
+      });
+      const events = Array.isArray(planned) ? planned : [planned];
+      expect(events.map((event) => event.type)).toContain("thread.turn-start-requested");
     }),
   );
 });
