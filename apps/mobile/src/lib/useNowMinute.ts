@@ -38,6 +38,10 @@ function startTimer(): void {
 
 function subscribe(listener: () => void): () => void {
   if (listeners.size === 0) {
+    // A boundary may have flipped since the render-time getSnapshot read;
+    // refresh before the timer starts so the first tick cannot serve a
+    // whole stale minute.
+    nowMs = currentMinuteMs();
     startTimer();
   }
   listeners.add(listener);

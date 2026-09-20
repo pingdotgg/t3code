@@ -7944,6 +7944,31 @@ export default function ChatView(props: ChatViewProps) {
       abortQueuedReplay();
       return;
     }
+    // Uploads and the dock transition give the quota window time to be spent
+    // by another client or an earlier send; re-read it before dispatching.
+    for (const selection of multipleModelSelections ?? [ctxSelectedModelSelection]) {
+      const provider = providerInstanceEntries.find(
+        (entry) => entry.instanceId === selection.instanceId,
+      );
+      const usageBlock =
+        provider === undefined
+          ? null
+          : usageLimitSendBlock(provider.snapshot, selection.model, Date.now());
+      if (provider !== undefined && usageBlock !== null) {
+        sendInFlightRef.current = false;
+        setThreadError(
+          threadIdForSend,
+          formatUsageLimitSendBlock(provider.displayName, usageBlock, Date.now(), {
+            providerLocked: lockedProvider !== null,
+          }),
+        );
+        setDockedDraftHeroThreadKey((currentThreadKey) =>
+          currentThreadKey === activeThreadKey ? null : currentThreadKey,
+        );
+        abortQueuedReplay();
+        return;
+      }
+    }
     beginLocalDispatch({
       preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
       submissionIntent: resolvedSubmissionIntent,
