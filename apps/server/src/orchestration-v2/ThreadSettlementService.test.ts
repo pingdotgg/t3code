@@ -209,6 +209,94 @@ describe("threadHasQueuedTurnStart", () => {
 });
 
 describe("resolveAutoSettlementAt", () => {
+  it.each(["manual", "created", "agent", "stack", "stack-dismissed"] as const)(
+    "handles %s links for inactivity after work resumes",
+    (source) => {
+      const input = {
+        thread: shell({
+          latestUserMessageAt: at(-4 * DAY_MS),
+          pullRequests: [
+            {
+              host: "example.test",
+              repository: "owner/repo",
+              number: 1,
+              url: "https://example.test/owner/repo/pull/1",
+              source,
+              linkedAt: DateTime.formatIso(at(-10 * DAY_MS)),
+              snapshot: {
+                state: "closed",
+                title: "PR",
+                headBranch: "feature",
+                baseBranch: "main",
+                isDraft: false,
+                closedAt: DateTime.formatIso(at(-5 * DAY_MS)),
+                updatedAt: DateTime.formatIso(at(-5 * DAY_MS)),
+                syncedAt: DateTime.formatIso(at(-1)),
+              },
+              stack: null,
+            },
+          ],
+        }),
+        pullRequest: null,
+        nowMs: NOW_MS,
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: true,
+        autoSettleScope: "without-pr" as const,
+      };
+      expect(resolveAutoSettlementAt(input)).toEqual(
+        source === "stack-dismissed" ? at(-4 * DAY_MS) : null,
+      );
+      expect(resolveAutoSettlementAt({ ...input, autoSettleScope: "all" })).toEqual(
+        at(-4 * DAY_MS),
+      );
+    },
+  );
+
+  it.each(["linkedPullRequest", "branchPullRequest"] as const)(
+    "excludes %s from inactivity while preserving merge and close rules",
+    (link) => {
+      const input = {
+        thread: shell({
+          latestUserMessageAt: at(-4 * DAY_MS),
+          [link]: {
+            projectId: ProjectId.make("project-1"),
+            repository: "owner/repo",
+            number: 1,
+            url: "https://example.test/owner/repo/pull/1",
+          },
+        }),
+        pullRequest: null,
+        nowMs: NOW_MS,
+        autoSettleAfterDays: 3,
+        autoSettleOnMerge: false,
+        autoSettleScope: "without-pr" as const,
+      };
+      expect(resolveAutoSettlementAt(input)).toBeNull();
+      expect(resolveAutoSettlementAt({ ...input, autoSettleScope: "all" })).toEqual(
+        at(-4 * DAY_MS),
+      );
+      expect(
+        resolveAutoSettlementAt({
+          ...input,
+          pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        }),
+      ).toBeNull();
+      expect(
+        resolveAutoSettlementAt({
+          ...input,
+          autoSettleOnMerge: true,
+          pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        }),
+      ).toEqual(at(-4 * DAY_MS));
+      expect(
+        resolveAutoSettlementAt({
+          ...input,
+          pullRequest: { state: "closed", closedAt: DateTime.formatIso(at(-1)) },
+        }),
+      ).toEqual(at(-4 * DAY_MS));
+    },
+  );
+
   it("uses the latest activity time when the inactivity window elapses", () => {
     const idle = shell({
       latestUserMessageAt: at(-4 * DAY_MS),
@@ -287,6 +375,22 @@ const PROJECT_ID = ProjectId.make("settlement-project");
 const LINKED_PROJECT_ID = ProjectId.make("linked-settlement-project");
 
 describe("autoSettlementSettingsKey", () => {
+  it("includes environment and project inactivity scope", () => {
+    const base = autoSettlementSettingsKey(DEFAULT_SERVER_SETTINGS);
+    expect(
+      autoSettlementSettingsKey({
+        ...DEFAULT_SERVER_SETTINGS,
+        sidebarAutoSettleScope: "without-pr",
+      }),
+    ).not.toBe(base);
+    expect(
+      autoSettlementSettingsKey({
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleScope: "without-pr" } },
+      }),
+    ).not.toBe(base);
+  });
+
   it("distinguishes a project that inherits the threshold from one that disables it", () => {
     const inherits = autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
@@ -555,6 +659,69 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect("excludes saved PR links from inactivity and rechecks when scope changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleScope: "without-pr" },
+          snapshot: makeSnapshot([
+            makeThread("open-linked", {
+              linkedPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+              },
+            }),
+            makeThread("open-branch", {
+              branch: "open",
+              branchPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+              },
+            }),
+            makeThread("failed-lookup", {
+              linkedPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 43,
+                url: "https://example.test/owner/repository/pull/43",
+              },
+            }),
+            makeThread("no-pr-branch", { branch: "unlinked" }),
+            makeThread("exploration"),
+          ]),
+          pullRequestSummary: (reference) =>
+            reference.number === 43
+              ? Effect.die(new Error("host unavailable"))
+              : Effect.succeed(makePullRequestSummary({ ...reference, state: "open" })),
+          branchPullRequest: () =>
+            Effect.die(new Error("inactivity should not look up unlinked branches")),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId).sort(),
+            [ThreadId.make("exploration"), ThreadId.make("no-pr-branch")],
+          );
+          yield* fixture.updateSettings({ sidebarAutoSettleScope: "all" });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.ok(
+            (yield* Ref.get(fixture.commands)).some(({ threadId }) => threadId === "open-linked"),
+          );
+          assert.ok(
+            (yield* Ref.get(fixture.commands)).some(({ threadId }) => threadId === "failed-lookup"),
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {

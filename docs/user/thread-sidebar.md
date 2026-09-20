@@ -104,18 +104,23 @@ sending an answer or restarting the agent.
 By default, environments settle inactive threads after three days and settle
 threads whose pull request merged. A closed pull request can also settle an idle
 thread. Work in progress, pending questions or approvals, and live background work
-prevent automatic settlement. An open pull request does not prevent inactivity
-settlement, but an old closed or merged pull request does not settle work you
-resumed after it closed.
+prevent automatic settlement. An old closed or merged pull request does not
+settle work you resumed after it closed.
 
 To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
 choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
 **Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
 is disabled.
 
-Change these rules in **Settings → General** on web and desktop, or **Settings → Thread behavior** on mobile.
-They continue to run when your apps are closed. On web and desktop, choose an environment at the
-top to change only its rules, or **All environments** to update connected environments together.
+For inactivity settlement, choose **All threads**, **Threads without a PR**,
+or **Off** in **Settings → General**. Threads without a PR excludes threads with
+PRs linked manually (including older links), created through the app, linked by
+an agent, associated through a stack, or detected from the branch. Dismissed
+stack PRs do not count. Merge and close settlement still follows the PR rules.
+
+On mobile, these rules are in **Settings → Thread behavior**.
+These rules continue to run when your apps are closed. On web and desktop, choose an environment at the top to change only
+its rules, or **All environments** to update connected environments together.
 Mixed values show where the selected environments disagree. Mobile applies these
 rules to connected environments that support shared settings. Offline environments
 and older servers keep their previous values. Changing a rule does not reopen
