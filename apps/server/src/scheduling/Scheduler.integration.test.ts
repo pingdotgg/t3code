@@ -104,14 +104,9 @@ it.effect.each(["on time", "after restart"])(
             ),
         }),
         Layer.mock(ProjectionStoreV2)({
-          getShellSnapshot: () =>
+          getLimitRecoveryCandidates: () =>
             Ref.get(current).pipe(
-              Effect.map((shell) => ({
-                schemaVersion: 2,
-                snapshotSequence: 0,
-                threads: [shell],
-                archivedThreads: [],
-              })),
+              Effect.map((shell) => (shell.status === "failed" ? [shell] : [])),
             ),
         }),
         Layer.mock(ServerSettingsService)({ getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) }),

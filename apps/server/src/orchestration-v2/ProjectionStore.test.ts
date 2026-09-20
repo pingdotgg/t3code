@@ -1,6 +1,7 @@
 import { assert, it, vi } from "@effect/vitest";
 import {
   EventId,
+  CommandId,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -2003,6 +2004,29 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           );
         }
         assert.isNull(shells.threads.find((row) => row.id === otherThreadId)!.lastErrorClass);
+        const candidates = yield* store.getLimitRecoveryCandidates({
+          now,
+          autoResume: true,
+          snooze: false,
+        });
+        const candidate = candidates.find((row) => row.id === threadId);
+        if (lastErrorClass === "usage_limit") {
+          assert.deepEqual(candidate, {
+            id: sqlShell.id,
+            status: sqlShell.status,
+            lastErrorClass: sqlShell.lastErrorClass,
+            usageLimitResetAt: sqlShell.usageLimitResetAt,
+            latestRunId: sqlShell.latestRunId,
+            latestRunCompletedAt: sqlShell.latestRunCompletedAt,
+            updatedAt: sqlShell.updatedAt,
+            archivedAt: sqlShell.archivedAt,
+            settledOverride: sqlShell.settledOverride,
+            pendingRuntimeRequest: null,
+            limitRecovery: sqlShell.limitRecovery,
+            snoozedUntil: sqlShell.snoozedUntil,
+          });
+        } else assert.isUndefined(candidate);
+        assert.isUndefined(candidates.find((row) => row.id === otherThreadId));
       });
       yield* store.apply({
         id: EventId.make("event:limit-shell:error"),
@@ -2013,6 +2037,87 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       });
       yield* applyRun("failed");
       yield* assertSummary("Plan limit reached.", "usage_limit");
+      const sql = yield* SqlClient.SqlClient;
+      const [originalRow] = yield* sql<{
+        payload_json: string;
+      }>`SELECT payload_json FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}`;
+      for (const [field, value] of [
+        ["archivedAt", DateTime.formatIso(now)],
+        ["settledOverride", "settled"],
+      ]) {
+        yield* sql`UPDATE orchestration_v2_projection_threads
+          SET payload_json = json_set(payload_json, ${`$.${field}`}, ${value})
+          WHERE thread_id = ${threadId}`;
+        assert.isUndefined(
+          (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
+            (row) => row.id === threadId,
+          ),
+        );
+        yield* sql`UPDATE orchestration_v2_projection_threads
+          SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
+      }
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = ${DateTime.formatIso(now)} WHERE thread_id = ${threadId}`;
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = ${threadId}`;
+      const recoveryOptions = { now, autoResume: false, snooze: false };
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates(recoveryOptions)).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      const reset = DateTime.makeUnsafe(limitItem.failure.resetAt);
+      const recovery = {
+        runId: original.id,
+        resetAt: limitItem.failure.resetAt,
+        autoResume: true,
+        requestId: CommandId.make("recovery:choice"),
+      };
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.limitRecovery', json(${encodeUnknownJsonString(recovery)}))
+        WHERE thread_id = ${threadId}`;
+      // Armed future retries need no state decoding until they become due.
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, autoResume: true })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      const due = (yield* store.getLimitRecoveryCandidates({
+        ...recoveryOptions,
+        now: reset,
+      })).find((row) => row.id === threadId)!;
+      assert.deepEqual(due.limitRecovery, recovery);
+      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests
+        (runtime_request_id, thread_id, node_id, kind, status, created_at, payload_json)
+        VALUES ('limit-shell:pending-request', ${threadId}, ${original.rootNodeId}, 'approval', 'pending', ${DateTime.formatIso(now)}, '{}')`;
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, now: reset })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      yield* sql`DELETE FROM orchestration_v2_projection_runtime_requests WHERE runtime_request_id = 'limit-shell:pending-request'`;
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.snoozedUntil', ${DateTime.formatIso(DateTime.add(reset, { minutes: 1 }))})
+        WHERE thread_id = ${threadId}`;
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, now: reset })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.snoozedUntil', NULL, '$.limitRecovery.autoResume', json('false'))
+        WHERE thread_id = ${threadId}`;
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({
+          ...recoveryOptions,
+          now: reset,
+          autoResume: true,
+        })).find((row) => row.id === threadId),
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${originalRow!.payload_json} WHERE thread_id = ${threadId}`;
       const session = {
         id: ProviderSessionId.make("session:limit-shell:shared"),
         driver,

@@ -214,6 +214,7 @@ it.effect(
         ProjectionStoreV2,
         ProjectionStoreV2.of({
           apply: () => Effect.void,
+          getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
           getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
