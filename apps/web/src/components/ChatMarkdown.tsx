@@ -863,7 +863,10 @@ function MarkdownDetails({
         <span>{summary}</span>
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <div className="pb-3 ps-6 text-foreground/80" data-markdown-details-content="">
+        <div
+          className="pb-3 ps-6 text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)]"
+          data-markdown-details-content=""
+        >
           {content}
         </div>
       </CollapsiblePanel>
@@ -3332,7 +3335,7 @@ function ChatMarkdown({
     <div
       ref={markdownRef}
       className={cn(
-        "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80 [overflow-wrap:anywhere] [word-break:break-word]",
+        "chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/[calc(80%+var(--appearance-contrast-boost)/5)] [overflow-wrap:anywhere] [word-break:break-word]",
         className,
       )}
       // Gates the fade-in for blocks that arrive while the response streams.
