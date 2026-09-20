@@ -445,7 +445,7 @@ describe("buildThreadFeed", () => {
       );
       expect(failedPresentation.map((entry) => entry.type)).toEqual([
         "activity-group",
-        "work-toggle",
+        "activity-group",
       ]);
       expect(
         failedPresentation[0]?.type === "activity-group"
@@ -1836,3 +1836,49 @@ it("previews a settled thought in its collapsed header and labels its expanded h
   if (detail?.type !== "activity-group") throw new Error("Expected full thought");
   expect(detail.activities[0]?.detail).toBe(thought.text);
 });
+
+it.each(["provider_error", "usage_limit"] as const)(
+  "keeps a historical %s failure and preceding work visible without disclosures",
+  (failureClass) => {
+    const at = "2026-06-20T00:00:03.000Z";
+    const error: OrchestrationV2TurnItem = {
+      ...base("failure", at, 2),
+      type: "error",
+      status: "failed",
+      failure: {
+        class: failureClass,
+        message: "The provider stopped this turn.\nRetry later.",
+        code: null,
+        retryable: true,
+      },
+    };
+    const command: OrchestrationV2TurnItem = {
+      ...base("command", "2026-06-20T00:00:02.000Z", 1),
+      type: "command_execution",
+      input: "pwd",
+      output: "",
+      exitCode: 0,
+    };
+    const feed = deriveThreadFeedPresentation(
+      buildThreadFeed([projected(userMessage(), 0), projected(command, 1), projected(error, 2)]),
+      { runId: RunId.make("newer-run"), status: "completed", startedAt: at, completedAt: at },
+      new Set(),
+    );
+    expect(feed.some((entry) => entry.type === "run-fold" || entry.type === "work-toggle")).toBe(
+      false,
+    );
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(activities.map((activity) => activity.projectedItem.item.id)).toEqual([
+      "command",
+      "failure",
+    ]);
+    expect(activities.at(-1)).toMatchObject({
+      detail: error.failure.message,
+      createdAt: at,
+      canExpand: false,
+      prominent: true,
+    });
+  },
+);

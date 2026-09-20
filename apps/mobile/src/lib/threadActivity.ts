@@ -669,13 +669,13 @@ function toFeedActivity(
     attemptId,
     summary,
     detail,
-    canExpand: true,
+    canExpand: !(item.type === "error" && item.status === "failed"),
     getFullDetail,
     getCopyText,
     icon: workEntry.toolSurface ?? itemIcon(item),
     logo: toolPresentation?.logo ?? null,
     toolLike: itemIsToolLike(item),
-    prominent: itemIsProminent(item),
+    prominent: itemIsProminent(item) || (item.type === "error" && item.status === "failed"),
     status:
       item.type === "error" && item.failure.class === "usage_limit"
         ? itemStatus(item)
@@ -821,6 +821,28 @@ interface ThreadFeedRunFold {
   readonly label: string;
 }
 
+function failedFeedRunIds(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+  latestRun: ThreadFeedLatestRun | null,
+) {
+  const failed = new Set<RunId>();
+  if (latestRun?.status === "failed") failed.add(latestRun.runId);
+  for (const entry of feed) {
+    if (entry.type !== "activity-group") continue;
+    for (const activity of entry.activities) {
+      const item = activity.projectedItem.item;
+      if (
+        item.type === "error" &&
+        item.status === "failed" &&
+        item.parentItemId === null &&
+        item.runId !== null
+      )
+        failed.add(item.runId);
+    }
+  }
+  return failed;
+}
+
 function deriveThreadFeedRunFolds(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
@@ -873,11 +895,13 @@ function deriveThreadFeedRunFolds(
   }
 
   const activeRunId = unsettledRunId(latestRun);
+  const failedRunIds = failedFeedRunIds(feed, latestRun);
   const foldsByAnchorId = new Map<string, ThreadFeedRunFold>();
   for (const [runId, group] of groupsByRunId) {
     if (
       runId === activeRunId ||
       interruptedRunIds.has(runId) ||
+      failedRunIds.has(runId) ||
       group.entries.some((entry) => entry.type === "message" && entry.message.streaming)
     ) {
       continue;
@@ -958,6 +982,7 @@ export function deriveThreadFeedPresentation(
     (entry) =>
       entry.type !== "run-fold" && entry.type !== "work-toggle" && entry.type !== "thinking",
   );
+  const failedRunIds = failedFeedRunIds(sourceFeed, latestRun);
   const activeTailGroup = sourceFeed.at(-1);
   const foldsByAnchorId = deriveThreadFeedRunFolds(sourceFeed, latestRun);
   const activeRunId = unsettledRunId(latestRun);
@@ -1001,6 +1026,22 @@ export function deriveThreadFeedPresentation(
       result.push(row);
     }
     if (!collapsedEntryIds.has(entry.id)) {
+      if (
+        entry.type === "activity-group" &&
+        entry.runId !== null &&
+        failedRunIds.has(entry.runId)
+      ) {
+        for (const activity of entry.activities) {
+          result.push({
+            type: "activity-group",
+            id: activity.id,
+            createdAt: activity.createdAt,
+            runId: activity.runId,
+            activities: [activity],
+          });
+        }
+        continue;
+      }
       appendPresentedFeedEntry(
         result,
         entry,

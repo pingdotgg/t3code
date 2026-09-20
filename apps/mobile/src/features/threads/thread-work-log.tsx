@@ -876,6 +876,39 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   },
 ) {
   const { row, expanded } = props;
+  const failureItem = row.projectedItem.item;
+  if (failureItem.type === "error" && failureItem.status === "failed") {
+    const warning = failureItem.failure.class === "usage_limit";
+    const timestamp = new Date(row.createdAt);
+    return (
+      <View className="py-1">
+        <View className="flex-row items-center gap-1.5">
+          <WorkLogIconSlot>
+            <WorkLogIcon
+              icon="exclamationmark.circle"
+              color={props.iconSubtleColor}
+              colorClassName={warning ? "accent-warning-foreground" : "accent-danger-foreground"}
+            />
+          </WorkLogIconSlot>
+          <WorkLogLabel tone={warning ? "warning" : "danger"}>{row.summary}</WorkLogLabel>
+          <Text
+            accessibilityLabel={timestamp.toLocaleString()}
+            className="text-xs text-foreground-subtle"
+          >
+            {timestamp.toLocaleString(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </Text>
+        </View>
+        <Text selectable className="ml-7 text-sm text-foreground">
+          {failureItem.failure.message}
+        </Text>
+      </View>
+    );
+  }
   const canExpand = row.canExpand;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
   const fullDetail = expanded && !reasoning ? row.getFullDetail() : null;
