@@ -103,6 +103,8 @@ import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
+const isDesktopBuildManifestRestoreError = Schema.is(DesktopBuildManifestRestoreError);
+
 // A minimal stand-in for the Linux CLI release archive: one top-level
 // directory named after the archive stem holding the executable, the web
 // client, and the runtime externals with node-pty built from source.
@@ -363,10 +365,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
         if (buildFails) {
           assert.instanceOf(failure, BuildCommandFailedError);
-          assert.isTrue(logs.flat().some(Schema.is(DesktopBuildManifestRestoreError)));
+          assert.isTrue(logs.flat().some(isDesktopBuildManifestRestoreError));
         } else {
           assert.instanceOf(failure, DesktopBuildManifestRestoreError);
-          if (Schema.is(DesktopBuildManifestRestoreError)(failure)) {
+          if (isDesktopBuildManifestRestoreError(failure)) {
             assert.equal(failure.failures[0]?.filePath, failedPath);
             assert.strictEqual(failure.failures[0]?.cause, writeFailure);
           }
