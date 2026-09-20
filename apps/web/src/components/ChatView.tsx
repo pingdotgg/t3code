@@ -8713,6 +8713,10 @@ export default function ChatView(props: ChatViewProps) {
     phase,
     queueBlockedByPendingRequest,
     queueSendGate,
+    // A send held at the quota gate retries when the window resets (minute
+    // tick) or when a probe publishes fresh usage (snapshot identity).
+    nowMinute,
+    providerInstanceEntries,
   ]);
 
   // The row handlers are read from refs at call-time so their identity stays
