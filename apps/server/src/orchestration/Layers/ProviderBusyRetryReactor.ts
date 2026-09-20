@@ -248,8 +248,10 @@ const make = Effect.gen(function* () {
         ),
       scope: yield* Effect.scope,
     });
+    // Subscribe before forking so an event published while the consumer parks is not lost.
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+      Stream.runForEach(domainEvents, (event) => {
         if (event.type !== "thread.session-set") {
           return Effect.void;
         }
