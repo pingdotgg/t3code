@@ -409,10 +409,9 @@ function toolDetailTextLooksLikeFailure(text: string): boolean {
     (normalized.includes("is not recognized") && normalized.includes("the term '")) ||
     normalized.includes("is not recognized as the name of a cmdlet") ||
     normalized.includes("a parameter cannot be found that matches parameter name") ||
-    (normalized.includes("exit code") &&
-      (/<exited with exit code\s+[1-9]\d*\s*>/i.test(text) ||
-        /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
-        /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text)))
+    /<exited with exit code\s+[1-9]\d*\s*>/i.test(text) ||
+    /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
+    /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text)
   );
 }
 
