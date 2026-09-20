@@ -92,7 +92,7 @@ function TaskSummary({
         >
           {progress.completedSteps}/{progress.totalSteps}
         </ComposerBanner.Count>
-        <TaskSegments className="hidden w-20 sm:flex" steps={steps} />
+        <TaskSegments className="hidden w-20 @min-[560px]:flex" steps={steps} />
         <ComposerBanner.ToggleIcon expanded={expanded} />
       </ComposerBanner.Actions>
     </>

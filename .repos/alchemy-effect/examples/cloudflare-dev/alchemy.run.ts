@@ -76,7 +76,7 @@ const AsyncWorker = (deps: {
           className: "QueueMessages",
         }),
         MY_VARIABLE: "my-variable-abc123",
-        MY_SECRET: Config.redacted("MY_SECRET").pipe(
+        MY_SECRET: Config.Redacted("MY_SECRET").pipe(
           Config.withDefault(Redacted.make("my-secret-abc123")),
         ),
         // The worker's own URL, injected as a plain-text binding (`self_url`).
@@ -122,7 +122,6 @@ const MediaWorker = Effect.gen(function* () {
   });
   const worker = yield* Cloudflare.Worker("MediaWorker", {
     main: "./src/MediaWorker.ts",
-    compatibility: { flags: ["nodejs_compat"] },
     env: {
       BROWSER: Cloudflare.Browser("BROWSER"),
       IMAGES: Cloudflare.Images.Images("IMAGES"),

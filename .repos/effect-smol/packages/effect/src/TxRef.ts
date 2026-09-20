@@ -17,7 +17,7 @@ import { pipeArguments } from "./Pipeable.ts"
 import type { Pipeable } from "./Pipeable.ts"
 import type { NoInfer } from "./Types.ts"
 
-const TypeId = "~effect/transactions/TxRef"
+const TypeId = "~effect/TxRef"
 
 /**
  * TxRef is a transactional value, it can be read and modified within the body of a transaction.

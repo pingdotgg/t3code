@@ -31,7 +31,7 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import type { ImageSourceLike } from "../ECR/ImageSource.ts";
 import {
-  flociSidecarEntry,
+  flociProvidersUrl,
   makeDevWatchProvider,
 } from "../Local/DevWatchProvider.ts";
 import { imageSourceTrigger, restartFamilyTasks } from "./EcsDevWatch.ts";
@@ -40,7 +40,7 @@ import { Task, TaskProvider, type TaskProps } from "./Task.ts";
 export const FlociTaskProvider = () =>
   makeDevWatchProvider<Task, TaskProps, Task["Attributes"]>(
     Task,
-    flociSidecarEntry(),
+    flociProvidersUrl(),
     {
       liveProvider: () => TaskProvider(),
       // The restart surface of the watch loop: everything that changes WHAT

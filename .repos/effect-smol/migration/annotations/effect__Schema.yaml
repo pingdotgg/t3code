@@ -27,7 +27,7 @@ effect/Schema#Annotations.Doc:
   note: The v3 helper/protocol type was removed by the v4 Schema model rewrite. Use the public v4 constructor and infer its result types instead.
 effect/Schema#Annotations.Filter:
   replacement: Schema.Annotations.Filter
-  note: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
+  note: "Use the v4 filter annotation shape. arbitraryConstraint uses Schema.Annotations.ToArbitrary.FilterConstraint; the earlier v4 ToArbitrary.Constraint name was removed."
 effect/Schema#Annotations.GenericSchema:
   replacement: none
   note: The v3 helper/protocol type was removed by the v4 Schema model rewrite. Use the public v4 constructor and infer its result types instead.
@@ -312,7 +312,7 @@ effect/Schema#EndsWithSchemaId:
   note: The v3 schema-id symbol was removed. Use the corresponding public v4 constructor/check instead of inspecting schema ids.
 effect/Schema#Enums:
   replacement: Schema.Enum
-  note: Rename the enum constructor and pass the enum object.
+  note: "Rename the enum constructor and pass the enum object. Numeric members must be finite; NaN and positive or negative Infinity throw at construction."
 effect/Schema#EnumsDefinition:
   replacement: none
   note: Compared the v3 declaration with v4 Schema and the schema migration guide; no direct public replacement remains. Rebuild the behavior from public v4 codecs/getters where still required.
@@ -660,7 +660,7 @@ effect/Schema#MinLengthSchemaId:
   note: The v3 schema-id symbol was removed. Use the corresponding public v4 constructor/check instead of inspecting schema ids.
 effect/Schema#multipleOf:
   replacement: Schema.isMultipleOf
-  note: Rename the predicate to `isMultipleOf` and apply it with `Schema.check` or a schema's `check` method.
+  note: "Rename the predicate to `isMultipleOf` and apply it with `Schema.check` or a schema's `check` method. The divisor must be finite and nonzero or construction throws RangeError; negative divisors are normalized to their absolute value."
 effect/Schema#MultipleOfSchemaId:
   replacement: none
   note: The v3 schema-id symbol was removed. Use the corresponding public v4 constructor/check instead of inspecting schema ids.
@@ -1155,10 +1155,10 @@ effect/Schema#TaggedStruct:
   note: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
 effect/Schema#TemplateLiteral:
   replacement: Schema.TemplateLiteral(parts)
-  note: Pass template literal parts as one array.
+  note: Pass template literal parts as one array. Parts must not contain encodings, including inside unions and nested templates. Transformations whose decoded and encoded types are equal are also rejected. Use Schema.TemplateLiteralParser(parts) for transformed parts.
 effect/Schema#TemplateLiteralParser:
-  replacement: Schema.TemplateLiteralParser(schema.parts)
-  note: Create the template schema first and pass its `parts` property.
+  replacement: Schema.TemplateLiteralParser(parts)
+  note: Pass template literal parts directly as one array. Transformed parts are supported, and their decoding and encoding services are required in the corresponding direction.
 effect/Schema#TimeZone:
   replacement: Schema.TimeZoneFromString
   note: Use the string codec; v4 `TimeZone` is the self schema.
@@ -1190,8 +1190,8 @@ effect/Schema#transformLiterals:
   replacement: Schema.Literals(fromValues).transform(toValues)
   note: Split the pairs into parallel arrays and use `Literals(...).transform(...)`.
 effect/Schema#transformOrFail:
-  replacement: "schema.pipe(Schema.decodeTo(target, { decode: SchemaGetter.transformOrFail(...), encode: ... }))"
-  note: Replace the constructor with `decodeTo` and fallible `SchemaGetter` transformations.
+  replacement: "schema.pipe(Schema.decodeTo(target, { decode: SchemaGetter.transformEffect(...), encode: ... }))"
+  note: Replace the constructor with `decodeTo` and effectful `SchemaGetter` transformations.
 effect/Schema#Trim:
   replacement: Schema.Trim
   note: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
@@ -1278,7 +1278,7 @@ effect/Schema#Union:
   note: Pass union members as one array.
 effect/Schema#UniqueSymbolFromSelf:
   replacement: Schema.UniqueSymbol
-  note: Use the v4 unique-symbol schema constructor.
+  note: "Use the v4 unique-symbol schema constructor. JSON encoding is available only for globally registered symbols and uses the exact String(symbol) value; local symbols cannot be encoded as JSON."
 effect/Schema#Unknown:
   replacement: Schema.Unknown
   note: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.

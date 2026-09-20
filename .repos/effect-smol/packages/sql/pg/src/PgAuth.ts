@@ -10,7 +10,8 @@
  * `SCRAM-SHA-256-PLUS` is not implemented: channel binding needs the TLS
  * socket, which this codec does not own. Passwords are used as UTF-8 without
  * SASLprep normalisation, so non-ASCII passwords that require normalisation
- * are not supported.
+ * are not supported. Server iteration counts above 1,000,000 are rejected
+ * before password derivation.
  *
  * @since 4.0.0
  */
@@ -44,6 +45,8 @@ const result = <A>(evaluate: () => A): Result.Result<A, AuthError> => {
 
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder("utf-8", { fatal: true })
+/** Bounds synchronous PBKDF2 work requested by an untrusted server. */
+const maxScramIterations = 1_000_000
 
 const bytesOf = (value: Uint8Array): Uint8Array => Uint8Array.from(value)
 
@@ -99,6 +102,12 @@ const md5PasswordUnsafe = (options: {
   return `md5${outer}`
 }
 
+/**
+ * Computes the legacy PostgreSQL MD5 password response.
+ *
+ * @category authentication
+ * @since 4.0.0
+ */
 export const md5Password = (options: {
   readonly user: string
   readonly password: string
@@ -198,6 +207,12 @@ const scramInitUnsafe = (options: {
   }
 }
 
+/**
+ * Creates the first SCRAM-SHA-256 client message.
+ *
+ * @category SCRAM
+ * @since 4.0.0
+ */
 export const scramInit = (options: {
   readonly password: string
   readonly nonce: string
@@ -230,7 +245,11 @@ const scramContinueUnsafe = (
   const salt = fromBase64(saltText, "s")
   const iterationText = attribute(attributes, "i")
   const iterations = Number(iterationText)
-  if (!/^[1-9]\d*$/.test(iterationText) || !Number.isSafeInteger(iterations) || iterations > 0x7fffffff) {
+  if (
+    !/^[1-9]\d*$/.test(iterationText) ||
+    !Number.isSafeInteger(iterations) ||
+    iterations > maxScramIterations
+  ) {
     return fail(`Invalid SCRAM iteration count: ${iterationText}`)
   }
 
@@ -255,6 +274,12 @@ const scramContinueUnsafe = (
   }
 }
 
+/**
+ * Processes the server's SCRAM challenge and creates the client proof.
+ *
+ * @category SCRAM
+ * @since 4.0.0
+ */
 export const scramContinue = (
   state: ScramFirst,
   challenge: Uint8Array
@@ -281,6 +306,12 @@ const scramFinishUnsafe = (state: ScramFinal, challenge: Uint8Array): void => {
   }
 }
 
+/**
+ * Verifies the server's final SCRAM message.
+ *
+ * @category SCRAM
+ * @since 4.0.0
+ */
 export const scramFinish = (
   state: ScramFinal,
   challenge: Uint8Array

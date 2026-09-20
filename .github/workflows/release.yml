@@ -311,15 +311,28 @@ jobs:
             args:
               - --filter=t3code-relay...
 
-      - id: relay_state
-        name: Read production relay tracing config
+      # The deployed stack's outputs, read from Alchemy's state store without
+      # planning or applying. Redacted values are persisted as
+      # {"__redacted__": "<value>"}; the token is masked before it is written.
+      - name: Read production relay tracing config
         shell: bash
+        working-directory: infra/relay
         run: |
-          vp run --filter t3code-relay deploy \
-            --stage prod \
-            --read-state \
-            --github-output \
-            --github-env-file "$RUNNER_TEMP/relay-client-tracing.env"
+          set -euo pipefail
+          output="$(npx alchemy state read T3CodeRelay/prod/output --no-input)"
+          field() {
+            jq -er --arg key "$1" '.[$key] | if type == "object" then .__redacted__ else . end | select(. != null and . != "")' <<<"$output" \
+              || { echo "Relay stack output is missing $1" >&2; exit 1; }
+          }
+          url="$(field clientTracingUrl)"
+          dataset="$(field clientTracingDataset)"
+          token="$(field clientTracingToken)"
+          echo "::add-mask::$token"
+          {
+            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=$url"
+            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET=$dataset"
+            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=$token"
+          } > "$RUNNER_TEMP/relay-client-tracing.env"
 
       - name: Upload relay client tracing config
         uses: actions/upload-artifact@v7
