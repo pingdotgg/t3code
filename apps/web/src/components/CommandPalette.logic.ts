@@ -72,6 +72,8 @@ export interface CommandPaletteUiState {
   readonly open: boolean;
   readonly mode: SearchOverlayMode;
   readonly openIntent: CommandPaletteOpenIntent | null;
+  readonly parentSearch?: CommandPaletteReturnContext;
+  readonly restoredSearch?: CommandPaletteReturnContext;
 }
 
 export type CommandPaletteUiAction =
@@ -85,7 +87,13 @@ export type CommandPaletteUiAction =
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "OpenChangeTheme" }
-  | { readonly _tag: "ClearOpenIntent" };
+  | { readonly _tag: "ClearOpenIntent" }
+  | {
+      readonly _tag: "OpenChildSearch";
+      readonly mode: "files" | "content";
+      readonly context: CommandPaletteReturnContext;
+    }
+  | { readonly _tag: "BackToCommand" };
 
 export function reduceCommandPaletteUiState(
   state: CommandPaletteUiState,
@@ -95,11 +103,22 @@ export function reduceCommandPaletteUiState(
     case "SetOpen":
       return action.open
         ? { open: true, mode: "command", openIntent: state.openIntent }
-        : { ...state, open: false, openIntent: null };
+        : { open: false, mode: state.mode, openIntent: null };
     case "ToggleMode":
       return state.open && state.mode === action.mode
-        ? { ...state, open: false, openIntent: null }
+        ? { open: false, mode: state.mode, openIntent: null }
         : { open: true, mode: action.mode, openIntent: null };
+    case "OpenChildSearch":
+      return { open: true, mode: action.mode, openIntent: null, parentSearch: action.context };
+    case "BackToCommand":
+      return state.open && state.mode !== "command"
+        ? {
+            open: true,
+            mode: "command",
+            openIntent: null,
+            ...(state.parentSearch ? { restoredSearch: state.parentSearch } : {}),
+          }
+        : state;
     case "OpenSearch":
       return {
         open: true,
@@ -169,6 +188,50 @@ export interface CommandPaletteView {
   readonly addonIcon: ReactNode;
   readonly groups: ReadonlyArray<CommandPaletteGroup>;
   readonly initialQuery?: string;
+}
+
+// File/content search actions only appear at the root. Retain input and data,
+// not view groups whose action callbacks belong to the unmounted palette.
+export interface CommandPaletteReturnContext {
+  readonly query: string;
+  readonly linkedThreadSearch: Extract<CommandPaletteOpenIntent, { kind: "search" }> | null;
+}
+
+export interface CommandPaletteSearchState {
+  readonly query: string;
+  readonly views: ReadonlyArray<{
+    readonly view: CommandPaletteView;
+    readonly parentQuery: string;
+  }>;
+}
+
+export function createCommandPaletteSearchState(query = ""): CommandPaletteSearchState {
+  return { query, views: [] };
+}
+
+export function reduceCommandPaletteSearchState(
+  state: CommandPaletteSearchState,
+  action:
+    | { readonly type: "query"; readonly query: string }
+    | { readonly type: "push"; readonly view: CommandPaletteView }
+    | { readonly type: "back" }
+    | { readonly type: "reset"; readonly query?: string },
+): CommandPaletteSearchState {
+  switch (action.type) {
+    case "query":
+      return { ...state, query: action.query };
+    case "push":
+      return {
+        query: action.view.initialQuery ?? "",
+        views: [...state.views, { view: action.view, parentQuery: state.query }],
+      };
+    case "back": {
+      const parent = state.views.at(-1);
+      return parent ? { query: parent.parentQuery, views: state.views.slice(0, -1) } : state;
+    }
+    case "reset":
+      return createCommandPaletteSearchState(action.query);
+  }
 }
 
 export function enumerateCommandPaletteItems(

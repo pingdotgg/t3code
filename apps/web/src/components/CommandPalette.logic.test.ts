@@ -11,8 +11,11 @@ import {
   filterPinnedBrowseEntries,
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
+  createCommandPaletteSearchState,
+  reduceCommandPaletteSearchState,
   type CommandPaletteActionItem,
   type CommandPaletteGroup,
+  type CommandPaletteUiState,
 } from "./CommandPalette.logic";
 
 describe("linked pull request thread navigation", () => {
@@ -801,5 +804,135 @@ describe("filterCommandPaletteGroups", () => {
       "setting:default-model",
       "setting:keybinding-modelPicker.toggle",
     ]);
+  });
+});
+
+describe("command palette search return", () => {
+  const projectPicker = { addonIcon: null, groups: [] };
+
+  it("restores distinct queries through multiple nested pickers", () => {
+    let state = createCommandPaletteSearchState(">new thread");
+    state = reduceCommandPaletteSearchState(state, { type: "push", view: projectPicker });
+    expect(state.query).toBe("");
+    state = reduceCommandPaletteSearchState(state, { type: "query", query: "remote project" });
+    state = reduceCommandPaletteSearchState(state, {
+      type: "push",
+      view: { ...projectPicker, initialQuery: "~/" },
+    });
+    state = reduceCommandPaletteSearchState(state, { type: "query", query: "~/work" });
+    state = reduceCommandPaletteSearchState(state, { type: "back" });
+    expect(state.query).toBe("remote project");
+    expect(state.views).toHaveLength(1);
+    state = reduceCommandPaletteSearchState(state, { type: "back" });
+    expect(state).toEqual(createCommandPaletteSearchState(">new thread"));
+    expect(reduceCommandPaletteSearchState(state, { type: "back" })).toBe(state);
+  });
+
+  it("clearing a child prefix before Back does not erase the parent input", () => {
+    let state = createCommandPaletteSearchState(">add project");
+    state = reduceCommandPaletteSearchState(state, {
+      type: "push",
+      view: { ...projectPicker, initialQuery: "~/" },
+    });
+    state = reduceCommandPaletteSearchState(state, { type: "query", query: "" });
+    state = reduceCommandPaletteSearchState(state, { type: "back" });
+    expect(state.query).toBe(">add project");
+    state = reduceCommandPaletteSearchState(state, { type: "query", query: "" });
+    expect(state).toEqual(createCommandPaletteSearchState());
+  });
+
+  it("new direct-open and fresh-open searches cannot return to old input", () => {
+    const nested = reduceCommandPaletteSearchState(createCommandPaletteSearchState("old search"), {
+      type: "push",
+      view: projectPicker,
+    });
+    const newSearch = reduceCommandPaletteSearchState(nested, {
+      type: "reset",
+      query: "linked thread",
+    });
+    expect(reduceCommandPaletteSearchState(newSearch, { type: "back" })).toEqual(
+      createCommandPaletteSearchState("linked thread"),
+    );
+    const directPicker = reduceCommandPaletteSearchState(
+      reduceCommandPaletteSearchState(nested, { type: "reset" }),
+      { type: "push", view: projectPicker },
+    );
+    expect(reduceCommandPaletteSearchState(directPicker, { type: "back" })).toEqual(
+      createCommandPaletteSearchState(),
+    );
+    expect(createCommandPaletteSearchState()).toEqual({ query: "", views: [] });
+  });
+});
+
+describe("palette-origin search overlay return", () => {
+  const root: CommandPaletteUiState = { open: true, mode: "command", openIntent: null };
+  const context = {
+    query: ">find file",
+    linkedThreadSearch: null,
+  };
+
+  it.each(["files", "content"] as const)(
+    "returns from %s without importing the child query",
+    (mode) => {
+      const child = reduceCommandPaletteUiState(root, {
+        _tag: "OpenChildSearch",
+        mode,
+        context,
+      });
+      const returned = reduceCommandPaletteUiState(child, { _tag: "BackToCommand" });
+      expect(returned.mode).toBe("command");
+      expect(returned.restoredSearch).toEqual(context);
+      expect(returned.parentSearch).toBeUndefined();
+      expect(createCommandPaletteSearchState(returned.restoredSearch?.query)).toEqual({
+        query: ">find file",
+        views: [],
+      });
+    },
+  );
+
+  it("retains linked-thread search data without carrying the old palette's views", () => {
+    const linkedContext = {
+      query: "https://github.com/acme/web/pull/7",
+      linkedThreadSearch: {
+        kind: "search" as const,
+        query: "https://github.com/acme/web/pull/7",
+        linkedThreads: {
+          environmentId: EnvironmentId.make("remote"),
+          threads: [],
+        },
+      },
+    };
+    const child = reduceCommandPaletteUiState(root, {
+      _tag: "OpenChildSearch",
+      mode: "content",
+      context: linkedContext,
+    });
+    const returned = reduceCommandPaletteUiState(child, { _tag: "BackToCommand" });
+    expect(returned.restoredSearch).toEqual(linkedContext);
+    expect(createCommandPaletteSearchState(returned.restoredSearch?.query).views).toEqual([]);
+  });
+
+  it("closing after a selection discards the return context and cannot reopen the parent", () => {
+    const child = reduceCommandPaletteUiState(root, {
+      _tag: "OpenChildSearch",
+      mode: "files",
+      context,
+    });
+    const closed = reduceCommandPaletteUiState(child, { _tag: "SetOpen", open: false });
+    expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toBe(closed);
+    expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
+  });
+
+  it("a fresh shortcut or direct intent discards a previous return context", () => {
+    const child = reduceCommandPaletteUiState(root, {
+      _tag: "OpenChildSearch",
+      mode: "files",
+      context,
+    });
+    const fresh = reduceCommandPaletteUiState(child, { _tag: "ToggleMode", mode: "content" });
+    expect(reduceCommandPaletteUiState(fresh, { _tag: "BackToCommand" })).toEqual(root);
+    const direct = reduceCommandPaletteUiState(child, { _tag: "OpenChangeTheme" });
+    expect(direct.parentSearch).toBeUndefined();
+    expect(direct.restoredSearch).toBeUndefined();
   });
 });
