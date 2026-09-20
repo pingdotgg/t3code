@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 
 import {
   commandDetailRepeatsCommand,
@@ -268,6 +269,122 @@ describe("summarizeToolGroup", () => {
 });
 
 describe("resolveWorkEntryToolPresentation", () => {
+  it("presents and summarizes every T3 tool using the same structured identity", () => {
+    for (const tool of T3_MCP_TOOL_NAMES) {
+      const entry: WorkLogPresentationEntry = {
+        id: tool,
+        createdAt: "2026-09-19T00:00:00.000Z",
+        tone: "tool",
+        label: "Custom provider title",
+        toolData: { server: "t3-code", tool },
+        toolLifecycleStatus: "completed",
+        itemType: "dynamic_tool",
+        toolSource: { key: "t3-code", name: "T3 Code", kind: "integration" },
+      };
+      const presentation = resolveWorkEntryToolPresentation(entry);
+      expect(presentation, tool).not.toBeNull();
+      expect(presentation?.displayName, tool).not.toContain(tool);
+      const summary = summarizeToolGroup([entry]);
+      expect(summary.summary, tool).not.toMatch(/Used (?:1 tool|T3 Code integration)/);
+      expect(summary.hasFailure, tool).toBe(false);
+      const failed = { ...entry, toolLifecycleStatus: "failed" as const };
+      expect(resolveWorkEntryToolPresentation(failed)?.displayName, tool).toMatch(/^Failed to /);
+      expect(summarizeToolGroup([failed]).hasFailure, tool).toBe(true);
+      expect(summarizeToolGroup([failed]).summary, tool).toMatch(
+        /^(?:Tried to |Requested thread creation)/,
+      );
+    }
+  });
+
+  it.each([
+    ["t3_project_list", "Listing projects", "Listed projects"],
+    ["t3_project_clone", "Cloning a repository", "Cloned a repository"],
+    ["t3_project_create", "Registering a project", "Registered a project"],
+    ["t3_thread_launch", "Launching a project thread", "Launched a project thread"],
+    ["t3_queue_edit", "Editing a queued message", "Edited a queued message"],
+    ["t3_pending_request_respond", "Answering pending questions", "Answered pending questions"],
+    ["t3_thread_configure", "Setting thread model", "Set thread model"],
+    ["t3_thread_fork", "Forking this thread", "Requested a fork of this thread"],
+    ["t3_thread_send_attachments", "Sending attachments", "Sent attachments"],
+    ["run_scheduled_task_now", "Running a scheduled task", "Requested a run of a scheduled task"],
+  ])("labels %s through its lifecycle", (tool, running, completed) => {
+    expect(resolveWorkEntryToolPresentation({ label: `T3-code.${tool}` })?.displayName).toBe(
+      running,
+    );
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: `T3-code.${tool}`,
+        toolLifecycleStatus: "completed",
+      })?.displayName,
+    ).toBe(completed);
+  });
+
+  it("summarizes project tools from MCP arguments and results without claiming failed effects", () => {
+    const entry: WorkLogPresentationEntry = {
+      id: "clone",
+      createdAt: "2026-09-19T00:00:00.000Z",
+      tone: "tool",
+      label: "Custom title",
+      itemType: "dynamic_tool",
+      toolLifecycleStatus: "completed",
+      toolData: {
+        server: "t3-code",
+        tool: "t3_project_clone",
+        arguments: { url: "https://github.com/acme/repo" },
+        result: { cwd: "/tmp/repo" },
+      },
+    };
+    const list = { ...entry, toolData: { server: "t3-code", tool: "t3_project_list" } };
+    expect(summarizeToolGroup([list, entry])).toEqual({
+      summary: "Listed projects 1 time and cloned 1 repository",
+      hasFailure: false,
+    });
+    const failed = {
+      ...entry,
+      toolData: { toolName: "T3-code.t3_project_clone", rawOutput: { isError: true } },
+    };
+    expect(summarizeToolGroup([entry, failed])).toEqual({
+      summary: "Cloned 1 repository",
+      hasFailure: true,
+    });
+  });
+
+  it("does not summarize a foreign structured identity as T3 work", () => {
+    const entry: WorkLogPresentationEntry = {
+      id: "foreign",
+      createdAt: "2026-09-19T00:00:00.000Z",
+      tone: "tool",
+      label: "t3_project_clone",
+      toolLifecycleStatus: "completed",
+      toolData: { server: "another-server", tool: "t3_project_clone" },
+    };
+    expect(summarizeToolGroup([entry]).summary).toBe("Used 1 tool");
+  });
+
+  it("shows returned MCP errors as failures even in the live activity row", () => {
+    const entry: WorkLogPresentationEntry = {
+      id: "clone",
+      createdAt: "2026-09-19T00:00:00.000Z",
+      tone: "tool",
+      label: "T3-code.t3_project_clone",
+      toolLifecycleStatus: "inProgress",
+      itemType: "dynamic_tool",
+      toolData: { output: { isError: true } },
+    };
+    expect(resolveWorkEntryToolPresentation(entry)?.displayName).toBe(
+      "Failed to clone a repository",
+    );
+    expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(true);
+    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
+    const childFailure = {
+      ...entry,
+      label: "T3-code.task_status",
+      toolLifecycleStatus: "completed" as const,
+      toolData: { output: { taskId: "child", status: "failed", summary: "command not found" } },
+    };
+    expect(workEntryDisplayIndicatesToolFailure(childFailure)).toBe(false);
+    expect(workEntryIndicatesToolSuccess(childFailure)).toBe(true);
+  });
   it.each([
     "mcp__t3-code__preview_click",
     "mcp__t3_code__preview_click",

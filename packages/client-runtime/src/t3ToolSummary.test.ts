@@ -7,6 +7,106 @@ function completed(input: unknown, output?: unknown): T3ToolSummaryCall {
 }
 
 describe("summarizeT3ToolCalls", () => {
+  it("counts registered projects, repository destinations, and accepted thread launches", () => {
+    expect(
+      summarizeT3ToolCalls("project-create", [
+        completed({}, { id: "project-1" }),
+        completed({}, { id: "project-1" }),
+        completed({}, { id: "project-2" }),
+      ]).label,
+    ).toBe("Registered 2 projects");
+    expect(
+      summarizeT3ToolCalls("project-clone", [
+        completed({}, { cwd: "/tmp/first" }),
+        completed({}, { cwd: "/tmp/second" }),
+      ]).label,
+    ).toBe("Cloned 2 repositories");
+    expect(
+      summarizeT3ToolCalls("thread-create", [
+        completed({}, { threadId: "launched-thread", status: "preparing" }),
+      ]).label,
+    ).toBe("Created 1 thread");
+  });
+
+  it.each([
+    ["queue-read", "Read 1 queued message"],
+    ["queue-edit", "Edited 1 queued message"],
+    ["queue-cancel", "Requested cancellation of 1 queued run"],
+    ["queue-reorder", "Reordered 1 queued run"],
+    ["queue-steer", "Requested steering with 1 queued message"],
+  ] as const)("deduplicates the queued run target for %s", (action, label) => {
+    expect(
+      summarizeT3ToolCalls(action, [
+        completed({ queuedRunId: "queued-1" }),
+        completed({ queuedRunId: "queued-1" }),
+        { input: { queuedRunId: "queued-2" }, output: undefined, outcome: "unfinished" },
+      ]),
+    ).toEqual({ label, failedCount: 0 });
+  });
+
+  it("counts answered requests rather than pretending every request contains one question", () => {
+    expect(
+      summarizeT3ToolCalls("question-respond", [
+        completed({ requestId: "request-1", answers: { one: ["Yes"], two: ["No"] } }),
+        completed({ requestId: "request-1" }),
+        completed({ requestId: "request-2" }),
+      ]).label,
+    ).toBe("Answered 2 pending question requests");
+  });
+
+  it("counts attachments in distinct messages and falls back when attachment counts are missing", () => {
+    const first = completed(
+      { threadId: "thread-1", attachments: [{ id: "one" }, { id: "two" }] },
+      { messageId: "message-1", threadId: "thread-1" },
+    );
+    const second = completed(
+      { threadId: "thread-2", attachments: [{ id: "one" }] },
+      { messageId: "message-2", threadId: "thread-2" },
+    );
+    expect(summarizeT3ToolCalls("attachment-send", [first, first, second])).toEqual({
+      label: "Sent 3 attachments to 2 threads",
+      failedCount: 0,
+    });
+    expect(
+      summarizeT3ToolCalls("attachment-send", [first, completed({ threadId: "thread-1" })]).label,
+    ).toBe("Sent attachments to 1 thread 2 times");
+  });
+
+  it("keeps repeated manual runs separate and describes asynchronous controls as requests", () => {
+    expect(
+      summarizeT3ToolCalls("schedule-run", [
+        completed({ taskId: "schedule-1" }, { lastRunStatus: "running" }),
+        completed({ taskId: "schedule-1" }, { lastRunStatus: "skipped" }),
+      ]).label,
+    ).toBe("Requested 2 scheduled task runs");
+    expect(
+      summarizeT3ToolCalls("thread-fork", [completed({}, { targetThreadId: "fork", sequence: 3 })])
+        .label,
+    ).toBe("Requested 1 thread fork");
+    expect(
+      summarizeT3ToolCalls("thread-merge", [
+        completed({ targetThreadId: "parent" }, { sequence: 4 }),
+      ]).label,
+    ).toBe("Requested 1 context merge");
+  });
+
+  it.each([
+    "WorktreeMcpFailure",
+    "DeviceOperationError",
+    "PreviewAutomationExecutionError",
+    "PullRequestOperationError",
+  ])("treats a returned %s as a failed call even if the provider says completed", (_tag) => {
+    const output = [
+      {
+        type: "content",
+        content: { type: "text", text: JSON.stringify({ _tag, message: "Unavailable" }) },
+      },
+    ];
+    expect(summarizeT3ToolCalls("browser", [completed({}, output)])).toEqual({
+      label: "Tried to use browser 1 time",
+      failedCount: 1,
+    });
+  });
   it("counts messages and distinct destinations across delivery modes, deduplicating retries", () => {
     const calls = Array.from({ length: 5 }, (_, i) =>
       completed(

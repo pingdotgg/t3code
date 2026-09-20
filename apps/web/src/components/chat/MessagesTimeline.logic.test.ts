@@ -526,6 +526,73 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("presents project MCP calls and summarizes successful clones through the web timeline", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
+    if (source.item.type !== "dynamic_tool") throw new Error("Expected tool fixture");
+    const items: OrchestrationV2ProjectedTurnItem["item"][] = [
+      {
+        ...source.item,
+        type: "dynamic_tool",
+        id: TurnItemId.make("list"),
+        status: "completed",
+        title: "Custom provider title",
+        toolName: "T3-code.t3_project_list",
+        input: {},
+        output: { projects: [] },
+      },
+      {
+        ...source.item,
+        type: "dynamic_tool",
+        id: TurnItemId.make("clone"),
+        status: "completed",
+        title: "Custom provider title",
+        toolName: "mcp__t3_code__t3_project_clone",
+        input: {},
+        output: { cwd: "/tmp/repo" },
+      },
+      {
+        ...source.item,
+        type: "dynamic_tool",
+        id: TurnItemId.make("failed-clone"),
+        status: "completed",
+        title: "Custom provider title",
+        toolName: "t3_project_clone",
+        input: {},
+        output: { isError: true },
+      },
+    ];
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: items.map((item, position) => ({
+        ...source,
+        item,
+        position,
+        sourceItemId: item.id,
+      })),
+      optimisticMessages: [],
+    });
+    const work = entries.flatMap((entry) => (entry.kind === "work" ? [entry.entry] : []));
+    expect(workEntryDisplayLabel(work[0]!, undefined)).toBe("Listed projects");
+    expect(workEntryDisplayLabel(work[1]!, undefined)).toBe("Cloned a repository");
+    expect(workEntryDisplayLabel(work[2]!, undefined)).toBe("Failed to clone a repository");
+    expect(
+      resolveTimelineToolPresentation(items[1]!.type === "dynamic_tool" ? items[1].toolName : null)
+        ?.logo,
+    ).toBe("t3-code");
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: entries,
+      isWorking: false,
+      runningRunId: fixture.runId,
+      activeTurnStartedAt: fixture.time(0),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
+      summary: "Listed projects 1 time and cloned 1 repository",
+      hasFailure: true,
+    });
+  });
+
   it.each(["waiting", "completed"] as const)(
     "groups approval and user-input requests with commands without expanding them when %s",
     (status) => {

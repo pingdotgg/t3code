@@ -1083,6 +1083,52 @@ describe("buildThreadFeed", () => {
       },
     ]);
   });
+
+  it("presents project calls and summarizes successful clones through the mobile feed", () => {
+    const items: OrchestrationV2TurnItem[] = [
+      {
+        ...base("list", "2026-09-19T00:00:01.000Z", 1),
+        type: "dynamic_tool",
+        title: "Custom provider title",
+        toolName: "T3-code.t3_project_list",
+        input: {},
+        output: { projects: [] },
+      },
+      {
+        ...base("clone", "2026-09-19T00:00:02.000Z", 2),
+        type: "dynamic_tool",
+        title: "Custom provider title",
+        toolName: "mcp__t3_code__t3_project_clone",
+        input: {},
+        output: { cwd: "/tmp/repo" },
+      },
+      {
+        ...base("failed-clone", "2026-09-19T00:00:03.000Z", 3),
+        type: "dynamic_tool",
+        title: "Custom provider title",
+        toolName: "t3_project_clone",
+        input: {},
+        output: { isError: true },
+      },
+    ];
+    const feed = buildThreadFeed(items.map((item, position) => projected(item, position)));
+    const activities = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(workEntryRowLabel(activities[0]!.workEntry)).toBe("Listed projects");
+    expect(workEntryRowLabel(activities[1]!.workEntry)).toBe("Cloned a repository");
+    expect(workEntryRowLabel(activities[2]!.workEntry)).toBe("Failed to clone a repository");
+    expect(activities.every((activity) => activity.logo === "t3-code")).toBe(true);
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      { runId, status: "running", startedAt: null, completedAt: null },
+      new Set(),
+    );
+    expect(presented.find((entry) => entry.type === "work-toggle")).toMatchObject({
+      summary: "Listed projects 1 time and cloned 1 repository",
+      hasFailure: true,
+    });
+  });
 });
 
 describe("retained v2 feed presentation", () => {
