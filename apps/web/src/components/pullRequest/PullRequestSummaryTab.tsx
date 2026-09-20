@@ -1,3 +1,4 @@
+import { reviewEditorKey, usePullRequestReviewStore } from "./pullRequestReviewStore";
 import type {
   EnvironmentId,
   PullRequestComment,
@@ -138,6 +139,7 @@ function reviewStateLabel(state: string): string {
 
 /** What every remark in the conversation needs to be rewritten where it sits. */
 interface CommentEditing {
+  readonly reference: PullRequestRef;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef | null;
@@ -165,6 +167,11 @@ function CommentBody({
     return (
       <PullRequestMarkdownEditor
         className={className}
+        draftKey={reviewEditorKey(
+          editing.environmentId,
+          editing.reference,
+          `comment:${comment.id}`,
+        )}
         value={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
@@ -604,11 +611,15 @@ export function PullRequestSummaryTab({
       toastManager.add({ type: "error", title: "Could not save the description" });
       return;
     }
+    usePullRequestReviewStore
+      .getState()
+      .clearEditorDraft(reviewEditorKey(environmentId, reference, "description"), body);
     setBodyScope(null);
     onRefresh();
   };
 
   const commentEditing: CommentEditing = {
+    reference,
     cwd: detail.workspaceRoot,
     environmentId,
     threadRef,
@@ -631,6 +642,9 @@ export function PullRequestSummaryTab({
         toastManager.add({ type: "error", title: "Could not save the comment" });
         return;
       }
+      usePullRequestReviewStore
+        .getState()
+        .clearEditorDraft(reviewEditorKey(environmentId, reference, `comment:${comment.id}`), body);
       setCommentScope(null);
       onRefresh();
     },
@@ -837,6 +851,7 @@ export function PullRequestSummaryTab({
             <PullRequestMarkdownEditor
               // Empty is a real answer here: saving nothing is how a description is cleared.
               allowEmpty
+              draftKey={reviewEditorKey(environmentId, reference, "description")}
               value={detail.body}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}

@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 
+import { usePullRequestReviewStore } from "./pullRequestReviewStore";
+
 import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
@@ -9,15 +11,15 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 
 /**
- * The box a body is rewritten in — a description, or a remark already posted. It owns the draft
- * and nothing else: the caller sends the request and says whether it is still in flight, so the
- * same box serves every mutation without knowing which one it is.
+ * Edits a description or posted remark. Its scoped session draft survives panel dismissal;
+ * the caller clears the accepted snapshot only after the host confirms the save.
  *
  * Preview renders through the same component the saved body will be read through, which is the
  * only way to see what a host's markdown will actually become before it is sent.
  */
 export function PullRequestMarkdownEditor({
   value,
+  draftKey,
   cwd,
   environmentId,
   threadRef = null,
@@ -30,6 +32,7 @@ export function PullRequestMarkdownEditor({
   onCancel,
 }: {
   readonly value: string;
+  readonly draftKey: string;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   /** Thread the editor sits beside, so links in its preview follow the link target setting. */
@@ -43,17 +46,10 @@ export function PullRequestMarkdownEditor({
   readonly onSave: (next: string) => void;
   readonly onCancel: () => void;
 }) {
-  const [draft, setDraft] = useState(value);
+  const draft = usePullRequestReviewStore((store) => store.editorDrafts[draftKey] ?? value);
+  const setDraft = (text: string) =>
+    usePullRequestReviewStore.getState().setEditorDraft(draftKey, text);
   const [preview, setPreview] = useState(false);
-  // The words this draft started from. React keeps a component instance wherever the same
-  // position and key come round again, so an editor opened on one remark can be handed another's
-  // words without being rebuilt — and saving would then write the first remark's text onto the
-  // second. Different words mean a different subject, and the draft starts again from them.
-  const [seed, setSeed] = useState(value);
-  if (seed !== value) {
-    setSeed(value);
-    setDraft(value);
-  }
   const empty = draft.trim().length === 0;
   const saveDisabled = saving || (empty && !allowEmpty);
 
@@ -75,6 +71,7 @@ export function PullRequestMarkdownEditor({
         }
         if (event.key !== "Escape" || saving) return;
         event.preventDefault();
+        event.stopPropagation();
         onCancel();
       }}
     >
