@@ -20,10 +20,11 @@ import { makeWorktreeDependencies } from "./WorktreeDependencies.ts";
 import { makeWorktreeClone } from "./WorktreeClone.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
-// Runner-installed Git LFS filters must not change the fixture's eligibility.
+// Runner-installed filters and suite-wide overrides must not mask fixture config.
 beforeAll(() => {
   vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
   vi.stubEnv("GIT_CONFIG_GLOBAL", NodeOS.devNull);
+  vi.stubEnv("GIT_CONFIG_COUNT", "0");
 });
 afterAll(() => vi.unstubAllEnvs());
 
