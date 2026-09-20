@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Smartphone } from "lucide-react";
 
 import { Spinner } from "~/components/ui/spinner";
@@ -8,6 +9,7 @@ export function DeviceLoadingView(props: {
   readonly stage: "opening" | "stream";
   readonly message: string;
   readonly error?: boolean;
+  readonly children?: ReactNode;
 }) {
   return (
     <div
@@ -28,6 +30,7 @@ export function DeviceLoadingView(props: {
           {!props.error ? <Spinner className="size-3" /> : null}
           <span>{props.message}</span>
         </div>
+        {props.children}
         {!props.error ? (
           <div
             className="flex w-24 gap-1"

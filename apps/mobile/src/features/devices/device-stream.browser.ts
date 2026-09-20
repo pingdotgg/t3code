@@ -12,13 +12,10 @@ declare global {
 }
 
 let activeClient: ReturnType<typeof createDeviceStreamClient> | null = null;
-let activeImage: HTMLImageElement | null = null;
 
 export function stop() {
   activeClient?.stop();
   activeClient = null;
-  activeImage?.removeAttribute("src");
-  activeImage = null;
 }
 
 export function command(button: "home" | "back" | "appSwitcher" | "rotate") {
@@ -70,34 +67,6 @@ export function start(configuration: DeviceStreamConfiguration) {
   image.alt = "";
   image.draggable = false;
   image.style.display = "none";
-  const overlay = document.createElement("div");
-  overlay.setAttribute("role", "status");
-  Object.assign(overlay.style, {
-    position: "fixed",
-    inset: "0",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: "16px",
-    padding: "24px",
-    textAlign: "center",
-    background: colors.background,
-  });
-  const detail = document.createElement("span");
-  const retry = document.createElement("button");
-  retry.textContent = "Retry";
-  Object.assign(retry.style, {
-    padding: "12px 24px",
-    borderRadius: "20px",
-    border: `1px solid ${colors.buttonBorder}`,
-    background: colors.buttonBackground,
-    color: colors.buttonForeground,
-    font: "inherit",
-    display: "none",
-  });
-  retry.addEventListener("click", () => post({ type: "retry" }));
-  overlay.append(detail, retry);
   const inputStatus = document.createElement("div");
   inputStatus.setAttribute("role", "status");
   inputStatus.textContent = "Reconnecting device controls...";
@@ -114,11 +83,17 @@ export function start(configuration: DeviceStreamConfiguration) {
   });
   frame.append(canvas, image);
   container.append(frame);
-  document.body.replaceChildren(container, overlay, inputStatus);
+  document.body.replaceChildren(container, inputStatus);
 
   let pointerId: number | null = null;
   let inputConnected = false;
   let streaming = false;
+  const reportStatus = (status: "connecting" | "streaming" | "error", detail?: string) => {
+    if (activeClient !== client) return;
+    streaming = status === "streaming";
+    inputStatus.style.display = streaming && !inputConnected ? "block" : "none";
+    post({ type: "status", status, detail });
+  };
   const layout = (screen: DeviceScreenSize | null) => {
     const landscape =
       screen?.orientation === "landscape_left" || screen?.orientation === "landscape_right";
@@ -160,19 +135,11 @@ export function start(configuration: DeviceStreamConfiguration) {
     { ...configuration, preferMjpeg: platform === "ios" },
     canvas,
     {
-      onStatus: (status, message) => {
-        streaming = status === "streaming";
-        overlay.style.display = streaming ? "none" : "flex";
-        inputStatus.style.display = streaming && !inputConnected ? "block" : "none";
-        detail.textContent =
-          status === "error" ? (message ?? "Device stream failed.") : "Connecting to device...";
-        retry.style.display = status === "error" ? "block" : "none";
-      },
+      onStatus: reportStatus,
       onScreen: layout,
-      onMjpegFallback: (url) => {
+      onMjpegFallback: () => {
         canvas.style.display = "none";
         image.style.display = "block";
-        image.src = url;
       },
       onUnauthorized: unauthorized,
       onInputConnected: (connected) => {
@@ -183,8 +150,7 @@ export function start(configuration: DeviceStreamConfiguration) {
     },
   );
   activeClient = client;
-  activeImage = image;
-  image.addEventListener("error", unauthorized);
+  client.setMjpegImage(image);
   const touch = (event: PointerEvent, phase: "begin" | "move" | "end") => {
     const rect = frame.getBoundingClientRect();
     client.sendTouch(

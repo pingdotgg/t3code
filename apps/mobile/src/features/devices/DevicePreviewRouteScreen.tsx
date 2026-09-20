@@ -68,7 +68,7 @@ function DevicePreviewScreen({
   const insets = useSafeAreaInsets();
   const { themeVariables } = useAppearancePreferences();
   const focused = useIsFocused();
-  const [foreground, setForeground] = useState(AppState.currentState === "active");
+  const [foreground, setForeground] = useState(AppState.currentState !== "background");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [inputConnected, setInputConnected] = useState(false);
   const [streamAttempt, setStreamAttempt] = useState(0);
@@ -87,7 +87,7 @@ function DevicePreviewScreen({
   );
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) =>
-      setForeground(state === "active"),
+      setForeground(state !== "background"),
     );
     return () => subscription.remove();
   }, []);

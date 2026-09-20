@@ -19,7 +19,8 @@ export function deviceStreamDocument(configuration: string, script: string) {
   // Tickets and device names are data, including any HTML delimiter characters.
   const safeConfiguration = configuration.replace(/</g, "\\u003c");
   const safeScript = script.replace(/<\/script/gi, "<\\/script");
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"></head><body><script>${safeScript}\nT3DeviceStream.start(${safeConfiguration});</script></body></html>`;
+  const failure = `window.ReactNativeWebView.postMessage(JSON.stringify({type:"status",status:"error",detail:"Device viewer stopped unexpectedly."}));`;
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"></head><body><script>window.addEventListener("error",function(){${failure}});window.addEventListener("unhandledrejection",function(){${failure}});\n${safeScript}\ntry{T3DeviceStream.start(${safeConfiguration});}catch{${failure}}</script></body></html>`;
 }
 
 export function deviceStreamMessage(data: string) {
@@ -35,6 +36,21 @@ export function deviceStreamMessage(data: string) {
       typeof message.connected === "boolean"
     ) {
       return { type: message.type, connected: message.connected } as const;
+    }
+    if (
+      message.type === "status" &&
+      "status" in message &&
+      (message.status === "connecting" ||
+        message.status === "streaming" ||
+        message.status === "error") &&
+      (!("detail" in message) || typeof message.detail === "string")
+    ) {
+      return {
+        type: message.type,
+        status: message.status,
+        detail:
+          "detail" in message && typeof message.detail === "string" ? message.detail : undefined,
+      } as const;
     }
   } catch {
     // Ignore messages that are not part of the stream bridge.

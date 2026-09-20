@@ -11,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -18,6 +19,8 @@ import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import { type DeviceService, makeWithHosts, stateStream } from "./DeviceService.ts";
+
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const baseState: DeviceServiceState = {
   hosts: [],
@@ -377,4 +380,92 @@ it.effect("keeps shutdown successful when subsequent discovery fails", () =>
     expect(state.sessions).toEqual([]);
     expect(state.devices.find((device) => device.id === session.deviceId)?.booted).toBe(false);
   }).pipe(Effect.scoped),
+);
+
+it.effect.each(["shutdown", "close"] as const)(
+  "%s releases iOS capture so reopening uses a fresh session",
+  (operation) =>
+    Effect.gen(function* () {
+      const deviceId = DeviceId.make("11111111-1111-1111-1111-111111111111");
+      const threadId = ThreadId.make("capture-recovery");
+      let booted = true;
+      let capture: number | null = null;
+      let generation = 0;
+      const ready: DeviceHost.DeviceHostReady = {
+        nodePath: process.execPath,
+        hub: { origin: "http://device.test" },
+        helpers: { serveSimAxSettings: null, serveSimCli: null },
+        run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+      };
+      const host: DeviceHost.DeviceHost["Service"] = {
+        id: LOCAL_DEVICE_HOST_ID,
+        summary: Effect.succeed({
+          id: LOCAL_DEVICE_HOST_ID,
+          kind: "local",
+          label: "Simulator host",
+          platforms: [{ platform: "ios", available: true }],
+          hubInstalled: true,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+        ensureReady: () => Effect.succeed(ready),
+        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+        current: Effect.succeed(ready),
+        stopAgent: Effect.void,
+        stop: Effect.void,
+      };
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const path = new URL(request.url).pathname;
+          if (path === "/api/devices") {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                emulators: [],
+                simulators: [
+                  {
+                    id: deviceId,
+                    name: "iPhone",
+                    platform: "ios",
+                    version: "26",
+                    physical: false,
+                    booted,
+                  },
+                ],
+              }),
+            );
+          }
+          if (path === "/vendor/serve-sim/grid/api/start") capture ??= ++generation;
+          else if (path === "/vendor/serve-sim/grid/api/shutdown") {
+            if (request.body._tag !== "Uint8Array") throw new Error("Missing shutdown body");
+            expect(decodeJson(new TextDecoder().decode(request.body.body))).toEqual({
+              udid: deviceId,
+            });
+            capture = null;
+            booted = false;
+          } else if (path === "/api/devices/shutdown") {
+            // This route powers off without releasing serve-sim's cached capture.
+            booted = false;
+          } else if (path === "/api/devices/boot") booted = true;
+          else throw new Error(`Unexpected hub path: ${path}`);
+          return HttpClientResponse.fromWeb(request, Response.json({ ok: true, id: deviceId }));
+        }),
+      );
+      const service = yield* makeWithHosts(new Map([[host.id, host]])).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+      );
+      const input = { threadId, deviceId, platform: "ios" as const };
+      yield* service.open(input);
+      expect(capture).toBe(1);
+      if (operation === "shutdown") yield* service.shutdown(input);
+      else yield* service.close({ threadId, deviceId, shutdown: true });
+      expect(capture).toBeNull();
+      expect((yield* service.state).sessions).toEqual([]);
+      yield* service.open(input);
+      expect(capture).toBe(2);
+      expect((yield* service.state).sessions).toHaveLength(1);
+    }).pipe(
+      Effect.provide(ServerSettingsService.layerTest({ enableDeviceSupport: true })),
+      Effect.scoped,
+    ),
 );

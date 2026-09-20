@@ -670,8 +670,14 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     platform: DevicePlatform,
   ) {
     const ready = yield* readiness(hostId);
-    yield* HttpClientRequest.post(`${ready.hub.origin}/api/devices/shutdown`).pipe(
-      HttpClientRequest.bodyJson({ platform, id: deviceId }),
+    // serve-sim's shutdown closes its in-process capture session before powering off.
+    // The hub's generic shutdown can leave that session cached across a reboot.
+    const path =
+      platform === "ios" ? `${vendorPrefix("ios")}/grid/api/shutdown` : "/api/devices/shutdown";
+    yield* HttpClientRequest.post(`${ready.hub.origin}${path}`).pipe(
+      HttpClientRequest.bodyJson(
+        platform === "ios" ? { udid: deviceId } : { platform, id: deviceId },
+      ),
       Effect.mapError(
         (cause) =>
           new DeviceOperationError({ operation: "shutdown", reason: "invalid_payload", cause }),
