@@ -25,6 +25,7 @@ const threadId = ThreadId.make("thread-mcp-test");
 const tabId = PreviewTabId.make("tab-mcp-test");
 const alternateTabId = PreviewTabId.make("tab-mcp-alternate");
 const decodeJsonText = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const noScreenshotTabId = PreviewTabId.make("tab-mcp-no-screenshot");
 const invocation = {
   environmentId,
   threadId,
@@ -633,10 +634,21 @@ it.effect("registers annotated tools and preserves authenticated request context
       const routedRequests: Array<{
         readonly operation: string;
         readonly tabId?: string | undefined;
+        readonly timeoutMs?: number | undefined;
       }> = [];
       const events = yield* broker.connect({
         clientId: "mcp-test-client",
+        hostId: "mcp-test-host",
         environmentId,
+        label: "Test Desktop",
+        platform: "linux",
+      });
+      const windowsEvents = yield* broker.connect({
+        clientId: "mcp-windows-client",
+        hostId: "mcp-windows-host",
+        environmentId,
+        label: "Windows Desktop",
+        platform: "windows",
       });
       yield* Stream.runForEach(events, (event) => {
         if (event.type === "connected") return Effect.void;
@@ -648,7 +660,11 @@ it.effect("registers annotated tools and preserves authenticated request context
           ok: true,
           result:
             event.request.operation === "snapshot"
-              ? snapshotResult
+              ? {
+                  ...snapshotResult,
+                  screenshot:
+                    event.request.tabId === noScreenshotTabId ? null : snapshotResult.screenshot,
+                }
               : event.request.operation === "evaluate"
                 ? ["Connect", "Continue"]
                 : event.request.operation === "press"
@@ -663,12 +679,21 @@ it.effect("registers annotated tools and preserves authenticated request context
                     },
         });
       }).pipe(Effect.forkScoped);
+      yield* Stream.runDrain(windowsEvents).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
 
       const statusTool = server.tools.find(({ tool }) => tool.name === "preview_status");
       expect(statusTool?.tool.annotations?.readOnlyHint).toBe(true);
       expect(statusTool?.tool.annotations?.idempotentHint).toBe(true);
       expect(statusTool?.tool.annotations?.destructiveHint).toBe(false);
+
+      const listHostsTool = server.tools.find(({ tool }) => tool.name === "preview_list_hosts");
+      expect(listHostsTool?.tool.annotations?.readOnlyHint).toBe(true);
+      expect(listHostsTool?.tool.annotations?.destructiveHint).toBe(false);
+
+      const selectHostTool = server.tools.find(({ tool }) => tool.name === "preview_select_host");
+      expect(selectHostTool?.tool.annotations?.idempotentHint).toBe(true);
+      expect(selectHostTool?.tool.annotations?.destructiveHint).toBe(false);
 
       const snapshotTool = server.tools.find(({ tool }) => tool.name === "preview_snapshot");
       expect(snapshotTool?.tool.annotations?.readOnlyHint).toBe(true);
@@ -688,6 +713,46 @@ it.effect("registers annotated tools and preserves authenticated request context
       const navigateTool = server.tools.find(({ tool }) => tool.name === "preview_navigate");
       expect(navigateTool?.tool.annotations?.destructiveHint).toBe(false);
       expect(navigateTool?.tool.annotations?.openWorldHint).toBe(true);
+
+      const closeTool = server.tools.find(({ tool }) => tool.name === "preview_close");
+      expect(closeTool?.tool.annotations?.destructiveHint).toBe(true);
+      expect(closeTool?.tool.annotations?.idempotentHint).toBe(true);
+      expect(closeTool?.tool.annotations?.openWorldHint).toBe(true);
+
+      const availableHosts = yield* server
+        .callTool({ name: "preview_list_hosts", arguments: {} })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(availableHosts.structuredContent).toMatchObject({
+        hosts: [
+          { hostId: "mcp-test-host", label: "Test Desktop", platform: "linux" },
+          { hostId: "mcp-windows-host", label: "Windows Desktop", platform: "windows" },
+        ],
+        assignedHostId: null,
+      });
+
+      const linuxHosts = yield* server
+        .callTool({ name: "preview_list_hosts", arguments: { platform: "linux" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(linuxHosts.structuredContent).toMatchObject({
+        hosts: [{ hostId: "mcp-test-host", label: "Test Desktop", platform: "linux" }],
+        assignedHostId: null,
+      });
+
+      const selectedHost = yield* server
+        .callTool({ name: "preview_select_host", arguments: { hostId: "mcp-test-host" } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(selectedHost.structuredContent).toMatchObject({
+        host: { hostId: "mcp-test-host", label: "Test Desktop", platform: "linux" },
+      });
 
       const status = yield* server
         .callTool({ name: "preview_status", arguments: {} })
@@ -743,11 +808,22 @@ it.effect("registers annotated tools and preserves authenticated request context
         value: ["Connect", "Continue"],
       });
 
+      const snapshotWithoutImage = yield* server
+        .callTool({ name: "preview_snapshot", arguments: { tabId: noScreenshotTabId, save: true } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(snapshotWithoutImage.isError).toBe(false);
+      expect(snapshotWithoutImage.content.some((content) => content.type === "image")).toBe(false);
+      expect(snapshotWithoutImage.structuredContent).toMatchObject({ screenshot: null });
+      expect(snapshotWithoutImage.structuredContent).not.toHaveProperty("screenshotPath");
+
       const actionRequests = [
         { name: "preview_click", arguments: { x: 10, y: 10 } },
         { name: "preview_type", arguments: { text: "Hello" } },
-        { name: "preview_press", arguments: { key: "Enter" } },
-        { name: "preview_scroll", arguments: { deltaY: 100 } },
+        { name: "preview_press", arguments: { key: "Enter", timeoutMs: 1_234 } },
+        { name: "preview_scroll", arguments: { deltaY: 100, timeoutMs: 1_234 } },
         { name: "preview_wait_for", arguments: { text: "Example" } },
       ];
       for (const request of actionRequests) {
@@ -763,6 +839,22 @@ it.effect("registers annotated tools and preserves authenticated request context
         const text = result.content[0];
         expect(text?.type === "text" ? decodeJsonText(text.text) : null).toEqual({ toolIcon });
       }
+      expect(routedRequests.find(({ operation }) => operation === "press")?.timeoutMs).toBe(1_234);
+      expect(routedRequests.find(({ operation }) => operation === "scroll")?.timeoutMs).toBe(1_234);
+
+      const evaluation = yield* server
+        .callTool({
+          name: "preview_evaluate",
+          arguments: { expression: "document.title", timeoutMs: 1_234 },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(evaluation.isError).toBe(false);
+      expect(routedRequests.findLast(({ operation }) => operation === "evaluate")?.timeoutMs).toBe(
+        1_234,
+      );
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { createClerkBridgeMock, storageAdapter, storageMock } = vi.hoisted(() => ({
@@ -34,6 +35,7 @@ const makeDesktopClerkLayer = (isDevelopment = true, events: string[] = []) => {
     stateDir: "/tmp/t3-state",
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
+    desktopUserDataDir: Option.none(),
     userDataDirName: isDevelopment ? "t3code-dev" : "t3code",
     legacyUserDataDirName: isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)",
     path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },

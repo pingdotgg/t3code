@@ -3,14 +3,19 @@ import {
   PreviewAutomationClickInput,
   PreviewAutomationError,
   PreviewAutomationEvaluateInput,
+  PreviewAutomationHostList,
+  PreviewAutomationHostListInput,
+  PreviewAutomationHostSelection,
   PreviewAutomationNavigateInput,
   PreviewAutomationOpenInput,
   PreviewAutomationPressInput,
   PreviewAutomationRecordingArtifact,
+  PreviewAutomationRecordingStartInput,
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
   PreviewAutomationScrollInput,
+  PreviewAutomationSelectHostInput,
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
@@ -50,6 +55,31 @@ const safeBrowserTool = <T extends Tool.Any>(tool: T): T =>
 const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
   safeBrowserTool(tool).annotate(Tool.Readonly, true).annotate(Tool.Idempotent, true) as T;
 
+const PreviewListHostsTool = Tool.make("preview_list_hosts", {
+  description:
+    "List preview automation renderers connected to this caller's environment. Each result has a stable hostId plus a device label and platform; listing hosts does not assign the provider session or disturb any desktop window.",
+  parameters: PreviewAutomationHostListInput,
+  success: PreviewAutomationHostList,
+  failure: PreviewAutomationError,
+  dependencies,
+})
+  .annotate(Tool.Title, "List preview hosts")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const PreviewSelectHostTool = Tool.make("preview_select_host", {
+  description:
+    "Bind this unassigned provider session to one available preview renderer by stable hostId. Selection does not focus or resize a window. A session already assigned to another host is not moved; start a new provider session to choose another host.",
+  parameters: PreviewAutomationSelectHostInput,
+  success: PreviewAutomationHostSelection,
+  failure: PreviewAutomationError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Select preview host")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 const PreviewStatusTool = Tool.make("preview_status", {
   description:
     "Report whether a collaborative browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
@@ -66,7 +96,7 @@ const PreviewStatusTool = Tool.make("preview_status", {
 const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
+      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab. Newly created tabs return after server creation while requested presentation and page loading continue; reopening an existing shown tab waits for stable presentation. Wait on the returned tab before interacting while its initial page loads.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,
@@ -74,6 +104,19 @@ const PreviewOpenTool = browserTool(
   })
     .annotate(Tool.Title, "Open browser preview")
     .annotate(Tool.Destructive, false),
+);
+
+const PreviewCloseTool = browserTool(
+  Tool.make("preview_close", {
+    description:
+      "Close and destroy the collaborative browser tab selected by tabId, or this agent session's current tab when omitted. The operation is idempotent and returns with no tab selected.",
+    parameters: PreviewAutomationTabTargetInput,
+    success: PreviewAutomationStatus,
+    failure: PreviewAutomationError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Close browser preview")
+    .annotate(Tool.Idempotent, true),
 );
 
 const PreviewNavigateTool = safeBrowserTool(
@@ -119,7 +162,7 @@ const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write the PNG to disk and get screenshotPath back; embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot when capture is available. Set includeImage=false for text-only output with the same page metadata. Set save=true to also write an available PNG to disk and get screenshotPath back; embed that path in your reply as ![alt](screenshotPath) so the user sees it. This is the only way to show the user a screenshot; the image in the tool result is not saved anywhere.",
     parameters: Schema.Struct({
       ...PreviewAutomationTabTargetInput.fields,
       includeImage: Schema.optional(
@@ -223,7 +266,7 @@ const PreviewRecordingStartTool = safeBrowserTool(
   Tool.make("preview_recording_start", {
     description:
       "Start recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted.",
-    parameters: PreviewAutomationTabTargetInput,
+    parameters: PreviewAutomationRecordingStartInput,
     success: Schema.Struct({ ...PreviewAutomationRecordingStatus.fields, ...presentationFields }),
     failure: PreviewAutomationError,
     dependencies,
@@ -242,8 +285,11 @@ const PreviewRecordingStopTool = safeBrowserTool(
 );
 
 export const PreviewToolkit = Toolkit.make(
+  PreviewListHostsTool,
+  PreviewSelectHostTool,
   PreviewStatusTool,
   PreviewOpenTool,
+  PreviewCloseTool,
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,
@@ -259,8 +305,11 @@ export const PreviewToolkit = Toolkit.make(
 );
 
 export const PreviewStandardToolkit = Toolkit.make(
+  PreviewListHostsTool,
+  PreviewSelectHostTool,
   PreviewStatusTool,
   PreviewOpenTool,
+  PreviewCloseTool,
   PreviewNavigateTool,
   PreviewResizeTool,
   PreviewSetAppearanceTool,

@@ -14,9 +14,14 @@ import {
 import {
   PreviewAutomationHost,
   PreviewAutomationError,
+  PreviewAutomationEvaluateInput,
   PreviewAutomationOpenInput,
+  PreviewAutomationPressInput,
+  PreviewAutomationRecordingStartInput,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
+  PreviewAutomationScrollInput,
+  PreviewAutomationSetColorSchemeInput,
   PreviewAutomationStatus,
 } from "./previewAutomation.ts";
 
@@ -31,7 +36,26 @@ const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
 const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResult);
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
+const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+const decodePressInput = Schema.decodeUnknownSync(PreviewAutomationPressInput);
+const decodeScrollInput = Schema.decodeUnknownSync(PreviewAutomationScrollInput);
+const decodeSetColorSchemeInput = Schema.decodeUnknownSync(PreviewAutomationSetColorSchemeInput);
+const decodeRecordingStartInput = Schema.decodeUnknownSync(PreviewAutomationRecordingStartInput);
+
+describe("Preview automation mutation deadlines", () => {
+  it("preserves explicit deadlines for mutations that follow overlay readiness", () => {
+    expect(decodePressInput({ key: "Enter", timeoutMs: 1_250 }).timeoutMs).toBe(1_250);
+    expect(decodeScrollInput({ deltaY: 100, timeoutMs: 1_250 }).timeoutMs).toBe(1_250);
+    expect(decodeSetColorSchemeInput({ colorScheme: "dark", timeoutMs: 1_250 }).timeoutMs).toBe(
+      1_250,
+    );
+    expect(decodeRecordingStartInput({ timeoutMs: 1_250 }).timeoutMs).toBe(1_250);
+    expect(decodeEvaluateInput({ expression: "document.title", timeoutMs: 1_250 }).timeoutMs).toBe(
+      1_250,
+    );
+  });
+});
 
 describe("PreviewAutomationOpenInput", () => {
   it("accepts the inline preview visibility flag", () => {
@@ -167,14 +191,37 @@ describe("PreviewAutomationHost", () => {
     expect(
       decodeAutomationHost({
         clientId: "current",
+        hostId: "desktop-current",
         environmentId: "environment-1",
+        label: "MacBook Pro",
+        platform: "macos",
         supportedOperations: ["status", "resize"],
-      }).supportedOperations,
-    ).toEqual(["status", "resize"]);
+      }),
+    ).toMatchObject({
+      hostId: "desktop-current",
+      label: "MacBook Pro",
+      platform: "macos",
+      supportedOperations: ["status", "resize"],
+    });
   });
 });
 
 describe("PreviewAutomationError", () => {
+  it("preserves explicit host selection failures without operation context", () => {
+    const error = decodeAutomationError({
+      _tag: "PreviewAutomationHostAssignmentConflictError",
+      environmentId: "environment-1",
+      threadId: "thread-1",
+      providerSessionId: "provider-session-1",
+      providerInstanceId: "codex",
+      requestedHostId: "host-windows",
+      assignedHostId: "host-mac",
+    });
+
+    expect(error._tag).toBe("PreviewAutomationHostAssignmentConflictError");
+    expect(error.message).toContain("host-mac");
+  });
+
   it("preserves a typed non-editable target failure", () => {
     const error = decodeAutomationError({
       _tag: "PreviewAutomationTargetNotEditableError",

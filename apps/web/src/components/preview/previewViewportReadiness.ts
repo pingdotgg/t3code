@@ -35,3 +35,44 @@ export function isPreviewViewportReady(input: {
     Math.abs(renderedViewport.height - expectedViewport.height) <= tolerance
   );
 }
+
+export async function waitForPreviewViewportReadiness(input: {
+  readonly setting: PreviewViewportSetting;
+  readonly timeoutMs: number;
+  readonly assertCurrent: () => void;
+  readonly readViewport: () => Promise<{
+    readonly appliedSettingKey: string | null;
+    readonly declaredViewport: PreviewRenderedViewportSize | null;
+    readonly renderedViewport: PreviewRenderedViewportSize | null;
+  } | null>;
+}): Promise<PreviewRenderedViewportSize | null> {
+  const deadline = Date.now() + input.timeoutMs;
+  while (Date.now() <= deadline) {
+    input.assertCurrent();
+    let viewportState: Awaited<ReturnType<typeof input.readViewport>> = null;
+    const remainingReadMs = deadline - Date.now();
+    if (remainingReadMs <= 0) break;
+    let readTimeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      viewportState = await Promise.race([
+        input.readViewport(),
+        new Promise<null>((resolve) => {
+          readTimeout = setTimeout(() => resolve(null), remainingReadMs);
+        }),
+      ]);
+    } catch {
+      // Registration and navigation can transiently replace the guest while
+      // React applies the server snapshot. Retry until the operation deadline.
+    } finally {
+      if (readTimeout !== undefined) clearTimeout(readTimeout);
+    }
+    input.assertCurrent();
+    if (viewportState && isPreviewViewportReady({ setting: input.setting, ...viewportState })) {
+      return viewportState.renderedViewport;
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, Math.min(50, remainingMs)));
+  }
+  return null;
+}

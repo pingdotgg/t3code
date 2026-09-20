@@ -56,6 +56,11 @@ const ContextMenuInput = Schema.Struct({
   position: Schema.optionalKey(ContextMenuPosition),
 });
 
+const PreviewAutomationHostMetadata = Schema.Struct({
+  label: Schema.String,
+  platform: Schema.Literals(["macos", "windows", "linux", "unknown"]),
+});
+
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
   const url = new URL(httpBaseUrl.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -68,6 +73,25 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getAppBranding")(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     return environment.branding;
+  }),
+});
+
+export const getPreviewAutomationHostMetadata = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_PREVIEW_AUTOMATION_HOST_METADATA_CHANNEL,
+  result: PreviewAutomationHostMetadata,
+  handler: Effect.fn("desktop.ipc.window.getPreviewAutomationHostMetadata")(function* () {
+    const hostPlatform = yield* HostProcess.HostProcessPlatform;
+    return {
+      label: NodeOS.hostname(),
+      platform:
+        hostPlatform === "darwin"
+          ? "macos"
+          : hostPlatform === "win32"
+            ? "windows"
+            : hostPlatform === "linux"
+              ? "linux"
+              : "unknown",
+    } as const;
   }),
 });
 

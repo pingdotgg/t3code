@@ -8,8 +8,13 @@ import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
+import {
+  selectThreadPreviewMiniPlayerTabId,
+  usePreviewMiniPlayerStore,
+} from "~/previewMiniPlayerStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
-import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
+import { selectBrowserSurfaceRenderState, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { useActiveBrowserRecordingTabIds } from "./browserRecording";
 import {
   browserViewportSettingKey,
@@ -19,7 +24,11 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
-import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
+import {
+  resolveHostedBrowserWebviewAriaHidden,
+  resolveHostedBrowserWebviewPresentation,
+  resolveHostedBrowserWebviewWrapperStyle,
+} from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
@@ -75,20 +84,26 @@ export function HostedBrowserWebview(props: {
   const webviewRef = useRef<ElectronWebview | null>(null);
   const crashRecoveryRef = useRef<WebviewCrashRecoveryState>(INITIAL_WEBVIEW_CRASH_RECOVERY_STATE);
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
-  const presentation = useBrowserSurfaceStore(
-    useShallow((state) => {
-      const current = state.byTabId[runtimeTabId];
-      return {
-        content: current?.content ?? null,
-        cornerRadius: current?.cornerRadius ?? 0,
-        fitSourceContent: current?.fitSourceContent ?? false,
-        fittedSourceContent: current?.fittedSourceContent ?? null,
-        rect: resolveBrowserSurfacePanelRect(state.byTabId, runtimeTabId),
-        visible: current?.visible ?? false,
-        zIndex: current?.zIndex ?? 30,
-      };
-    }),
+  const surface = useBrowserSurfaceStore(
+    useShallow((state) => selectBrowserSurfaceRenderState(state, runtimeTabId)),
   );
+  const selectedInRightPanel = useRightPanelStore((state) => {
+    const panel = selectThreadRightPanelState(state.byThreadKey, threadRef);
+    return panel.isOpen && panel.activeSurfaceId === `browser:${tabId}`;
+  });
+  const selectedInMiniPlayer = usePreviewMiniPlayerStore(
+    (state) => selectThreadPreviewMiniPlayerTabId(state.byThreadKey, threadRef) === tabId,
+  );
+  const presentation = {
+    backgroundCapture: surface.backgroundCapture,
+    content: surface.content,
+    cornerRadius: surface.cornerRadius,
+    fitSourceContent: surface.fitSourceContent,
+    fittedSourceContent: surface.fittedSourceContent,
+    rect: surface.rect,
+    visible: surface.visible,
+    zIndex: surface.zIndex,
+  };
   const backgroundActivity = useBrowserSurfaceStore(
     (state) => (state.activityByTabId[runtimeTabId] ?? 0) > 0,
   );
@@ -169,8 +184,18 @@ export function HostedBrowserWebview(props: {
     };
   }, [clientSettingsHydrated, config, initialSrc, runtimeTabId, webviewGeneration]);
 
-  const active = presentation.visible && presentation.rect !== null;
-  const lastRect = presentation.rect;
+  const {
+    active,
+    backgroundCapture,
+    rect: presentationRect,
+  } = resolveHostedBrowserWebviewPresentation({
+    backgroundCaptureRequested: presentation.backgroundCapture,
+    rect: presentation.rect,
+    rendererViewport: { width: window.innerWidth, height: window.innerHeight },
+    selected: selectedInRightPanel || selectedInMiniPlayer,
+    surfaceVisible: presentation.visible,
+  });
+  const lastRect = presentationRect;
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
   const viewportHeight = viewport._tag === "fill" ? null : viewport.height;
@@ -197,7 +222,7 @@ export function HostedBrowserWebview(props: {
           width: hiddenContentSize?.width ?? lastRect?.width ?? 1280,
           height: hiddenContentSize?.height ?? lastRect?.height ?? 800,
         };
-  const containerSize = active && lastRect ? lastRect : hiddenSize;
+  const containerSize = (active || backgroundCapture) && lastRect ? lastRect : hiddenSize;
   const deviceToolbarVisible = active && viewport._tag !== "fill" && !presentation.fitSourceContent;
   const {
     activeDrag,
@@ -254,9 +279,11 @@ export function HostedBrowserWebview(props: {
 
   if (!clientSettingsHydrated || !config) return null;
 
-  const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
+  const renderingActive =
+    active || backgroundCapture || backgroundActivity || pictureInPicture || recordingActive;
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
+    backgroundCapture,
     renderingActive,
     // Electron 43 can permanently blank a macOS webview after `visibility: hidden`.
     // Inactive macOS guests intentionally remain paintable offscreen; other platforms still
@@ -276,6 +303,7 @@ export function HostedBrowserWebview(props: {
       onScroll={syncContentPresentation}
       data-preview-rendering={renderingActive ? "active" : "suspended"}
       data-preview-viewport={runtimeTabId}
+      data-preview-background-capture={backgroundCapture ? "true" : undefined}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
         {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
@@ -318,7 +346,7 @@ export function HostedBrowserWebview(props: {
                 ? Math.max(1, Math.round(layout.viewportHeight / normalizedZoomFactor))
                 : effectiveViewport.height
           }
-          aria-hidden={active ? undefined : true}
+          aria-hidden={resolveHostedBrowserWebviewAriaHidden(active)}
           className={cn(
             "absolute flex overflow-hidden bg-white",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",

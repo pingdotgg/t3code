@@ -1,4 +1,9 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import {
+  DEV_BROWSER_LOOPBACK_HOST,
+  DEV_LOOPBACK_HOST,
+  resolveDevProxyTarget,
+} from "@t3tools/shared/devProxy";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const readPreparedConnection = vi.fn();
@@ -210,6 +215,35 @@ describe("browser target resolver", () => {
         path: "/app",
       }).resolvedUrl,
     ).toBe("http://localhost:5173/app");
+  });
+
+  it("keeps the dev runner loopback listener and proxy reachable to local preview guests", async () => {
+    expect(DEV_LOOPBACK_HOST).toBe("127.0.0.1");
+    expect(DEV_BROWSER_LOOPBACK_HOST).toBe("localhost");
+
+    const proxyTarget = resolveDevProxyTarget("13773", undefined, undefined);
+    expect(proxyTarget).toBe("http://127.0.0.1:13773/");
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: proxyTarget });
+
+    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
+    expect(
+      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
+        kind: "environment-port",
+        port: 5733,
+        path: "/pair#token=example",
+      }).resolvedUrl,
+    ).toBe("http://localhost:5733/pair#token=example");
+  });
+
+  it("preserves concrete backend hosts while translating wildcard listeners", () => {
+    expect(resolveDevProxyTarget("13773", undefined, "192.168.1.20")).toBe(
+      "http://192.168.1.20:13773/",
+    );
+    expect(resolveDevProxyTarget("13773", undefined, "2001:db8::20")).toBe(
+      "http://[2001:db8::20]:13773/",
+    );
+    expect(resolveDevProxyTarget("13773", undefined, "0.0.0.0")).toBe("http://127.0.0.1:13773/");
+    expect(resolveDevProxyTarget("13773", undefined, "::")).toBe("http://[::1]:13773/");
   });
 
   it("leaves malformed input for the normal navigation error path", async () => {

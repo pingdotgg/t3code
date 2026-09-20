@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -6,6 +7,8 @@ import {
   PREVIEW_RECORDING_STOP_TIMEOUT_MS,
   PreviewAutomationRecordingTransferError,
   PreviewAutomationRecordingDesktopUpdateRequiredError,
+  type PreviewAutomationHostList,
+  type PreviewAutomationHostSelection,
   PreviewAutomationRecordingArtifact,
   type ToolActivityIcon,
   type ThreadId,
@@ -62,6 +65,9 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
 > {
   const scope = yield* McpInvocationContext.requireMcpCapability("preview");
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const deadline =
+    (yield* Clock.currentTimeMillis) +
+    (timeoutMs ?? PreviewAutomationBroker.DEFAULT_PREVIEW_AUTOMATION_TIMEOUT_MS);
   let targetTabId = tabId;
   const result = yield* broker.invoke<A>({
     onTargetTab: (resolvedTabId) => {
@@ -74,6 +80,9 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
     ...(tabId === undefined ? {} : { tabId }),
   });
   if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
+  // Optional favicon metadata shares the operation deadline, including its default budget.
+  const metadataTimeoutMs = Math.min(500, deadline - (yield* Clock.currentTimeMillis));
+  if (metadataTimeoutMs <= 0) return { result };
   const statusTabId =
     (operation !== "evaluate" && typeof result === "object" && result !== null
       ? (result as { tabId?: PreviewTabId }).tabId
@@ -83,7 +92,7 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
       scope,
       operation: "status",
       input: {},
-      timeoutMs: 500,
+      timeoutMs: metadataTimeoutMs,
       updateCurrentTab: false,
       ...(statusTabId === undefined ? {} : { tabId: statusTabId }),
     })
@@ -187,15 +196,39 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
 });
 
 const handlers = {
+  preview_list_hosts: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.requireMcpCapability("preview");
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const result = yield* broker.listHosts(scope);
+      return input.platform === undefined
+        ? result
+        : { ...result, hosts: result.hosts.filter((host) => host.platform === input.platform) };
+    }) satisfies Effect.Effect<
+      PreviewAutomationHostList,
+      import("@t3tools/contracts").PreviewAutomationError,
+      McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
+    >,
+  preview_select_host: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.requireMcpCapability("preview");
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      return yield* broker.selectHost(scope, input.hostId);
+    }) satisfies Effect.Effect<
+      PreviewAutomationHostSelection,
+      import("@t3tools/contracts").PreviewAutomationError,
+      McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
+    >,
   preview_status: (input) => invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
   preview_open: (input) =>
     invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
+  preview_close: (input) => invokeTargeted<PreviewAutomationStatus>("close", input ?? {}),
   preview_navigate: (input) =>
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   preview_resize: (input) =>
     invokeTargeted<PreviewAutomationResizeResult>("resize", input, input.timeoutMs),
   preview_set_appearance: (input) =>
-    invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input),
+    invokeTargeted<PreviewAutomationSetColorSchemeResult>("setColorScheme", input, input.timeoutMs),
   preview_snapshot: (input) => {
     // Output selection and saving are MCP-only; the browser still produces a complete snapshot.
     const { includeImage: _includeImage, save: _save, ...operationInput } = input ?? {};
@@ -203,10 +236,10 @@ const handlers = {
   },
   preview_click: (input) => invokeTargeted<object>("click", input, input.timeoutMs),
   preview_type: (input) => invokeTargeted<object>("type", input, input.timeoutMs),
-  preview_press: (input) => invokeTargeted<object>("press", input),
-  preview_scroll: (input) => invokeTargeted<object>("scroll", input),
+  preview_press: (input) => invokeTargeted<object>("press", input, input.timeoutMs),
+  preview_scroll: (input) => invokeTargeted<object>("scroll", input, input.timeoutMs),
   preview_evaluate: ({ tabId, ...input }) =>
-    invoke<unknown>("evaluate", input, undefined, tabId).pipe(
+    invoke<unknown>("evaluate", input, input.timeoutMs, tabId).pipe(
       Effect.map(({ result, toolIcon }) => ({
         value: result ?? null,
         ...(toolIcon ? { toolIcon } : {}),
@@ -214,7 +247,11 @@ const handlers = {
     ),
   preview_wait_for: (input) => invokeTargeted<object>("waitFor", input, input.timeoutMs),
   preview_recording_start: (input) =>
-    invokeTargeted<PreviewAutomationRecordingStatus>("recordingStart", input ?? {}),
+    invokeTargeted<PreviewAutomationRecordingStatus>(
+      "recordingStart",
+      input ?? {},
+      input?.timeoutMs,
+    ),
   preview_recording_stop: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.requireMcpCapability("preview");

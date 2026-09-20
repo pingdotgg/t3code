@@ -2,9 +2,12 @@ import {
   FILL_PREVIEW_VIEWPORT,
   type PreviewAutomationOperation,
   type PreviewAutomationOpenInput,
+  type PreviewOpenInput,
   type PreviewSessionSnapshot,
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
+
+import type { BrowserDefaults } from "~/browser/browserDefaults";
 
 /**
  * Viewport an agent-opened tab falls back to when the user has no configured
@@ -17,6 +20,19 @@ export const DEFAULT_PREVIEW_AUTOMATION_VIEWPORT = {
   width: 1280,
   height: 800,
 } as const satisfies PreviewViewportSetting;
+
+export interface PreviewAutomationOpenWaitPolicy {
+  readonly acknowledgeAfterCreation: boolean;
+  readonly waitForOverlay: boolean;
+  readonly waitForVisibility: boolean;
+}
+
+/** Browser state fixed when a new automation tab is created. */
+export function previewAutomationNewTabDefaults(
+  defaults: Pick<BrowserDefaults, "viewport" | "profileId">,
+): Pick<PreviewOpenInput, "viewport" | "profileId"> {
+  return { viewport: defaults.viewport, profileId: defaults.profileId };
+}
 
 /**
  * An explicit `open`/`show` is the agent deliberately surfacing or suppressing
@@ -49,6 +65,30 @@ export function previewAutomationOpenNeedsOverlay(
   snapshot: PreviewSessionSnapshot,
 ): boolean {
   return input.url !== undefined || snapshot.navStatus._tag !== "Idle";
+}
+
+export function resolvePreviewAutomationOpenWaitPolicy(
+  input: PreviewAutomationOpenInput,
+  snapshot: PreviewSessionSnapshot,
+  reusedExistingTab: boolean,
+  shouldPresentPreview: boolean,
+): PreviewAutomationOpenWaitPolicy {
+  if (!reusedExistingTab) {
+    return {
+      acknowledgeAfterCreation: true,
+      waitForOverlay: false,
+      waitForVisibility: false,
+    };
+  }
+  const canPresentBrowserSurface =
+    input.url !== undefined ||
+    snapshot.navStatus._tag === "Loading" ||
+    snapshot.navStatus._tag === "Success";
+  return {
+    acknowledgeAfterCreation: false,
+    waitForOverlay: previewAutomationOpenNeedsOverlay(input, snapshot),
+    waitForVisibility: shouldPresentPreview && canPresentBrowserSurface,
+  };
 }
 
 /**

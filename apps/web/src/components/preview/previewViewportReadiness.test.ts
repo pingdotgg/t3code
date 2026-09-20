@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { browserViewportSettingKey } from "~/browser/browserViewportLayout";
 
-import { isPreviewViewportReady } from "./previewViewportReadiness";
+import {
+  isPreviewViewportReady,
+  waitForPreviewViewportReadiness,
+} from "./previewViewportReadiness";
 
 describe("isPreviewViewportReady", () => {
   const landscape = {
@@ -68,5 +71,83 @@ describe("isPreviewViewportReady", () => {
         renderedViewport: { width: 846, height: 390 },
       }),
     ).toBe(false);
+  });
+});
+
+describe("waitForPreviewViewportReadiness", () => {
+  const setting = {
+    _tag: "preset",
+    width: 844,
+    height: 390,
+    presetId: "iphone-12-pro",
+  } as const;
+  const readyViewport = {
+    appliedSettingKey: browserViewportSettingKey(setting),
+    declaredViewport: { width: 844, height: 390 },
+    renderedViewport: { width: 844, height: 390 },
+  } as const;
+
+  it("clamps polling to the remaining short deadline", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", { setTimeout });
+    try {
+      const result = waitForPreviewViewportReadiness({
+        setting,
+        timeoutMs: 40,
+        assertCurrent: vi.fn(),
+        readViewport: vi.fn().mockResolvedValue(null),
+      });
+
+      await vi.advanceTimersByTimeAsync(40);
+      await expect(result).resolves.toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns at the deadline when the guest never answers a viewport read", async () => {
+    vi.useFakeTimers();
+    try {
+      const result = waitForPreviewViewportReadiness({
+        setting,
+        timeoutMs: 40,
+        assertCurrent: vi.fn(),
+        readViewport: () => new Promise(() => {}),
+      });
+      await vi.advanceTimersByTimeAsync(40);
+      await expect(result).resolves.toBeNull();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("revalidates runtime identity after an awaited viewport read", async () => {
+    let resolveViewport!: (value: typeof readyViewport) => void;
+    const readViewport = vi.fn(
+      () =>
+        new Promise<typeof readyViewport>((resolve) => {
+          resolveViewport = resolve;
+        }),
+    );
+    const replaced = new Error("runtime replaced");
+    const assertCurrent = vi
+      .fn()
+      .mockImplementationOnce(() => undefined)
+      .mockImplementation(() => {
+        throw replaced;
+      });
+    const result = waitForPreviewViewportReadiness({
+      setting,
+      timeoutMs: 1_000,
+      assertCurrent,
+      readViewport,
+    });
+
+    resolveViewport(readyViewport);
+
+    await expect(result).rejects.toBe(replaced);
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
   });
 });

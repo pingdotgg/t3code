@@ -5,12 +5,15 @@ import {
   DesktopPreviewAutomationEvaluateInputSchema,
   DesktopPreviewAutomationPressInputSchema,
   DesktopPreviewAutomationScrollInputSchema,
+  DesktopPreviewAutomationSnapshotInputSchema,
   DesktopPreviewAutomationStatusSchema,
   DesktopPreviewAutomationTypeInputSchema,
   DesktopPreviewAutomationWaitForInputSchema,
   DesktopPreviewConfigInputSchema,
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
+  DesktopPreviewRecordingStartInputSchema,
+  DesktopPreviewRecordingStopInputSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
@@ -156,9 +159,13 @@ export const setColorScheme = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL,
   payload: DesktopPreviewSetColorSchemeInputSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.setColorScheme")(function* ({ tabId, colorScheme }) {
+  handler: Effect.fn("desktop.ipc.preview.setColorScheme")(function* ({
+    tabId,
+    colorScheme,
+    timeoutMs,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.setColorScheme(tabId, colorScheme);
+    yield* manager.setColorScheme(tabId, colorScheme, timeoutMs);
   }),
 });
 export const setAudioMuted = DesktopIpc.makeIpcMethod({
@@ -180,16 +187,24 @@ export const cancelPickElement = tabMethod(
   "desktop.ipc.preview.cancelPickElement",
   (manager, tabId) => manager.cancelPickElement(tabId),
 );
-export const startRecording = tabMethod(
-  IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
-  "desktop.ipc.preview.startRecording",
-  (manager, tabId) => manager.startRecording(tabId),
-);
-export const stopRecording = tabMethod(
-  IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
-  "desktop.ipc.preview.stopRecording",
-  (manager, tabId) => manager.stopRecording(tabId),
-);
+export const startRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_RECORDING_START_CHANNEL,
+  payload: DesktopPreviewRecordingStartInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.startRecording")(function* ({ tabId, timeoutMs }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.startRecording(tabId, timeoutMs);
+  }),
+});
+export const stopRecording = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL,
+  payload: DesktopPreviewRecordingStopInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.stopRecording")(function* ({ tabId, timeoutMs }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.stopRecording(tabId, timeoutMs);
+  }),
+});
 export const openPictureInPicture = tabMethod(
   IpcChannels.PREVIEW_PICTURE_IN_PICTURE_OPEN_CHANNEL,
   "desktop.ipc.preview.openPictureInPicture",
@@ -389,11 +404,15 @@ export const automationStatus = DesktopIpc.makeIpcMethod({
 
 export const automationSnapshot = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
+  payload: DesktopPreviewAutomationSnapshotInputSchema,
   result: PreviewAutomationSnapshot,
-  handler: Effect.fn("desktop.ipc.preview.automationSnapshot")(function* ({ tabId }) {
+  handler: Effect.fn("desktop.ipc.preview.automationSnapshot")(function* ({
+    tabId,
+    background,
+    timeoutMs,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.automationSnapshot(tabId);
+    return yield* manager.automationSnapshot(tabId, background, timeoutMs);
   }),
 });
 
@@ -461,9 +480,15 @@ export const saveRecording = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL,
   payload: DesktopPreviewRecordingSaveInputSchema,
   result: DesktopPreviewRecordingArtifactSchema,
-  handler: Effect.fn("desktop.ipc.preview.saveRecording")(function* ({ tabId, mimeType, data }) {
+  handler: Effect.fn("desktop.ipc.preview.saveRecording")(function* ({
+    tabId,
+    mimeType,
+    data,
+    idempotencyKey,
+    timeoutMs,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.saveRecording(tabId, mimeType, data);
+    return yield* manager.saveRecording(tabId, mimeType, data, idempotencyKey, timeoutMs);
   }),
 });
 

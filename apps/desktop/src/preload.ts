@@ -62,6 +62,10 @@ function unwrapEnsureSshEnvironmentResult(result: unknown) {
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
+  getPreviewAutomationHostMetadata: () =>
+    ipcRenderer.sendSync(IpcChannels.GET_PREVIEW_AUTOMATION_HOST_METADATA_CHANNEL) as ReturnType<
+      NonNullable<DesktopBridge["getPreviewAutomationHostMetadata"]>
+    >,
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);
     if (typeof result !== "object" || result === null) {
@@ -294,8 +298,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     zoomOut: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_ZOOM_OUT_CHANNEL, { tabId }),
     resetZoom: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_RESET_ZOOM_CHANNEL, { tabId }),
     hardReload: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL, { tabId }),
-    setColorScheme: (tabId, colorScheme) =>
-      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, { tabId, colorScheme }),
+    setColorScheme: (tabId, colorScheme, timeoutMs) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_SET_COLOR_SCHEME_CHANNEL, {
+        tabId,
+        colorScheme,
+        timeoutMs,
+      }),
     setAudioMuted: (tabId, audioMuted) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_AUDIO_MUTED_CHANNEL, { tabId, audioMuted }),
     openDevTools: (tabId) =>
@@ -327,15 +335,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.invoke(IpcChannels.PREVIEW_PICTURE_IN_PICTURE_CLOSE_CHANNEL, { tabId }),
     },
     recording: {
-      startScreencast: (tabId) =>
-        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, { tabId }),
-      stopScreencast: (tabId) =>
-        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL, { tabId }),
-      save: (tabId, mimeType, data) =>
+      startScreencast: (tabId, timeoutMs) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_START_CHANNEL, { tabId, timeoutMs }),
+      stopScreencast: (tabId, timeoutMs) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_STOP_CHANNEL, { tabId, timeoutMs }),
+      save: (tabId, mimeType, data, idempotencyKey, timeoutMs) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL, {
           tabId,
           mimeType,
           data,
+          idempotencyKey,
+          timeoutMs,
         }),
       onFrame: (listener) => {
         const wrappedListener = (_event: Electron.IpcRendererEvent, frame: unknown) => {
@@ -350,8 +360,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     automation: {
       status: (tabId) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_STATUS_CHANNEL, { tabId }),
-      snapshot: (tabId) =>
-        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL, { tabId }),
+      snapshot: (tabId, background = false, timeoutMs) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_SNAPSHOT_CHANNEL, {
+          tabId,
+          background,
+          timeoutMs,
+        }),
       click: (tabId, input) =>
         ipcRenderer.invoke(IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL, { tabId, input }),
       type: (tabId, input) =>

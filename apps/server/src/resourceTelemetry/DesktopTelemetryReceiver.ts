@@ -519,11 +519,13 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         if (message.type === "desktopTelemetryHello") {
           return recordContact.pipe(
             Effect.andThen(
-              updateHealth((current): DesktopTelemetryReceiverHealth => ({
-                ...current,
-                status: "healthy",
-                lastError: Option.none(),
-              })),
+              updateHealth(
+                (current): DesktopTelemetryReceiverHealth => ({
+                  ...current,
+                  status: "healthy",
+                  lastError: Option.none(),
+                }),
+              ),
             ),
           );
         }
@@ -548,18 +550,22 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         );
       }),
       Effect.andThen(
-        updateHealth((current): DesktopTelemetryReceiverHealth => ({
-          ...current,
-          status: "stopped",
-          lastError: Option.some(new DesktopTelemetryStreamClosed({ fd }).message),
-        })),
+        updateHealth(
+          (current): DesktopTelemetryReceiverHealth => ({
+            ...current,
+            status: "stopped",
+            lastError: Option.some(new DesktopTelemetryStreamClosed({ fd }).message),
+          }),
+        ),
       ),
       Effect.catch((error) =>
-        updateHealth((current): DesktopTelemetryReceiverHealth => ({
-          ...current,
-          status: "degraded",
-          lastError: Option.some(error.message),
-        })),
+        updateHealth(
+          (current): DesktopTelemetryReceiverHealth => ({
+            ...current,
+            status: "degraded",
+            lastError: Option.some(error.message),
+          }),
+        ),
       ),
       Effect.forkScoped,
     );
