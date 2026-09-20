@@ -129,12 +129,8 @@ const waitForDesktopOverlay = async (
   });
 };
 
-interface ExecutablePreviewWebview extends Element {
-  readonly executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
-}
-
-const findPreviewWebview = (tabId: string): ExecutablePreviewWebview | null =>
-  Array.from(document.querySelectorAll<ExecutablePreviewWebview>("webview[data-preview-tab]")).find(
+const findPreviewWebview = (tabId: string): Element | null =>
+  Array.from(document.querySelectorAll("[data-preview-tab]")).find(
     (candidate) => candidate.getAttribute("data-preview-tab") === tabId,
   ) ?? null;
 
@@ -144,21 +140,10 @@ const isPreviewWebviewRendering = (runtimeTabId: string): boolean => {
 };
 
 const readWebviewViewport = async (
-  webview: ExecutablePreviewWebview,
+  element: Element,
 ): Promise<PreviewRenderedViewportSize | null> => {
-  const value = await webview.executeJavaScript(
-    "({ width: window.innerWidth, height: window.innerHeight })",
-  );
-  if (typeof value !== "object" || value === null) return null;
-  const { width, height } = value as { readonly width?: unknown; readonly height?: unknown };
-  return typeof width === "number" &&
-    Number.isInteger(width) &&
-    width > 0 &&
-    typeof height === "number" &&
-    Number.isInteger(height) &&
-    height > 0
-    ? { width, height }
-    : null;
+  const tabId = element.getAttribute("data-preview-tab");
+  return tabId ? ((await window.desktopBridge?.preview?.browser.viewport(tabId)) ?? null) : null;
 };
 
 const readRenderedViewport = async (
@@ -169,9 +154,7 @@ const readRenderedViewport = async (
   return await readWebviewViewport(webview);
 };
 
-const readDeclaredViewport = (
-  webview: ExecutablePreviewWebview | null,
-): PreviewRenderedViewportSize | null => {
+const readDeclaredViewport = (webview: Element | null): PreviewRenderedViewportSize | null => {
   const width = Number(webview?.getAttribute("data-preview-css-width"));
   const height = Number(webview?.getAttribute("data-preview-css-height"));
   return Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0
