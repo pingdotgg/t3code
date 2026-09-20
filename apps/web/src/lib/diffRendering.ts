@@ -210,7 +210,7 @@ function fileDiffPath(raw: string): string {
   return unquoteGitPatchPath(raw);
 }
 
-export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
+export function resolveFileDiffPath(fileDiff: Pick<FileDiffMetadata, "name" | "prevName">): string {
   return fileDiffPath(fileDiff.name ?? fileDiff.prevName ?? "");
 }
 
@@ -229,6 +229,16 @@ export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string 
  */
 export function buildFileDiffIdentityKey(fileDiff: FileDiffMetadata): string {
   return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}\u0000${fileDiff.type}`;
+}
+
+export function getDiffPatchFileIndexes(diff: string): ReadonlyMap<string, number> {
+  const indexes = new Map<string, number>();
+  diff.split(/(?=^diff --git )/m).forEach((patch, index) => {
+    const parsed = getRenderablePatch(patch);
+    if (parsed?.kind === "files" && parsed.files[0])
+      indexes.set(buildFileDiffIdentityKey(parsed.files[0]), index);
+  });
+  return indexes;
 }
 
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {

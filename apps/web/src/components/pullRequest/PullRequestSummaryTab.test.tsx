@@ -5,6 +5,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/pullRequests", () => ({ pullRequestEnvironment: {} }));
+vi.mock("~/state/query", () => ({
+  useEnvironmentQuery: () => ({ data: null, error: null, isPending: false }),
+}));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
 vi.mock("./PullRequestMarkdown", () => ({
   PullRequestMarkdown: ({ text }: { text: string }) => <p>{text}</p>,
@@ -145,6 +148,29 @@ it("keeps an unsaved description when collapsed and reopened", () => {
   expect(renderer.root.findByType("textarea").props.value).toBe("Unsaved description");
 });
 
+it.each(["closed", "merged"] as const)(
+  "removes the reviewer picker when a pull request becomes %s",
+  (state) => {
+    const value: PullRequestDetailView = {
+      ...detail,
+      capabilities: { ...detail.capabilities, reviewers: { request: true, listCandidates: true } },
+      viewerPermissions: { ...detail.viewerPermissions, requestReviewers: true },
+    };
+    act(() => {
+      renderer = create(render(value));
+    });
+    const buttons = () =>
+      renderer.root
+        .findAllByType("button")
+        .filter((button) => button.props["aria-label"] === "Request a review");
+    expect(buttons()).toHaveLength(1);
+    act(() => renderer.update(render({ ...value, isDraft: true })));
+    expect(buttons()).toHaveLength(1);
+    act(() => renderer.update(render({ ...value, state })));
+    expect(buttons()).toHaveLength(0);
+  },
+);
+
 it("opens bot reports in pages without hiding human comments", () => {
   const value: PullRequestDetailView = {
     ...detail,
@@ -211,4 +237,49 @@ it("opens bot reports in pages without hiding human comments", () => {
   expect(
     renderer.root.findAllByType("p").some((p) => p.children.join("").startsWith("Bot report")),
   ).toBe(false);
+});
+
+it("shows each thread once while keeping standalone comments separate", () => {
+  const comment = {
+    id: "thread-comment",
+    body: "Review this change",
+    author: detail.author,
+    createdAt: detail.createdAt,
+    url: null,
+  };
+  act(() => {
+    renderer = create(
+      render({
+        ...detail,
+        reviewThreads: [
+          {
+            id: "discussion",
+            path: null,
+            line: null,
+            side: "right",
+            isResolved: false,
+            isOutdated: false,
+            comments: [comment],
+          },
+        ],
+        comments: [
+          { ...comment, kind: "review-comment", path: null, reviewState: null },
+          {
+            ...comment,
+            id: "standalone",
+            body: "General update",
+            kind: "issue-comment",
+            path: null,
+            reviewState: null,
+          },
+        ],
+        commentCount: 2,
+      }),
+    );
+  });
+  const paragraphs = renderer.root.findAllByType("p");
+  expect(paragraphs.filter((node) => node.children.includes("Review this change"))).toHaveLength(1);
+  expect(paragraphs.filter((node) => node.children.includes("General update"))).toHaveLength(1);
+  expect(heading("Threads (1)").props["aria-expanded"]).toBe(true);
+  expect(heading("Comments (1)").props["aria-expanded"]).toBe(true);
 });

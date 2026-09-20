@@ -43,6 +43,7 @@ const writes = new Set<string>([
   WS_METHODS.pullRequestsUpdate,
   WS_METHODS.pullRequestsComment,
   WS_METHODS.pullRequestsUpdateComment,
+  WS_METHODS.pullRequestsUploadAttachment,
   WS_METHODS.pullRequestsSubmitReview,
   WS_METHODS.pullRequestsReplyToThread,
   WS_METHODS.pullRequestsSetReaction,

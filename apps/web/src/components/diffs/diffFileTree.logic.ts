@@ -1,12 +1,31 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { FileTreeBatchOperation, FileTreeSortComparator, GitStatus } from "@pierre/trees";
 
-import { resolveFileDiffPath } from "~/lib/diffRendering";
+import { resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
 
 /** One changed file as the tree shows it: its current path and how it changed. */
 export interface DiffFileTreeEntry {
   readonly path: string;
   readonly status: GitStatus;
+  readonly previousPath?: string;
+  readonly renamedWithChanges?: boolean;
+  readonly viewed?: boolean;
+  readonly viewedStale?: boolean;
+}
+
+export function diffFileTreeViewedCounts(entries: ReadonlyArray<DiffFileTreeEntry>) {
+  const counts = new Map<string, { total: number; viewed: number; stale: number }>();
+  for (const entry of entries) {
+    const paths = [entry.path, ...collectDirectoryPaths([entry.path])];
+    for (const path of paths) {
+      const count = counts.get(path) ?? { total: 0, viewed: 0, stale: 0 };
+      count.total++;
+      if (entry.viewed) count.viewed++;
+      if (entry.viewedStale) count.stale++;
+      counts.set(path, count);
+    }
+  }
+  return counts;
 }
 
 function toGitStatus(file: FileDiffMetadata): GitStatus {
@@ -31,14 +50,46 @@ function toGitStatus(file: FileDiffMetadata): GitStatus {
 export function diffFileTreeEntries(
   files: ReadonlyArray<FileDiffMetadata>,
 ): ReadonlyArray<DiffFileTreeEntry> {
-  const statusByPath = new Map<string, GitStatus>();
+  const entries = new Map<string, DiffFileTreeEntry>();
   for (const file of files) {
-    const path = resolveFileDiffPath(file);
-    const status = toGitStatus(file);
-    const previous = statusByPath.get(path);
-    statusByPath.set(path, previous === undefined || previous === status ? status : "modified");
+    const entry: DiffFileTreeEntry = {
+      path: resolveFileDiffPath(file),
+      status: toGitStatus(file),
+      ...(file.type === "rename-pure" || file.type === "rename-changed"
+        ? {
+            previousPath: resolveFileDiffPreviousPath(file),
+            renamedWithChanges: file.type === "rename-changed",
+          }
+        : {}),
+    };
+    const previous = entries.get(entry.path);
+    entries.set(
+      entry.path,
+      previous
+        ? { ...previous, status: previous.status === entry.status ? entry.status : "modified" }
+        : entry,
+    );
   }
-  return [...statusByPath].map(([path, status]) => ({ path, status }));
+  return [...entries.values()];
+}
+
+export function changedPathParts(previousPath: string, path: string) {
+  const before = Array.from(previousPath);
+  const after = Array.from(path);
+  let start = 0;
+  while (start < Math.min(before.length, after.length) && before[start] === after[start]) start++;
+  let end = 0;
+  while (
+    end < Math.min(before.length, after.length) - start &&
+    before[before.length - end - 1] === after[after.length - end - 1]
+  )
+    end++;
+  return {
+    prefix: before.slice(0, start).join(""),
+    before: before.slice(start, before.length - end).join(""),
+    after: after.slice(start, after.length - end).join(""),
+    suffix: before.slice(before.length - end).join(""),
+  };
 }
 
 /**
@@ -70,6 +121,31 @@ export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap
     }
   });
   return positions;
+}
+
+export function orderFilesByTree<T>(
+  files: ReadonlyArray<T>,
+  getPath: (file: T) => string,
+): ReadonlyArray<T> {
+  const positions = diffFileTreePositions(files.map(getPath));
+  return files
+    .map((file) => {
+      let path = "";
+      const segments = getPath(file).split("/");
+      const ranks = segments.map((segment, index) => {
+        path += segment + (index < segments.length - 1 ? "/" : "");
+        return positions.get(path)!;
+      });
+      return { file, ranks };
+    })
+    .sort((left, right) => {
+      for (let index = 0; index < Math.min(left.ranks.length, right.ranks.length); index++) {
+        const difference = left.ranks[index]! - right.ranks[index]!;
+        if (difference !== 0) return difference;
+      }
+      return left.ranks.length - right.ranks.length;
+    })
+    .map(({ file }) => file);
 }
 
 export function compareDiffFileTreeEntries(

@@ -2,6 +2,9 @@ import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
   AssetGitHubMediaUrlValidationError,
+  AssetPullRequestMediaUrlValidationError,
+  PullRequestRef,
+  SourceControlProviderKind,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -28,6 +31,7 @@ import {
   readImageDimensions,
   type ImageDimensions,
 } from "@t3tools/shared/imageDimensions";
+import { pullRequestMediaUrl } from "@t3tools/shared/pullRequestMedia";
 import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import * as Clock from "effect/Clock";
@@ -83,6 +87,14 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
 ]);
 
 const AssetClaimsSchema = Schema.Union([
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("pull-request-media"),
+    reference: PullRequestRef,
+    provider: SourceControlProviderKind,
+    url: Schema.String,
+    expiresAt: Schema.Number,
+  }),
   Schema.Struct({
     version: Schema.Literal(1),
     kind: Schema.Literal("workspace-file"),
@@ -153,6 +165,7 @@ const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
 export type ResolvedAsset =
+  | Extract<AssetClaims, { readonly kind: "pull-request-media" }>
   | {
       readonly kind: "file";
       readonly path: string;
@@ -676,6 +689,26 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
+    case "pull-request-media": {
+      const resource = input.resource;
+      const url = pullRequestMediaUrl({
+        ...resource.reference,
+        provider: resource.provider,
+        host: resource.reference.host,
+        url: resource.url,
+      });
+      if (url === null) return yield* new AssetPullRequestMediaUrlValidationError({});
+      claims = {
+        version: 1,
+        kind: "pull-request-media",
+        reference: resource.reference,
+        provider: resource.provider,
+        url,
+        expiresAt,
+      };
+      fileName = githubMediaFileName(url);
+      break;
+    }
     case "github-media": {
       const fetchUrl = githubMediaFetchUrl(input.resource.url);
       if (fetchUrl === null) {
@@ -790,6 +823,8 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ? ({ kind: "file", path: faviconPath } satisfies ResolvedAsset)
       : null;
   }
+
+  if (claims.kind === "pull-request-media") return claims;
 
   if (claims.kind === "github-media") {
     return {

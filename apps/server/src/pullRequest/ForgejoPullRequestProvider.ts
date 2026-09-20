@@ -1,7 +1,9 @@
+import { attachmentMarkdown, NATIVE_ATTACHMENT_CAPABILITY } from "./PullRequestAttachments.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
+import { pullRequestMediaUrl } from "@t3tools/shared/pullRequestMedia";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { ForgejoCli, type ForgejoApiInput } from "../sourceControl/ForgejoCli.ts";
 import { parseDiffFileRevisions } from "./bitbucketDiffRevisions.ts";
@@ -33,7 +35,13 @@ import {
   forgejoReactions,
 } from "./forgejoPullRequestJson.ts";
 
+const ForgejoAttachment = Schema.Struct({ browser_download_url: Schema.String });
+
 const CAPABILITIES: PullRequestCapabilities = {
+  attachments: {
+    ...NATIVE_ATTACHMENT_CAPABILITY,
+    reason: "Requires fj authentication. The server may set a smaller file limit.",
+  },
   diff: true,
   viewedFiles: "environment",
   comment: true,
@@ -175,7 +183,7 @@ export const make = Effect.gen(function* () {
           )
         : [],
       comment: active && (!pr.is_locked || canWrite),
-      resolve: false,
+      resolve: active,
       verdicts: active
         ? pr.user?.login === viewer
           ? ["comment"]
@@ -187,6 +195,34 @@ export const make = Effect.gen(function* () {
         active && canWrite ? (repo.allow_rebase_update ? ["merge", "rebase"] : ["merge"]) : [],
     };
   };
+  const hostCapabilities = new Map<string, PullRequestCapabilities>();
+  const getCapabilities = Effect.fn("ForgejoPullRequestProvider.getCapabilities")(function* (
+    input: ProviderRepositoryRef,
+  ) {
+    const key = `${input.cwd}:${input.host}`;
+    const cached = hostCapabilities.get(key);
+    if (cached) return cached;
+    const version = yield* read(
+      { ...input, path: "version" },
+      Schema.Struct({ version: Schema.String }),
+    ).pipe(Effect.orElseSucceed(() => null));
+    if (version === null) return CAPABILITIES;
+    const giteaVersion = /^1\.(\d+)\.\d+(?:[+-][\w.-]+)?$/.exec(version.version);
+    const capabilities = {
+      ...CAPABILITIES,
+      review: {
+        ...CAPABILITIES.review,
+        resolve:
+          giteaVersion !== null &&
+          Number(giteaVersion[1]) >= 26 &&
+          !/forgejo/i.test(version.version),
+      },
+    };
+    if (hostCapabilities.size >= 128)
+      hostCapabilities.delete(hostCapabilities.keys().next().value!);
+    hostCapabilities.set(key, capabilities);
+    return capabilities;
+  });
   const getPermissions = Effect.fn("ForgejoPullRequestProvider.getPermissions")(function* (
     input: ProviderRepositoryRef & { readonly number: number },
   ) {
@@ -201,6 +237,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "forgejo",
     capabilities: CAPABILITIES,
+    getCapabilities,
     getViewer,
     listChangeRequests: Effect.fn("ForgejoPullRequestProvider.listChangeRequests")(
       function* (input) {
@@ -240,6 +277,9 @@ export const make = Effect.gen(function* () {
         [getPull(input), getRepo(input), getViewer(input)],
         { concurrency: 3 },
       );
+      const attachmentAuth = yield* cli
+        .resolveRepository(input)
+        .pipe(Effect.orElseSucceed(() => null));
       const statuses = yield* page(
         {
           ...input,
@@ -249,6 +289,14 @@ export const make = Effect.gen(function* () {
       );
       return {
         ...forgejoChangeRequest(pr),
+        attachments: {
+          ...NATIVE_ATTACHMENT_CAPABILITY,
+          supported: attachmentAuth?.command === "fj",
+          reason:
+            attachmentAuth?.command === "fj"
+              ? "Uploads use this server’s fj account."
+              : "Attachment uploads require fj authentication. tea does not support multipart uploads.",
+        },
         body: pr.body ?? "",
         changedFiles: pr.changed_files ?? 0,
         reviewers: (pr.requested_reviewers ?? []).flatMap((user) => {
@@ -454,6 +502,52 @@ export const make = Effect.gen(function* () {
         method: "POST",
         body: { body: input.body },
       }),
+    readAttachment: Effect.fn("ForgejoPullRequestProvider.readAttachment")(function* (input) {
+      const url = pullRequestMediaUrl({ ...input, provider: "forgejo" });
+      if (!url || !cli.readAttachment)
+        return yield* failure(
+          "readAttachment",
+          "This Forgejo account cannot read private attachments.",
+        );
+      const assets = yield* page(
+        { ...input, path: `${issuePath(input)}/assets` },
+        ForgejoAttachment,
+      );
+      if (!assets.items.some((asset) => asset.browser_download_url === url))
+        return yield* failure(
+          "readAttachment",
+          "The attachment does not belong to this pull request.",
+        );
+      return yield* cli
+        .readAttachment(input)
+        .pipe(Effect.mapError((cause) => failure("readAttachment", cause.detail)));
+    }),
+    uploadAttachment: Effect.fn("ForgejoPullRequestProvider.uploadAttachment")(function* (input) {
+      const formData = new FormData();
+      formData.set(
+        "attachment",
+        new Blob([new Uint8Array(input.data)], { type: input.mimeType }),
+        input.name,
+      );
+      const asset = yield* read(
+        {
+          cwd: input.cwd,
+          repository: input.repository,
+          host: input.host,
+          path: `${issuePath(input)}/assets`,
+          method: "POST",
+          formData,
+        },
+        Schema.Struct({
+          browser_download_url: Schema.String.check(Schema.isPattern(/^https?:\/\//)),
+        }),
+      );
+      return {
+        url: asset.browser_download_url,
+        markdown: attachmentMarkdown(asset.browser_download_url, input.name, input.mimeType),
+      };
+    }),
+
     updateComment: (input) =>
       write({
         ...input,
@@ -591,7 +685,19 @@ export const make = Effect.gen(function* () {
       });
     }),
     replyToThread: () => unsupported("thread replies"),
-    setThreadResolution: () => unsupported("thread resolution"),
+    setThreadResolution: Effect.fn("ForgejoPullRequestProvider.setThreadResolution")(
+      function* (input) {
+        if (!/^[1-9]\d*$/.test(input.threadId))
+          return yield* failure("setThreadResolution", "Invalid review comment ID.");
+        const capabilities = yield* getCapabilities(input);
+        if (!capabilities.review.resolve) return yield* unsupported("thread resolution");
+        yield* write({
+          ...input,
+          path: `${repoPath(input)}/pulls/comments/${input.threadId}/${input.resolved ? "resolve" : "unresolve"}`,
+          method: "POST",
+        });
+      },
+    ),
   };
   return provider;
 });

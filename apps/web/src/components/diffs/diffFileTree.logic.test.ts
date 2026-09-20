@@ -6,13 +6,29 @@ import {
   buildDiffFileTreeUpdates,
   compareDiffFileTreeEntries,
   collectDirectoryPaths,
+  changedPathParts,
   diffFileTreePositions,
+  diffFileTreeViewedCounts,
   diffFileTreeEntries,
+  orderFilesByTree,
 } from "./diffFileTree.logic";
 
 function file(type: FileDiffMetadata["type"], name: string, prevName = name): FileDiffMetadata {
   return { type, name, prevName } as FileDiffMetadata;
 }
+
+it("counts nested viewed files without including similar folder names", () => {
+  const counts = diffFileTreeViewedCounts([
+    { path: "src/a.ts", status: "modified", viewed: true },
+    { path: "src/deep/b.ts", status: "added", viewedStale: true },
+    { path: "src-other/c.ts", status: "deleted", viewed: true },
+    { path: "README.md", status: "modified" },
+  ]);
+  expect(counts.get("src/")).toEqual({ total: 2, viewed: 1, stale: 1 });
+  expect(counts.get("src/deep/")).toEqual({ total: 1, viewed: 0, stale: 1 });
+  expect(counts.get("src-other/")).toEqual({ total: 1, viewed: 1, stale: 0 });
+  expect(counts.get("README.md")).toEqual({ total: 1, viewed: 0, stale: 0 });
+});
 
 describe("diffFileTreeEntries", () => {
   it("maps each change type to its git status under the file's current path", () => {
@@ -27,10 +43,48 @@ describe("diffFileTreeEntries", () => {
     ).toEqual([
       { path: "a/src/a.ts", status: "added" },
       { path: "src/b.ts", status: "deleted" },
-      { path: "src/c.ts", status: "renamed" },
-      { path: "src/d.ts", status: "renamed" },
+      {
+        path: "src/c.ts",
+        status: "renamed",
+        previousPath: "src/old-c.ts",
+        renamedWithChanges: false,
+      },
+      {
+        path: "src/d.ts",
+        status: "renamed",
+        previousPath: "src/old-d.ts",
+        renamedWithChanges: true,
+      },
       { path: "README.md", status: "modified" },
     ]);
+  });
+});
+
+describe("changedPathParts", () => {
+  it.each([
+    [
+      "src/quality-control.ts",
+      "src/issues.ts",
+      { prefix: "src/", before: "quality-control", after: "issues", suffix: ".ts" },
+    ],
+    ["old/file.ts", "new/file.ts", { prefix: "", before: "old", after: "new", suffix: "/file.ts" }],
+    [
+      "src/file.ts",
+      "src/new-file.ts",
+      { prefix: "src/", before: "", after: "new-", suffix: "file.ts" },
+    ],
+    [
+      "src/new-file.ts",
+      "src/file.ts",
+      { prefix: "src/", before: "new-", after: "", suffix: "file.ts" },
+    ],
+    ["src/😀.ts", "src/😁.ts", { prefix: "src/", before: "😀", after: "😁", suffix: ".ts" }],
+    ["src/file.ts", "src/file.ts", { prefix: "src/file.ts", before: "", after: "", suffix: "" }],
+  ])("isolates the changed part of %s → %s", (previousPath, path, expected) => {
+    const parts = changedPathParts(previousPath, path);
+    expect(parts).toEqual(expected);
+    expect(parts.prefix + parts.before + parts.suffix).toBe(previousPath);
+    expect(parts.prefix + parts.after + parts.suffix).toBe(path);
   });
 });
 
@@ -62,6 +116,35 @@ describe("collectDirectoryPaths", () => {
 });
 
 describe("diff tree reading order", () => {
+  it("keeps nested folders contiguous using the first file in review order", () => {
+    const paths = ["lib/b.ts", "ui/a.ts", "lib/c.ts", "ui/a.test.ts", "lib/b.test.ts", "lock"];
+    expect(orderFilesByTree(paths, (path) => path)).toEqual([
+      "lib/b.ts",
+      "lib/c.ts",
+      "lib/b.test.ts",
+      "ui/a.ts",
+      "ui/a.test.ts",
+      "lock",
+    ]);
+    expect(orderFilesByTree(paths.toReversed(), (path) => path)).toEqual([
+      "lock",
+      "lib/b.test.ts",
+      "lib/c.ts",
+      "lib/b.ts",
+      "ui/a.test.ts",
+      "ui/a.ts",
+    ]);
+  });
+
+  it("keeps both sides of a type change and handles empty input", () => {
+    const removed = file("deleted", "src/app.ts");
+    const added = file("new", "src/app.ts");
+    expect(
+      orderFilesByTree([removed, file("change", "README.md"), added], (file) => file.name),
+    ).toEqual([removed, added, file("change", "README.md")]);
+    expect(orderFilesByTree([], String)).toEqual([]);
+  });
+
   it("places folders and files where their first diff appears", () => {
     const paths = [
       "apps/mobile/src/state/shell.ts",

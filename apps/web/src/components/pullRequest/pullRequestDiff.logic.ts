@@ -42,6 +42,22 @@ export function isFileDiffCollapsed(
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
 }
 
+export function describeReviewFile(file: FileDiffMetadata): string {
+  if (file.type === "rename-pure")
+    return "Renamed without content changes. Check the new path and its callers.";
+  const additions = file.hunks.reduce((count, hunk) => count + hunk.additionLines, 0);
+  const deletions = file.hunks.reduce((count, hunk) => count + hunk.deletionLines, 0);
+  const change =
+    file.type === "new"
+      ? "New file"
+      : file.type === "deleted"
+        ? "Deleted file"
+        : file.type === "rename-changed"
+          ? "Renamed and edited file"
+          : "Modified file";
+  return `${change}. In this diff: ${additions} added ${additions === 1 ? "line" : "lines"}, ${deletions} removed ${deletions === 1 ? "line" : "lines"}.`;
+}
+
 /**
  * The reader's fold choices after a file was ticked off, or put back.
  *
@@ -50,15 +66,20 @@ export function isFileDiffCollapsed(
  * toolbar last asked, and so keeps "collapse all" from ticking anything off.
  */
 export function toggleFileDiffFoldForViewed(
-  fileKey: string,
+  fileKey: string | ReadonlyArray<string>,
   viewed: boolean,
   foldOverride: DiffFoldOverride,
   toggledFileKeys: ReadonlySet<string>,
 ): ReadonlySet<string> {
-  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys) === viewed)
-    return toggledFileKeys;
+  const keys = typeof fileKey === "string" ? [fileKey] : fileKey;
+  const changed = keys.filter(
+    (key) => isFileDiffCollapsed(key, foldOverride, toggledFileKeys) !== viewed,
+  );
+  if (changed.length === 0) return toggledFileKeys;
   const next = new Set(toggledFileKeys);
-  if (next.has(fileKey)) next.delete(fileKey);
-  else next.add(fileKey);
+  for (const key of changed) {
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+  }
   return next;
 }

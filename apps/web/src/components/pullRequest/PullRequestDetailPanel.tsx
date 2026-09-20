@@ -1,3 +1,4 @@
+import { reviewEditKey, reviewPublishKey, useReviewEdits } from "../diffs/ReviewEdits";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
@@ -122,11 +123,15 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
+import { PullRequestCommentActionsContext } from "./PullRequestCommentActions";
+import { Checkbox } from "../ui/checkbox";
+import { PullRequestAttachmentProvider } from "./PullRequestMarkdownField";
 import { PullRequestCommentComposer } from "./PullRequestCommentComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
   buildAddSelectionToAgentHandoff,
+  buildPullRequestCommentContext,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildFixFindingHandoff,
@@ -155,7 +160,10 @@ import {
   stripPullRequestHandoffReferences,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
-import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
+import {
+  canEditPullRequestChangeRequest,
+  getPullRequestFileEditReason,
+} from "./pullRequestEditing.logic";
 import {
   resolvePickableEnvironments,
   type PickableEnvironment,
@@ -624,6 +632,7 @@ export function PullRequestDetailPanel({
   };
   const [confirmation, setConfirmation] = useState<{
     readonly open: boolean;
+    readonly bypassMergeChecks?: boolean;
     readonly action: "merge" | "close" | "enable-auto-merge" | "revert" | "approve-workflows";
   }>({ open: false, action: "merge" });
   const confirmAction = confirmation.action;
@@ -870,7 +879,32 @@ export function PullRequestDetailPanel({
   // Which action is in flight, not merely that one is: every control here is disabled while any
   // of them runs, but only the button that was pressed may say what it is doing.
   const [pendingAction, setPendingAction] = useState<PullRequestAction | null>(null);
-  const actionPending = pendingAction !== null;
+  const [resolvingThread, setResolvingThread] = useState(false);
+  const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
+    reportFailure: false,
+  });
+  const reviewEdits = useReviewEdits();
+  const fileEditReason = detail ? getPullRequestFileEditReason(detail) : null;
+  const fixUnavailable = detail?.state !== "open";
+  const setPullRequestReadOnly = reviewEdits?.setPullRequestReadOnly;
+  useLayoutEffect(() => {
+    if (detail) setPullRequestReadOnly?.(environmentId, detail.url, fileEditReason);
+  }, [detail, environmentId, fileEditReason, setPullRequestReadOnly]);
+  const publishLabel =
+    detail && reviewEdits?.publishing.get(reviewPublishKey(environmentId, detail.url));
+  const reviewFiles = [...(reviewEdits?.drafts.values() ?? [])].filter(
+    (draft) =>
+      draft.environmentId === environmentId &&
+      draft.cwd === detail?.workspaceRoot &&
+      draft.pullRequestUrl === detail?.url,
+  );
+  const pendingEdits = reviewFiles.filter((draft) => draft.pendingPush).length;
+  const savingReview = reviewFiles.some((draft) =>
+    reviewEdits?.savingKeys.has(reviewEditKey(draft)),
+  );
+  const hasUnsavedEdits = reviewFiles.some((draft) => draft.contents !== draft.savedContents);
+  const actionPending = pendingAction !== null || resolvingThread || savingReview || !!publishLabel;
+  const [pushedReviewUrl, setPushedReviewUrl] = useState<string | null>(null);
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
   // Scoped to the pull request it was typed against, since this one panel shows a different one
   // every time it is opened and a half-written title must not follow it there.
@@ -954,6 +988,7 @@ export function PullRequestDetailPanel({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
+    bypassMergeChecks = false,
   ) => {
     const result = await runAction({
       environmentId,
@@ -961,6 +996,7 @@ export function PullRequestDetailPanel({
         ...reference,
         action,
         ...(method ? { mergeMethod: method } : {}),
+        ...(bypassMergeChecks ? { bypassMergeChecks: true } : {}),
         ...(updateMethod ? { updateMethod } : {}),
       },
     });
@@ -1003,14 +1039,15 @@ export function PullRequestDetailPanel({
     action: PullRequestAction,
     method?: PullRequestMergeMethod,
     updateMethod?: PullRequestUpdateMethod,
+    bypassMergeChecks = false,
   ) => {
-    if (pendingAction !== null) return false;
+    if (actionPending) return false;
     setPendingAction(action);
-    return finishAction(action, method, updateMethod);
+    return finishAction(action, method, updateMethod, bypassMergeChecks);
   };
 
   const performCommentAction = async (body: string, action: "close" | "reopen") => {
-    if (pendingAction !== null) return { commentPosted: false };
+    if (actionPending) return { commentPosted: false };
     setPendingAction(action);
     const commentResult = await postComment({
       environmentId,
@@ -1130,7 +1167,7 @@ export function PullRequestDetailPanel({
 
   /** A question about the change, which needs a thread and nothing else. */
   const startAsk = async (kind: string, task: ThreadTask) => {
-    if (!detail || handoff !== null) return;
+    if (!detail || handoff !== null || actionPending) return;
     if (attachTarget !== null) {
       writeTaskToComposer(attachTarget, task);
       toastManager.add({
@@ -1178,7 +1215,7 @@ export function PullRequestDetailPanel({
     // already work — and it moves the branch under everything else that is open there.
     mode: "worktree" | "local" = "worktree",
   ) => {
-    if (!detail || handoff !== null) return;
+    if (!detail || handoff !== null || actionPending) return;
     if (attachTarget !== null && task !== null) {
       writeTaskToComposer(attachTarget, task);
       toastManager.add({
@@ -1354,7 +1391,7 @@ export function PullRequestDetailPanel({
 
   /** One finding, handed over on its own — the surfaces that show findings call this. */
   const startFixFinding = (finding: PullRequestFinding) => {
-    if (!detail) return;
+    if (!detail || fixUnavailable) return;
     void startHandoff(
       pullRequestFindingKey(finding),
       buildFixFindingHandoff({
@@ -1369,7 +1406,7 @@ export function PullRequestDetailPanel({
   };
 
   const startFixFindings = () => {
-    if (!detail) return;
+    if (!detail || fixUnavailable) return;
     void startHandoff(
       "findings",
       buildFixFindingsHandoff({
@@ -1489,6 +1526,17 @@ export function PullRequestDetailPanel({
     !detail.isDraft &&
     !conflicting &&
     allowedMergeMethods.length > 1;
+  const confirmationAllowed =
+    can(confirmAction) &&
+    (confirmAction === "merge"
+      ? primaryAction === "merge" || showsMergeNow
+      : confirmAction === "enable-auto-merge"
+        ? primaryAction === "enable-auto-merge" || (showsAutoMerge && !autoMergeArmed)
+        : confirmAction === "close"
+          ? detail?.state === "open"
+          : confirmAction === "revert"
+            ? detail?.state === "merged"
+            : workflowApprovalsRequired > 0);
   // The pull request number carries this state in the overview and the right-panel tab mirrors
   // it. Conflicts take the action slot while they need a person, but do not change the PR state.
   const statePresentation = detail
@@ -1515,9 +1563,52 @@ export function PullRequestDetailPanel({
     return <PullRequestDetailGhost seed={matchingListEntry} />;
   }
 
-  return (
+  const panel = (
     <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
-      {threadPickerOpen && detail ? (
+      {detail &&
+        (pendingEdits > 0 ||
+          (hasUnsavedEdits && fileEditReason !== null) ||
+          publishLabel ||
+          savingReview ||
+          (pushedReviewUrl === detail.url && !hasUnsavedEdits)) && (
+          <div
+            className="flex shrink-0 items-center justify-between gap-3 border-b border-border/60 px-4 py-2"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="text-xs text-muted-foreground">
+              {publishLabel ||
+                (savingReview && "Saving changes...") ||
+                (fileEditReason && `${fileEditReason} Your edits are kept.`) ||
+                (pendingEdits > 0
+                  ? `${pendingEdits} saved ${pendingEdits === 1 ? "file" : "files"} ready to push`
+                  : "Changes pushed")}
+            </span>
+            {pendingEdits > 0 && (
+              <Button
+                size="sm"
+                disabled={
+                  actionPending || reviewEdits?.saving || hasUnsavedEdits || fileEditReason !== null
+                }
+                title={
+                  fileEditReason ??
+                  (hasUnsavedEdits ? "Save your edits with Cmd/Ctrl+S first" : undefined)
+                }
+                onClick={async () => {
+                  if (fileEditReason) return;
+                  const url = detail.url;
+                  if (await reviewEdits?.publish(environmentId, detail.workspaceRoot, url)) {
+                    setPushedReviewUrl(url);
+                    void refreshFromHost();
+                  }
+                }}
+              >
+                {publishLabel ? "Publishing..." : "Commit & push"}
+              </Button>
+            )}
+          </div>
+        )}
+      {threadPickerOpen && detail && !publishLabel ? (
         <PullRequestThreadLinks
           key={`${environmentId}:${detail.url}`}
           display="picker"
@@ -1529,6 +1620,7 @@ export function PullRequestDetailPanel({
         />
       ) : null}
       <div
+        inert={!!publishLabel}
         className={cn(
           "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
           detail && "border-b border-border/60",
@@ -1731,7 +1823,7 @@ export function PullRequestDetailPanel({
                     <TooltipTrigger
                       render={
                         <MenuTrigger
-                          disabled={handoff !== null}
+                          disabled={actionPending || handoff !== null}
                           render={
                             <Button
                               size="xs"
@@ -1756,7 +1848,10 @@ export function PullRequestDetailPanel({
                     <TooltipPopup>Check out this pull request</TooltipPopup>
                   </Tooltip>
                   <MenuPopup align="end" side="bottom" className="min-w-72">
-                    <MenuItem onClick={() => startCheckout("worktree")}>
+                    <MenuItem
+                      disabled={actionPending || handoff !== null}
+                      onClick={() => startCheckout("worktree")}
+                    >
                       <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
                       <span className="flex min-w-0 flex-col">
                         <span>In a separate worktree</span>
@@ -1765,7 +1860,10 @@ export function PullRequestDetailPanel({
                         </span>
                       </span>
                     </MenuItem>
-                    <MenuItem onClick={() => startCheckout("local")}>
+                    <MenuItem
+                      disabled={actionPending || handoff !== null}
+                      onClick={() => startCheckout("local")}
+                    >
                       <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start" />
                       <span className="flex min-w-0 flex-col">
                         <span>In this repository</span>
@@ -1779,7 +1877,7 @@ export function PullRequestDetailPanel({
                         environments={pickableEnvironments}
                         value={actingEnvironmentId}
                         onChange={(next) => setActingScope({ pullRequestKey, environmentId: next })}
-                        disabled={handoff !== null}
+                        disabled={actionPending || handoff !== null}
                       />
                     ) : null}
                   </MenuPopup>
@@ -1816,7 +1914,7 @@ export function PullRequestDetailPanel({
                         <Button
                           size="xs"
                           variant="destructive-outline"
-                          disabled={handoff !== null}
+                          disabled={actionPending || handoff !== null}
                           onClick={startResolveConflicts}
                           aria-label={
                             handoff === "conflicts" ? "Preparing..." : "Resolve conflicts"
@@ -1981,7 +2079,10 @@ export function PullRequestDetailPanel({
                     />
                     Refresh
                   </MenuItem>
-                  <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
+                  <MenuItem
+                    disabled={actionPending || handoff !== null}
+                    onClick={askAboutPullRequest}
+                  >
                     <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start" />
                     <span className="flex min-w-0 flex-col">
                       <span>{handoff === "ask" ? "Opening..." : "Ask a question"}</span>
@@ -1992,7 +2093,10 @@ export function PullRequestDetailPanel({
                       </span>
                     </span>
                   </MenuItem>
-                  <MenuItem disabled={handoff !== null} onClick={explainPullRequest}>
+                  <MenuItem
+                    disabled={actionPending || handoff !== null}
+                    onClick={explainPullRequest}
+                  >
                     <BookOpenIcon className="mt-1 size-3.5 shrink-0 self-start" />
                     <span className="flex min-w-0 flex-col">
                       <span>{handoff === "explain" ? "Opening..." : "Explain this PR"}</span>
@@ -2001,7 +2105,13 @@ export function PullRequestDetailPanel({
                       </span>
                     </span>
                   </MenuItem>
-                  <MenuItem disabled={handoff !== null} onClick={startFixFindings}>
+                  <MenuItem
+                    disabled={actionPending || handoff !== null || fixUnavailable}
+                    title={
+                      fixUnavailable ? "Fixes are only available on open pull requests." : undefined
+                    }
+                    onClick={startFixFindings}
+                  >
                     <HammerIcon className="size-3.5" />
                     {handoff === "findings" ? "Preparing..." : handoffLabels.fixFindings}
                   </MenuItem>
@@ -2010,7 +2120,7 @@ export function PullRequestDetailPanel({
                       environments={pickableEnvironments}
                       value={actingEnvironmentId}
                       onChange={(next) => setActingScope({ pullRequestKey, environmentId: next })}
-                      disabled={handoff !== null}
+                      disabled={actionPending || handoff !== null}
                     />
                   ) : null}
                   <MenuSeparator />
@@ -2472,6 +2582,24 @@ export function PullRequestDetailPanel({
                 </Toggle>
               ))}
             </ToggleGroup>
+            {detail?.capabilities.comment && detail.viewerPermissions.comment ? (
+              <PullRequestCommentComposer
+                key={JSON.stringify([
+                  environmentId,
+                  reference.projectId,
+                  reference.host,
+                  reference.repository,
+                  reference.number,
+                ])}
+                environmentId={environmentId}
+                reference={reference}
+                detail={detail}
+                actionPending={actionPending}
+                onCommentAction={performCommentAction}
+                onCommented={refreshDetail}
+              />
+            ) : null}
+
             {tab === "summary" ? (
               <span className="ml-auto inline-flex shrink-0 items-center">
                 {workflowApprovalsRequired > 0 && can("approve-workflows") ? (
@@ -2606,6 +2734,7 @@ export function PullRequestDetailPanel({
       </div>
 
       <div
+        inert={!!publishLabel}
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
         onScrollCapture={(event) => {
           const scroller = event.target as HTMLElement;
@@ -2640,89 +2769,124 @@ export function PullRequestDetailPanel({
             {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
           />
         ) : detail ? (
-          <PullRequestMarkdownContext value={markdownContext}>
-            {mountedTabs.has("summary") ? (
-              <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
-                <PullRequestSummaryTab
-                  environmentId={environmentId}
-                  threadRef={threadRef}
-                  reference={reference}
-                  detail={detail}
-                  activityPending={activityPending}
-                  activityError={activityError}
-                  pendingFinding={handoff}
-                  fixFindingLabel={handoffLabels.fixFinding}
-                  fixCheckLabel={handoffLabels.fixCheck}
-                  onFixFinding={startFixFinding}
-                  onRefresh={refreshDetail}
-                />
-              </div>
-            ) : null}
-            {mountedTabs.has("timeline") ? (
-              <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
-                {activityPending ? (
-                  <PullRequestTimelineGhost />
-                ) : activityError ? (
-                  <PullRequestActivityUnavailableState
-                    error={activityError}
-                    onRetry={activityQuery.refresh}
-                  />
-                ) : (
-                  <PullRequestTimelineTab
-                    detail={detail}
+          <PullRequestCommentActionsContext
+            value={{
+              disabled: actionPending || handoff !== null,
+              threads: new Map(
+                detail.reviewThreads.flatMap((thread) =>
+                  thread.comments.map((comment) => [comment.id, thread] as const),
+                ),
+              ),
+              ...(detail.capabilities.review.resolve && detail.viewerPermissions.resolve
+                ? {
+                    resolve: async (thread) => {
+                      if (thread.canResolve === false) return;
+                      if (actionPending) return;
+                      setResolvingThread(true);
+                      const result = await setThreadResolution({
+                        environmentId,
+                        input: {
+                          ...reference,
+                          threadId: thread.id,
+                          resolved: !thread.isResolved,
+                        },
+                      });
+                      setResolvingThread(false);
+                      if (result._tag === "Failure") {
+                        toastManager.add({
+                          type: "error",
+                          title: "The conversation could not be updated",
+                          description: readableFailure(
+                            squashAtomCommandFailure(result),
+                            "Try again.",
+                          ),
+                        });
+                        return;
+                      }
+                      refreshDetail();
+                    },
+                  }
+                : {}),
+              add: (comment) =>
+                void startAsk(`comment:${comment.id}`, {
+                  prompt: "",
+                  reviewComments: [buildPullRequestCommentContext(detail, comment)],
+                }),
+            }}
+          >
+            <PullRequestMarkdownContext value={markdownContext}>
+              {mountedTabs.has("summary") ? (
+                <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
+                  <PullRequestSummaryTab
                     environmentId={environmentId}
                     threadRef={threadRef}
                     reference={reference}
-                    order={timelineOrder}
-                    onOpenCommit={openCommit}
-                    onRefresh={refreshDetail}
-                  />
-                )}
-              </div>
-            ) : null}
-            {mountedTabs.has("code") ? (
-              <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
-                <Suspense fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}>
-                  <PullRequestCodeTab
-                    onAddToAgentSelection={addSelectionToAgent}
-                    environmentId={environmentId}
-                    reference={reference}
                     detail={detail}
-                    selectedCommitOid={selectedCodeCommitOid}
-                    onSelectedCommitChange={selectCodeCommit}
+                    activityPending={activityPending}
+                    activityError={activityError}
                     pendingFinding={handoff}
+                    actionPending={actionPending}
                     fixFindingLabel={handoffLabels.fixFinding}
-                    onFixFinding={startFixFinding}
+                    fixCheckLabel={handoffLabels.fixCheck}
+                    {...(!fixUnavailable ? { onFixFinding: startFixFinding } : {})}
                     onRefresh={refreshDetail}
-                    refreshToken={codeRefreshToken}
                   />
-                </Suspense>
-              </div>
-            ) : null}
-          </PullRequestMarkdownContext>
+                </div>
+              ) : null}
+              {mountedTabs.has("timeline") ? (
+                <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
+                  {activityPending ? (
+                    <PullRequestTimelineGhost />
+                  ) : activityError ? (
+                    <PullRequestActivityUnavailableState
+                      error={activityError}
+                      onRetry={activityQuery.refresh}
+                    />
+                  ) : (
+                    <PullRequestTimelineTab
+                      detail={detail}
+                      environmentId={environmentId}
+                      threadRef={threadRef}
+                      reference={reference}
+                      order={timelineOrder}
+                      onOpenCommit={openCommit}
+                      onRefresh={refreshDetail}
+                    />
+                  )}
+                </div>
+              ) : null}
+              {mountedTabs.has("code") ? (
+                <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
+                  <Suspense
+                    fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}
+                  >
+                    <PullRequestCodeTab
+                      actionPending={actionPending}
+                      onAddToAgentSelection={addSelectionToAgent}
+                      onExplainFile={(path) =>
+                        void startAsk(`explain:${path}`, {
+                          ...buildExplainPullRequestHandoff(detail),
+                          prompt: `Explain the changes to ${JSON.stringify(path)} in this pull request. Cover what changed, why it matters, and what to check during review. Do not change any code.`,
+                        })
+                      }
+                      environmentId={environmentId}
+                      reference={reference}
+                      detail={detail}
+                      selectedCommitOid={selectedCodeCommitOid}
+                      onSelectedCommitChange={selectCodeCommit}
+                      pendingFinding={handoff}
+                      fixFindingLabel={handoffLabels.fixFinding}
+                      {...(!fixUnavailable ? { onFixFinding: startFixFinding } : {})}
+                      onRefresh={refreshDetail}
+                      refreshToken={codeRefreshToken}
+                    />
+                  </Suspense>
+                </div>
+              ) : null}
+            </PullRequestMarkdownContext>
+          </PullRequestCommentActionsContext>
         ) : null}
       </div>
-
-      {/* Float over the content; do not reserve a footer or padding in the PR tabs. */}
-      {detail?.capabilities.comment && detail.viewerPermissions.comment ? (
-        <div className="absolute right-4 bottom-3 z-20">
-          <PullRequestCommentComposer
-            key={JSON.stringify([
-              environmentId,
-              reference.projectId,
-              reference.host,
-              reference.repository,
-              reference.number,
-            ])}
-            environmentId={environmentId}
-            reference={reference}
-            detail={detail}
-            actionPending={actionPending}
-            onCommentAction={performCommentAction}
-            onCommented={refreshDetail}
-          />
-        </div>
-      ) : null}
 
       <AlertDialog
         open={confirmation.open}
@@ -2731,7 +2895,7 @@ export function PullRequestDetailPanel({
           if (!open) setConfirmation({ open: false, action: "merge" });
         }}
       >
-        <AlertDialogPopup>
+        <AlertDialogPopup inert={!!publishLabel}>
           <AlertDialogHeader>
             <AlertDialogTitle>
               {confirmAction === "merge"
@@ -2759,6 +2923,20 @@ export function PullRequestDetailPanel({
                       : `This closes #${reference.number} without merging it.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {confirmAction === "merge" &&
+          detail?.capabilities.bypassMergeChecks === true &&
+          detail.viewerPermissions.bypassMergeChecks === true ? (
+            <label className="flex items-start gap-2 text-sm text-destructive">
+              <Checkbox
+                checked={confirmation.bypassMergeChecks === true}
+                disabled={actionPending}
+                onCheckedChange={(checked) =>
+                  setConfirmation((current) => ({ ...current, bypassMergeChecks: checked }))
+                }
+              />
+              Merge without waiting for requirements (bypass checks)
+            </label>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" size="sm" />}>
               Cancel
@@ -2766,11 +2944,18 @@ export function PullRequestDetailPanel({
             <Button
               size="sm"
               variant={confirmAction === "close" ? "destructive" : "default"}
-              disabled={actionPending}
+              disabled={actionPending || !confirmationAllowed}
               onClick={() => {
+                if (actionPending || !confirmationAllowed) return;
                 const action = confirmAction;
                 setConfirmation((current) => ({ ...current, open: false }));
-                if (action === "merge") void perform("merge", selectedMergeMethod);
+                if (action === "merge")
+                  void perform(
+                    "merge",
+                    selectedMergeMethod,
+                    undefined,
+                    confirmation.bypassMergeChecks === true,
+                  );
                 if (action === "enable-auto-merge")
                   void perform("enable-auto-merge", selectedMergeMethod);
                 if (action === "revert") void perform("revert");
@@ -2779,7 +2964,9 @@ export function PullRequestDetailPanel({
               }}
             >
               {confirmAction === "merge"
-                ? selectedMergeMethodLabel
+                ? confirmation.bypassMergeChecks
+                  ? `Bypass checks and ${selectedMergeMethodLabel.toLowerCase()}`
+                  : selectedMergeMethodLabel
                 : confirmAction === "enable-auto-merge"
                   ? "Enable auto-merge"
                   : confirmAction === "revert"
@@ -2792,5 +2979,17 @@ export function PullRequestDetailPanel({
         </AlertDialogPopup>
       </AlertDialog>
     </div>
+  );
+  return (
+    <PullRequestAttachmentProvider
+      environmentId={environmentId}
+      reference={reference}
+      url={detail?.url}
+      provider={detail?.provider}
+      capabilities={detail?.capabilities.attachments}
+      cwd={detail?.workspaceRoot ?? ""}
+    >
+      {panel}
+    </PullRequestAttachmentProvider>
   );
 }

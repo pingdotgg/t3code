@@ -1,30 +1,50 @@
 import type { GitStatusEntry } from "@pierre/trees";
-import { FileTree, useFileTree, useFileTreeSelector } from "@pierre/trees/react";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FileTree, useFileTree } from "@pierre/trees/react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+  type SyntheticEvent,
+} from "react";
 
 import { useTheme } from "~/hooks/useTheme";
+import { useResizableWidth } from "~/hooks/useResizableWidth";
 import { cn } from "~/lib/utils";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "../files/fileTreeExpansion";
+import { setAllDirectoriesExpanded } from "../files/fileTreeExpansion";
+import { RightPanelResizeHandle } from "../preview/RightPanelResizeHandle";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup } from "../ui/tooltip";
+import { DiffRenameDetails } from "./DiffRename";
 import {
   buildDiffFileTreeUpdates,
   compareDiffFileTreeEntries,
   collectDirectoryPaths,
   diffFileTreePositions,
+  diffFileTreeViewedCounts,
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
+export interface DiffFileTreeHandle {
+  setExpanded: (expanded: boolean) => void;
+}
+
 interface DiffFileTreeProps {
+  readonly ref?: Ref<DiffFileTreeHandle>;
   readonly entries: ReadonlyArray<DiffFileTreeEntry>;
   /** Called with the file's path when the reader picks a file row. */
   readonly onSelectFile: (path: string) => void;
+  readonly onSetViewed?: (path: string, viewed: boolean) => void;
+  readonly viewedPending?: boolean;
   /**
    * The file the diff is currently showing, kept selected in the tree. Bump `revealRequestId` to
    * scroll the tree to the same path again.
@@ -32,11 +52,13 @@ interface DiffFileTreeProps {
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
   readonly ariaLabel: string;
+  readonly widthStorageKey: string;
   /** Right-aligned content in the header row, after the file count. */
   readonly headerAccessory?: ReactNode;
   /** Rendered under the tree, for a host that still has files to fetch. */
   readonly footer?: ReactNode;
   readonly className?: string;
+  readonly defaultWidth?: number;
 }
 
 /**
@@ -44,17 +66,61 @@ interface DiffFileTreeProps {
  * compared to a workspace, and the reader came for the files, not the folders.
  */
 export function DiffFileTree({
+  ref,
   entries,
   onSelectFile,
+  onSetViewed,
+  viewedPending = false,
   selectedPath = null,
   revealRequestId = 0,
   ariaLabel,
+  widthStorageKey,
   headerAccessory,
   footer,
   className,
+  defaultWidth = 256,
 }: DiffFileTreeProps) {
   const { resolvedTheme } = useTheme();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [maxWidth, setMaxWidth] = useState(640);
+  useLayoutEffect(() => {
+    const parent = containerRef.current?.parentElement;
+    if (!parent) return;
+    const resize = () => setMaxWidth(Math.max(160, Math.min(640, parent.clientWidth * 0.6)));
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, []);
+  const { width, handlers } = useResizableWidth({
+    storageKey: widthStorageKey,
+    defaultWidth,
+    minWidth: 160,
+    maxWidth,
+    edge: "left",
+  });
   const paths = useMemo(() => entries.map((entry) => entry.path), [entries]);
+  const entriesByPath = useMemo(
+    () => new Map(entries.map((entry) => [entry.path, entry])),
+    [entries],
+  );
+  const viewedCounts = useMemo(() => diffFileTreeViewedCounts(entries), [entries]);
+  const viewedFileCount = useMemo(
+    () => entries.filter((entry) => entry.viewed === true).length,
+    [entries],
+  );
+  const viewedRef = useRef({ counts: viewedCounts, onSetViewed, pending: viewedPending });
+  const [hoveredRow, setHoveredRow] = useState<HTMLElement | null>(null);
+  const hoveredEntry = entriesByPath.get(hoveredRow?.getAttribute("data-item-path") ?? "");
+  const showPathTooltip = (event: SyntheticEvent) => {
+    const row = event.nativeEvent
+      .composedPath()
+      .find(
+        (node): node is HTMLElement =>
+          node instanceof HTMLElement && node.hasAttribute("data-item-path"),
+      );
+    setHoveredRow(row ?? null);
+  };
   const directoryPaths = useMemo(() => collectDirectoryPaths(paths), [paths]);
   const positions = useMemo(() => diffFileTreePositions(paths), [paths]);
   const [ordering] = useState(() => {
@@ -84,6 +150,18 @@ export function DiffFileTree({
   }, [onSelectFile, paths]);
 
   const { model } = useFileTree({
+    renderRowDecoration: ({ item }) => {
+      const { counts, onSetViewed: setViewed, pending } = viewedRef.current;
+      const count = counts.get(item.path);
+      if (!setViewed || !count) return null;
+      return {
+        checked: count.viewed === count.total ? true : count.viewed > 0 ? "mixed" : false,
+        label: `Viewed: ${item.path}`,
+        title: `${count.stale > 0 ? "Changed since viewed. " : ""}${count.viewed} of ${count.total} viewed`,
+        disabled: pending,
+        onChange: (viewed) => setViewed(item.path, viewed),
+      };
+    },
     density: "compact",
     flattenEmptyDirectories: true,
     initialExpansion: "open",
@@ -96,10 +174,78 @@ export function DiffFileTree({
     paths: [],
     search: false,
     sort: ordering.sort,
-    unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
+    unsafeCSS: `${PIERRE_TREE_UNSAFE_CSS}
+      :host {
+        --trees-accent-override: var(--primary);
+        --trees-bg-muted-override: color-mix(in srgb, currentColor 7%, transparent);
+      }
+      [data-type='item']:has([data-tree-checkbox]) {
+        [data-item-section='spacing'] { order: -3; }
+        &[data-item-type='folder'] > [data-item-section='icon'] { order: -2; }
+        [data-item-section='decoration'] {
+          order: -1;
+          flex: 0 0 20px;
+          justify-content: center;
+          overflow: visible;
+        }
+        [data-item-section='content'] { flex: 1 1 auto; }
+      }
+      [data-tree-checkbox] {
+        appearance: none;
+        display: grid;
+        place-content: center;
+        width: 16px;
+        height: 16px;
+        flex-shrink: 0;
+        margin: 0;
+        border: 1px solid color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+        border-radius: 4px;
+        background: var(--background);
+        color: var(--primary-foreground);
+        cursor: pointer;
+      }
+      [data-tree-checkbox]:hover:not(:disabled) { border-color: var(--foreground); }
+      [data-tree-checkbox]:checked,
+      [data-tree-checkbox]:indeterminate {
+        border-color: var(--primary);
+        background: var(--primary);
+      }
+      [data-tree-checkbox]:checked::after {
+        content: '';
+        width: 9px;
+        height: 6px;
+        border: solid currentColor;
+        border-width: 0 0 2px 2px;
+        transform: translateY(-1px) rotate(-45deg);
+      }
+      [data-tree-checkbox]:indeterminate::after {
+        content: '';
+        width: 8px;
+        height: 2px;
+        background: currentColor;
+      }
+      [data-tree-checkbox]:focus-visible {
+        outline: 2px solid var(--ring);
+        outline-offset: 2px;
+      }
+      [data-tree-checkbox]:disabled { cursor: wait; opacity: 0.5; }
+      @media (forced-colors: active) {
+        [data-tree-checkbox] { appearance: auto; }
+        [data-tree-checkbox]::after { display: none; }
+      }
+      [data-type='item'] { border-radius: 5px; }
+      [data-file-tree-virtualized-scroll='true'] {
+        overflow-x: hidden;
+      }
+    `,
   });
-  const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
-    areAllDirectoriesExpanded(currentModel, directoryPaths),
+  useImperativeHandle(
+    ref,
+    () => ({
+      setExpanded: (expanded: boolean) =>
+        setAllDirectoriesExpanded(model, directoryPaths, expanded),
+    }),
+    [model, directoryPaths],
   );
 
   useEffect(() => {
@@ -126,8 +272,12 @@ export function DiffFileTree({
         if (directory !== null && "collapse" in directory) directory.collapse();
       }
     }
+  }, [directoryPaths, model, ordering, paths, positions]);
+
+  useEffect(() => {
+    viewedRef.current = { counts: viewedCounts, onSetViewed, pending: viewedPending };
     model.setGitStatus(gitStatus);
-  }, [directoryPaths, gitStatus, model, ordering, paths, positions]);
+  }, [gitStatus, model, onSetViewed, viewedCounts, viewedPending]);
 
   useEffect(() => {
     if (selectedPath === null) {
@@ -164,48 +314,76 @@ export function DiffFileTree({
   }, [model, paths, revealRequestId, selectedPath]);
 
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
+    <div
+      ref={containerRef}
+      className={cn(
+        "relative flex min-h-0 min-w-40 max-w-[60%] shrink-0 flex-col border-l border-border/60 bg-background pb-3",
+        className,
+      )}
+      style={{ width }}
+    >
+      <RightPanelResizeHandle handlers={handlers} />
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
         <span className="px-1 font-medium text-foreground">Files</span>
-        <span className="ml-auto tabular-nums">{entries.length}</span>
+        <span className="ml-auto whitespace-nowrap px-1 tabular-nums">
+          {onSetViewed ? `${viewedFileCount} / ${entries.length} viewed` : entries.length}
+        </span>
         {headerAccessory}
-        {directoryPaths.length > 0 ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={
-                    allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
-                  }
-                  onClick={() =>
-                    setAllDirectoriesExpanded(model, directoryPaths, !allDirectoriesExpanded)
-                  }
-                />
-              }
-            >
-              {allDirectoriesExpanded ? (
-                <ChevronsDownUpIcon className="size-3.5" />
-              ) : (
-                <ChevronsUpDownIcon className="size-3.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
       </div>
       <FileTree
         model={model}
         aria-label={ariaLabel}
+        {...(onSetViewed
+          ? {
+              renderContextMenu: (item, context) => {
+                const count = viewedCounts.get(item.path);
+                if (!count) return null;
+                const viewed = count.viewed === count.total;
+                return (
+                  <div
+                    role="menu"
+                    className="rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+                  >
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      type="button"
+                      role="menuitem"
+                      autoFocus
+                      disabled={viewedPending}
+                      onClick={() => {
+                        onSetViewed(item.path, !viewed);
+                        context.close();
+                      }}
+                    >
+                      {viewed ? "Mark as not viewed" : "Mark as viewed"}
+                    </Button>
+                  </div>
+                );
+              },
+            }
+          : {})}
+        onPointerMoveCapture={showPathTooltip}
+        onPointerLeave={() => setHoveredRow(null)}
+        onFocusCapture={showPathTooltip}
+        onKeyUpCapture={(event) => {
+          if (event.key === "Escape") setHoveredRow(null);
+          else showPathTooltip(event);
+        }}
+        onBlurCapture={() => setHoveredRow(null)}
+        onScrollCapture={() => setHoveredRow(null)}
+        onWheelCapture={() => setHoveredRow(null)}
         onClickCapture={(event) => {
           if (
+            event.nativeEvent
+              .composedPath()
+              .some(
+                (node) =>
+                  node instanceof HTMLElement && node.getAttribute("data-tree-checkbox") !== null,
+              ) ||
             event.defaultPrevented ||
             event.button !== 0 ||
             event.ctrlKey ||
@@ -230,6 +408,24 @@ export function DiffFileTree({
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
       />
+      <Tooltip
+        open={hoveredEntry !== undefined}
+        onOpenChange={(open) => !open && setHoveredRow(null)}
+      >
+        <TooltipPopup role="tooltip" anchor={hoveredRow} side="left" align="start">
+          {hoveredEntry?.previousPath ? (
+            <DiffRenameDetails
+              previousPath={hoveredEntry.previousPath}
+              path={hoveredEntry.path}
+              withChanges={hoveredEntry.renamedWithChanges === true}
+            />
+          ) : (
+            <span className="block max-w-[min(32rem,80vw)] break-all font-mono">
+              {hoveredEntry?.path}
+            </span>
+          )}
+        </TooltipPopup>
+      </Tooltip>
       {footer}
     </div>
   );

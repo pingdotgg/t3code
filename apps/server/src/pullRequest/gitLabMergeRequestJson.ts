@@ -536,11 +536,6 @@ export interface GitLabDiscussions {
   readonly rawCount: number;
 }
 
-/**
- * Positioned discussions only. GitLab returns the merge request's whole conversation here,
- * including the plain notes the timeline already shows, and only a positioned one belongs
- * against a line of the diff.
- */
 export function decodeDiscussionsJson(
   raw: string,
 ): Result.Result<GitLabDiscussions, DecodeFailure> {
@@ -555,19 +550,28 @@ export function decodeDiscussionsJson(
     const notes = (discussion.value.notes ?? []).filter((note) => note.system !== true);
     const root = notes[0];
     const position = root?.position;
-    if (root === undefined || !position || position.position_type !== "text") continue;
+    if (root === undefined) continue;
     // A comment on an added or context line carries `new_line`; one on a removed line carries
     // only `old_line`, and belongs against the file as it was.
-    const side = position.new_line === null || position.new_line === undefined ? "left" : "right";
-    const path = trimmed(side === "left" ? position.old_path : position.new_path);
-    const line = side === "left" ? position.old_line : position.new_line;
-    if (path === null) continue;
+    const side = position?.old_line != null && position.new_line == null ? "left" : "right";
+    const path = trimmed(
+      side === "left" ? position?.old_path : (position?.new_path ?? position?.old_path),
+    );
+    const line =
+      position?.position_type === "text"
+        ? side === "left"
+          ? position.old_line
+          : position.new_line
+        : null;
+    const resolvableNotes = notes.filter((note) => note.resolvable === true);
     threads.push({
       id: discussion.value.id,
       path,
       line: typeof line === "number" && line > 0 ? line : null,
       side,
-      isResolved: root.resolved === true,
+      isResolved:
+        resolvableNotes.length > 0 && resolvableNotes.every((note) => note.resolved === true),
+      canResolve: resolvableNotes.length > 0,
       // GitLab reports no equivalent of "written against a line that has since moved", so a
       // thread the diff cannot place is worked out from the diff itself rather than claimed
       // here.

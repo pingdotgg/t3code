@@ -1,3 +1,4 @@
+import { useReviewEdits, useReviewPanelLeaveGuard } from "../components/diffs/ReviewEdits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
@@ -305,6 +306,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
 });
 
 function PullRequestsRouteView() {
+  const { requestLeave } = useReviewEdits()!;
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
@@ -441,6 +443,7 @@ function PullRequestsRouteView() {
   // uses a fixed sentinel environment, not whichever server happens to sort first, so the tab
   // strip survives a capable server disconnecting or losing the pull-requests capability.
   const rightPanelRef = capableEnvironments.length === 0 ? null : PULL_REQUESTS_PANEL_REF;
+  useReviewPanelLeaveGuard(rightPanelRef);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(rightPanelRef);
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, rightPanelRef),
@@ -1504,11 +1507,25 @@ function PullRequestsRouteView() {
           },
     );
 
+  const leavePanel = useCallback(
+    (action: () => void) => {
+      const active = selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        PULL_REQUESTS_PANEL_REF,
+      );
+      if (active?.kind === "pull-request") requestLeave(action);
+      else action();
+    },
+    [requestLeave],
+  );
+
   const toggleRightPanel = () => {
     if (rightPanelRef === null) return;
     if (rightPanelState.isOpen) {
-      useRightPanelStore.getState().close(rightPanelRef);
-      updateSearch(clearedSelection);
+      leavePanel(() => {
+        useRightPanelStore.getState().close(rightPanelRef);
+        updateSearch(clearedSelection);
+      });
       return;
     }
     if (selectedPullRequestSurface === null) return;
@@ -1561,19 +1578,22 @@ function PullRequestsRouteView() {
 
   // Stable so the memoized rows can skip re-rendering when the list around them changes.
   const selectEntry = useCallback(
-    (entry: PullRequestRowTarget) => {
+    (entry: Omit<PullRequestRowTarget, "host"> & { host?: string }) => {
       // The surface carries the row's own server, which is what its detail reads and acts on.
       if (rightPanelRef === null) return;
-      useRightPanelStore.getState().openPullRequest(rightPanelRef, entry);
-      updateSearch({
-        repository: entry.repository,
-        number: entry.number,
-        selectedProjectId: entry.projectId,
-        selectedEnvironmentId: entry.environmentId,
-        selectedHost: entry.host,
+      if (activePullRequestSurface?.id === pullRequestSurfaceId(entry)) return;
+      leavePanel(() => {
+        useRightPanelStore.getState().openPullRequest(rightPanelRef, entry);
+        updateSearch({
+          repository: entry.repository,
+          number: entry.number,
+          selectedProjectId: entry.projectId,
+          selectedEnvironmentId: entry.environmentId,
+          selectedHost: entry.host,
+        });
       });
     },
-    [rightPanelRef, updateSearch],
+    [rightPanelRef, activePullRequestSurface?.id, updateSearch, leavePanel],
   );
 
   const searchInput = (
@@ -1868,37 +1888,62 @@ function PullRequestsRouteView() {
   };
 
   const activateSurface = (surface: PullRequestSurface) => {
-    if (rightPanelRef === null) return;
-    useRightPanelStore.getState().activateSurface(rightPanelRef, surface.id);
-    selectSurfaceInUrl(surface);
+    if (rightPanelRef === null || activePullRequestSurface?.id === surface.id) return;
+    leavePanel(() => {
+      useRightPanelStore.getState().activateSurface(rightPanelRef, surface.id);
+      selectSurfaceInUrl(surface);
+    });
   };
   const closeSurface = (surface: PullRequestSurface) => {
     if (rightPanelRef === null) return;
-    useRightPanelStore.getState().closeSurface(rightPanelRef, surface.id);
-    const next = selectActiveRightPanelSurface(
-      useRightPanelStore.getState().byThreadKey,
-      rightPanelRef,
-    );
-    selectSurfaceInUrl(next?.kind === "pull-request" ? next : null);
+    const close = () => {
+      useRightPanelStore.getState().closeSurface(rightPanelRef, surface.id);
+      const next = selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        rightPanelRef,
+      );
+      if (next?.id !== activePullRequestSurface?.id)
+        selectSurfaceInUrl(next?.kind === "pull-request" ? next : null);
+    };
+    if (activePullRequestSurface?.id === surface.id) leavePanel(close);
+    else close();
   };
   const closeOtherSurfaces = (surface: PullRequestSurface) => {
     if (rightPanelRef === null) return;
-    useRightPanelStore.getState().closeOtherSurfaces(rightPanelRef, surface.id);
-    selectSurfaceInUrl(surface);
+    const close = () => {
+      useRightPanelStore.getState().closeOtherSurfaces(rightPanelRef, surface.id);
+      if (activePullRequestSurface?.id !== surface.id) selectSurfaceInUrl(surface);
+    };
+    if (activePullRequestSurface && activePullRequestSurface.id !== surface.id) leavePanel(close);
+    else close();
   };
   const closeSurfacesToRight = (surface: PullRequestSurface) => {
     if (rightPanelRef === null) return;
-    useRightPanelStore.getState().closeSurfacesToRight(rightPanelRef, surface.id);
-    const next = selectActiveRightPanelSurface(
-      useRightPanelStore.getState().byThreadKey,
-      rightPanelRef,
-    );
-    selectSurfaceInUrl(next?.kind === "pull-request" ? next : null);
+    const close = () => {
+      useRightPanelStore.getState().closeSurfacesToRight(rightPanelRef, surface.id);
+      const next = selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        rightPanelRef,
+      );
+      if (next?.id !== activePullRequestSurface?.id)
+        selectSurfaceInUrl(next?.kind === "pull-request" ? next : null);
+    };
+    const surfaces = rightPanelState.surfaces;
+    const index = surfaces.findIndex((entry) => entry.id === surface.id);
+    if (index < 0 || index === surfaces.length - 1) return;
+    if (
+      activePullRequestSurface &&
+      surfaces.slice(index + 1).some((entry) => entry.id === activePullRequestSurface.id)
+    )
+      leavePanel(close);
+    else close();
   };
   const closeAllSurfaces = () => {
     if (rightPanelRef === null) return;
-    useRightPanelStore.getState().closeAllSurfaces(rightPanelRef);
-    selectSurfaceInUrl(null);
+    leavePanel(() => {
+      useRightPanelStore.getState().closeAllSurfaces(rightPanelRef);
+      selectSurfaceInUrl(null);
+    });
   };
 
   // This page has no ChatView, so it handles the shared panel shortcuts itself.
@@ -2010,20 +2055,12 @@ function PullRequestsRouteView() {
               key={renderedPullRequestSurface.id}
               environmentId={panelEnvironmentId}
               onSelectPullRequest={(reference) => {
-                if (rightPanelRef === null) return;
-                useRightPanelStore.getState().openPullRequest(rightPanelRef, {
+                selectEntry({
                   projectId: reference.projectId,
                   repository: reference.repository,
                   number: reference.number,
                   ...(reference.host ? { host: reference.host } : {}),
                   environmentId: panelEnvironmentId,
-                });
-                updateSearch({
-                  repository: reference.repository,
-                  number: reference.number,
-                  selectedHost: reference.host,
-                  selectedProjectId: reference.projectId,
-                  selectedEnvironmentId: panelEnvironmentId,
                 });
               }}
               reference={{

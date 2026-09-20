@@ -1747,6 +1747,31 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("requests an admin merge only when explicitly selected", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      yield* cli.runPullRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        action: "merge",
+        mergeMethod: "squash",
+        bypassMergeChecks: true,
+      });
+      expect(callAt(0).args).toEqual([
+        "pr",
+        "merge",
+        "7",
+        "--repo",
+        "github.com/acme/web",
+        "--squash",
+        "--admin",
+      ]);
+    }),
+  );
+
   it.effect("merges with the strategy it was asked for", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(output("")));
@@ -3218,6 +3243,25 @@ layer("GitHubPullRequestCli.layer", (it) => {
       );
 
       assert.strictEqual(error._tag, "GitHubPullRequestReadError");
+    }),
+  );
+
+  it.effect("keeps explicit admin bypass permission in the core detail read", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      for (const [index, allowed] of [true, false, undefined].entries()) {
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(encodeJson(coreResponse({ viewerCanMergeAsAdmin: allowed })))),
+        );
+        const detail = yield* cli.getPullRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: index + 70,
+        });
+        expect(detail.viewerAccess.canBypassMergeChecks === true).toBe(allowed === true);
+        expect(callAt(index).args.at(-1)).toContain("viewerCanMergeAsAdmin");
+      }
     }),
   );
 

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
+  PullRequestUploadAttachmentInput,
   PullRequestFilesViewedResult,
   PullRequestListInput,
   PullRequestListResult,
@@ -337,4 +338,20 @@ describe("naming the file a tick belongs to", () => {
       }),
     ).toThrow();
   });
+});
+
+it("accepts attachment metadata but rejects path or header injection", () => {
+  const decode = Schema.decodeUnknownSync(PullRequestUploadAttachmentInput);
+  const input = {
+    projectId: "p1",
+    repository: "owner/repo",
+    number: 1,
+    attachmentId: "pending-id",
+    name: "screen.png",
+    mimeType: "image/png",
+  };
+  expect(decode(input).name).toBe("screen.png");
+  for (const name of ["../screen.png", "folder/screen.png", "folder\\screen.png", "screen\r\n.png"])
+    expect(() => decode({ ...input, name })).toThrow();
+  expect(() => decode({ ...input, mimeType: "image/png\r\nAuthorization: bad" })).toThrow();
 });

@@ -1,9 +1,10 @@
+import { PullRequestThreads } from "./PullRequestThreads";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
 import type {
   EnvironmentId,
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
-  PullRequestReviewThread,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
@@ -109,23 +110,16 @@ function CommentIdentity({
   );
 }
 
-function CommentLocation({
-  comment,
-  thread,
-}: {
-  comment: PullRequestComment;
-  thread: PullRequestReviewThread | undefined;
-}) {
-  const path = thread?.path ?? comment.path;
-  if (!path) return null;
-  const label = `${path}${thread?.line ? `:${thread.line}` : ""}`;
+function CommentLocation({ comment }: { comment: PullRequestComment }) {
+  if (!comment.path) return null;
   return (
     <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
       <Tooltip>
-        <TooltipTrigger render={<span className="truncate font-mono" />}>{label}</TooltipTrigger>
-        <TooltipPopup>{label}</TooltipPopup>
+        <TooltipTrigger render={<span className="truncate font-mono" />}>
+          {comment.path}
+        </TooltipTrigger>
+        <TooltipPopup>{comment.path}</TooltipPopup>
       </Tooltip>
-      {thread?.isOutdated ? <span className="shrink-0">Outdated</span> : null}
     </div>
   );
 }
@@ -186,14 +180,10 @@ function CommentBody({
         environmentId={editing.environmentId}
         threadRef={editing.threadRef}
       />
-      {editing.canEdit(comment) ? (
-        <PullRequestEditButton aria-label="Edit comment" onClick={() => editing.onEdit(comment)} />
-      ) : null}
     </div>
   );
 }
 
-/** Finished work — a resolved conversation or a dismissed review — opens collapsed. */
 function CollapsedComment({
   comment,
   editing,
@@ -201,7 +191,6 @@ function CollapsedComment({
   body,
   reactionBar,
   detail,
-  thread,
 }: {
   comment: PullRequestComment;
   editing: CommentEditing;
@@ -210,7 +199,6 @@ function CollapsedComment({
   body: string | null;
   reactionBar: ReactNode;
   detail: PullRequestDetailView;
-  thread: PullRequestReviewThread | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
@@ -230,9 +218,22 @@ function CollapsedComment({
                 className={cn("size-3.5 transition-transform", open && "rotate-180")}
               />
             </CollapsibleTrigger>
+            <PullRequestCommentActions
+              showResolution
+              comment={comment}
+              disabled={editing.saving || editing.editingId !== null}
+              {...(editing.canEdit(comment)
+                ? {
+                    onEdit: () => {
+                      setOpen(true);
+                      editing.onEdit(comment);
+                    },
+                  }
+                : {})}
+            />
             {reactionBar}
           </div>
-          <CommentLocation comment={comment} thread={thread} />
+          <CommentLocation comment={comment} />
           {!open && body ? (
             <CollapsibleTrigger
               className="mt-2 block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
@@ -463,6 +464,7 @@ export function PullRequestSummaryTab({
   activityPending,
   activityError,
   pendingFinding,
+  actionPending = false,
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
   onFixFinding,
@@ -476,6 +478,7 @@ export function PullRequestSummaryTab({
   activityError: string | null;
   /** The hand-off currently preparing, if any, so only the finding it belongs to says so. */
   pendingFinding?: string | null;
+  actionPending?: boolean;
   fixFindingLabel?: string;
   fixCheckLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
@@ -488,22 +491,16 @@ export function PullRequestSummaryTab({
   const [shownBots, setShownBots] = useState({ url: detail.url, count: COMMENT_PAGE });
   const shownBotComments = shownBots.url === detail.url ? shownBots.count : COMMENT_PAGE;
   const shownComments = shown.url === detail.url ? shown.count : COMMENT_PAGE;
-  // A comment that already lives on a review thread is that thread: the thread carries the line
-  // and side the bare comment has lost, and a resolved one is finished work nobody should be
-  // invited to fix again — the same call the whole-review hand-off makes.
-  const threadByCommentId = new Map(
-    detail.reviewThreads.flatMap((thread) =>
-      thread.comments.map((comment) => [comment.id, thread] as const),
-    ),
+  const threadCommentIds = new Set(
+    detail.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
 
   const activeComments: PullRequestComment[] = [];
   const finishedComments: PullRequestComment[] = [];
   const botComments: PullRequestComment[] = [];
   for (const comment of detail.comments) {
-    const finished =
-      threadByCommentId.get(comment.id)?.isResolved ||
-      pullRequestReviewOutcome(comment.reviewState) === "dismissed";
+    if (threadCommentIds.has(comment.id)) continue;
+    const finished = pullRequestReviewOutcome(comment.reviewState) === "dismissed";
     const bot = comment.author?.isBot === true || comment.author?.login.endsWith("[bot]");
     (finished ? finishedComments : bot ? botComments : activeComments).push(comment);
   }
@@ -592,7 +589,7 @@ export function PullRequestSummaryTab({
   const editingCommentId = commentScope?.pullRequest === detail.url ? commentScope.commentId : null;
 
   const saveBody = async (body: string) => {
-    if (bodySaving) return;
+    if (bodySaving || actionPending) return;
     setBodySaving(true);
     const result = await update({ environmentId, input: { ...reference, body } });
     setBodySaving(false);
@@ -608,15 +605,15 @@ export function PullRequestSummaryTab({
     cwd: detail.workspaceRoot,
     environmentId,
     threadRef,
-    canEdit: (comment) => canEditPullRequestComment(detail, comment),
+    canEdit: (comment) => !actionPending && canEditPullRequestComment(detail, comment),
     editingId: editingCommentId,
-    saving: commentSaving,
+    saving: commentSaving || actionPending,
     onEdit: (comment) =>
       setCommentScope(comment === null ? null : { pullRequest: detail.url, commentId: comment.id }),
     onSave: async (comment, body) => {
       // A review's own summary is not a kind any host rewrites, which is why no pencil is ever
       // offered on one; the check is here because the comment's own type still allows it.
-      if (commentSaving || comment.kind === "review") return;
+      if (commentSaving || actionPending || comment.kind === "review") return;
       setCommentSaving(true);
       const result = await updateComment({
         environmentId,
@@ -633,24 +630,19 @@ export function PullRequestSummaryTab({
   };
 
   const renderComment = (comment: PullRequestComment) => {
-    const thread = threadByCommentId.get(comment.id);
     const body = visibleBody(comment.body);
     const outcome = pullRequestReviewOutcome(comment.reviewState);
     // An approval is a verdict, not a finding: there is nothing in it to fix.
     const finding: PullRequestFinding | null =
-      (comment.kind !== "review" && comment.kind !== "review-comment") || outcome === "approved"
+      (comment.kind !== "review" && comment.kind !== "review-comment") ||
+      outcome === "approved" ||
+      body === null
         ? null
-        : thread === undefined
-          ? // Nor is a remark with nothing in it: offering to hand an empty review
-            // to a thread promises work it does not describe.
-            body === null
-            ? null
-            : { kind: "comment", comment }
-          : { kind: "thread", thread };
+        : { kind: "comment", comment };
     const reactionBar = (
       <PullRequestReactionBar
         reactions={comment.reactions ?? []}
-        canReact={detail.capabilities.reactions === true}
+        canReact={detail.capabilities.reactions === true && !actionPending && !commentSaving}
         subjectId={comment.id}
         environmentId={environmentId}
         reference={reference}
@@ -681,17 +673,25 @@ export function PullRequestSummaryTab({
               size="xs"
               variant="ghost"
               className="-mt-1 shrink-0"
-              disabled={pendingFinding !== null && pendingFinding !== undefined}
+              disabled={actionPending || (pendingFinding !== null && pendingFinding !== undefined)}
               onClick={() => onFixFinding(finding)}
             >
               <HammerIcon className="size-3" />
               {pendingFinding === pullRequestFindingKey(finding) ? "Preparing..." : fixFindingLabel}
             </Button>
           ) : null}
+          <PullRequestCommentActions
+            showResolution
+            comment={comment}
+            disabled={actionPending || commentSaving || editingCommentId !== null}
+            {...(commentEditing.canEdit(comment)
+              ? { onEdit: () => commentEditing.onEdit(comment) }
+              : {})}
+          />
           {reactionBar}
         </div>
         <div className="px-3">
-          <CommentLocation comment={comment} thread={thread} />
+          <CommentLocation comment={comment} />
         </div>
         {/* A verdict usually carries no words, and an empty markdown block reads as
                           a card somebody forgot to fill in — the badge above already said it.
@@ -787,7 +787,8 @@ export function PullRequestSummaryTab({
                   nobody why, and "you need write access" is the answer to the question a reader
                   actually has. Azure DevOps is the exception — it takes a reviewer but will not
                   say who could be one, so there is nothing to open. */}
-              {detail.capabilities.reviewers.request &&
+              {detail.state === "open" &&
+              detail.capabilities.reviewers.request &&
               detail.capabilities.reviewers.listCandidates ? (
                 <PullRequestReviewerPicker
                   environmentId={environmentId}
@@ -847,7 +848,7 @@ export function PullRequestSummaryTab({
               threadRef={threadRef}
               label="Pull request description"
               placeholder="Describe this pull request"
-              saving={bodySaving}
+              saving={bodySaving || actionPending}
               onSave={(body) => void saveBody(body)}
               onCancel={() => setBodyScope(null)}
             />
@@ -863,6 +864,7 @@ export function PullRequestSummaryTab({
               {canEditPullRequestChangeRequest(detail) ? (
                 <PullRequestEditButton
                   aria-label="Edit description"
+                  disabled={actionPending}
                   onClick={() => setBodyScope(detail.url)}
                 />
               ) : null}
@@ -907,7 +909,9 @@ export function PullRequestSummaryTab({
                     size="xs"
                     variant="ghost"
                     className="shrink-0"
-                    disabled={pendingFinding !== null && pendingFinding !== undefined}
+                    disabled={
+                      actionPending || (pendingFinding !== null && pendingFinding !== undefined)
+                    }
                     onClick={() => onFixFinding(finding)}
                   >
                     <HammerIcon className="size-3" />
@@ -922,8 +926,28 @@ export function PullRequestSummaryTab({
         )}
       </Section>
 
+      {detail.reviewThreads.length > 0 ? (
+        <Section
+          key={`threads:${environmentId}:${detail.url}`}
+          title={`Threads (${detail.reviewThreads.length})`}
+          keepMounted
+        >
+          <PullRequestThreads
+            key={`${environmentId}:${detail.url}`}
+            environmentId={environmentId}
+            reference={reference}
+            detail={detail}
+            pending={actionPending}
+            pendingFinding={pendingFinding}
+            fixFindingLabel={fixFindingLabel}
+            onFixFinding={onFixFinding}
+            onRefresh={onRefresh}
+          />
+        </Section>
+      ) : null}
+
       <Section
-        title={`Comments (${detail.commentCount})`}
+        title={`Comments (${activeComments.length + botComments.length + finishedComments.length})`}
         actions={
           <Button
             size="xs"
@@ -953,7 +977,7 @@ export function PullRequestSummaryTab({
                 {detail.comments.length} are here; open it on the host to read the rest.
               </p>
             ) : null}
-            {detail.comments.length === 0 ? (
+            {activeComments.length + botComments.length + finishedComments.length === 0 ? (
               <p className="py-2 text-xs text-muted-foreground">No comments yet.</p>
             ) : (
               <div className="space-y-3">
@@ -1018,27 +1042,29 @@ export function PullRequestSummaryTab({
                 {finishedComments.length > 0 ? (
                   <CommentGroup
                     key={detail.url}
-                    label={`${finishedComments.length} resolved or dismissed comment${finishedComments.length === 1 ? "" : "s"}`}
+                    label={`${finishedComments.length} dismissed review comment${finishedComments.length === 1 ? "" : "s"}`}
                     comments={finishedComments}
                     detail={detail}
                   >
                     <div className="space-y-2 pt-2">
                       {orderPullRequestComments(finishedComments, commentOrder).map((comment) => {
-                        const thread = threadByCommentId.get(comment.id);
                         return (
                           <CollapsedComment
                             key={comment.id}
                             comment={comment}
                             editing={commentEditing}
                             detail={detail}
-                            thread={thread}
-                            label={thread?.isResolved ? "Resolved" : "Review dismissed"}
+                            label="Review dismissed"
                             body={visibleBody(comment.body)}
                             reactionBar={
                               <PullRequestReactionBar
                                 className="ml-auto justify-end"
                                 reactions={comment.reactions ?? []}
-                                canReact={detail.capabilities.reactions === true}
+                                canReact={
+                                  detail.capabilities.reactions === true &&
+                                  !actionPending &&
+                                  !commentSaving
+                                }
                                 subjectId={comment.id}
                                 environmentId={environmentId}
                                 reference={reference}

@@ -1,4 +1,6 @@
 import * as Context from "effect/Context";
+import type * as Scope from "effect/Scope";
+import { pullRequestMediaUrl } from "@t3tools/shared/pullRequestMedia";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -9,7 +11,12 @@ import * as Semaphore from "effect/Semaphore";
 import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - fj storage paths use explicit Windows and POSIX layouts, independently of this process's platform.
 import * as NodePath from "node:path";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  type HttpClientResponse,
+} from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -121,6 +128,7 @@ export interface ForgejoApiInput extends ForgejoRepositoryInput {
   readonly path: string;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly body?: unknown;
+  readonly formData?: FormData;
 }
 
 export class ForgejoCli extends Context.Service<
@@ -146,6 +154,13 @@ export class ForgejoCli extends Context.Service<
     readonly resolveRepository: (
       input: ForgejoRepositoryInput,
     ) => Effect.Effect<ForgejoRepository, ForgejoCliError>;
+    readonly readAttachment?: (
+      input: ForgejoRepositoryInput & {
+        readonly number: number;
+        readonly url: string;
+        readonly headers: Readonly<Record<string, string>>;
+      },
+    ) => Effect.Effect<HttpClientResponse.HttpClientResponse, ForgejoCliError, Scope.Scope>;
     readonly api: (
       input: ForgejoApiInput,
     ) => Effect.Effect<VcsProcess.VcsProcessOutput, ForgejoCliError>;
@@ -343,6 +358,7 @@ export const make = Effect.gen(function* () {
       readonly path: string;
       readonly method?: ForgejoApiInput["method"];
       readonly body?: string;
+      readonly formData?: FormData;
     }) {
       const base = new URL(`${input.baseUrl}/api/v1/`);
       const url = new URL(input.path, base);
@@ -362,6 +378,8 @@ export const make = Effect.gen(function* () {
       );
       if (input.body !== undefined)
         request = request.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
+      if (input.formData !== undefined)
+        request = request.pipe(HttpClientRequest.bodyFormData(input.formData));
       const response = yield* httpClient
         .execute(request)
         .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
@@ -674,6 +692,15 @@ export const make = Effect.gen(function* () {
         path,
         ...(input.method === undefined ? {} : { method: input.method }),
         ...(stdin === undefined ? {} : { body: stdin }),
+        ...(input.formData === undefined ? {} : { formData: input.formData }),
+      });
+    }
+    if (input.formData !== undefined) {
+      return yield* new ForgejoCliError({
+        command: "tea",
+        cwd: input.cwd,
+        detail:
+          "Attachment uploads require fj authentication. tea does not support multipart uploads.",
       });
     }
     const result = yield* execute({
@@ -718,7 +745,39 @@ export const make = Effect.gen(function* () {
       });
     return result;
   });
-  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });
+  const readAttachment: NonNullable<ForgejoCli["Service"]["readAttachment"]> = Effect.fn(
+    "ForgejoCli.readAttachment",
+  )(function* (input) {
+    const repository = yield* resolveRepository(input);
+    const invalid = (detail: string) =>
+      new ForgejoCliError({ command: repository.command ?? "fj", cwd: input.cwd, detail });
+    const url = pullRequestMediaUrl({
+      provider: "forgejo",
+      host: input.host,
+      repository: input.repository ?? repository.repository,
+      number: input.number,
+      url: input.url,
+    });
+    if (!url || new URL(url).origin !== new URL(repository.baseUrl).origin)
+      return yield* invalid("The attachment does not belong to this Forgejo server.");
+    if (repository.command !== "fj")
+      return yield* invalid("Private attachments require fj authentication on this server.");
+    const token = (yield* readKeys(input.cwd)).hosts[repository.login]?.token;
+    if (!token) return yield* invalid("fj has no credentials for this server.");
+    const headers: Record<string, string> = {
+      "accept-encoding": "identity",
+      authorization: `token ${token}`,
+    };
+    for (const name of ["range", "if-range"])
+      if (input.headers[name]) headers[name] = input.headers[name];
+    return yield* HttpClient.withScope(httpClient)
+      .execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers)))
+      .pipe(
+        Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+        Effect.mapError(() => invalid("Forgejo attachment download failed.")),
+      );
+  });
+  return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api, readAttachment });
 });
 
 export const layer = Layer.effect(ForgejoCli, make);

@@ -7,14 +7,15 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { act, type ReactNode, type ReactElement, type ComponentProps } from "react";
+import { act, useState, type ReactNode, type ReactElement, type ComponentProps } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
-const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() => ({
+const { newThread, prepareThread, runAction, refresh, Wrapper, Trigger } = vi.hoisted(() => ({
   newThread: vi.fn(),
   prepareThread: vi.fn(),
+  runAction: vi.fn(),
   refresh: vi.fn(),
   Wrapper: ({ children }: { children?: ReactNode }) => children,
   Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
@@ -40,9 +41,15 @@ vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => newThr
 vi.mock("~/lib/sourceControlActions", () => ({
   usePreparePullRequestThreadAction: () => ({ run: prepareThread }),
 }));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("~/state/use-atom-command", () => ({
+  useAtomCommand: (command: string) => (command === "run-action" ? runAction : vi.fn()),
+}));
 vi.mock("~/state/pullRequests", () => ({
-  pullRequestEnvironment: { detail: () => "detail", activity: () => "activity" },
+  pullRequestEnvironment: {
+    detail: () => "detail",
+    activity: () => "activity",
+    runAction: "run-action",
+  },
   usePullRequestTurnRefresh: () => 0,
   useSharedPullRequestSummary: () => null,
 }));
@@ -83,7 +90,8 @@ vi.mock("../ui/menu", () => ({
   MenuShortcut: () => null,
 }));
 vi.mock("../ui/alert-dialog", () => ({
-  AlertDialog: () => null,
+  AlertDialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
+    open ? <section aria-label="Action confirmation">{children}</section> : null,
   AlertDialogPopup: Wrapper,
   AlertDialogHeader: Wrapper,
   AlertDialogTitle: Wrapper,
@@ -112,6 +120,18 @@ vi.mock("./PullRequestSummaryTab", () => ({
       Fix check
     </button>
   ),
+}));
+vi.mock("./PullRequestCommentComposer", () => ({
+  PullRequestCommentComposer: () => {
+    const [draft, setDraft] = useState("");
+    return (
+      <input
+        aria-label="Comment draft"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+    );
+  },
 }));
 vi.mock("./PullRequestCodeTab", () => ({
   default: ({
@@ -143,7 +163,7 @@ vi.mock("./PullRequestCodeTab", () => ({
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { pullRequestPanelContext } from "./pullRequestDetail.logic";
 
-const detail: PullRequestDetailView = {
+let detail: PullRequestDetailView = {
   provider: "github",
   projectId: ProjectId.make("project"),
   projectTitle: "Project",
@@ -204,6 +224,7 @@ const newDraftId = DraftId.make("new-draft");
 let renderer: ReactTestRenderer;
 
 beforeEach(() => {
+  runAction.mockReset().mockResolvedValue({ _tag: "Success" });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
@@ -215,6 +236,64 @@ beforeEach(() => {
     value: { branch: "feature", worktreePath: "/workspace/pr" },
   });
 });
+
+it.each([
+  ["merge", "closed", false],
+  ["merge", "merged", false],
+  ["merge", "open", true],
+  ["close", "merged", false],
+] as const)(
+  "refuses a stale %s confirmation after the PR becomes %s (draft: %s)",
+  async (action, state, isDraft) => {
+    const previous = detail;
+    detail = {
+      ...detail,
+      mergeability: "mergeable",
+      mergeCapabilities: { merge: true, squash: false, rebase: false },
+      capabilities: { ...detail.capabilities, actions: [action], mergeMethods: ["merge"] },
+      viewerPermissions: { ...detail.viewerPermissions, actions: [action] },
+    };
+    const view = () => (
+      <PullRequestDetailPanel
+        environmentId={threadRef.environmentId}
+        reference={detail}
+        shortcutsEnabled={false}
+        getShortcutContext={() => ({
+          terminalFocus: false,
+          terminalOpen: false,
+          previewFocus: false,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        })}
+      />
+    );
+    try {
+      await act(async () => {
+        renderer = create(view());
+      });
+      await click(action === "merge" ? "Merge" : "Close pull request");
+      const confirm = () =>
+        renderer.root
+          .findByProps({ "aria-label": "Action confirmation" })
+          .findAllByType("button")
+          .at(-1)!;
+      expect(confirm().props.disabled).toBe(false);
+      detail = { ...detail, state, isDraft };
+      await act(async () => renderer.update(view()));
+      expect(confirm().props.disabled).toBe(true);
+      await act(async () => confirm().props.onClick());
+      expect(runAction).not.toHaveBeenCalled();
+      detail = { ...detail, state: "open", isDraft: false };
+      await act(async () => renderer.update(view()));
+      expect(confirm().props.disabled).toBe(false);
+      await act(async () => confirm().props.onClick());
+      expect(runAction).toHaveBeenCalledOnce();
+    } finally {
+      detail = previous;
+    }
+  },
+);
 afterEach(() => {
   act(() => renderer?.unmount());
   vi.unstubAllGlobals();
@@ -334,4 +413,47 @@ describe.each([
       expect(newThread).toHaveBeenCalled();
     }
   });
+});
+
+it("keeps the toolbar comment draft while changing PR tabs", async () => {
+  const previous = detail;
+  detail = {
+    ...detail,
+    capabilities: { ...detail.capabilities, comment: true },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+  };
+  try {
+    await act(async () => {
+      renderer = create(
+        <PullRequestDetailPanel
+          environmentId={threadRef.environmentId}
+          reference={detail}
+          shortcutsEnabled={false}
+          getShortcutContext={() => ({
+            terminalFocus: false,
+            terminalOpen: false,
+            previewFocus: false,
+            previewOpen: false,
+            isWeb: true,
+            isDesktop: false,
+          })}
+        />,
+      );
+    });
+    await act(async () => {
+      renderer.root
+        .findByProps({ "aria-label": "Comment draft" })
+        .props.onChange({ target: { value: "Keep this comment" } });
+    });
+    await click("Code");
+    expect(renderer.root.findByProps({ "aria-label": "Comment draft" }).props.value).toBe(
+      "Keep this comment",
+    );
+    await click("Summary");
+    expect(renderer.root.findByProps({ "aria-label": "Comment draft" }).props.value).toBe(
+      "Keep this comment",
+    );
+  } finally {
+    detail = previous;
+  }
 });

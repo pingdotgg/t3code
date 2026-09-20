@@ -124,6 +124,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import { withPullRequestAttachment } from "./pullRequest/PullRequestAttachments.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -2801,6 +2802,17 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "pull-requests",
             },
           ),
+        [WS_METHODS.pullRequestsUploadAttachment]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsUploadAttachment,
+            withPullRequestViewer(
+              input,
+              withPullRequestAttachment(input, (attachment) =>
+                pullRequests.uploadAttachment({ ...input, ...attachment }),
+              ),
+            ),
+            { "rpc.aggregate": "pull-requests" },
+          ),
         [WS_METHODS.pullRequestsUpdateComment]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsUpdateComment,
@@ -3039,15 +3051,104 @@ const makeWsRpcLayer = (
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
-            workspaceFileSystem.writeFile(input).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectWriteFileError({
+            Effect.gen(function* () {
+              if (input.expectedBranch !== undefined) {
+                yield* gitWorkflow.invalidateLocalStatus(input.cwd);
+                const status = yield* gitWorkflow.localStatus({ cwd: input.cwd }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectWriteFileError({
+                        cwd: input.cwd,
+                        relativePath: input.relativePath,
+                        failure: "checkout_verification_failed",
+                        cause,
+                      }),
+                  ),
+                );
+                if (!status.isRepo || status.refName !== input.expectedBranch) {
+                  return yield* new ProjectWriteFileError({
                     cwd: input.cwd,
                     relativePath: input.relativePath,
-                    ...projectFileFailureContext(cause),
-                    cause,
-                  }),
+                    failure: "checkout_changed",
+                  });
+                }
+              }
+              if (input.expectedContents !== undefined) {
+                const file = yield* workspaceFileSystem.readFile(input).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectWriteFileError({
+                        cwd: input.cwd,
+                        relativePath: input.relativePath,
+                        failure: "read_before_write_failed",
+                        cause,
+                      }),
+                  ),
+                );
+                if (
+                  file.truncated ||
+                  (file.contents !== input.expectedContents && file.contents !== input.contents)
+                ) {
+                  return yield* new ProjectWriteFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    failure: "contents_changed",
+                  });
+                }
+              }
+              if (input.pullRequestUrl !== undefined) {
+                const { pullRequest } = yield* gitWorkflow
+                  .resolvePullRequest({
+                    cwd: input.cwd,
+                    reference: input.pullRequestUrl,
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProjectWriteFileError({
+                          cwd: input.cwd,
+                          relativePath: input.relativePath,
+                          failure: "pull_request_verification_failed",
+                          cause,
+                        }),
+                    ),
+                  );
+                if (pullRequest.state !== "open") {
+                  return yield* new ProjectWriteFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    failure: "pull_request_not_open",
+                  });
+                }
+              }
+              return yield* workspaceFileSystem.writeFile(input).pipe(
+                Effect.tap(() =>
+                  input.expectedBranch !== undefined
+                    ? gitWorkflow.invalidateLocalStatus(input.cwd)
+                    : Effect.void,
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectWriteFileError({
+                      cwd: input.cwd,
+                      relativePath: input.relativePath,
+                      ...projectFileFailureContext(cause),
+                      cause,
+                    }),
+                ),
+              );
+            }).pipe((effect) =>
+              gitWorkflow.withRepositoryLock(input.cwd, effect).pipe(
+                Effect.mapError((cause) =>
+                  cause._tag === "ProjectWriteFileError"
+                    ? cause
+                    : new ProjectWriteFileError({
+                        cwd: input.cwd,
+                        relativePath: input.relativePath,
+                        failure: "workspace_verification_failed",
+                        cause,
+                      }),
+                ),
               ),
             ),
             { "rpc.aggregate": "workspace" },
@@ -3117,6 +3218,7 @@ const makeWsRpcLayer = (
                 input.resource._tag === "native-app-icon" ||
                 // GitHub media names the repository it authenticates through itself.
                 input.resource._tag === "github-media" ||
+                input.resource._tag === "pull-request-media" ||
                 (input.resource._tag === "media-file" && path.isAbsolute(input.resource.path))
               ) {
                 return yield* issueAssetUrl({ resource: input.resource });
@@ -3336,6 +3438,23 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.reviewGetDiffFileContents,
             review.getDiffFileContents(input),
+            { "rpc.aggregate": "review" },
+          ),
+        [WS_METHODS.reviewApplyPatch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.reviewApplyPatch,
+            gitWorkflow.withRepositoryLock(
+              input.cwd,
+              review
+                .applyPatch(input)
+                .pipe(
+                  Effect.tap(() =>
+                    vcsStatusBroadcaster
+                      .refreshLocalStatus(input.cwd)
+                      .pipe(Effect.ignoreCause({ log: true })),
+                  ),
+                ),
+            ),
             { "rpc.aggregate": "review" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>

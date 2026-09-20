@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ThreadId,
   WS_METHODS,
+  type ReviewDiffPreviewInput,
   type GitActionProgressEvent,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
@@ -27,7 +28,8 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
-import type { AtomCommandResult } from "./runtime.ts";
+import { executeAtomQuery, type AtomCommandResult } from "./runtime.ts";
+import { createReviewEnvironmentAtoms } from "./review.ts";
 import {
   applyVcsActionProgressEvent,
   beginVcsActionState,
@@ -572,7 +574,7 @@ describe("vcsActionState", () => {
     registry.dispose();
   });
 
-  it.effect("invalidates persisted refs after successful and failed stacked actions", () =>
+  it.effect("refreshes inactive review scopes after staging and stacked actions", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const connectionState: SupervisorConnectionState = {
@@ -592,9 +594,19 @@ describe("vcsActionState", () => {
         );
         const failedTransportActionId = createVcsActionTransportId(targetKey, failedActionId);
         const rpcInputs = new Array<GitRunStackedActionInput>();
+        let revision = 0;
         const client = {
+          [WS_METHODS.reviewGetDiffPreview]: (input: ReviewDiffPreviewInput) =>
+            Effect.sync(() => ({
+              cwd: input.cwd,
+              sources: [{ diff: `${input.workingTreeScope ?? "branch"}:${revision}` }],
+            })),
+          [WS_METHODS.reviewApplyPatch]: () =>
+            Effect.sync(() => {
+              revision += 1;
+            }),
           [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) =>
-            (rpcInputs.push(input), input.actionId === successfulTransportActionId)
+            (rpcInputs.push(input), (revision += 1), input.actionId === successfulTransportActionId)
               ? Stream.make(
                   progress({
                     kind: "action_finished",
@@ -635,6 +647,7 @@ describe("vcsActionState", () => {
         const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
           run,
           runStream,
+          followStream: runStream,
         } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
         const removed = new Array<string>();
         const runtime = Atom.runtime(
@@ -653,23 +666,67 @@ describe("vcsActionState", () => {
           Effect.sync(() => registry.dispose()),
         );
         const state = vcsRefsCacheStateAtom({ environmentId });
+        const reviewAtoms = createReviewEnvironmentAtoms(runtime);
+        const previewAtoms = ["staged", "unstaged", "branch"].map((scope) =>
+          reviewAtoms.diffPreview({
+            environmentId,
+            input: {
+              cwd,
+              ...(scope === "staged" || scope === "unstaged" ? { workingTreeScope: scope } : {}),
+            },
+          }),
+        );
+        for (const atom of previewAtoms) {
+          const loaded = yield* Effect.promise(() => executeAtomQuery(registry, atom));
+          expect(loaded).toMatchObject({
+            _tag: "Success",
+            value: { sources: [{ diff: expect.stringContaining(":0") }] },
+          });
+        }
+        const patchResult = yield* Effect.promise(() =>
+          reviewAtoms.applyPatch.run(registry, {
+            environmentId,
+            input: { cwd, sourceKind: "unstaged", expectedDiffHash: "before", fileIndex: 0 },
+          }),
+        );
+        expect(patchResult._tag).toBe("Success");
+        for (const atom of previewAtoms) {
+          const loaded = yield* Effect.promise(() => executeAtomQuery(registry, atom));
+          expect(loaded).toMatchObject({
+            _tag: "Success",
+            value: { sources: [{ diff: expect.stringContaining(":1") }] },
+          });
+        }
 
         expect(registry.get(state).revision).toBe(0);
         const threadId = ThreadId.make("thread-stacked-action");
+        const review = {
+          expectedBranch: "review",
+          pullRequestUrl: "https://github.com/example/repo/pull/1",
+          filePaths: ["file.ts"],
+        };
         const successfulResult = yield* Effect.promise(() =>
           manager.runStackedAction(targetKey).run(registry, {
             actionId: successfulActionId,
             action,
             threadId,
+            ...review,
           }),
         );
 
         expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
+        for (const atom of previewAtoms) {
+          const loaded = yield* Effect.promise(() => executeAtomQuery(registry, atom));
+          expect(loaded).toMatchObject({
+            _tag: "Success",
+            value: { sources: [{ diff: expect.stringContaining(":2") }] },
+          });
+        }
         expect(registry.get(state).revision).toBe(1);
         expect(removed).toEqual([`${environmentId}:*`]);
         // The server links a created pull request to this thread, so the id must ride along.
         expect(rpcInputs).toEqual([
-          { actionId: successfulTransportActionId, cwd, action, threadId },
+          { actionId: successfulTransportActionId, cwd, action, threadId, ...review },
         ]);
 
         const failedResult = yield* Effect.promise(() =>
@@ -680,6 +737,13 @@ describe("vcsActionState", () => {
         );
 
         expect(AsyncResult.isFailure(failedResult)).toBe(true);
+        for (const atom of previewAtoms) {
+          const loaded = yield* Effect.promise(() => executeAtomQuery(registry, atom));
+          expect(loaded).toMatchObject({
+            _tag: "Success",
+            value: { sources: [{ diff: expect.stringContaining(":3") }] },
+          });
+        }
         expect(registry.get(state).revision).toBe(2);
         expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
       }),

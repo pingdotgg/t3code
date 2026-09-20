@@ -2,6 +2,7 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
+import { orderFilesByTree } from "../diffs/diffFileTree.logic";
 
 /** Only the path and the patch's own lines matter here; the viewer fills the rest in. */
 function file(name: string, additionLines: ReadonlyArray<string> = []): FileDiffMetadata {
@@ -13,6 +14,41 @@ function order(files: ReadonlyArray<FileDiffMetadata>): Array<string> {
 }
 
 describe("orderDiffFiles", () => {
+  it("preserves both diff records when a file changes type", () => {
+    const removed = { ...file("src/app.ts"), type: "deleted" as const };
+    const added = { ...file("src/app.ts"), type: "new" as const };
+    const readme = file("README.md");
+    expect(orderDiffFiles([removed, readme, added])).toEqual([readme, removed, added]);
+  });
+
+  it("uses one folder order for review and tree across imports and tests", () => {
+    const files = [
+      file("lib/z.ts", ['import "../ui/app";']),
+      file("ui/app.ts", ['import "../lib/base";']),
+      file("lib/base.ts"),
+      file("ui/app.test.ts"),
+      file("lib/base.test.ts"),
+      file("pnpm-lock.yaml"),
+    ];
+    const review = orderDiffFiles(files);
+    expect(review.map((file) => file.name)).toEqual([
+      "lib/base.ts",
+      "ui/app.ts",
+      "lib/z.ts",
+      "lib/base.test.ts",
+      "ui/app.test.ts",
+      "pnpm-lock.yaml",
+    ]);
+    expect(orderFilesByTree(review, (file) => file.name).map((file) => file.name)).toEqual([
+      "lib/base.ts",
+      "lib/z.ts",
+      "lib/base.test.ts",
+      "ui/app.ts",
+      "ui/app.test.ts",
+      "pnpm-lock.yaml",
+    ]);
+  });
+
   it("places source before tests and generated files across path conventions", () => {
     const source = ["src/app.ts", "src/dist.ts", "src/testing.ts"];
     const tests = [

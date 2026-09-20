@@ -225,6 +225,11 @@ interface ChatMarkdownProps {
   /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
       uploads need; without it those images and videos load unauthenticated and 404. */
   githubMedia?: boolean | undefined;
+  resolveMediaResource?:
+    | ((
+        url: string,
+      ) => Extract<AssetResource, { readonly _tag: "github-media" | "pull-request-media" }> | null)
+    | undefined;
   /** Levels added to each markdown heading in the accessibility tree so the
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
@@ -1578,7 +1583,14 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" | "github-media" }
+    {
+      readonly _tag:
+        | "attachment"
+        | "workspace-file"
+        | "media-file"
+        | "github-media"
+        | "pull-request-media";
+    }
   >;
   readonly kind?: "image" | "video";
   readonly alt: string;
@@ -2262,6 +2274,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  resolveMediaResource,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2660,6 +2673,7 @@ function useChatMarkdownState({
       expandMedia,
       fileLinkChip,
       githubMedia,
+      resolveMediaResource,
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
@@ -2690,6 +2704,7 @@ function useChatMarkdownState({
       expandMedia,
       fileLinkChip,
       githubMedia,
+      resolveMediaResource,
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
@@ -2854,6 +2869,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       updateThreadPullRequestLink,
       fileLinkChip,
       renderContextReference,
+      resolveMediaResource,
     } = use(ChatMarkdownRendererContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
@@ -2864,6 +2880,25 @@ const CHAT_MARKDOWN_COMPONENTS = {
         renderContextReference({ ...contextReference, label })
       ) : (
         <span>{label}</span>
+      );
+    }
+    const nativeVideo =
+      href &&
+      (mediaKindFromPath(href) === "video" ||
+        mediaKindFromPath(hastPlainTextDeep(node)) === "video")
+        ? resolveMediaResource?.(href)
+        : null;
+    if (environmentId !== null && nativeVideo) {
+      return (
+        <ChatMarkdownAssetImage
+          environmentId={environmentId}
+          resource={nativeVideo}
+          kind="video"
+          alt={hastPlainTextDeep(node)}
+          originalUrl={nativeVideo.url}
+          fallbackSrc={nativeVideo.url}
+          framed={false}
+        />
       );
     }
     const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
@@ -3125,6 +3160,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       cwd,
       environmentId,
       githubMedia,
+      resolveMediaResource,
       imageBaseDir,
       threadRef,
       renderContextReference,
@@ -3157,17 +3193,16 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;
     const githubMediaUrl =
       directUri === null ? null : githubMediaFetchUrl(resolveProtocolRelativeMediaUrl(directUri));
-    if (
-      githubMedia &&
-      cwd !== undefined &&
-      environmentId !== null &&
-      directUri !== null &&
-      githubMediaUrl !== null
-    ) {
+    const hostedMediaResource = resolveMediaResource
+      ? resolveMediaResource(classifiedSrc)
+      : githubMedia && cwd !== undefined && githubMediaUrl !== null
+        ? { _tag: "github-media" as const, cwd, url: githubMediaUrl }
+        : null;
+    if (environmentId !== null && hostedMediaResource !== null) {
       return (
         <ChatMarkdownAssetImage
           environmentId={environmentId}
-          resource={{ _tag: "github-media", cwd, url: githubMediaUrl }}
+          resource={hostedMediaResource}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
@@ -3176,13 +3211,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
           style={authoredSizeStyle}
           imageProps={imageProps}
           srcFragment={markdownImageSourceFragment(classifiedSrc)}
-          originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
+          originalUrl={
+            directUri === null
+              ? hostedMediaResource.url
+              : resolveProtocolRelativeMediaUrl(directUri)
+          }
           // A pull request body draws its own boxes; keep the author's, not the workspace frame.
           framed={false}
           // A server too old to sign this resource, or one with no route to GitHub, still leaves
           // the public half of these working exactly as it did before. The canonical URL, not the
           // authored one: a `blob` link addresses the page, and only the raw host has the bytes.
-          fallbackSrc={githubMediaUrl}
+          fallbackSrc={hostedMediaResource.url}
           onImageExpand={imageExpand}
         />
       );

@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import {
   NonNegativeInt,
   TrimmedNonEmptyString,
@@ -13,7 +14,12 @@ import {
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
 import {
   detectSourceControlProviderFromRemoteUrl,
@@ -323,6 +329,11 @@ export class BitbucketApi extends Context.Service<
   BitbucketApi,
   {
     readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
+    readonly readAttachment: (input: {
+      readonly repository: string;
+      readonly url: string;
+      readonly headers: Readonly<Record<string, string>>;
+    }) => Effect.Effect<HttpClientResponse.HttpClientResponse, BitbucketApiError, Scope.Scope>;
 
     /**
      * One authenticated request, returning the body verbatim. Bitbucket answers most endpoints
@@ -338,6 +349,7 @@ export class BitbucketApi extends Context.Service<
       readonly url: string;
       /** A JSON document, for the endpoints that take one. */
       readonly body?: string;
+      readonly formData?: FormData;
       /** Response bytes to keep; past this the body comes back cut short and marked. */
       readonly maxBytes?: number;
     }) => Effect.Effect<{ readonly body: string; readonly truncated: boolean }, BitbucketApiError>;
@@ -826,6 +838,7 @@ export const make = Effect.gen(function* () {
     readonly method: "GET" | "POST" | "PUT" | "DELETE";
     readonly url: string;
     readonly body?: string;
+    readonly formData?: FormData;
     readonly redirects: number;
   }): Effect.Effect<HttpClientResponse.HttpClientResponse, BitbucketApiError> => {
     const url = trustedUrl(input.url);
@@ -844,9 +857,11 @@ export const make = Effect.gen(function* () {
             : HttpClientRequest.put(url);
     // No `Accept: application/json`: the diff endpoints answer with a patch, not JSON.
     const withBody =
-      input.body === undefined
-        ? base
-        : base.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
+      input.formData !== undefined
+        ? base.pipe(HttpClientRequest.bodyFormData(input.formData))
+        : input.body === undefined
+          ? base
+          : base.pipe(HttpClientRequest.bodyText(input.body, "application/json"));
     return httpClient.execute(withAuth(withBody)).pipe(
       Effect.mapError(
         (cause): BitbucketApiError => new BitbucketRequestError({ operation: "request", cause }),
@@ -902,6 +917,46 @@ export const make = Effect.gen(function* () {
 
   return BitbucketApi.of({
     request,
+    readAttachment: Effect.fn("BitbucketApi.readAttachment")(function* (input) {
+      const url = URL.canParse(input.url) ? new URL(input.url) : null;
+      const segments = input.repository.split("/");
+      const prefix = `/${segments.map(encodeURIComponent).join("/")}/downloads/`;
+      const encodedName = url?.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : "";
+      let fileName = "";
+      try {
+        fileName = decodeURIComponent(encodedName);
+      } catch {}
+      if (
+        !url ||
+        url.origin !== "https://bitbucket.org" ||
+        url.username ||
+        url.password ||
+        url.search ||
+        segments.length !== 2 ||
+        segments.some((segment) => !segment || segment === "." || segment === "..") ||
+        !fileName ||
+        fileName === "." ||
+        fileName === ".." ||
+        /[\\/\p{Cc}]/u.test(fileName)
+      )
+        return yield* new BitbucketUntrustedUrlError({ host: url?.origin ?? "an unreadable url" });
+      const headers: Record<string, string> = { "accept-encoding": "identity" };
+      for (const name of ["range", "if-range"]) {
+        const value = input.headers[name];
+        if (value !== undefined) headers[name] = value;
+      }
+      const request = HttpClientRequest.get(
+        apiUrl(
+          `/repositories/${segments.map(encodeURIComponent).join("/")}/downloads/${encodeURIComponent(fileName)}`,
+        ),
+      ).pipe(HttpClientRequest.setHeaders(headers), withAuth);
+      return yield* HttpClient.withScope(httpClient)
+        .execute(request)
+        .pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+          Effect.mapError((cause) => new BitbucketRequestError({ operation: "request", cause })),
+        );
+    }),
     probeAuth: executeJson(
       "probeAuth",
       HttpClientRequest.get(apiUrl("/user")),

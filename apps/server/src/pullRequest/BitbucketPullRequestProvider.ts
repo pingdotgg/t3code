@@ -1,3 +1,4 @@
+import { NATIVE_ATTACHMENT_CAPABILITY } from "./PullRequestAttachments.ts";
 import * as Effect from "effect/Effect";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
@@ -13,6 +14,11 @@ import {
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
+  attachments: {
+    ...NATIVE_ATTACHMENT_CAPABILITY,
+    destination: "repository-downloads",
+    reason: "Files are stored in this repository’s Downloads. Requires repository write access.",
+  },
   diff: true,
   comment: true,
   // Bitbucket has no endpoint that reopens a declined pull request, and nothing documented that
@@ -153,6 +159,8 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "bitbucket",
     capabilities: CAPABILITIES,
+    readAttachment: (input) =>
+      api.readAttachment(input).pipe(Effect.mapError(fail("readAttachment"))),
 
     // Bitbucket credentials come from the server's environment rather than a checkout, so the
     // account is the same whichever workspace asks.
@@ -316,6 +324,7 @@ export const make = Effect.gen(function* () {
         .comment({ repository: input.repository, number: input.number, body: input.body })
         .pipe(Effect.mapError(fail("comment"))),
 
+    uploadAttachment: (input) => api.uploadAttachment(input),
     updateComment: (input) =>
       api
         .updateComment({

@@ -1,4 +1,5 @@
 import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
+import { ReviewEditsProvider } from "../components/diffs/ReviewEdits";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
@@ -184,10 +185,10 @@ function ChatRouteLayout() {
     select: (params) => resolveThreadRouteTarget(params),
   });
   return (
-    <>
+    <ReviewEditsProvider>
       <ChatRouteGlobalShortcuts />
       {threadTarget ? <ThreadRouteView target={threadTarget} /> : <Outlet />}
-    </>
+    </ReviewEditsProvider>
   );
 }
 

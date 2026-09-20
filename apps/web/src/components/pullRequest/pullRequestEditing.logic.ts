@@ -1,5 +1,19 @@
 import type { PullRequestComment, PullRequestDetail } from "@t3tools/contracts";
 
+export function getPullRequestFileEditReason(
+  detail: Pick<
+    PullRequestDetail,
+    "state" | "capabilities" | "headBranch" | "headRepositoryNameWithOwner"
+  >,
+): string | null {
+  if (detail.state !== "open") return "File edits are only available on open pull requests.";
+  if (!detail.capabilities.diff)
+    return "This source control provider does not support PR file edits.";
+  if (!detail.headBranch || detail.headRepositoryNameWithOwner === null)
+    return "The source branch or repository is unavailable.";
+  return null;
+}
+
 /** Only the parts of a detail either answer reads, so a caller can pass a whole detail view. */
 type EditingSubject = Pick<
   PullRequestDetail,

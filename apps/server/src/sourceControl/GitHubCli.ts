@@ -69,7 +69,27 @@ function commandHosts(args: ReadonlyArray<string>): Array<string | null> {
 
 function targetsVerifiedHost(args: ReadonlyArray<string>, host: string): boolean {
   const hosts = commandHosts(args);
-  return hosts.length > 0 && hosts.every((target) => target === host);
+  const upload =
+    args[0] === "api" &&
+    args.some((arg) => {
+      try {
+        const url = new URL(arg);
+        return (
+          url.protocol === "https:" &&
+          url.host === `uploads.${host}` &&
+          url.pathname === "/user-attachments/assets" &&
+          !url.username &&
+          !url.password
+        );
+      } catch {
+        return false;
+      }
+    }) &&
+    (host === "github.com" || /^[a-z0-9-]+\.ghe\.com$/.test(host));
+  return (
+    hosts.length > 0 &&
+    hosts.every((target) => target === host || (upload && target === `uploads.${host}`))
+  );
 }
 
 const gitHubCliFailureFields = {

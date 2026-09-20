@@ -19,14 +19,24 @@ describe("pull request review drafts", () => {
   it("removes only the line comments included in a submitted snapshot", () => {
     const store = usePullRequestReviewStore.getState();
     store.addComment("review-a", comment("submitted"));
-    const submittedIds =
-      usePullRequestReviewStore.getState().drafts["review-a"]?.map((entry) => entry.id) ?? [];
+    const submitted = usePullRequestReviewStore.getState().drafts["review-a"] ?? [];
 
     usePullRequestReviewStore.getState().addComment("review-a", comment("added-in-flight"));
-    usePullRequestReviewStore.getState().removeComments("review-a", submittedIds);
+    usePullRequestReviewStore.getState().removeComments("review-a", submitted);
 
     expect(usePullRequestReviewStore.getState().drafts["review-a"]).toEqual([
       comment("added-in-flight"),
+    ]);
+  });
+
+  it("keeps a queued comment edited while its submitted version is in flight", () => {
+    const store = usePullRequestReviewStore.getState();
+    store.addComment("review-a", comment("same-id", "Submitted body"));
+    const submitted = usePullRequestReviewStore.getState().drafts["review-a"] ?? [];
+    store.updateComment("review-a", "same-id", "Revised body");
+    store.removeComments("review-a", submitted);
+    expect(usePullRequestReviewStore.getState().drafts["review-a"]).toEqual([
+      comment("same-id", "Revised body"),
     ]);
   });
 

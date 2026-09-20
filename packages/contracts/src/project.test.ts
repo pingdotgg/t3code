@@ -38,6 +38,32 @@ describe("project search inputs", () => {
 });
 
 describe("project RPC errors", () => {
+  it.each([
+    ["checkout_changed", "The checkout changed. Reopen the file before saving."],
+    ["checkout_verification_failed", "Could not verify the checkout before saving."],
+    ["pull_request_not_open", "This PR is no longer open for edits. Your edits are still here."],
+    [
+      "pull_request_verification_failed",
+      "Could not verify this PR before saving. Your edits are still here.",
+    ],
+    ["read_before_write_failed", "Could not read the file before saving."],
+    [
+      "contents_changed",
+      "This file changed since you opened it. Your edits are still here. Refresh the review before saving.",
+    ],
+    ["workspace_verification_failed", "Could not verify the working copy before saving."],
+  ] as const)("preserves the save message for %s", (failure, message) => {
+    const error = new ProjectWriteFileError({
+      cwd: "/workspace",
+      relativePath: "file.ts",
+      failure,
+      cause: new Error("private failure detail"),
+    });
+    expect(error.message).toBe(message);
+    const encoded = Schema.encodeSync(ProjectWriteFileError)(error);
+    expect(Schema.decodeUnknownSync(ProjectWriteFileError)(encoded).message).toBe(message);
+  });
+
   it("derives stable messages from structured request context while retaining causes", () => {
     const cause = new Error("sensitive platform detail");
     const searchError = new ProjectSearchEntriesError({

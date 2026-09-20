@@ -9,6 +9,7 @@ import {
   VcsRepositoryDetectionError,
   VcsUnsupportedOperationError,
   type ReviewDiffFileContentsInput,
+  type ReviewApplyPatchInput,
   type ReviewDiffFileContentsResult,
   type ReviewDiffPreviewError,
   type ReviewDiffPreviewInput,
@@ -22,6 +23,9 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 export class ReviewService extends Context.Service<
   ReviewService,
   {
+    readonly applyPatch: (
+      input: ReviewApplyPatchInput,
+    ) => Effect.Effect<void, ReviewDiffPreviewError>;
     readonly getDiffPreview: (
       input: ReviewDiffPreviewInput,
     ) => Effect.Effect<ReviewDiffPreviewResult, ReviewDiffPreviewError>;
@@ -64,7 +68,10 @@ export const make = Effect.gen(function* () {
   };
 
   const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (
-    operation: "ReviewService.getDiffPreview" | "ReviewService.getDiffFileContents",
+    operation:
+      | "ReviewService.getDiffPreview"
+      | "ReviewService.getDiffFileContents"
+      | "ReviewService.applyPatch",
     cwd: string,
   ) {
     const [candidate, workspaceRoot, worktreesRoot] = yield* Effect.all([
@@ -83,7 +90,9 @@ export const make = Effect.gen(function* () {
       detail:
         operation === "ReviewService.getDiffPreview"
           ? "Review diff preview cwd must stay within the configured workspace root."
-          : "Review diff file contents cwd must stay within the configured workspace root.",
+          : operation === "ReviewService.applyPatch"
+            ? "Staging cwd must stay within the configured workspace root."
+            : "Review diff file contents cwd must stay within the configured workspace root.",
     });
   });
 
@@ -101,6 +110,13 @@ export const make = Effect.gen(function* () {
       };
     }
 
+    if (input.workingTreeScope && handle.kind !== "git") {
+      return yield* new VcsUnsupportedOperationError({
+        operation: "ReviewService.getDiffPreview",
+        kind: handle.kind,
+        detail: "Staged and unstaged changes require a Git repository.",
+      });
+    }
     const getDriverDiffPreview = handle.driver.getDiffPreview;
     if (!getDriverDiffPreview) {
       if (handle.kind === "git") {
@@ -134,6 +150,18 @@ export const make = Effect.gen(function* () {
   });
 
   return ReviewService.of({
+    applyPatch: Effect.fn("ReviewService.applyPatch")(function* (input) {
+      yield* assertWorkspaceBoundCwd("ReviewService.applyPatch", input.cwd);
+      const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
+      if (handle?.kind !== "git") {
+        return yield* new VcsUnsupportedOperationError({
+          operation: "ReviewService.applyPatch",
+          kind: handle?.kind ?? "unknown",
+          detail: "Staging requires a Git repository.",
+        });
+      }
+      yield* git.applyReviewPatch(input);
+    }),
     getDiffPreview,
     getDiffFileContents,
   });

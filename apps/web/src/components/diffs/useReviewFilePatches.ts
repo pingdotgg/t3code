@@ -6,6 +6,7 @@ import * as Atom from "effect/unstable/reactivity/Atom";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
+import { orderFilesByTree } from "./diffFileTree.logic";
 
 export function useReviewFilePatches({
   environmentId,
@@ -16,6 +17,7 @@ export function useReviewFilePatches({
   theme,
   revision,
   preview,
+  fileTreeOpen,
 }: {
   environmentId: EnvironmentId | undefined;
   cwd: string | undefined;
@@ -25,6 +27,7 @@ export function useReviewFilePatches({
   theme: "light" | "dark";
   revision: string | undefined;
   preview: RenderablePatch | null;
+  fileTreeOpen: boolean;
 }) {
   const registry = useContext(RegistryContext);
   const scope = JSON.stringify([
@@ -34,19 +37,20 @@ export function useReviewFilePatches({
     source?.diffHash,
     baseRef,
     ignoreWhitespace,
+    fileTreeOpen,
   ]);
   const [requested, setRequested] = useState({ scope, indices: [0, 1, 2, 3] });
   const indices = useMemo(
     () => (requested.scope === scope ? requested.indices : [0, 1, 2, 3]),
     [requested, scope],
   );
-  const files = useMemo(
-    () =>
+  const files = useMemo(() => {
+    const sorted =
       source?.files?.toSorted((a, b) =>
         a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: "base" }),
-      ) ?? [],
-    [source?.files],
-  );
+      ) ?? [];
+    return fileTreeOpen ? orderFilesByTree(sorted, (file) => file.path) : sorted;
+  }, [source?.files, fileTreeOpen]);
   const queries = useMemo(
     () =>
       !environmentId || !cwd || !source
@@ -65,6 +69,9 @@ export function useReviewFilePatches({
                       cwd,
                       ...(baseRef ? { baseRef } : {}),
                       ignoreWhitespace,
+                      ...(source.kind === "staged" || source.kind === "unstaged"
+                        ? { workingTreeScope: source.kind }
+                        : {}),
                       file: {
                         path: file.path,
                         previousPath: file.previousPath,
@@ -153,7 +160,7 @@ export function useReviewFilePatches({
     },
     [queries, files, registry],
   );
-  const renderableFiles = useMemo(
+  const parsedFiles = useMemo(
     () =>
       source
         ? files.map((file, index): FileDiffMetadata => {
@@ -184,6 +191,11 @@ export function useReviewFilePatches({
             }),
           ),
     [source, files, patches, scope, preview],
+  );
+  const renderableFiles = useMemo(
+    () =>
+      fileTreeOpen && !source ? orderFilesByTree(parsedFiles, resolveFileDiffPath) : parsedFiles,
+    [fileTreeOpen, parsedFiles, source],
   );
   const fileStates = new Map(
     files.map((file, index) => {

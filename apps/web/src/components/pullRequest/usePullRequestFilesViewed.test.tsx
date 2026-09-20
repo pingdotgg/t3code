@@ -98,6 +98,39 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+it("batches folder marks within the wire limit and keeps later file presses", async () => {
+  const paths = Array.from({ length: 501 }, (_, index) => `src/${index}.ts`);
+  await act(async () => {
+    view().setViewed(paths, true);
+    view().setViewed(paths[0]!, false);
+  });
+  expect(paths.slice(1).every((path) => view().isViewed(path))).toBe(true);
+  expect(view().isViewed(paths[0]!)).toBe(false);
+  await act(async () => vi.advanceTimersByTimeAsync(500));
+  expect(setFilesViewed.mock.calls.map(([request]) => request.input.files.length)).toEqual([
+    500, 1,
+  ]);
+  expect(setFilesViewed.mock.calls.flatMap(([request]) => request.input.files)).toEqual(
+    paths.map((path, index) => ({ path, viewed: index !== 0 })),
+  );
+  host.data = {
+    files: paths
+      .slice(0, 500)
+      .map((path, index) => ({ path, state: index === 0 ? "unviewed" : "viewed" })),
+    truncated: true,
+  };
+  await act(async () =>
+    renderer!.update(
+      <StrictMode>
+        <Surface />
+      </StrictMode>,
+    ),
+  );
+  expect(view().isViewed(paths[500]!)).toBe(true);
+  await act(async () => view().setViewed(paths, false));
+  expect(paths.every((path) => !view().isViewed(path))).toBe(true);
+});
+
 describe("a mark whose file was pushed to before the read that followed it", () => {
   it("gives way to the host and shows the file as changed", async () => {
     view().setViewed("a.ts", true);

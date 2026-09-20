@@ -217,6 +217,13 @@ export const ProjectFileFailure = Schema.Literals([
   "resolved_path_outside_root",
   "path_not_file",
   "binary_file",
+  "checkout_changed",
+  "checkout_verification_failed",
+  "pull_request_not_open",
+  "pull_request_verification_failed",
+  "read_before_write_failed",
+  "contents_changed",
+  "workspace_verification_failed",
   "operation_failed",
 ]);
 export type ProjectFileFailure = typeof ProjectFileFailure.Type;
@@ -273,6 +280,9 @@ export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
+  expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  expectedContents: Schema.optional(Schema.String),
+  pullRequestUrl: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
@@ -280,6 +290,18 @@ export const ProjectWriteFileResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
+
+const projectWriteFailureMessages: Partial<Record<ProjectFileFailure, string>> = {
+  checkout_changed: "The checkout changed. Reopen the file before saving.",
+  checkout_verification_failed: "Could not verify the checkout before saving.",
+  pull_request_not_open: "This PR is no longer open for edits. Your edits are still here.",
+  pull_request_verification_failed:
+    "Could not verify this PR before saving. Your edits are still here.",
+  read_before_write_failed: "Could not read the file before saving.",
+  contents_changed:
+    "This file changed since you opened it. Your edits are still here. Refresh the review before saving.",
+  workspace_verification_failed: "Could not verify the working copy before saving.",
+};
 
 export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",
@@ -301,6 +323,7 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
       ...props,
       message:
         decodedProjectErrorMessage(props) ??
+        projectWriteFailureMessages[props.failure] ??
         `Failed to write workspace file '${props.relativePath}' in '${props.cwd}'.`,
     } as any);
   }

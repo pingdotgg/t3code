@@ -1,13 +1,14 @@
-import type {
-  PullRequestActor,
-  PullRequestCapabilities,
-  PullRequestComment,
-  PullRequestDetail,
-  PullRequestViewerPermissions,
+import {
+  type PullRequestActor,
+  type PullRequestCapabilities,
+  type PullRequestComment,
+  type PullRequestDetail,
+  type PullRequestViewerPermissions,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  getPullRequestFileEditReason,
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
 } from "./pullRequestEditing.logic";
@@ -168,5 +169,34 @@ describe("canEditPullRequestComment", () => {
 
   it("refuses where the host did not say who the reader is", () => {
     expect(canEditPullRequestComment(subject({ viewer: undefined }), comment())).toBe(false);
+  });
+});
+
+describe("PR file editing", () => {
+  const editable = {
+    state: "open" as const,
+    capabilities: capabilities(),
+    headBranch: "feature",
+    headRepositoryNameWithOwner: "owner/repo",
+  };
+  it("allows open pull requests including drafts", () => {
+    expect(getPullRequestFileEditReason(editable)).toBeNull();
+    const draft = { ...editable, isDraft: true };
+    expect(getPullRequestFileEditReason(draft)).toBeNull();
+  });
+  it.each(["closed", "merged"] as const)("rejects %s pull requests", (state) => {
+    expect(getPullRequestFileEditReason({ ...editable, state })).toMatch(/open pull requests/);
+  });
+  it("rejects unavailable source branches, repositories, and unsupported diffs", () => {
+    expect(getPullRequestFileEditReason({ ...editable, headBranch: "" })).toMatch(/unavailable/);
+    expect(
+      getPullRequestFileEditReason({ ...editable, headRepositoryNameWithOwner: null }),
+    ).toMatch(/unavailable/);
+    expect(
+      getPullRequestFileEditReason({
+        ...editable,
+        capabilities: { ...capabilities(), diff: false },
+      }),
+    ).toMatch(/does not support/);
   });
 });

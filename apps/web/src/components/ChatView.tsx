@@ -1,3 +1,5 @@
+import { useReviewEdits, useReviewPanelLeaveGuard } from "./diffs/ReviewEdits";
+import { isDiffSearchShortcut } from "./diffs/DiffSearch.logic";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -1463,6 +1465,7 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
 }
 
 export default function ChatView(props: ChatViewProps) {
+  const { requestLeave } = useReviewEdits()!;
   const {
     environmentId,
     threadId,
@@ -1987,6 +1990,18 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadEnvironmentId, activeThreadId],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  useReviewPanelLeaveGuard(activeThreadRef);
+  const leaveReviewPanel = useCallback(
+    (action: () => void) => {
+      const active = selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        activeThreadRef,
+      );
+      if (active?.kind === "diff" || active?.kind === "pull-request") requestLeave(action);
+      else action();
+    },
+    [activeThreadRef, requestLeave],
+  );
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -4527,25 +4542,27 @@ export default function ChatView(props: ChatViewProps) {
   const createBrowserSurface = useCallback(
     (profileId?: string) => {
       if (!activeThreadRef) return;
-      void addBrowserSurface({
-        threadRef: activeThreadRef,
-        openPreview,
-        ...(profileId === undefined ? {} : { profileId }),
-      }).then((result) => {
-        if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-        const error = squashAtomCommandFailure(result);
-        if (error instanceof BrowserSettingsReadError) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Unable to open browser",
-              description: error.message,
-            }),
-          );
-        }
+      leaveReviewPanel(() => {
+        void addBrowserSurface({
+          threadRef: activeThreadRef,
+          openPreview,
+          ...(profileId === undefined ? {} : { profileId }),
+        }).then((result) => {
+          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+          const error = squashAtomCommandFailure(result);
+          if (error instanceof BrowserSettingsReadError) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Unable to open browser",
+                description: error.message,
+              }),
+            );
+          }
+        });
       });
     },
-    [activeThreadRef, openPreview],
+    [activeThreadRef, openPreview, leaveReviewPanel],
   );
   const addDiffSurface = useCallback(() => {
     if (!activeThreadRef || !isServerThread || !isGitRepo) return;
@@ -4857,10 +4874,18 @@ export default function ChatView(props: ChatViewProps) {
           .getState()
           .open(activeThreadRef, { kind: "device", ...activeRightPanelSurface.target });
       }
-      setMaximizedRightPanelThreadKey(null);
-      useRightPanelStore.getState().close(activeThreadRef);
+      const close = () => {
+        setMaximizedRightPanelThreadKey(null);
+        useRightPanelStore.getState().close(activeThreadRef);
+      };
+      if (
+        activeRightPanelSurface?.kind === "diff" ||
+        activeRightPanelSurface?.kind === "pull-request"
+      )
+        requestLeave(close);
+      else close();
     }
-  }, [activeRightPanelSurface, activeThreadRef]);
+  }, [activeRightPanelSurface, activeThreadRef, requestLeave]);
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
     if (previewPanelOpen) {
@@ -4882,22 +4907,24 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const addTerminalSurface = useCallback(() => {
     if (!activeThreadRef || !activeThreadId || !activeProject) return;
-    const cwd = gitCwd ?? activeProject.workspaceRoot;
-    const terminalId = nextTerminalId(allocatableActiveTerminalIds);
-    useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
-    setTerminalFocusRequestId((value) => value + 1);
-    void openTerminal({
-      environmentId: activeThreadRef.environmentId,
-      input: {
-        threadId: activeThreadId,
-        terminalId,
-        cwd,
-        ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-        env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
-          worktreePath: activeThreadWorktreePath,
-        }),
-      },
+    leaveReviewPanel(() => {
+      const cwd = gitCwd ?? activeProject.workspaceRoot;
+      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
+      setTerminalFocusRequestId((value) => value + 1);
+      void openTerminal({
+        environmentId: activeThreadRef.environmentId,
+        input: {
+          threadId: activeThreadId,
+          terminalId,
+          cwd,
+          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+          env: projectScriptRuntimeEnv({
+            project: { cwd: activeProject.workspaceRoot },
+            worktreePath: activeThreadWorktreePath,
+          }),
+        },
+      });
     });
   }, [
     activeProject,
@@ -4907,6 +4934,7 @@ export default function ChatView(props: ChatViewProps) {
     allocatableActiveTerminalIds,
     gitCwd,
     openTerminal,
+    leaveReviewPanel,
   ]);
   const splitPanelTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
@@ -4999,18 +5027,22 @@ export default function ChatView(props: ChatViewProps) {
   const activateRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
-      useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
-      if (surface.kind === "preview" && surface.resourceId) {
-        setActivePreviewTab(activeThreadRef, surface.resourceId);
-      }
-      if (surface.kind === "terminal") {
-        setTerminalFocusRequestId((value) => value + 1);
-      }
-      if (surface.kind === "diff" && !diffOpen) {
-        onDiffPanelOpen?.();
-      }
+      const activate = () => {
+        useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
+        if (surface.kind === "preview" && surface.resourceId) {
+          setActivePreviewTab(activeThreadRef, surface.resourceId);
+        }
+        if (surface.kind === "terminal") {
+          setTerminalFocusRequestId((value) => value + 1);
+        }
+        if (surface.kind === "diff" && !diffOpen) {
+          onDiffPanelOpen?.();
+        }
+      };
+      if (activeRightPanelSurface?.id === surface.id) activate();
+      else leaveReviewPanel(activate);
     },
-    [activeThreadRef, diffOpen, onDiffPanelOpen],
+    [activeRightPanelSurface?.id, activeThreadRef, diffOpen, leaveReviewPanel, onDiffPanelOpen],
   );
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
@@ -5091,14 +5123,29 @@ export default function ChatView(props: ChatViewProps) {
   const finishRightPanelSurfaceClose = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
-      cleanupRightPanelSurfaces(surfaces);
-      const store = useRightPanelStore.getState();
-      for (const surface of surfaces) {
-        store.closeSurface(activeThreadRef, surface.id);
-      }
-      syncActivePreviewSurface();
+      const close = () => {
+        cleanupRightPanelSurfaces(surfaces);
+        const store = useRightPanelStore.getState();
+        for (const surface of surfaces) {
+          store.closeSurface(activeThreadRef, surface.id);
+        }
+        syncActivePreviewSurface();
+      };
+      if (
+        (activeRightPanelSurface?.kind === "diff" ||
+          activeRightPanelSurface?.kind === "pull-request") &&
+        surfaces.some((surface) => surface.id === activeRightPanelSurface.id)
+      )
+        requestLeave(close);
+      else close();
     },
-    [activeThreadRef, cleanupRightPanelSurfaces, syncActivePreviewSurface],
+    [
+      activeThreadRef,
+      activeRightPanelSurface,
+      cleanupRightPanelSurfaces,
+      syncActivePreviewSurface,
+      requestLeave,
+    ],
   );
   const closeRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
@@ -6672,7 +6719,7 @@ export default function ChatView(props: ChatViewProps) {
         event.stopPropagation();
         return;
       }
-      if (!activeThreadId || isCommandPaletteOpen()) {
+      if (!activeThreadId || isCommandPaletteOpen() || isDiffSearchShortcut(event)) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();
@@ -9471,12 +9518,17 @@ export default function ChatView(props: ChatViewProps) {
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       if (!isServerThread || !activeThreadRef) return;
-      explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
-      useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
-      useRightPanelStore.getState().open(activeThreadRef, "diff");
-      onDiffPanelOpen?.();
+      const open = () => {
+        explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
+        useDiffPanelStore.getState().selectTurn(activeThreadRef, turnId, filePath);
+        useRightPanelStore.getState().open(activeThreadRef, "diff");
+        onDiffPanelOpen?.();
+      };
+      const selected = useDiffPanelStore.getState().byThreadKey[scopedThreadKey(activeThreadRef)];
+      if (selected?.kind === "turn" && selected.turnId === turnId) open();
+      else requestLeave(open);
     },
-    [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen],
+    [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen, requestLeave],
   );
   // The revert handler is read from a ref at call-time so the callback
   // reference is fully stable and never busts TimelineRowCtx identity.

@@ -20,7 +20,8 @@ import {
 
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
-import { StyledDiffCodeView, type StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
+import type { StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
+import { EditableDiffCodeView, type ReviewEditTargetResolver } from "./EditableDiffCodeView";
 
 interface DiffCommentAnnotationEntry {
   id: string;
@@ -32,6 +33,7 @@ interface DiffCommentAnnotationEntry {
 
 interface DiffCommentAnnotationGroup {
   entries: DiffCommentAnnotationEntry[];
+  hunk?: { fileDiff: FileDiffMetadata; index: number };
 }
 
 type DiffCommentLineAnnotation = DiffLineAnnotation<DiffCommentAnnotationGroup>;
@@ -86,10 +88,12 @@ interface AnnotatableCodeViewProps {
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
   className?: string;
+  editing?: ReviewEditTargetResolver;
   renderCodeViewFooter?: () => ReactNode;
   unsafeCSSExtra?: string;
   renderHeaderMetadata?: (fileDiff: FileDiffMetadata) => ReactNode;
   renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata) => ReactNode;
+  renderHunkAction?: (fileDiff: FileDiffMetadata, hunkIndex: number) => ReactNode;
   renderHeaderPrefix: (
     fileDiff: FileDiffMetadata,
     fileKey: string,
@@ -110,11 +114,13 @@ export function AnnotatableCodeView({
   options,
   viewerRef,
   className,
+  editing,
   renderCodeViewFooter,
   unsafeCSSExtra,
   renderHeaderMetadata,
   renderHeaderFilenameSuffix,
   renderHeaderPrefix,
+  renderHunkAction,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -153,8 +159,18 @@ export function AnnotatableCodeView({
               text: comment.text,
             });
           }, []);
-        const annotations =
-          draft?.fileKey === fileKey ? [...persisted, draft.annotation] : persisted;
+        const hunkActions: DiffCommentLineAnnotation[] = renderHunkAction
+          ? fileDiff.hunks.map((hunk, index) => ({
+              side: hunk.additionCount > 0 ? "additions" : "deletions",
+              lineNumber: hunk.additionCount > 0 ? hunk.additionStart : hunk.deletionStart,
+              metadata: { entries: [], hunk: { fileDiff, index } },
+            }))
+          : [];
+        const annotations = [
+          ...hunkActions,
+          ...persisted,
+          ...(draft?.fileKey === fileKey ? [draft.annotation] : []),
+        ];
         return {
           id: fileKey,
           type: "diff",
@@ -172,7 +188,7 @@ export function AnnotatableCodeView({
           ),
         };
       }),
-    [draft, files, reviewComments, sectionId],
+    [draft, files, reviewComments, sectionId, renderHunkAction],
   );
 
   const removeEntry = useCallback(
@@ -247,8 +263,9 @@ export function AnnotatableCodeView({
 
   const hasOpenComment = draft !== null;
   return (
-    <StyledDiffCodeView<DiffCommentAnnotationGroup>
-      key={codeViewKey}
+    <EditableDiffCodeView<DiffCommentAnnotationGroup>
+      viewerKey={codeViewKey}
+      {...(editing ? { editing } : {})}
       {...(viewerRef ? { viewerRef } : {})}
       {...(className ? { className } : {})}
       {...(unsafeCSSExtra ? { unsafeCSSExtra } : {})}
@@ -277,6 +294,11 @@ export function AnnotatableCodeView({
           : null
       }
       renderAnnotation={(annotation) => {
+        if (annotation.metadata.hunk)
+          return renderHunkAction?.(
+            annotation.metadata.hunk.fileDiff,
+            annotation.metadata.hunk.index,
+          );
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
           <div

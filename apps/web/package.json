@@ -9,7 +9,8 @@
     "build": "vp build",
     "preview": "vp preview",
     "typecheck": "tsc --noEmit",
-    "test": "vp test run --passWithNoTests --project unit"
+    "test": "vp test run --passWithNoTests --project unit",
+    "test:review-editor": "node scripts/review-editor-smoke.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

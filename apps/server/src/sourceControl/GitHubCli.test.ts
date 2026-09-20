@@ -191,6 +191,20 @@ describe("GitHubCli.layer", () => {
         ["repo", "view", "other.example.test/owner/repo", "--json", "name"],
         ["api", "https://other.example.test/user", "--hostname", "github.com"],
         ["api", "user"],
+        ["api", "https://uploads.github.com/other", "--hostname", "github.com"],
+        ["api", "http://uploads.github.com/user-attachments/assets", "--hostname", "github.com"],
+        [
+          "api",
+          "https://user@uploads.github.com/user-attachments/assets",
+          "--hostname",
+          "github.com",
+        ],
+        [
+          "api",
+          "https://uploads.other.ghe.com/user-attachments/assets",
+          "--hostname",
+          "github.com",
+        ],
       ]) {
         const failure = yield* gh.execute({ cwd: "/repo", args }).pipe(
           Effect.provideService(GitHubCli.PinnedGitHubCredential, {
@@ -637,3 +651,35 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 });
+
+it.effect("pins official attachment uploads to the same verified GitHub credential", () =>
+  Effect.gen(function* () {
+    mockRun.mockReturnValue(Effect.succeed(processOutput("{}")));
+    const gh = yield* GitHubCli.GitHubCli;
+    yield* gh
+      .execute({
+        cwd: "/repo",
+        args: [
+          "api",
+          "https://uploads.github.com/user-attachments/assets?repository_id=42",
+          "--hostname",
+          "github.com",
+          "--method",
+          "POST",
+          "--input",
+          "/tmp/safe-upload",
+        ],
+      })
+      .pipe(
+        Effect.provideService(GitHubCli.PinnedGitHubCredential, {
+          host: "github.com",
+          token: Redacted.make("test-upload-token"),
+          credentialFingerprint: "upload-account",
+        }),
+      );
+    expect(mockRun.mock.calls[0]?.[0].env).toMatchObject({
+      GH_TOKEN: "test-upload-token",
+      GH_DEBUG: "",
+    });
+  }).pipe(Effect.provide(layer)),
+);

@@ -193,5 +193,11 @@ export function orderDiffFiles(
     .filter((path) => tiers.get(path) === "generated")
     .sort((left, right) => left.localeCompare(right));
 
-  return [...orderedSource, ...orderedTests, ...orderedGenerated].map((path) => byPath.get(path)!);
+  const positions = new Map(
+    [...orderedSource, ...orderedTests, ...orderedGenerated].map((path, index) => [path, index]),
+  );
+  return files.toSorted(
+    (left, right) =>
+      positions.get(resolveFileDiffPath(left))! - positions.get(resolveFileDiffPath(right))!,
+  );
 }

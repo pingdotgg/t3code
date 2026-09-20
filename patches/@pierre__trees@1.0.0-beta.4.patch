@@ -1,0 +1,78 @@
+diff --git a/dist/model/publicTypes.d.ts b/dist/model/publicTypes.d.ts
+index 84a7e2d14f67c1aad8230f19a3426ab7403f378e..56d2f48f3b3a80ca27552a93cb977a715b340013 100644
+--- a/dist/model/publicTypes.d.ts
++++ b/dist/model/publicTypes.d.ts
+@@ -289,7 +289,13 @@ interface FileTreeRowDecorationIcon {
+   icon: RemappedIcon;
+   title?: string;
+ }
+-type FileTreeRowDecoration = FileTreeRowDecorationText | FileTreeRowDecorationIcon;
++type FileTreeRowDecoration = FileTreeRowDecorationText | FileTreeRowDecorationIcon | {
++  checked: boolean | "mixed";
++  label: string;
++  title?: string;
++  disabled?: boolean;
++  onChange: (checked: boolean) => void;
++};
+ interface FileTreeRowDecorationContext {
+   item: FileTreeContextMenuItem;
+   row: FileTreeVisibleRow;
+diff --git a/dist/render/FileTreeView.js b/dist/render/FileTreeView.js
+index 648639b4b65c1dd797434e3afe189848426f4d53..d51f226ed5a60439061123c3088e3be3dec13670 100644
+--- a/dist/render/FileTreeView.js
++++ b/dist/render/FileTreeView.js
+@@ -328,6 +328,23 @@ function isBuiltInDecorationIconName(name) {
+ }
+ function renderRowDecoration(decoration, resolveIcon) {
+ 	if (decoration == null) return null;
++	if ("checked" in decoration) return jsx("input", {
++		type: "checkbox",
++		"data-tree-checkbox": "",
++		"aria-label": decoration.label,
++		title: decoration.title,
++		checked: decoration.checked === true,
++		disabled: decoration.disabled,
++		ref: (element) => { if (element) element.indeterminate = decoration.checked === "mixed"; },
++		onFocus: (event) => event.stopPropagation(),
++		onMouseDown: (event) => event.stopPropagation(),
++		onPointerDown: (event) => event.stopPropagation(),
++		onTouchStart: (event) => event.stopPropagation(),
++		onKeyDown: (event) => event.stopPropagation(),
++		onKeyUp: (event) => event.stopPropagation(),
++		onClick: (event) => event.stopPropagation(),
++		onChange: (event) => decoration.onChange(event.currentTarget.checked)
++	});
+ 	if ("text" in decoration) return /* @__PURE__ */ jsx("span", {
+ 		title: decoration.title,
+ 		children: decoration.text
+@@ -404,6 +421,7 @@ function renderStyledRow(frame, row, key, options = {}) {
+ 	const effectiveGitStatus = gitStatusByPath?.get(targetPath) ?? null ?? getInheritedIgnoredGitStatus(row.ancestorPaths, ignoredGitDirectories, ignoredInheritanceCache);
+ 	const containsGitChange = row.kind === "directory" && (directoriesWithGitChanges?.has(targetPath) ?? false);
+ 	const customDecoration = renderDecorationForRow(row, targetPath);
++	const hasCheckbox = customDecoration != null && "checked" in customDecoration;
+ 	const gitDecoration = getBuiltInGitStatusDecoration(effectiveGitStatus, containsGitChange);
+ 	const actionLaneEnabled = contextMenuEnabled && contextMenuButtonTriggerEnabled;
+ 	const decorationLaneEnabled = customDecoration != null || gitLaneActive || actionLaneEnabled;
+@@ -476,7 +494,12 @@ function renderStyledRow(frame, row, key, options = {}) {
+ 		onFocus: !isSticky ? () => {
+ 			controller.focusMountedPathFromInput(targetPath);
+ 		} : void 0,
+-		onKeyDown: !isSticky ? onKeyDown : void 0,
++		onKeyDown: hasCheckbox ? (event) => {
++			if ((event.key === "Enter" || event.key === " ") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
++				event.preventDefault();
++				event.currentTarget.click();
++			} else if (!isSticky) onKeyDown(event);
++		} : !isSticky ? onKeyDown : void 0,
+ 		ref: (element) => {
+ 			registerButton(targetPath, element);
+ 		}
+@@ -485,7 +508,7 @@ function renderStyledRow(frame, row, key, options = {}) {
+ 		...commonProps,
+ 		children: rowContent
+ 	});
+-	return /* @__PURE__ */ jsx("button", {
++	return /* @__PURE__ */ jsx(hasCheckbox ? "div" : "button", {
+ 		...commonProps,
+ 		type: "button",
+ 		draggable: dragAndDropEnabled && !isParked,

@@ -42,6 +42,15 @@ describe("gitLabViewerPermissions", () => {
     });
   });
 
+  it("offers request changes only to an eligible reviewer", () => {
+    expect(
+      gitLabViewerPermissions({ viewerCanMerge: true, canRequestChanges: true }).verdicts,
+    ).toContain("request-changes");
+    expect(
+      gitLabViewerPermissions({ viewerCanMerge: true, canRequestChanges: false }).verdicts,
+    ).not.toContain("request-changes");
+  });
+
   it("names no way of updating a branch it will not let this viewer update", () => {
     // The action and the strategy behind it go together: a button offered with nothing to press
     // it with, or a strategy left standing next to a withheld button, is a half-refusal.
@@ -101,11 +110,42 @@ describe("getChangeRequest base freshness", () => {
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
           getMergeRequestDetail: () => Effect.succeed({ ...detail, ...divergence }),
+          getRequestChangesViewer: () => Effect.succeed(null),
           getProjectMergeCapabilities: () =>
             Effect.succeed({ merge: true, squash: true, rebase: true }),
         }),
       ),
     );
+
+  for (const viewer of [null, "bilal", "octocat"]) {
+    it.effect(`gates request changes on host support and reviewer assignment: ${viewer}`, () =>
+      Effect.gen(function* () {
+        const provider = yield* make;
+        const input = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+        const capabilities = yield* provider.getCapabilities!(input);
+        const result = yield* provider.getChangeRequest(input);
+        const permissions = yield* provider.getViewerPermissions(input);
+        expect(capabilities.review.verdicts.includes("request-changes")).toBe(viewer !== null);
+        expect(result.viewerPermissions?.verdicts.includes("request-changes")).toBe(
+          viewer === "octocat",
+        );
+        expect(permissions.verdicts.includes("request-changes")).toBe(viewer === "octocat");
+      }).pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            getRequestChangesViewer: () => Effect.succeed(viewer),
+            getMergeRequestDetail: () =>
+              Effect.succeed({
+                ...detail,
+                reviewers: [{ login: "octocat", avatarUrl: null, name: null }],
+              }),
+            getProjectMergeCapabilities: () =>
+              Effect.succeed({ merge: true, squash: true, rebase: true }),
+          }),
+        ),
+      ),
+    );
+  }
 
   it.effect("reads a counted divergence as a branch that has fallen behind", () =>
     Effect.gen(function* () {
@@ -170,7 +210,7 @@ describe("rewriting what has already been said", () => {
     }),
   );
 
-  it.effect("rewrites a positioned comment through the same note as any other", () =>
+  it.effect("keeps the discussion id when editing a thread comment", () =>
     Effect.gen(function* () {
       const provider = yield* providerWith;
       assert.isDefined(provider.updateComment);
@@ -181,6 +221,7 @@ describe("rewriting what has already been said", () => {
         host: "gitlab.com",
         number: 7,
         commentId: "42",
+        threadId: "discussion",
         kind: "review-comment",
         body: "Reworded.",
       });
@@ -190,8 +231,66 @@ describe("rewriting what has already been said", () => {
         repository: "acme/web",
         number: 7,
         noteId: "42",
+        discussionId: "discussion",
         body: "Reworded.",
       });
+    }),
+  );
+});
+
+describe("comment links", () => {
+  it.effect("links notes and discussion replies to their own anchors on the source host", () =>
+    Effect.gen(function* () {
+      const comment = {
+        id: "5",
+        kind: "review-comment" as const,
+        author: null,
+        body: "Please check this.",
+        createdAt: "2026-07-02T00:00:00Z",
+        url: null,
+        path: "src/app.ts",
+        reviewState: null,
+      };
+      const reply = { ...comment, id: "6", body: "Updated.", createdAt: "2026-07-03T00:00:00Z" };
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            listNotes: () => Effect.succeed({ comments: [reply], truncated: true }),
+            listCommits: () => Effect.succeed([]),
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "discussion",
+                    path: "src/app.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [comment, reply],
+                  },
+                ],
+                truncated: false,
+              }),
+            listReactions: () => Effect.succeed({ reactions: [], reactionsByNoteId: new Map() }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity({
+        cwd: "/w",
+        host: "gitlab.example.com:8443",
+        repository: "team/sub group/web",
+        number: 7,
+      });
+
+      const links = [
+        "https://gitlab.example.com:8443/team/sub%20group/web/-/merge_requests/7#note_5",
+        "https://gitlab.example.com:8443/team/sub%20group/web/-/merge_requests/7#note_6",
+      ];
+      expect(activity.comments.map((item) => item.url)).toEqual(links);
+      expect(activity.commentCount).toBe(2);
+      expect(activity.reviewThreads[0]?.comments.map((item) => item.url)).toEqual(links);
     }),
   );
 });

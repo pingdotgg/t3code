@@ -5,6 +5,7 @@ import {
   decodeAwardEmojiJson,
   decodeRepositoryBlobsJson,
   decodeCommitsJson,
+  decodeDiscussionsJson,
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
@@ -47,6 +48,76 @@ function expectSuccess<A>(result: Result.Result<A, unknown>): A {
   if (!Result.isSuccess(result)) throw new Error("expected a successful decode");
   return result.success;
 }
+
+describe("decodeDiscussionsJson", () => {
+  const note = (id: number, fields: Record<string, unknown> = {}) => ({
+    id,
+    body: `note ${id}`,
+    created_at: "2026-07-01T00:00:00Z",
+    ...fields,
+  });
+
+  it("keeps general discussions and replyable individual notes while excluding system notes", () => {
+    const decoded = expectSuccess(
+      decodeDiscussionsJson(
+        JSON.stringify([
+          { id: "general", individual_note: false, notes: [note(1), note(2)] },
+          { id: "single", individual_note: true, notes: [note(3)] },
+          { id: "system", individual_note: false, notes: [note(4, { system: true })] },
+        ]),
+      ),
+    );
+
+    expect(decoded.rawCount).toBe(3);
+    expect(decoded.threads).toHaveLength(2);
+    expect(decoded.threads[0]).toMatchObject({
+      id: "general",
+      path: null,
+      line: null,
+      canResolve: false,
+    });
+    expect(decoded.threads[0]?.comments.map((comment) => comment.id)).toEqual(["1", "2"]);
+    expect(decoded.threads[1]).toMatchObject({ id: "single", path: null, canResolve: false });
+  });
+
+  it.each([false, true])("uses every resolvable note to report resolution: %s", (resolved) => {
+    const decoded = expectSuccess(
+      decodeDiscussionsJson(
+        JSON.stringify([
+          {
+            id: "general",
+            individual_note: false,
+            notes: [
+              note(1, { resolvable: true, resolved: true }),
+              note(2, { resolvable: true, resolved }),
+              note(3, { resolvable: false, resolved: false }),
+            ],
+          },
+        ]),
+      ),
+    );
+
+    expect(decoded.threads[0]).toMatchObject({ canResolve: true, isResolved: resolved });
+  });
+
+  it.each(["image", "file"])(
+    "keeps %s discussions without assigning a text line",
+    (position_type) => {
+      const decoded = expectSuccess(
+        decodeDiscussionsJson(
+          JSON.stringify([
+            {
+              id: "file",
+              notes: [note(1, { position: { position_type, new_path: "image.png", new_line: 1 } })],
+            },
+          ]),
+        ),
+      );
+
+      expect(decoded.threads[0]).toMatchObject({ path: "image.png", line: null });
+    },
+  );
+});
 
 describe("decodeMergeRequestListJson", () => {
   it("reads a merge request as a change request", () => {

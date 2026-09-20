@@ -78,6 +78,7 @@ import {
   VcsStatusStreamEvent,
 } from "./git.ts";
 import {
+  ReviewApplyPatchInput,
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
   ReviewDiffPreviewError,
@@ -110,6 +111,8 @@ import {
   PullRequestActivity,
   PullRequestCommentInput,
   PullRequestCommentUpdateInput,
+  PullRequestUploadAttachmentInput,
+  PullRequestUploadAttachmentResult,
   PullRequestDetail,
   PullRequestPreview,
   PullRequestDiffFileContentsInput,
@@ -325,6 +328,7 @@ export const WS_METHODS = {
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
   reviewGetDiffFileContents: "review.getDiffFileContents",
+  reviewApplyPatch: "review.applyPatch",
 
   // Terminal methods
   terminalOpen: "terminal.open",
@@ -406,6 +410,7 @@ export const WS_METHODS = {
   pullRequestsUpdate: "pullRequests.update",
   pullRequestsComment: "pullRequests.comment",
   pullRequestsUpdateComment: "pullRequests.updateComment",
+  pullRequestsUploadAttachment: "pullRequests.uploadAttachment",
   pullRequestsSubmitReview: "pullRequests.submitReview",
   pullRequestsReplyToThread: "pullRequests.replyToThread",
   pullRequestsSetThreadResolution: "pullRequests.setThreadResolution",
@@ -793,6 +798,12 @@ const WsPullRequestsCommentRpc = Rpc.make(WS_METHODS.pullRequestsComment, {
   error: PullRequestRpcError,
 });
 
+const WsPullRequestsUploadAttachmentRpc = Rpc.make(WS_METHODS.pullRequestsUploadAttachment, {
+  payload: PullRequestUploadAttachmentInput,
+  success: PullRequestUploadAttachmentResult,
+  error: PullRequestRpcError,
+});
+
 const WsPullRequestsUpdateCommentRpc = Rpc.make(WS_METHODS.pullRequestsUpdateComment, {
   payload: PullRequestCommentUpdateInput,
   success: Schema.Void,
@@ -1095,6 +1106,11 @@ const WsReviewGetDiffPreviewRpc = Rpc.make(WS_METHODS.reviewGetDiffPreview, {
 const WsReviewGetDiffFileContentsRpc = Rpc.make(WS_METHODS.reviewGetDiffFileContents, {
   payload: ReviewDiffFileContentsInput,
   success: ReviewDiffFileContentsResult,
+  error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
+});
+
+const WsReviewApplyPatchRpc = Rpc.make(WS_METHODS.reviewApplyPatch, {
+  payload: ReviewApplyPatchInput,
   error: Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
 });
 
@@ -1436,6 +1452,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPullRequestsUpdateRpc,
   WsPullRequestsCommentRpc,
   WsPullRequestsUpdateCommentRpc,
+  WsPullRequestsUploadAttachmentRpc,
   WsPullRequestsSubmitReviewRpc,
   WsPullRequestsReplyToThreadRpc,
   WsPullRequestsSetThreadResolutionRpc,
@@ -1482,6 +1499,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsInitRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,
+  WsReviewApplyPatchRpc,
   WsTerminalOpenRpc,
   WsTerminalAttachRpc,
   WsTerminalWriteRpc,

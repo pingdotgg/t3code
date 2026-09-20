@@ -7,6 +7,7 @@ import {
   type GitRunStackedActionResult,
   GitStackedAction,
   type ThreadId,
+  type ProjectId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -27,6 +28,7 @@ import {
 } from "./runtime.ts";
 import { vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
+import { invalidateReviewDiffPreviews } from "./review.ts";
 
 export const VcsActionOperation = Schema.Literals([
   "refresh_status",
@@ -76,6 +78,10 @@ export interface RunVcsStackedActionInput {
   readonly action: GitStackedAction;
   readonly commitMessage?: string;
   readonly featureBranch?: boolean;
+  readonly stagedOnly?: boolean;
+  readonly expectedBranch?: string;
+  readonly pullRequestUrl?: string;
+  readonly projectId?: ProjectId;
   readonly filePaths?: ReadonlyArray<string>;
   /** The thread the action runs beside; the server links a pull request it creates to it. */
   readonly threadId?: ThreadId;
@@ -465,6 +471,10 @@ export function createVcsActionManager<R, E>(
           action: input.action,
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch ? { featureBranch: true } : {}),
+          ...(input.stagedOnly ? { stagedOnly: true } : {}),
+          ...(input.expectedBranch !== undefined ? { expectedBranch: input.expectedBranch } : {}),
+          ...(input.pullRequestUrl !== undefined ? { pullRequestUrl: input.pullRequestUrl } : {}),
+          ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
           ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
         };
@@ -495,6 +505,7 @@ export function createVcsActionManager<R, E>(
               }),
           },
         ).pipe(
+          Effect.ensuring(Effect.sync(() => invalidateReviewDiffPreviews(registry, target))),
           Effect.ensuring(invalidateCachedVcsRefs(registry, target)),
           Effect.tapError((error) =>
             Effect.sync(() => {

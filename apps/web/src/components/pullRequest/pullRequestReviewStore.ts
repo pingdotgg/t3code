@@ -37,9 +37,14 @@ export function pullRequestReviewKey(reference: PullRequestRef): string {
 interface PullRequestReviewStoreState {
   readonly drafts: Readonly<Record<string, ReadonlyArray<PendingReviewComment>>>;
   readonly summaries: Readonly<Record<string, string>>;
+  readonly submittingReviews: Readonly<Record<string, boolean>>;
+  readonly setReviewSubmitting: (key: string, submitting: boolean) => void;
+  readonly editingComments: Readonly<Record<string, ReadonlyArray<string>>>;
+  readonly setCommentEditing: (key: string, commentId: string, editing: boolean) => void;
   readonly addComment: (key: string, comment: PendingReviewComment) => void;
+  readonly updateComment: (key: string, commentId: string, body: string) => void;
   readonly removeComment: (key: string, commentId: string) => void;
-  readonly removeComments: (key: string, commentIds: ReadonlyArray<string>) => void;
+  readonly removeComments: (key: string, comments: ReadonlyArray<PendingReviewComment>) => void;
   readonly clear: (key: string) => void;
   readonly setSummary: (key: string, body: string) => void;
   readonly clearSummary: (key: string, submittedBody: string) => void;
@@ -50,9 +55,35 @@ const EMPTY: ReadonlyArray<PendingReviewComment> = [];
 export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((set) => ({
   drafts: {},
   summaries: {},
+  submittingReviews: {},
+  setReviewSubmitting: (key, submitting) =>
+    set((state) => {
+      if (submitting) return { submittingReviews: { ...state.submittingReviews, [key]: true } };
+      const { [key]: _removed, ...rest } = state.submittingReviews;
+      return { submittingReviews: rest };
+    }),
+  editingComments: {},
+  setCommentEditing: (key, commentId, editing) =>
+    set((state) => {
+      const current = state.editingComments[key] ?? [];
+      if (current.includes(commentId) === editing) return state;
+      const next = editing ? [...current, commentId] : current.filter((id) => id !== commentId);
+      if (next.length > 0) return { editingComments: { ...state.editingComments, [key]: next } };
+      const { [key]: _removed, ...rest } = state.editingComments;
+      return { editingComments: rest };
+    }),
   addComment: (key, comment) =>
     set((state) => ({
       drafts: { ...state.drafts, [key]: [...(state.drafts[key] ?? EMPTY), comment] },
+    })),
+  updateComment: (key, commentId, body) =>
+    set((state) => ({
+      drafts: {
+        ...state.drafts,
+        [key]: (state.drafts[key] ?? EMPTY).map((comment) =>
+          comment.id === commentId ? { ...comment, body } : comment,
+        ),
+      },
     })),
   removeComment: (key, commentId) =>
     set((state) => {
@@ -61,10 +92,12 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((
       const { [key]: _removed, ...rest } = state.drafts;
       return { drafts: rest };
     }),
-  removeComments: (key, commentIds) =>
+  removeComments: (key, comments) =>
     set((state) => {
-      const submitted = new Set(commentIds);
-      const remaining = (state.drafts[key] ?? EMPTY).filter((entry) => !submitted.has(entry.id));
+      const submitted = new Map(comments.map((comment) => [comment.id, comment.body]));
+      const remaining = (state.drafts[key] ?? EMPTY).filter(
+        (entry) => submitted.get(entry.id) !== entry.body,
+      );
       if (remaining.length > 0) return { drafts: { ...state.drafts, [key]: remaining } };
       const { [key]: _removed, ...rest } = state.drafts;
       return { drafts: rest };

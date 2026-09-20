@@ -7,10 +7,37 @@ import {
   buildFileDiffRenderKey,
   buildPatchCacheKey,
   getDiffLineStat,
+  getDiffPatchFileIndexes,
   getRenderablePatch,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
 } from "./diffRendering";
+import { orderFilesByTree } from "../components/diffs/diffFileTree.logic";
+
+it.each([false, true])(
+  "keeps source patch indexes for type changes with tree ordering: %s",
+  (tree) => {
+    const diff = [
+      "diff --git a/src/item b/src/item\ndeleted file mode 100644\n--- a/src/item\n+++ /dev/null\n@@ -1 +0,0 @@\n-removed\n",
+      "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-old\n+new\n",
+      "diff --git a/src/item b/src/item\nnew file mode 120000\n--- /dev/null\n+++ b/src/item\n@@ -0,0 +1 @@\n+target\n",
+    ];
+    const patch = diff.join("");
+    const parsed = getRenderablePatch(patch, "review", { compactPartialHunkOffsets: true });
+    if (parsed?.kind !== "files") throw new Error("Expected file patches");
+    const files = tree ? orderFilesByTree(parsed.files, resolveFileDiffPath) : parsed.files;
+    const indexes = getDiffPatchFileIndexes(patch);
+    expect(files.map((file) => indexes.get(buildFileDiffIdentityKey(file)))).toEqual(
+      tree ? [0, 2, 1] : [0, 1, 2],
+    );
+    for (const file of files) {
+      const selected = getRenderablePatch(diff[indexes.get(buildFileDiffIdentityKey(file))!]);
+      if (selected?.kind !== "files") throw new Error("Expected selected file patch");
+      expect(selected.files[0]?.type).toBe(file.type);
+      expect(selected.files[0]?.hunks).toEqual(file.hunks);
+    }
+  },
+);
 
 describe("buildPatchCacheKey", () => {
   it("normalizes outer whitespace before hashing", () => {

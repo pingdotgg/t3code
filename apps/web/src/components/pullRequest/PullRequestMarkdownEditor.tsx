@@ -4,9 +4,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestMarkdownField } from "./PullRequestMarkdownField";
 
 /**
  * The box a body is rewritten in — a description, or a remark already posted. It owns the draft
@@ -28,6 +26,9 @@ export function PullRequestMarkdownEditor({
   className,
   onSave,
   onCancel,
+  saveLabel = "Save",
+  onDraftChange,
+  secondaryAction,
 }: {
   readonly value: string;
   readonly cwd: string;
@@ -40,22 +41,16 @@ export function PullRequestMarkdownEditor({
   /** A description may be cleared, which is how one is removed; a remark may not be emptied. */
   readonly allowEmpty?: boolean;
   readonly className?: string | undefined;
+  readonly secondaryAction?: { readonly label: string; readonly onAction: (draft: string) => void };
+  readonly saveLabel?: string;
+  readonly onDraftChange?: (next: string) => void;
   readonly onSave: (next: string) => void;
   readonly onCancel: () => void;
 }) {
   const [draft, setDraft] = useState(value);
-  const [preview, setPreview] = useState(false);
-  // The words this draft started from. React keeps a component instance wherever the same
-  // position and key come round again, so an editor opened on one remark can be handed another's
-  // words without being rebuilt — and saving would then write the first remark's text onto the
-  // second. Different words mean a different subject, and the draft starts again from them.
-  const [seed, setSeed] = useState(value);
-  if (seed !== value) {
-    setSeed(value);
-    setDraft(value);
-  }
+  const [uploadPending, setUploadPending] = useState(false);
   const empty = draft.trim().length === 0;
-  const saveDisabled = saving || (empty && !allowEmpty);
+  const saveDisabled = saving || uploadPending || (empty && !allowEmpty);
 
   return (
     <div
@@ -78,49 +73,38 @@ export function PullRequestMarkdownEditor({
         onCancel();
       }}
     >
-      <ToggleGroup
-        aria-label="Markdown editor mode"
-        variant="segmented"
-        value={[preview ? "preview" : "write"]}
+      <PullRequestMarkdownField
+        autoFocus
         disabled={saving}
-        onValueChange={(next) => {
-          const mode = next[0];
-          if (mode === "write" || mode === "preview") setPreview(mode === "preview");
+        value={draft}
+        rows={6}
+        placeholder={placeholder}
+        aria-label={label}
+        cwd={cwd}
+        environmentId={environmentId}
+        threadRef={threadRef}
+        onUploadPendingChange={setUploadPending}
+        onChange={(next) => {
+          setDraft(next);
+          onDraftChange?.(next);
         }}
-      >
-        <Toggle value="write">Write</Toggle>
-        <Toggle value="preview">Preview</Toggle>
-      </ToggleGroup>
-      {preview ? (
-        <div className="rounded-lg border border-border/60 px-3 py-2">
-          {empty ? (
-            <p className="text-xs text-muted-foreground">Nothing to preview.</p>
-          ) : (
-            <PullRequestMarkdown
-              text={draft}
-              cwd={cwd}
-              environmentId={environmentId}
-              threadRef={threadRef}
-            />
-          )}
-        </div>
-      ) : (
-        <Textarea
-          autoFocus
-          disabled={saving}
-          value={draft}
-          rows={6}
-          placeholder={placeholder}
-          aria-label={label}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-      )}
+      />
       <div className="flex justify-end gap-2">
         <Button size="xs" variant="ghost" disabled={saving} onClick={onCancel}>
           Cancel
         </Button>
+        {secondaryAction ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={saveDisabled}
+            onClick={() => secondaryAction.onAction(draft)}
+          >
+            {secondaryAction.label}
+          </Button>
+        ) : null}
         <Button size="xs" variant="outline" disabled={saveDisabled} onClick={() => onSave(draft)}>
-          {saving ? "Saving..." : "Save"}
+          {saving ? "Saving..." : saveLabel}
         </Button>
       </div>
     </div>

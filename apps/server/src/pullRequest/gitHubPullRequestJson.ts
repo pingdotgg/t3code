@@ -459,6 +459,9 @@ const RawReviewThreadsSchema = Schema.Struct({
             Schema.Struct({
               id: Schema.optional(Schema.NullOr(Schema.String)),
               isResolved: Schema.optional(Schema.Boolean),
+              viewerCanResolve: Schema.optional(Schema.Boolean),
+              viewerCanReply: Schema.optional(Schema.Boolean),
+              viewerCanUnresolve: Schema.optional(Schema.Boolean),
               isOutdated: Schema.optional(Schema.Boolean),
               path: Schema.optional(Schema.NullOr(Schema.String)),
               /** Null once the thread's line has left the diff, which `isOutdated` reports. */
@@ -605,6 +608,7 @@ const RawCoreSchema = Schema.Struct({
         ...RawDetailSchema.fields,
         ...RawViewerFieldsSchema.fields,
         viewerCanUpdateBranch: Schema.Boolean,
+        viewerCanMergeAsAdmin: Schema.optional(Schema.Boolean),
         baseRef: Schema.NullOr(
           Schema.Struct({
             compare: Schema.NullOr(Schema.Struct({ behindBy: Schema.Int })),
@@ -713,7 +717,7 @@ export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: St
       headRepositoryOwner { login }
       author { login avatarUrl ... on User { id name } }
       autoMergeRequest { mergeMethod }
-      viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch
+      viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch viewerCanMergeAsAdmin
       baseRef { compare(headRef: $headRef) { behindBy } }
       reviewRequests(first: 100) {
         nodes { requestedReviewer { ... on User { login name } ... on Bot { login } ... on Team { slug name } } }
@@ -863,6 +867,9 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
         nodes {
           id
           isResolved
+          viewerCanResolve
+          viewerCanReply
+          viewerCanUnresolve
           isOutdated
           path
           line
@@ -1840,6 +1847,7 @@ export function decodePullRequestCoreJson(
       canWrite: toCanWrite(repository.viewerPermission),
       canTriage: toCanTriage(repository.viewerPermission),
       ...toPullRequestViewerFields(pr),
+      ...(pr.viewerCanMergeAsAdmin === true ? { canBypassMergeChecks: true } : {}),
       mergeCapabilities: {
         merge: repository.mergeCommitAllowed,
         squash: repository.squashMergeAllowed,
@@ -2078,6 +2086,7 @@ export function decodeReviewThreadsJson(
     const path = trimmed(thread.path);
     const id = trimmed(thread.id);
     if (path === null || id === null || thread.comments.nodes.length === 0) return [];
+    const canResolve = thread.isResolved ? thread.viewerCanUnresolve : thread.viewerCanResolve;
     return [
       {
         thread: {
@@ -2091,6 +2100,8 @@ export function decodeReviewThreadsJson(
               : null,
           side: thread.diffSide?.toUpperCase() === "LEFT" ? "left" : "right",
           isResolved: thread.isResolved === true,
+          ...(canResolve === undefined ? {} : { canResolve }),
+          ...(thread.viewerCanReply === undefined ? {} : { canReply: thread.viewerCanReply }),
           isOutdated: thread.isOutdated === true,
           comments: thread.comments.nodes.map((comment) => ({
             id: comment.id,
@@ -2563,6 +2574,7 @@ export function buildLabelRequestJson(labels: ReadonlyArray<string>): string {
  * only read access can still be told apart from a passer-by.
  */
 export interface GitHubViewerAccess {
+  readonly canBypassMergeChecks?: boolean;
   readonly canWrite: boolean;
   /**
    * The viewer's role reaches triage, which is the least that may label. Everyone who can write
@@ -2584,7 +2596,7 @@ export interface GitHubViewerAccess {
 export const VIEWER_PERMISSIONS_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
-    pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor }
+    pullRequest(number: $number) { viewerCanUpdate viewerDidAuthor viewerCanMergeAsAdmin }
   }
 }`;
 
@@ -2593,7 +2605,12 @@ const RawViewerPermissionsSchema = Schema.Struct({
     repository: Schema.Struct({
       ...RawRepositoryAccessSchema.fields,
       /** Null for a number that names no pull request the viewer can see. */
-      pullRequest: Schema.NullOr(RawViewerFieldsSchema),
+      pullRequest: Schema.NullOr(
+        Schema.Struct({
+          ...RawViewerFieldsSchema.fields,
+          viewerCanMergeAsAdmin: Schema.optional(Schema.Boolean),
+        }),
+      ),
     }),
   }),
 });
@@ -2617,6 +2634,9 @@ export function decodeViewerPermissionsJson(
     canWrite: toCanWrite(repository.viewerPermission),
     canTriage: toCanTriage(repository.viewerPermission),
     ...toPullRequestViewerFields(repository.pullRequest),
+    ...(repository.pullRequest?.viewerCanMergeAsAdmin === true
+      ? { canBypassMergeChecks: true }
+      : {}),
   });
 }
 

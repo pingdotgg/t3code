@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import {
+  FetchHttpClient,
   HttpClient,
   HttpClientError,
   HttpClientRequest,
@@ -60,6 +61,7 @@ const repositoryJson = {
 
 function makeLayer(input: {
   readonly response: (request: HttpClientRequest.HttpClientRequest) => Response;
+  readonly fetch?: typeof fetch;
   readonly requestFailure?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => HttpClientError.HttpClientError;
@@ -122,10 +124,14 @@ function makeLayer(input: {
 
   const layer = BitbucketApi.layer.pipe(
     Layer.provide(
-      Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) => execute(request)),
-      ),
+      input.fetch
+        ? FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, input.fetch)),
+          )
+        : Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => execute(request)),
+          ),
     ),
     Layer.provide(
       Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
@@ -908,4 +914,112 @@ it.effect("cuts a response short rather than reading an unbounded diff into memo
       makeLayer({ response: () => new Response("1234567890", { status: 200 }) }).layer,
     ),
   ),
+);
+
+it.effect("sends multipart attachment bytes with existing repository credentials", () => {
+  const fixture = makeLayer({ response: () => new Response("", { status: 201 }) });
+  return Effect.gen(function* () {
+    const api = yield* BitbucketApi.BitbucketApi;
+    const formData = new FormData();
+    formData.set("files", new Blob([new Uint8Array([0, 128, 255])]), "log.bin");
+    yield* api.request({ method: "POST", url: "/repositories/owner/repo/downloads", formData });
+    const request = fixture.execute.mock.calls[0]?.[0];
+    assert.strictEqual(request?.body._tag, "FormData");
+    assert.strictEqual(request?.headers.authorization, `Basic ${btoa("user@example.com:token")}`);
+    assert.strictEqual(
+      request?.url,
+      "https://api.test.local/2.0/repositories/owner/repo/downloads",
+    );
+  }).pipe(Effect.provide(fixture.layer));
+});
+
+it.effect(
+  "reads attachment bytes from the selected repository with authentication and range",
+  () => {
+    const fixture = makeLayer({
+      response: () => new Response(new Uint8Array([0, 128, 255]), { status: 206 }),
+    });
+    return Effect.gen(function* () {
+      const api = yield* BitbucketApi.BitbucketApi;
+      const response = yield* api.readAttachment({
+        repository: "owner/repo",
+        url: "https://bitbucket.org/owner/repo/downloads/screen%20one.png",
+        headers: {
+          range: "bytes=0-2",
+          "if-range": "etag",
+          authorization: "untrusted",
+          cookie: "untrusted",
+        },
+      });
+      assert.deepStrictEqual(
+        new Uint8Array(yield* response.arrayBuffer),
+        new Uint8Array([0, 128, 255]),
+      );
+      const request = fixture.execute.mock.calls[0]?.[0];
+      assert.strictEqual(
+        request?.url,
+        "https://api.test.local/2.0/repositories/owner/repo/downloads/screen%20one.png",
+      );
+      assert.strictEqual(request?.headers.authorization, `Basic ${btoa("user@example.com:token")}`);
+      assert.strictEqual(request?.headers.range, "bytes=0-2");
+      assert.strictEqual(request?.headers["if-range"], "etag");
+      assert.strictEqual(request?.headers.cookie, undefined);
+    }).pipe(Effect.scoped, Effect.provide(fixture.layer));
+  },
+);
+
+it.effect(
+  "rejects attachment hosts and paths outside the selected repository before sending credentials",
+  () => {
+    const fixture = makeLayer({ response: () => new Response("") });
+    return Effect.gen(function* () {
+      const api = yield* BitbucketApi.BitbucketApi;
+      for (const url of [
+        "https://other.example/owner/repo/downloads/image.png",
+        "http://bitbucket.org/owner/repo/downloads/image.png",
+        "https://user@bitbucket.org/owner/repo/downloads/image.png",
+        "https://bitbucket.org/other/repo/downloads/image.png",
+        "https://bitbucket.org/owner/repo/src/image.png",
+        "https://bitbucket.org/owner/repo/downloads/%2fsecret",
+        "https://bitbucket.org/owner/repo/downloads/../secret",
+        "https://bitbucket.org/owner/repo/downloads/image.png?target=other",
+      ]) {
+        const error = yield* api
+          .readAttachment({ repository: "owner/repo", url, headers: {} })
+          .pipe(Effect.flip);
+        assert.strictEqual(error._tag, "BitbucketUntrustedUrlError");
+      }
+      assert.strictEqual(fixture.execute.mock.calls.length, 0);
+    }).pipe(Effect.scoped, Effect.provide(fixture.layer));
+  },
+);
+
+it.effect(
+  "returns download redirects for the unsigned media fetcher without forwarding credentials",
+  () => {
+    const response = () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: "https://storage.example/signed-image?signature=test" },
+      });
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => response());
+    const fixture = makeLayer({ response, fetch });
+    return Effect.gen(function* () {
+      const api = yield* BitbucketApi.BitbucketApi;
+      const response = yield* api.readAttachment({
+        repository: "owner/repo",
+        url: "https://bitbucket.org/owner/repo/downloads/image.png",
+        headers: {},
+      });
+      assert.strictEqual(response.status, 302);
+      assert.strictEqual(
+        response.headers.location,
+        "https://storage.example/signed-image?signature=test",
+      );
+      assert.strictEqual(fetch.mock.calls.length, 1);
+      assert.strictEqual(fetch.mock.calls[0]?.[1]?.redirect, "manual");
+      const headers = new Headers(fetch.mock.calls[0]?.[1]?.headers);
+      assert.strictEqual(headers.get("authorization"), `Basic ${btoa("user@example.com:token")}`);
+    }).pipe(Effect.scoped, Effect.provide(fixture.layer));
+  },
 );

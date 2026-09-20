@@ -28,6 +28,7 @@ import {
   GitCommandError,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
   TextGenerationError,
 } from "@t3tools/contracts";
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
@@ -37,11 +38,11 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
+import { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
 import {
   ForgejoPullRequestSchema,
   toForgejoChangeRequest,
 } from "../sourceControl/forgejoPullRequests.ts";
-import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -602,7 +603,11 @@ function runStackedAction(
     actionId?: string;
     commitMessage?: string;
     featureBranch?: boolean;
+    stagedOnly?: boolean;
     filePaths?: readonly string[];
+    expectedBranch?: string;
+    pullRequestUrl?: string;
+    projectId?: ProjectId;
   },
   options?: Parameters<GitManager.GitManager["Service"]["runStackedAction"]>[1],
 ) {
@@ -2992,6 +2997,140 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("generates a commit from the index without staging later edits", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "approved\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "later edit\n");
+      let patch = "";
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: (input) =>
+            Effect.sync(() => {
+              patch = input.stagedPatch;
+              return { subject: "Reviewed change", body: "" };
+            }),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        stagedOnly: true,
+      });
+      expect(result.commit.status).toBe("created");
+      expect(patch).toContain("+approved");
+      expect(patch).not.toContain("later edit");
+      expect((yield* runGit(repoDir, ["show", "HEAD:README.md"])).stdout).toBe("approved\n");
+      expect((yield* runGit(repoDir, ["diff"])).stdout).toContain("+later edit");
+      const empty = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        stagedOnly: true,
+      });
+      expect(empty.commit.status).toBe("skipped_no_changes");
+      expect((yield* runGit(repoDir, ["diff"])).stdout).toContain("+later edit");
+    }),
+  );
+
+  it.effect(
+    "rejects changes staged during commit-title generation without changing the index",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "approved\n");
+        yield* runGit(repoDir, ["add", "README.md"]);
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitMessage: () =>
+              Effect.gen(function* () {
+                NodeFS.writeFileSync(NodePath.join(repoDir, "later.txt"), "later\n");
+                yield* runGit(repoDir, ["add", "later.txt"]);
+                return { subject: "Reviewed change", body: "" };
+              }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git), Effect.orDie),
+          },
+        });
+        const error = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+          stagedOnly: true,
+        }).pipe(Effect.flip);
+        expect(error.message).toContain("Staged changes changed");
+        expect((yield* runGit(repoDir, ["show", ":README.md"])).stdout).toBe("approved\n");
+        expect((yield* runGit(repoDir, ["diff", "--cached", "--name-only"])).stdout.trim()).toBe(
+          "README.md\nlater.txt",
+        );
+        expect((yield* runGit(repoDir, ["rev-list", "--count", "HEAD"])).stdout.trim()).toBe("1");
+      }),
+  );
+
+  it.effect(
+    "rejects a staged snapshot when another commit advances HEAD during title generation",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "approved\n");
+        yield* runGit(repoDir, ["add", "README.md"]);
+        const { manager } = yield* makeManager({
+          textGeneration: {
+            generateCommitMessage: () =>
+              Effect.gen(function* () {
+                NodeFS.writeFileSync(NodePath.join(repoDir, "other.txt"), "other commit\n");
+                yield* runGit(repoDir, ["add", "other.txt"]);
+                yield* runGit(repoDir, ["commit", "-m", "Other commit"]);
+                return { subject: "Stale review", body: "" };
+              }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git), Effect.orDie),
+          },
+        });
+        const error = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit",
+          stagedOnly: true,
+        }).pipe(Effect.flip);
+        expect(error.message).toContain("branch changed");
+        expect((yield* runGit(repoDir, ["log", "-1", "--format=%s"])).stdout.trim()).toBe(
+          "Other commit",
+        );
+        expect((yield* runGit(repoDir, ["show", "HEAD:other.txt"])).stdout).toBe("other commit\n");
+        expect((yield* runGit(repoDir, ["diff", "--cached"])).stdout).toBe("");
+      }),
+  );
+
+  it.effect("rejects a branch switch at the same HEAD during commit-title generation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "approved\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () =>
+            Effect.gen(function* () {
+              yield* runGit(repoDir, ["switch", "-c", "other"]);
+              return { subject: "Stale review", body: "" };
+            }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git), Effect.orDie),
+        },
+      });
+      const error = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        stagedOnly: true,
+      }).pipe(Effect.flip);
+      expect(error.message).toContain("branch changed");
+      expect((yield* runGit(repoDir, ["symbolic-ref", "--short", "HEAD"])).stdout.trim()).toBe(
+        "other",
+      );
+      expect((yield* runGit(repoDir, ["rev-list", "--count", "HEAD"])).stdout.trim()).toBe("1");
+      expect((yield* runGit(repoDir, ["show", ":README.md"])).stdout).toBe("approved\n");
+    }),
+  );
+
   it.effect("commits only selected files when filePaths is provided", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4573,6 +4712,310 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect.each([
+    ["github", "https://github.com/pingdotgg/codething-mvp/pull/77"],
+    ["gitlab", "https://gitlab.com/team/repo/-/merge_requests/77"],
+    ["bitbucket", "https://bitbucket.org/team/repo/pull-requests/77"],
+    ["azure-devops", "https://dev.azure.com/team/project/_git/repo/pullrequest/77"],
+    ["forgejo", "https://forgejo.example/forgejo/team/repo/pulls/77"],
+    ["forgejo", "https://gitea.example/team/repo/pulls/77"],
+  ] as const)(
+    "publishes %s review edits from an isolated worktree with the writing agent",
+    ([provider, url]) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir("t3code-pr-review-");
+        yield* initRepo(cwd);
+        const remote = yield* createBareRemote();
+        yield* runGit(cwd, ["remote", "add", "origin", remote]);
+        yield* runGit(cwd, ["push", "-u", "origin", "main"]);
+        yield* runGit(cwd, ["checkout", "-b", "feature/review"]);
+        NodeFS.writeFileSync(NodePath.join(cwd, "review.txt"), "original\n");
+        yield* runGit(cwd, ["add", "review.txt"]);
+        yield* runGit(cwd, ["commit", "-m", "PR head"]);
+        yield* runGit(cwd, ["push", "-u", "origin", "feature/review"]);
+        yield* runGit(cwd, ["push", "origin", "HEAD:refs/pull/77/head"]);
+        NodeFS.writeFileSync(NodePath.join(cwd, "review.txt"), "unrelated local work\n");
+        let generated = false;
+        let state: "open" | "closed" | "merged" = "open";
+        const projectId = ProjectId.make("review-project");
+        const forgejoPullRequest =
+          provider === "forgejo"
+            ? toForgejoChangeRequest(
+                yield* decodeForgejoPullRequest({
+                  number: 77,
+                  title: "Review",
+                  html_url: url,
+                  state: "open",
+                  merged: false,
+                  base: {
+                    ref: "main",
+                    sha: "base",
+                    repo: { full_name: "team/repo", owner: { login: "team" } },
+                  },
+                  head: {
+                    ref: "feature/review",
+                    sha: "head",
+                    repo: { full_name: "team/repo", owner: { login: "team" } },
+                  },
+                }),
+              )
+            : null;
+        const adapter = yield* SourceControlProvider.pipe(
+          Effect.provide(
+            Layer.mock(SourceControlProvider)({
+              kind: provider,
+              getChangeRequest: () =>
+                Effect.succeed({
+                  ...(forgejoPullRequest ?? {
+                    provider,
+                    number: 77,
+                    title: "Review",
+                    url,
+                    baseRefName: "main",
+                    headRefName: "feature/review",
+                    state: "open",
+                    updatedAt: Option.none(),
+                  }),
+                  state,
+                }),
+              getRepositoryCloneUrls: ({ repository }) => {
+                expect(repository).toBe("team/repo");
+                return Effect.succeed({ nameWithOwner: repository!, url: remote, sshUrl: remote });
+              },
+              getDefaultBranch: () => Effect.succeed("main"),
+              listChangeRequests: () => Effect.succeed([]),
+            }),
+          ),
+        );
+        const { manager } = yield* makeManager({
+          sourceControlProvider: adapter,
+          serverSettings: {
+            projectSettingsOverrides: {
+              [projectId]: {
+                sourceControlWritingStyle: {
+                  mode: "custom",
+                  customInstructions: "Use the project review style.",
+                },
+              },
+            },
+          },
+          textGeneration: {
+            generateCommitMessage: (input) =>
+              Effect.sync(() => {
+                generated = true;
+                expect(input.stagedPatch).toContain("review edit");
+                expect(input.policy?.commitInstructions).toContain("Use the project review style.");
+                return { subject: "Fix review feedback", body: "" };
+              }),
+          },
+        });
+        const prepared = yield* preparePullRequestThread(manager, {
+          cwd,
+          reference: "77",
+          mode: "review",
+        });
+        expect(prepared.branch).toBe("t3-review/feature/review");
+        expect(prepared.isOnPullRequestHead).toBe(true);
+        const reviewCwd = prepared.worktreePath!;
+        NodeFS.writeFileSync(NodePath.join(reviewCwd, "review.txt"), "review edit\n");
+        NodeFS.writeFileSync(NodePath.join(reviewCwd, "unrelated.txt"), "do not publish\n");
+        const result = yield* runStackedAction(manager, {
+          cwd: reviewCwd,
+          action: "commit_push",
+          projectId,
+          expectedBranch: prepared.branch,
+          pullRequestUrl: url,
+          filePaths: ["review.txt"],
+        });
+        expect(generated).toBe(true);
+        expect(result.push.status).toBe("pushed");
+        expect((yield* runGit(cwd, ["show", "origin/feature/review:review.txt"])).stdout).toBe(
+          "review edit\n",
+        );
+        expect(
+          (yield* runGit(cwd, ["log", "-1", "--format=%s", "origin/feature/review"])).stdout.trim(),
+        ).toBe("Fix review feedback");
+        expect((yield* runGit(cwd, ["branch", "--show-current"])).stdout.trim()).toBe(
+          "feature/review",
+        );
+        expect(NodeFS.readFileSync(NodePath.join(cwd, "review.txt"), "utf8")).toBe(
+          "unrelated local work\n",
+        );
+        expect((yield* runGit(reviewCwd, ["status", "--porcelain"])).stdout).toContain(
+          "unrelated.txt",
+        );
+        const wrongBranch = yield* runStackedAction(manager, {
+          cwd: reviewCwd,
+          action: "commit_push",
+          expectedBranch: "other",
+          filePaths: ["unrelated.txt"],
+        }).pipe(Effect.result);
+        expect(wrongBranch._tag).toBe("Failure");
+        const before = (yield* runGit(reviewCwd, ["rev-parse", "HEAD"])).stdout;
+        const worktrees = (yield* runGit(cwd, ["worktree", "list", "--porcelain"])).stdout;
+        for (const nextState of ["closed", "merged"] as const) {
+          state = nextState;
+          const preparation = yield* preparePullRequestThread(manager, {
+            cwd,
+            reference: url,
+            mode: "review",
+          }).pipe(Effect.flip);
+          expect(preparation.message).toContain("no longer open for edits");
+          expect((yield* runGit(cwd, ["worktree", "list", "--porcelain"])).stdout).toBe(worktrees);
+          const publish = yield* runStackedAction(manager, {
+            cwd: reviewCwd,
+            action: "commit_push",
+            expectedBranch: prepared.branch,
+            pullRequestUrl: url,
+            filePaths: ["unrelated.txt"],
+            commitMessage: "Do not publish",
+          }).pipe(Effect.flip);
+          expect(publish.message).toContain("no longer open for edits");
+          expect((yield* runGit(reviewCwd, ["rev-parse", "HEAD"])).stdout).toBe(before);
+          expect(NodeFS.readFileSync(NodePath.join(reviewCwd, "unrelated.txt"), "utf8")).toBe(
+            "do not publish\n",
+          );
+        }
+      }),
+  );
+
+  it.effect.each(["title", "push"] as const)(
+    "stops publishing when the PR merges during %s",
+    (phase) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir("t3code-pr-merge-race-");
+        yield* initRepo(cwd);
+        const remote = yield* createBareRemote();
+        yield* runGit(cwd, ["remote", "add", "origin", remote]);
+        yield* runGit(cwd, ["push", "-u", "origin", "main"]);
+        const before = (yield* runGit(cwd, ["rev-parse", "HEAD"])).stdout;
+        let state: "open" | "merged" = "open";
+        const url = "https://github.com/acme/web/pull/7";
+        const adapter = yield* SourceControlProvider.pipe(
+          Effect.provide(
+            Layer.mock(SourceControlProvider)({
+              kind: "github",
+              getChangeRequest: () =>
+                Effect.succeed({
+                  provider: "github",
+                  number: 7,
+                  title: "Review",
+                  url,
+                  baseRefName: "main",
+                  headRefName: "main",
+                  state,
+                  updatedAt: Option.none(),
+                }),
+              getDefaultBranch: () => Effect.succeed("main"),
+              listChangeRequests: () => Effect.succeed([]),
+            }),
+          ),
+        );
+        const { manager } = yield* makeManager({
+          sourceControlProvider: adapter,
+          textGeneration: {
+            generateCommitMessage: () =>
+              Effect.sync(() => {
+                if (phase === "title") state = "merged";
+                return { subject: "Review changes", body: "" };
+              }),
+          },
+        });
+        NodeFS.writeFileSync(NodePath.join(cwd, "README.md"), "pending review edit\n");
+        const error = yield* runStackedAction(
+          manager,
+          {
+            cwd,
+            action: "commit_push",
+            expectedBranch: "main",
+            pullRequestUrl: url,
+            filePaths: ["README.md"],
+          },
+          {
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  if (phase === "push" && event.kind === "phase_started" && event.phase === "push")
+                    state = "merged";
+                }),
+            },
+          },
+        ).pipe(Effect.flip);
+        expect(error.message).toContain("no longer open for edits");
+        expect((yield* runGit(cwd, ["rev-parse", "origin/main"])).stdout).toBe(before);
+        const head = (yield* runGit(cwd, ["rev-parse", "HEAD"])).stdout;
+        if (phase === "title") expect(head).toBe(before);
+        else expect(head).not.toBe(before);
+        expect(NodeFS.readFileSync(NodePath.join(cwd, "README.md"), "utf8")).toBe(
+          "pending review edit\n",
+        );
+      }),
+  );
+
+  it.effect("does not publish a Forgejo review whose source repository is missing", () =>
+    Effect.gen(function* () {
+      const cwd = yield* makeTempDir("t3code-forgejo-review-");
+      yield* initRepo(cwd);
+      const remote = yield* createBareRemote();
+      yield* runGit(cwd, ["remote", "add", "origin", remote]);
+      yield* runGit(cwd, ["push", "-u", "origin", "main"]);
+      yield* runGit(cwd, ["push", "origin", "HEAD:refs/pull/77/head"]);
+      const before = (yield* runGit(cwd, ["rev-parse", "HEAD"])).stdout;
+      const pullRequest = toForgejoChangeRequest(
+        yield* decodeForgejoPullRequest({
+          number: 77,
+          title: "Unavailable source",
+          html_url: "https://forgejo.example/forgejo/team/repo/pulls/77",
+          state: "open",
+          merged: false,
+          base: {
+            ref: "main",
+            sha: before.trim(),
+            repo: { full_name: "team/repo", owner: { login: "team" } },
+          },
+          head: { ref: "main", sha: before.trim(), repo: null },
+        }),
+      );
+      const adapter = yield* SourceControlProvider.pipe(
+        Effect.provide(
+          Layer.mock(SourceControlProvider)({
+            kind: "forgejo",
+            getChangeRequest: () => Effect.succeed(pullRequest),
+            getDefaultBranch: () => Effect.succeed("main"),
+            listChangeRequests: () => Effect.succeed([]),
+          }),
+        ),
+      );
+      const { manager } = yield* makeManager({ sourceControlProvider: adapter });
+      const prepared = yield* preparePullRequestThread(manager, {
+        cwd,
+        reference: pullRequest.url,
+        mode: "review",
+      });
+      NodeFS.writeFileSync(NodePath.join(prepared.worktreePath!, "README.md"), "review edit\n");
+      const result = yield* runStackedAction(manager, {
+        cwd: prepared.worktreePath!,
+        action: "commit_push",
+        expectedBranch: prepared.branch,
+        pullRequestUrl: pullRequest.url,
+        filePaths: ["README.md"],
+      }).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure.message).toContain("PR source repository is unavailable");
+      }
+      expect((yield* runGit(cwd, ["rev-parse", "origin/main"])).stdout).toBe(before);
+      expect((yield* runGit(prepared.worktreePath!, ["rev-parse", "HEAD"])).stdout).toBe(before);
+      expect(
+        (yield* runGit(prepared.worktreePath!, [
+          "for-each-ref",
+          "--format=%(upstream)",
+          `refs/heads/${prepared.branch}`,
+        ])).stdout.trim(),
+      ).toBe("");
+    }),
+  );
+
   it.effect("preserves both branch materialization failures when the fallback also fails", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4685,7 +5128,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("preserves fork upstream tracking when preparing a worktree PR thread", () =>
+  it.effect.each([
+    ["github", "worktree"],
+    ["github", "review"],
+    ["forgejo", "review"],
+  ] as const)("preserves fork upstream tracking when preparing a %s %s PR", ([provider, mode]) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -4701,19 +5148,47 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "fork-seed", "feature/pr-fork"]);
       yield* runGit(repoDir, ["checkout", "main"]);
 
+      const pullRequest = {
+        provider,
+        number: 81,
+        title: "Fork PR",
+        url:
+          provider === "forgejo"
+            ? "https://forgejo.example/forgejo/pingdotgg/codething-mvp/pulls/81"
+            : "https://github.com/pingdotgg/codething-mvp/pull/81",
+        baseRefName: "main",
+        headRefName: "feature/pr-fork",
+        state: "open" as const,
+        updatedAt: Option.none(),
+        isCrossRepository: true,
+        headRepositoryNameWithOwner: "octocat/codething-mvp",
+        headRepositoryOwnerLogin: "octocat",
+      };
+      const adapter =
+        provider === "forgejo"
+          ? yield* SourceControlProvider.pipe(
+              Effect.provide(
+                Layer.mock(SourceControlProvider)({
+                  kind: provider,
+                  getChangeRequest: () => Effect.succeed(pullRequest),
+                  getRepositoryCloneUrls: ({ repository }) => {
+                    expect(repository).toBe("octocat/codething-mvp");
+                    return Effect.succeed({
+                      nameWithOwner: repository!,
+                      url: forkDir,
+                      sshUrl: forkDir,
+                    });
+                  },
+                  getDefaultBranch: () => Effect.succeed("main"),
+                  listChangeRequests: () => Effect.succeed([]),
+                }),
+              ),
+            )
+          : undefined;
       const { manager } = yield* makeManager({
+        ...(adapter ? { sourceControlProvider: adapter } : {}),
         ghScenario: {
-          pullRequest: {
-            number: 81,
-            title: "Fork PR",
-            url: "https://github.com/pingdotgg/codething-mvp/pull/81",
-            baseRefName: "main",
-            headRefName: "feature/pr-fork",
-            state: "open",
-            isCrossRepository: true,
-            headRepositoryNameWithOwner: "octocat/codething-mvp",
-            headRepositoryOwnerLogin: "octocat",
-          },
+          pullRequest,
           repositoryCloneUrls: {
             "octocat/codething-mvp": {
               url: forkDir,
@@ -4726,9 +5201,25 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       const result = yield* preparePullRequestThread(manager, {
         cwd: repoDir,
         reference: "81",
-        mode: "worktree",
+        mode,
       });
 
+      if (mode === "review") {
+        NodeFS.writeFileSync(NodePath.join(result.worktreePath!, "fork.txt"), "reviewed fork\n");
+        yield* runStackedAction(manager, {
+          cwd: result.worktreePath!,
+          action: "commit_push",
+          expectedBranch: result.branch,
+          pullRequestUrl: pullRequest.url,
+          filePaths: ["fork.txt"],
+        });
+        expect(
+          (yield* runGit(repoDir, ["show", "fork-seed/feature/pr-fork:fork.txt"])).stdout,
+        ).toBe("reviewed fork\n");
+        expect((yield* runGit(repoDir, ["show", "origin/main:README.md"])).stdout).not.toContain(
+          "reviewed fork",
+        );
+      }
       expect(result.worktreePath).not.toBeNull();
       const upstreamRef = (yield* runGit(result.worktreePath as string, [
         "rev-parse",

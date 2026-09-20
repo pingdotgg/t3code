@@ -1,4 +1,6 @@
 import * as Schema from "effect/Schema";
+import { PullRequestRef } from "./pullRequest.ts";
+import { SourceControlProviderKind } from "./sourceControl.ts";
 
 import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -12,6 +14,11 @@ import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 const ASSET_PATH_MAX_LENGTH = 1024;
 
 export const AssetResource = Schema.Union([
+  Schema.TaggedStruct("pull-request-media", {
+    reference: PullRequestRef,
+    provider: SourceControlProviderKind,
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -301,7 +308,17 @@ export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<Asset
   }
 }
 
+export class AssetPullRequestMediaUrlValidationError extends Schema.TaggedError<AssetPullRequestMediaUrlValidationError>()(
+  "AssetPullRequestMediaUrlValidationError",
+  {},
+) {
+  override get message(): string {
+    return "The attachment URL does not belong to this pull request host.";
+  }
+}
+
 export const AssetAccessError = Schema.Union([
+  AssetPullRequestMediaUrlValidationError,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   AssetWorkspaceRootNormalizationError,
