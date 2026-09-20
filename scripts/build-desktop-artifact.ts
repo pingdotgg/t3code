@@ -23,6 +23,7 @@ import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" wit
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import {
+  ReleasePackageManifestError,
   releasePackageFiles,
   updateReleasePackageVersions,
 } from "./update-release-package-versions.ts";
@@ -46,6 +47,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -283,6 +285,15 @@ export class InvalidMockUpdateServerPortError extends Schema.TaggedError<Invalid
       inputLength: configuredPort.length,
       cause,
     });
+  }
+}
+
+export class DesktopBuildManifestRestoreError extends Schema.TaggedError<DesktopBuildManifestRestoreError>()(
+  "DesktopBuildManifestRestoreError",
+  { failures: Schema.Array(ReleasePackageManifestError) },
+) {
+  override get message(): string {
+    return `Failed to restore release manifests: ${this.failures.map((failure) => failure.filePath).join(", ")}`;
   }
 }
 
@@ -1723,14 +1734,27 @@ export const buildDesktopBundles = Effect.fn("buildDesktopBundles")(function* (
           { label: "vp run build:desktop", verbose },
         );
       }),
-    (originals) =>
-      Effect.forEach(
-        originals,
-        ({ filePath, contents }) => fs.writeFileString(filePath, contents),
-        {
-          discard: true,
-        },
-      ).pipe(Effect.orDie),
+    (originals, exit) =>
+      Effect.gen(function* () {
+        const [failures] = yield* Effect.partition(originals, ({ filePath, contents }) =>
+          fs
+            .writeFileString(filePath, contents)
+            .pipe(
+              Effect.mapError(
+                (cause) => new ReleasePackageManifestError({ operation: "write", filePath, cause }),
+              ),
+            ),
+        );
+        if (failures.length === 0) return;
+        const error = new DesktopBuildManifestRestoreError({ failures });
+        if (Exit.isFailure(exit)) {
+          // Keep the build/alignment failure catchable while reporting every
+          // manifest the caller may need to restore manually.
+          yield* Effect.logError(error);
+        } else {
+          return yield* error;
+        }
+      }),
   );
 });
 
