@@ -7,12 +7,17 @@ import * as NodePath from "node:path";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { windowsFileCloneScript } from "./WindowsFileClone.ts";
 import { makeFileClone } from "./FileClone.ts";
+import { makeWorktreeClone } from "./WorktreeClone.ts";
+import { makeWorktreeDependencies } from "./WorktreeDependencies.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { ServerConfig } from "../config.ts";
 
@@ -48,7 +53,7 @@ function clone(sources: string[], destination: string) {
       "-EncodedCommand",
       Buffer.from(windowsFileCloneScript, "utf16le").toString("base64"),
     ],
-    { input: JSON.stringify({ sources, destination }), encoding: "utf8", timeout: 30_000 },
+    { input: JSON.stringify([{ sources, destination }]), encoding: "utf8", timeout: 30_000 },
   );
 }
 
@@ -93,7 +98,67 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "win32" || !process.env.T
   "Windows ReFS block clones",
   () => {
     it.effect(
-      "creates a clean Git worktree with retained clones and isolated dependency seeds",
+      "checks out 128 directories with one native helper process",
+      () =>
+        Effect.gen(function* () {
+          const { source, destination } = yield* Effect.promise(() =>
+            fixture(process.env.T3_TEST_REFS_ROOT!),
+          );
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const git = (cwd: string, args: string[]) =>
+            driver.execute({ operation: "test", cwd, args });
+          yield* git(source, ["init", "--initial-branch=main"]);
+          yield* git(source, ["config", "user.name", "Test"]);
+          yield* git(source, ["config", "user.email", "test@example.com"]);
+          yield* git(source, ["config", "core.autocrlf", "false"]);
+          const content = Buffer.alloc(8193, 42);
+          const names = Array.from({ length: 128 }, (_, index) => `directory-${index}/asset.bin`);
+          yield* Effect.promise(async () => {
+            for (const name of names) {
+              await NodeFSP.mkdir(NodePath.dirname(NodePath.join(source, name)));
+              await NodeFSP.writeFile(NodePath.join(source, name), content);
+            }
+          });
+          yield* git(source, ["add", "."]);
+          yield* git(source, ["commit", "-m", "many directories"]);
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          let helperProcesses = 0;
+          const clone = yield* makeWorktreeClone(driver.execute).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+              ...spawner,
+              exitCode: (command) => {
+                helperProcesses += 1;
+                return spawner.exitCode(command);
+              },
+            }),
+          );
+          const plan = yield* clone.prepare(source, "HEAD");
+          expect(plan).not.toBeNull();
+          const target = NodePath.join(destination, "worktree");
+          yield* git(source, ["worktree", "add", "--no-checkout", "-b", "feature", target]);
+          const started = yield* TestClock.withLive(Clock.monotonicTimeNanos);
+          expect(yield* clone.checkout(plan!, target)).toBe(true);
+          yield* Effect.logInfo("Windows tracked-file clone benchmark", {
+            directories: names.length,
+            helperProcesses,
+            checkoutElapsedMs:
+              Number((yield* TestClock.withLive(Clock.monotonicTimeNanos)) - started) / 1_000_000,
+          });
+          expect(helperProcesses).toBe(1);
+          expect((yield* git(target, ["status", "--porcelain"])).stdout).toBe("");
+          yield* Effect.promise(async () => {
+            for (const name of names) {
+              expect(await NodeFSP.readFile(NodePath.join(target, name))).toEqual(content);
+            }
+            await NodeFSP.writeFile(NodePath.join(target, names[0]!), "target edit");
+            expect(await NodeFSP.readFile(NodePath.join(source, names[0]!))).toEqual(content);
+          });
+        }).pipe(Effect.provide(WindowsGitLayer)),
+      90_000,
+    );
+
+    it.effect(
+      "retains clean worktree clones and seeds isolated dependencies during setup",
       () =>
         Effect.gen(function* () {
           const { source, destination } = yield* Effect.promise(() =>
@@ -159,6 +224,11 @@ describe.skipIf(HostProcessPlatform.defaultValue() !== "win32" || !process.env.T
           const copyInfo = yield* Effect.promise(() => NodeFSP.stat(copied));
           expect(copyInfo.ino).toBe(clonedInode);
           expect((yield* git(target, ["status", "--porcelain"])).stdout).toBe("");
+          yield* Effect.promise(() =>
+            expect(NodeFSP.stat(NodePath.join(target, "node_modules"))).rejects.toThrow(),
+          );
+          const warmDependencies = yield* makeWorktreeDependencies();
+          yield* warmDependencies(source, target);
           yield* Effect.promise(async () => {
             expect(await NodeFSP.readFile(copied)).toEqual(content);
             await expect(NodeFSP.stat(NodePath.join(target, ".env"))).rejects.toThrow();

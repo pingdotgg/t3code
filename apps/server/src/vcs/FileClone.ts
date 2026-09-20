@@ -10,10 +10,12 @@ import { windowsFileCloneScript } from "./WindowsFileClone.ts";
 
 const encodeRequest = Schema.encodeSync(
   Schema.fromJsonString(
-    Schema.Struct({
-      sources: Schema.Array(Schema.String),
-      destination: Schema.String,
-    }),
+    Schema.Array(
+      Schema.Struct({
+        sources: Schema.Array(Schema.String),
+        destination: Schema.String,
+      }),
+    ),
   ),
 );
 
@@ -22,6 +24,44 @@ export const makeFileClone = Effect.fn("makeFileClone")(function* () {
   const platform = yield* HostProcessPlatform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const supported = platform === "darwin" || platform === "win32";
+  const run = Effect.fn("FileClone.run")(function* (
+    command: ChildProcess.Command,
+    destination: string,
+  ) {
+    const code = yield* spawner.exitCode(command).pipe(Effect.timeout(300_000));
+    if (code !== 0) {
+      return yield* new GitCommandError({
+        operation: "FileClone.copy",
+        command: platform === "win32" ? "powershell.exe" : "/bin/cp",
+        cwd: destination,
+        detail: "Filesystem clone unavailable",
+        exitCode: code,
+      });
+    }
+  });
+  const cloneGroups = Effect.fn("FileClone.copyGroups")(function* (
+    groups: ReadonlyArray<{ sources: ReadonlyArray<string>; destination: string }>,
+  ) {
+    if (groups.length === 0) return;
+    yield* run(
+      ChildProcess.make(
+        "powershell.exe",
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-EncodedCommand",
+          Buffer.from(windowsFileCloneScript, "utf16le").toString("base64"),
+        ],
+        {
+          stdin: Stream.succeed(Buffer.from(encodeRequest(groups), "utf8")),
+          stdout: "ignore",
+          stderr: "ignore",
+        },
+      ),
+      groups[0]!.destination,
+    );
+  });
   const clone = Effect.fn("FileClone.copy")(function* (
     sources: ReadonlyArray<string>,
     destination: string,
@@ -34,6 +74,7 @@ export const makeFileClone = Effect.fn("makeFileClone")(function* () {
         detail: "Filesystem cloning is unavailable on this platform",
       });
     }
+    if (platform === "win32") return yield* cloneGroups([{ sources, destination }]);
     if (platform === "darwin") {
       // APFS clones inherit immutable flags. Reject these sources before copying
       // so Git fallback and cancellation can still remove every created file.
@@ -55,37 +96,13 @@ export const makeFileClone = Effect.fn("makeFileClone")(function* () {
         });
       }
     }
-    const command =
-      platform === "win32"
-        ? ChildProcess.make(
-            "powershell.exe",
-            [
-              "-NoLogo",
-              "-NoProfile",
-              "-NonInteractive",
-              "-EncodedCommand",
-              Buffer.from(windowsFileCloneScript, "utf16le").toString("base64"),
-            ],
-            {
-              stdin: Stream.succeed(Buffer.from(encodeRequest({ sources, destination }), "utf8")),
-              stdout: "ignore",
-              stderr: "ignore",
-            },
-          )
-        : ChildProcess.make("/bin/cp", ["-c", "-p", "-R", "-P", ...sources, destination], {
-            stdout: "ignore",
-            stderr: "ignore",
-          });
-    const code = yield* spawner.exitCode(command).pipe(Effect.timeout(300_000));
-    if (code !== 0) {
-      return yield* new GitCommandError({
-        operation: "FileClone.copy",
-        command: platform === "win32" ? "powershell.exe" : "/bin/cp",
-        cwd: destination,
-        detail: "Filesystem clone unavailable",
-        exitCode: code,
-      });
-    }
+    yield* run(
+      ChildProcess.make("/bin/cp", ["-c", "-p", "-R", "-P", ...sources, destination], {
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+      destination,
+    );
   });
-  return { supported, clone };
+  return { supported, clone, cloneGroups: platform === "win32" ? cloneGroups : undefined };
 });

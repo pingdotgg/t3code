@@ -7,6 +7,7 @@ on:
       - apps/server/src/vcs/FileClone.ts
       - apps/server/src/vcs/WindowsFileClone*
       - apps/server/src/vcs/WorktreeClone*
+      - apps/server/src/vcs/WorktreeDependencies*
       - apps/server/src/vcs/GitVcsDriverCore*
       - .github/workflows/windows-file-clone.yml
 

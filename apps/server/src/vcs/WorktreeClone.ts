@@ -19,7 +19,7 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { supported, clone } = yield* makeFileClone();
+  const { supported, clone, cloneGroups } = yield* makeFileClone();
   const git = (cwd: string, args: string[], allowNonZeroExit = false, stdin?: string) =>
     execute({
       operation: "GitVcsDriver.worktreeClone",
@@ -143,9 +143,14 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
         group.push(path.join(plan.cwd, name));
         groups.set(parent, group);
       }
+      const windowsGroups = [];
       for (const [parent, sources] of groups) {
         const target = path.join(destination, parent);
         yield* fs.makeDirectory(target, { recursive: true });
+        if (cloneGroups) {
+          windowsGroups.push({ sources, destination: target });
+          continue;
+        }
         // Bound argv size; one cp per batch, not one process per file.
         for (let start = 0; start < sources.length; start += 64) {
           const batch = sources.slice(start, start + 64);
@@ -158,6 +163,16 @@ export const makeWorktreeClone = Effect.fn("makeWorktreeClone")(function* (
               total: plan.totalFiles,
             });
         }
+      }
+      if (cloneGroups) {
+        // Windows receives all paths on stdin and compiles its native helper once.
+        yield* cloneGroups(windowsGroups);
+        if (onProgress)
+          yield* onProgress({
+            percent: Math.min(99, Math.floor((plan.files.length * 100) / plan.totalFiles)),
+            completed: plan.files.length,
+            total: plan.totalFiles,
+          });
       }
       // Git records only executable versus regular mode. Source read-only or
       // ignored executable bits must not leak into the new checkout.

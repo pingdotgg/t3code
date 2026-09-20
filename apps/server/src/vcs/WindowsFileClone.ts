@@ -107,8 +107,10 @@ public static class T3BlockClone {
     [IO.File]::SetAttributes($destination, $entry.Attributes)
   }
   $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
-  foreach ($source in $request.sources) {
-    Clone-Entry $source ([IO.Path]::Combine($request.destination, [IO.Path]::GetFileName($source)))
+  foreach ($group in $request) {
+    foreach ($source in $group.sources) {
+      Clone-Entry $source ([IO.Path]::Combine($group.destination, [IO.Path]::GetFileName($source)))
+    }
   }
   exit 0
 } catch {
