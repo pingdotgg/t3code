@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -24,6 +24,32 @@ function relayStatus(
 }
 
 describe("available cloud environment presentation", () => {
+  it("shows an incompatible discovered server before any connection attempt", () => {
+    const onlineStatus = relayStatus("online");
+    const status = {
+      ...onlineStatus,
+      descriptor: {
+        environmentId: onlineStatus.environmentId,
+        label: "Preview server",
+        platform: { os: "darwin", arch: "arm64" },
+        serverVersion: "2.0.0",
+        orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1,
+        capabilities: { repositoryIdentity: true },
+      },
+    } satisfies RelayEnvironmentStatusResponse;
+    expect(
+      availableCloudEnvironmentPresentation({
+        isStatusPending: false,
+        status,
+        statusError: null,
+        statusErrorTraceId: null,
+      }),
+    ).toMatchObject({
+      connectionState: "unsupported",
+      statusText: "Client not supported",
+    });
+  });
+
   it("presents an online unsaved environment as available, not connected", () => {
     expect(
       availableCloudEnvironmentPresentation({

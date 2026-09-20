@@ -1,4 +1,4 @@
-import { SearchIcon, UserCheckIcon } from "lucide-react";
+import { SearchIcon } from "lucide-react";
 import { PullRequestStackPopover } from "./PullRequestStackPopover";
 import { memo, type RefCallback } from "react";
 
@@ -12,8 +12,10 @@ import { pullRequestLabelColor, type EnvironmentPullRequestEntry } from "./pullR
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import {
   PullRequestActorLabel,
+  PullRequestConflictGlyph,
   PullRequestDiffStat,
   PullRequestMetaLine,
+  PullRequestApprovalGlyph,
   PullRequestStateGlyph,
 } from "./pullRequestPresentation";
 
@@ -103,7 +105,7 @@ function PullRequestRowImpl({
       aria-current={selected ? "true" : undefined}
       onClick={() => onSelect(entry)}
       className={cn(
-        "@container/pr-row grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        "@container/pr-row grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         // Offscreen rows are skipped for style, layout and paint: a long list costs what the
         // viewport shows, not what the pages have loaded. The intrinsic size keeps the
         // scrollbar honest while a row is skipped.
@@ -111,12 +113,23 @@ function PullRequestRowImpl({
         selected ? "bg-accent" : "hover:bg-accent/60",
       )}
     >
-      <PullRequestStateGlyph
-        state={entry.state}
-        isDraft={entry.isDraft}
-        mergeability={entry.mergeability}
-        baseBranch={entry.baseBranch}
-      />
+      {/* The conflict warning rides the corner of the lifecycle glyph, over the arrow's
+          merge circle, so the leading slot stays one icon wide and titles line up whether or
+          not a row is blocked. The background fill cuts it out of the glyph beneath. */}
+      <span className="relative inline-flex shrink-0">
+        <PullRequestStateGlyph state={entry.state} isDraft={entry.isDraft} />
+        {/* The wrapper takes the offset, not the icon, so the tooltip trigger inside keeps the
+            badge's size and anchors the popup to it. */}
+        <span className="absolute -right-1 -bottom-1 inline-flex">
+          <PullRequestConflictGlyph
+            state={entry.state}
+            isDraft={entry.isDraft}
+            mergeability={entry.mergeability}
+            baseBranch={entry.baseBranch}
+            className="size-3 fill-background [stroke-width:2.5]"
+          />
+        </span>
+      </span>
       <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5">
         <span className="col-start-1 row-start-1 block truncate text-sm font-medium text-foreground">
           {entry.title}
@@ -137,6 +150,26 @@ function PullRequestRowImpl({
               }
             />
           ) : null}
+          {/* Only a verdict somebody has actually given: "review required" is the absence of
+              one, and saying so on every unreviewed row would say nothing. */}
+          {entry.reviewDecision === "approved" ? (
+            <PullRequestApprovalGlyph />
+          ) : entry.reviewDecision === "changes-requested" ? (
+            <span className="min-w-0 truncate text-amber-600/90 dark:text-amber-400/80">
+              Changes requested
+            </span>
+          ) : null}
+          {entry.checksState === undefined ? null : (
+            <PullRequestChecksPopover
+              checksState={entry.checksState}
+              environmentId={entry.environmentId}
+              reference={{
+                projectId: entry.projectId,
+                repository: entry.repository,
+                number: entry.number,
+              }}
+            />
+          )}
           <PullRequestDiffStat
             additions={entry.additions}
             deletions={entry.deletions}
@@ -195,35 +228,6 @@ function PullRequestRowImpl({
             labelClassName="sr-only @xs/pr-row-meta:not-sr-only @xs/pr-row-meta:truncate"
           />
           {entry.labels.length > 0 ? <PullRequestRowLabels labels={entry.labels} /> : null}
-          {/* Only a verdict somebody has actually given: "review required" is the absence of
-              one, and saying so on every unreviewed row would say nothing. */}
-          {entry.reviewDecision === "approved" ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-                <UserCheckIcon
-                  aria-hidden
-                  className="size-3.5 text-emerald-600/90 dark:text-emerald-400/80"
-                />
-                <span className="sr-only">Approved</span>
-              </TooltipTrigger>
-              <TooltipPopup>Approved</TooltipPopup>
-            </Tooltip>
-          ) : entry.reviewDecision === "changes-requested" ? (
-            <span className="min-w-0 truncate text-amber-600/90 dark:text-amber-400/80">
-              Changes requested
-            </span>
-          ) : null}
-          {entry.checksState === undefined ? null : (
-            <PullRequestChecksPopover
-              checksState={entry.checksState}
-              environmentId={entry.environmentId}
-              reference={{
-                projectId: entry.projectId,
-                repository: entry.repository,
-                number: entry.number,
-              }}
-            />
-          )}
         </PullRequestMetaLine>
         <span className="col-start-2 row-start-2 flex items-center justify-self-end gap-3 whitespace-nowrap text-[11px] text-muted-foreground/70 tabular-nums">
           <span className="hidden @sm/pr-row:inline">

@@ -10,10 +10,23 @@ import { pullRequestHostOf } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "./changeRequestUrl.ts";
 import { canonicalRepositoryKey, sourceControlRepositorySelector } from "./sourceControl.ts";
 
-/** Normalize stored link identity, including Azure's SSH and browser host aliases. */
-export function normalizeThreadPullRequestKey(key: ThreadPullRequestKey): ThreadPullRequestKey {
+type ThreadPullRequestKeySource = ThreadPullRequestKey & {
+  readonly authority?: string;
+  readonly url?: string;
+};
+
+/** Normalize stored links, recovering Forgejo HTTP ports from old links' URLs. */
+export function normalizeThreadPullRequestKey(
+  key: ThreadPullRequestKeySource,
+): ThreadPullRequestKey {
+  const parsed = key.url === undefined ? null : parseChangeRequestUrl(key.url);
+  const authority =
+    key.authority ??
+    (parsed?.repository === key.repository.trim().toLowerCase() && parsed.number === key.number
+      ? parsed.authority
+      : undefined);
   const canonical = canonicalRepositoryKey(
-    `${key.host.trim().toLowerCase()}/${key.repository.trim().toLowerCase()}`,
+    `${(authority ?? key.host).trim().toLowerCase()}/${key.repository.trim().toLowerCase()}`,
   );
   const separator = canonical.indexOf("/");
   return {
@@ -31,7 +44,7 @@ export function legacyThreadPullRequestKey(
   const parsed = parseChangeRequestUrl(linked.url);
   if (parsed !== null && parsed.number === linked.number) {
     const canonical = canonicalRepositoryKey(`${parsed.host}/${parsed.repository}`);
-    if (canonical.startsWith("dev.azure.com/")) {
+    if (parsed.authority !== undefined || canonical.startsWith("dev.azure.com/")) {
       return normalizeThreadPullRequestKey(parsed);
     }
   }
@@ -52,13 +65,13 @@ export function legacyThreadPullRequestKey(
 
 /** Identity comparison for links: host-level, case-insensitive on host and repository. */
 export function threadPullRequestKeysEqual(
-  left: ThreadPullRequestKey,
-  right: ThreadPullRequestKey,
+  left: ThreadPullRequestKeySource,
+  right: ThreadPullRequestKeySource,
 ): boolean {
   return threadPullRequestKeyOf(left) === threadPullRequestKeyOf(right);
 }
 
-export function threadPullRequestKeyOf(key: ThreadPullRequestKey): string {
+export function threadPullRequestKeyOf(key: ThreadPullRequestKeySource): string {
   const normalized = normalizeThreadPullRequestKey(key);
   return `${normalized.host}/${normalized.repository}#${normalized.number}`;
 }
@@ -106,8 +119,10 @@ export function resolveThreadCurrentPullRequest(
   if (open.length === 1) return { kind: "single", link: open[0]! };
   const chains = resolveThreadPullRequestChains(visible);
   if (open.length > 1) {
+    // `.reverse()` on a copy, not `.toReversed()`: this runs on Hermes, which has no ES2023
+    // array methods, and a TypeError here is fatal on every mobile launch that renders a stack.
     const openChains = chains
-      .map((chain) => chain.layers.toReversed().filter(isOpen))
+      .map((chain) => [...chain.layers].reverse().filter(isOpen))
       .filter((layers) => layers.length > 0)
       .sort(
         (left, right) =>
@@ -155,6 +170,20 @@ export function legacyLinkedPullRequestOf(
         const key = legacyThreadPullRequestKey(link, link.host);
         return canonicalRepositoryKey(`${key.host}/${key.repository}`) === azureKey;
       }
+      const parsed = parseChangeRequestUrl(link.url);
+      if (parsed?.authority !== undefined) {
+        try {
+          const remote = new URL(identity.locator.remoteUrl);
+          if (remote.protocol === "http:" || remote.protocol === "https:") {
+            return (
+              parsed.authority === remote.host && parsed.repository === repository.toLowerCase()
+            );
+          }
+        } catch {
+          // SSH web ports are resolved by the provider's configured login.
+        }
+        return parsed.host === host && parsed.repository === repository.toLowerCase();
+      }
       return (
         link.host.toLowerCase() === host.toLowerCase() &&
         link.repository.toLowerCase() === repository.toLowerCase()
@@ -191,7 +220,8 @@ export function resolveThreadPullRequestChains(
   const nativeStacks = new Map<string, Array<ThreadPullRequestLink>>();
   for (const link of visible) {
     if (link.stack === null) continue;
-    const stackKey = `${link.host.toLowerCase()}/${link.repository.toLowerCase()}#stack:${link.stack.id}`;
+    const key = normalizeThreadPullRequestKey(link);
+    const stackKey = `${key.host}/${key.repository}#stack:${link.stack.id}`;
     const members = nativeStacks.get(stackKey) ?? [];
     members.push(link);
     nativeStacks.set(stackKey, members);
@@ -204,8 +234,10 @@ export function resolveThreadPullRequestChains(
   }
 
   const remaining = visible.filter((link) => !placed.has(threadPullRequestKeyOf(link)));
-  const branchKey = (link: ThreadPullRequestLink, branch: string) =>
-    `${link.host.toLowerCase()}/${link.repository.toLowerCase()}:${branch}`;
+  const branchKey = (link: ThreadPullRequestLink, branch: string) => {
+    const key = normalizeThreadPullRequestKey(link);
+    return `${key.host}/${key.repository}:${branch}`;
+  };
   // Reused head names cannot identify a parent unambiguously.
   const byHead = new Map<string, ThreadPullRequestLink | null>();
   for (const link of remaining) {
@@ -243,31 +275,35 @@ export function resolveThreadPullRequestChains(
   return chains;
 }
 
-export type ThreadPullRequestBadge =
+export type ThreadPullRequestBadge = {
+  readonly state: "open" | "closed" | "merged" | "draft";
+} & (
   | {
       readonly kind: "stack";
       readonly layers: number;
-      readonly state: "open" | "closed" | "merged";
     }
-  | { readonly kind: "pull-request"; readonly others: number };
+  | { readonly kind: "pull-request"; readonly others: number }
+);
 
-/** Aggregate a single chain's state; unrelated links show a count beside the current PR. */
+/** Aggregate visible links' state for both stacks and unrelated linked counts. */
 export function resolveThreadPullRequestBadge(
   pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined,
 ): ThreadPullRequestBadge | null {
   const visible = visibleThreadPullRequests(pullRequests ?? []);
   if (visible.length === 0) return null;
-  const chains = resolveThreadPullRequestChains(visible);
-  if (visible.length > 1 && chains.length === 1) {
-    const states = visible.map((link) => link.snapshot?.state ?? "open");
-    const state = states.includes("open")
+  const states = visible.map((link) => link.snapshot?.state ?? "open");
+  const state = visible.every((link) => link.snapshot?.state === "open" && link.snapshot.isDraft)
+    ? "draft"
+    : states.includes("open")
       ? "open"
       : states.every((entry) => entry === "merged")
         ? "merged"
         : "closed";
+  const chains = resolveThreadPullRequestChains(visible);
+  if (visible.length > 1 && chains.length === 1) {
     return { kind: "stack", layers: visible.length, state };
   }
-  return { kind: "pull-request", others: visible.length - 1 };
+  return { kind: "pull-request", others: visible.length - 1, state };
 }
 
 /** Search terms for visible PR links, including the legacy single-link projection. */

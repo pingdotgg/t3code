@@ -9,6 +9,7 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { type ObservedConnection, secretValue } from "./Internal/Observed.ts";
 import { PrismaEnvironment } from "./PrismaEnvironment.ts";
 import type {
   App,
@@ -513,18 +514,14 @@ const decodeUrlComponent = (value: string) => {
 };
 
 export const extractConnectionSecrets = (
-  connection:
-    | DatabaseConnection
-    | DatabaseConnectionWithOptionalSecrets
-    | DatabaseConnectionWithSecrets
-    | undefined
-    | null,
+  connection: ObservedConnection | undefined | null,
 ): PrismaSecretConnection => {
   if (!connection) return {};
-  const withSecrets = connection as DatabaseConnectionWithOptionalSecrets;
-  const direct = withSecrets.endpoints?.direct?.connectionString;
-  const pooled = withSecrets.endpoints?.pooled?.connectionString;
-  const accelerate = withSecrets.endpoints?.accelerate?.connectionString;
+  const direct = secretValue(connection.endpoints?.direct?.connectionString);
+  const pooled = secretValue(connection.endpoints?.pooled?.connectionString);
+  const accelerate = secretValue(
+    connection.endpoints?.accelerate?.connectionString,
+  );
   const directUrl = (() => {
     if (!direct) return undefined;
     try {
@@ -537,7 +534,7 @@ export const extractConnectionSecrets = (
     directConnectionString: redactedString(direct),
     pooledConnectionString: redactedString(pooled),
     accelerateConnectionString: redactedString(accelerate),
-    host: directUrl?.hostname ?? withSecrets.endpoints?.direct?.host ?? null,
+    host: directUrl?.hostname ?? connection.endpoints?.direct?.host ?? null,
     user: directUrl?.username ? decodeUrlComponent(directUrl.username) : null,
     password: directUrl?.password
       ? redactedString(decodeUrlComponent(directUrl.password))

@@ -495,6 +495,7 @@ const setPreviewServerGlobal = (
   vitePlugins: WakuVitePluginsModule,
   root: string,
   previewConfig: ResolvedWakuConfig,
+  port: number,
 ): void => {
   (globalThis as Record<string, unknown>)[PREVIEW_SERVER_GLOBAL] =
     async (): Promise<WakuPreviewServer> => {
@@ -502,6 +503,8 @@ const setPreviewServerGlobal = (
         configFile: false,
         root,
         plugins: [vitePlugins.unstable_combinedPlugins(previewConfig)],
+        // localhost can resolve to another build's listener on the other IP family.
+        preview: { host: "127.0.0.1", port },
       });
       const baseUrl = server.resolvedUrls?.local[0];
       if (!baseUrl) {
@@ -782,6 +785,9 @@ export const make = (
           process.env.NODE_ENV = INITIAL_NODE_ENV ?? "production";
         });
         const wakuConfig = yield* makeConfig(project, root, hooks);
+        const previewPort = yield* FrameworkCore.resolveViteDevPort(
+          project.vite.version,
+        );
         // Entry selection (the user-entry seam): when the deploy target
         // carries a user worker entry, the chunk built from it must become
         // `serverModules[0]` — waku's own `server/index.js` remains an
@@ -827,6 +833,7 @@ export const make = (
                 project.vitePlugins,
                 root,
                 wakuConfig,
+                previewPort,
               );
               try {
                 await builder.buildApp();

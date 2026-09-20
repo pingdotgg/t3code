@@ -1,6 +1,8 @@
+import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import type { VcsRefTarget } from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
+  ProjectId,
   OrchestrationThread,
   ThreadId,
   VcsListRefsResult,
@@ -23,6 +25,7 @@ import { projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
 import { useEnvironmentThread } from "./threads";
 import { vcsEnvironment } from "./vcs";
+import { composerPullRequests } from "./pull-requests";
 import {
   buildCheckpointDiffTargets,
   normalizeComposerPathSearchQuery,
@@ -76,6 +79,79 @@ export function useDebouncedValue<A>(value: A, delayMs: number): A {
   }, [delayMs, value]);
 
   return debounced;
+}
+
+export function useComposerPullRequestSearch(input: {
+  environmentId: EnvironmentId | null;
+  projectId: ProjectId | null;
+  repository: string | null;
+  query: string | null;
+}) {
+  const query = useDebouncedValue(input.query, 180);
+  const ready =
+    query === input.query &&
+    query !== null &&
+    input.environmentId !== null &&
+    input.projectId !== null &&
+    input.repository !== null;
+  const numeric = query !== null && /^\d*$/.test(query);
+  const list = useEnvironmentQuery(
+    ready
+      ? composerPullRequests.list({
+          environmentId: input.environmentId!,
+          input: {
+            projectId: input.projectId!,
+            state: "all",
+            limit: 200,
+            ...(!numeric && query ? { query } : {}),
+          },
+        })
+      : null,
+  );
+  const number = numeric && query ? Number(query) : null;
+  const hasExact = list.data?.entries.some(
+    (entry) =>
+      entry.number === number && entry.repository.toLowerCase() === input.repository?.toLowerCase(),
+  );
+  const exact = useEnvironmentQuery(
+    ready && number !== null && Number.isSafeInteger(number) && number > 0 && !hasExact
+      ? composerPullRequests.detail({
+          environmentId: input.environmentId!,
+          input: { projectId: input.projectId!, repository: input.repository!, number },
+        })
+      : null,
+  );
+  const entries = useMemo(() => {
+    if (!ready) return [];
+    if (numeric) {
+      return filterComposerPullRequestMatches({
+        entries: [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])],
+        projectId: input.projectId!,
+        repository: input.repository!,
+        query: query ?? "",
+        limit: 20,
+      });
+    }
+    const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+    const found = [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])].filter(
+      (entry) =>
+        entry.projectId === input.projectId &&
+        entry.repository.toLowerCase() === input.repository?.toLowerCase() &&
+        words.every((word) =>
+          `${entry.title} ${entry.headBranch} ${entry.baseBranch}`.toLowerCase().includes(word),
+        ),
+    );
+    const unique = new Map<number, (typeof found)[number]>();
+    for (const entry of found) if (!unique.has(entry.number)) unique.set(entry.number, entry);
+    return [...unique.values()]
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .slice(0, 20);
+  }, [ready, exact.data, list.data, input.projectId, input.repository, numeric, query]);
+  return {
+    entries,
+    isPending: input.query !== null && (query !== input.query || list.isPending || exact.isPending),
+    error: list.error ?? list.data?.errors[0]?.message ?? exact.error,
+  };
 }
 
 export function useThreadSearch(
