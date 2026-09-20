@@ -270,6 +270,22 @@ it.effect("lists closed pull requests with both closed Bitbucket states", () => 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("lists pull requests in bulk without a source branch filter", () => {
+  const { execute, layer } = makeLayer({ response: () => Response.json({ values: [] }) });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.listPullRequests({ cwd: "/repo", state: "open", limit: 100 });
+
+    assert.deepStrictEqual(execute.mock.calls[0]?.[0].urlParams.params, [
+      ["pagelen", "50"],
+      ["sort", "-updated_on"],
+      ["q", 'state = "OPEN"'],
+      ["state", "OPEN"],
+    ]);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("expands all-state pull request listing instead of relying on Bitbucket defaults", () => {
   const { execute, layer } = makeLayer({
     response: () =>

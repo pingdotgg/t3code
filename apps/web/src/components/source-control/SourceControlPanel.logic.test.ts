@@ -1,0 +1,797 @@
+import { describe, expect, it } from "@effect/vitest";
+import {
+  EnvironmentId,
+  type ThreadId,
+  type VcsPanelSnapshotResult,
+  type VcsRef,
+} from "@t3tools/contracts";
+
+import {
+  beginPanelFileDiffLoad,
+  beginPanelAction,
+  beginPanelDetailRequest,
+  branchAttention,
+  branchHasUpstream,
+  branchNeedsRepositoryPublish,
+  branchIsCheckedOut,
+  branchOperationCwd,
+  branchSyncState,
+  completePanelFileDiffLoad,
+  confirmSourceControlPanelMutation,
+  drainPanelRefreshQueue,
+  failPanelFileDiffLoad,
+  formatRelativeDate,
+  isFederatedSourceControlTargetExpanded,
+  mergeChangeGroups,
+  namedBranchOperationCwd,
+  isLatestPanelDetailRequest,
+  panelActionError,
+  pushBranchAndSyncPeers,
+  resolveFederatedSourceControlTargets,
+  resolveBranchSyncSnapshot,
+  runPanelActionAndReconcile,
+  stashIdentityKey,
+  vcsPanelSnapshotFingerprint,
+} from "./SourceControlPanel.logic";
+import {
+  operationPathsForFile,
+  renameOriginalPathForFile,
+  sourceControlPanelError,
+} from "./SourceControlPanelModel";
+import { sourceControlPanelStateCacheKey } from "./SourceControlPanelCache";
+
+const PRIMARY_ENVIRONMENT_ID = EnvironmentId.make("environment-primary");
+const REMOTE_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
+const DISCONNECTED_ENVIRONMENT_ID = EnvironmentId.make("environment-disconnected");
+
+const baseSnapshot: VcsPanelSnapshotResult = {
+  status: {
+    isRepo: true,
+    hasPrimaryRemote: true,
+    isDefaultRef: false,
+    refName: "split/vscode-extension-work",
+    hasWorkingTreeChanges: false,
+    workingTree: { files: [], insertions: 0, deletions: 0 },
+    hasUpstream: true,
+    aheadCount: 7,
+    behindCount: 47,
+    aheadOfDefaultCount: 0,
+    pr: null,
+  },
+  changeGroups: [],
+  worktreeChangeSets: [],
+  localBranches: [],
+  branchDetails: [],
+  remotes: [
+    {
+      name: "origin",
+      fetchUrl: "git@example.test:fork/repo.git",
+      pushUrl: "git@example.test:fork/repo.git",
+      provider: null,
+      branches: [],
+    },
+    {
+      name: "upstream",
+      fetchUrl: "git@example.test:upstream/repo.git",
+      pushUrl: "git@example.test:upstream/repo.git",
+      provider: null,
+      branches: [{ name: "main", fullRefName: "upstream/main", isDefaultRemoteHead: true }],
+    },
+  ],
+  actionableForkBranches: [],
+  stashes: [],
+  recentCommits: [],
+  defaultCompareRef: "upstream/main",
+};
+
+function branch(input: Partial<VcsRef>): VcsRef {
+  return {
+    name: "split/vscode-extension-work",
+    current: false,
+    isDefault: false,
+    worktreePath: null,
+    ...input,
+  };
+}
+
+describe("SourceControlPanel branch sync logic", () => {
+  it("refreshes branch sync state after a fetch-before-sync request", async () => {
+    const calls: string[] = [];
+    const refreshedSnapshot = {
+      ...baseSnapshot,
+      status: {
+        ...baseSnapshot.status,
+        aheadCount: 0,
+        behindCount: 3,
+      },
+    };
+
+    const resolved = await resolveBranchSyncSnapshot({
+      snapshot: baseSnapshot,
+      fetchFirst: true,
+      fetch: async () => {
+        calls.push("fetch");
+      },
+      refreshSnapshot: async () => {
+        calls.push("snapshot");
+        return refreshedSnapshot;
+      },
+    });
+
+    expect(calls).toEqual(["fetch", "snapshot"]);
+    expect(resolved).toBe(refreshedSnapshot);
+    expect(
+      branchSyncState(
+        branch({ name: "topic", current: true, upstreamName: "origin/topic" }),
+        resolved,
+      ),
+    ).toBe("pull");
+  });
+
+  it("reuses the current branch sync snapshot when no prefetch is requested", async () => {
+    let fetched = false;
+    const resolved = await resolveBranchSyncSnapshot({
+      snapshot: baseSnapshot,
+      fetchFirst: false,
+      fetch: async () => {
+        fetched = true;
+      },
+      refreshSnapshot: async () => {
+        throw new Error("unexpected snapshot refresh");
+      },
+    });
+
+    expect(fetched).toBe(false);
+    expect(resolved).toBe(baseSnapshot);
+  });
+
+  it("publishes a local branch whose configured upstream is only its comparison base", () => {
+    const localBranch = branch({
+      current: true,
+      upstreamName: "upstream/main",
+      aheadCount: 7,
+      behindCount: 47,
+    });
+
+    expect(branchHasUpstream(localBranch, baseSnapshot)).toBe(false);
+    expect(branchSyncState(localBranch, baseSnapshot)).toBe("publish");
+    expect(branchAttention(localBranch, baseSnapshot)).toBe("unpushed");
+  });
+
+  it("opens repository publishing instead of pushing when no remote exists", () => {
+    const unpublishedSnapshot = {
+      ...baseSnapshot,
+      status: { ...baseSnapshot.status, hasPrimaryRemote: false, hasUpstream: false },
+      remotes: [],
+    };
+
+    expect(branchNeedsRepositoryPublish(branch({ current: true }), unpublishedSnapshot)).toBe(true);
+    expect(branchNeedsRepositoryPublish(branch({ current: true }), baseSnapshot)).toBe(false);
+  });
+
+  it("treats a same-name remote tracking branch as the sync upstream", () => {
+    const localBranch = branch({
+      name: "split/subagent-threading-work",
+      upstreamName: "origin/split/subagent-threading-work",
+      aheadCount: 0,
+      behindCount: 3,
+    });
+
+    expect(branchHasUpstream(localBranch, baseSnapshot)).toBe(true);
+    expect(branchSyncState(localBranch, baseSnapshot)).toBe("pull");
+    expect(branchAttention(localBranch, baseSnapshot)).toBe("behind");
+  });
+
+  it("targets the branch worktree cwd for branch operations when present", () => {
+    expect(
+      branchOperationCwd(
+        branch({
+          worktreePath: "/repo.worktrees/feature",
+        }),
+        "/repo",
+      ),
+    ).toBe("/repo.worktrees/feature");
+    expect(branchOperationCwd(branch({}), "/repo")).toBe("/repo");
+  });
+
+  it("resolves named branch actions to the checkout that owns the branch", () => {
+    const branches = [
+      branch({ name: "main", current: true, worktreePath: "/repo" }),
+      branch({ name: "feature", worktreePath: "/repo.worktrees/feature" }),
+    ];
+
+    expect(namedBranchOperationCwd(branches, "feature", "/repo")).toBe("/repo.worktrees/feature");
+    expect(namedBranchOperationCwd(branches, "missing", "/repo")).toBe("/repo");
+  });
+
+  it("treats current and sibling-worktree branches as checked out", () => {
+    expect(branchIsCheckedOut(branch({ current: true }))).toBe(true);
+    expect(branchIsCheckedOut(branch({ worktreePath: "/repo.worktrees/feature" }))).toBe(true);
+    expect(branchIsCheckedOut(branch({}))).toBe(false);
+    expect(branchIsCheckedOut(undefined)).toBe(false);
+  });
+});
+
+describe("SourceControlPanel working-tree presentation logic", () => {
+  it("sums staged and unstaged stats for the same path", () => {
+    expect(
+      mergeChangeGroups([
+        {
+          kind: "staged",
+          files: [
+            {
+              path: "src/file.ts",
+              originalPath: null,
+              status: "modified",
+              insertions: 2,
+              deletions: 1,
+            },
+          ],
+        },
+        {
+          kind: "unstaged",
+          files: [
+            {
+              path: "src/file.ts",
+              originalPath: null,
+              status: "modified",
+              insertions: 3,
+              deletions: 4,
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        path: "src/file.ts",
+        originalPath: null,
+        status: "modified",
+        insertions: 5,
+        deletions: 5,
+        hasStagedChanges: true,
+        hasUnstagedChanges: true,
+        hasConflicts: false,
+      },
+    ]);
+  });
+
+  it("preserves status precedence and conflict flags when merging paths", () => {
+    expect(
+      mergeChangeGroups([
+        {
+          kind: "staged",
+          files: [
+            {
+              path: "src/cafe.ts",
+              originalPath: null,
+              status: "modified",
+              insertions: 1,
+              deletions: 0,
+            },
+          ],
+        },
+        {
+          kind: "conflicts",
+          files: [
+            {
+              path: "src/cafe.ts",
+              originalPath: null,
+              status: "conflicted",
+              insertions: 0,
+              deletions: 2,
+            },
+            {
+              path: "src/áudio.ts",
+              originalPath: null,
+              status: "added",
+              insertions: 3,
+              deletions: 0,
+            },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        path: "src/áudio.ts",
+        originalPath: null,
+        status: "added",
+        insertions: 3,
+        deletions: 0,
+        hasStagedChanges: false,
+        hasUnstagedChanges: false,
+        hasConflicts: true,
+      },
+      {
+        path: "src/cafe.ts",
+        originalPath: null,
+        status: "conflicted",
+        insertions: 1,
+        deletions: 2,
+        hasStagedChanges: true,
+        hasUnstagedChanges: false,
+        hasConflicts: true,
+      },
+    ]);
+  });
+
+  it("formats future timestamps as just now", () => {
+    const now = Date.parse("2026-06-20T12:00:00.000Z");
+    const then = new Date(now + 5 * 60 * 1000).toISOString();
+
+    expect(formatRelativeDate(then, now)).toBe("just now");
+  });
+
+  it("formats late-month dates before the one-year threshold as months", () => {
+    const now = Date.parse("2026-06-20T12:00:00.000Z");
+    const then = new Date(now - 360 * 24 * 60 * 60 * 1000).toISOString();
+
+    expect(formatRelativeDate(then, now)).toBe("11 months ago");
+  });
+
+  it("includes the original path for renames but not copies", () => {
+    expect(
+      operationPathsForFile({
+        path: "src/renamed.ts",
+        originalPath: "src/original.ts",
+        status: "renamed",
+      }),
+    ).toEqual(["src/renamed.ts", "src/original.ts"]);
+    expect(
+      operationPathsForFile({
+        path: "src/copied.ts",
+        originalPath: "src/original.ts",
+        status: "copied",
+      }),
+    ).toEqual(["src/copied.ts"]);
+  });
+
+  it("passes an original path to diff requests only for renames", () => {
+    expect(
+      renameOriginalPathForFile({
+        originalPath: "src/original.ts",
+        status: "renamed",
+      }),
+    ).toBe("src/original.ts");
+    expect(
+      renameOriginalPathForFile({
+        originalPath: "src/original.ts",
+        status: "copied",
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("SourceControlPanel stash identity", () => {
+  it("uses the stash commit hash instead of the positional ref when available", () => {
+    expect(
+      stashIdentityKey({
+        refName: "stash@{0}",
+        sha: "abc123",
+        createdAt: "2026-06-30T13:00:00Z",
+        message: "WIP on main: abc123 change",
+      }),
+    ).toBe("sha:abc123");
+  });
+
+  it("falls back to the positional ref for stashes without a hash", () => {
+    expect(
+      stashIdentityKey({
+        refName: "stash@{0}",
+        sha: null,
+        createdAt: null,
+        message: "stash@{0}",
+      }),
+    ).toBe("ref:stash@{0}");
+  });
+});
+
+describe("SourceControlPanel mutation confirmation", () => {
+  it("uses the themed destructive confirmation contract", async () => {
+    const calls: Array<{ message: string; variant: string | undefined }> = [];
+
+    const confirmed = await confirmSourceControlPanelMutation(async (message, options) => {
+      calls.push({ message, variant: options?.variant });
+      return true;
+    }, "Discard 2 files?");
+
+    expect(confirmed).toBe(true);
+    expect(calls).toEqual([{ message: "Discard 2 files?", variant: "destructive" }]);
+  });
+});
+
+describe("SourceControlPanel refresh stability logic", () => {
+  it("suppresses a duplicate panel action until the first action releases its key", () => {
+    const runningActionKeys = new Set<string>();
+
+    expect(beginPanelAction(runningActionKeys, "commit:/repo")).toBe(true);
+    expect(beginPanelAction(runningActionKeys, "commit:/repo")).toBe(false);
+    expect(beginPanelAction(runningActionKeys, "push:feature")).toBe(true);
+
+    runningActionKeys.delete("commit:/repo");
+    expect(beginPanelAction(runningActionKeys, "commit:/repo")).toBe(true);
+  });
+
+  it("reconciles repository state after a failed panel action", async () => {
+    const calls: string[] = [];
+    const failure = new Error("merge produced conflicts");
+
+    const result = await runPanelActionAndReconcile({
+      action: async () => {
+        calls.push("action");
+        throw failure;
+      },
+      reconcile: async () => {
+        calls.push("reconcile");
+      },
+    });
+
+    expect(calls).toEqual(["action", "reconcile"]);
+    expect(result).toEqual({ status: "failure", error: failure });
+  });
+
+  it("preserves the mutation error when reconciliation also fails", () => {
+    const mutationError = new Error("merge produced conflicts");
+    const reconcileError = new Error("snapshot refresh failed");
+
+    expect(panelActionError({ status: "failure", error: mutationError }, reconcileError)).toBe(
+      mutationError,
+    );
+    expect(panelActionError({ status: "success" }, reconcileError)).toBe(reconcileError);
+  });
+
+  it("keeps a mutation error visible when a later refresh clears its own error", () => {
+    expect(sourceControlPanelError(null, "merge produced conflicts")).toBe(
+      "merge produced conflicts",
+    );
+    expect(sourceControlPanelError("snapshot refresh failed", "merge produced conflicts")).toBe(
+      "merge produced conflicts",
+    );
+  });
+
+  it("rejects late branch-detail responses for the same rendered surface", () => {
+    const requests = new Map<string, number>();
+    const first = beginPanelDetailRequest(requests, "branch:feature");
+    const second = beginPanelDetailRequest(requests, "branch:feature");
+
+    expect(isLatestPanelDetailRequest(requests, "branch:feature", first)).toBe(false);
+    expect(isLatestPanelDetailRequest(requests, "branch:feature", second)).toBe(true);
+  });
+
+  it("drains a queued refresh after the active refresh fails", async () => {
+    let queuedMode: "full" | "working-tree" | null = null;
+    const calls: string[] = [];
+    const errors: unknown[] = [];
+
+    await drainPanelRefreshQueue({
+      initialMode: "full",
+      clearQueuedMode: () => {
+        queuedMode = null;
+      },
+      readQueuedMode: () => queuedMode,
+      run: async (mode) => {
+        calls.push(mode);
+        if (calls.length !== 1) return;
+        queuedMode = "working-tree";
+        throw new Error("interrupted");
+      },
+      onError: (error) => {
+        errors.push(error);
+      },
+    });
+
+    expect(calls).toEqual(["full", "working-tree"]);
+    expect(errors).toEqual([expect.objectContaining({ message: "interrupted" })]);
+  });
+
+  it("fingerprints snapshots with their cwd so equal snapshots from different repos are distinct", () => {
+    expect(vcsPanelSnapshotFingerprint("/repo/one", baseSnapshot)).toBe(
+      vcsPanelSnapshotFingerprint("/repo/one", { ...baseSnapshot }),
+    );
+    expect(vcsPanelSnapshotFingerprint("/repo/one", baseSnapshot)).not.toBe(
+      vcsPanelSnapshotFingerprint("/repo/two", baseSnapshot),
+    );
+  });
+
+  it("keeps a loaded diff mounted while a refresh revalidates it", () => {
+    const loaded = { status: "loaded", patch: "same patch" } as const;
+
+    expect(beginPanelFileDiffLoad(loaded, { preserveLoaded: true })).toBe(loaded);
+    expect(completePanelFileDiffLoad(loaded, "same patch")).toBe(loaded);
+    expect(failPanelFileDiffLoad(loaded, "failed", { preserveLoaded: true })).toBe(loaded);
+  });
+
+  it("updates preserved loaded diffs only when the refreshed patch changes", () => {
+    const loaded = { status: "loaded", patch: "old patch" } as const;
+
+    expect(completePanelFileDiffLoad(loaded, "new patch")).toEqual({
+      status: "loaded",
+      patch: "new patch",
+    });
+    expect(beginPanelFileDiffLoad(loaded)).toEqual({ status: "loading" });
+    expect(failPanelFileDiffLoad(loaded, "failed")).toEqual({
+      status: "error",
+      message: "failed",
+    });
+  });
+});
+
+describe("SourceControlPanel environment federation", () => {
+  const syncedMainSnapshot = (
+    input: {
+      readonly aheadCount?: number;
+      readonly behindCount?: number;
+      readonly dirty?: boolean;
+      readonly remoteUrl?: string;
+    } = {},
+  ): VcsPanelSnapshotResult => {
+    const currentBranch = branch({
+      name: "main",
+      current: true,
+      isDefault: true,
+      upstreamName: "origin/main",
+      aheadCount: input.aheadCount ?? 0,
+      behindCount: input.behindCount ?? 0,
+    });
+    return {
+      ...baseSnapshot,
+      status: {
+        ...baseSnapshot.status,
+        refName: "main",
+        hasWorkingTreeChanges: input.dirty ?? false,
+        aheadCount: input.aheadCount ?? 0,
+        behindCount: input.behindCount ?? 0,
+      },
+      localBranches: [currentBranch],
+      remotes: [
+        {
+          name: "origin",
+          fetchUrl: input.remoteUrl ?? "https://example.test/team/repo.git",
+          pushUrl: input.remoteUrl ?? "https://example.test/team/repo.git",
+          provider: null,
+          branches: [],
+        },
+      ],
+    };
+  };
+
+  it.each([0, 3])(
+    "fast-forwards a clean peer already %i commits behind on the same remote branch",
+    async (behindCount) => {
+      const calls: string[] = [];
+      const sourceSnapshot = syncedMainSnapshot({
+        aheadCount: 1,
+        remoteUrl: "git@example.test:team/repo.git",
+      });
+      const peerSnapshots = [
+        syncedMainSnapshot({ behindCount }),
+        syncedMainSnapshot({ behindCount: behindCount + 1 }),
+      ];
+
+      await pushBranchAndSyncPeers({
+        sourceEnvironmentId: PRIMARY_ENVIRONMENT_ID,
+        sourceBranch: sourceSnapshot.localBranches[0]!,
+        sourceSnapshot,
+        force: false,
+        peerTargets: [
+          { environmentId: PRIMARY_ENVIRONMENT_ID, cwd: "/local/repo" },
+          { environmentId: REMOTE_ENVIRONMENT_ID, cwd: "/remote/repo" },
+        ],
+        push: async () => {
+          calls.push("push");
+        },
+        readPeerSnapshot: async () => {
+          calls.push("snapshot");
+          return peerSnapshots.shift()!;
+        },
+        fetchPeerBranch: async (_target, branchName) => {
+          calls.push(`fetch:${branchName}`);
+        },
+        pullPeerBranch: async (_target, branchName) => {
+          calls.push(`pull:${branchName}`);
+        },
+      });
+
+      expect(calls).toEqual(["snapshot", "push", "fetch:main", "snapshot", "pull:main"]);
+    },
+  );
+
+  it.each([{ dirty: true, behindCount: 3 }, { aheadCount: 1 }, { aheadCount: 1, behindCount: 3 }])(
+    "skips dirty or locally ahead peers before pushing: %j",
+    async (peerState) => {
+      const calls: string[] = [];
+      const sourceSnapshot = syncedMainSnapshot({ aheadCount: 1 });
+      const peers = new Map<EnvironmentId, VcsPanelSnapshotResult>([
+        [REMOTE_ENVIRONMENT_ID, syncedMainSnapshot(peerState)],
+        [
+          DISCONNECTED_ENVIRONMENT_ID,
+          syncedMainSnapshot({ remoteUrl: "https://example.test/another/repo.git" }),
+        ],
+      ]);
+
+      await pushBranchAndSyncPeers({
+        sourceEnvironmentId: PRIMARY_ENVIRONMENT_ID,
+        sourceBranch: sourceSnapshot.localBranches[0]!,
+        sourceSnapshot,
+        force: false,
+        peerTargets: [
+          { environmentId: REMOTE_ENVIRONMENT_ID, cwd: "/remote/repo" },
+          { environmentId: DISCONNECTED_ENVIRONMENT_ID, cwd: "/other/repo" },
+        ],
+        push: async () => {
+          calls.push("push");
+        },
+        readPeerSnapshot: async (target) => peers.get(target.environmentId)!,
+        fetchPeerBranch: async () => {
+          calls.push("fetch");
+        },
+        pullPeerBranch: async () => {
+          calls.push("pull");
+        },
+      });
+
+      expect(calls).toEqual(["push"]);
+    },
+  );
+
+  it.each([{ aheadCount: 1 }, { aheadCount: 1, behindCount: 4 }, { dirty: true, behindCount: 4 }])(
+    "rechecks an eligible behind peer after fetch and skips changed state: %j",
+    async (peerState) => {
+      const calls: string[] = [];
+      const sourceSnapshot = syncedMainSnapshot({ aheadCount: 1 });
+      const peerSnapshots = [syncedMainSnapshot({ behindCount: 3 }), syncedMainSnapshot(peerState)];
+
+      await pushBranchAndSyncPeers({
+        sourceEnvironmentId: PRIMARY_ENVIRONMENT_ID,
+        sourceBranch: sourceSnapshot.localBranches[0]!,
+        sourceSnapshot,
+        force: false,
+        peerTargets: [{ environmentId: REMOTE_ENVIRONMENT_ID, cwd: "/remote/repo" }],
+        push: async () => {
+          calls.push("push");
+        },
+        readPeerSnapshot: async () => peerSnapshots.shift()!,
+        fetchPeerBranch: async () => {
+          calls.push("fetch");
+        },
+        pullPeerBranch: async () => {
+          calls.push("pull");
+        },
+      });
+
+      expect(calls).toEqual(["push", "fetch"]);
+    },
+  );
+
+  it("changes panel identity with every repository cache scope", () => {
+    const base = {
+      environmentId: PRIMARY_ENVIRONMENT_ID,
+      threadId: "thread-one" as ThreadId,
+      cwd: "/repo/one",
+      worktreePath: null,
+    };
+
+    expect(sourceControlPanelStateCacheKey(base)).not.toBe(
+      sourceControlPanelStateCacheKey({ ...base, threadId: "thread-two" as ThreadId }),
+    );
+    expect(sourceControlPanelStateCacheKey(base)).not.toBe(
+      sourceControlPanelStateCacheKey({ ...base, cwd: "/repo/two" }),
+    );
+    expect(sourceControlPanelStateCacheKey(base)).not.toBe(
+      sourceControlPanelStateCacheKey({ ...base, worktreePath: "/worktrees/feature" }),
+    );
+  });
+
+  it("always expands the current environment and collapses other environments by default", () => {
+    expect(
+      isFederatedSourceControlTargetExpanded(
+        { active: true, environmentId: PRIMARY_ENVIRONMENT_ID },
+        new Set(),
+      ),
+    ).toBe(true);
+    expect(
+      isFederatedSourceControlTargetExpanded(
+        { active: false, environmentId: REMOTE_ENVIRONMENT_ID },
+        new Set(),
+      ),
+    ).toBe(false);
+    expect(
+      isFederatedSourceControlTargetExpanded(
+        { active: false, environmentId: REMOTE_ENVIRONMENT_ID },
+        new Set([REMOTE_ENVIRONMENT_ID]),
+      ),
+    ).toBe(true);
+  });
+
+  it("omits disconnected environments and keeps the active checkout first", () => {
+    expect(
+      resolveFederatedSourceControlTargets({
+        activeEnvironmentId: REMOTE_ENVIRONMENT_ID,
+        activeCwd: "/remote/repo.worktrees/active",
+        activeWorktreePath: "/remote/repo.worktrees/active",
+        candidates: [
+          {
+            environmentId: PRIMARY_ENVIRONMENT_ID,
+            label: "This device",
+            isPrimary: true,
+            machine: "laptop",
+            cwd: "/local/repo",
+            connected: true,
+          },
+          {
+            environmentId: DISCONNECTED_ENVIRONMENT_ID,
+            label: "Offline server",
+            isPrimary: false,
+            machine: "mac-mini",
+            cwd: "/offline/repo",
+            connected: false,
+          },
+          {
+            environmentId: REMOTE_ENVIRONMENT_ID,
+            label: "Build server",
+            isPrimary: false,
+            machine: "mac-mini",
+            cwd: "/remote/repo",
+            connected: true,
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        environmentId: REMOTE_ENVIRONMENT_ID,
+        label: "Build server",
+        isPrimary: false,
+        machine: "mac-mini",
+        cwd: "/remote/repo.worktrees/active",
+        connected: true,
+        active: true,
+        worktreePath: "/remote/repo.worktrees/active",
+      },
+      {
+        environmentId: PRIMARY_ENVIRONMENT_ID,
+        label: "This device",
+        isPrimary: true,
+        machine: "laptop",
+        cwd: "/local/repo",
+        connected: true,
+        active: false,
+        worktreePath: null,
+      },
+    ]);
+  });
+
+  it("deduplicates multiple physical projects in the same connected environment", () => {
+    expect(
+      resolveFederatedSourceControlTargets({
+        activeEnvironmentId: PRIMARY_ENVIRONMENT_ID,
+        activeCwd: "/local/repo",
+        activeWorktreePath: null,
+        candidates: [
+          {
+            environmentId: PRIMARY_ENVIRONMENT_ID,
+            label: "This device",
+            isPrimary: true,
+            machine: "laptop",
+            cwd: "/local/repo",
+            connected: true,
+          },
+          {
+            environmentId: REMOTE_ENVIRONMENT_ID,
+            label: "Build server",
+            isPrimary: false,
+            machine: "mac-mini",
+            cwd: "/remote/repo",
+            connected: true,
+          },
+          {
+            environmentId: REMOTE_ENVIRONMENT_ID,
+            label: "Build server",
+            isPrimary: false,
+            machine: "mac-mini",
+            cwd: "/remote/repo/packages/web",
+            connected: true,
+          },
+        ],
+      }).map((target) => target.cwd),
+    ).toEqual(["/local/repo", "/remote/repo"]);
+  });
+});

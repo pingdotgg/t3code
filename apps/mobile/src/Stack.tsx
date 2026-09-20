@@ -42,6 +42,8 @@ import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
+import { VersionControlRouteScreen } from "./features/version-control/VersionControlRouteScreen";
+import { VersionControlDiffRouteScreen } from "./features/version-control/VersionControlDiffRouteScreen";
 import { ThreadRouteScreen } from "./features/threads/ThreadRouteScreen";
 import { ConnectionsRouteScreen } from "./features/connection/ConnectionsRouteScreen";
 import { ConnectionsNewRouteScreen } from "./features/connection/ConnectionsNewRouteScreen";
@@ -453,6 +455,8 @@ const WORKSPACE_OVERLAY_ROUTES = new Set([
   "GitCommit",
   "GitConfirm",
   "GitOverview",
+  "VersionControl",
+  "VersionControlDiff",
   "NewTaskSheet",
   "SettingsLegal",
   "SettingsSheet",
@@ -670,6 +674,22 @@ const RootStackConfig = createNativeStackNavigator({
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.55, 0.92],
         sheetGrabberVisible: true,
+      },
+    }),
+    VersionControl: createNativeStackScreen({
+      screen: VersionControlRouteScreen,
+      linking: `${THREAD_LINKING_PREFIX}/version-control`,
+      options: {
+        ...GLASS_HEADER_OPTIONS,
+        presentation: "fullScreenModal",
+        title: "Version Control",
+      },
+    }),
+    VersionControlDiff: createNativeStackScreen({
+      screen: VersionControlDiffRouteScreen,
+      options: {
+        ...SOLID_HEADER_OPTIONS,
+        title: "Diff",
       },
     }),
     GitCommit: createNativeStackScreen({

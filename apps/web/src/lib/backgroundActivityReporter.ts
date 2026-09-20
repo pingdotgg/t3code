@@ -35,6 +35,7 @@ interface RetainedScope {
 
 const retainedScopes = new Map<string, RetainedScope>();
 const retainedScopeListeners = new Set<() => void>();
+let immediateReporter: (() => Promise<void>) | null = null;
 
 function notifyRetainedScopesChanged(): void {
   for (const listener of retainedScopeListeners) {
@@ -122,7 +123,10 @@ function scopeForSubscription(
   return typeof input.cwd === "string" ? { type: "vcs-status", cwd: input.cwd } : null;
 }
 
-function retainBackgroundScope(environmentId: EnvironmentId, scope: BackgroundScope): () => void {
+export function retainBackgroundActivityScope(
+  environmentId: EnvironmentId,
+  scope: BackgroundScope,
+): () => void {
   const key = stableScopeKey(environmentId, scope);
   const existing = retainedScopes.get(key);
   if (existing) {
@@ -151,7 +155,10 @@ export function observeBackgroundActivitySubscription(
     return Effect.succeed(Effect.void);
   }
   return Effect.sync(() => {
-    const release = retainBackgroundScope(observation.environmentId as EnvironmentId, scope);
+    const release = retainBackgroundActivityScope(
+      observation.environmentId as EnvironmentId,
+      scope,
+    );
     return Effect.sync(release);
   });
 }
@@ -162,6 +169,10 @@ export function retainedBackgroundScopes(
   return Array.from(retainedScopes.values(), (entry) =>
     entry.environmentId === environmentId ? entry.scope : null,
   ).filter((scope): scope is BackgroundScope => scope !== null);
+}
+
+export async function flushBackgroundActivityReport(): Promise<void> {
+  await immediateReporter?.();
 }
 
 export const backgroundActivityObserverLayer = Layer.succeed(
@@ -210,9 +221,13 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
         { concurrency: "unbounded", discard: true },
       );
     }).pipe(Effect.withSpan("web.backgroundActivity.report"));
+    const runtimeContext = yield* Effect.context<never>();
+    const runPromise = Effect.runPromiseWith(runtimeContext);
+    const reportImmediately = () => runPromise(report);
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
+        immediateReporter = reportImmediately;
         retainedScopeListeners.add(requestReport);
         document.addEventListener("visibilitychange", requestReport);
         window.addEventListener("focus", requestReport);
@@ -225,6 +240,9 @@ export const backgroundActivityReporterLayer = Layer.effectDiscard(
       }),
       () =>
         Effect.sync(() => {
+          if (immediateReporter === reportImmediately) {
+            immediateReporter = null;
+          }
           retainedScopeListeners.delete(requestReport);
           document.removeEventListener("visibilitychange", requestReport);
           window.removeEventListener("focus", requestReport);

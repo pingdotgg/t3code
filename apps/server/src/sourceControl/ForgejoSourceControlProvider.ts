@@ -228,11 +228,14 @@ export const make = Effect.gen(function* () {
   });
   return SourceControlProvider.SourceControlProvider.of({
     kind: "forgejo",
+    getCommitAvatarUrl: () => Effect.succeed(null),
     listChangeRequests: (input) =>
       Effect.gen(function* () {
         const repo = yield* cli.resolveRepository(input);
-        const source = SourceControlProvider.sourceControlRefFromInput(input);
-        const branch = SourceControlProvider.sourceBranch(input);
+        const source = input.source ?? (input.headSelector
+          ? SourceControlProvider.sourceControlRefFromInput({ ...input, headSelector: input.headSelector })
+          : undefined);
+        const branch = source?.refName ?? input.headSelector;
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
         for (let page = 1; results.length < limit; page++) {
@@ -245,7 +248,7 @@ export const make = Effect.gen(function* () {
           );
           for (const item of items) {
             if (
-              item.head.ref !== branch ||
+              (branch !== undefined && item.head.ref !== branch) ||
               (source?.repository && item.head.repo?.full_name !== source.repository) ||
               (source?.owner && item.head.repo?.owner.login !== source.owner)
             )

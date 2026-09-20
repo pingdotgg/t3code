@@ -95,6 +95,72 @@ describe("serverSettings helpers", () => {
     ).toEqual([]);
   });
 
+  it("resolves balanced defaults with a five-minute panel all-remotes interval", () => {
+    const resolved = resolveServerBackgroundActivitySettings(DEFAULT_SERVER_SETTINGS);
+
+    expect(resolved.profile).toBe("balanced");
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
+    expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(300_000);
+    expect(Duration.toMillis(resolved.providerHealthRefreshInterval)).toBe(300_000);
+    expect(resolved.pauseWhenHostLowPower).toBe(true);
+  });
+
+  it("keeps an explicit balanced preset at thirty seconds for upstream status", () => {
+    const resolved = resolveServerBackgroundActivitySettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      backgroundActivity: {
+        schemaVersion: 1,
+        profile: "balanced",
+        overrides: {},
+      },
+    });
+
+    expect(resolved.profile).toBe("balanced");
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
+    expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(300_000);
+  });
+
+  it("preserves an explicit five-minute upstream-status override", () => {
+    const resolved = resolveServerBackgroundActivitySettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      backgroundActivity: {
+        schemaVersion: 1,
+        profile: "custom",
+        baseProfile: "balanced",
+        overrides: {
+          automaticGitFetchInterval: Duration.minutes(5),
+        },
+      },
+    });
+
+    expect(resolved.profile).toBe("balanced");
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(300_000);
+    expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(300_000);
+  });
+
+  it.each([
+    ["performance", 60_000],
+    ["balanced", 300_000],
+    ["battery-saver", 0],
+  ] as const)("resolves the %s all-remotes cadence", (profile, expectedMs) => {
+    const resolved = resolveServerBackgroundActivitySettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      backgroundActivity: { schemaVersion: 1, profile, overrides: {} },
+    });
+
+    expect(Duration.toMillis(resolved.sourceControlAllRemotesFetchInterval)).toBe(expectedMs);
+  });
+
+  it("migrates a legacy thirty-second Git fetch interval", () => {
+    const resolved = resolveServerBackgroundActivitySettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      automaticGitFetchInterval: Duration.seconds(30),
+    });
+
+    expect(resolved.profile).toBe("balanced");
+    expect(Duration.toMillis(resolved.automaticGitFetchInterval)).toBe(30_000);
+  });
+
   it("preserves other projects' actions when overriding, clearing, or resetting one project", () => {
     const firstProject = { id: ProjectId.make("first-project"), scripts: [] };
     const secondProject = { id: ProjectId.make("second-project"), scripts: [] };
@@ -497,6 +563,21 @@ describe("serverSettings helpers", () => {
       displayName: "Codex Work",
       enabled: true,
       config: { homePath: "~/.codex" },
+    });
+  });
+
+  it("deep merges source control provider option patches", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        sourceControl: {
+          providers: {
+            github: { showCommitAuthorAvatar: true },
+          },
+        },
+      }).sourceControl.providers,
+    ).toEqual({
+      ...DEFAULT_SERVER_SETTINGS.sourceControl.providers,
+      github: { showCommitAuthorAvatar: true },
     });
   });
 

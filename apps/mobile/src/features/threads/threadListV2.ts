@@ -27,8 +27,9 @@ import {
 export { snoozeWakeLabel };
 
 /**
- * Thread List v2 model, ported from the web sidebar v2
- * (apps/web/src/components/Sidebar.logic.ts + SidebarV2.tsx).
+ * Thread List v2 model, ported from the web's default sidebar
+ * (apps/web/src/components/Sidebar.logic.ts + Sidebar.tsx). The pre-v2 sidebar
+ * implementation now lives in LegacySidebar.tsx.
  *
  * Four visual states, three colors: color is reserved for "act now"
  * (approval), "in motion" (working), and "broken" (failed). Ready is the

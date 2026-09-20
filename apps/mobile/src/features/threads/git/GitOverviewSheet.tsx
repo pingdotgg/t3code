@@ -284,6 +284,19 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
         ) : null}
         {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
+          icon="point.topleft.down.curvedto.point.bottomright.up"
+          title="Version Control"
+          subtitle="Actionable branches, selected files, stashes, and remotes"
+          disabled={busy || !isRepo}
+          onPress={() =>
+            navigation.navigate("VersionControl", {
+              environmentId: String(environmentId),
+              threadId: String(threadId),
+            })
+          }
+        />
+        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
+        <SheetListRow
           icon="text.bubble"
           title="Review changes"
           subtitle="Inspect turn diffs, worktree changes, and base branch diff"

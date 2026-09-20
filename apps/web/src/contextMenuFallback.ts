@@ -302,15 +302,19 @@ export function showContextMenuFallback<T extends string>(
       inner.style.cssText =
         "max-height:min(24rem,70vh);min-width:0;max-width:24rem;overflow-x:hidden;overflow-y:auto;padding:0.25rem;";
 
+      const appendSeparator = () => {
+        if (inner.children.length === 0) return;
+        const separator = document.createElement("div");
+        separator.className = "mx-2 my-1 h-px bg-border";
+        separator.style.cssText =
+          "height:1px;margin:0.25rem 0.5rem;background:var(--contrast-border);";
+        separator.dataset.contextMenuSeparator = "true";
+        separator.setAttribute("role", "separator");
+        inner.appendChild(separator);
+      };
       for (const item of entries) {
-        if (item.separatorBefore === true && inner.children.length > 0) {
-          const separator = document.createElement("div");
-          separator.className = "mx-2 my-1 h-px bg-border";
-          separator.style.cssText =
-            "height:1px;margin:0.25rem 0.5rem;background:var(--contrast-border);";
-          separator.dataset.contextMenuSeparator = "true";
-          separator.setAttribute("role", "separator");
-          inner.appendChild(separator);
+        if (item.separatorBefore === true) {
+          appendSeparator();
         }
 
         if (item.header === true) {

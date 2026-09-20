@@ -180,3 +180,15 @@ the scope and merge strategy. GitHub rebases the remaining stack after merging.
 It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that
 layer before retrying. GitHub may require manual conflict resolution after a lower layer is amended,
 even when its changes look independent. Stack actions require an environment that supports them.
+
+## Control background remote refreshes
+
+The Git details in **Settings → Source Control** expose two separate refresh intervals:
+
+- **Git fetch interval** refreshes the current branch's upstream status.
+- **Version Control all remotes interval** refreshes every remote shown by an open Version Control panel. Balanced mode uses five minutes, Performance uses one minute, and Battery saver disables it.
+
+Automatic all-remotes refreshes follow the shared Background Activity rules for locked hosts,
+low-power mode, battery state, and active clients. Set the all-remotes interval to `0` to prevent
+opening, focusing, or leaving the Version Control panel open from fetching remotes. The panel still
+refreshes local repository state, and its explicit **Fetch** action remains available.

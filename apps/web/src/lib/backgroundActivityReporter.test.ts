@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 
 import {
   observeBackgroundActivitySubscription,
+  retainBackgroundActivityScope,
   retainedBackgroundScopes,
   wasRecentlyInteracted,
 } from "./backgroundActivityReporter.ts";
@@ -60,4 +61,14 @@ describe("wasRecentlyInteracted", () => {
       yield* Effect.all([releaseFirst, releaseSecond]);
     }),
   );
+
+  it("retains Version Control git-ref demand explicitly", () => {
+    const environmentId = EnvironmentId.make("version-control-panel");
+    const scope = { type: "git-refs" as const, cwd: "/repo" };
+    const release = retainBackgroundActivityScope(environmentId, scope);
+
+    expect(retainedBackgroundScopes(environmentId)).toEqual([scope]);
+    release();
+    expect(retainedBackgroundScopes(environmentId)).toEqual([]);
+  });
 });

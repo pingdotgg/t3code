@@ -161,6 +161,7 @@ import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
+import * as SourceControlPanelService from "./sourceControl/SourceControlPanelService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
@@ -654,6 +655,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const sourceControlPanel = yield* SourceControlPanelService.SourceControlPanelService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -1825,9 +1827,9 @@ const makeWsRpcLayer = (
           };
         });
 
-      const refreshGitStatus = (cwd: string) =>
+      const refreshGitStatus = (cwd: string, options?: { readonly refreshUpstream?: boolean }) =>
         vcsStatusBroadcaster
-          .refreshStatus(cwd)
+          .refreshStatus(cwd, options)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
@@ -3235,6 +3237,239 @@ const makeWsRpcLayer = (
               }),
             ),
             { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.vcsPanelSnapshot]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsPanelSnapshot, sourceControlPanel.snapshot(input), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsPanelBranchDetails]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelBranchDetails,
+            sourceControlPanel.branchDetails(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelCommitFiles]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsPanelCommitFiles, sourceControlPanel.commitFiles(input), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsPanelBranchCommits]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelBranchCommits,
+            sourceControlPanel.branchCommits(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelStashDetails]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelStashDetails,
+            sourceControlPanel.stashDetails(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelEnrichWorkingTreeFiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelEnrichWorkingTreeFiles,
+            sourceControlPanel.enrichWorkingTreeFiles(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelReadFileDiff]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelReadFileDiff,
+            sourceControlPanel.readFileDiff(input),
+            {
+              "rpc.aggregate": "vcs",
+            },
+          ),
+        [WS_METHODS.vcsPanelCompare]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsPanelCompare, sourceControlPanel.compare(input), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsPanelCommitStaged]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelCommitStaged,
+            sourceControlPanel
+              .commitStaged(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelStageFiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelStageFiles,
+            sourceControlPanel
+              .stageFiles(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelUnstageFiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelUnstageFiles,
+            sourceControlPanel
+              .unstageFiles(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelDiscardFiles]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelDiscardFiles,
+            sourceControlPanel
+              .discardFiles(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelPullBranch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelPullBranch,
+            sourceControlPanel
+              .pullBranch(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelPushBranch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelPushBranch,
+            sourceControlPanel
+              .pushBranch(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelDeleteBranch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelDeleteBranch,
+            sourceControlPanel
+              .deleteBranch(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelUndoLatestCommit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelUndoLatestCommit,
+            sourceControlPanel
+              .undoLatestCommit(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelRevertCommit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelRevertCommit,
+            sourceControlPanel
+              .revertCommit(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelCheckoutCommit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelCheckoutCommit,
+            sourceControlPanel
+              .checkoutCommit(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelCreateBranchFromCommit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelCreateBranchFromCommit,
+            sourceControlPanel
+              .createBranchFromCommit(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelMergeBranchIntoCurrent]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelMergeBranchIntoCurrent,
+            sourceControlPanel
+              .mergeBranchIntoCurrent(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelRebaseCurrentOnto]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelRebaseCurrentOnto,
+            sourceControlPanel
+              .rebaseCurrentOnto(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelFetchBranch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelFetchBranch,
+            sourceControlPanel
+              .fetchBranch(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd, { refreshUpstream: false }))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelFetchRemote]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelFetchRemote,
+            sourceControlPanel
+              .fetchRemote(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd, { refreshUpstream: false }))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelFetchAllRemotes]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelFetchAllRemotes,
+            Effect.gen(function* () {
+              if (input.force !== true) {
+                const shouldRun = yield* Effect.all([
+                  backgroundPolicy.shouldRunScopeWork({ type: "git-refs", cwd: input.cwd }),
+                  backgroundPolicy.shouldRunScopeWork({ type: "vcs-status", cwd: input.cwd }),
+                ]).pipe(Effect.map((decisions) => decisions.some(Boolean)));
+                if (!shouldRun) return false;
+              }
+              const fetched = yield* sourceControlPanel.fetchAllRemotes(input);
+              if (fetched) {
+                yield* refreshGitStatus(input.cwd, { refreshUpstream: false });
+              }
+              return fetched;
+            }),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelAddRemote]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelAddRemote,
+            sourceControlPanel.addRemote(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelRemoveRemote]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelRemoveRemote,
+            sourceControlPanel
+              .removeRemote(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelCreateStash]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelCreateStash,
+            sourceControlPanel
+              .createStash(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelApplyStash]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelApplyStash,
+            sourceControlPanel
+              .applyStash(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelPopStash]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelPopStash,
+            sourceControlPanel.popStash(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsPanelDropStash]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsPanelDropStash,
+            sourceControlPanel.dropStash(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
           observeRpcStream(

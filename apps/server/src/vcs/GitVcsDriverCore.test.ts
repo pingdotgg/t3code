@@ -12,8 +12,8 @@ import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
-import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
@@ -34,6 +34,10 @@ import {
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
+import {
+  makeSourceControlPanelActions,
+  type SourceControlPanelActionDependencies,
+} from "../sourceControl/SourceControlPanelActions.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
@@ -202,9 +206,15 @@ it.effect("bounds Git bursts across drivers without timing out queued commands",
   }).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
-it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
+it.effect.each([
+  { args: ["push"], timeoutMs: null },
+  { args: ["push"], timeoutMs: 30_001 },
+  { args: ["push"], timeoutMs: undefined },
+  { args: ["fetch", "origin"], timeoutMs: undefined },
+  { args: ["commit"], timeoutMs: undefined },
+])(
   "keeps all Git slots available with a pending command whose timeout is $timeoutMs",
-  ({ timeoutMs }) =>
+  ({ args, timeoutMs }) =>
     Effect.gen(function* () {
       const slowGate = yield* Deferred.make<void>();
       const fastGate = yield* Deferred.make<void>();
@@ -216,7 +226,7 @@ it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
             active++;
             yield* Queue.offer(starts, undefined);
             const gate =
-              ChildProcess.isStandardCommand(command) && command.args[0] === "push"
+              ChildProcess.isStandardCommand(command) && command.args[0] !== "status"
                 ? slowGate
                 : fastGate;
             return ChildProcessSpawner.makeHandle({
@@ -231,7 +241,12 @@ it.effect.each([{ timeoutMs: null }, { timeoutMs: 30_001 }])(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       const slow = yield* driver
-        .execute({ operation: "test.slowGit", cwd: "/repo", args: ["push"], timeoutMs })
+        .execute({
+          operation: "test.slowGit",
+          cwd: "/repo",
+          args,
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        })
         .pipe(Effect.forkChild);
       yield* Queue.take(starts);
       const burst = yield* Effect.all(
@@ -258,8 +273,22 @@ for (const location of ["root", "nested", "worktree"] as const) {
     `skips clean filters while the ${location} index is locked and resumes after unlock`,
     () =>
       Effect.gen(function* () {
-        const driver = yield* GitVcsDriver.GitVcsDriver;
         const fs = yield* FileSystem.FileSystem;
+        const lockChecks = yield* Queue.unbounded<boolean>();
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provide(ServerConfigLayer),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            exists: (path) =>
+              fs
+                .exists(path)
+                .pipe(
+                  Effect.tap((exists) =>
+                    path.endsWith("index.lock") ? Queue.offer(lockChecks, exists) : Effect.void,
+                  ),
+                ),
+          }),
+        );
         const path = yield* Path.Path;
         const repository = yield* makeTmpDir();
         yield* initRepoWithCommit(repository);
@@ -283,20 +312,69 @@ for (const location of ["root", "nested", "worktree"] as const) {
         yield* fs.makeDirectory(statusCwd, { recursive: true });
 
         for (let poll = 0; poll < 3; poll++) {
-          const result = yield* driver.statusDetailsLocal(statusCwd).pipe(Effect.result);
+          const pending = yield* driver
+            .statusDetailsLocal(statusCwd)
+            .pipe(Effect.result, Effect.forkChild);
+          assert.isTrue(yield* Queue.take(lockChecks));
+          assert.isFalse(yield* fs.exists(runsPath));
+          yield* TestClock.adjust("1 second");
+          const result = yield* Fiber.join(pending);
+          assert.isTrue(yield* Queue.take(lockChecks));
           assert.isTrue(Result.isFailure(result));
           if (Result.isFailure(result)) assert.include(result.failure.detail, "index is locked");
         }
         assert.isFalse(yield* fs.exists(runsPath));
         assert.isTrue(yield* fs.exists(lockPath));
 
+        const pending = yield* driver.statusDetailsLocal(statusCwd).pipe(Effect.forkChild);
+        assert.isTrue(yield* Queue.take(lockChecks));
+        assert.isFalse(yield* fs.exists(runsPath));
         yield* fs.remove(lockPath);
-        const status = yield* driver.statusDetailsLocal(statusCwd);
+        yield* TestClock.adjust("1 second");
+        const status = yield* Fiber.join(pending);
+        assert.isFalse(yield* Queue.take(lockChecks));
         assert.isFalse(status.hasWorkingTreeChanges);
         assert.include(yield* fs.readFileString(runsPath), "clean");
       }).pipe(Effect.provide(TestLayer)),
   );
 }
+
+it.effect("keeps synchronous spawn failures local to the Git request", () => {
+  const spawnError = Object.assign(new Error("spawn ENAMETOOLONG"), { code: "ENAMETOOLONG" });
+  let attempts = 0;
+  const spawner = ChildProcessSpawner.make(() => {
+    attempts++;
+    if (attempts === 1) throw spawnError;
+    if (attempts === 2) return Effect.die(spawnError);
+    return Effect.succeed(makeSuccessfulHandle("git version test"));
+  });
+  const layer = GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfigLayer),
+    Layer.provideMerge(
+      Layer.merge(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const error = yield* driver
+        .execute({ operation: "test.spawn", cwd: "/repo", args: ["--version"] })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "GitCommandError");
+      assert.equal(error.detail, "Failed to spawn Git process.");
+      assert.strictEqual(error.cause, spawnError);
+    }
+    const result = yield* driver.execute({
+      operation: "test.afterSpawnFailure",
+      cwd: "/repo",
+      args: ["--version"],
+    });
+    assert.equal(result.stdout, "git version test");
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
@@ -332,7 +410,7 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     assert.deepStrictEqual(commands, [
       { args: ["rev-parse", "--git-path", "index"], lcAll: "C" },
       { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
-      { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
+      { args: ["branch", "--show-current"], lcAll: "C" },
       { args: ["rev-parse", "--git-common-dir"], lcAll: "C" },
     ]);
   }).pipe(Effect.provide(layer));
@@ -493,6 +571,85 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
       );
     }),
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("exposes shared ref snapshot invalidation for raw Git mutation services", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+
+      const initialRefs = yield* driver.listRefs({ cwd, refresh: true });
+      assert.equal(
+        initialRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        false,
+      );
+
+      yield* git(cwd, ["branch", "feature/raw-panel"]);
+      const cachedRefs = yield* driver.listRefs({ cwd });
+      assert.equal(
+        cachedRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        false,
+      );
+
+      yield* driver.invalidateRefs(cwd);
+      const invalidatedRefs = yield* driver.listRefs({ cwd });
+      assert.equal(
+        invalidatedRefs.refs.some((ref) => ref.name === "feature/raw-panel"),
+        true,
+      );
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
+it.effect("refreshes pull-request listRefs data after a ref-changing panel action", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      const headSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+      const branchName = "feature/panel-list-refs";
+      const pullRequestRefsInput = {
+        cwd,
+        includeMatchingRemoteRefs: true,
+        limit: 2,
+        query: branchName,
+      } as const;
+      const before = yield* driver.listRefs({ ...pullRequestRefsInput, refresh: true });
+      assert.equal(
+        before.refs.some((ref) => ref.name === branchName),
+        false,
+      );
+
+      const actions = makeSourceControlPanelActions({
+        invalidateRefs: driver.invalidateRefs,
+        run: (operation, commandCwd, args, options) =>
+          driver
+            .execute({
+              operation,
+              cwd: commandCwd,
+              args: [...args],
+              timeoutMs: 10_000,
+              ...(options?.allowNonZeroExit !== undefined
+                ? { allowNonZeroExit: options.allowNonZeroExit }
+                : {}),
+              ...(options?.env !== undefined ? { env: options.env } : {}),
+              ...(options?.progress !== undefined ? { progress: options.progress } : {}),
+            })
+            .pipe(Effect.map((result) => result.stdout)),
+      } as SourceControlPanelActionDependencies);
+
+      yield* actions.createBranchFromCommit({ cwd, sha: headSha, branchName });
+
+      const after = yield* driver.listRefs(pullRequestRefsInput);
+      assert.equal(
+        after.refs.some((ref) => ref.name === branchName),
+        true,
+      );
+    }),
+  ).pipe(Effect.provide(TestLayer)),
 );
 
 it.effect("retries an in-flight ref snapshot invalidated by a mutation", () =>
@@ -1788,6 +1945,51 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports an unborn branch when its configured remote repository is unavailable", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const unavailableRemoteParent = yield* makeTmpDir("git-vcs-driver-missing-remote-");
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(cwd, [
+          "remote",
+          "add",
+          "origin",
+          pathService.join(unavailableRemoteParent, "not-created.git"),
+        ]);
+        const branch = yield* git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+
+        const status = yield* driver.statusDetailsRemote(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.branch, branch);
+        assert.equal(status.hasUpstream, false);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.behindCount, 0);
+      }),
+    );
+
+    it.effect("reports an unborn branch when its remote exists without an uploaded branch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-empty-remote-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        const branch = yield* git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+
+        const status = yield* driver.statusDetailsRemote(cwd);
+
+        assert.equal(status.isRepo, true);
+        assert.equal(status.branch, branch);
+        assert.equal(status.hasUpstream, false);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.behindCount, 0);
+      }),
+    );
+
     it.effect("reports remote status on unborn HEAD without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -2090,6 +2292,63 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(
           refs.refs.find((refName) => refName.name === "feature/renamed")?.current,
           true,
+        );
+      }),
+    );
+
+    it.effect("creates a suffixed tracking branch for colliding remote refs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const origin = yield* makeTmpDir("git-vcs-driver-origin-");
+        const upstream = yield* makeTmpDir("git-vcs-driver-upstream-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(origin, ["init", "--bare"]);
+        yield* git(upstream, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", origin]);
+        yield* git(cwd, ["remote", "add", "upstream", upstream]);
+        yield* git(cwd, ["push", "origin", `${initialBranch}:refs/heads/release`]);
+        yield* git(cwd, ["push", "upstream", `${initialBranch}:refs/heads/release`]);
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* git(cwd, ["fetch", "upstream"]);
+        yield* git(cwd, ["checkout", "-b", "release", "--track", "upstream/release"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).switchRef({
+          cwd,
+          refName: "origin/release",
+        });
+
+        assert.equal(result.refName, "release-1");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "release-1");
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "origin/release",
+        );
+      }),
+    );
+
+    it.effect("derives tracking branches from slashful remote names", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const slashfulRemote = yield* makeTmpDir("git-vcs-driver-slashful-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(slashfulRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "my-org/upstream", slashfulRemote]);
+        yield* git(cwd, ["push", "my-org/upstream", `${initialBranch}:refs/heads/effect-atom`]);
+        yield* git(cwd, ["fetch", "my-org/upstream"]);
+        yield* git(cwd, ["checkout", "-b", "effect-atom"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+
+        const result = yield* (yield* GitVcsDriver.GitVcsDriver).switchRef({
+          cwd,
+          refName: "my-org/upstream/effect-atom",
+        });
+
+        assert.equal(result.refName, "effect-atom-1");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "effect-atom-1");
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "my-org/upstream/effect-atom",
         );
       }),
     );
@@ -2679,8 +2938,8 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(started);
           if (failure === "timeout") {
-            yield* TestClock.adjust("31 seconds");
-            yield* TestClock.adjust("31 seconds");
+            yield* TestClock.adjust("301 seconds");
+            yield* TestClock.adjust("301 seconds");
           }
           const result = yield* Fiber.join(fetching);
           assert.isTrue(Result.isFailure(result));

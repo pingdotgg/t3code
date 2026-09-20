@@ -1,17 +1,18 @@
 import { RegistryContext } from "@effect/atom-react";
 import {
   executeAtomQuery,
-  type AtomQueryOptions,
   type AtomCommandResult,
+  type AtomQueryOptions,
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult, type Atom } from "effect/unstable/reactivity";
+import type * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
 import { useCallback, useContext } from "react";
 
 export function useAtomQueryRunner<T, A, E>(
   family: (target: T) => Atom.Atom<AsyncResult.AsyncResult<A, E>>,
   options?: string | AtomQueryOptions,
 ): (target: T) => Promise<AtomCommandResult<A, E>> {
-  const registry = useContext(RegistryContext);
+  const registry = useContext(RegistryContext) as AtomRegistry.AtomRegistry;
   const explicitLabel = typeof options === "string" ? options : options?.label;
   const reportFailure = typeof options === "string" ? true : (options?.reportFailure ?? true);
   const reportDefect = typeof options === "string" ? true : (options?.reportDefect ?? true);
@@ -27,6 +28,6 @@ export function useAtomQueryRunner<T, A, E>(
         refresh,
       });
     },
-    [explicitLabel, family, registry, refresh, reportDefect, reportFailure],
+    [explicitLabel, family, refresh, registry, reportDefect, reportFailure],
   );
 }

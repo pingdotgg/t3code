@@ -149,3 +149,63 @@ it.effect("creates Bitbucket PRs through provider-neutral input names", () =>
     });
   }),
 );
+
+it.effect("uses Bitbucket API repository detection for default branch lookup", () =>
+  Effect.gen(function* () {
+    let cwdInput: string | null = null;
+    const provider = yield* makeProvider({
+      getDefaultBranch: (input) => {
+        cwdInput = input.cwd;
+        return Effect.succeed("main");
+      },
+    });
+
+    const defaultBranch = yield* provider.getDefaultBranch({ cwd: "/repo" });
+
+    assert.strictEqual(defaultBranch, "main");
+    assert.strictEqual(cwdInput, "/repo");
+  }),
+);
+
+it.effect("uses Bitbucket account avatar links through the provider API", () =>
+  Effect.gen(function* () {
+    let avatarInput:
+      | Parameters<BitbucketApi.BitbucketApi["Service"]["getCommitAvatarUrl"]>[0]
+      | null = null;
+    const provider = yield* makeProvider({
+      getCommitAvatarUrl: (input) => {
+        avatarInput = input;
+        return Effect.succeed("https://bitbucket.org/account/user/example/avatar/32/");
+      },
+    });
+
+    const avatarUrl = yield* provider.getCommitAvatarUrl({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "bitbucket",
+          name: "Bitbucket",
+          baseUrl: "https://bitbucket.org",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://bitbucket.org/workspace/repo.git",
+      },
+      sha: "abc123",
+    });
+
+    assert.strictEqual(avatarUrl, "https://bitbucket.org/account/user/example/avatar/32/");
+    assert.deepStrictEqual(avatarInput, {
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "bitbucket",
+          name: "Bitbucket",
+          baseUrl: "https://bitbucket.org",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://bitbucket.org/workspace/repo.git",
+      },
+      sha: "abc123",
+    });
+  }),
+);

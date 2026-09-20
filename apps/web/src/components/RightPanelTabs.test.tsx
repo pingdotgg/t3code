@@ -1,16 +1,16 @@
 import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   RightPanelTabs,
   resolvePullRequestTabLink,
   shouldOpenDefaultBrowserProfileFromMenuClick,
-  surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
-  tabMuteMenuItem,
 } from "./RightPanelTabs";
+import { browserTabMuteMenuItem } from "./rightPanelBrowserTabState";
+import { buildAddSurfaceActions, surfaceShortcutActionForKey } from "./rightPanelSurfaceActions";
 
 describe("browser profile submenu", () => {
   it("reserves touch clicks for opening the choices while mouse clicks use the default", () => {
@@ -118,6 +118,7 @@ function renderTabs(
       onAddBrowser={() => undefined}
       onAddBrowserInProfile={() => undefined}
       onAddTerminal={() => undefined}
+      onAddSourceControl={() => undefined}
       onAddPullRequest={() => undefined}
       onAddPullRequests={() => undefined}
       onAddDiff={() => undefined}
@@ -129,6 +130,7 @@ function renderTabs(
       terminalAvailable={false}
       diffAvailable={false}
       filesAvailable={false}
+      sourceControlAvailable={false}
       pullRequestAvailable={false}
       pullRequestsAvailable={false}
       agentsAvailable={false}
@@ -162,28 +164,101 @@ describe("RightPanelTabs preview favicon", () => {
   });
 });
 
-describe("surface shortcuts", () => {
-  const actions = [
-    { shortcut: "B", available: true, label: "Browser" },
-    { shortcut: "D", available: false, label: "Diff" },
-  ] as const;
+function actionProps() {
+  return {
+    onAddBrowser: vi.fn(),
+    onAddTerminal: vi.fn(),
+    onAddDiff: vi.fn(),
+    onAddFiles: vi.fn(),
+    onAddSourceControl: vi.fn(),
+    onAddPullRequest: vi.fn(),
+    onAddAgents: vi.fn(),
+    onAddPullRequests: vi.fn(),
+    onAddDevice: vi.fn(),
+    browserAvailable: true,
+    terminalAvailable: true,
+    diffAvailable: false,
+    filesAvailable: true,
+    sourceControlAvailable: true,
+    pullRequestAvailable: true,
+    agentsAvailable: true,
+    pullRequestsAvailable: true,
+    deviceAvailable: true,
+    liveAgentCount: 3,
+  };
+}
 
+describe("RightPanelTabs add-surface actions", () => {
+  it("keeps Version Control first and unique in the empty state", () => {
+    const actions = buildAddSurfaceActions(actionProps(), "empty-state");
+    const sourceControlActions = actions.filter((action) => action.id === "source-control");
+
+    expect(actions[0]?.id).toBe("source-control");
+    expect(actions[0]?.instancePolicy).toBe("singleton");
+    expect(sourceControlActions).toHaveLength(1);
+    expect(actions.some((action) => action.id === "pull-request")).toBe(true);
+  });
+
+  it("keeps Version Control last and unique in the add menu", () => {
+    const actions = buildAddSurfaceActions(actionProps(), "menu");
+    const sourceControlActions = actions.filter((action) => action.id === "source-control");
+
+    expect(actions.at(-1)?.id).toBe("source-control");
+    expect(actions.find((action) => action.id === "pull-request")?.instancePolicy).toBe("multiple");
+    expect(sourceControlActions).toHaveLength(1);
+    expect(actions.some((action) => action.id === "pull-request")).toBe(true);
+  });
+
+  it("uses the Version Control callback, availability, and disabled reason", () => {
+    const props = actionProps();
+    const actions = buildAddSurfaceActions(props);
+    const sourceControl = actions.find((action) => action.id === "source-control");
+    const unavailableSourceControl = buildAddSurfaceActions({
+      ...props,
+      sourceControlAvailable: false,
+    }).find((action) => action.id === "source-control");
+
+    expect(sourceControl?.available).toBe(true);
+    sourceControl?.onClick();
+    expect(props.onAddSourceControl).toHaveBeenCalledTimes(1);
+    expect(unavailableSourceControl?.available).toBe(false);
+    expect(unavailableSourceControl?.disabledReason).toBe(
+      "Version Control is only available when a project is open in a Git repository.",
+    );
+  });
+
+  it("preserves the live agent badge in the merged action model", () => {
+    const actions = buildAddSurfaceActions(actionProps());
+
+    expect(actions.find((action) => action.id === "agents")?.badgeCount).toBe(3);
+    expect(actions.find((action) => action.id === "source-control")?.badgeCount).toBe(0);
+  });
+});
+
+describe("surface shortcuts", () => {
   it("matches available surface shortcuts case-insensitively", () => {
-    expect(surfaceShortcutActionForKey(actions, shortcutEvent("b"))).toBe(actions[0]);
-    expect(surfaceShortcutActionForKey(actions, shortcutEvent("B"))).toBe(actions[0]);
+    const actions = buildAddSurfaceActions(actionProps(), "menu");
+    const sourceControl = actions.find((action) => action.id === "source-control");
+
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("v"))).toBe(sourceControl);
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("V"))).toBe(sourceControl);
   });
 
   it("does not activate unavailable surfaces", () => {
+    const actions = buildAddSurfaceActions({ ...actionProps(), diffAvailable: false }, "menu");
+
     expect(surfaceShortcutActionForKey(actions, shortcutEvent("d"))).toBeNull();
   });
 
   it("leaves modified, composing, and already-handled key events alone", () => {
-    expect(surfaceShortcutActionForKey(actions, shortcutEvent("b", { metaKey: true }))).toBeNull();
+    const actions = buildAddSurfaceActions(actionProps(), "menu");
+
+    expect(surfaceShortcutActionForKey(actions, shortcutEvent("v", { metaKey: true }))).toBeNull();
     expect(
-      surfaceShortcutActionForKey(actions, shortcutEvent("b", { isComposing: true })),
+      surfaceShortcutActionForKey(actions, shortcutEvent("v", { isComposing: true })),
     ).toBeNull();
     expect(
-      surfaceShortcutActionForKey(actions, shortcutEvent("b", { defaultPrevented: true })),
+      surfaceShortcutActionForKey(actions, shortcutEvent("v", { defaultPrevented: true })),
     ).toBeNull();
   });
 });
@@ -253,32 +328,35 @@ describe("RightPanelTabs audio indicator", () => {
   });
 });
 
-describe("tabMuteMenuItem", () => {
+describe("browserTabMuteMenuItem", () => {
   const overlay = (audioMuted: boolean) =>
-    ({ audioMuted, audible: false }) as Parameters<typeof tabMuteMenuItem>[0]["overlay"];
+    ({ audioMuted, audible: false }) as Parameters<typeof browserTabMuteMenuItem>[0]["overlay"];
 
   it("stays disabled until the desktop tab exists", () => {
     // The server session id resolves before the preview manager finishes
     // createTab. Muting in that window fails with an error nobody surfaces.
-    expect(tabMuteMenuItem({ overlay: null, canResolveRuntimeTabId: true })).toEqual({
+    expect(browserTabMuteMenuItem({ overlay: null, canResolveRuntimeTabId: true })).toEqual({
       label: "Mute tab",
       disabled: true,
     });
   });
 
   it("stays disabled when no runtime tab id can be resolved", () => {
-    expect(tabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: false })).toEqual({
-      label: "Mute tab",
-      disabled: true,
-    });
+    expect(
+      browserTabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: false }),
+    ).toEqual({ label: "Mute tab", disabled: true });
   });
 
   it("offers mute and unmute once the tab is addressable", () => {
-    expect(tabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: true })).toEqual({
+    expect(
+      browserTabMuteMenuItem({ overlay: overlay(false), canResolveRuntimeTabId: true }),
+    ).toEqual({
       label: "Mute tab",
       disabled: false,
     });
-    expect(tabMuteMenuItem({ overlay: overlay(true), canResolveRuntimeTabId: true })).toEqual({
+    expect(
+      browserTabMuteMenuItem({ overlay: overlay(true), canResolveRuntimeTabId: true }),
+    ).toEqual({
       label: "Unmute tab",
       disabled: false,
     });

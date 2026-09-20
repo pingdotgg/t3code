@@ -1,0 +1,947 @@
+import { panelBranchDetailsFingerprint } from "@t3tools/shared/sourceControl";
+import type {
+  VcsPanelBranchDetails,
+  VcsPanelFileChange,
+  VcsPanelFileDiffInput,
+  VcsPanelStashDetails,
+  VcsPanelSnapshotResult,
+  VcsRef,
+  VcsStatusResult,
+} from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, EnvironmentId } from "@t3tools/contracts";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { panelBranchOperationCwd, panelBranchSyncState } from "@t3tools/shared/sourceControl";
+import { useAtomValue } from "@effect/atom-react";
+import * as Duration from "effect/Duration";
+import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Alert } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { retainMobileBackgroundActivityScope } from "../../connection/background-activity-scopes";
+import { ScreenHeader } from "../../components/ScreenHeader";
+import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
+import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { vcsEnvironment } from "../../state/vcs";
+import {
+  actionableLocalBranches,
+  applyWorkingTreeEnrichments,
+  beginVersionControlAction,
+  beginDetailRequest,
+  branchOwnsOperationCwd,
+  clearResolvedDetailError,
+  detailRequestIsCurrent,
+  discardableFiles,
+  discardPathGroups,
+  operationPaths,
+  panelChangeSets,
+  newlyInitializedCurrentChangeSetCwds,
+  reconcileSelectedPaths,
+  snapshotForCwd,
+  snapshotIsPendingForCwd,
+  snapshotRequestIsCurrent,
+  stashIdentityKey,
+  type VersionControlChangeSet,
+} from "./versionControlModel";
+import {
+  VersionControlCommandInterrupted,
+  useVersionControlPanelApi,
+} from "./useVersionControlPanelApi";
+import {
+  mergeVersionControlRefreshOptions,
+  retainPullRefreshIndicator,
+  retryInterruptedVersionControlRequest,
+  runAutomaticRemoteFetch,
+  type VersionControlRefreshOptions,
+  VERSION_CONTROL_CHECKOUT_ACTION_OPTIONS,
+} from "./versionControlRequest";
+import type { PublishRequest } from "./VersionControlRouteComponents";
+import { VersionControlRouteView } from "./VersionControlRouteView";
+
+type VersionControlRouteScreenProps = StaticScreenProps<{
+  readonly environmentId: string;
+  readonly threadId: string;
+}>;
+
+type FileDiffSource = NonNullable<VcsPanelFileDiffInput["source"]>;
+
+interface FileDiffRequest {
+  readonly cwd: string;
+  readonly file: VcsPanelFileChange;
+  readonly source: FileDiffSource;
+}
+
+interface VersionControlRefreshQueue {
+  readonly cwd: string | null;
+  readonly runId: number;
+  queued: VersionControlRefreshOptions | null;
+  promise: Promise<void>;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) return error.message;
+  return "The Version Control operation failed.";
+}
+
+export function useVersionControlRouteController(props: VersionControlRouteScreenProps) {
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  const environmentId = EnvironmentId.make(props.route.params.environmentId);
+  const { selectedThread } = useThreadSelection();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const gitActions = useSelectedThreadGitActions();
+  const api = useVersionControlPanelApi(environmentId);
+  const serverSettings =
+    useAtomValue(serverEnvironment.settingsValueAtom(environmentId)) ?? DEFAULT_SERVER_SETTINGS;
+  const sourceControlAllRemotesFetchIntervalMs = Duration.toMillis(
+    resolveServerBackgroundActivitySettings(serverSettings).sourceControlAllRemotesFetchInterval,
+  );
+  const statusQuery = useEnvironmentQuery(
+    selectedThreadCwd
+      ? vcsEnvironment.status({
+          environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
+      : null,
+  );
+
+  const [scopedSnapshot, setScopedSnapshot] = useState<{
+    readonly cwd: string;
+    readonly snapshot: VcsPanelSnapshotResult;
+  } | null>(null);
+  const snapshot = snapshotForCwd(scopedSnapshot, selectedThreadCwd);
+  const [loading, setLoading] = useState(true);
+  const [settledSnapshotCwd, setSettledSnapshotCwd] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const runningActionKeysRef = useRef(new Set<string>());
+  const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [actionableExpanded, setActionableExpanded] = useState(true);
+  const [remotesExpanded, setRemotesExpanded] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<ReadonlySet<string>>(
+    () => new Set(selectedThreadCwd ? [`changes:${selectedThreadCwd}`] : []),
+  );
+  const expandedRowsRef = useRef<ReadonlySet<string>>(expandedRows);
+  const [selectedByCwd, setSelectedByCwd] = useState<ReadonlyMap<string, ReadonlySet<string>>>(
+    new Map(),
+  );
+  const knownPathsByCwd = useRef(new Map<string, Set<string>>());
+  const initializedChangeSetCwds = useRef(new Set<string>());
+  const [branchDetails, setBranchDetails] = useState<ReadonlyMap<string, VcsPanelBranchDetails>>(
+    new Map(),
+  );
+  const [stashDetails, setStashDetails] = useState<ReadonlyMap<string, VcsPanelStashDetails>>(
+    new Map(),
+  );
+  const [detailErrors, setDetailErrors] = useState<ReadonlyMap<string, string>>(new Map());
+  const [showAddRemote, setShowAddRemote] = useState(false);
+  const [remoteName, setRemoteName] = useState("");
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [publishRequest, setPublishRequest] = useState<PublishRequest | null>(null);
+  const snapshotRequestId = useRef(0);
+  const detailRequestIds = useRef(new Map<string, number>());
+  const selectedThreadCwdRef = useRef(selectedThreadCwd);
+  const snapshotRevision = useRef(0);
+  const detailsFingerprint = useRef<string | null>(null);
+  const snapshotFingerprint = useRef<string | null>(null);
+  const refreshQueue = useRef<VersionControlRefreshQueue | null>(null);
+  const refreshRunId = useRef(0);
+  const automaticFetchesInFlight = useRef(new Set<string>());
+
+  useLayoutEffect(() => {
+    selectedThreadCwdRef.current = selectedThreadCwd;
+  }, [selectedThreadCwd]);
+
+  useEffect(() => {
+    expandedRowsRef.current = expandedRows;
+  }, [expandedRows]);
+
+  useEffect(() => {
+    if (!selectedThreadCwd) return;
+    return retainMobileBackgroundActivityScope(environmentId, {
+      type: "git-refs",
+      cwd: selectedThreadCwd,
+    });
+  }, [environmentId, selectedThreadCwd]);
+
+  const syncSelections = useCallback((nextSnapshot: VcsPanelSnapshotResult, cwd: string) => {
+    const changeSets = panelChangeSets(nextSnapshot, cwd);
+    const newlyInitializedCurrentCwds = newlyInitializedCurrentChangeSetCwds(
+      changeSets,
+      initializedChangeSetCwds.current,
+    );
+    const previousKnownPaths = knownPathsByCwd.current;
+    const nextKnownPaths = new Map(
+      changeSets.map(
+        (changeSet) => [changeSet.cwd, new Set(changeSet.files.map((file) => file.path))] as const,
+      ),
+    );
+    knownPathsByCwd.current = nextKnownPaths;
+
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      for (const changeSetCwd of newlyInitializedCurrentCwds) next.add(`changes:${changeSetCwd}`);
+      return next;
+    });
+    setSelectedByCwd((current) =>
+      reconcileSelectedPaths({
+        changeSets,
+        previousKnownPaths,
+        selectedByCwd: current,
+      }),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (snapshot && selectedThreadCwd) syncSelections(snapshot, selectedThreadCwd);
+  }, [snapshot, selectedThreadCwd, syncSelections]);
+
+  const performSnapshotRefresh = useCallback(
+    async (requestCwd: string | null, options: VersionControlRefreshOptions) => {
+      if (requestCwd !== selectedThreadCwdRef.current) return;
+      const requestId = ++snapshotRequestId.current;
+      setRefreshing((current) => retainPullRefreshIndicator(current, options.pull === true));
+      if (!requestCwd) {
+        if (requestId === snapshotRequestId.current) {
+          setSettledSnapshotCwd(null);
+          setLoading(false);
+          setRefreshing(false);
+        }
+        return;
+      }
+      setSettledSnapshotCwd((current) => (current === requestCwd ? null : current));
+      try {
+        const rawSnapshot = await api.snapshot({
+          cwd: requestCwd,
+          refresh: options.refresh ?? "full",
+        });
+        if (
+          !snapshotRequestIsCurrent(
+            requestId,
+            snapshotRequestId.current,
+            requestCwd,
+            selectedThreadCwdRef.current,
+          )
+        ) {
+          return;
+        }
+        const nextFingerprint = `${requestCwd}\0${JSON.stringify(rawSnapshot)}`;
+        if (snapshotFingerprint.current !== nextFingerprint) {
+          snapshotFingerprint.current = nextFingerprint;
+          const nextDetailsFingerprint = `${requestCwd}\0${panelBranchDetailsFingerprint(rawSnapshot)}\0${JSON.stringify(rawSnapshot.stashes)}`;
+          if (
+            detailsFingerprint.current !== nextDetailsFingerprint ||
+            options.refresh !== "working-tree"
+          ) {
+            detailsFingerprint.current = nextDetailsFingerprint;
+            snapshotRevision.current += 1;
+            setBranchDetails(new Map());
+            setStashDetails(new Map());
+            setDetailErrors(new Map());
+            setExpandedRows(
+              (current) =>
+                new Set(
+                  [...current].filter(
+                    (key) =>
+                      !key.startsWith("branch:") &&
+                      !key.startsWith("fork:") &&
+                      !key.startsWith("commit:") &&
+                      !key.startsWith("stash:"),
+                  ),
+                ),
+            );
+          }
+        }
+        enrichmentRequested.current.clear();
+        enrichmentPending.current.clear();
+        setScopedSnapshot({ cwd: requestCwd, snapshot: rawSnapshot });
+        setError(null);
+      } catch (cause) {
+        if (
+          snapshotRequestIsCurrent(
+            requestId,
+            snapshotRequestId.current,
+            requestCwd,
+            selectedThreadCwdRef.current,
+          ) &&
+          !(cause instanceof VersionControlCommandInterrupted)
+        ) {
+          setError(errorMessage(cause));
+        }
+      } finally {
+        if (
+          snapshotRequestIsCurrent(
+            requestId,
+            snapshotRequestId.current,
+            requestCwd,
+            selectedThreadCwdRef.current,
+          )
+        ) {
+          setSettledSnapshotCwd(requestCwd);
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    },
+    [api, syncSelections],
+  );
+
+  const enrichmentRequested = useRef(new Set<string>());
+  const enrichmentPending = useRef(new Map<string, { cwd: string; path: string }>());
+  const enrichmentRunning = useRef(false);
+  const enrichmentTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enqueueFileEnrichment = useCallback(
+    (file: VcsPanelFileChange, cwd: string) => {
+      if (file.status !== "untracked" && file.status !== "deleted") return;
+      const key = JSON.stringify([cwd, file.path]);
+      if (enrichmentRequested.current.has(key)) return;
+      enrichmentRequested.current.add(key);
+      enrichmentPending.current.set(key, { cwd, path: file.path });
+      const flush = async () => {
+        enrichmentTimer.current = null;
+        if (enrichmentRunning.current) return;
+        enrichmentRunning.current = true;
+        try {
+          while (enrichmentPending.current.size > 0) {
+            const entries = [...enrichmentPending.current.entries()].slice(0, 64);
+            const cwd = entries[0]![1].cwd;
+            const batch = entries.filter(([, entry]) => entry.cwd === cwd);
+            for (const [key] of batch) enrichmentPending.current.delete(key);
+            const requestId = snapshotRequestId.current;
+            const result = await api.enrichWorkingTreeFiles({
+              cwd,
+              paths: batch.map(([, entry]) => entry.path),
+            });
+            if (requestId !== snapshotRequestId.current) continue;
+            setScopedSnapshot((current) => {
+              if (!current || current.cwd !== selectedThreadCwdRef.current) return current;
+              return {
+                ...current,
+                snapshot: applyWorkingTreeEnrichments(
+                  current.snapshot,
+                  current.cwd,
+                  new Map([[cwd, result]]),
+                ),
+              };
+            });
+          }
+        } catch {
+          // Metadata can retry on the next authoritative snapshot.
+        } finally {
+          enrichmentRunning.current = false;
+        }
+      };
+      if (!enrichmentRunning.current && enrichmentTimer.current === null) {
+        enrichmentTimer.current = setTimeout(() => void flush(), 50);
+      }
+    },
+    [api],
+  );
+  useEffect(() => {
+    if (!snapshot || !selectedThreadCwd) return;
+    for (const changeSet of panelChangeSets(snapshot, selectedThreadCwd)) {
+      for (const file of changeSet.files) enqueueFileEnrichment(file, changeSet.cwd);
+    }
+  }, [snapshot, selectedThreadCwd, enqueueFileEnrichment]);
+  useEffect(
+    () => () => {
+      enrichmentPending.current.clear();
+      if (enrichmentTimer.current !== null) clearTimeout(enrichmentTimer.current);
+    },
+    [],
+  );
+
+  const refreshSnapshot = useCallback(
+    (options: VersionControlRefreshOptions = {}): Promise<void> => {
+      const requestCwd = selectedThreadCwd;
+      if (requestCwd !== selectedThreadCwdRef.current) return Promise.resolve();
+      const active = refreshQueue.current;
+      if (active?.cwd === requestCwd) {
+        if (options.pull === true) setRefreshing(true);
+        active.queued = mergeVersionControlRefreshOptions(active.queued, options);
+        return active.promise;
+      }
+
+      const runId = ++refreshRunId.current;
+      const queue: VersionControlRefreshQueue = {
+        cwd: requestCwd,
+        runId,
+        queued: null,
+        promise: Promise.resolve(),
+      };
+      queue.promise = (async () => {
+        let nextOptions: VersionControlRefreshOptions | null = options;
+        while (nextOptions !== null) {
+          await performSnapshotRefresh(requestCwd, nextOptions);
+          if (refreshQueue.current?.runId !== runId) return;
+          nextOptions = queue.queued;
+          queue.queued = null;
+        }
+      })().finally(() => {
+        if (refreshQueue.current?.runId === runId) refreshQueue.current = null;
+      });
+      refreshQueue.current = queue;
+      return queue.promise;
+    },
+    [performSnapshotRefresh, selectedThreadCwd],
+  );
+
+  const runAction = useCallback(
+    async (label: string, action: () => Promise<unknown>) => {
+      if (!beginVersionControlAction(runningActionKeysRef.current, label)) return false;
+      setBusyAction(label);
+      setError(null);
+      setMutationError(null);
+      let succeeded = false;
+      let actionError: string | null = null;
+      try {
+        await action();
+        succeeded = true;
+      } catch (cause) {
+        if (!(cause instanceof VersionControlCommandInterrupted)) actionError = errorMessage(cause);
+      } finally {
+        try {
+          await refreshSnapshot();
+          statusQuery.refresh();
+          if (actionError) setMutationError(actionError);
+        } finally {
+          runningActionKeysRef.current.delete(label);
+          setBusyAction((current) => (current === label ? null : current));
+        }
+      }
+      return succeeded;
+    },
+    [refreshSnapshot, statusQuery],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!selectedThreadCwd) return;
+      const cwd = selectedThreadCwd;
+      void refreshSnapshot({ refresh: "working-tree" });
+      if (sourceControlAllRemotesFetchIntervalMs <= 0) return;
+
+      const refreshAllRemotes = () => {
+        void runAutomaticRemoteFetch({
+          cwd,
+          inFlightCwds: automaticFetchesInFlight.current,
+          fetch: () => api.fetchAllRemotes({ cwd }),
+          refresh: () => refreshSnapshot(),
+        });
+      };
+      refreshAllRemotes();
+      const interval = setInterval(refreshAllRemotes, sourceControlAllRemotesFetchIntervalMs);
+      return () => clearInterval(interval);
+    }, [api, refreshSnapshot, selectedThreadCwd, sourceControlAllRemotesFetchIntervalMs]),
+  );
+
+  const statusFingerprint = statusQuery.data ? JSON.stringify(statusQuery.data) : null;
+  const lastStatusRefresh = useRef<{
+    readonly data: VcsStatusResult;
+    readonly fingerprint: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!statusQuery.data || !statusFingerprint) return;
+    const previous = lastStatusRefresh.current;
+    if (previous?.data === statusQuery.data && previous.fingerprint === statusFingerprint) return;
+    lastStatusRefresh.current = {
+      data: statusQuery.data,
+      fingerprint: statusFingerprint,
+    };
+    if (previous) void refreshSnapshot({ refresh: "working-tree" });
+  }, [refreshSnapshot, statusFingerprint, statusQuery.data]);
+
+  const changeSets = useMemo(
+    () => (snapshot && selectedThreadCwd ? panelChangeSets(snapshot, selectedThreadCwd) : []),
+    [selectedThreadCwd, snapshot],
+  );
+  const localBranches = useMemo(
+    () => (snapshot ? actionableLocalBranches(snapshot) : []),
+    [snapshot],
+  );
+  const actionCount =
+    changeSets.length +
+    localBranches.length +
+    (snapshot?.actionableForkBranches.length ?? 0) +
+    (snapshot?.stashes.length ?? 0);
+  const busy = busyAction !== null;
+  const header = (
+    <ScreenHeader
+      title="Version Control"
+      sidebar={false}
+      actions={[
+        {
+          accessibilityLabel: "Close Version Control",
+          icon: "xmark",
+          onPress: () => navigation.goBack(),
+        },
+      ]}
+    />
+  );
+
+  const toggleExpanded = useCallback((key: string) => {
+    setExpandedRows((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      expandedRowsRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const openFileDiff = useCallback(
+    (request: FileDiffRequest) => {
+      navigation.navigate("VersionControlDiff", {
+        environmentId: String(environmentId),
+        cwd: request.cwd,
+        file: request.file,
+        source: request.source,
+      });
+    },
+    [environmentId, navigation],
+  );
+
+  const toggleSelectedFile = useCallback((cwd: string, path: string) => {
+    setSelectedByCwd((current) => {
+      const next = new Map(current);
+      const selected = new Set(next.get(cwd) ?? []);
+      if (selected.has(path)) selected.delete(path);
+      else selected.add(path);
+      next.set(cwd, selected);
+      return next;
+    });
+  }, []);
+
+  const selectAllFiles = useCallback((changeSet: VersionControlChangeSet) => {
+    setSelectedByCwd((current) => {
+      const next = new Map(current);
+      const selected = next.get(changeSet.cwd) ?? new Set();
+      next.set(
+        changeSet.cwd,
+        selected.size === changeSet.files.length
+          ? new Set()
+          : new Set(changeSet.files.map((file) => file.path)),
+      );
+      return next;
+    });
+  }, []);
+
+  const selectedFiles = useCallback(
+    (changeSet: VersionControlChangeSet) => {
+      const selected = selectedByCwd.get(changeSet.cwd) ?? new Set();
+      return changeSet.files.filter((file) => selected.has(file.path));
+    },
+    [selectedByCwd],
+  );
+
+  const commitSelected = useCallback(
+    (changeSet: VersionControlChangeSet) => {
+      const files = selectedFiles(changeSet);
+      const paths = operationPaths(files);
+      if (paths.length === 0) return;
+      void runAction("commit", async () => {
+        await api.commitStaged({ cwd: changeSet.cwd, paths });
+      });
+    },
+    [api, runAction, selectedFiles],
+  );
+
+  const stashSelected = useCallback(
+    (changeSet: VersionControlChangeSet) => {
+      const files = selectedFiles(changeSet);
+      const paths = operationPaths(files);
+      if (paths.length === 0) return;
+      void runAction("stash", () =>
+        api.createStash({ cwd: changeSet.cwd, paths, includeUntracked: true }),
+      );
+    },
+    [api, runAction, selectedFiles],
+  );
+
+  const discardSelected = useCallback(
+    (changeSet: VersionControlChangeSet) => {
+      const files = discardableFiles(selectedFiles(changeSet));
+      const paths = discardPathGroups(files);
+      if (paths.staged.length === 0 && paths.unstaged.length === 0) return;
+      Alert.alert(
+        "Discard selected changes?",
+        `This permanently discards changes in ${files.length} selected file${files.length === 1 ? "" : "s"}.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Discard",
+            style: "destructive",
+            onPress: () =>
+              void runAction("discard", async () => {
+                if (paths.unstaged.length > 0) {
+                  await api.discardFiles({
+                    cwd: changeSet.cwd,
+                    paths: paths.unstaged,
+                  });
+                }
+                if (paths.staged.length > 0) {
+                  await api.discardFiles({
+                    cwd: changeSet.cwd,
+                    paths: paths.staged,
+                    staged: true,
+                  });
+                }
+              }),
+          },
+        ],
+      );
+    },
+    [api, runAction, selectedFiles],
+  );
+
+  const loadBranchDetails = useCallback(
+    (branch: VcsRef, key: string, compareBaseRef?: string) => {
+      const wasExpanded = expandedRowsRef.current.has(key);
+      toggleExpanded(key);
+      if (!snapshot || branchDetails.has(key) || wasExpanded) return;
+      const previousDetailError = detailErrors.get(key) ?? null;
+      const revision = snapshotRevision.current;
+      const requestId = beginDetailRequest(detailRequestIds.current, key);
+      setDetailErrors((current) => {
+        if (!current.has(key)) return current;
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
+      void retryInterruptedVersionControlRequest(() =>
+        api.branchDetails({
+          cwd: selectedThreadCwd ?? "",
+          branch,
+          defaultCompareRef: snapshot.defaultCompareRef,
+          ...(compareBaseRef ? { compareBaseRef } : {}),
+        }),
+      )
+        .then((details) => {
+          if (
+            revision !== snapshotRevision.current ||
+            !detailRequestIsCurrent(detailRequestIds.current, key, requestId)
+          ) {
+            return;
+          }
+          setBranchDetails((current) => new Map(current).set(key, details));
+          setDetailErrors((current) => {
+            if (!current.has(key)) return current;
+            const next = new Map(current);
+            next.delete(key);
+            return next;
+          });
+          setError((current) => clearResolvedDetailError(current, previousDetailError));
+        })
+        .catch((cause) => {
+          if (
+            revision === snapshotRevision.current &&
+            detailRequestIsCurrent(detailRequestIds.current, key, requestId) &&
+            !(cause instanceof VersionControlCommandInterrupted)
+          ) {
+            const message = errorMessage(cause);
+            setDetailErrors((current) => new Map(current).set(key, message));
+            setError(message);
+          }
+        });
+    },
+    [api, branchDetails, detailErrors, selectedThreadCwd, snapshot, toggleExpanded],
+  );
+
+  const publishBranch = useCallback(
+    (branch: VcsRef, targetCwd: string) => {
+      if (!snapshot) return;
+      if (snapshot.remotes.length === 0) {
+        setError("Add a remote before publishing this branch.");
+        return;
+      }
+      if (snapshot.remotes.length > 1) {
+        setPublishRequest({ branchName: branch.name, targetCwd });
+        return;
+      }
+      const remote = snapshot.remotes[0];
+      if (!remote) return;
+      void runAction("publish", () =>
+        api.pushBranch({
+          cwd: targetCwd,
+          branchName: branch.name,
+          remoteName: remote.name,
+        }),
+      );
+    },
+    [api, runAction, snapshot],
+  );
+
+  const publishToRemote = useCallback(
+    (remoteName: string) => {
+      const request = publishRequest;
+      if (!request) return;
+      setPublishRequest(null);
+      void runAction("publish", () =>
+        api.pushBranch({
+          cwd: request.targetCwd,
+          branchName: request.branchName,
+          remoteName,
+        }),
+      );
+    },
+    [api, publishRequest, runAction],
+  );
+
+  const syncBranch = useCallback(
+    (branch: VcsRef) => {
+      if (!snapshot || !selectedThreadCwd) return;
+      const state = panelBranchSyncState(branch, snapshot);
+      const targetCwd = panelBranchOperationCwd(branch, selectedThreadCwd);
+      if (state === "publish") {
+        publishBranch(branch, targetCwd);
+        return;
+      }
+      if (state === "push") {
+        void runAction("push", () => api.pushBranch({ cwd: targetCwd, branchName: branch.name }));
+        return;
+      }
+      if (state === "pull") {
+        void runAction("pull", () => api.pullBranch({ cwd: targetCwd, branchName: branch.name }));
+        return;
+      }
+      if (state === "fetch") {
+        void runAction("fetch", () => api.fetchBranch({ cwd: targetCwd, branchName: branch.name }));
+        return;
+      }
+      const canMerge = branchOwnsOperationCwd(branch);
+      Alert.alert("Branch has diverged", "Choose how to synchronize this branch.", [
+        { text: "Cancel", style: "cancel" },
+        ...(canMerge
+          ? [
+              {
+                text: "Pull & merge",
+                onPress: () =>
+                  void runAction("merge-sync", () =>
+                    api.pullBranch({
+                      cwd: targetCwd,
+                      branchName: branch.name,
+                      merge: true,
+                    }),
+                  ),
+              },
+            ]
+          : []),
+        {
+          text: "More…",
+          onPress: () =>
+            Alert.alert("Destructive sync", "These actions overwrite one side of the branch.", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Force pull",
+                style: "destructive",
+                onPress: () =>
+                  void runAction("force-pull", () =>
+                    api.pullBranch({
+                      cwd: targetCwd,
+                      branchName: branch.name,
+                      force: true,
+                    }),
+                  ),
+              },
+              {
+                text: "Force push",
+                style: "destructive",
+                onPress: () =>
+                  void runAction("force-push", () =>
+                    api.pushBranch({
+                      cwd: targetCwd,
+                      branchName: branch.name,
+                      force: true,
+                    }),
+                  ),
+              },
+            ]),
+        },
+      ]);
+    },
+    [api, publishBranch, runAction, selectedThreadCwd, snapshot],
+  );
+
+  const switchBranch = useCallback(
+    (branch: VcsRef) => {
+      void runAction("switch", async () => {
+        await gitActions.onCheckoutSelectedThreadBranch(
+          branch.name,
+          VERSION_CONTROL_CHECKOUT_ACTION_OPTIONS,
+        );
+      });
+    },
+    [gitActions, runAction],
+  );
+
+  const deleteBranch = useCallback(
+    (branch: VcsRef) => {
+      if (!selectedThreadCwd || branch.current || branch.worktreePath !== null) return;
+      Alert.alert("Delete branch?", `Delete ${branch.name}?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () =>
+            void runAction("delete-branch", () =>
+              api.deleteBranch({
+                cwd: selectedThreadCwd,
+                branchName: branch.name,
+              }),
+            ),
+        },
+      ]);
+    },
+    [api, runAction, selectedThreadCwd],
+  );
+
+  const mergeBranch = useCallback(
+    (refName: string) => {
+      if (!selectedThreadCwd) return;
+      Alert.alert("Merge branch?", `Merge ${refName} into the current branch?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Merge",
+          onPress: () =>
+            void runAction("merge-branch", () =>
+              api.mergeBranchIntoCurrent({ cwd: selectedThreadCwd, refName }),
+            ),
+        },
+      ]);
+    },
+    [api, runAction, selectedThreadCwd],
+  );
+
+  const rebaseBranch = useCallback(
+    (refName: string) => {
+      if (!selectedThreadCwd) return;
+      Alert.alert("Rebase branch?", `Rebase the current branch onto ${refName}?`, [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Rebase",
+          onPress: () =>
+            void runAction("rebase-branch", () =>
+              api.rebaseCurrentOnto({ cwd: selectedThreadCwd, refName }),
+            ),
+        },
+      ]);
+    },
+    [api, runAction, selectedThreadCwd],
+  );
+
+  const loadStashDetails = useCallback(
+    (stash: VcsPanelSnapshotResult["stashes"][number]) => {
+      const detailsKey = stashIdentityKey(stash);
+      const key = `stash:${detailsKey}`;
+      const wasExpanded = expandedRowsRef.current.has(key);
+      toggleExpanded(key);
+      if (!selectedThreadCwd || stashDetails.has(detailsKey) || wasExpanded) return;
+      const previousDetailError = detailErrors.get(key) ?? null;
+      const revision = snapshotRevision.current;
+      const requestId = beginDetailRequest(detailRequestIds.current, key);
+      setDetailErrors((current) => {
+        if (!current.has(key)) return current;
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      });
+      void retryInterruptedVersionControlRequest(() =>
+        api.stashDetails({ cwd: selectedThreadCwd, stashRef: stash.refName }),
+      )
+        .then((details) => {
+          if (
+            revision !== snapshotRevision.current ||
+            !detailRequestIsCurrent(detailRequestIds.current, key, requestId)
+          ) {
+            return;
+          }
+          setStashDetails((current) => new Map(current).set(detailsKey, details));
+          setDetailErrors((current) => {
+            if (!current.has(key)) return current;
+            const next = new Map(current);
+            next.delete(key);
+            return next;
+          });
+          setError((current) => clearResolvedDetailError(current, previousDetailError));
+        })
+        .catch((cause) => {
+          if (
+            revision === snapshotRevision.current &&
+            detailRequestIsCurrent(detailRequestIds.current, key, requestId) &&
+            !(cause instanceof VersionControlCommandInterrupted)
+          ) {
+            const message = errorMessage(cause);
+            setDetailErrors((current) => new Map(current).set(key, message));
+            setError(message);
+          }
+        });
+    },
+    [api, detailErrors, selectedThreadCwd, stashDetails, toggleExpanded],
+  );
+
+  return {
+    actionableExpanded,
+    actionCount,
+    api,
+    branchDetails,
+    busy,
+    busyAction,
+    changeSets,
+    enqueueFileEnrichment,
+    commitSelected,
+    deleteBranch,
+    detailErrors,
+    discardSelected,
+    error,
+    expandedRows,
+    header,
+    insets,
+    loadBranchDetails,
+    loadStashDetails,
+    loading: loading || snapshotIsPendingForCwd(snapshot, selectedThreadCwd, settledSnapshotCwd),
+    localBranches,
+    mergeBranch,
+    mutationError,
+    openFileDiff,
+    publishRequest,
+    publishToRemote,
+    rebaseBranch,
+    refreshing,
+    refreshSnapshot,
+    remoteName,
+    remotesExpanded,
+    remoteUrl,
+    runAction,
+    selectAllFiles,
+    selectedByCwd,
+    selectedFiles,
+    selectedThread,
+    selectedThreadCwd,
+    setActionableExpanded,
+    setError,
+    setMutationError,
+    setPublishRequest,
+    setRemoteName,
+    setRemotesExpanded,
+    setRemoteUrl,
+    setShowAddRemote,
+    showAddRemote,
+    snapshot,
+    stashDetails,
+    stashSelected,
+    switchBranch,
+    syncBranch,
+    toggleExpanded,
+    toggleSelectedFile,
+  };
+}
+
+export type VersionControlRouteController = ReturnType<typeof useVersionControlRouteController>;
+
+export function VersionControlRouteScreen(props: VersionControlRouteScreenProps) {
+  return <VersionControlRouteView controller={useVersionControlRouteController(props)} />;
+}

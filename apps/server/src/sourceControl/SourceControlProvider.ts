@@ -3,12 +3,12 @@ import * as Effect from "effect/Effect";
 import type {
   ChangeRequest,
   ChangeRequestState,
-  SourceControlProviderError,
   SourceControlProviderInfo,
   SourceControlProviderKind,
   SourceControlRepositoryCloneUrls,
   SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
+import { SourceControlProviderError } from "@t3tools/contracts";
 
 export interface SourceControlLinkSubject {
   readonly title: string;
@@ -36,6 +36,8 @@ export interface SourceControlRefSelector {
 }
 
 const MAX_ERROR_TRANSPORT_VALUE_LENGTH = 256;
+const EMBEDDED_HTTP_URL_PATTERN = /https?:\/\/[^\s"'<>`]+/giu;
+const EMBEDDED_HTTP_AUTHORITY_CREDENTIALS_PATTERN = /^(https?:\/\/)[^/?#@]*@/iu;
 
 /**
  * Sanitizes user-provided source-control identifiers before attaching them to
@@ -48,21 +50,35 @@ export function transportSafeSourceControlErrorValue(value: string): string {
     const codePoint = character.codePointAt(0);
     printable += codePoint !== undefined && (codePoint < 32 || codePoint === 127) ? " " : character;
   }
-  const normalized = printable.trim().replace(/\s+/gu, " ");
+  const normalized = printable
+    .replace(EMBEDDED_HTTP_URL_PATTERN, transportSafeEmbeddedUrl)
+    .trim()
+    .replace(/\s+/gu, " ");
 
   let safe = normalized;
+  const parsedUrl = transportSafeUrl(normalized);
+  safe = parsedUrl ?? normalized;
+
+  return safe.slice(0, MAX_ERROR_TRANSPORT_VALUE_LENGTH);
+}
+
+function transportSafeEmbeddedUrl(value: string): string {
+  return (
+    transportSafeUrl(value) ?? value.replace(EMBEDDED_HTTP_AUTHORITY_CREDENTIALS_PATTERN, "$1")
+  );
+}
+
+function transportSafeUrl(value: string): string | null {
   try {
-    const url = new URL(normalized);
+    const url = new URL(value);
     url.username = "";
     url.password = "";
     url.search = "";
     url.hash = "";
-    safe = url.toString();
+    return url.toString();
   } catch {
-    // Plain repository and change-request identifiers are not URLs.
+    return null;
   }
-
-  return safe.slice(0, MAX_ERROR_TRANSPORT_VALUE_LENGTH);
 }
 
 export function parseSourceControlOwnerRef(
@@ -92,6 +108,105 @@ export function sourceControlRefFromInput(input: {
   return input.source ?? parseSourceControlOwnerRef(input.headSelector);
 }
 
+export interface SourceControlProviderCommandError {
+  readonly command?: string;
+  readonly detail?: string;
+  readonly message?: string;
+}
+
+function readStringField(value: unknown, key: string): string | undefined {
+  if (typeof value !== "object" || value === null || !(key in value)) {
+    return undefined;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : undefined;
+}
+
+function safeNumberField(error: unknown, key: string): Record<string, number> {
+  if (typeof error !== "object" || error === null || !(key in error)) {
+    return {};
+  }
+  const value = (error as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? { [key]: value } : {};
+}
+
+function normalizedSourceControlProviderCause(error: unknown) {
+  if (typeof error !== "object" || error === null) {
+    return {
+      message: transportSafeSourceControlErrorValue(String(error)),
+    };
+  }
+
+  return {
+    ...safeErrorField(error, "_tag"),
+    ...safeErrorField(error, "name"),
+    ...safeErrorField(error, "command"),
+    ...safeErrorField(error, "operation"),
+    ...safeErrorField(error, "failureKind"),
+    ...safeErrorField(error, "reference"),
+    ...safeErrorField(error, "repository"),
+    ...safeErrorField(error, "detail"),
+    ...safeErrorField(error, "message"),
+    ...safeNumberField(error, "status"),
+    ...safeNumberField(error, "retryAt"),
+  };
+}
+
+function safeErrorField(error: unknown, key: string): Record<string, string> {
+  const value = readStringField(error, key);
+  return value === undefined ? {} : { [key]: transportSafeSourceControlErrorValue(value) };
+}
+
+export function sourceControlProviderError(input: {
+  readonly provider: SourceControlProviderKind;
+  readonly operation: string;
+  readonly cwd: string;
+  readonly error: unknown;
+  readonly detail?: string;
+  readonly reference?: string;
+  readonly repository?: string;
+}): SourceControlProviderError {
+  const command = readStringField(input.error, "command");
+  const detail =
+    input.detail ??
+    readStringField(input.error, "detail") ??
+    "Source control provider operation failed.";
+
+  return new SourceControlProviderError({
+    provider: input.provider,
+    operation: input.operation,
+    ...(command !== undefined ? { command: transportSafeSourceControlErrorValue(command) } : {}),
+    cwd: input.cwd,
+    ...(input.reference !== undefined
+      ? { reference: transportSafeSourceControlErrorValue(input.reference) }
+      : {}),
+    ...(input.repository !== undefined
+      ? { repository: transportSafeSourceControlErrorValue(input.repository) }
+      : {}),
+    detail: transportSafeSourceControlErrorValue(detail),
+    cause: normalizedSourceControlProviderCause(input.error),
+  });
+}
+
+export function repositoryPathFromRemoteUrl(remoteUrl: string): string | null {
+  const withoutSuffix = (value: string) => value.replace(/\.git$/u, "");
+  const trimmed = remoteUrl.trim();
+  if (trimmed.length === 0) return null;
+
+  try {
+    const url = new URL(trimmed);
+    const path = withoutSuffix(decodeURIComponent(url.pathname).replace(/^\/+/u, "").trim());
+    return path.length > 0 ? path : null;
+  } catch {
+    const scpLike = /^(?:[^@/\s]+@)?[^:/\s]+:(.+)$/u.exec(trimmed);
+    if (scpLike?.[1]) {
+      const path = withoutSuffix(scpLike[1].replace(/^\/+/u, "").trim());
+      return path.length > 0 ? path : null;
+    }
+    return null;
+  }
+}
+
 export class SourceControlProvider extends Context.Service<
   SourceControlProvider,
   {
@@ -102,7 +217,7 @@ export class SourceControlProvider extends Context.Service<
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;
       readonly source?: SourceControlRefSelector;
-      readonly headSelector: string;
+      readonly headSelector?: string;
       readonly state: ChangeRequestState | "all";
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<ChangeRequest>, SourceControlProviderError>;
@@ -126,6 +241,12 @@ export class SourceControlProvider extends Context.Service<
       readonly context?: SourceControlProviderContext;
       readonly repository: string;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
+    readonly getCommitAvatarUrl: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProviderContext;
+      readonly sha: string;
+      readonly authorEmail?: string | null;
+    }) => Effect.Effect<string | null, SourceControlProviderError>;
     readonly createRepository: (input: {
       readonly cwd: string;
       readonly repository: string;

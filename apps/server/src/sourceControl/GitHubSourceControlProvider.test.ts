@@ -97,7 +97,59 @@ it.effect("maps GitHub PR summaries into provider-neutral change requests", () =
   }),
 );
 
-it.effect("adds safe request context while retaining GitHub CLI causes", () =>
+for (const { host, remoteUrl } of [
+  {
+    host: "github.example.test",
+    remoteUrl: "https://github.example.test/acme/repo.git",
+  },
+  {
+    host: "github.example.test:8443",
+    remoteUrl: "https://github.example.test:8443/acme/repo.git",
+  },
+  {
+    host: "github.example.test",
+    remoteUrl: "git@github.example.test:acme/repo.git",
+  },
+]) {
+  it.effect(`lists GitHub PRs against the requested remote repository ${remoteUrl}`, () =>
+    Effect.gen(function* () {
+      let listInput: Parameters<GitHubCli.GitHubCli["Service"]["listOpenPullRequests"]>[0] | null =
+        null;
+      const provider = yield* makeProvider({
+        listOpenPullRequests: (input) => {
+          listInput = input;
+          return Effect.succeed([]);
+        },
+      });
+
+      yield* provider.listChangeRequests({
+        cwd: "/repo",
+        context: {
+          provider: {
+            kind: "github",
+            name: "GitHub Enterprise",
+            baseUrl: `https://${host}`,
+          },
+          remoteName: "upstream",
+          remoteUrl,
+        },
+        headSelector: "feature/provider",
+        state: "open",
+        limit: 10,
+      });
+
+      assert.deepStrictEqual(listInput, {
+        cwd: "/repo",
+        headSelector: "feature/provider",
+        repository: `${host}/acme/repo`,
+        rateLimitHost: host,
+        limit: 10,
+      });
+    }),
+  );
+}
+
+it.effect("adds safe request context while bounding GitHub CLI causes", () =>
   Effect.gen(function* () {
     const cause = new GitHubCli.GitHubPullRequestNotFoundError({
       command: "gh",
@@ -133,7 +185,14 @@ it.effect("adds safe request context while retaining GitHub CLI causes", () =>
         detail: "Pull request not found. Check the PR number or URL and try again.",
       },
     );
-    assert.strictEqual(error.cause, cause);
+    assert.deepStrictEqual(error.cause, {
+      _tag: "GitHubPullRequestNotFoundError",
+      name: "GitHubPullRequestNotFoundError",
+      command: "gh",
+      detail: "Pull request not found. Check the PR number or URL and try again.",
+      message:
+        "GitHub CLI failed in execute: Pull request not found. Check the PR number or URL and try again.",
+    });
     assert.equal(error.message.includes("raw upstream detail"), false);
   }),
 );

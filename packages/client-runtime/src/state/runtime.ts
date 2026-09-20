@@ -348,10 +348,11 @@ export async function executeAtomQuery<A, E>(
   options: AtomQueryOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
+  const hasCachedNode = options.refresh ? registry.getNodes().has(atom) : false;
   const query = Effect.scoped(
     Effect.gen(function* () {
       yield* AtomRegistry.mount(registry, atom);
-      if (options.refresh) {
+      if (hasCachedNode) {
         yield* Effect.sync(() => {
           // Only a settled value can be a leftover from an earlier read; a
           // computation that mounting just started is already fresh.

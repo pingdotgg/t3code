@@ -1989,6 +1989,7 @@ function PullRequestsRouteView() {
             onAddTerminal={() => undefined}
             onAddDiff={() => undefined}
             onAddFiles={() => undefined}
+            onAddSourceControl={() => undefined}
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
             onAddAgents={() => undefined}
@@ -1997,6 +1998,7 @@ function PullRequestsRouteView() {
             terminalAvailable={false}
             diffAvailable={false}
             filesAvailable={false}
+            sourceControlAvailable={false}
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
             agentsAvailable={false}

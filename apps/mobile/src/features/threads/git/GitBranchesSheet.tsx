@@ -251,8 +251,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
                   accessibilityState={{ selected: branch.current, disabled: busy || disabled }}
                   disabled={busy || disabled}
                   onPress={() => {
-                    void gitActions.onCheckoutSelectedThreadBranch(branch.name).then(() => {
-                      navigation.goBack();
+                    void gitActions.onCheckoutSelectedThreadBranch(branch.name).then((result) => {
+                      if (result !== null) navigation.goBack();
                     });
                   }}
                 >
