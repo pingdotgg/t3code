@@ -1,0 +1,305 @@
+import type { PerspectiveCamera, Scene, Object3D } from "three";
+import { afterEach, expect, it, vi } from "vite-plus/test";
+
+const gpu = vi.hoisted(() => ({
+  instances: [] as {
+    blank: boolean;
+    allocations: number;
+    disposed: boolean;
+    size: { width: number; height: number; pixelRatio: number };
+    frames: {
+      scene: Scene;
+      phone: Object3D | undefined;
+      yaw: number | undefined;
+      cameraZ: number;
+    }[];
+  }[],
+}));
+
+vi.mock("three", async () => {
+  const actual = await vi.importActual<typeof import("three")>("three");
+  return {
+    ...actual,
+    WebGLRenderer: class {
+      outputColorSpace = "";
+      state: (typeof gpu.instances)[number] = {
+        blank: true,
+        allocations: 0,
+        disposed: false,
+        size: { width: 0, height: 0, pixelRatio: 1 },
+        frames: [],
+      };
+      constructor() {
+        gpu.instances.push(this.state);
+      }
+      setDrawingBufferSize(width: number, height: number, pixelRatio: number) {
+        this.state.size = { width, height, pixelRatio };
+        this.state.allocations++;
+        this.state.blank = true;
+      }
+      setSize(width: number, height: number) {
+        this.setDrawingBufferSize(width, height, this.state.size.pixelRatio);
+      }
+      setPixelRatio(pixelRatio: number) {
+        this.setDrawingBufferSize(this.state.size.width, this.state.size.height, pixelRatio);
+      }
+      render(scene: Scene, camera: PerspectiveCamera) {
+        const phone = scene.children.find((child) => child.type === "Group");
+        this.state.frames.push({
+          scene,
+          phone,
+          yaw: phone?.rotation.y,
+          cameraZ: camera.position.z,
+        });
+        this.state.blank = false;
+      }
+      dispose() {
+        this.state.disposed = true;
+      }
+      forceContextLoss() {}
+    },
+  };
+});
+
+const models = vi.hoisted(() => ({
+  pending: [] as {
+    signal: AbortSignal;
+    resolve: (model: { asset: import("three").Group; dispose: () => void }) => void;
+  }[],
+}));
+vi.mock("./modelScene.ts", async () => {
+  const actual = await vi.importActual<typeof import("./modelScene.ts")>("./modelScene.ts");
+  return {
+    ...actual,
+    loadDeviceModel: (_source: unknown, signal: AbortSignal) =>
+      new Promise((resolve) => models.pending.push({ signal, resolve })),
+  };
+});
+
+import { BoxGeometry, Group, Mesh, MeshBasicMaterial, PlaneGeometry } from "three";
+import { disposeDeviceModel } from "./modelScene.ts";
+import { createPhoneViewer } from "./phoneViewer.ts";
+import { IOS_TABLET_SHAPE } from "./shapeProfile.ts";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  gpu.instances.length = 0;
+  models.pending.length = 0;
+});
+
+function fixture() {
+  const pending = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    pending.set(++id, callback);
+    return id;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => pending.delete(id));
+  const canvas = Object.assign(new EventTarget(), { width: 0, height: 0 }) as HTMLCanvasElement;
+  const source = { width: 1206, height: 2622 } as HTMLCanvasElement;
+  const onUnavailable = vi.fn();
+  const onFramingAspect = vi.fn();
+  const viewer = createPhoneViewer({ canvas, source, onUnavailable, onFramingAspect });
+  const draw = () => {
+    const callbacks = [...pending.values()];
+    pending.clear();
+    callbacks.forEach((callback) => callback(0));
+  };
+  viewer.resize(400, 700, 2);
+  draw();
+  return {
+    viewer,
+    draw,
+    pending,
+    source,
+    onUnavailable,
+    onFramingAspect,
+    state: gpu.instances[0]!,
+  };
+}
+
+it("retains the drawn phone until resize and redraw commit together, without replacing scene or pose", () => {
+  const { viewer, draw, pending, source, state, onUnavailable } = fixture();
+  viewer.orbit(0.08, 0.04);
+  viewer.zoomBy(0.2);
+  draw();
+  const previous = state.frames.at(-1)!;
+  const allocations = state.allocations;
+  viewer.resize(500, 700, 2);
+  viewer.resize(450, 700, 2);
+  viewer.frameUpdated();
+  // ResizeObserver runs after rAF. A cleared buffer here would reach the browser's next paint.
+  expect(state.blank).toBe(false);
+  expect(state.allocations).toBe(allocations);
+  expect(pending.size).toBe(1);
+  draw();
+  expect(state.size).toEqual({ width: 450, height: 700, pixelRatio: 2 });
+  expect(state.blank).toBe(false);
+  expect(state.allocations).toBe(allocations + 1);
+  expect(state.frames.at(-1)?.scene).toBe(previous.scene);
+  expect(state.frames.at(-1)?.phone).toBe(previous.phone);
+  expect(state.frames.at(-1)?.yaw).toBe(previous.yaw);
+  viewer.resize(400, 700, 2);
+  draw();
+  expect(state.frames.at(-1)?.cameraZ).toBeCloseTo(previous.cameraZ);
+  expect(source).toMatchObject({ width: 1206, height: 2622 });
+  expect(gpu.instances).toHaveLength(1);
+  expect(onUnavailable).not.toHaveBeenCalled();
+  viewer.dispose();
+});
+
+it("ignores redundant and invalid sizes and combines a DPR change into one allocation and draw", () => {
+  const { viewer, draw, pending, state } = fixture();
+  const allocations = state.allocations;
+  viewer.resize(400, 700, 2);
+  viewer.resize(400, 700, 5);
+  viewer.resize(0, 700, 2);
+  viewer.resize(NaN, 700, 2);
+  expect(pending.size).toBe(0);
+  viewer.resize(400, 700, 1);
+  expect(state.blank).toBe(false);
+  draw();
+  expect(state.size.pixelRatio).toBe(1);
+  expect(state.allocations).toBe(allocations + 1);
+  viewer.resize(450, 700, 1);
+  viewer.dispose();
+  draw();
+  expect(state.allocations).toBe(allocations + 1);
+  expect(state.disposed).toBe(true);
+});
+
+it("changes device shape without replacing the renderer, decoded source or pose", () => {
+  const { viewer, draw, source, state } = fixture();
+  viewer.orbit(0.1, 0.05);
+  draw();
+  const previous = state.frames.at(-1)!;
+  const allocations = state.allocations;
+  viewer.setScreen(null, IOS_TABLET_SHAPE);
+  draw();
+  expect(state.frames.at(-1)?.phone).not.toBe(previous.phone);
+  expect(state.frames.at(-1)?.yaw).toBe(previous.yaw);
+  expect(state.frames.at(-1)?.scene).toBe(previous.scene);
+  expect(state.allocations).toBe(allocations);
+  expect(source.width).toBe(1206);
+  expect(gpu.instances).toHaveLength(1);
+  const tablet = state.frames.at(-1)?.phone;
+  viewer.frameUpdated();
+  draw();
+  expect(state.frames.at(-1)?.phone).toBe(tablet);
+  viewer.dispose();
+});
+
+it("retains the loaded model and pose through rotation and framebuffer resolution changes, then releases it once", async () => {
+  const { viewer, draw, source, state } = fixture();
+  viewer.orbit(0.08, 0.04);
+  viewer.zoomBy(0.2);
+  draw();
+  const yaw = state.frames.at(-1)!.yaw;
+  viewer.setModel({ id: "iphone-18-pro", url: "/pro.glb" });
+  const asset = new Group();
+  const body = new Mesh(new BoxGeometry(1.15, 2.3, 0.1), new MeshBasicMaterial());
+  body.position.z = -0.02;
+  const display = new Mesh(new PlaneGeometry(1, 2.2), new MeshBasicMaterial());
+  display.geometry.translate(0, 0, 0.043);
+  display.name = "device-screen";
+  asset.add(body, display);
+  const release = vi.spyOn(body.geometry, "dispose");
+  const dispose = vi.fn(() => disposeDeviceModel(asset));
+  models.pending[0]!.resolve({ asset, dispose });
+  await Promise.resolve();
+  draw();
+  const loaded = state.frames.at(-1)!.phone;
+  expect(loaded?.getObjectByName("device-screen")).toBe(display);
+  expect(state.frames.at(-1)!.yaw).toBe(yaw);
+  source.width = 2622;
+  source.height = 1206;
+  viewer.setScreen({ width: 2622, height: 1206, orientation: "landscape_left" });
+  viewer.frameUpdated();
+  viewer.resize(700, 400, 1);
+  draw();
+  expect(state.frames.at(-1)!.phone).toBe(loaded);
+  expect(state.frames.at(-1)!.yaw).toBe(yaw);
+  expect(display.material.map?.image).toBe(source);
+  expect(release).not.toHaveBeenCalled();
+  expect(gpu.instances).toHaveLength(1);
+  viewer.dispose();
+  viewer.dispose();
+  expect(dispose).toHaveBeenCalledOnce();
+  expect(release).toHaveBeenCalledOnce();
+});
+
+it("attaches and detaches an accessory without replacing the device, stream texture, renderer or pose", async () => {
+  const { viewer, draw, source, state, onFramingAspect } = fixture();
+  viewer.setModel({ id: "ipad-pro-13-m5", url: "/ipad.glb" });
+  const asset = new Group();
+  const body = new Mesh(new BoxGeometry(1.8, 2.3, 0.1), new MeshBasicMaterial());
+  const display = new Mesh(new PlaneGeometry(1.7, 2.2), new MeshBasicMaterial());
+  display.geometry.translate(0, 0, 0.043);
+  display.name = "device-screen";
+  asset.add(body, display);
+  const releaseBody = vi.fn(() => disposeDeviceModel(asset));
+  models.pending[0]!.resolve({ asset, dispose: releaseBody });
+  await Promise.resolve();
+  viewer.orbit(0.1, 0.05);
+  draw();
+  const before = state.frames.at(-1)!;
+  const bareAspect = onFramingAspect.mock.lastCall![0];
+  const keyboard = new Group();
+  const deck = new Mesh(new BoxGeometry(2, 1, 1), new MeshBasicMaterial());
+  deck.position.set(1, 0, 0.5);
+  keyboard.add(deck);
+  const releaseKeyboard = vi.fn(() => disposeDeviceModel(keyboard));
+  viewer.setAccessory({
+    id: "ipad-pro-13-m5-magic-keyboard",
+    modelId: "ipad-pro-13-m5",
+    url: "/keyboard.glb",
+  });
+  models.pending[1]!.resolve({ asset: keyboard, dispose: releaseKeyboard });
+  await Promise.resolve();
+  draw();
+  expect(state.frames.at(-1)!.phone).toBe(before.phone);
+  expect(keyboard.parent).toBe(asset.parent);
+  expect(state.frames.at(-1)!.yaw).toBe(before.yaw);
+  expect(display.material.map?.image).toBe(source);
+  expect(state.frames.at(-1)!.cameraZ).toBeGreaterThan(before.cameraZ);
+  expect(onFramingAspect.mock.lastCall![0]).toBeGreaterThan(bareAspect);
+  const calls = onFramingAspect.mock.calls.length;
+  viewer.orbit(0.1, 0.05);
+  viewer.frameUpdated();
+  draw();
+  expect(onFramingAspect).toHaveBeenCalledTimes(calls);
+  viewer.setAccessory(null);
+  draw();
+  expect(keyboard.parent).toBeNull();
+  expect(onFramingAspect.mock.lastCall![0]).toBeCloseTo(bareAspect);
+  expect(releaseKeyboard).toHaveBeenCalledOnce();
+  expect(releaseBody).not.toHaveBeenCalled();
+  expect(state.frames.at(-1)!.phone).toBe(before.phone);
+  expect(state.frames.at(-1)!.cameraZ).toBeCloseTo(before.cameraZ);
+  expect(gpu.instances).toHaveLength(1);
+  viewer.dispose();
+  expect(releaseBody).toHaveBeenCalledOnce();
+  expect(releaseKeyboard).toHaveBeenCalledOnce();
+});
+
+it("rejects incompatible accessories and releases an accessory that finishes after detaching", async () => {
+  const { viewer } = fixture();
+  const keyboard = {
+    id: "ipad-pro-13-m5-magic-keyboard",
+    modelId: "ipad-pro-13-m5",
+    url: "/keyboard.glb",
+  } as const;
+  viewer.setAccessory(keyboard);
+  expect(models.pending).toHaveLength(0);
+  viewer.setModel({ id: "ipad-pro-13-m5", url: "/ipad.glb" });
+  viewer.setAccessory(keyboard);
+  viewer.setAccessory(null);
+  expect(models.pending[1]!.signal.aborted).toBe(true);
+  const dispose = vi.fn();
+  const asset = new Group();
+  models.pending[1]!.resolve({ asset, dispose });
+  await Promise.resolve();
+  expect(asset.parent).toBeNull();
+  expect(dispose).toHaveBeenCalledOnce();
+  viewer.dispose();
+});

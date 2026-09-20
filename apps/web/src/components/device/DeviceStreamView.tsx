@@ -1,10 +1,15 @@
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { refreshDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import { createCanvasFrameSink } from "@t3tools/client-runtime/device/frame";
+import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
+import { deviceKeyboard, deviceModel } from "./deviceModels";
+import { DevicePhoneViewport } from "./DevicePhoneViewport";
 import { DeviceLoadingView } from "./DeviceLoadingView";
+import { DEVICE_CONTROLS_RAIL_WIDTH, deviceControlsLayout } from "./deviceControlsLayout";
 import { type DeviceAxElement, fetchDeviceAxTree } from "./deviceHubApi";
 import {
   createDeviceStreamClient,
@@ -15,6 +20,17 @@ import {
 } from "@t3tools/client-runtime/device/stream";
 
 const AX_POLL_INTERVAL_MS = 2_000;
+
+export interface DeviceViewControls {
+  readonly layout: "rail" | "header";
+  readonly phone: boolean;
+  readonly streaming: boolean;
+  readonly phoneUnavailableReason: string | null;
+  readonly showPhone: () => void;
+  readonly showFlat: () => void;
+  readonly resetView: () => void;
+  readonly keyboard: { readonly attached: boolean; readonly toggle: () => void } | null;
+}
 
 export interface DeviceStreamHandle {
   readonly pressButton: (button: DeviceHardwareButton) => void;
@@ -37,11 +53,33 @@ export function DeviceStreamView(props: {
   readonly deviceDescription?: string;
   readonly visible: boolean;
   readonly hostId: string;
+  /** The full panel opts into the phone spike; compact viewers retain their flat presentation. */
+  readonly allowPhoneView?: boolean;
+  readonly renderControls?: (view: DeviceViewControls) => ReactNode;
   /** Draw accessibility element frames over the screen. */
   readonly axOverlay?: boolean;
   readonly onHandle?: (handle: DeviceStreamHandle | null) => void;
   readonly onScreen?: (screen: DeviceScreenSize | null) => void;
 }) {
+  const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
+  const [keyboardAttached, setKeyboardAttached] = useState(false);
+  const [framingAspect, setFramingAspect] = useState<number | null>(null);
+  const [phoneUnavailable, setPhoneUnavailable] = useState(false);
+  const onPhoneUnavailable = useCallback(() => setPhoneUnavailable(true), []);
+  const cancelPhoneInputRef = useRef<(() => void) | null>(null);
+  const cancelPhoneInput = useCallback(() => cancelPhoneInputRef.current?.(), []);
+  const resetViewRef = useRef<(() => void) | null>(null);
+  const resetView = useCallback(() => resetViewRef.current?.(), []);
+  const onResetReady = useCallback((reset: (() => void) | null) => {
+    resetViewRef.current = reset;
+  }, []);
+  const frameListenerRef = useRef<(() => void) | null>(null);
+  const onFrameListener = useCallback((listener: (() => void) | null) => {
+    frameListenerRef.current = listener;
+  }, []);
+  const onInputCancel = useCallback((cancel: (() => void) | null) => {
+    cancelPhoneInputRef.current = cancel;
+  }, []);
   const access = useDeviceHubAccess(props.environmentId, props.hostId);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const clientRef = useRef<DeviceStreamClient | null>(null);
@@ -67,7 +105,7 @@ export function DeviceStreamView(props: {
     }
     const client = createDeviceStreamClient(
       { platform: props.platform, deviceId: props.deviceId, access },
-      canvas,
+      createCanvasFrameSink(canvas, () => frameListenerRef.current?.()),
       {
         onStatus: (next, nextDetail) => {
           setStatus(next);
@@ -101,6 +139,7 @@ export function DeviceStreamView(props: {
     client.start();
     onHandle?.({ pressButton: client.pressButton, rotate: client.rotate, inputConnected: false });
     return () => {
+      cancelPhoneInput();
       client.stop();
       clientRef.current = null;
       onHandle?.(null);
@@ -109,6 +148,7 @@ export function DeviceStreamView(props: {
     };
   }, [
     access,
+    cancelPhoneInput,
     onHandle,
     onScreen,
     props.deviceId,
@@ -136,12 +176,21 @@ export function DeviceStreamView(props: {
   // `aspect-ratio` alone cannot do this: with the height pinned to 100% the
   // width clamp wins and distorts the drawn frame.
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const [workspace, setWorkspace] = useState({ width: 0, height: 0 });
   const [host, setHost] = useState({ width: 0, height: 0 });
   useEffect(() => {
     const element = hostRef.current;
-    if (!element) return;
+    const workspaceElement = workspaceRef.current;
+    if (!element || !workspaceElement) return;
     const update = () => {
       const rect = element.getBoundingClientRect();
+      const workspaceRect = workspaceElement.getBoundingClientRect();
+      setWorkspace((current) =>
+        current.width === workspaceRect.width && current.height === workspaceRect.height
+          ? current
+          : { width: workspaceRect.width, height: workspaceRect.height },
+      );
       setHost((current) =>
         current.width === rect.width && current.height === rect.height
           ? current
@@ -151,6 +200,7 @@ export function DeviceStreamView(props: {
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
+    observer.observe(workspaceElement);
     return () => observer.disconnect();
   }, []);
   const frame = useMemo(() => {
@@ -223,6 +273,14 @@ export function DeviceStreamView(props: {
     };
   }, [access, props.axOverlay, props.deviceId, props.platform, props.visible]);
 
+  const showPhone =
+    props.allowPhoneView &&
+    status === "streaming" &&
+    props.visible &&
+    presentation === "phone" &&
+    !phoneUnavailable &&
+    !mjpegUrl &&
+    !props.axOverlay;
   const pointerActive = useRef(false);
   const normalizedPoint = (event: React.PointerEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -231,123 +289,235 @@ export function DeviceStreamView(props: {
     return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) };
   };
 
+  const phoneUnavailableReason = phoneUnavailable
+    ? "3D is unavailable on this browser"
+    : mjpegUrl
+      ? "3D requires the H.264 stream"
+      : props.axOverlay
+        ? "Turn off accessibility frames to use 3D"
+        : null;
+
+  const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
+  const controlsLayout = deviceControlsLayout({
+    ...workspace,
+    aspect: showPhone && keyboardAttached && keyboardSource ? (framingAspect ?? aspect) : aspect,
+    phone: !!showPhone,
+    android: props.platform === "android",
+  });
+  const contentOffset =
+    props.renderControls && controlsLayout === "rail" ? -DEVICE_CONTROLS_RAIL_WIDTH / 2 : 0;
+  const profile = resolveDeviceShape({
+    platform: props.platform,
+    name: props.deviceName ?? "",
+    portraitAspect: Math.min(aspect, 1 / aspect),
+  });
+
   return (
     <div
-      ref={hostRef}
-      className="relative flex size-full items-center justify-center overflow-hidden bg-black/90 outline-none"
-      tabIndex={0}
-      role="application"
-      aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
-      onKeyDown={(event) => {
-        if (event.target !== event.currentTarget) return;
-        if (event.metaKey && !["r", "R"].includes(event.key)) return;
-        event.preventDefault();
-        clientRef.current?.sendKey(event.nativeEvent, "down");
-      }}
-      onKeyUp={(event) => {
-        if (event.target !== event.currentTarget) return;
-        clientRef.current?.sendKey(event.nativeEvent, "up");
-      }}
+      ref={workspaceRef}
+      className={cn(
+        "relative flex size-full min-h-0 min-w-0",
+        props.renderControls && controlsLayout === "header" && "flex-col",
+        props.allowPhoneView ? "bg-background" : "bg-black/90",
+      )}
     >
+      {props.renderControls ? (
+        <DeviceControlsSlot
+          renderControls={props.renderControls}
+          view={{
+            layout: controlsLayout,
+            phone: !!showPhone,
+            streaming: status === "streaming",
+            phoneUnavailableReason,
+            keyboard:
+              showPhone && keyboardSource
+                ? {
+                    attached: keyboardAttached,
+                    toggle: () => {
+                      cancelPhoneInput();
+                      if (!keyboardAttached && screen?.orientation.startsWith("portrait"))
+                        clientRef.current?.rotate();
+                      setKeyboardAttached(!keyboardAttached);
+                    },
+                  }
+                : null,
+            showPhone: () => setPresentation("phone"),
+            showFlat: () => setPresentation("flat"),
+          }}
+          onResetView={resetView}
+        />
+      ) : null}
       <div
-        className="relative select-none"
-        style={{ width: frame.width, height: frame.height }}
-        onPointerDown={(event) => {
-          event.currentTarget.setPointerCapture(event.pointerId);
-          (event.currentTarget.parentElement as HTMLElement | null)?.focus();
-          pointerActive.current = true;
-          const { x, y } = normalizedPoint(event);
-          clientRef.current?.sendTouch("begin", x, y);
+        ref={hostRef}
+        className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+        tabIndex={0}
+        role="application"
+        aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.metaKey && !["r", "R"].includes(event.key)) return;
+          event.preventDefault();
+          clientRef.current?.sendKey(event.nativeEvent, "down");
         }}
-        onPointerMove={(event) => {
-          if (!pointerActive.current) return;
-          const { x, y } = normalizedPoint(event);
-          clientRef.current?.sendTouch("move", x, y);
-        }}
-        onPointerUp={(event) => {
-          if (!pointerActive.current) return;
-          pointerActive.current = false;
-          const { x, y } = normalizedPoint(event);
-          clientRef.current?.sendTouch("end", x, y);
-        }}
-        onPointerCancel={(event) => {
-          if (!pointerActive.current) return;
-          pointerActive.current = false;
-          const { x, y } = normalizedPoint(event);
-          clientRef.current?.sendTouch("end", x, y);
+        onKeyUp={(event) => {
+          if (event.target !== event.currentTarget) return;
+          clientRef.current?.sendKey(event.nativeEvent, "up");
         }}
       >
-        <canvas
-          ref={canvasRef}
-          className={cn("absolute top-0 left-0", mjpegUrl && "hidden")}
-          style={mediaStyle}
-        />
-        {props.visible && access && mjpegUrl ? (
-          <img
-            key={mjpegGeneration}
-            ref={attachMjpegImage}
-            alt=""
-            draggable={false}
-            className="absolute top-0 left-0 object-contain"
+        <div
+          className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
+          style={{ width: frame.width, height: frame.height, translate: `${contentOffset}px 0` }}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            (event.currentTarget.parentElement as HTMLElement | null)?.focus();
+            pointerActive.current = true;
+            const { x, y } = normalizedPoint(event);
+            clientRef.current?.sendTouch("begin", x, y);
+          }}
+          onPointerMove={(event) => {
+            if (!pointerActive.current) return;
+            const { x, y } = normalizedPoint(event);
+            clientRef.current?.sendTouch("move", x, y);
+          }}
+          onPointerUp={(event) => {
+            if (!pointerActive.current) return;
+            pointerActive.current = false;
+            const { x, y } = normalizedPoint(event);
+            clientRef.current?.sendTouch("end", x, y);
+          }}
+          onPointerCancel={(event) => {
+            if (!pointerActive.current) return;
+            pointerActive.current = false;
+            const { x, y } = normalizedPoint(event);
+            clientRef.current?.sendTouch("end", x, y);
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            className={cn("absolute top-0 left-0", mjpegUrl && "hidden")}
             style={mediaStyle}
           />
+          {props.visible && access && mjpegUrl ? (
+            <img
+              key={mjpegGeneration}
+              ref={attachMjpegImage}
+              alt=""
+              draggable={false}
+              className="absolute top-0 left-0 object-contain"
+              style={mediaStyle}
+            />
+          ) : null}
+          {axElements.length > 0 ? (
+            <div className="pointer-events-none absolute inset-0" aria-hidden>
+              {axElements.map((element) => (
+                <div
+                  key={element.id}
+                  className="absolute border border-sky-400/80 bg-sky-400/10"
+                  style={{
+                    left: `${element.x * 100}%`,
+                    top: `${element.y * 100}%`,
+                    width: `${element.width * 100}%`,
+                    height: `${element.height * 100}%`,
+                  }}
+                >
+                  {element.label ? (
+                    <span className="absolute -top-3.5 left-0 max-w-full truncate rounded-sm bg-sky-500 px-1 text-[9px] leading-3.5 text-white">
+                      {element.label}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        {showPhone ? (
+          <DevicePhoneViewport
+            profile={profile}
+            model={deviceModel(props.platform, props.deviceName ?? "")}
+            accessory={keyboardAttached ? keyboardSource : null}
+            contentOffset={contentOffset}
+            source={canvasRef}
+            onFrameListener={onFrameListener}
+            client={clientRef}
+            onInputCancel={onInputCancel}
+            onResetReady={onResetReady}
+            screen={screen}
+            onUnavailable={onPhoneUnavailable}
+            onFramingAspect={setFramingAspect}
+          />
         ) : null}
-        {axElements.length > 0 ? (
-          <div className="pointer-events-none absolute inset-0" aria-hidden>
-            {axElements.map((element) => (
-              <div
-                key={element.id}
-                className="absolute border border-sky-400/80 bg-sky-400/10"
-                style={{
-                  left: `${element.x * 100}%`,
-                  top: `${element.y * 100}%`,
-                  width: `${element.width * 100}%`,
-                  height: `${element.height * 100}%`,
-                }}
-              >
-                {element.label ? (
-                  <span className="absolute -top-3.5 left-0 max-w-full truncate rounded-sm bg-sky-500 px-1 text-[9px] leading-3.5 text-white">
-                    {element.label}
-                  </span>
-                ) : null}
-              </div>
-            ))}
+        {props.allowPhoneView && !props.renderControls && status === "streaming" ? (
+          <div className="absolute top-3 left-3 flex gap-1 rounded-lg border border-border/50 bg-background/90 p-1 shadow-sm">
+            <Button
+              variant={showPhone ? "secondary" : "ghost"}
+              size="xs"
+              aria-pressed={!!showPhone}
+              disabled={phoneUnavailable || !!mjpegUrl || !!props.axOverlay}
+              title={
+                phoneUnavailable
+                  ? "3D is unavailable on this browser"
+                  : mjpegUrl
+                    ? "3D requires the H.264 stream"
+                    : props.axOverlay
+                      ? "Turn off accessibility frames to use 3D"
+                      : "Show 3D phone"
+              }
+              onClick={() => setPresentation("phone")}
+            >
+              3D
+            </Button>
+            <Button
+              variant={!showPhone ? "secondary" : "ghost"}
+              size="xs"
+              aria-pressed={!showPhone}
+              onClick={() => setPresentation("flat")}
+            >
+              Flat
+            </Button>
+          </div>
+        ) : null}
+        {status === "streaming" && !inputState.connected ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
+            <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
+              Input disconnected{inputState.detail ? ` (${inputState.detail})` : ""}, reconnecting…
+            </span>
+          </div>
+        ) : null}
+        {status !== "streaming" ? (
+          <div className="absolute inset-0">
+            <DeviceLoadingView
+              name={props.deviceName ?? "Device"}
+              description={props.deviceDescription ?? ""}
+              stage="stream"
+              message={status === "error" ? (detail ?? "Stream failed.") : "Connecting video…"}
+              error={status === "error"}
+            >
+              {status === "error" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    // An expired ticket surfaces as unauthorized on restart and
+                    // refreshes access through the effect; no need to mint one here.
+                    clientRef.current?.stop();
+                    clientRef.current?.start();
+                  }}
+                >
+                  Reconnect
+                </Button>
+              ) : null}
+            </DeviceLoadingView>
           </div>
         ) : null}
       </div>
-      {status === "streaming" && !inputState.connected ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
-          <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
-            Input disconnected{inputState.detail ? ` (${inputState.detail})` : ""}, reconnecting…
-          </span>
-        </div>
-      ) : null}
-      {status !== "streaming" ? (
-        <div className="absolute inset-0">
-          <DeviceLoadingView
-            name={props.deviceName ?? "Device"}
-            description={props.deviceDescription ?? ""}
-            stage="stream"
-            message={status === "error" ? (detail ?? "Stream failed.") : "Connecting video…"}
-            error={status === "error"}
-          >
-            {status === "error" ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  // An expired ticket surfaces as unauthorized on restart and
-                  // refreshes access through the effect; no need to mint one here.
-                  clientRef.current?.stop();
-                  clientRef.current?.start();
-                }}
-              >
-                Reconnect
-              </Button>
-            ) : null}
-          </DeviceLoadingView>
-        </div>
-      ) : null}
     </div>
   );
+}
+
+function DeviceControlsSlot(props: {
+  renderControls: (view: DeviceViewControls) => ReactNode;
+  view: Omit<DeviceViewControls, "resetView">;
+  onResetView: () => void;
+}) {
+  return props.renderControls({ ...props.view, resetView: props.onResetView });
 }
