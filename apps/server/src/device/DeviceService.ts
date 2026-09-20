@@ -93,6 +93,10 @@ const HubActionResult = Schema.Struct({
   serial: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
 });
+const HubStreamModeResult = Schema.Struct({
+  ok: Schema.Literal(true),
+  mode: Schema.Literal("scrcpy"),
+});
 
 export interface DeviceScreenshot {
   readonly device: DeviceSummary;
@@ -525,6 +529,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     }
   });
 
+  const ensurePhysicalAndroidStream = Effect.fn("DeviceService.ensurePhysicalAndroidStream")(
+    function* (ready: DeviceReadiness, device: DeviceSummary) {
+      if (device.platform !== "android" || !device.physical) return;
+      const url = `${ready.hub.origin}${vendorPrefix("android")}/api/stream-mode?device=${encodeURIComponent(device.id)}`;
+      const request = HttpClientRequest.put(url).pipe(
+        HttpClientRequest.bodyJsonUnsafe({ mode: "scrcpy" }),
+      );
+      yield* hubJson(request, HubStreamModeResult, "select stream source", BOOT_TIMEOUT);
+    },
+  );
+
   /**
    * Boot through the hub so its device list and the streaming helper both see
    * the device come up. Android AVDs change id when they boot (AVD name to
@@ -625,6 +640,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         ),
       );
     }
+    yield* ensurePhysicalAndroidStream(ready, device);
     if (hosts.get(host.id) !== host)
       return yield* new DeviceHostUnavailableError({
         hostId: host.id,
