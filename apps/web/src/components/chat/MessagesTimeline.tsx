@@ -83,6 +83,7 @@ import {
   createMessageAttachmentPreviewProjector,
   selectMessageImageResources,
   workEntryDisplayIndicatesToolFailure,
+  workEntryIsProviderBusy,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
@@ -4948,6 +4949,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showDestructiveRowStyle =
     !showWarningIndicator &&
     showFailedIndicator &&
+    !workEntryIsProviderBusy(workEntry) &&
     (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
   const entryIconName =
     showWarningIndicator || showDestructiveRowStyle ? "circle-alert" : workEntryIconName(workEntry);

@@ -176,7 +176,7 @@ export function makeProviderFailure(input: {
  * conservative on purpose: a bare 503 is excluded because proxies also use it
  * for permanent conditions such as revoked credentials.
  */
-export function isProviderBusyFailureSignal(input: {
+function isProviderBusyFailureSignal(input: {
   readonly message: string;
   readonly code: string | null;
 }): boolean {

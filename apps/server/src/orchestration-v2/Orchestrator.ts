@@ -4069,13 +4069,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (command.providerBusyRetry !== undefined) {
         const sourceRunId = command.providerBusyRetry.sourceRunId;
         const source = projection.runs.find((run) => run.id === sourceRunId);
+        const snoozedUntil = projection.thread.snoozedUntil ?? null;
         if (
           !source ||
           source.status !== "failed" ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
           projection.thread.settledOverride === "settled" ||
-          projection.thread.snoozedUntil != null ||
+          (snoozedUntil !== null && DateTime.isGreaterThan(snoozedUntil, yield* DateTime.now)) ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
           projection.runs.some((run) => run.ordinal > source.ordinal)
         ) {

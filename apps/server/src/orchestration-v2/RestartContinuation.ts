@@ -6,6 +6,7 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
@@ -123,7 +124,11 @@ export const retryProviderBusyRun = Effect.fn("RestartContinuation.retryProvider
     const projection = yield* threads.getThreadProjection(input.threadId);
     if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
     // Settling or snoozing parks the thread; a message would un-park it, and only the user does that.
-    if (projection.thread.settledOverride === "settled" || projection.thread.snoozedUntil != null)
+    const snoozedUntil = projection.thread.snoozedUntil ?? null;
+    if (
+      projection.thread.settledOverride === "settled" ||
+      (snoozedUntil !== null && DateTime.isGreaterThan(snoozedUntil, yield* DateTime.now))
+    )
       return;
     const messageId = MessageId.make(`message:provider-busy-retry:${input.sourceRunId}`);
     if (projection.messages.some((message) => message.id === messageId)) return;

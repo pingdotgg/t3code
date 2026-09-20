@@ -11,6 +11,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
@@ -358,7 +359,13 @@ it.effect("retries a provider-busy failure once and yields to newer work or a sp
       { ...projection, runs: [{ ...projection.runs[0]!, status: "completed" as const }] },
       { ...projection, thread: { ...projection.thread, archivedAt: {} as never } },
       { ...projection, thread: { ...projection.thread, settledOverride: "settled" as never } },
-      { ...projection, thread: { ...projection.thread, snoozedUntil: {} as never } },
+      {
+        ...projection,
+        thread: {
+          ...projection.thread,
+          snoozedUntil: DateTime.makeUnsafe("2999-01-01T00:00:00.000Z") as never,
+        },
+      },
       {
         ...projection,
         thread: { ...projection.thread, providerInstanceId: ProviderInstanceId.make("other") },
@@ -377,5 +384,15 @@ it.effect("retries a provider-busy failure once and yields to newer work or a sp
       projection = restore;
     }
     assert.lengthOf(commands, 1);
+    // A snooze that already expired no longer parks the thread.
+    projection = {
+      ...projection,
+      thread: {
+        ...projection.thread,
+        snoozedUntil: DateTime.makeUnsafe("1969-01-01T00:00:00.000Z") as never,
+      },
+    };
+    yield* retry(2);
+    assert.lengthOf(commands, 2);
   }),
 );

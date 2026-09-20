@@ -155,14 +155,15 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
  *  command exited nonzero. Provider-busy failures are transient capacity that
  *  the server retries, so they keep the calm row treatment. */
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
-  if (
-    entry.itemType === "error" &&
+  return entry.itemType === "error" && !workEntryIsProviderBusy(entry);
+}
+
+/** A failure the server retries on its own: shown as failed, never in the destructive style. */
+export function workEntryIsProviderBusy(entry: WorkLogEntry): boolean {
+  return (
     entry.structuredPayload?.type === "error" &&
     entry.structuredPayload.failure.class === "provider_busy"
-  ) {
-    return false;
-  }
-  return entry.itemType === "error";
+  );
 }
 
 export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
