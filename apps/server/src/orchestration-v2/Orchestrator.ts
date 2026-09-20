@@ -2418,12 +2418,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             Date.parse(command.limitRecovery.resetAt) > DateTime.toEpochMillis(now)
               ? {
                   snoozedUntil: DateTime.makeUnsafe(command.limitRecovery.resetAt),
-                  snoozedAt:
-                    thread.snoozedUntil != null &&
-                    DateTime.toEpochMillis(thread.snoozedUntil) ===
-                      Date.parse(command.limitRecovery.resetAt)
-                      ? (thread.snoozedAt ?? now)
-                      : now,
+                  // Recovery changes acknowledge the same stopped run; keep its
+                  // metadata timestamp from appearing as a fresh failure wake.
+                  snoozedAt: now,
                 }
               : command.limitRecovery !== undefined &&
                   thread.limitRecovery?.snooze &&

@@ -30,18 +30,33 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
   };
 }
 
-function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, nowMs, onChange }: RecoveryProps) {
+function RecoveryActions({
+  runId,
+  resetAt,
+  recovery,
+  snoozedUntil,
+  nowMs,
+  onChange,
+}: RecoveryProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scheduled =
     recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
-  const snoozed = recovery?.snooze === true && recovery.runId === runId && recovery.resetAt === resetAt && resetAt !== null && snoozedUntil !== null && Date.parse(snoozedUntil) === Date.parse(resetAt);
+  const snoozed =
+    recovery?.snooze === true &&
+    recovery.runId === runId &&
+    recovery.resetAt === resetAt &&
+    resetAt !== null &&
+    snoozedUntil !== null &&
+    Date.parse(snoozedUntil) === Date.parse(resetAt);
   async function toggle(action: "resume" | "snooze") {
     if (resetAt === null) return;
     setPending(true);
     setError(null);
     try {
-      await onChange({ runId, resetAt,
+      await onChange({
+        runId,
+        resetAt,
         autoResume: action === "resume" ? !scheduled : Boolean(scheduled),
         snooze: action === "snooze" ? !snoozed : snoozed,
       });
@@ -56,7 +71,12 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, nowMs, onChan
       <Button size="xs" variant="ghost" disabled={pending} onClick={() => void toggle("resume")}>
         {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
       </Button>
-      <Button size="xs" variant="ghost" disabled={pending || (!snoozed && Date.parse(resetAt!) <= nowMs)} onClick={() => void toggle("snooze")}>
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={pending || (!snoozed && Date.parse(resetAt!) <= nowMs)}
+        onClick={() => void toggle("snooze")}
+      >
         {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
       </Button>
       {error ? (

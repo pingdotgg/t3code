@@ -7000,7 +7000,16 @@ export default function ChatView(props: ChatViewProps) {
     const resumeCompactionItems =
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
-    const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const recoveryOwnsSnooze =
+      limitRecoveryBanner !== null &&
+      activeThreadShell?.limitRecovery?.snooze === true &&
+      activeThreadShell.limitRecovery.runId === activeThreadShell.latestRun?.runId &&
+      activeThreadShell.limitRecovery.resetAt === serverRuntime?.usageLimitResetAt &&
+      activeThreadShell.snoozedUntil !== null &&
+      Date.parse(activeThreadShell.snoozedUntil) ===
+        Date.parse(activeThreadShell.limitRecovery.resetAt);
+    const parkedThreadItems =
+      parkedThreadBannerItem === null || recoveryOwnsSnooze ? [] : [parkedThreadBannerItem];
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
@@ -7068,6 +7077,8 @@ export default function ChatView(props: ChatViewProps) {
     ];
   }, [
     activeBranchMismatchKey,
+    activeThreadShell,
+    serverRuntime?.usageLimitResetAt,
     feedbackBannerItems,
     limitRecoveryBanner,
     handleRestoreThreadBranch,

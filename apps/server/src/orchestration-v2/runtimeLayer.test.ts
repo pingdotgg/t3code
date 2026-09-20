@@ -3029,6 +3029,8 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
     "manual-snooze",
     "snooze-only",
     "snooze-resume",
+    "cancel-resume-keep-snooze",
+    "wake-preserve-resume",
     "wake",
   ] as const)("guards a scheduled usage-limit continuation against %s", (scenario) =>
     Effect.gen(function* () {
@@ -3128,12 +3130,18 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         (thread) => thread.id === threadId,
       )!;
       assert.isNull(limitRecoveryCommand(shell, false, DateTime.toEpochMillis(now)));
-      const snooze = ["snooze-only", "snooze-resume", "wake"].includes(scenario);
+      const snooze = [
+        "snooze-only",
+        "snooze-resume",
+        "wake",
+        "cancel-resume-keep-snooze",
+        "wake-preserve-resume",
+      ].includes(scenario);
       const autoResume = scenario !== "snooze-only" && scenario !== "wake";
       const arm = limitRecoveryCommand(shell, autoResume, DateTime.toEpochMillis(now), snooze);
       assert.isNotNull(arm);
       yield* orchestrator.dispatch(arm!);
-      const armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+      let armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
       )!;
       assert.deepEqual(armedShell.limitRecovery, {
@@ -3145,6 +3153,37 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
       });
       if (snooze)
         assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
+      if (scenario === "cancel-resume-keep-snooze" || scenario === "wake-preserve-resume") {
+        yield* TestClock.adjust("10 seconds");
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`recovery:independent-choice:${scenario}`),
+          threadId,
+          limitRecovery: {
+            runId: run.id,
+            resetAt,
+            autoResume: scenario === "wake-preserve-resume",
+            snooze: scenario === "cancel-resume-keep-snooze",
+          },
+        });
+        armedShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        if (scenario === "cancel-resume-keep-snooze") {
+          assert.equal(DateTime.toEpochMillis(armedShell.snoozedUntil!), Date.parse(resetAt));
+          // Failed runtime timestamps advance with metadata. Acknowledging the
+          // same failed run must not turn cancellation into an early wake.
+          assert.equal(
+            DateTime.toEpochMillis(armedShell.snoozedAt!),
+            DateTime.toEpochMillis(armedShell.updatedAt),
+          );
+          assert.isFalse(armedShell.limitRecovery!.autoResume);
+        } else {
+          assert.isNull(armedShell.snoozedUntil);
+          assert.isNull(armedShell.snoozedAt);
+          assert.isTrue(armedShell.limitRecovery!.autoResume);
+        }
+      }
       if (scenario === "manual-snooze") {
         yield* orchestrator.dispatch({
           type: "thread.snooze",
@@ -3168,6 +3207,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
           type: "thread.unsnooze",
           commandId: CommandId.make(`recovery:manual-wake:${scenario}`),
           threadId,
+          reason: "user",
         });
         assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.snoozedUntil);
       }
@@ -3200,7 +3240,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         true,
         DateTime.toEpochMillis(yield* DateTime.now),
       );
-      if (autoResume) assert.isNotNull(resume);
+      if (autoResume && scenario !== "cancel-resume-keep-snooze") assert.isNotNull(resume);
       else assert.isNull(resume);
       if (scenario === "snooze-race") {
         const wakeAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 }));
@@ -3314,11 +3354,21 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.lengthOf(
         after.runs,
-        before.runs.length + (scenario === "resume" || scenario === "snooze-resume" ? 1 : 0),
+        before.runs.length +
+          (scenario === "resume" ||
+          scenario === "snooze-resume" ||
+          scenario === "wake-preserve-resume"
+            ? 1
+            : 0),
       );
       assert.lengthOf(
         after.messages,
-        before.messages.length + (scenario === "resume" || scenario === "snooze-resume" ? 1 : 0),
+        before.messages.length +
+          (scenario === "resume" ||
+          scenario === "snooze-resume" ||
+          scenario === "wake-preserve-resume"
+            ? 1
+            : 0),
       );
     }),
   );
