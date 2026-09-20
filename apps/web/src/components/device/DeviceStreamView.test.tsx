@@ -8,7 +8,7 @@ vi.mock("~/state/device", () => ({
   refreshDeviceHubAccess: vi.fn(),
 }));
 const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true };
-vi.mock("./deviceStream", () => ({
+vi.mock("@t3tools/client-runtime/device/stream", () => ({
   createDeviceStreamClient: (
     _target: unknown,
     _canvas: unknown,
