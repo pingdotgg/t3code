@@ -9,18 +9,28 @@ import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 export const deviceToolMaintenanceScript = String.raw`
 const maintenanceFs = require('node:fs');
 const maintenancePath = require('node:path');
-const maintenanceAlive = pid => {
-  try { process.kill(pid, 0); return true; }
+const maintenanceIdentity = pid => {
+  const result = process.platform === 'win32'
+    ? require('node:child_process').spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id ' + pid + ').StartTime.ToUniversalTime().Ticks'], { encoding: 'utf8', timeout: 10000 })
+    : require('node:child_process').spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 10000 });
+  return result.status === 0 ? result.stdout.trim() || null : null;
+};
+const maintenanceAlive = (pid, identity) => {
+  try {
+    process.kill(pid, 0);
+    const current = identity ? maintenanceIdentity(pid) : null;
+    return !identity || !current || identity === current;
+  }
   catch (error) { return error.code !== 'ESRCH'; }
 };
 async function withToolMaintenance(root, operation) {
   maintenanceFs.mkdirSync(root, { recursive: true });
   const lock = maintenancePath.join(root, '.maintenance-lock');
-  const token = process.pid + ':' + require('node:crypto').randomUUID();
+  const token = JSON.stringify({ pid: process.pid, identity: maintenanceIdentity(process.pid), nonce: require('node:crypto').randomUUID() });
   const readOwner = () => { try { return maintenanceFs.readFileSync(lock, 'utf8'); } catch { return null; } };
   const deadline = Date.now() + 30000;
   while (true) {
-    const candidate = lock + '.' + token.replace(':', '.');
+    const candidate = lock + '.' + process.pid + '.' + require('node:crypto').randomUUID();
     try {
       maintenanceFs.writeFileSync(candidate, token);
       try { maintenanceFs.linkSync(candidate, lock); }
@@ -30,8 +40,10 @@ async function withToolMaintenance(root, operation) {
     catch (error) {
       if (error.code !== 'EEXIST') throw error;
       const previous = readOwner();
-      const pid = Number(previous?.split(':')[0]);
-      if (Number.isSafeInteger(pid) && pid > 0 && !maintenanceAlive(pid) && readOwner() === previous) {
+      let holder;
+      try { holder = JSON.parse(previous); } catch {}
+      const pid = holder?.pid;
+      if (Number.isSafeInteger(pid) && pid > 0 && !maintenanceAlive(pid, holder.identity) && readOwner() === previous) {
         try { maintenanceFs.unlinkSync(lock); } catch (error) { if (error.code !== 'ENOENT') throw error; }
         continue;
       }
@@ -47,7 +59,7 @@ function claimTool(root, name, version, pid) {
   return withToolMaintenance(root, () => {
     const users = maintenancePath.join(root, '.users', name + '@' + version);
     maintenanceFs.mkdirSync(users, { recursive: true });
-    maintenanceFs.writeFileSync(maintenancePath.join(users, String(pid)), '');
+    maintenanceFs.writeFileSync(maintenancePath.join(users, String(pid)), maintenanceIdentity(pid) || '');
   });
 }
 function pruneTools(root, specs, flat) {
@@ -80,11 +92,14 @@ function pruneTools(root, specs, flat) {
         // Older releases did not register users. Never guess whether one of those installs is still in use.
         if (!maintenanceFs.existsSync(users)) continue;
         const leases = maintenanceFs.readdirSync(users);
+        let inUse = false;
         for (const lease of leases) {
-          if (/^[1-9][0-9]*$/.test(lease) && !maintenanceAlive(Number(lease))) maintenanceFs.rmSync(maintenancePath.join(users, lease), { force: true });
+          const file = maintenancePath.join(users, lease);
+          const identity = maintenanceFs.readFileSync(file, 'utf8');
+          if (!/^[1-9][0-9]*$/.test(lease) || maintenanceAlive(Number(lease), identity)) inUse = true;
+          else maintenanceFs.rmSync(file, { force: true });
         }
-        if (version === required || version === previous || scan.stdout.includes(directory + maintenancePath.sep)) continue;
-        if (leases.some(value => !/^[1-9][0-9]*$/.test(value) || maintenanceAlive(Number(value)))) continue;
+        if (version === required || version === previous || scan.stdout.includes(directory + maintenancePath.sep) || inUse) continue;
         maintenanceFs.rmSync(directory, { recursive: true, force: true });
         maintenanceFs.rmSync(users, { recursive: true, force: true });
       }

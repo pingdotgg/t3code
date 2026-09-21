@@ -32,7 +32,10 @@ describe.each([false, true])("device tool cleanup, flat=%s", (flat) => {
         `
 (async () => {
   const root = ${JSON.stringify(root)};
-  await claimTool(root, '${name}', '0.1.0', 2147483647);
+  // Simulate a dead owner whose numeric PID was reused by this live test process.
+  maintenanceFs.writeFileSync(maintenancePath.join(root, '.maintenance-lock'), JSON.stringify({ pid: ${process.pid}, identity: 'previous-process-start' }));
+  await claimTool(root, '${name}', '0.1.0', ${process.pid});
+  maintenanceFs.writeFileSync(maintenancePath.join(root, '.users', '${name}@0.1.0', '${process.pid}'), 'previous-process-start');
   await claimTool(root, '${name}', '0.2.0', ${process.pid});
   await claimTool(root, '${name}', '0.4.0', 2147483647);
   await pruneTools(root, [['${name}', '0.6.0']], ${flat});
