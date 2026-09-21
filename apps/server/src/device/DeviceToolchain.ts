@@ -27,6 +27,11 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const DEVICE_HUB_PACKAGE = "expo-device-hub";
 export const DEVICE_HUB_VERSION = "0.10.1";
+const DEVICE_HUB_DUO_BASE_VERSION = "0.9.0";
+export const DEVICE_HUB_DUO_COMMIT = "bb265b11c13b395e5302d121458e2d42224a2e9f";
+export const DEVICE_HUB_DUO_PATCH =
+  "ed67a0803952b7554dae0466125c915850013d9042470d87e3d25cbb9827f01a";
+export const DEVICE_HUB_DUO_VERSION = `${DEVICE_HUB_DUO_BASE_VERSION}-duo.${DEVICE_HUB_DUO_COMMIT.slice(0, 12)}.physical.${DEVICE_HUB_DUO_PATCH.slice(0, 8)}`;
 const AGENT_DEVICE_PACKAGE = "agent-device";
 export const AGENT_DEVICE_VERSION = "0.21.12";
 
@@ -64,12 +69,17 @@ interface ToolSpec {
   readonly name: string;
   readonly version: string;
   readonly entry: ReadonlyArray<string>;
+  readonly archive?: string;
 }
 
-const HUB_SPEC: ToolSpec = {
-  name: DEVICE_HUB_PACKAGE,
-  version: DEVICE_HUB_VERSION,
-  entry: ["dist", "server", "cli.mjs"],
+const hubSpec = (): ToolSpec => {
+  const archive = process.env.T3CODE_DEVICE_HUB_ARCHIVE;
+  return {
+    name: DEVICE_HUB_PACKAGE,
+    version: archive ? DEVICE_HUB_DUO_VERSION : DEVICE_HUB_VERSION,
+    ...(archive ? { archive } : {}),
+    entry: ["dist", "server", "cli.mjs"],
+  };
 };
 
 const AGENT_DEVICE_SPEC: ToolSpec = {
@@ -87,8 +97,12 @@ const toolPaths = (path: Path.Path, baseDir: string, spec: ToolSpec): DeviceTool
   };
 };
 
-const deviceToolchainPaths = (path: Path.Path, baseDir: string): DeviceToolchainPaths => ({
-  hub: toolPaths(path, baseDir, HUB_SPEC),
+const deviceToolchainPaths = (
+  path: Path.Path,
+  baseDir: string,
+  hub = hubSpec(),
+): DeviceToolchainPaths => ({
+  hub: toolPaths(path, baseDir, hub),
   agentDevice: toolPaths(path, baseDir, AGENT_DEVICE_SPEC),
 });
 
@@ -118,6 +132,10 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
   const fail = (step: string) => (cause: unknown) =>
     new DeviceToolchainInstallError({ tool: spec.name, step, cause });
 
+  if (spec.archive && !path.isAbsolute(spec.archive))
+    return yield* fail("validating the Duo archive path")(
+      new Error("An absolute archive path is required"),
+    );
   if (yield* isInstalled(fs, paths, spec.version)) return paths;
 
   const parentDir = path.dirname(paths.installDir);
@@ -138,7 +156,7 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
       stagingDir,
       "--no-fund",
       "--no-audit",
-      `${spec.name}@${spec.version}`,
+      spec.archive ?? `${spec.name}@${spec.version}`,
     ];
     const result = yield* runner
       .run({ command: "npm", args: installArgs, timeout: INSTALL_TIMEOUT })
@@ -171,6 +189,28 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
         step: "verifying the installed entry point",
       });
     }
+    if (spec.archive) {
+      const manifest = yield* fs
+        .readFileString(path.join(stagingDir, "node_modules", spec.name, "package.json"))
+        .pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(
+              Schema.fromJsonString(
+                Schema.Struct({
+                  version: Schema.Literal(DEVICE_HUB_DUO_VERSION),
+                  t3DeviceHubBuild: Schema.Struct({
+                    serveSimCommit: Schema.Literal(DEVICE_HUB_DUO_COMMIT),
+                    physicalOrientationPatchSha256: Schema.Literal(DEVICE_HUB_DUO_PATCH),
+                  }),
+                }),
+              ),
+            ),
+          ),
+          Effect.mapError(fail("verifying the pinned Duo build")),
+        );
+      if (manifest.version !== spec.version)
+        return yield* fail("verifying the pinned Duo build")(manifest);
+    }
     yield* fs
       .writeFileString(path.join(stagingDir, ".install-complete"), `${spec.version}\n`)
       .pipe(Effect.mapError(fail("recording the completed install")));
@@ -196,12 +236,16 @@ const ensureTool = Effect.fn("DeviceToolchain.ensureTool")(function* (
   select: (paths: DeviceToolchainPaths) => DeviceToolPaths,
 ) {
   const path = yield* Path.Path;
-  const paths = deviceToolchainPaths(path, baseDir);
+  const paths = deviceToolchainPaths(
+    path,
+    baseDir,
+    spec.name === DEVICE_HUB_PACKAGE ? spec : hubSpec(),
+  );
   return yield* installLock.withPermit(installTool(spec, select(paths)));
 });
 
 export const ensureDeviceHub = (baseDir: string) =>
-  ensureTool(baseDir, HUB_SPEC, (paths) => paths.hub);
+  ensureTool(baseDir, hubSpec(), (paths) => paths.hub);
 
 export const ensureAgentDevice = (baseDir: string) =>
   ensureTool(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
@@ -213,12 +257,16 @@ const isToolInstalled = Effect.fn("DeviceToolchain.isToolInstalled")(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const paths = deviceToolchainPaths(path, baseDir);
+  const paths = deviceToolchainPaths(
+    path,
+    baseDir,
+    spec.name === DEVICE_HUB_PACKAGE ? spec : hubSpec(),
+  );
   return yield* isInstalled(fs, select(paths), spec.version);
 });
 
 export const isDeviceHubInstalled = (baseDir: string) =>
-  isToolInstalled(baseDir, HUB_SPEC, (paths) => paths.hub);
+  isToolInstalled(baseDir, hubSpec(), (paths) => paths.hub);
 
 export const isAgentDeviceInstalled = (baseDir: string) =>
   isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
@@ -260,7 +308,7 @@ export const deviceToolVersions = Effect.fn("DeviceToolchain.versions")(function
   });
   return yield* Effect.gen(function* () {
     return {
-      hub: yield* inspect(HUB_SPEC),
+      hub: yield* inspect(hubSpec()),
       agent: yield* inspect(AGENT_DEVICE_SPEC),
     } satisfies DeviceToolVersions;
   }).pipe(Effect.orElseSucceed(() => undefined));
