@@ -362,6 +362,8 @@ import {
   useThread,
   useThreadRefs,
   useThreadShell,
+  readThreadShells,
+  readEnvironmentSupportsSettlement,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -6101,6 +6103,23 @@ export default function ChatView(props: ChatViewProps) {
       setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
     }
   }, [activeThreadRef, unsettleThreadMutation]);
+  const handleUnsettleLastThread = useCallback(async () => {
+    const latest = readThreadShells()
+      .filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          readEnvironmentSupportsSettlement(thread.environmentId) &&
+          thread.settledOverride === "settled" &&
+          thread.settledAt !== null &&
+          Number.isFinite(Date.parse(thread.settledAt)),
+      )
+      .toSorted((left, right) => Date.parse(right.settledAt!) - Date.parse(left.settledAt!))[0];
+    if (!latest) return;
+    await unsettleThreadMutation({
+      environmentId: latest.environmentId,
+      input: { threadId: latest.id, reason: "user" },
+    });
+  }, [unsettleThreadMutation]);
   const unsnoozeThreadMutation = useAtomCommand(threadEnvironment.unsnooze, {
     reportFailure: false,
   });
@@ -6731,6 +6750,13 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.unsettleLast") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) void handleUnsettleLastThread();
+        return;
+      }
+
       if (command === "thread.undo") {
         // Only claim the chord when there is an Undo to run; otherwise the
         // page keeps its native behavior for the key.
@@ -6942,6 +6968,7 @@ export default function ChatView(props: ChatViewProps) {
     splitPanelTerminal,
     keybindings,
     handleUnsettleActiveThread,
+    handleUnsettleLastThread,
     isServerThread,
     onInterrupt,
     onToggleDiff,
