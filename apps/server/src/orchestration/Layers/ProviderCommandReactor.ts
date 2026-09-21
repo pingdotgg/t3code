@@ -1520,7 +1520,7 @@ const make = Effect.gen(function* () {
     }
     const session = thread.session;
     if (!session || session.status === "stopped") {
-      return yield* appendProviderFailureActivity({
+      yield* appendProviderFailureActivity({
         threadId: event.payload.threadId,
         kind: "provider.turn.interrupt.failed",
         summary: "Provider turn interrupt failed",
@@ -1528,6 +1528,19 @@ const make = Effect.gen(function* () {
         turnId: event.payload.turnId ?? null,
         createdAt: event.payload.createdAt,
       });
+      // A stopped session must not keep an active turn. That turn can never be
+      // interrupted, so the thread keeps reading as working and every later stop
+      // fails identically with no way out from the UI. Clearing it makes stop
+      // self-correcting, matching how session-stop settles a thread whose
+      // provider session is already gone.
+      if (session && session.activeTurnId !== null) {
+        yield* setThreadSession({
+          threadId: event.payload.threadId,
+          session: { ...session, activeTurnId: null, updatedAt: event.payload.createdAt },
+          createdAt: event.payload.createdAt,
+        });
+      }
+      return;
     }
 
     const recoverInterruptFailure = (cause: Cause.Cause<unknown>) => {
