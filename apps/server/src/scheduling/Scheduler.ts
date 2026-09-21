@@ -17,7 +17,7 @@ export class Scheduler extends Context.Service<
   }
 >()("t3/scheduling/Scheduler") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sources = yield* Ref.make(new Map<symbol, Effect.Effect<void>>());
   const register: Scheduler["Service"]["register"] = Effect.fn("Scheduler.register")(function* <
     E,
