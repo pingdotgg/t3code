@@ -10,6 +10,7 @@ import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
+import { relativeTime } from "../../lib/time";
 
 export type ArchivedThreadSortOrder = "newest" | "oldest";
 
@@ -19,13 +20,31 @@ export interface ArchivedThreadGroup {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
 }
 
-function archiveTimestamp(thread: EnvironmentThreadShell): number {
-  const timestamp = Date.parse(thread.archivedAt ?? thread.updatedAt);
-  return Number.isNaN(timestamp) ? 0 : timestamp;
+function parseTimestamp(input: string): number | null {
+  const timestamp = Date.parse(input);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function archiveTimestamp(thread: EnvironmentThreadShell): number | null {
+  return parseTimestamp(thread.archivedAt ?? thread.updatedAt);
+}
+
+export function formatArchivedThreadRelativeTime(input: string): string | null {
+  return parseTimestamp(input) === null ? null : relativeTime(input);
 }
 
 function matchesQuery(value: string | null, query: string): boolean {
   return value?.toLocaleLowerCase().includes(query) ?? false;
+}
+
+function makeArchiveTimestampOrder(sortOrder: ArchivedThreadSortOrder): Order.Order<number | null> {
+  const timestampOrder = sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
+  return Order.make((left, right) => {
+    if (left === null && right === null) return 0;
+    if (left === null) return 1;
+    if (right === null) return -1;
+    return timestampOrder(left, right);
+  });
 }
 
 export function buildArchivedThreadGroups(input: {
@@ -72,14 +91,18 @@ export function buildArchivedThreadGroups(input: {
         continue;
       }
 
-      const timestampOrder = input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
+      const timestampOrder = makeArchiveTimestampOrder(input.sortOrder);
       groups.push({
         key: scopedProjectKey(project.environmentId, project.id),
         project,
         threads: Arr.sort(
           matchingThreads,
           Order.mapInput(
-            Order.Struct({ timestamp: timestampOrder, title: Order.String, id: Order.String }),
+            Order.Struct({
+              timestamp: timestampOrder,
+              title: Order.String,
+              id: Order.String,
+            }),
             (thread: EnvironmentThreadShell) => ({
               timestamp: archiveTimestamp(thread),
               title: thread.title,
@@ -91,13 +114,13 @@ export function buildArchivedThreadGroups(input: {
     }
   }
 
-  const timestampOrder = input.sortOrder === "newest" ? Order.flip(Order.Number) : Order.Number;
+  const timestampOrder = makeArchiveTimestampOrder(input.sortOrder);
   return Arr.sort(
     groups,
     Order.mapInput(
       Order.Struct({ timestamp: timestampOrder, title: Order.String, key: Order.String }),
       (group: ArchivedThreadGroup) => ({
-        timestamp: group.threads[0] ? archiveTimestamp(group.threads[0]) : 0,
+        timestamp: group.threads[0] ? archiveTimestamp(group.threads[0]) : null,
         title: group.project.title,
         key: group.key,
       }),

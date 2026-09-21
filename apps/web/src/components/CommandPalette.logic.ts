@@ -207,7 +207,7 @@ export function buildCommandPaletteProjectMetadata(input: {
   return { searchTerms, environmentLabels: [...environmentLabels] };
 }
 
-export function buildProjectActionItems(input: {
+export interface BuildProjectActionItemsInput {
   projects: ReadonlyArray<CommandPaletteProject>;
   valuePrefix: string;
   icon: (project: CommandPaletteProject) => ReactNode;
@@ -215,7 +215,11 @@ export function buildProjectActionItems(input: {
   searchTerms?: (project: CommandPaletteProject) => ReadonlyArray<string>;
   renderDescription?: (project: CommandPaletteProject) => ReactNode;
   shortcutCommand?: KeybindingCommand;
-}): CommandPaletteActionItem[] {
+}
+
+export function buildProjectActionItems(
+  input: BuildProjectActionItemsInput,
+): CommandPaletteActionItem[] {
   return input.projects.map((project) => ({
     kind: "action",
     value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
@@ -253,7 +257,9 @@ export type BuildThreadActionItemsThread = Pick<
   latestUserMessageAt?: string | null;
 };
 
-export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {
+export interface BuildThreadActionItemsInput<
+  TThread extends BuildThreadActionItemsThread = BuildThreadActionItemsThread,
+> {
   threads: ReadonlyArray<TThread>;
   activeThreadId?: Thread["id"];
   projectTitleById: ReadonlyMap<Project["id"], string>;
@@ -268,7 +274,11 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   getContentMatch?: (thread: TThread) => CommandPaletteThreadContentMatch | undefined;
   runThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
   limit?: number;
-}): CommandPaletteActionItem[] {
+}
+
+export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(
+  input: BuildThreadActionItemsInput<TThread>,
+): CommandPaletteActionItem[] {
   const sortedThreads = sortThreads(
     input.threads.filter((thread) => thread.archivedAt === null),
     input.sortOrder,

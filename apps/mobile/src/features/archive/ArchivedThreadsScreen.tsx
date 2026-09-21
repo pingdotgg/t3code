@@ -27,11 +27,15 @@ import { AppText as Text } from "../../components/AppText";
 import { EmptyState } from "../../components/EmptyState";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { relativeTime } from "../../lib/time";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
+import {
+  formatArchivedThreadRelativeTime,
+  type ArchivedThreadGroup,
+  type ArchivedThreadSortOrder,
+} from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
 
 export interface ArchivedThreadsHeaderEnvironment {
@@ -181,6 +185,7 @@ function ArchivedThreadRow(props: {
   readonly environmentLabel: string | null;
   readonly isFirst: boolean;
   readonly isLast: boolean;
+  readonly isUnarchiving: boolean;
   readonly onDelete: () => void;
   readonly onSwipeableClose: (methods: SwipeableMethods) => void;
   readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
@@ -192,10 +197,13 @@ function ArchivedThreadRow(props: {
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const cardColor = useUniwindTheme()["--color-card"];
-  const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
+  const timestamp = formatArchivedThreadRelativeTime(
+    props.thread.archivedAt ?? props.thread.updatedAt,
+  );
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
+  const onDelete = props.isUnarchiving ? () => undefined : props.onDelete;
   return (
     <ThreadSwipeable
       resetKey={`${props.thread.environmentId}:${props.thread.id}`}
@@ -210,15 +218,16 @@ function ArchivedThreadRow(props: {
         borderBottomRightRadius: props.isLast ? 20 : 0,
         overflow: "hidden",
       }}
+      enabled={!props.isUnarchiving}
       fullSwipeWidth={windowWidth - 32}
-      onDelete={props.onDelete}
+      onDelete={onDelete}
       onSwipeableClose={props.onSwipeableClose}
       onSwipeableWillOpen={props.onSwipeableWillOpen}
       primaryAction={{
         accessibilityLabel: `Unarchive ${props.thread.title}`,
         icon: "arrow.uturn.backward",
         label: "Unarchive",
-        onPress: props.onUnarchive,
+        onPress: props.isUnarchiving ? () => undefined : props.onUnarchive,
       }}
       simultaneousWithExternalGesture={props.simultaneousSwipeGesture}
       threadTitle={props.thread.title}
@@ -228,12 +237,16 @@ function ArchivedThreadRow(props: {
           className={`flex-row items-center gap-3 bg-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
         >
           <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
-            <SymbolView
-              name="archivebox.fill"
-              size={15}
-              tintColorClassName="accent-icon-subtle"
-              type="monochrome"
-            />
+            {props.isUnarchiving ? (
+              <ActivityIndicator colorClassName="accent-icon-subtle" size="small" />
+            ) : (
+              <SymbolView
+                name="archivebox.fill"
+                size={15}
+                tintColorClassName="accent-icon-subtle"
+                type="monochrome"
+              />
+            )}
           </View>
 
           <View className="min-w-0 flex-1 gap-1">
@@ -244,9 +257,11 @@ function ArchivedThreadRow(props: {
               >
                 {props.thread.title}
               </Text>
-              <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
-                {timestamp}
-              </Text>
+              {timestamp ? (
+                <Text className="min-w-[30px] text-right text-xs tabular-nums text-foreground-tertiary">
+                  {timestamp}
+                </Text>
+              ) : null}
             </View>
             {subtitle.length > 0 ? (
               <View className="flex-row items-center gap-1.5">
@@ -299,6 +314,7 @@ export function ArchivedThreadsScreen(props: {
   readonly onSearchQueryChange: (query: string) => void;
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
   readonly onUnarchiveThread: (thread: EnvironmentThreadShell) => void;
+  readonly unarchivingThreadKeys: ReadonlySet<string>;
 }) {
   const { onDeleteThread, onUnarchiveThread } = props;
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
@@ -370,6 +386,9 @@ export function ArchivedThreadsScreen(props: {
           environmentLabel={item.environmentLabel}
           isFirst={item.isFirst}
           isLast={item.isLast}
+          isUnarchiving={props.unarchivingThreadKeys.has(
+            scopedThreadKey(item.thread.environmentId, item.thread.id),
+          )}
           onDelete={() => onDeleteThread(item.thread)}
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -385,6 +404,7 @@ export function ArchivedThreadsScreen(props: {
       handleSwipeableWillOpen,
       onDeleteThread,
       onUnarchiveThread,
+      props.unarchivingThreadKeys,
     ],
   );
   const listEmptyComponent = useMemo(() => {

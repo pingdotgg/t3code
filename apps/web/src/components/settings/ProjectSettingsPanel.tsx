@@ -39,7 +39,11 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import {
+  buildArchivedProjectRemovalPlans,
+  getArchivedProjectRemovalWarning,
+  projectGroupTitleNeedsUpdate,
+} from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 
 const ProjectIconPickerDialog = lazy(() =>
@@ -301,6 +305,7 @@ function ProjectDetail({
       const projectThreads = threads.filter((thread) =>
         memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
       );
+      const memberRemovalPlans = buildArchivedProjectRemovalPlans(members, projectThreads);
       const isWholeGroup = members.length === group.memberProjects.length;
       const targetKind = hasOtherMembers || !isWholeGroup ? "checkout" : "project";
       const singleMember = members.length === 1 ? members[0]! : null;
@@ -319,11 +324,10 @@ function ProjectDetail({
                     : []),
                 ]
               : [`This removes ${members.length} grouped project entries.`]),
-            ...(projectThreads.length > 0
-              ? [
-                  "This permanently clears conversation history for those threads and any archived threads.",
-                ]
-              : ["This permanently clears any archived conversation history."]),
+            getArchivedProjectRemovalWarning({
+              memberCount: members.length,
+              hasLiveThreads: projectThreads.length > 0,
+            }),
             isWholeGroup && !hasOtherMembers
               ? "This removes only the project entries, not the files on disk."
               : "Other entries in this grouped project are unaffected.",
@@ -335,17 +339,13 @@ function ProjectDetail({
       if (confirmed._tag === "Failure" || !confirmed.value) return;
 
       const draftStore = useComposerDraftStore.getState();
-      for (const member of members) {
-        const memberThreads = projectThreads.filter(
-          (thread) =>
-            thread.environmentId === member.environmentId && thread.projectId === member.id,
-        );
+      for (const { member, memberThreads, commandOptions } of memberRemovalPlans) {
         const result = mapAtomCommandResult(
           await deleteProject({
             environmentId: member.environmentId,
             input: {
               projectId: member.id,
-              force: true,
+              ...commandOptions,
             },
           }),
           () => undefined,

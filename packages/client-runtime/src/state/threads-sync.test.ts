@@ -40,6 +40,13 @@ import {
   ThreadSnapshotLoader,
   type EnvironmentThreadState,
 } from "./threads.ts";
+import {
+  cachedThreadGeneration,
+  evictCachedThread,
+  isCachedThreadEvicted,
+  persistCachedThread,
+  reviveCachedThread,
+} from "./threadCache.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -137,6 +144,8 @@ function awaitThreadState(
 
 const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (options?: {
   readonly cached?: OrchestrationThread;
+  readonly cache?: Persistence.EnvironmentCacheStore["Service"];
+  readonly removeThread?: Persistence.EnvironmentCacheStore["Service"]["removeThread"];
   readonly httpSnapshot?: Option.Option<OrchestrationThreadDetailSnapshot>;
   readonly completionMarker?: boolean;
   readonly resumeCache?: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]>;
@@ -215,33 +224,37 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     disconnect: Effect.void,
     retryNow: Ref.update(retryCount, (count) => count + 1),
   } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
-  const cache = Persistence.EnvironmentCacheStore.of({
-    loadShell: () => Effect.succeed(Option.none()),
-    saveShell: () => Effect.void,
-    loadThread: (_environmentId, threadId) =>
-      options?.loadCached ??
-      Effect.succeed(
-        threadId === THREAD_ID && options?.cached !== undefined
-          ? Option.some({
-              snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
-              thread: options.cached,
-            })
-          : Option.none(),
-      ),
-    saveThread: (environmentId, thread) =>
-      Ref.update(savedThreads, (current) => [...current, thread]).pipe(
-        Effect.andThen(options?.saveThread?.(environmentId, thread) ?? Effect.void),
-      ),
-    removeThread: (_environmentId, threadId) =>
-      Ref.update(removedThreads, (current) => [...current, threadId]),
-    loadServerConfig: () => Effect.succeed(Option.none()),
-    saveServerConfig: () => Effect.void,
-    loadVcsRefs: () => Effect.succeed(Option.none()),
-    saveVcsRefs: () => Effect.void,
-    removeVcsRefs: () => Effect.void,
-    clearVcsRefs: () => Effect.void,
-    clear: () => Effect.void,
-  });
+  const cache =
+    options?.cache ??
+    Persistence.EnvironmentCacheStore.of({
+      loadShell: () => Effect.succeed(Option.none()),
+      saveShell: () => Effect.void,
+      loadThread: (_environmentId, threadId) =>
+        options?.loadCached ??
+        Effect.succeed(
+          threadId === THREAD_ID && options?.cached !== undefined
+            ? Option.some({
+                snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
+                thread: options.cached,
+              })
+            : Option.none(),
+        ),
+      saveThread: (environmentId, thread) =>
+        Ref.update(savedThreads, (current) => [...current, thread]).pipe(
+          Effect.andThen(options?.saveThread?.(environmentId, thread) ?? Effect.void),
+        ),
+      removeThread: (_environmentId, threadId) =>
+        Ref.update(removedThreads, (current) => [...current, threadId]).pipe(
+          Effect.andThen(options?.removeThread?.(_environmentId, threadId) ?? Effect.void),
+        ),
+      loadServerConfig: () => Effect.succeed(Option.none()),
+      saveServerConfig: () => Effect.void,
+      loadVcsRefs: () => Effect.succeed(Option.none()),
+      saveVcsRefs: () => Effect.void,
+      removeVcsRefs: () => Effect.void,
+      clearVcsRefs: () => Effect.void,
+      clear: () => Effect.void,
+    });
   const threadState = yield* makeEnvironmentThreadState(THREAD_ID, options?.resumeCache).pipe(
     Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
     Effect.provideService(Persistence.EnvironmentCacheStore, cache),
@@ -276,6 +289,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     supervisorSession,
     savedThreads,
     removedThreads,
+    cache,
     wakeups,
     replaceSession: SubscriptionRef.set(
       supervisorSession,
@@ -368,6 +382,47 @@ const deleted = (): OrchestrationThreadStreamItem => ({
     payload: {
       threadId: THREAD_ID,
       deletedAt: "2026-04-01T02:00:00.000Z",
+    },
+  },
+});
+
+const archived = (sequence = 3): OrchestrationThreadStreamItem => ({
+  kind: "event",
+  event: {
+    eventId: EventId.make("event-archived"),
+    sequence,
+    occurredAt: "2026-04-01T02:00:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    type: "thread.archived",
+    payload: {
+      threadId: THREAD_ID,
+      archivedAt: "2026-04-01T02:00:00.000Z",
+      updatedAt: "2026-04-01T02:00:00.000Z",
+    },
+  },
+});
+
+const unarchived = (sequence = 4): OrchestrationThreadStreamItem => ({
+  kind: "event",
+  event: {
+    eventId: EventId.make("event-unarchived"),
+    sequence,
+    occurredAt: "2026-04-01T03:00:00.000Z",
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+    aggregateKind: "thread",
+    aggregateId: THREAD_ID,
+    type: "thread.unarchived",
+    payload: {
+      threadId: THREAD_ID,
+      updatedAt: "2026-04-01T03:00:00.000Z",
     },
   },
 });
@@ -613,6 +668,101 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  for (const delivery of ["event", "snapshot"] as const) {
+    it.effect(`preserves successor persistence after an obsolete archive ${delivery}`, () =>
+      Effect.gen(function* () {
+        const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+          snapshot: undefined,
+          owner: undefined,
+        };
+        const persisted = yield* Deferred.make<void>();
+        const old = yield* makeHarness({
+          cached: BASE_THREAD,
+          resumeCache,
+          saveThread: (_environmentId, saved) =>
+            saved.thread.title === "Successor still persists"
+              ? Deferred.succeed(persisted, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        yield* awaitThreadState(old.observed, (value) => value.status === "live");
+        const successor = yield* makeHarness({ resumeCache, cache: old.cache });
+        yield* Queue.offer(successor.inputs, titleUpdated("Successor title", 9));
+        yield* awaitThreadState(
+          successor.observed,
+          (value) => Option.getOrNull(value.data)?.title === "Successor title",
+        );
+        const update = archived();
+        if (update.kind !== "event") return yield* Effect.die("Expected an event");
+        yield* Queue.offer(
+          old.inputs,
+          delivery === "event"
+            ? { ...update, event: { ...update.event, sequence: 8 } }
+            : snapshot({ ...BASE_THREAD, archivedAt: "2026-04-01T02:00:00.000Z" }),
+        );
+        yield* awaitThreadState(
+          old.observed,
+          (value) => Option.getOrNull(value.data)?.archivedAt != null,
+        );
+        // A later item confirms the prior archive finished applying.
+        yield* Queue.offer(old.inputs, titleUpdated("Old scope processed archive", 10));
+        yield* awaitThreadState(
+          old.observed,
+          (value) => Option.getOrNull(value.data)?.title === "Old scope processed archive",
+        );
+        expect(resumeCache.snapshot?.sequence).toBe(9);
+        expect(Option.getOrThrow(resumeCache.snapshot!.state.data).title).toBe("Successor title");
+        expect(yield* Ref.get(old.removedThreads)).toEqual([]);
+        expect(isCachedThreadEvicted(old.cache, TARGET.environmentId, THREAD_ID)).toBe(false);
+
+        yield* Queue.offer(successor.inputs, titleUpdated("Successor still persists", 11));
+        yield* awaitThreadState(
+          successor.observed,
+          (value) => Option.getOrNull(value.data)?.title === "Successor still persists",
+        );
+        yield* TestClock.adjust("500 millis");
+        yield* Deferred.await(persisted);
+      }),
+    );
+
+    it.effect(`preserves the successor tombstone after an obsolete unarchive ${delivery}`, () =>
+      Effect.gen(function* () {
+        const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+          snapshot: undefined,
+          owner: undefined,
+        };
+        const old = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
+        yield* awaitThreadState(old.observed, (value) => value.status === "live");
+        const successor = yield* makeHarness({ resumeCache, cache: old.cache });
+        yield* awaitThreadState(successor.observed, (value) => value.status === "live");
+        yield* evictCachedThread(old.cache, TARGET.environmentId, THREAD_ID);
+        const generation = cachedThreadGeneration(old.cache, TARGET.environmentId, THREAD_ID);
+        const update = unarchived();
+        if (update.kind !== "event") return yield* Effect.die("Expected an event");
+        yield* Queue.offer(
+          old.inputs,
+          delivery === "event"
+            ? { ...update, event: { ...update.event, sequence: 8 } }
+            : snapshot({ ...BASE_THREAD, title: "Obsolete active snapshot" }),
+        );
+        yield* awaitThreadState(old.observed, (value) => {
+          const thread = Option.getOrNull(value.data);
+          return delivery === "event"
+            ? thread?.updatedAt === "2026-04-01T03:00:00.000Z"
+            : thread?.title === "Obsolete active snapshot";
+        });
+        yield* Queue.offer(old.inputs, titleUpdated("Old scope processed unarchive", 10));
+        yield* awaitThreadState(
+          old.observed,
+          (value) => Option.getOrNull(value.data)?.title === "Old scope processed unarchive",
+        );
+        expect(isCachedThreadEvicted(old.cache, TARGET.environmentId, THREAD_ID)).toBe(true);
+        expect(cachedThreadGeneration(old.cache, TARGET.environmentId, THREAD_ID)).toBe(generation);
+        expect(resumeCache.invalidated).toBe(true);
+        expect(resumeCache.snapshot).toBeUndefined();
+      }),
+    );
+  }
+
   it.effect("retains a deletion instead of restoring the old disk snapshot", () =>
     Effect.gen(function* () {
       const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
@@ -775,6 +925,336 @@ describe("EnvironmentThreads", () => {
 
       expect(Option.isNone(state.data)).toBe(true);
       expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+    }),
+  );
+
+  it.effect("removes cached data when the thread is archived and does not persist it again", () =>
+    Effect.gen(function* () {
+      const savedThreads = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({ cached: BASE_THREAD });
+          yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+          yield* Queue.offer(harness.inputs, archived());
+
+          const state = yield* awaitThreadState(
+            harness.observed,
+            (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+          );
+          yield* TestClock.adjust("500 millis");
+          yield* Effect.yieldNow;
+
+          expect(Option.getOrThrow(state.data).archivedAt).toBe("2026-04-01T02:00:00.000Z");
+          expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+          expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+          return harness.savedThreads;
+        }),
+      );
+
+      expect(yield* Ref.get(savedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("retries a missing archived thread so it can observe unarchive", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+      yield* Queue.offer(harness.inputs, archived());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+      );
+
+      yield* Queue.offer(harness.inputs, new Error("thread was moved to cold storage"));
+      yield* awaitThreadState(harness.observed, (value) => Option.isSome(value.error));
+      yield* TestClock.adjust("250 millis");
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        yield* Effect.yieldNow;
+      }
+
+      expect(yield* Ref.get(harness.subscriptionCount)).toBe(2);
+      yield* Queue.offer(harness.inputs, unarchived());
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt === null,
+      );
+      expect(Option.getOrThrow(state.data).archivedAt).toBeNull();
+    }),
+  );
+
+  it.effect("removes cached data when an archived thread arrives in a snapshot", () =>
+    Effect.gen(function* () {
+      const archivedThread = {
+        ...BASE_THREAD,
+        archivedAt: "2026-04-01T02:00:00.000Z",
+      };
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+
+      yield* Queue.offer(harness.inputs, snapshot(archivedThread));
+      const state = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+
+      expect(Option.getOrThrow(state.data).archivedAt).toBe("2026-04-01T02:00:00.000Z");
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("does not restore an out-of-band cache eviction from queued or teardown writes", () =>
+    Effect.gen(function* () {
+      const savedThreads = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({ cached: BASE_THREAD });
+          yield* Queue.offer(
+            harness.inputs,
+            titleUpdated("Stale pending title", CACHED_SNAPSHOT_SEQUENCE + 1),
+          );
+          yield* awaitThreadState(
+            harness.observed,
+            (value) =>
+              Option.isSome(value.data) && value.data.value.title === "Stale pending title",
+          );
+
+          yield* evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+          yield* TestClock.adjust("500 millis");
+          yield* Effect.yieldNow;
+
+          expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+          expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+          return harness.savedThreads;
+        }),
+      );
+
+      expect(yield* Ref.get(savedThreads)).toEqual([]);
+    }),
+  );
+
+  for (const operation of ["evict", "revive"] as const) {
+    it.effect(`rechecks ownership when a queued cache ${operation} acquires its permit`, () =>
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const block = Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        );
+        const harness = yield* makeHarness({
+          cached: BASE_THREAD,
+          ...(operation === "evict" ? { saveThread: () => block } : { removeThread: () => block }),
+        });
+        yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        const holding = yield* (
+          operation === "evict"
+            ? persistCachedThread(
+                harness.cache,
+                TARGET.environmentId,
+                { snapshotSequence: 7, thread: BASE_THREAD },
+                cachedThreadGeneration(harness.cache, TARGET.environmentId, THREAD_ID),
+              )
+            : evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID)
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        let ownsCache = true;
+        const queued = yield* (
+          operation === "evict"
+            ? evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID, () => ownsCache)
+            : reviveCachedThread(harness.cache, TARGET.environmentId, THREAD_ID, () => ownsCache)
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        const generation = cachedThreadGeneration(harness.cache, TARGET.environmentId, THREAD_ID);
+        ownsCache = false;
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(holding);
+        yield* Fiber.join(queued);
+        expect(cachedThreadGeneration(harness.cache, TARGET.environmentId, THREAD_ID)).toBe(
+          generation,
+        );
+        expect(isCachedThreadEvicted(harness.cache, TARGET.environmentId, THREAD_ID)).toBe(
+          operation === "revive",
+        );
+        expect(yield* Ref.get(harness.removedThreads)).toEqual(
+          operation === "revive" ? [THREAD_ID] : [],
+        );
+      }),
+    );
+  }
+
+  it.effect("retries a failed archive eviction for the current cache owner", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const removed = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        cached: BASE_THREAD,
+        resumeCache: { snapshot: undefined, owner: undefined },
+        removeThread: () =>
+          Effect.suspend(() => {
+            attempts += 1;
+            return attempts === 1
+              ? Effect.fail(
+                  new Persistence.ConnectionPersistenceError({
+                    operation: "remove-thread",
+                    message: "Temporary cache removal failure",
+                  }),
+                )
+              : Deferred.succeed(removed, undefined).pipe(Effect.asVoid);
+          }),
+      });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({ ...BASE_THREAD, archivedAt: "2026-04-01T02:00:00.000Z" }),
+      );
+      yield* Queue.offer(harness.inputs, titleUpdated("First eviction processed", 9));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.title === "First eviction processed",
+      );
+      expect(attempts).toBe(1);
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({ ...BASE_THREAD, archivedAt: "2026-04-01T02:00:00.000Z" }),
+      );
+      yield* Deferred.await(removed);
+      expect(attempts).toBe(2);
+    }),
+  );
+
+  it.effect("keeps an active cache write valid when revival is already satisfied", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      const generation = cachedThreadGeneration(harness.cache, TARGET.environmentId, THREAD_ID);
+
+      yield* reviveCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      yield* persistCachedThread(
+        harness.cache,
+        TARGET.environmentId,
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+        generation,
+      );
+
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+      ]);
+    }),
+  );
+
+  it.effect("rejects a pre-eviction write after cache revival", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      const staleGeneration = cachedThreadGeneration(
+        harness.cache,
+        TARGET.environmentId,
+        THREAD_ID,
+      );
+
+      yield* evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      yield* reviveCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      yield* persistCachedThread(
+        harness.cache,
+        TARGET.environmentId,
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+        staleGeneration,
+      );
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+
+      const revivedGeneration = cachedThreadGeneration(
+        harness.cache,
+        TARGET.environmentId,
+        THREAD_ID,
+      );
+      yield* persistCachedThread(
+        harness.cache,
+        TARGET.environmentId,
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+        revivedGeneration,
+      );
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+      ]);
+    }),
+  );
+
+  it.effect("rejects a write captured while the cache is evicted after revival", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+
+      yield* evictCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      const evictedGeneration = cachedThreadGeneration(
+        harness.cache,
+        TARGET.environmentId,
+        THREAD_ID,
+      );
+
+      yield* reviveCachedThread(harness.cache, TARGET.environmentId, THREAD_ID);
+      yield* persistCachedThread(
+        harness.cache,
+        TARGET.environmentId,
+        { snapshotSequence: CACHED_SNAPSHOT_SEQUENCE, thread: BASE_THREAD },
+        evictedGeneration,
+      );
+
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+    }),
+  );
+
+  it.effect("persists thread detail again after an authoritative unarchive event", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* Queue.offer(harness.inputs, snapshot(BASE_THREAD));
+      yield* Queue.offer(harness.inputs, archived());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+      );
+
+      yield* Queue.offer(harness.inputs, unarchived());
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt === null,
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)?.thread.archivedAt).toBeNull();
+    }),
+  );
+
+  it.effect("persists thread detail again after an authoritative active snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({
+          ...BASE_THREAD,
+          archivedAt: "2026-04-01T02:00:00.000Z",
+        }),
+      );
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.archivedAt !== null,
+      );
+
+      yield* Queue.offer(
+        harness.inputs,
+        snapshot({
+          ...BASE_THREAD,
+          title: "Restored from snapshot",
+          updatedAt: "2026-04-01T03:00:00.000Z",
+        }),
+      );
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.title === "Restored from snapshot",
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)?.thread).toMatchObject({
+        title: "Restored from snapshot",
+        archivedAt: null,
+      });
     }),
   );
 
@@ -1032,6 +1512,63 @@ describe("EnvironmentThreads", () => {
         yield* Effect.yieldNow;
       }
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
+    }),
+  );
+
+  it.effect("evicts cached data without repersisting a body archived in a batch", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      const harness = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* Queue.offerAll(harness.inputs, [
+        titleUpdated("Settled before archive", CACHED_SNAPSHOT_SEQUENCE + 1),
+        archived(CACHED_SNAPSHOT_SEQUENCE + 2),
+      ]);
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.archivedAt != null,
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+      expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+      expect(yield* Ref.get(harness.savedThreads)).toEqual([]);
+      expect(isCachedThreadEvicted(harness.cache, TARGET.environmentId, THREAD_ID)).toBe(true);
+      expect(resumeCache.snapshot).toBeUndefined();
+    }),
+  );
+
+  it.effect("revives and persists cached data after an unarchive in a batch", () =>
+    Effect.gen(function* () {
+      const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
+        snapshot: undefined,
+        owner: undefined,
+      };
+      const harness = yield* makeHarness({ cached: BASE_THREAD, resumeCache });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* Queue.offer(harness.inputs, archived(CACHED_SNAPSHOT_SEQUENCE + 1));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.archivedAt != null,
+      );
+      yield* Queue.offerAll(harness.inputs, [
+        unarchived(CACHED_SNAPSHOT_SEQUENCE + 2),
+        titleUpdated("Restored in batch", CACHED_SNAPSHOT_SEQUENCE + 3),
+      ]);
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.title === "Restored in batch",
+      );
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+      expect(isCachedThreadEvicted(harness.cache, TARGET.environmentId, THREAD_ID)).toBe(false);
+      expect((yield* Ref.get(harness.savedThreads)).at(-1)).toMatchObject({
+        snapshotSequence: CACHED_SNAPSHOT_SEQUENCE + 3,
+        thread: { title: "Restored in batch", archivedAt: null },
+      });
+      expect(resumeCache.invalidated).toBe(false);
     }),
   );
 

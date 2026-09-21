@@ -476,3 +476,7 @@ export const __testing = {
   EMPTY_THREAD_PREVIEW_STATE,
   RECENT_URL_LIMIT: PREVIEW_RECENT_URL_LIMIT,
 };
+
+export function removePreviewThread(ref: ScopedThreadRef): void {
+  updateThreadPreviewState(ref, () => EMPTY_THREAD_PREVIEW_STATE);
+}

@@ -1,5 +1,6 @@
-import type { ProviderDriverKind } from "@t3tools/contracts";
+import type { EnvironmentMachineKind, ProviderDriverKind } from "@t3tools/contracts";
 import { FolderGit2Icon, FolderIcon, GitBranchIcon } from "lucide-react";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
@@ -23,6 +24,40 @@ export const COMMAND_PALETTE_META_ICON_CLASS = "size-3 shrink-0 text-muted-foreg
 
 export function CommandPaletteMetaDot() {
   return <span className="shrink-0 text-muted-foreground/50">·</span>;
+}
+
+export interface ProjectCommandLocation {
+  readonly kind: "local" | "remote";
+  readonly label: string;
+  readonly machine: EnvironmentMachineKind;
+}
+
+export function projectCommandLocationSearchTerms(
+  location: ProjectCommandLocation | undefined,
+): ReadonlyArray<string> {
+  return location ? [location.label] : [];
+}
+
+export function ProjectCommandSubtitle(props: {
+  readonly location: ProjectCommandLocation;
+  readonly workspaceRoot: string;
+}) {
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <span className="inline-flex min-w-0 items-center gap-1">
+        {props.location.kind === "remote" ? (
+          <EnvironmentMachineIcon
+            aria-hidden
+            kind={props.location.machine}
+            className={COMMAND_PALETTE_META_ICON_CLASS}
+          />
+        ) : null}
+        <span className="truncate">{props.location.label}</span>
+      </span>
+      <CommandPaletteMetaDot />
+      <span className="truncate">{props.workspaceRoot}</span>
+    </span>
+  );
 }
 
 function WorkspaceIcon(props: { variant: ThreadCommandSubtitleVariant; isWorktree: boolean }) {

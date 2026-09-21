@@ -32,6 +32,7 @@ import { OrchestrationLayerLive } from "../src/orchestration/runtimeLayer.ts";
 import * as OrchestrationEngine from "../src/orchestration/Services/OrchestrationEngine.ts";
 import * as OrchestrationReactor from "../src/orchestration/Services/OrchestrationReactor.ts";
 import * as ProjectionSnapshotQuery from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadColdStorage from "../src/orchestration/ThreadColdStorage.ts";
 import { makeSqlitePersistenceLive } from "../src/persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../src/persistence/ProviderSessionRuntime.ts";
 import * as ExternalLauncher from "../src/process/externalLauncher.ts";
@@ -59,6 +60,7 @@ const stoppedBindingResumeCursor = {
 const makePersistedRuntimeLayer = (dbPath: string) => {
   const persistence = makeSqlitePersistenceLive(dbPath);
   const orchestration = OrchestrationLayerLive.pipe(
+    Layer.provide(ThreadColdStorage.noOpLayer),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(persistence),
   );

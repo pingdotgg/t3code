@@ -95,4 +95,18 @@ describe("previewMiniPlayerStore", () => {
       selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
     ).toBe(floating);
   });
+
+  it("removes only the targeted thread lifecycle state", () => {
+    usePreviewMiniPlayerStore.getState().open(refA, tabA);
+    usePreviewMiniPlayerStore.getState().open(refB, tabB);
+
+    usePreviewMiniPlayerStore.getState().removeThread(refA);
+
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
+    ).toBeNull();
+    expect(
+      selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refB),
+    ).toMatchObject({ source: tabB });
+  });
 });

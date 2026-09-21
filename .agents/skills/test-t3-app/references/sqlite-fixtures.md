@@ -4,7 +4,7 @@ Load this reference only when inspecting or seeding local T3 state directly.
 
 ## Select the correct database
 
-When `--base-dir` or `--home-dir` is explicit, runtime state lives under `<base-dir>/userdata` and the database path is `<base-dir>/userdata/state.sqlite`. The `<base-dir>/dev` state directory is only the fallback for an implicit development home, preventing an ordinary `vp run dev` from touching production state.
+When `--base-dir` or `--home-dir` is explicit, runtime state lives under `<base-dir>/userdata`. Hot projections and runtime state are stored in `state.sqlite`; cold archive manifests and compressed chunks are stored in `archive.sqlite`. The `<base-dir>/dev` state directory is only the fallback for an implicit development home, preventing an ordinary `vp run dev` from touching production state.
 
 Start the target runtime once before seeding so all migrations have run. Use an isolated base directory. Stop the server before writes to avoid racing application state or an active projection.
 
@@ -16,6 +16,15 @@ List tables:
 node apps/server/scripts/t3-sqlite-state.ts query \
   --base-dir <base-dir> \
   --sql "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name"
+```
+
+The helper targets `state.sqlite` by default. Select the cold archive database explicitly for read-only inspection:
+
+```bash
+node apps/server/scripts/t3-sqlite-state.ts query \
+  --base-dir <base-dir> \
+  --database archive \
+  --sql "SELECT t.thread_id, t.archive_version, COUNT(c.chunk_index) AS chunk_count FROM archive_threads AS t LEFT JOIN archive_thread_chunks AS c ON c.thread_id = t.thread_id GROUP BY t.thread_id, t.archive_version ORDER BY t.thread_id"
 ```
 
 Inspect current columns before writing a fixture:
@@ -35,6 +44,8 @@ node apps/server/scripts/t3-sqlite-state.ts exec \
 ```
 
 Use one statement per invocation for both `query` and `exec`; the helper wraps writes in a transaction and prints the backup path after a successful mutation. Use a single insert with multiple value rows when a fixture needs several records.
+
+Cold archive manifests and chunks are authoritative recovery data. Prefer `--database archive` for queries only. Exercise archive and restore behavior through application commands and APIs instead of constructing or changing archive bundles directly; only use archive writes for a deliberately isolated corruption or compatibility fixture.
 
 ## Seed projection data carefully
 

@@ -60,6 +60,7 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import * as ThreadBackgroundLiveness from "../ThreadBackgroundLiveness.ts";
+import * as ThreadColdStorage from "../ThreadColdStorage.ts";
 import * as ThreadPlanProgress from "../ThreadPlanProgress.ts";
 import {
   providerErrorLabelFromInstanceHint,
@@ -402,6 +403,7 @@ describe("ProviderCommandReactor", () => {
     };
 
     const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(ThreadColdStorage.noOpLayer),
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(ThreadPlanProgress.layer),

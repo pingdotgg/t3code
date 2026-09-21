@@ -11,6 +11,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
+  filterVisibleSidebarThreads,
   filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
@@ -59,7 +60,6 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
-
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -2183,6 +2183,26 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
   };
 }
 
+describe("filterVisibleSidebarThreads", () => {
+  it("excludes archived shells and optimistically archived threads", () => {
+    const visibleThread = makeThread({ id: ThreadId.make("thread-visible") });
+    const optimisticThread = makeThread({
+      id: ThreadId.make("thread-optimistic"),
+      archivedAt: "2026-03-09T10:05:00.000Z",
+    });
+    const archivedThread = makeThread({
+      id: ThreadId.make("thread-archived"),
+      archivedAt: "2026-03-09T10:05:00.000Z",
+    });
+
+    expect(
+      filterVisibleSidebarThreads([visibleThread, optimisticThread, archivedThread]).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([visibleThread.id]);
+  });
+});
+
 describe("getFallbackThreadIdAfterDelete", () => {
   it("returns the top remaining thread in the deleted thread's project sidebar order", () => {
     const fallbackThreadId = getFallbackThreadIdAfterDelete({
@@ -2477,6 +2497,45 @@ describe("sortScopedProjectsForSidebar", () => {
       "Archived-only project",
     ]);
   });
+
+  it("does not use optimistically archived threads as project activity", () => {
+    const visibleProjectId = ProjectId.make("project-visible");
+    const optimisticProjectId = ProjectId.make("project-optimistic");
+    const optimisticThread = makeThread({
+      id: ThreadId.make("thread-optimistic"),
+      projectId: optimisticProjectId,
+      archivedAt: "2026-03-09T10:05:00.000Z",
+      updatedAt: "2026-03-09T10:10:00.000Z",
+    });
+    const sorted = sortScopedProjectsForSidebar(
+      [
+        makeProject({
+          id: visibleProjectId,
+          title: "Visible project",
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        makeProject({
+          id: optimisticProjectId,
+          title: "Optimistic-only project",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        }),
+      ],
+      [
+        makeThread({
+          id: ThreadId.make("thread-visible"),
+          projectId: visibleProjectId,
+          updatedAt: "2026-03-09T10:02:00.000Z",
+        }),
+        optimisticThread,
+      ],
+      "updated_at",
+    );
+
+    expect(sorted.map((project) => project.title)).toEqual([
+      "Visible project",
+      "Optimistic-only project",
+    ]);
+  });
 });
 
 describe("sortLogicalProjectsForSidebar", () => {
@@ -2513,6 +2572,52 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+
+  it("does not use optimistically archived threads as logical project activity", () => {
+    const visibleProjectId = ProjectId.make("project-visible");
+    const optimisticProjectId = ProjectId.make("project-optimistic");
+    const projects = [
+      {
+        ...makeProject({
+          id: visibleProjectId,
+          title: "Visible project",
+          updatedAt: "2026-03-09T10:01:00.000Z",
+        }),
+        projectKey: "logical-visible",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: visibleProjectId }],
+      },
+      {
+        ...makeProject({
+          id: optimisticProjectId,
+          title: "Optimistic-only project",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        }),
+        projectKey: "logical-optimistic",
+        memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: optimisticProjectId }],
+      },
+    ];
+    const optimisticThread = makeThread({
+      id: ThreadId.make("thread-optimistic"),
+      projectId: optimisticProjectId,
+      archivedAt: "2026-03-09T10:05:00.000Z",
+      updatedAt: "2026-03-09T10:10:00.000Z",
+    });
+
+    expect(
+      sortLogicalProjectsForSidebar(
+        projects,
+        [
+          makeThread({
+            id: ThreadId.make("thread-visible"),
+            projectId: visibleProjectId,
+            updatedAt: "2026-03-09T10:02:00.000Z",
+          }),
+          optimisticThread,
+        ],
+        "updated_at",
+      ).map((project) => project.projectKey),
+    ).toEqual(["logical-visible", "logical-optimistic"]);
   });
 });
 

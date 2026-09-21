@@ -30,6 +30,7 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { makeTestRpcSession } from "../rpc/testUtils/rpcSession.ts";
 import type { ThreadSnapshotWindow } from "./threadSnapshotHttp.ts";
 import {
   INITIAL_THREAD_USER_TURN_LIMIT,
@@ -154,17 +155,12 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     [ORCHESTRATION_WS_METHODS.subscribeThread]: (input: Record<string, unknown>) =>
       Stream.unwrap(Ref.set(lastSubscribeInput, input).pipe(Effect.as(Stream.fromQueue(inputs)))),
   } as unknown as WsRpcProtocolClient;
-  const session: RpcSession.RpcSession = {
-    client,
+  const session = makeTestRpcSession(client, {
     initialConfig: Effect.succeed({
       threadSnapshotPagination: options?.paginationCapability !== false,
       reasoningMessages: options?.reasoningCapability === true,
     } as never),
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
-    ready: Effect.void,
-    probe: Effect.void,
-    closed: Effect.never,
-  };
+  });
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
     Option.some(session),
   );

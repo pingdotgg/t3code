@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { archivedThreadContextMenuItems } from "./components/settings/ArchivedThreadsPanel.logic";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 
 type FakeListener = (event: FakeDomEvent) => void;
@@ -157,6 +158,10 @@ class FakeDocument {
     return new FakeElement(tagName);
   }
 
+  createElementNS(_namespace: string, tagName: string) {
+    return new FakeElement(tagName);
+  }
+
   addEventListener(type: string, listener: FakeListener) {
     const existing = this.listeners.get(type) ?? [];
     existing.push(listener);
@@ -219,6 +224,25 @@ afterEach(() => {
 });
 
 describe("showContextMenuFallback", () => {
+  it("renders and dispatches the archived-thread actions", async () => {
+    expect(archivedThreadContextMenuItems.map(({ id }) => id)).toEqual(["unarchive", "delete"]);
+
+    const selectionPromise = showContextMenuFallback(archivedThreadContextMenuItems);
+    const unarchiveButton = findButton("Unarchive");
+    const deleteButton = findButton("Delete");
+    const separators = (document as unknown as FakeDocument)
+      .querySelectorAll("div")
+      .filter((element) => element.dataset.contextMenuSeparator === "true");
+
+    expect(unarchiveButton?.querySelectorAll("svg")[0]?.children).toHaveLength(3);
+    expect(deleteButton?.querySelectorAll("svg")[0]?.children).toHaveLength(5);
+    expect(deleteButton?.style.color).toBe("var(--destructive-foreground)");
+    expect(separators).toHaveLength(1);
+
+    deleteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await expect(selectionPromise).resolves.toBe("delete");
+  });
+
   it("renders one separator between menu sections", async () => {
     const selectionPromise = showContextMenuFallback([
       { id: "rename", label: "Rename" },

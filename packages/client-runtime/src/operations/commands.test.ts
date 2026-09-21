@@ -19,8 +19,8 @@ import {
   type PreparedConnection,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
+import { makeTestRpcSession } from "../rpc/testUtils/rpcSession.ts";
 import {
   archiveThread,
   createProject,
@@ -56,14 +56,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
         return { sequence: dispatched.length };
       }),
   } as unknown as WsRpcProtocolClient;
-  const session: RpcSession.RpcSession = {
-    client,
-    initialConfig: Effect.never,
-    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
-    ready: Effect.void,
-    probe: Effect.void,
-    closed: Effect.never,
-  };
+  const session = makeTestRpcSession(client);
   return EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,
     state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),

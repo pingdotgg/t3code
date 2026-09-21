@@ -20,6 +20,7 @@ import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
 
@@ -78,6 +79,20 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
   } as EnvironmentSupervisor["Service"]);
   const runtime = Atom.runtime(
     Layer.mergeAll(
+      Layer.succeed(EnvironmentCacheStore, {
+        loadShell: () => Effect.succeed(Option.none()),
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeed(Option.none()),
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeed(Option.none()),
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      }),
       Layer.succeed(EnvironmentRegistry, {
         run: (_environmentId, effect) =>
           Effect.provideService(effect, EnvironmentSupervisor, supervisor),
@@ -102,6 +117,7 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
 
 describe("remote thread lifecycle commands", () => {
   const actions = [
+    ["archive", {}, { archivedAt: expect.any(String) }],
     ["settle", {}, { settledOverride: "settled", pinnedAt: null, snoozedUntil: null }],
     ["unsettle", { reason: "user" }, { settledOverride: "active", settledAt: null }],
     [
@@ -159,6 +175,81 @@ describe("remote thread lifecycle commands", () => {
       }),
     );
   }
+
+  for (const shellFirst of [false, true]) {
+    it.effect(
+      `reconciles archive with a restored shell (${shellFirst ? "shell first" : "reply first"})`,
+      () =>
+        Effect.gen(function* () {
+          const h = yield* makeHarness();
+          const result = h.commands.archive.run(h.registry, {
+            environmentId: ENVIRONMENT_ID,
+            input: { threadId: THREAD_ID },
+          });
+          const request = yield* Queue.take(h.requests);
+          expect(h.registry.get(h.visibleAtom)?.threads[0]?.archivedAt).not.toBeNull();
+          expect(h.registry.get(h.commands.snapshotAtom(EnvironmentId.make("other")))).toBe(
+            SNAPSHOT,
+          );
+          const restored = { ...SNAPSHOT, snapshotSequence: 4 };
+          if (shellFirst) h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), restored);
+          yield* Deferred.succeed(request.reply, { sequence: 3 });
+          expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+          if (!shellFirst) {
+            h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), { ...SNAPSHOT, snapshotSequence: 2 });
+            expect(h.registry.get(h.visibleAtom)?.threads[0]?.archivedAt).not.toBeNull();
+            h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+              ...SNAPSHOT,
+              snapshotSequence: 3,
+              threads: [],
+            });
+            expect(h.registry.get(h.visibleAtom)?.threads).toEqual([]);
+            h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), restored);
+          }
+          expect(h.registry.get(h.visibleAtom)).toBe(restored);
+        }),
+    );
+  }
+
+  it.effect("keeps a second archive pending when an earlier archive fails", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const target = { environmentId: ENVIRONMENT_ID, input: { threadId: THREAD_ID } };
+      const firstResult = h.commands.archive.run(h.registry, target);
+      const first = yield* Queue.take(h.requests);
+      const secondResult = h.commands.archive.run(h.registry, target);
+      yield* Deferred.fail(first.reply, new Error("Archive rejected"));
+      yield* Effect.promise(() => firstResult);
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.archivedAt).not.toBeNull();
+      const second = yield* Queue.take(h.requests);
+      yield* Deferred.interrupt(second.reply);
+      expect((yield* Effect.promise(() => secondResult))._tag).toBe("Failure");
+      expect(h.registry.get(h.visibleAtom)).toBe(SNAPSHOT);
+    }),
+  );
+
+  it.effect("keeps an accepted archive hidden when a queued unarchive fails", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const target = { environmentId: ENVIRONMENT_ID, input: { threadId: THREAD_ID } };
+      const archived = h.commands.archive.run(h.registry, target);
+      const first = yield* Queue.take(h.requests);
+      const restored = h.commands.unarchive.run(h.registry, target);
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.archivedAt).toBeNull();
+      yield* Deferred.succeed(first.reply, { sequence: 3 });
+      yield* Effect.promise(() => archived);
+      const second = yield* Queue.take(h.requests);
+      yield* Deferred.fail(second.reply, new Error("Restore rejected"));
+      yield* Effect.promise(() => restored);
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.archivedAt).not.toBeNull();
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+        ...SNAPSHOT,
+        snapshotSequence: 3,
+        threads: [],
+      });
+      expect(h.registry.get(h.visibleAtom)?.threads).toEqual([]);
+    }),
+  );
 
   it.effect("keeps the preview after acknowledgement until the matching shell update arrives", () =>
     Effect.gen(function* () {

@@ -1,3 +1,4 @@
+import * as ThreadColdStorage from "../orchestration/ThreadColdStorage.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
@@ -562,6 +563,7 @@ const integrationRuntimeRepository = ProviderSessionRuntime.layer.pipe(
 );
 const integrationLayer = Layer.mergeAll(
   OrchestrationEngineLive.pipe(
+    Layer.provide(ThreadColdStorage.noOpLayer),
     Layer.provide(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(OrchestrationProjectionPipelineLive),
   ),

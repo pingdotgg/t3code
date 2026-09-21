@@ -24,6 +24,24 @@ export const shellEnvironment = createShellEnvironmentAtoms(connectionAtomRuntim
 export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
 export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environmentShell.stateAtom);
 
+let previousLiveEnvironmentIds: ReadonlySet<EnvironmentId> = new Set();
+export const liveEnvironmentIdsAtom = Atom.make((get) => {
+  const next = new Set<EnvironmentId>();
+  for (const environmentId of get(environmentCatalog.catalogValueAtom).entries.keys()) {
+    if (get(environmentShell.stateValueAtom(environmentId)).status === "live") {
+      next.add(environmentId);
+    }
+  }
+  if (
+    previousLiveEnvironmentIds.size === next.size &&
+    [...previousLiveEnvironmentIds].every((environmentId) => next.has(environmentId))
+  ) {
+    return previousLiveEnvironmentIds;
+  }
+  previousLiveEnvironmentIds = next;
+  return previousLiveEnvironmentIds;
+}).pipe(Atom.withLabel("web-live-environment-ids"));
+
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));
   if (Option.isNone(catalog)) {

@@ -36,10 +36,11 @@ import {
 } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { ConnectionWakeups, type ConnectionWakeup } from "../connection/wakeups.ts";
-import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import { ConnectionPersistenceError, EnvironmentCacheStore } from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
+import { cachedThreadGeneration, evictCachedThread, reviveCachedThread } from "./threadCache.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
 import type { ThreadSnapshotWindow } from "./threadSnapshotHttp.ts";
 import {
@@ -96,6 +97,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
   readonly connected?: boolean;
   readonly httpNone?: boolean;
   readonly initialLoad?: Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
+  readonly diskLoad?: ReturnType<EnvironmentCacheStore["Service"]["loadThread"]>;
+  readonly removeThread?: ReturnType<EnvironmentCacheStore["Service"]["removeThread"]>;
   readonly stream?: Stream.Stream<OrchestrationThreadStreamItem, Error>;
 }) {
   const clock = yield* Clock.Clock;
@@ -115,6 +118,27 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
   let diskLoads = 0;
   let opened = 0;
   let active = 0;
+  const savedSnapshots: OrchestrationThreadDetailSnapshot[] = [];
+  const cache = EnvironmentCacheStore.of({
+    loadShell: () => Effect.succeed(Option.none()),
+    saveShell: () => Effect.void,
+    loadThread: () =>
+      Effect.sync(() => {
+        diskLoads += 1;
+      }).pipe(Effect.andThen(options?.diskLoad ?? Effect.succeed(Option.none()))),
+    saveThread: (_environmentId, value) =>
+      Effect.sync(() => {
+        savedSnapshots.push(value);
+      }),
+    removeThread: () => options?.removeThread ?? Effect.void,
+    loadServerConfig: () => Effect.succeed(Option.none()),
+    saveServerConfig: () => Effect.void,
+    loadVcsRefs: () => Effect.succeed(Option.none()),
+    saveVcsRefs: () => Effect.void,
+    removeVcsRefs: () => Effect.void,
+    clearVcsRefs: () => Effect.void,
+    clear: () => Effect.void,
+  });
   const client = {
     [ORCHESTRATION_WS_METHODS.subscribeThread]: (input: { readonly afterSequence?: number }) =>
       Stream.unwrap(
@@ -197,27 +221,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
       Layer.succeed(Clock.Clock, clock),
       Layer.succeed(ConnectionWakeups, { changes: Stream.fromQueue(wakeups) }),
       Layer.succeed(EnvironmentRegistry, environmentRegistry),
-      Layer.succeed(
-        EnvironmentCacheStore,
-        EnvironmentCacheStore.of({
-          loadShell: () => Effect.succeed(Option.none()),
-          saveShell: () => Effect.void,
-          loadThread: () =>
-            Effect.sync(() => {
-              diskLoads += 1;
-              return Option.none();
-            }),
-          saveThread: () => Effect.void,
-          removeThread: () => Effect.void,
-          loadServerConfig: () => Effect.succeed(Option.none()),
-          saveServerConfig: () => Effect.void,
-          loadVcsRefs: () => Effect.succeed(Option.none()),
-          saveVcsRefs: () => Effect.void,
-          removeVcsRefs: () => Effect.void,
-          clearVcsRefs: () => Effect.void,
-          clear: () => Effect.void,
-        }),
-      ),
+      Layer.succeed(EnvironmentCacheStore, cache),
       Layer.succeed(
         ThreadSnapshotLoader,
         ThreadSnapshotLoader.of({
@@ -257,6 +261,8 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
 
   return {
     runtime,
+    cache,
+    savedSnapshots,
     supervisor,
     registry,
     makeRegistry,
@@ -683,6 +689,219 @@ describe("createEnvironmentThreadStateAtoms", () => {
     }),
   );
 
+  it.effect("does not reload an archived disk snapshot when removal fails", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        httpNone: true,
+        diskLoad: Effect.succeed(Option.some(SNAPSHOT)),
+        removeThread: Effect.fail(
+          new ConnectionPersistenceError({
+            operation: "remove-thread",
+            message: "Test removal failure",
+          }),
+        ),
+      });
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      unmount();
+      yield* Deferred.await(first.closed);
+      expect(yield* evictCachedThread(h.cache, TARGET.environmentId, THREAD_ID)).toBe(false);
+      const remount = h.registry.mount(h.stateAtom);
+      expect(h.registry.get(h.stateAtom).data).toEqual(Option.none());
+      const next = yield* Queue.take(h.subscriptions);
+      expect(next.afterSequence).toBeUndefined();
+      expect(h.counts().diskLoads).toBe(1);
+      expect(h.registry.get(h.stateAtom).data).toEqual(Option.none());
+      remount();
+      yield* Deferred.await(next.closed);
+      expect(h.savedSnapshots).toHaveLength(0);
+    }),
+  );
+
+  it.effect.each([false, true])("discards a disk load crossing eviction (revived: %s)", (revived) =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const disk = yield* Deferred.make<Option.Option<OrchestrationThreadDetailSnapshot>>();
+      const h = yield* makeHarness({
+        httpNone: true,
+        diskLoad: Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(disk))),
+      });
+      const unmount = h.registry.mount(h.stateAtom);
+      yield* Deferred.await(started);
+      yield* evictCachedThread(h.cache, TARGET.environmentId, THREAD_ID);
+      if (revived) yield* reviveCachedThread(h.cache, TARGET.environmentId, THREAD_ID);
+      yield* Deferred.succeed(disk, Option.some(SNAPSHOT));
+      const first = yield* Queue.take(h.subscriptions);
+      expect(first.afterSequence).toBeUndefined();
+      expect(h.registry.get(h.stateAtom).data).toEqual(Option.none());
+      unmount();
+      yield* Deferred.await(first.closed);
+      expect(h.savedSnapshots).toHaveLength(0);
+    }),
+  );
+
+  it.effect("does not republish a live body after eviction and a later stream update", () =>
+    Effect.gen(function* () {
+      let available = Option.some(SNAPSHOT);
+      const h = yield* makeHarness({ initialLoad: Effect.sync(() => available) });
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      yield* evictCachedThread(h.cache, TARGET.environmentId, THREAD_ID);
+      const writes = h.savedSnapshots.length;
+      available = Option.none();
+      yield* Queue.offer(first.events, {
+        kind: "event",
+        event: {
+          type: "thread.message-sent",
+          sequence: 8,
+          eventId: EventId.make("after-eviction"),
+          aggregateKind: "thread",
+          aggregateId: THREAD_ID,
+          occurredAt: THREAD.createdAt,
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            threadId: THREAD_ID,
+            messageId: MessageId.make("after-eviction"),
+            role: "assistant",
+            text: "Late body",
+            turnId: null,
+            streaming: false,
+            createdAt: THREAD.createdAt,
+            updatedAt: THREAD.createdAt,
+          },
+        },
+      });
+      yield* observeState(h.registry, h.stateAtom, (state) =>
+        Option.exists(state.data, (thread) =>
+          thread.messages.some((message) => message.text === "Late body"),
+        ),
+      );
+      unmount();
+      yield* Deferred.await(first.closed);
+      const remount = h.registry.mount(h.stateAtom);
+      expect(h.registry.get(h.stateAtom).data).toEqual(Option.none());
+      const next = yield* Queue.take(h.subscriptions);
+      expect(next.afterSequence).toBeUndefined();
+      yield* TestClock.adjust("1 second");
+      expect(h.savedSnapshots).toHaveLength(writes);
+      expect(h.registry.get(h.stateAtom).data).toEqual(Option.none());
+      remount();
+      yield* Deferred.await(next.closed);
+    }),
+  );
+
+  it.effect.each([false, true])(
+    "retains a deleted tombstone through failed eviction (shell first: %s)",
+    (shellFirst) =>
+      Effect.gen(function* () {
+        let removals = 0;
+        const h = yield* makeHarness({
+          diskLoad: Effect.succeed(Option.some(SNAPSHOT)),
+          removeThread: Effect.sync(() => {
+            removals += 1;
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ConnectionPersistenceError({
+                  operation: "remove-thread",
+                  message: "Test removal failure",
+                }),
+              ),
+            ),
+          ),
+        });
+        const unmount = h.registry.mount(h.stateAtom);
+        const first = yield* Queue.take(h.subscriptions);
+        yield* Queue.offer(first.events, { kind: "synchronized" });
+        yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+        if (shellFirst) yield* evictCachedThread(h.cache, TARGET.environmentId, THREAD_ID);
+        yield* Queue.offer(first.events, {
+          kind: "event",
+          event: {
+            type: "thread.deleted",
+            sequence: 8,
+            eventId: EventId.make("retained-deletion"),
+            aggregateKind: "thread",
+            aggregateId: THREAD_ID,
+            occurredAt: THREAD.createdAt,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            payload: { threadId: THREAD_ID, deletedAt: THREAD.createdAt },
+          },
+        });
+        yield* observeState(h.registry, h.stateAtom, (state) => state.status === "deleted");
+        unmount();
+        yield* Deferred.await(first.closed);
+        expect(removals).toBe(shellFirst ? 2 : 1);
+        yield* evictCachedThread(h.cache, TARGET.environmentId, THREAD_ID);
+        const before = h.counts();
+        const remount = h.registry.mount(h.stateAtom);
+        expect(h.registry.get(h.stateAtom).status).toBe("deleted");
+        expect(h.registry.get(h.stateAtom).data).toEqual(Option.none());
+        yield* TestClock.adjust("0 millis");
+        expect(h.counts().diskLoads).toBe(before.diskLoads);
+        expect(h.counts().httpLoads).toBe(before.httpLoads);
+        remount();
+      }),
+  );
+
+  it.effect("invalidates a warm snapshot when archived after the detail subscription closes", () =>
+    Effect.gen(function* () {
+      let available = Option.some(SNAPSHOT);
+      const h = yield* makeHarness({ initialLoad: Effect.sync(() => available) });
+      const unmount = h.registry.mount(h.stateAtom);
+      const first = yield* Queue.take(h.subscriptions);
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      unmount();
+      yield* Deferred.await(first.closed);
+      const writesBeforeArchive = h.savedSnapshots.length;
+
+      available = Option.none();
+      yield* evictCachedThread(h.cache, TARGET.environmentId, THREAD_ID);
+      // The warm atom owns the generation even with no live detail scope.
+      expect(cachedThreadGeneration(h.cache, TARGET.environmentId, THREAD_ID)).toBeGreaterThan(0);
+      const remount = h.registry.mount(h.stateAtom);
+      expect(h.registry.get(h.stateAtom).data).toEqual(Option.none());
+      const archived = yield* Queue.take(h.subscriptions);
+      expect(archived.afterSequence).toBeUndefined();
+      yield* Queue.offer(archived.events, { kind: "synchronized" });
+      yield* TestClock.adjust("1 second");
+      expect(h.registry.get(h.stateAtom).data).toEqual(Option.none());
+      expect(h.savedSnapshots).toHaveLength(writesBeforeArchive);
+
+      // Repeated shell eviction can arrive while the replacement subscription
+      // is live; an authoritative restore must still make its cache writable.
+      yield* evictCachedThread(h.cache, TARGET.environmentId, THREAD_ID);
+
+      const restored = { snapshotSequence: 10, thread: { ...THREAD, title: "Restored thread" } };
+      yield* Queue.offer(archived.events, { kind: "snapshot", snapshot: restored });
+      yield* Queue.offer(archived.events, { kind: "synchronized" });
+      yield* observeState(h.registry, h.stateAtom, (state) => state.status === "live");
+      remount();
+      yield* Deferred.await(archived.closed);
+      expect(h.savedSnapshots.at(-1)).toEqual(restored);
+      const returnAgain = h.registry.mount(h.stateAtom);
+      expect(currentThread(h.registry, h.stateAtom).title).toBe("Restored thread");
+      const resumed = yield* Queue.take(h.subscriptions);
+      expect(resumed.afterSequence).toBe(10);
+      returnAgain();
+      yield* Deferred.await(resumed.closed);
+      h.registry.dispose();
+      yield* TestClock.adjust("0 millis");
+      expect(cachedThreadGeneration(h.cache, TARGET.environmentId, THREAD_ID)).toBe(0);
+    }),
+  );
+
   it.effect("keeps warm data and resumes a completed cursor without loading another snapshot", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
@@ -853,8 +1072,11 @@ describe("createEnvironmentThreadStateAtoms", () => {
       const first = yield* Queue.take(h.subscriptions);
       unmount();
       yield* Deferred.await(first.closed);
+      yield* evictCachedThread(h.cache, TARGET.environmentId, THREAD_ID);
+      expect(cachedThreadGeneration(h.cache, TARGET.environmentId, THREAD_ID)).toBeGreaterThan(0);
       yield* Effect.yieldNow;
       yield* Effect.promise(() => vi.advanceTimersByTimeAsync(THREAD_SNAPSHOT_IDLE_TTL_MS + 1));
+      expect(cachedThreadGeneration(h.cache, TARGET.environmentId, THREAD_ID)).toBe(0);
       const remount = h.registry.mount(h.stateAtom);
       const next = yield* Queue.take(h.subscriptions);
       expect(h.counts()).toEqual({ httpLoads: 2, diskLoads: 2, opened: 2, active: 1 });

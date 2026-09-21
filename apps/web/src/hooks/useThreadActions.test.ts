@@ -1,14 +1,24 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  navigateAfterThreadDeletion,
-  requestThreadUnpinConfirmation,
-  ThreadArchiveBlockedError,
-} from "./useThreadActions";
+const mocks = vi.hoisted(() => ({
+  archiveMutation: vi.fn(),
+  clearComposerDraftForThread: vi.fn(),
+  clearProjectDraftThreadById: vi.fn(),
+  clearTerminalUiState: vi.fn(),
+  handleNewThread: vi.fn(),
+  markThreadVisited: vi.fn(),
+  readThreadShell: vi.fn(),
+  refreshArchivedThreads: vi.fn(),
+  releaseComposerDraftUploads: vi.fn(),
+}));
+import { navigateAfterThreadDeletion } from "./useThreadActions";
 import { toastManager } from "../components/ui/toast";
 
 describe("navigateAfterThreadDeletion", () => {
+  beforeEach(() => vi.clearAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
   it("reports a rejected navigation without failing the completed deletion", async () => {
@@ -36,6 +46,130 @@ describe("navigateAfterThreadDeletion", () => {
   });
 });
 
+vi.mock("@tanstack/react-router", () => ({
+  useRouter: () => ({
+    navigate: vi.fn(),
+    state: { matches: [{ params: {} }] },
+  }),
+}));
+
+vi.mock("../components/Sidebar.logic", () => ({
+  getFallbackThreadIdAfterDelete: vi.fn(() => null),
+  pinOrderKeyBetween: vi.fn(() => null),
+}));
+
+vi.mock("../composerDraftStore", () => ({
+  useComposerDraftStore: <T>(
+    selector: (state: {
+      clearDraftThread: typeof mocks.clearComposerDraftForThread;
+      clearProjectDraftThreadById: typeof mocks.clearProjectDraftThreadById;
+    }) => T,
+  ) =>
+    selector({
+      clearDraftThread: mocks.clearComposerDraftForThread,
+      clearProjectDraftThreadById: mocks.clearProjectDraftThreadById,
+    }),
+}));
+
+vi.mock("../state/terminal", () => ({ terminalEnvironment: { close: {} } }));
+vi.mock("../state/threads", () => ({
+  threadEnvironment: {
+    archive: {},
+    delete: {},
+    pin: {},
+    reorderPin: {},
+    settle: {},
+    snooze: {},
+    stopSession: {},
+    unarchive: {},
+    unpin: {},
+    unsettle: {},
+    unsnooze: {},
+  },
+}));
+vi.mock("../state/vcs", () => ({
+  vcsEnvironment: { refreshStatus: {}, removeWorktree: {} },
+}));
+vi.mock("./useHandleNewThread", () => ({
+  useNewThreadHandler: () => mocks.handleNewThread,
+}));
+vi.mock("../lib/archivedThreadsState", () => ({
+  refreshArchivedThreadsForEnvironment: mocks.refreshArchivedThreads,
+}));
+vi.mock("../lib/composerDraftUploads", () => ({
+  releaseComposerDraftUploads: mocks.releaseComposerDraftUploads,
+}));
+vi.mock("../localApi", () => ({ readLocalApi: vi.fn(() => null) }));
+vi.mock("../state/entities", () => ({
+  readEnvironmentSupportsPinning: vi.fn(() => false),
+  readEnvironmentSupportsPinReorder: vi.fn(() => false),
+  readEnvironmentSupportsSettlement: vi.fn(() => false),
+  readEnvironmentSupportsSnooze: vi.fn(() => false),
+  readEnvironmentThreadRefs: vi.fn(() => []),
+  readProject: vi.fn(() => null),
+  readThreadShell: mocks.readThreadShell,
+  readThreadShells: vi.fn(() => []),
+}));
+vi.mock("../terminalUiStateStore", () => ({
+  useTerminalUiStateStore: <T>(
+    selector: (state: { clearTerminalUiState: typeof mocks.clearTerminalUiState }) => T,
+  ) => selector({ clearTerminalUiState: mocks.clearTerminalUiState }),
+}));
+vi.mock("../uiStateStore", () => ({
+  useUiStateStore: <T>(
+    selector: (state: { markThreadVisited: typeof mocks.markThreadVisited }) => T,
+  ) => selector({ markThreadVisited: mocks.markThreadVisited }),
+}));
+vi.mock("../worktreeCleanup", () => ({
+  formatWorktreePathForDisplay: vi.fn((path: string) => path),
+  getOrphanedWorktreePathForThread: vi.fn(() => null),
+}));
+vi.mock("../components/ui/toast", () => ({
+  stackedThreadToast: vi.fn((input: unknown) => input),
+  toastManager: { add: vi.fn() },
+}));
+vi.mock("./useSettings", () => ({
+  useClientSettings: <T>(
+    selector: (settings: {
+      confirmThreadDelete: boolean;
+      sidebarThreadSortOrder: "updated_at";
+    }) => T,
+  ) => selector({ confirmThreadDelete: false, sidebarThreadSortOrder: "updated_at" }),
+}));
+vi.mock("../state/use-atom-command", () => ({
+  useAtomCommand: vi.fn(() => mocks.archiveMutation),
+}));
+vi.mock("@t3tools/client-runtime/state/thread-settled", () => ({
+  canSettle: vi.fn(() => true),
+  canSnooze: vi.fn(() => true),
+  threadWokeAt: vi.fn(() => null),
+}));
+
+import {
+  requestThreadUnpinConfirmation,
+  ThreadArchiveBlockedError,
+  useThreadActions,
+} from "./useThreadActions";
+
+const threadRef = {
+  environmentId: EnvironmentId.make("environment-1"),
+  threadId: ThreadId.make("thread-1"),
+};
+
+function renderThreadActions(): ReturnType<typeof useThreadActions> {
+  let actions: ReturnType<typeof useThreadActions> | undefined;
+
+  function Probe() {
+    actions = useThreadActions();
+    return null;
+  }
+
+  renderToStaticMarkup(createElement(Probe));
+  if (actions === undefined) {
+    throw new Error("Thread actions did not render.");
+  }
+  return actions;
+}
 describe("ThreadArchiveBlockedError", () => {
   it("keeps the blocked thread context with the fixed message", () => {
     const error = new ThreadArchiveBlockedError({
@@ -48,6 +182,37 @@ describe("ThreadArchiveBlockedError", () => {
       threadId: "thread-1",
     });
     expect(error.message).toBe("Cannot archive a running thread.");
+  });
+});
+
+describe("archive draft uploads", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.readThreadShell.mockReturnValue({
+      environmentId: threadRef.environmentId,
+      id: threadRef.threadId,
+      projectId: ProjectId.make("project-1"),
+      session: null,
+    });
+  });
+
+  it("releases pending draft uploads after archive succeeds", async () => {
+    mocks.archiveMutation.mockResolvedValue({ _tag: "Success", value: undefined });
+
+    const result = await renderThreadActions().archiveThread(threadRef);
+
+    expect(result._tag).toBe("Success");
+    expect(mocks.releaseComposerDraftUploads).toHaveBeenCalledOnce();
+    expect(mocks.releaseComposerDraftUploads).toHaveBeenCalledWith(threadRef);
+  });
+
+  it("keeps pending draft uploads when archive fails", async () => {
+    mocks.archiveMutation.mockResolvedValue({ _tag: "Failure", cause: new Error("offline") });
+
+    const result = await renderThreadActions().archiveThread(threadRef);
+
+    expect(result._tag).toBe("Failure");
+    expect(mocks.releaseComposerDraftUploads).not.toHaveBeenCalled();
   });
 });
 

@@ -14,10 +14,13 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
+import * as ServerConfig from "../src/config.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export const SqliteStateOperation = Schema.Literals(["query", "exec"]);
 export type SqliteStateOperation = typeof SqliteStateOperation.Type;
+export const SqliteStateDatabase = Schema.Literals(["state", "archive"]);
+export type SqliteStateDatabase = typeof SqliteStateDatabase.Type;
 
 export class SqliteStateMultipleSqlSourcesError extends Schema.TaggedError<SqliteStateMultipleSqlSourcesError>()(
   "SqliteStateMultipleSqlSourcesError",
@@ -119,6 +122,7 @@ type RawSqliteRow = Readonly<Record<string, RawSqliteValue>>;
 export interface RunSqliteStateInput {
   readonly operation: SqliteStateOperation;
   readonly baseDir: string;
+  readonly database?: SqliteStateDatabase | undefined;
   readonly sql?: string | undefined;
   readonly file?: string | undefined;
 }
@@ -182,7 +186,11 @@ export const runSqliteState = Effect.fn("runSqliteState")(function* (
   const path = yield* Path.Path;
   const baseDir = path.resolve(input.baseDir);
   const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
-  const databasePath = path.join(baseDir, "userdata", "state.sqlite");
+  const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined, {
+    baseDirIsExplicit: true,
+  });
+  const databasePath =
+    input.database === "archive" ? derivedPaths.archiveDbPath : derivedPaths.dbPath;
   const source = yield* resolveSqlSource(input.sql, input.file);
 
   if (!(yield* fs.exists(databasePath))) {
@@ -252,7 +260,11 @@ const t3SqliteStateCommand = Command.make(
       Argument.withDescription("Run a read-only query or a backed-up fixture mutation."),
     ),
     baseDir: Flag.String("base-dir").pipe(
-      Flag.withDescription("Explicit T3 base directory containing userdata/state.sqlite."),
+      Flag.withDescription("Explicit T3 base directory containing runtime SQLite databases."),
+    ),
+    database: Flag.Literals("database", SqliteStateDatabase.literals).pipe(
+      Flag.withDescription("Runtime database to inspect or seed (default: state)."),
+      Flag.withDefault("state"),
     ),
     sql: Flag.String("sql").pipe(
       Flag.optional,
@@ -263,10 +275,11 @@ const t3SqliteStateCommand = Command.make(
       Flag.withDescription("Path to a SQL source file."),
     ),
   },
-  ({ operation, baseDir, sql, file }) =>
+  ({ operation, baseDir, database, sql, file }) =>
     runSqliteState({
       operation,
       baseDir,
+      database,
       sql: Option.getOrUndefined(sql),
       file: Option.getOrUndefined(file),
     }).pipe(Effect.flatMap(encodeSqliteStateResult), Effect.flatMap(Console.log)),

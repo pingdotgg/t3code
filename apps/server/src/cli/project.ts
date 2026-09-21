@@ -27,6 +27,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ThreadColdStorage from "../orchestration/ThreadColdStorage.ts";
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -200,6 +201,7 @@ const projectCommandUuid = Crypto.Crypto.pipe(
 const ProjectCliRuntimeLive = Layer.mergeAll(
   WorkspacePaths.layer,
   OrchestrationLayerLive.pipe(
+    Layer.provide(ThreadColdStorage.noOpLayer),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceLayerLive),
   ),
