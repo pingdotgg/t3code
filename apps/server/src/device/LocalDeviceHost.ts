@@ -1,3 +1,4 @@
+import { deviceToolInstallMessage } from "@t3tools/contracts";
 /**
  * The device host that is this machine.
  *
@@ -556,7 +557,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   let agentToolRef: { readonly entryPath: string; readonly nodePath: string } | null = null;
 
   const ensureHubReady = Effect.fn("LocalDeviceHost.ensureHubReady")(function* (
-    onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
+    onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
   ): Effect.fn.Return<RunningHost, DeviceHost.DeviceHostError | NodeRuntimeUnavailableError> {
     const running = yield* Ref.get(runningRef);
     if (running) {
@@ -573,7 +574,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    if (!installed) yield* onPhase("installing");
+    if (!installed) {
+      const inventory = yield* summary;
+      yield* onPhase("installing", deviceToolInstallMessage("device hub", inventory.tools?.hub));
+    }
     const hubTool = yield* ensureDeviceHub(config.baseDir).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -628,7 +632,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         );
-        if (!installed) yield* onPhase("installing");
+        if (!installed) {
+          const inventory = yield* summary;
+          yield* onPhase(
+            "installing",
+            deviceToolInstallMessage("agent tools", inventory.tools?.agent),
+          );
+        }
         const agentTool = yield* ensureAgentDevice(config.baseDir).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),

@@ -66,7 +66,7 @@ const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string,
   failListAfterShutdown = false,
-  runtimeFailure?: NodeRuntimeUnavailableError,
+  runtimeFailure?: NodeRuntimeUnavailableError | DeviceHost.DeviceHostError,
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -96,7 +96,7 @@ const fixture = Effect.fn("fixture")(function* (
       Effect.gen(function* () {
         if (runtimeFailure) return yield* runtimeFailure;
         starts.push("start");
-        yield* onPhase("starting");
+        yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
         return ready;
       }),
     ensureAgentReady: (onPhase) =>
@@ -570,4 +570,56 @@ it.effect.each([
       Effect.provide(ServerSettingsService.layerTest({ enableDeviceSupport: true })),
       Effect.scoped,
     ),
+);
+
+it.effect("retry keeps device and agent consent unchanged", () =>
+  Effect.gen(function* () {
+    const { service, starts, agentStarts } = yield* fixture();
+    yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(starts).toEqual([]);
+    expect(agentStarts).toEqual([]);
+    yield* service.configure({ enabled: true });
+    yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(agentStarts).toEqual([]);
+    yield* service.configure({ agentAccessEnabled: true });
+    const before = agentStarts.length;
+    yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(agentStarts.length).toBe(before + 1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("publishes update detail for the correct host", () =>
+  Effect.gen(function* () {
+    const { service } = yield* fixture();
+    const changes = yield* service.subscribe;
+    yield* service.configure({ enabled: true });
+    const states = yield* PubSub.takeAll(changes);
+    expect(
+      states.some(
+        (state) => state.hostStatuses.local?.detail === "Updating device hub from 0.9.0 to 0.10.1…",
+      ),
+    ).toBe(true);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("host retry exposes actionable failure without internal IDs or diagnostics", () =>
+  Effect.gen(function* () {
+    const { service, settings } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      new DeviceHost.DeviceHostError({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        step: "probe",
+        cause: "private diagnostics",
+      }),
+    );
+    yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+    const state = yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(state.supportsHostRetry).toBe(true);
+    expect(state.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+      status: "failed",
+      detail: "Could not connect to this host over SSH.",
+    });
+  }).pipe(Effect.scoped),
 );
