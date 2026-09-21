@@ -15,6 +15,9 @@ import type * as AcpSchema from "effect-acp/schema";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const kimiProfile = process.env.T3_ACP_KIMI === "1";
+const emitKimiSubagentToolCalls = process.env.T3_ACP_KIMI_EMIT_SUBAGENT_TOOL_CALLS === "1";
+const emitKimiElicitationMode = process.env.T3_ACP_KIMI_EMIT_ELICIT;
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -69,8 +72,12 @@ const permissionRequestCount = Math.max(
 );
 const sessionId = "mock-session-1";
 
-let currentModeId = antigravityProfile ? "default" : "ask";
-let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
+let currentModeId = antigravityProfile ? "default" : kimiProfile ? "default" : "ask";
+let currentModelId = antigravityProfile
+  ? "gemini-test-low"
+  : kimiProfile
+    ? "kimi-code/kimi-for-coding"
+    : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -116,6 +123,38 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (kimiProfile) {
+    return [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options: kimiModels.map((model) => ({ value: model.value, name: model.name })),
+      },
+      {
+        id: "thinking",
+        name: "Thinking",
+        category: "thought_level",
+        type: "select",
+        currentValue: "normal",
+        options: [
+          { value: "off", name: "Off" },
+          { value: "normal", name: "Normal" },
+          { value: "deep", name: "Deep" },
+        ],
+      },
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: currentModeId,
+        options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
+      },
+    ];
+  }
   if (antigravityProfile) {
     return [
       {
@@ -295,34 +334,50 @@ function availableModels(): ReadonlyArray<{
   }));
 }
 
+// Mirrors the real Kimi ACP: the model list rides on the session's `model`
+// config option, not on an `initialize._meta.modelState` block.
+const kimiModels = [
+  { value: "kimi-code/kimi-for-coding", name: "K2.8 Preview" },
+  { value: "kimi-code/kimi-for-coding-highspeed", name: "Kimi for Coding Highspeed" },
+  { value: "kimi-code/k3", name: "K3" },
+  { value: "kimi-code/k3-256k", name: "K3 256K" },
+] as const;
+
 const antigravityModels = [
   { modelId: "gemini-test-low", name: "Gemini Test Low" },
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpSchema.ModelInfo>;
 
-const availableModes: ReadonlyArray<AcpSchema.SessionMode> = antigravityProfile
+const availableModes: ReadonlyArray<AcpSchema.SessionMode> = kimiProfile
   ? [
       { id: "default", name: "Default" },
-      { id: "auto_edit", name: "Auto edit" },
+      { id: "plan", name: "Plan" },
+      { id: "auto", name: "Auto" },
       { id: "yolo", name: "YOLO" },
     ]
-  : [
-      {
-        id: "ask",
-        name: "Ask",
-        description: "Request permission before making any changes",
-      },
-      {
-        id: "architect",
-        name: "Architect",
-        description: "Design and plan software systems without implementation",
-      },
-      {
-        id: "code",
-        name: "Code",
-        description: "Write and modify code with full tool access",
-      },
-    ];
+  : antigravityProfile
+    ? [
+        { id: "default", name: "Default" },
+        { id: "auto_edit", name: "Auto edit" },
+        { id: "yolo", name: "YOLO" },
+      ]
+    : [
+        {
+          id: "ask",
+          name: "Ask",
+          description: "Request permission before making any changes",
+        },
+        {
+          id: "architect",
+          name: "Architect",
+          description: "Design and plan software systems without implementation",
+        },
+        {
+          id: "code",
+          name: "Code",
+          description: "Write and modify code with full tool access",
+        },
+      ];
 
 function modeState(): AcpSchema.SessionModeState {
   return {
@@ -352,6 +407,9 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
 ];
 
 function modelState(): AcpSchema.SessionModelState {
+  if (kimiProfile) {
+    return { currentModelId, availableModels: [] };
+  }
   if (antigravityProfile) {
     return { currentModelId, availableModels: antigravityModels };
   }
@@ -381,6 +439,20 @@ const program = Effect.gen(function* () {
       },
     });
 
+  const publishKimiCommands = (targetSessionId: string) =>
+    agent.client.sessionUpdate({
+      sessionId: targetSessionId,
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          { name: "compact", description: "Compact the conversation" },
+          { name: "status", description: "Show session status" },
+          { name: "usage", description: "Show usage" },
+          { name: "help", description: "Show help" },
+        ],
+      },
+    });
+
   yield* agent.handleInitialize((request) =>
     Effect.gen(function* () {
       if (floodStderr) {
@@ -393,6 +465,26 @@ const program = Effect.gen(function* () {
       }
       parameterizedModelPicker =
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+      if (kimiProfile) {
+        return {
+          protocolVersion: 1,
+          agentInfo: { name: "Kimi Code CLI", version: "mock" },
+          agentCapabilities: {
+            loadSession: true,
+            sessionCapabilities: { resume: {} },
+            auth: { logout: {} },
+            promptCapabilities: { image: true, embeddedContext: true },
+          },
+          authMethods: [
+            {
+              id: "login",
+              type: "terminal",
+              name: "Login with Kimi account",
+              _meta: { "terminal-auth": { command: "kimi", args: ["login"] } },
+            },
+          ],
+        };
+      }
       if (antigravityProfile) {
         return {
           protocolVersion: 1,
@@ -419,15 +511,23 @@ const program = Effect.gen(function* () {
   // Mirrors the real agent: the API key method reads GEMINI_API_KEY from the
   // process environment and rejects when it is missing.
   yield* agent.handleAuthenticate((request) =>
-    !antigravityProfile || request.methodId === "oauth-personal"
-      ? Effect.succeed({})
-      : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
+    kimiProfile
+      ? request.methodId === "login"
         ? Effect.succeed({})
         : Effect.fail(
             AcpError.AcpRequestError.invalidParams(
-              `Mock Antigravity rejected auth method ${request.methodId}.`,
+              `Mock Kimi rejected auth method ${request.methodId}.`,
             ),
-          ),
+          )
+      : !antigravityProfile || request.methodId === "oauth-personal"
+        ? Effect.succeed({})
+        : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
+          ? Effect.succeed({})
+          : Effect.fail(
+              AcpError.AcpRequestError.invalidParams(
+                `Mock Antigravity rejected auth method ${request.methodId}.`,
+              ),
+            ),
   );
   if (antigravityProfile) {
     yield* agent.handleLogout(() => Effect.succeed({}));
@@ -437,6 +537,14 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       if (antigravityProfile) {
         yield* publishAntigravityCommands(sessionId);
+      }
+      if (kimiProfile) {
+        yield* publishKimiCommands(sessionId);
+        return {
+          sessionId,
+          modes: modeState(),
+          configOptions: configOptions(),
+        };
       }
       return {
         sessionId,
@@ -535,7 +643,11 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!modelState().availableModels.some((model) => model.modelId === request.modelId)) {
+      if (
+        kimiProfile
+          ? !kimiModels.some((model) => model.value === request.modelId)
+          : !modelState().availableModels.some((model) => model.modelId === request.modelId)
+      ) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
@@ -658,6 +770,176 @@ const program = Effect.gen(function* () {
 
       if (failPrompt) {
         return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
+      }
+
+      if (kimiProfile && emitKimiSubagentToolCalls) {
+        // Mirrors the real Kimi ACP: sub-agent dispatch surfaces as a single
+        // tool_call classified by title, with no _meta linkage and no
+        // inner-activity stream.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "0:tool_agent_1",
+            title: "Agent",
+            kind: "read",
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: "agent_id: agent-123 finished review" },
+              },
+            ],
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "0:tool_swarm_1",
+            title: "AgentSwarm",
+            kind: "other",
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: {
+                  type: "text",
+                  text: '<agent_swarm_result><summary>2 agents</summary><subagent agent_id="agent-1" item="review" outcome="done">ok</subagent></agent_swarm_result>',
+                },
+              },
+            ],
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "hello from kimi" },
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      if (kimiProfile && emitKimiElicitationMode) {
+        const elicitRequestedSchema: Extract<
+          AcpSchema.ElicitationRequest,
+          { mode: "form" }
+        >["requestedSchema"] =
+          emitKimiElicitationMode === "boolean"
+            ? {
+                type: "object",
+                title: "Confirm",
+                required: ["agree"],
+                properties: {
+                  agree: {
+                    type: "boolean",
+                    title: "Agree",
+                  },
+                },
+              }
+            : emitKimiElicitationMode === "number"
+              ? {
+                  type: "object",
+                  title: "Count",
+                  required: ["count"],
+                  properties: {
+                    count: {
+                      type: "number",
+                      title: "Count",
+                    },
+                  },
+                }
+              : emitKimiElicitationMode === "integer"
+                ? {
+                    type: "object",
+                    title: "Retries",
+                    required: ["retries"],
+                    properties: {
+                      retries: {
+                        type: "integer",
+                        title: "Retries",
+                      },
+                    },
+                  }
+                : emitKimiElicitationMode === "free-form-string"
+                  ? {
+                      type: "object",
+                      title: "Note",
+                      required: ["note"],
+                      properties: {
+                        note: {
+                          type: "string",
+                          title: "Note",
+                        },
+                      },
+                    }
+                  : emitKimiElicitationMode === "optional-color"
+                    ? {
+                        type: "object",
+                        title: "Optional color picker",
+                        properties: {
+                          color: {
+                            type: "string",
+                            title: "Color",
+                            oneOf: [
+                              { const: "red", title: "Red" },
+                              { const: "blue", title: "Blue" },
+                            ],
+                          },
+                        },
+                      }
+                    : {
+                        type: "object",
+                        title: "Color picker",
+                        required: ["color"],
+                        properties: {
+                          color: {
+                            type: "string",
+                            title: "Color",
+                            oneOf: [
+                              { const: "red", title: "Red" },
+                              { const: "blue", title: "Blue" },
+                            ],
+                          },
+                        },
+                      };
+        const elicitResult = yield* agent.client.elicit({
+          mode: "form",
+          sessionId: requestedSessionId,
+          message:
+            emitKimiElicitationMode === "boolean"
+              ? "Please confirm"
+              : emitKimiElicitationMode === "number"
+                ? "Please give a count"
+                : emitKimiElicitationMode === "integer"
+                  ? "Please give a retry count"
+                  : emitKimiElicitationMode === "free-form-string"
+                    ? "Please leave a note"
+                    : "Pick a color",
+          requestedSchema: elicitRequestedSchema,
+        });
+        const elicitAction = elicitResult.action;
+        const chosenContent = elicitAction.action === "accept" ? elicitAction.content : undefined;
+        const chosen = chosenContent
+          ? emitKimiElicitationMode === "boolean"
+            ? String(chosenContent.agree ?? "nothing")
+            : emitKimiElicitationMode === "number"
+              ? String(chosenContent.count ?? "nothing")
+              : emitKimiElicitationMode === "integer"
+                ? String(chosenContent.retries ?? "nothing")
+                : emitKimiElicitationMode === "free-form-string"
+                  ? String(chosenContent.note ?? "nothing")
+                  : String(chosenContent.color ?? "nothing")
+          : "nothing";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `selected ${chosen}` },
+          },
+        });
+        return { stopReason: "end_turn" };
       }
 
       if (emitStaleXAiPromptCompleteBeforeSecondHang && promptCount === 1) {
