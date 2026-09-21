@@ -57,7 +57,8 @@ const WORKSPACE_CHOICES: ReadonlyArray<{
   {
     mode: null,
     label: "Inherit",
-    description: "Follow the repository's t3.json, or the current checkout.",
+    description:
+      "Follow the next tier: the environment, the repository's t3.json, or the current checkout.",
   },
   {
     mode: "local",

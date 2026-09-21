@@ -811,8 +811,19 @@ describe("ServerSettings worktree defaults", () => {
       "worktree",
     );
     expect(
+      decodeServerSettings({ defaultThreadEnvMode: "remote" }).defaultThreadEnvMode,
+    ).toBeNull();
+    expect(
       decodeServerSettingsPatch({ defaultThreadEnvMode: null }).defaultThreadEnvMode,
     ).toBeNull();
+  });
+
+  it("keeps an inherited thread env mode off the wire for older clients", () => {
+    const encode = Schema.encodeSync(ServerSettings);
+    expect("defaultThreadEnvMode" in encode(decodeServerSettings({}))).toBe(false);
+    expect(
+      encode(decodeServerSettings({ defaultThreadEnvMode: "worktree" })).defaultThreadEnvMode,
+    ).toBe("worktree");
   });
 
   it("defaults start-from-origin on for legacy configs", () => {

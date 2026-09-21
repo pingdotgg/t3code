@@ -2,6 +2,7 @@ import {
   ClientSettingsSchema,
   type ClientSettingsPatch,
   type EnvironmentId,
+  isNullableProjectSettingsOverride,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectId,
   type ProjectScopedServerSettingKey,
@@ -232,6 +233,15 @@ export function planScopedSettingsPatch(
                       ...serverPatch.worktreeCleanup.rules,
                     },
                   };
+                  continue;
+                }
+                // A picker's "Inherit" sends null; for keys whose override
+                // cannot store null that means remove the override.
+                if (
+                  value === null &&
+                  !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
+                ) {
+                  delete next[key];
                   continue;
                 }
                 const base = effective[key as keyof ServerSettings];

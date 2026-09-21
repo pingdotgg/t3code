@@ -79,16 +79,18 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const unavailable = connectedEnvironments.length === 0;
 
   // A setting on either scope beats the checkout's t3.json, and "inherit"
-  // (null) is what lets the file decide; show what inherit resolves to.
+  // (null) is what lets the file decide; show what inherit resolves to once
+  // a checkout's file has been read. Other scopes have no single file to ask.
   const checkout = scope.kind === "checkout" ? scope.checkout : null;
   // The query is disabled without a checkout, so any id satisfies the hook.
   const t3File = useT3ProjectFileState(
     checkout?.environmentId ?? EnvironmentId.make("none"),
     category === "general" && checkout ? checkout.workspaceRoot : null,
   );
+  const fileSettled = checkout !== null && t3File.status !== "loading";
   const repositoryEnvMode = t3File.file?.defaultThreadEnvMode ?? null;
   const inheritedEnvModeLabel =
-    settings.defaultThreadEnvMode !== null
+    !fileSettled || settings.defaultThreadEnvMode !== null
       ? null
       : repositoryEnvMode
         ? `${resolveEnvModeLabel(repositoryEnvMode)} (t3.json)`
