@@ -44,12 +44,14 @@ import {
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
+  shouldNavigateAfterThreadPark,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
+import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   EnvironmentId,
   OrchestrationLatestTurn,
@@ -815,11 +817,23 @@ describe("resolveSidebarThreadStatus", () => {
 });
 
 describe("searchSidebarThreads", () => {
+  const searchThread = (id: string, title: string, project: string) => ({
+    environmentId: localEnvironmentId,
+    id: ThreadId.make(id),
+    title,
+    project,
+  });
   const threads = [
-    { id: "thread-1", title: "Fix workspace search", project: "Alpha" },
-    { id: "thread-2", title: "Review providers", project: "Workspace" },
-    { id: "thread-3", title: "WORKTREE cleanup", project: "Beta" },
+    searchThread("thread-1", "Fix workspace search", "Alpha"),
+    searchThread("thread-2", "Review providers", "Workspace"),
+    searchThread("thread-3", "WORKTREE cleanup", "Beta"),
   ];
+  const contentKeys = (...ids: ReadonlyArray<string>) =>
+    new Set(
+      ids.map((id) =>
+        threadSearchMatchKey({ environmentId: localEnvironmentId, threadId: ThreadId.make(id) }),
+      ),
+    );
 
   it("matches thread titles case-insensitively and preserves their order", () => {
     expect(searchSidebarThreads(threads, "work")).toEqual([threads[0], threads[2]]);
@@ -831,6 +845,28 @@ describe("searchSidebarThreads", () => {
 
   it("returns no results for an empty query", () => {
     expect(searchSidebarThreads(threads, "   ")).toEqual([]);
+  });
+
+  it("appends content-only matches after every title match", () => {
+    expect(searchSidebarThreads(threads, "work", contentKeys("thread-2"))).toEqual([
+      threads[0],
+      threads[2],
+      threads[1],
+    ]);
+  });
+
+  it("lists a thread matching both title and content once", () => {
+    expect(searchSidebarThreads(threads, "work", contentKeys("thread-1"))).toEqual([
+      threads[0],
+      threads[2],
+    ]);
+  });
+
+  it("ignores content matches for threads outside the sidebar collection", () => {
+    expect(searchSidebarThreads(threads, "work", contentKeys("thread-missing"))).toEqual([
+      threads[0],
+      threads[2],
+    ]);
   });
 });
 
@@ -2499,4 +2535,45 @@ describe("resolveSidebarDropVerb", () => {
     expect(resolveSidebarDropVerb("active", null)).toBeNull();
     expect(resolveSidebarDropVerb("active", "snoozed")).toBeNull();
   });
+});
+
+describe("navigation after parking a thread", () => {
+  it.each([
+    ["settle", "settled", null, "thread", true],
+    ["settle", "active", null, "thread", false],
+    ["settle", "settled", null, "other-thread", false],
+    ["snooze", null, "2099-01-01T00:00:00.000Z", "thread", true],
+    ["snooze", null, null, "thread", false],
+    ["snooze", null, "2026-09-12T09:00:00.000Z", "thread", false],
+    ["snooze", null, "2099-01-01T00:00:00.000Z", "thread", false, true],
+    ["snooze", null, "2099-01-01T00:00:00.000Z", "other-thread", false],
+  ] as const)(
+    "%s with state %s / %s on %s navigates: %s",
+    (
+      action,
+      settledOverride,
+      snoozedUntil,
+      currentThreadKey,
+      expected,
+      hasPendingApprovals: boolean = false,
+    ) => {
+      expect(
+        shouldNavigateAfterThreadPark({
+          threadKey: "thread",
+          currentThreadKey,
+          action,
+          now: "2026-09-12T10:00:00.000Z",
+          thread: {
+            settledOverride,
+            snoozedUntil,
+            snoozedAt: null,
+            session: null,
+            latestTurn: null,
+            hasPendingApprovals,
+            hasPendingUserInput: false,
+          },
+        }),
+      ).toBe(expected);
+    },
+  );
 });

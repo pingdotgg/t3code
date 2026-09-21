@@ -248,56 +248,56 @@ export const layerDefaults: Layer.Layer<ShardingConfig> = layer()
  */
 export const config: Config.Config<ShardingConfig["Service"]> = Config.all({
   runnerAddress: Config.all({
-    host: Config.string("host").pipe(
+    host: Config.String("host").pipe(
       Config.withDefault(defaultRunnerAddress.host)
       // Config.withDescription("The hostname or IP address of the runner.")
     ),
-    port: Config.int("port").pipe(
+    port: Config.Int("port").pipe(
       Config.withDefault(defaultRunnerAddress.port)
       // Config.withDescription("The port used for inter-runner communication.")
     )
   }).pipe(Config.map((options) => RunnerAddress.make(options)), Config.option),
   runnerListenAddress: Config.all({
-    host: Config.string("listenHost"),
+    host: Config.String("listenHost"),
     // Config.withDescription("The host to listen on.")
-    port: Config.int("listenPort").pipe(
+    port: Config.Int("listenPort").pipe(
       Config.withDefault(defaultRunnerAddress.port)
       // Config.withDescription("The port to listen on.")
     )
   }).pipe(Config.map((options) => RunnerAddress.make(options)), Config.option),
-  runnerShardWeight: Config.int("runnerShardWeight").pipe(
+  runnerShardWeight: Config.Int("runnerShardWeight").pipe(
     Config.withDefault(defaults.runnerShardWeight)
     // Config.withDescription("A number that determines how many shards this runner will be assigned relative to other runners.")
   ),
-  availableShardGroups: Config.schema(Config.Array(Schema.String), "availableShardGroups").pipe(
+  availableShardGroups: Config.Array(Schema.String, "availableShardGroups").pipe(
     Config.withDefault(["default"])
     // Config.withDescription("The shard groups available across all runners.")
   ),
-  assignedShardGroups: Config.schema(Config.Array(Schema.String), "shardGroups").pipe(
+  assignedShardGroups: Config.Array(Schema.String, "shardGroups").pipe(
     Config.withDefault(["default"])
     // Config.withDescription("The shard groups that are assigned to this runner.")
   ),
-  shardsPerGroup: Config.int("shardsPerGroup").pipe(
+  shardsPerGroup: Config.Int("shardsPerGroup").pipe(
     Config.withDefault(defaults.shardsPerGroup)
     // Config.withDescription("The number of shards to allocate per shard group.")
   ),
-  shardLockRefreshInterval: Config.duration("shardLockRefreshInterval").pipe(
+  shardLockRefreshInterval: Config.Duration("shardLockRefreshInterval").pipe(
     Config.withDefault(defaults.shardLockRefreshInterval)
     // Config.withDescription("Shard lock refresh interval.")
   ),
-  shardLockExpiration: Config.duration("shardLockExpiration").pipe(
+  shardLockExpiration: Config.Duration("shardLockExpiration").pipe(
     Config.withDefault(defaults.shardLockExpiration)
     // Config.withDescription("Shard lock expiration duration.")
   ),
-  shardLockDisableAdvisory: Config.boolean("shardLockDisableAdvisory").pipe(
+  shardLockDisableAdvisory: Config.Boolean("shardLockDisableAdvisory").pipe(
     Config.withDefault(defaults.shardLockDisableAdvisory)
     // Config.withDescription("Disable the use of advisory locks for shard locking.")
   ),
-  preemptiveShutdown: Config.boolean("preemptiveShutdown").pipe(
+  preemptiveShutdown: Config.Boolean("preemptiveShutdown").pipe(
     Config.withDefault(defaults.preemptiveShutdown)
     // Config.withDescription("Start shutting down as soon as an Entity has started shutting down.")
   ),
-  entityMailboxCapacity: Config.int("entityMailboxCapacity").pipe(
+  entityMailboxCapacity: Config.Int("entityMailboxCapacity").pipe(
     Config.withDefault(defaults.entityMailboxCapacity)
     // Config.withDescription("The default capacity of the mailbox for entities.")
   ),
@@ -315,42 +315,42 @@ export const config: Config.Config<ShardingConfig["Service"]> = Config.all({
     Config.withDefault(defaults.unprocessedMessageBatchSize)
     // Config.withDescription("The maximum number of unprocessed messages read from storage in a single poll.")
   ),
-  entityMaxIdleTime: Config.duration("entityMaxIdleTime").pipe(
+  entityMaxIdleTime: Config.Duration("entityMaxIdleTime").pipe(
     Config.withDefault(defaults.entityMaxIdleTime)
     // Config.withDescription(
     //   "The maximum duration of inactivity (i.e. without receiving a message) after which an entity will be interrupted."
     // )
   ),
-  entityRegistrationTimeout: Config.duration("entityRegistrationTimeout").pipe(
+  entityRegistrationTimeout: Config.Duration("entityRegistrationTimeout").pipe(
     Config.withDefault(defaults.entityRegistrationTimeout)
     // Config.withDescription("If an entity does not register itself within this time after a message is sent to it, the message will be marked as failed.")
   ),
-  entityTerminationTimeout: Config.duration("entityTerminationTimeout").pipe(
+  entityTerminationTimeout: Config.Duration("entityTerminationTimeout").pipe(
     Config.withDefault(defaults.entityTerminationTimeout)
     // Config.withDescription("The maximum duration of time to wait for an entity to terminate.")
   ),
-  entityMessagePollInterval: Config.duration("entityMessagePollInterval").pipe(
+  entityMessagePollInterval: Config.Duration("entityMessagePollInterval").pipe(
     Config.withDefault(defaults.entityMessagePollInterval)
     // Config.withDescription("The interval at which to poll for unprocessed messages from storage.")
   ),
-  entityReplyPollInterval: Config.duration("entityReplyPollInterval").pipe(
+  entityReplyPollInterval: Config.Duration("entityReplyPollInterval").pipe(
     Config.withDefault(defaults.entityReplyPollInterval)
     // Config.withDescription("The interval at which to poll for client replies from storage.")
   ),
-  sendRetryInterval: Config.duration("sendRetryInterval").pipe(
+  sendRetryInterval: Config.Duration("sendRetryInterval").pipe(
     Config.withDefault(defaults.sendRetryInterval)
     // Config.withDescription("The interval to retry a send if EntityNotManagedByRunner is returned.")
   ),
-  refreshAssignmentsInterval: Config.duration("refreshAssignmentsInterval").pipe(
+  refreshAssignmentsInterval: Config.Duration("refreshAssignmentsInterval").pipe(
     Config.withDefault(defaults.refreshAssignmentsInterval)
     // Config.withDescription("The interval at which to refresh shard assignments.")
   ),
-  runnerHealthCheckInterval: Config.duration("runnerHealthCheckInterval").pipe(
+  runnerHealthCheckInterval: Config.Duration("runnerHealthCheckInterval").pipe(
     Config.withDefault(defaults.runnerHealthCheckInterval)
     // Config.withDescription("The interval at which to check for unhealthy runners and report them.")
   ),
-  // unhealthyRunnerReportInterval: Config.duration("unhealthyRunnerReportInterval").pipe(
-  simulateRemoteSerialization: Config.boolean("simulateRemoteSerialization").pipe(
+  // unhealthyRunnerReportInterval: Config.Duration("unhealthyRunnerReportInterval").pipe(
+  simulateRemoteSerialization: Config.Boolean("simulateRemoteSerialization").pipe(
     Config.withDefault(defaults.simulateRemoteSerialization)
     // Config.withDescription("Simulate serialization and deserialization to remote runners for local entities.")
   )

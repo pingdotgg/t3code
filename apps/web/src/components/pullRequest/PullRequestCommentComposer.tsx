@@ -1,11 +1,5 @@
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
-import {
-  GitPullRequestClosedIcon,
-  MessageSquareIcon,
-  RotateCcwIcon,
-  SendIcon,
-  XIcon,
-} from "lucide-react";
+import { MessageSquareIcon, SendIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -15,6 +9,7 @@ import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
+import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestCommentComposer({
   environmentId,
@@ -123,6 +118,19 @@ export function PullRequestCommentComposer({
             placeholder="Leave a comment"
             aria-label="Comment on this pull request"
             onChange={(event) => setBody(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (
+                event.key === "Enter" &&
+                (event.metaKey || event.ctrlKey) &&
+                !event.shiftKey &&
+                !event.altKey
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!event.repeat) void submit("comment");
+              }
+            }}
           />
           <div className="flex flex-wrap justify-end gap-2">
             {followUpAction === null ? null : (
@@ -133,9 +141,9 @@ export function PullRequestCommentComposer({
                 onClick={() => void submit(followUpAction)}
               >
                 {followUpAction === "close" ? (
-                  <GitPullRequestClosedIcon className="size-3.5" />
+                  <PullRequestGlyph.closed className="size-3.5" />
                 ) : (
-                  <RotateCcwIcon className="size-3.5" />
+                  <PullRequestGlyph.reopen className="size-3.5" />
                 )}
                 {submitting === followUpAction
                   ? followUpAction === "close"

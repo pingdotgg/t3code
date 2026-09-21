@@ -42,7 +42,7 @@ const authenticate = Effect.fnUntraced(function*(options: {
 
 it.effect("indexes conflicts from the sliced history", () =>
   Effect.gen(function*() {
-    const encode = Schema.encodeUnknownEffect(event.payloadMsgPack)
+    const encode = Schema.encodeUnknownEffect(event.payloadSchemaBinary)
     const makeEntry = Effect.fnUntraced(function*(msecs: number, key: string, value: number) {
       return new EventJournal.Entry({
         id: EventJournal.makeEntryIdUnsafe({ msecs }),

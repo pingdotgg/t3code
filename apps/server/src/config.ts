@@ -17,6 +17,7 @@ import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
+import { DEFAULT_SIGNAL_EXPORT, type SignalExport } from "@t3tools/shared/observability";
 
 export const DEFAULT_PORT = 3773;
 
@@ -71,7 +72,15 @@ export class ServerConfig extends Context.Service<
     readonly traceMaxFiles: number;
     readonly otlpTracesUrl: string | undefined;
     readonly otlpMetricsUrl: string | undefined;
-    readonly otlpExportIntervalMs: number;
+    readonly otlpLogsUrl: string | undefined;
+    /**
+     * How each signal is exported. Read instead of a process-wide setting so
+     * the wire format, credential, and schedule travel with the endpoint they
+     * were configured beside.
+     */
+    readonly otlpTracesExport: SignalExport;
+    readonly otlpMetricsExport: SignalExport;
+    readonly otlpLogsExport: SignalExport;
     readonly otlpServiceName: string;
     readonly mode: RuntimeMode;
     readonly port: number;
@@ -102,6 +111,18 @@ export class ServerConfig extends Context.Service<
 }
 
 export const make = (config: ServerConfig["Service"]) => ServerConfig.of(config);
+
+/**
+ * Resource attributes shared by every OTLP exporter, so traces, metrics, and
+ * logs report the same service identity to the collector.
+ */
+export const otlpResource = (config: ServerConfig["Service"]) => ({
+  serviceName: config.otlpServiceName,
+  attributes: {
+    "service.runtime": "t3-server",
+    "service.mode": config.mode,
+  },
+});
 
 export const layer = (config: ServerConfig["Service"]) => Layer.succeed(ServerConfig, make(config));
 
@@ -195,7 +216,10 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     traceMaxFiles: 10,
     otlpTracesUrl: undefined,
     otlpMetricsUrl: undefined,
-    otlpExportIntervalMs: 10_000,
+    otlpLogsUrl: undefined,
+    otlpTracesExport: DEFAULT_SIGNAL_EXPORT,
+    otlpMetricsExport: DEFAULT_SIGNAL_EXPORT,
+    otlpLogsExport: DEFAULT_SIGNAL_EXPORT,
     otlpServiceName: "t3-server",
     cwd,
     baseDir,

@@ -77,7 +77,7 @@ export function ConfirmDialogHost() {
     >
       <AlertDialogPopup className="max-w-lg">
         <AlertDialogHeader>
-          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+          <AlertDialogTitle className="wrap-anywhere">{copy.title}</AlertDialogTitle>
           {copy.description ? (
             <AlertDialogDescription className="whitespace-pre-line">
               {copy.description}

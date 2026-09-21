@@ -60,7 +60,7 @@ import {
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
-export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
+
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
@@ -186,7 +186,11 @@ export function resolveProactiveTurnDiffAction(input: {
   ) {
     return "ignore";
   }
-  return "open";
+  const changedLines = input.checkpoint.files.reduce(
+    (total, file) => total + file.additions + file.deletions,
+    0,
+  );
+  return input.checkpoint.files.length >= 3 || changedLines >= 50 ? "open" : "ignore";
 }
 
 export function codexArtifactTemplatePromptToAppend(
@@ -250,6 +254,11 @@ export function toolGroupConsumesUpwardNavigation(target: EventTarget | null): b
   }
   return false;
 }
+
+export {
+  findRecordedWorktreeSetup,
+  resolveVisibleWorktreeSetup,
+} from "@t3tools/client-runtime/worktree-setup";
 
 export function resolveDraftHeroState(input: {
   isLocalDraftThread: boolean;
@@ -405,7 +414,7 @@ export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input:
 
 export function resolveDraftPromotionNavigationTarget(input: {
   serverThreadRef: ScopedThreadRef | null;
-  serverThread: Pick<Thread, "latestTurn" | "session"> | null | undefined;
+  serverThread: Pick<Thread, "latestTurn" | "session" | "messages"> | null | undefined;
   backgroundSubmissionPending: boolean;
 }): ScopedThreadRef | null {
   if (input.backgroundSubmissionPending) {
@@ -415,9 +424,13 @@ export function resolveDraftPromotionNavigationTarget(input: {
   const turnStarted = input.serverThread?.latestTurn?.startedAt != null;
   const startupStopped =
     sessionStatus === "error" || sessionStatus === "stopped" || sessionStatus === "interrupted";
-  // Keep local preparation feedback mounted until the server can render the
-  // running turn or its startup error on the canonical thread route.
-  return turnStarted || startupStopped ? input.serverThreadRef : null;
+  // A worktree bootstrap persists the user message before the turn, so the
+  // thread route can render the send and the live setup by itself. Otherwise
+  // keep the draft mounted until the server can render the running turn or
+  // its startup error.
+  const messagePersisted =
+    input.serverThread?.messages.some((message) => message.role === "user") ?? false;
+  return turnStarted || startupStopped || messagePersisted ? input.serverThreadRef : null;
 }
 
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
@@ -666,30 +679,14 @@ export function reconcileMountedTerminalThreadIds(input: {
   activeThreadTerminalOpen: boolean;
   maxHiddenThreadCount?: number;
 }): string[] {
-  return reconcileRetainedMountedThreadIds({
-    currentThreadIds: input.currentThreadIds,
-    openThreadIds: input.openThreadIds,
-    activeThreadId: input.activeThreadId,
-    activeThreadOpen: input.activeThreadTerminalOpen,
-    maxHiddenThreadCount: input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
-  });
-}
-
-export function reconcileRetainedMountedThreadIds(input: {
-  currentThreadIds: ReadonlyArray<string>;
-  openThreadIds: ReadonlyArray<string>;
-  activeThreadId: string | null;
-  activeThreadOpen: boolean;
-  maxHiddenThreadCount: number;
-  retainInactiveActiveThread?: boolean;
-}): string[] {
   const openThreadIdSet = new Set(input.openThreadIds);
   const hiddenThreadIds = input.currentThreadIds.filter(
-    (threadId) =>
-      (threadId !== input.activeThreadId || input.retainInactiveActiveThread === true) &&
-      openThreadIdSet.has(threadId),
+    (threadId) => threadId !== input.activeThreadId && openThreadIdSet.has(threadId),
   );
-  const maxHiddenThreadCount = Math.max(0, input.maxHiddenThreadCount);
+  const maxHiddenThreadCount = Math.max(
+    0,
+    input.maxHiddenThreadCount ?? MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  );
   const nextThreadIds =
     hiddenThreadIds.length > maxHiddenThreadCount
       ? hiddenThreadIds.slice(-maxHiddenThreadCount)
@@ -697,7 +694,7 @@ export function reconcileRetainedMountedThreadIds(input: {
 
   if (
     input.activeThreadId &&
-    input.activeThreadOpen &&
+    input.activeThreadTerminalOpen &&
     !nextThreadIds.includes(input.activeThreadId)
   ) {
     nextThreadIds.push(input.activeThreadId);
