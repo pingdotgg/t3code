@@ -855,6 +855,16 @@ export class GhosttyTerminalSurface {
     this.applyFontMetrics();
   };
 
+  /**
+   * The grid the mount currently fits, or null while the surface is hidden or
+   * the mount has no layout size. Bytes replayed into the surface are
+   * only correct for this width, so the host sizes the PTY to it when attaching.
+   */
+  gridSize(): { readonly cols: number; readonly rows: number } | null {
+    if (this.disposed || !this.visible || !this.hasSize) return null;
+    return { cols: this.cols, rows: this.rows };
+  }
+
   fit(): boolean {
     if (this.disposed || !this.visible) return false;
     const width = this.mount.clientWidth;

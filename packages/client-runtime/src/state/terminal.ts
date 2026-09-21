@@ -1,4 +1,10 @@
-import { type TerminalSummary, WS_METHODS } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type TerminalAttachInput,
+  type TerminalSummary,
+  WS_METHODS,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -7,14 +13,41 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
+  followStreamInEnvironment,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import { subscribe, subscribeDynamic, type EnvironmentRpcInput } from "../rpc/client.ts";
 import {
   applyTerminalAttachStreamEvent,
   applyTerminalMetadataStreamEvent,
   nextTerminalAttachSeedState,
 } from "./terminalSession.ts";
+
+/** A viewport owns its stream; every connection measures again before attaching. */
+export function createTerminalViewportAtom<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: Omit<TerminalAttachInput, "cols" | "rows">;
+  },
+  readGrid: () => { readonly cols: number; readonly rows: number } | null,
+) {
+  return runtime
+    .atom(
+      followStreamInEnvironment(
+        target.environmentId,
+        Stream.suspend(() =>
+          subscribeDynamic(WS_METHODS.terminalAttach, () =>
+            Effect.sync(() => ({ ...target.input, ...readGrid() })),
+          ).pipe(Stream.scan(nextTerminalAttachSeedState(), applyTerminalAttachStreamEvent)),
+        ),
+      ),
+    )
+    .pipe(
+      Atom.setIdleTTL(0),
+      Atom.withLabel(`environment-data:terminal:viewport:${target.input.terminalId}`),
+    );
+}
 
 export function createTerminalEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,

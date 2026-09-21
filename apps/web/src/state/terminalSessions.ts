@@ -1,5 +1,6 @@
 import {
   combineTerminalSessionState,
+  createTerminalViewportAtom,
   EMPTY_TERMINAL_BUFFER_STATE,
   EMPTY_TERMINAL_SESSION_STATE,
   selectRunningSubprocessTerminalIds,
@@ -16,6 +17,7 @@ import { useMemo } from "react";
 
 import { useEnvironmentQuery } from "./query";
 import { terminalEnvironment } from "./terminal";
+import { connectionAtomRuntime } from "../connection/runtime";
 
 const EMPTY_KNOWN_TERMINAL_SESSIONS = Object.freeze<ReadonlyArray<KnownTerminalSession>>([]);
 
@@ -124,15 +126,23 @@ export function selectKnownTerminalSessions(
 export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
   readonly terminal: TerminalAttachInput | null;
+  readonly readGrid: () => { readonly cols: number; readonly rows: number } | null;
 }): TerminalSessionState {
-  const attach = useEnvironmentQuery(
-    input.environmentId !== null && input.terminal !== null
-      ? terminalEnvironment.attach({
-          environmentId: input.environmentId,
-          input: input.terminal,
-        })
-      : null,
+  const attachAtom = useMemo(
+    () =>
+      input.environmentId !== null && input.terminal !== null
+        ? createTerminalViewportAtom(
+            connectionAtomRuntime,
+            {
+              environmentId: input.environmentId,
+              input: input.terminal,
+            },
+            input.readGrid,
+          )
+        : null,
+    [input.environmentId, input.terminal, input.readGrid],
   );
+  const attach = useEnvironmentQuery(attachAtom);
   const metadata = useEnvironmentQuery(
     input.environmentId === null
       ? null
