@@ -284,8 +284,10 @@ async function uploadFileBytes(
   signal.addEventListener("abort", cancelTransfer, { once: true });
   const timedOut = Promise.withResolvers<never>();
   const timer = setTimeout(() => {
-    transfer.abort();
+    // Settled before the abort, so the race reports the timeout and not the
+    // cancellation the abort produces.
     timedOut.reject(new Error(`'${attachment.name}' took too long to upload. Try a smaller file.`));
+    transfer.abort();
   }, ATTACHMENT_UPLOAD_TIMEOUT_MS);
   try {
     if (fileUri === undefined && inlineDataUrl !== undefined) {

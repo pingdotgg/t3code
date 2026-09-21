@@ -315,7 +315,11 @@ describe("prepareTurnAttachments", () => {
       mocks.upload.mockImplementation(
         (_uri: string, _url: string, options: { readonly signal: AbortSignal }) => {
           nativeSignal = options.signal;
-          return new Promise(() => undefined);
+          // Rejects on the abort at once, as the native task may: the timeout
+          // must still be the error the caller sees.
+          return new Promise((_resolve, reject) => {
+            options.signal.addEventListener("abort", () => reject(new Error("Upload cancelled.")));
+          });
         },
       );
       const preparing = prepareTurnAttachments({
