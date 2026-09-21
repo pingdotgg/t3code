@@ -41,6 +41,7 @@ import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColorClassName } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
+import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
@@ -287,19 +288,26 @@ export function SubagentAvatar({
   driver,
   provider,
   status,
+  pulse = false,
   className,
 }: {
   driver?: ProviderDriverKind | undefined;
   provider?: ServerProvider | undefined;
   /** Omitted inside an overlapped stack, where a covered dot would only add noise. */
   status?: OrchestrationV2TurnItem["status"] | undefined;
+  /** Breathes while the worker is running; paused offscreen and for reduced motion. */
+  pulse?: boolean;
   className?: string;
 }) {
+  const breathing = pulse && status === "running";
   return (
     <span
       aria-hidden
+      ref={breathing ? observeVisibleAnimation : undefined}
       className={cn(
         "relative inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted ring-2 ring-background",
+        breathing &&
+          "motion-safe:animate-status-pulse [animation-play-state:var(--visible-animation-state,paused)]",
         className,
       )}
     >
@@ -361,7 +369,7 @@ function SubagentTimelineLink(props: {
   };
   const content = (
     <>
-      <SubagentAvatar driver={props.driver} provider={props.provider} status={status} />
+      <SubagentAvatar driver={props.driver} provider={props.provider} status={status} pulse />
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
           <span className="min-w-0 truncate text-xs font-medium text-foreground">
