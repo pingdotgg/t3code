@@ -298,6 +298,8 @@ interface TimelineRowSharedState {
   onToggleSpawnRow: (entryId: string, expanded: boolean) => void;
   onToggleReasoning: (messageId: string, expanded: boolean, anchorKey: string) => void;
   expandedReasoningMessageIds: ReadonlySet<string>;
+  /** Entry holding the active find match; clipped bodies expand to show it. */
+  chatFindRevealEntryId: string | null;
   workGroupViewState: WorkGroupViewState;
   agentPanelModel: AgentPanelModel;
   expandedSpawnEntryIds: ReadonlySet<string>;
@@ -962,14 +964,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const findOpen = useChatFindStore((store) => store.open);
   const findFocusRequestId = useChatFindStore((store) => store.focusRequestId);
   const hideFind = useChatFindStore((store) => store.hide);
-  const [findQuery, setFindQuery] = useState("");
   // Find is scoped to one thread; switching threads closes it.
+  const findThreadKeyRef = useRef(listIdentityKey);
   useEffect(() => {
+    if (findThreadKeyRef.current === listIdentityKey) return;
+    findThreadKeyRef.current = listIdentityKey;
     hideFind();
   }, [hideFind, listIdentityKey]);
   const chatFind = useChatFind({
     enabled: findOpen,
-    query: findQuery,
     entries: timelineEntries,
     rows,
     listRef,
@@ -979,6 +982,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   });
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const alwaysRender = citationAlwaysRender ?? chatFind.alwaysRender ?? restoringAlwaysRender;
+  const chatFindRevealEntryId = findOpen ? chatFind.activeEntryId : null;
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = useCallback(
@@ -1177,6 +1181,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleSpawnRow,
       onToggleReasoning,
       expandedReasoningMessageIds: paintedExpandedReasoningMessageIds,
+      chatFindRevealEntryId,
       workGroupViewState,
       agentPanelModel: agentPanelModel ?? EMPTY_AGENT_PANEL_MODEL,
       expandedSpawnEntryIds: paintedExpandedSpawnEntryIds,
@@ -1212,6 +1217,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleSpawnRow,
       onToggleReasoning,
       paintedExpandedReasoningMessageIds,
+      chatFindRevealEntryId,
       workGroupViewState,
       agentPanelModel,
       paintedExpandedSpawnEntryIds,
@@ -1299,8 +1305,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           ) : null}
           {findOpen ? (
             <ChatFindBar
-              query={findQuery}
-              onQueryChange={setFindQuery}
+              query={chatFind.query}
+              onQueryChange={chatFind.setQuery}
               matchCount={chatFind.matches.length}
               activeIndex={chatFind.activeIndex}
               onStep={chatFind.step}
@@ -2232,6 +2238,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             renderContextReference={renderContextReference}
             skills={ctx.skills}
             markdownCwd={ctx.markdownCwd}
+            revealed={ctx.chatFindRevealEntryId === row.id}
           />
         </div>
       </div>
@@ -2535,6 +2542,7 @@ function ProposedPlanTimelineRow({
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+        revealed={ctx.chatFindRevealEntryId === row.id}
       />
     </div>
   );
@@ -4042,11 +4050,14 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
   footer?: ReactNode;
+  /** A find match landed inside; open the clipped body so it can be seen. */
+  revealed?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasVisibleBody = props.text.trim().length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
-  const isCollapsed = canCollapse && !expanded;
+  // The find bar holds the body open while its active match is inside.
+  const isCollapsed = canCollapse && !expanded && props.revealed !== true;
 
   return (
     <div>
@@ -4087,12 +4098,12 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
               type="button"
               size="xs"
               variant="ghost"
-              aria-expanded={expanded}
+              aria-expanded={!isCollapsed}
               data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
+              onClick={() => setExpanded(isCollapsed)}
               className="-ml-1 h-6 rounded-md px-1.5 text-secondary-label text-xs hover:bg-muted/55 hover:text-message-foreground"
             >
-              {expanded ? "Show less" : "Show full message"}
+              {isCollapsed ? "Show full message" : "Show less"}
             </Button>
           ) : null}
           {props.footer ? (

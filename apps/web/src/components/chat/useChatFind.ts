@@ -27,10 +27,10 @@ const MAX_REVEAL_ATTEMPTS = 60;
  * unmounted and folded rows count; highlights are painted onto whatever rows
  * the virtualized list has mounted, and the active match is revealed by
  * unfolding its turn, pinning its row, and scrolling the range into view.
+ * Rows read `activeEntryId` from the row context to expand clipped bodies.
  */
 export function useChatFind({
   enabled,
-  query,
   entries,
   rows,
   listRef,
@@ -39,7 +39,6 @@ export function useChatFind({
   onManualNavigation,
 }: {
   enabled: boolean;
-  query: string;
   entries: ReadonlyArray<TimelineEntry>;
   rows: ReadonlyArray<MessagesTimelineRow>;
   listRef: RefObject<LegendListRef | null>;
@@ -47,14 +46,17 @@ export function useChatFind({
   onExpandTurn: (turnId: TurnId) => void;
   onManualNavigation: () => void;
 }) {
+  const [query, setQueryState] = useState("");
   const pattern = useMemo(() => (enabled ? buildChatFindPattern(query) : null), [enabled, query]);
   const matches = useMemo(() => collectChatFindMatches(entries, pattern), [entries, pattern]);
-  // A new query restarts from the first match; the same query keeps its place.
-  const [selection, setSelection] = useState<{ query: string; match: ChatFindMatch } | null>(null);
-  const activeIndex = resolveActiveMatchIndex(
-    matches,
-    selection?.query === query ? selection.match : null,
-  );
+  // The stepped-to match, kept by identity while history prepends or streams.
+  const [selection, setSelection] = useState<ChatFindMatch | null>(null);
+  // A new query restarts from the first match; stepping picks one explicitly.
+  const setQuery = useCallback((next: string) => {
+    setQueryState(next);
+    setSelection(null);
+  }, []);
+  const activeIndex = resolveActiveMatchIndex(matches, selection);
   const activeMatch = activeIndex >= 0 ? (matches[activeIndex] ?? null) : null;
   const targetKey = activeMatch
     ? JSON.stringify([query, activeMatch.entryId, activeMatch.occurrence])
@@ -78,9 +80,9 @@ export function useChatFind({
       if (!match) return;
       // Re-reveal even when the match is unchanged, as with a single result.
       navigatedKeyRef.current = null;
-      setSelection({ query, match });
+      setSelection(match);
     },
-    [activeIndex, matches, query],
+    [activeIndex, matches],
   );
 
   useEffect(() => {
@@ -148,15 +150,16 @@ export function useChatFind({
           if (pending?.rowId === rowId) {
             const listState = list.getState();
             const index = listState.indexByKey(rowId);
-            // Estimated rows have not settled; try again after the next layout.
-            if (
-              (index === undefined || !(listState.sizeAtIndex(index) > 0)) &&
-              pending.attempts++ < MAX_REVEAL_ATTEMPTS
-            ) {
+            const settled = index !== undefined && listState.sizeAtIndex(index) > 0;
+            // Estimated rows have not settled, or clipped content is still
+            // expanding for this match; try again after the next layout.
+            if (settled && activeRange) {
+              pendingRevealRef.current = null;
+              revealRange(activeRange, scrollNode, list);
+            } else if (pending.attempts++ < MAX_REVEAL_ATTEMPTS) {
               schedule();
             } else {
               pendingRevealRef.current = null;
-              if (activeRange) revealRange(activeRange, scrollNode, list);
             }
           }
         }
@@ -182,7 +185,15 @@ export function useChatFind({
     [enabled, activeMatch],
   );
 
-  return { matches, activeIndex, step, alwaysRender };
+  return {
+    query,
+    setQuery,
+    matches,
+    activeIndex,
+    activeEntryId: activeMatch?.entryId ?? null,
+    step,
+    alwaysRender,
+  };
 }
 
 function revealRange(range: Range, scrollNode: HTMLElement, list: LegendListRef) {

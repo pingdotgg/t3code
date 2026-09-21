@@ -42,6 +42,27 @@ export function findPatternSpans(text: string, pattern: RegExp): TextSpan[] {
 }
 
 /**
+ * Approximates the rendered text of a Markdown source so match counts line up
+ * with what highlighting finds in the DOM: delimiters, link and image targets,
+ * fences, headings and list markers are dropped while their text is kept.
+ */
+export function markdownSearchText(markdown: string): string {
+  return markdown
+    .replace(/^[ \t]*(```|~~~)[^\n]*$/gm, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/<((?:https?|mailto):[^>\s]+)>/g, "$1")
+    .replace(/<\/?[a-zA-Z][^>\n]*>/g, "")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]*>[ \t]?/gm, "")
+    .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/gm, "")
+    .replace(/^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/gm, "")
+    .replace(/`+/g, "")
+    .replace(/(\*\*|__|~~)(?=\S)([\s\S]*?\S)\1/g, "$2")
+    .replace(/(^|[^\w*])[*_](?=\S)([^*_\n]*?\S)[*_](?![\w*])/g, "$1$2");
+}
+
+/**
  * Text a find can land on: what the conversation shows once a turn settles.
  * Thinking is grouped with tool activity behind its own disclosure and system
  * messages never render, so counting them would point at nothing.
@@ -52,9 +73,12 @@ export function chatFindEntrySource(
   switch (entry.kind) {
     case "message":
       if (entry.message.role !== "user" && entry.message.role !== "assistant") return null;
-      return { text: entry.message.text, turnId: entry.message.turnId };
+      return { text: markdownSearchText(entry.message.text), turnId: entry.message.turnId };
     case "proposed-plan":
-      return { text: entry.proposedPlan.planMarkdown, turnId: entry.proposedPlan.turnId };
+      return {
+        text: markdownSearchText(entry.proposedPlan.planMarkdown),
+        turnId: entry.proposedPlan.turnId,
+      };
     default:
       return null;
   }

@@ -1,4 +1,4 @@
-import { memo, useState, useId } from "react";
+import { memo, useId, useState } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -39,12 +39,15 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   threadRef,
   cwd,
   workspaceRoot,
+  revealed = false,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  /** A find match landed inside; open the collapsed preview so it can be seen. */
+  revealed?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -69,6 +72,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";
   const lineCount = planMarkdown.split("\n").length;
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
+  // The find bar holds the plan open while its active match is inside.
+  const isCollapsed = canCollapse && !expanded && !revealed;
   const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
   const collapsedPreview = canCollapse
     ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
@@ -172,8 +177,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </Menu>
       </div>
       <div className="mt-4">
-        <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
-          {canCollapse && !expanded ? (
+        <div className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}>
+          {isCollapsed ? (
             <ChatMarkdown
               text={collapsedPreview ?? ""}
               cwd={cwd}
@@ -190,7 +195,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               headingLevelOffset={3}
             />
           )}
-          {canCollapse && !expanded ? (
+          {isCollapsed ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
           ) : null}
         </div>
@@ -200,9 +205,9 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               size="sm"
               variant="outline"
               data-scroll-anchor-ignore
-              onClick={() => setExpanded((value) => !value)}
+              onClick={() => setExpanded(isCollapsed)}
             >
-              {expanded ? "Collapse plan" : "Expand plan"}
+              {isCollapsed ? "Expand plan" : "Collapse plan"}
             </Button>
           </div>
         ) : null}

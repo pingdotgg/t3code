@@ -8,6 +8,7 @@ import {
   collectChatFindMatches,
   findPatternSpans,
   formatChatFindCount,
+  markdownSearchText,
   resolveActiveMatchIndex,
   stepChatFindIndex,
 } from "./ChatFind.logic";
@@ -72,6 +73,31 @@ describe("buildChatFindPattern", () => {
     const pattern = buildChatFindPattern("  hello   world ")!;
     expect(findPatternSpans("hello\n  world", pattern)).toEqual([{ start: 0, end: 13 }]);
     expect(findPatternSpans("helloworld", pattern)).toEqual([]);
+  });
+});
+
+describe("markdownSearchText", () => {
+  it("drops delimiters and link targets but keeps their text", () => {
+    expect(
+      markdownSearchText("Use **bold** and _em_ with `code` and [docs](https://x.test/a)."),
+    ).toBe("Use bold and em with code and docs.");
+    expect(markdownSearchText("![alt text](https://x.test/i.png) <https://x.test>")).toBe(
+      "alt text https://x.test",
+    );
+  });
+
+  it("drops block markers but keeps content", () => {
+    const text = markdownSearchText(
+      "# Title\n\n> quoted\n\n- [ ] task one\n1. step\n\n```ts\nconst a = 1;\n```",
+    );
+    // Whitespace runs collapse in the pattern, so only the words matter here.
+    expect(text.replace(/\s+/g, " ").trim()).toBe("Title quoted task one step const a = 1;");
+  });
+
+  it("does not count a delimiter-only query", () => {
+    const entries = [message("m1", "Use **bold** here")];
+    expect(collectChatFindMatches(entries, buildChatFindPattern("**"))).toEqual([]);
+    expect(collectChatFindMatches(entries, buildChatFindPattern("bold"))).toHaveLength(1);
   });
 });
 
