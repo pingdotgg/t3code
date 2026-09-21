@@ -257,7 +257,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     renderer.root
       .findAll((node) => typeof node.type === "string")
       .flatMap((node) => node.children.filter((child) => typeof child === "string"))
-      .join(" ");
+      .join("");
   expect(text()).toContain("My GPT");
   expect(text()).not.toContain("Tokens");
   expect(text()).not.toContain("Open subagent");

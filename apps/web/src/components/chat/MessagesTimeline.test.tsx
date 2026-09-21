@@ -1914,7 +1914,10 @@ describe("MessagesTimeline", () => {
         expect(child()).toHaveLength(0);
         await act(() => group().props.onClick());
         expect(child()).toHaveLength(1);
-        const content = JSON.stringify(renderer!.toJSON());
+        const content = renderer!.root
+          .findAll((node) => typeof node.type === "string")
+          .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+          .join("");
         expect(content).toContain(preview);
         expect(content).not.toContain("Inspect the package");
         if (result?.trim() && result !== preview) expect(content).not.toContain(result);

@@ -2,17 +2,33 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationProjectShell,
   ServerProvider,
+  ProviderDriverKind,
 } from "@t3tools/contracts";
 import { fileBasename } from "@t3tools/client-runtime/markdown-links";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
-import { Fragment } from "react";
+import type { ReactNode } from "react";
+import {
+  BotIcon,
+  CheckIcon,
+  CircleDashedIcon,
+  CircleXIcon,
+  FolderIcon,
+  GitBranchIcon,
+  TerminalIcon,
+} from "lucide-react";
+import { ThreadHoverCard } from "../ThreadHoverCard";
+import { MiddleTruncate } from "../ui/middle-truncate";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { cn } from "~/lib/utils";
 
 /** Geometry and preview limits stay identical in lineage and timeline tooltips. */
 export function SubagentTooltipContent(props: {
   title: string;
   model: string | null;
   provider?: ServerProvider | undefined;
+  driver?: ProviderDriverKind | undefined;
+  elapsed?: ReactNode;
   parentThread?: Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath"> | undefined;
   childThread?:
     | Pick<OrchestrationV2ThreadShell, "branch" | "worktreePath" | "modelSelection">
@@ -61,22 +77,65 @@ export function SubagentTooltipContent(props: {
   const compactDetail = detail.trim().replace(/\s+/g, " ");
   const preview =
     compactDetail.length > 280 ? `${compactDetail.slice(0, 280).trimEnd()}…` : compactDetail;
+  const driver = props.provider?.driver ?? props.driver;
+  const working = ["running", "in_progress", "pending", "waiting"].includes(props.status);
+  const failed = ["failed", "error"].includes(props.status);
+  const StatusIcon = working
+    ? CircleDashedIcon
+    : failed
+      ? CircleXIcon
+      : props.status === "completed"
+        ? CheckIcon
+        : CircleDashedIcon;
   return (
-    <div className="max-w-72 space-y-1 py-1">
-      <div className="truncate font-medium">{props.title}</div>
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
-        <dt className="text-muted-foreground">Model</dt>
-        <dd className="break-words text-right">{modelLabel}</dd>
-        <dt className="text-muted-foreground">Status</dt>
-        <dd className="text-right capitalize">{props.status.replaceAll("_", " ")}</dd>
-        {metadata.map(({ label, value }) => (
-          <Fragment key={label}>
-            <dt className="text-muted-foreground">{label}</dt>
-            <dd className="break-words text-right">{value}</dd>
-          </Fragment>
-        ))}
-      </dl>
-      {preview ? <p className="line-clamp-3 break-words text-muted-foreground">{preview}</p> : null}
-    </div>
+    <ThreadHoverCard title={props.title}>
+      <div className="flex min-w-0 items-center gap-2">
+        {driver ? (
+          <ProviderInstanceIcon
+            driverKind={driver}
+            displayName={props.provider?.displayName ?? driver}
+            acpRegistryIconUrl={props.provider?.iconUrl}
+            iconClassName="size-3 shrink-0 grayscale opacity-60"
+          />
+        ) : (
+          <BotIcon className="size-3 shrink-0" />
+        )}
+        <span className="min-w-0 truncate text-foreground/75">{modelLabel}</span>
+      </div>
+      <div className="flex min-w-0 items-center justify-between gap-4">
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-sm font-medium capitalize",
+            working
+              ? "text-sky-600 dark:text-sky-400"
+              : failed
+                ? "text-red-700 dark:text-red-300"
+                : props.status === "completed"
+                  ? "text-emerald-700 dark:text-emerald-300"
+                  : "text-muted-foreground",
+          )}
+        >
+          <StatusIcon aria-hidden className="size-3 shrink-0" />
+          {props.status.replaceAll("_", " ")}
+        </span>
+        {props.elapsed}
+      </div>
+      {metadata.map(({ label, value }) => {
+        const Icon = label === "Branch" ? GitBranchIcon : FolderIcon;
+        return (
+          <div key={label} className="flex min-w-0 items-center gap-2">
+            <Icon aria-hidden className="size-3 shrink-0" />
+            <span className="sr-only">{label}</span>
+            <MiddleTruncate value={value} className="flex text-foreground/75" showTitle={false} />
+          </div>
+        );
+      })}
+      {preview ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <TerminalIcon aria-hidden className="size-3 shrink-0" />
+          <MiddleTruncate value={preview} className="flex text-foreground/75" showTitle={false} />
+        </div>
+      ) : null}
+    </ThreadHoverCard>
   );
 }
