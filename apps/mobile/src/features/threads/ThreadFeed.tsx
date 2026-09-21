@@ -2818,6 +2818,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         case "thinking":
           return WORK_GROUP_TOGGLE_HEIGHT;
         case "activity-group":
+          if (entry.activities[0]?.projectedItem.item.type === "subagent") {
+            return undefined;
+          }
           if (isContextCompactionActivityGroup(entry) || isContextHandoffActivityGroup(entry)) {
             return undefined;
           }

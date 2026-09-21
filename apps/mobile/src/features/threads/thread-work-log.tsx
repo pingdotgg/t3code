@@ -1,7 +1,5 @@
 import { SubagentStatusDot } from "./SubagentStatusDot";
-import { useAtomValue } from "@effect/atom-react";
-import { serverEnvironment } from "../../state/server";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ThreadSubagentGroup } from "./thread-subagent-group";
 import {
   WorkLogLabel,
   WorkLogBlock,
@@ -20,11 +18,7 @@ import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
 import { MaskedView } from "@expo/ui/community/masked-view";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import { useIsFocused, useNavigation } from "@react-navigation/native";
-import {
-  formatSubagentDisplayTitle,
-  subagentGroupSummary,
-} from "@t3tools/client-runtime/state/subagent-display";
+import { useIsFocused } from "@react-navigation/native";
 import {
   memo,
   useCallback,
@@ -521,92 +515,6 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       ) : (
         <WorkLogRows>{props.activities.map(renderRow)}</WorkLogRows>
       )}
-    </WorkLogBlock>
-  );
-}
-
-function ThreadSubagentGroup(props: ThreadWorkLogProps) {
-  const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
-  const navigation = useNavigation();
-  const members = props.activities.flatMap(({ projectedItem }) =>
-    projectedItem.item.type === "subagent" ? [projectedItem.item] : [],
-  );
-  const summary = subagentGroupSummary(members);
-  const expanded = props.expandedRows[props.anchorKey] ?? false;
-  return (
-    <WorkLogBlock continues={props.continuesWorkLog}>
-      <WorkLogPressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        accessibilityLabel={summary.label}
-        onPress={() => props.onToggleRow(props.anchorKey, props.anchorKey)}
-        rowSizing={props.rowSizing}
-      >
-        <WorkLogIconSlot>
-          <SymbolView
-            name={workRowSymbolName("agent")}
-            size={14}
-            tintColor={props.iconSubtleColor}
-          />
-        </WorkLogIconSlot>
-        <WorkLogLabel tone={summary.failed ? "danger" : "default"}>{summary.label}</WorkLogLabel>
-        <ThreadDisclosureChevron
-          expanded={expanded}
-          collapsedDirection="down"
-          size={11}
-          tintColor={props.iconSubtleColor}
-        />
-      </WorkLogPressable>
-      {expanded ? (
-        <WorkLogRows>
-          {members.map((item) => {
-            const title = formatSubagentDisplayTitle(item.title ?? "Subagent");
-            const threadId = item.childThreadId;
-            return (
-              <WorkLogPressable
-                key={item.id}
-                accessibilityRole={threadId === null ? undefined : "button"}
-                accessibilityLabel={threadId === null ? title : `Open ${title}`}
-                accessibilityHint={item.status.replaceAll("_", " ")}
-                disabled={threadId === null}
-                onPress={() => {
-                  if (threadId !== null)
-                    navigation.navigate("Thread", {
-                      environmentId: String(props.environmentId),
-                      threadId: String(threadId),
-                    });
-                }}
-                rowSizing={props.rowSizing}
-              >
-                <WorkLogIconSlot>
-                  <ProviderIcon
-                    provider={item.driver}
-                    iconUrl={
-                      config?.providers.find(
-                        (provider) => provider.instanceId === item.providerInstanceId,
-                      )?.iconUrl
-                    }
-                    size={14}
-                  />
-                  <SubagentStatusDot
-                    placement="provider"
-                    tone={
-                      item.status === "failed"
-                        ? "failed"
-                        : item.status === "completed"
-                          ? "completed"
-                          : item.status === "cancelled" || item.status === "interrupted"
-                            ? "stopped"
-                            : "working"
-                    }
-                  />
-                </WorkLogIconSlot>
-                <WorkLogLabel>{title}</WorkLogLabel>
-              </WorkLogPressable>
-            );
-          })}
-        </WorkLogRows>
-      ) : null}
     </WorkLogBlock>
   );
 }

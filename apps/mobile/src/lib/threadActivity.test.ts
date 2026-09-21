@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   ProviderThreadId,
+  ProviderTurnId,
   RunId,
   RunAttemptId,
   ScheduledTaskId,
@@ -1430,6 +1431,117 @@ describe("retained v2 feed presentation", () => {
       expect(rows[0]).toMatchObject({ type: "work-toggle", summary, hasFailure, shimmer: false });
     },
   );
+
+  it.each([
+    { envelope: "direct", output: { taskId: "a" } },
+    { envelope: "structured", output: { structuredContent: { taskId: "a" } } },
+    { envelope: "text", output: { content: [{ type: "text", text: '{"taskId":"a"}' }] } },
+  ])(
+    "folds matched $envelope delegations without hiding pending, failed or unmatched calls",
+    ({ output }) => {
+      const agent = (
+        id: string,
+        index: number,
+        origin = "app_owned" as "app_owned" | "provider_native",
+      ) =>
+        projected(
+          {
+            ...base(id, "2026-06-20T00:00:01.000Z", index),
+            type: "subagent",
+            subagentId: NodeId.make(id),
+            origin,
+            driver: ProviderDriverKind.make("codex"),
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            childThreadId: ThreadId.make(`child-${id}`),
+            prompt: "Identical task",
+            result: "Done",
+          },
+          index,
+        );
+      const delegation = (
+        id: string,
+        index: number,
+        overrides: Partial<Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>> = {},
+      ) =>
+        projected(
+          {
+            ...base(id, "2026-06-20T00:00:02.000Z", index),
+            type: "dynamic_tool",
+            toolName: "t3-code.delegate_task",
+            input: { task: "Identical task" },
+            output,
+            ...overrides,
+          },
+          index,
+        );
+      const feed = buildThreadFeed([
+        agent("a", 1),
+        delegation("matched", 2),
+        agent("b", 3),
+        delegation("pending", 4, { status: "running", output: null }),
+        delegation("unmatched", 5, { output: { taskId: "missing" } }),
+        delegation("failed", 6, { status: "failed" }),
+        delegation("error-output", 7, { output: { taskId: "a", isError: true } }),
+        delegation("other-run", 8, { runId: RunId.make("other-run") }),
+        agent("native", 9, "provider_native"),
+        delegation("native-delegation", 10, { output: { taskId: "native" } }),
+      ]);
+      const groups = feed.flatMap((entry) =>
+        entry.type === "activity-group"
+          ? [entry.activities.map((activity) => activity.projectedItem.item.id)]
+          : [],
+      );
+      expect(groups[0]).toEqual(["a", "b"]);
+      expect(groups.flat()).toEqual([
+        "a",
+        "b",
+        "pending",
+        "unmatched",
+        "failed",
+        "error-output",
+        "other-run",
+        "native",
+        "native-delegation",
+      ]);
+      const presented = deriveThreadFeedPresentation(
+        feed,
+        null,
+        new Set([runId, RunId.make("other-run")]),
+      );
+      expect(
+        presented.find(
+          (entry) =>
+            entry.type === "activity-group" && entry.activities[0]?.projectedItem.item.id === "a",
+        )?.continuesWorkLog,
+      ).toBeUndefined();
+    },
+  );
+
+  it("keeps subagents from different provider turns in separate cards", () => {
+    const agent = (id: string, index: number) =>
+      projected(
+        {
+          ...base(id, "2026-06-20T00:00:01.000Z", index),
+          type: "subagent",
+          subagentId: NodeId.make(id),
+          origin: "provider_native",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerTurnId: ProviderTurnId.make(id),
+          childThreadId: null,
+          prompt: "Task",
+          result: null,
+        },
+        index,
+      );
+    expect(
+      buildThreadFeed([agent("a", 1), agent("b", 2)]).flatMap((entry) =>
+        entry.type === "activity-group"
+          ? [entry.activities.map((activity) => activity.projectedItem.item.id)]
+          : [],
+      ),
+    ).toEqual([["a"], ["b"]]);
+  });
 
   it("groups only adjacent subagents in the same run, keeping their child links", () => {
     const agent = (id: string, index: number, agentRunId = runId) =>
