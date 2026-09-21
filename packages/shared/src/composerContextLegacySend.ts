@@ -5,6 +5,18 @@ import {
   projectComposerContextForProvider,
 } from "./composerContextReferences.ts";
 
+/** Checks every record kind against the destination server at dispatch time. */
+export function supportsInlineComposerContext(
+  capabilities: { inlineMessageContext?: boolean; deviceMessageContext?: boolean } | undefined,
+  records: ReadonlyArray<ComposerContextRecord> = [],
+): boolean {
+  return (
+    capabilities?.inlineMessageContext === true &&
+    (capabilities.deviceMessageContext === true ||
+      !records.some((record) => record.kind === "device"))
+  );
+}
+
 /**
  * Serializes a canonical message (inline reference links plus records) into the pre-inline-context
  * wire shape, for servers that do not advertise `inlineMessageContext`. Those servers drop the
@@ -28,9 +40,10 @@ export function serializeLegacyContextMessage(input: {
     const record = recordsById.get(occurrence.contextId);
     if (!record) continue;
     used.add(occurrence.contextId);
+    // Preserve a machine snapshot for newer readers while old servers forward readable instructions.
     const replacement =
       record.kind === "device"
-        ? projectComposerContextForProvider({ text: occurrence.source, records: [record] })
+        ? `<device_context record="${escapeAttribute(JSON.stringify(record))}">\n${projectComposerContextForProvider({ text: occurrence.source, records: [record] }).replace(/</g, "&lt;")}\n</device_context>`
         : record.kind === "review-comment"
           ? renderReviewComment(record)
           : inlineLabel(record);

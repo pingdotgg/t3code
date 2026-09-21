@@ -3349,9 +3349,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * payload here and an undo puts it back rather than leaving a dangling chip.
    */
   const removedContextPayloadsRef = useRef<{
+    devices: Map<string, DeviceContextRecord>;
     terminals: Map<string, TerminalContextDraft>;
     reviewComments: Map<string, ReviewCommentContext>;
-  }>({ terminals: new Map(), reviewComments: new Map() });
+  }>({ devices: new Map(), terminals: new Map(), reviewComments: new Map() });
   const removedAttachmentContextPayloadsRef = useRef<RetainedAttachmentContextPayloads>({
     files: new Map(),
     previewAnnotations: new Map(),
@@ -3391,6 +3392,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       const referenced = new Set(contextIds);
       const retained = removedContextPayloadsRef.current;
+
+      const devices = composerDraft.deviceMentions ?? [];
+      const liveDeviceIds = new Set<string>(devices.map((record) => record.contextId));
+      const restoredDevices = [...referenced].flatMap((contextId) => {
+        if (liveDeviceIds.has(contextId)) return [];
+        const record = retained.devices.get(contextId);
+        return record ? [record] : [];
+      });
+      const nextDevices = devices.filter((record) => referenced.has(record.contextId));
+      for (const record of devices) {
+        if (!referenced.has(record.contextId)) retained.devices.set(record.contextId, record);
+      }
+      if (nextDevices.length !== devices.length || restoredDevices.length > 0) {
+        setDeviceMentions(composerDraftTarget, [...nextDevices, ...restoredDevices]);
+      }
 
       // An undone delete brings the reference back; restore the payload it points at.
       const liveTerminalIds = new Set<string>(
@@ -3474,6 +3490,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setPrompt,
       setComposerTrigger,
       composerDraftTarget,
+      composerDraft.deviceMentions,
+      setDeviceMentions,
       composerTerminalContexts,
       setComposerDraftTerminalContexts,
       composerReviewComments,

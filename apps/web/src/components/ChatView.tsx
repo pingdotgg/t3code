@@ -316,7 +316,10 @@ import {
   removeInlineContextReference,
   stripInlineContextReferences,
 } from "../lib/composerContextReferences";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import {
+  serializeLegacyContextMessage,
+  supportsInlineComposerContext,
+} from "@t3tools/shared/composerContextLegacySend";
 import {
   buildMessageContext,
   previewAnnotationContextLabel,
@@ -8009,10 +8012,10 @@ export default function ChatView(props: ChatViewProps) {
               const capabilities = appAtomRegistry
                 .get(environmentServerConfigsAtom)
                 .get(environmentId)?.environment.capabilities;
-              const supportsInlineMessageContext =
-                capabilities?.inlineMessageContext === true &&
-                (!context?.records.some((record) => record.kind === "device") ||
-                  capabilities.deviceMessageContext === true);
+              const supportsInlineMessageContext = supportsInlineComposerContext(
+                capabilities,
+                context?.records,
+              );
               requestMayHaveStarted = true;
               const result = await startThreadTurn({
                 environmentId,
@@ -8433,10 +8436,10 @@ export default function ChatView(props: ChatViewProps) {
               const capabilities = appAtomRegistry
                 .get(environmentServerConfigsAtom)
                 .get(environmentId)?.environment.capabilities;
-              const supportsInlineMessageContext =
-                capabilities?.inlineMessageContext === true &&
-                (!context?.records.some((record) => record.kind === "device") ||
-                  capabilities.deviceMessageContext === true);
+              const supportsInlineMessageContext = supportsInlineComposerContext(
+                capabilities,
+                context?.records,
+              );
               if (!supportsInlineMessageContext) {
                 return {
                   text: serializeLegacyContextMessage({
@@ -9066,8 +9069,11 @@ export default function ChatView(props: ChatViewProps) {
             message: {
               messageId: messageIdForSend,
               role: "user",
-              ...(appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                .capabilities.inlineMessageContext === true
+              ...(supportsInlineComposerContext(
+                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+                  .capabilities,
+                context?.records,
+              )
                 ? { text: outgoingMessageText, ...(context ? { context } : {}) }
                 : {
                     text: serializeLegacyContextMessage({

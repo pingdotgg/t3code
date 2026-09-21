@@ -3425,15 +3425,18 @@ describe("device mention drafts", () => {
         connectionStatus: "connected",
         ssh: [{ host: "buildbox.tailnet.test", username: "dev", port: 2222 }],
       };
-      useComposerDraftStore.getState().setPrompt(threadRef, formatComposerContextReference(device));
+      // Device insertion and prompt updates can happen in separate store writes.
       useComposerDraftStore.getState().setDeviceMentions(threadRef, [device]);
+      useComposerDraftStore.getState().setPrompt(threadRef, "");
       await vi.advanceTimersByTimeAsync(300);
       resetComposerDraftStore();
       await useComposerDraftStore.persist.rehydrate();
       expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.deviceMentions).toEqual([device]);
-      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
-        formatComposerContextReference(device),
-      );
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("");
+      useComposerDraftStore.getState().setDeviceMentions(threadRef, []);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+      useComposerDraftStore.getState().setPrompt(threadRef, formatComposerContextReference(device));
+      useComposerDraftStore.getState().setDeviceMentions(threadRef, [device]);
       useComposerDraftStore.getState().clearComposerContent(threadRef);
       expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.deviceMentions ?? []).toEqual([]);
     } finally {

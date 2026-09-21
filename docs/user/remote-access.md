@@ -201,6 +201,12 @@ settings.
 
 ## Mention a connected machine
 
-Type `@` in a message and search for a machine by its connection name or advertised SSH hostname. Select the **Machine** result to include its identity, operating system, connection status, and available SSH details in the message. You can mention several machines and remove a mention by deleting its chip.
+Type `@` in a message and search for a machine by its connection name or advertised SSH
+hostname. Select the **Machine** result to include its identity, operating system, connection
+status, and available SSH details in the message. You can mention several machines and remove
+a mention by deleting its chip.
 
-A mention tells the agent which machine you mean. It does not move the thread to that machine or establish remote access. The agent uses its available remote tools and may need connection details or credentials before it can work there. T3 connection status describes your client's connection; the agent may have different network access.
+A mention tells the agent which machine you mean. It does not move the thread to that machine
+or establish remote access. The agent uses its available remote tools and may need connection
+details or credentials before it can work there. T3 connection status describes your client's
+connection; the agent may have different network access.

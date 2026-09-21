@@ -430,7 +430,8 @@ export function composerDraftHasUserContent(
     draft.persistedAttachments.length > 0 ||
     draft.terminalContexts.length > 0 ||
     draft.previewAnnotations.length > 0 ||
-    draft.reviewComments.length > 0
+    draft.reviewComments.length > 0 ||
+    (draft.deviceMentions?.length ?? 0) > 0
   );
 }
 
@@ -909,6 +910,7 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     draft.terminalContexts.length === 0 &&
     draft.previewAnnotations.length === 0 &&
     draft.reviewComments.length === 0 &&
+    (draft.deviceMentions?.length ?? 0) === 0 &&
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
@@ -1995,6 +1997,9 @@ function normalizePersistedDraftsByThreadId(
       activeProvider = modelSelection?.instanceId ?? null;
     }
 
+    const deviceMentions = Array.isArray(draftCandidate.deviceMentions)
+      ? draftCandidate.deviceMentions.filter(isDeviceContextRecord)
+      : [];
     const hasModelData =
       Object.keys(modelSelectionByProvider).length > 0 || activeProvider !== null;
     if (
@@ -2004,7 +2009,7 @@ function normalizePersistedDraftsByThreadId(
       terminalContexts.length === 0 &&
       previewAnnotations.length === 0 &&
       reviewComments.length === 0 &&
-      previewAnnotations.length === 0 &&
+      deviceMentions.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
       !interactionMode
@@ -2030,10 +2035,7 @@ function normalizePersistedDraftsByThreadId(
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
       ...(previewAnnotations.length > 0 ? { previewAnnotations } : {}),
       ...(reviewComments.length > 0 ? { reviewComments } : {}),
-      deviceMentions: Array.isArray(draftCandidate.deviceMentions)
-        ? draftCandidate.deviceMentions.filter(isDeviceContextRecord)
-        : [],
-      ...(previewAnnotations.length > 0 ? { previewAnnotations } : {}),
+      deviceMentions,
       ...(hasModelData
         ? {
             modelSelectionByProvider: compactModelSelectionByProvider(modelSelectionByProvider),
@@ -2056,7 +2058,8 @@ function persistedComposerDraftHasUserContent(draft: PersistedComposerThreadDraf
     (draft.files?.length ?? 0) > 0 ||
     (draft.terminalContexts?.length ?? 0) > 0 ||
     (draft.previewAnnotations?.length ?? 0) > 0 ||
-    (draft.reviewComments?.length ?? 0) > 0
+    (draft.reviewComments?.length ?? 0) > 0 ||
+    (draft.deviceMentions?.length ?? 0) > 0
   );
 }
 
@@ -2141,6 +2144,7 @@ export function partializeComposerDraftStoreState(
       draft.terminalContexts.length === 0 &&
       draft.previewAnnotations.length === 0 &&
       draft.reviewComments.length === 0 &&
+      (draft.deviceMentions?.length ?? 0) === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
       draft.interactionMode === null
@@ -3854,17 +3858,18 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         setDeviceMentions: (threadRef, deviceMentions) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
           if (!threadKey) return;
-          set((state) => ({
-            draftsByThreadKey: {
-              ...state.draftsByThreadKey,
-              [threadKey]: {
-                ...(state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft()),
-                deviceMentions: [
-                  ...new Map(deviceMentions.map((record) => [record.contextId, record])).values(),
-                ],
-              },
-            },
-          }));
+          set((state) => {
+            const nextDraft = {
+              ...(state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft()),
+              deviceMentions: [
+                ...new Map(deviceMentions.map((record) => [record.contextId, record])).values(),
+              ],
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
+            else nextDraftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
         },
         addReviewComment: (threadRef, comment, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef);
