@@ -3,8 +3,8 @@ import { type KnownTerminalSession } from "@t3tools/client-runtime/state/termina
 import { SymbolView } from "../../components/AppSymbol";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Platform, Pressable, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { Alert, Platform, Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { TerminalContextSheet } from "./TerminalContextSheet";
@@ -18,11 +18,6 @@ import {
   useKeyboardState,
 } from "react-native-keyboard-controller";
 
-import {
-  ComposerToolbarButton,
-  ComposerToolbarRow,
-  ComposerToolbarScroller,
-} from "../../components/ComposerToolbar";
 import { EmptyState } from "../../components/EmptyState";
 import { GlassSurface } from "../../components/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -50,7 +45,7 @@ import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { TerminalSurface } from "./NativeTerminalSurface";
-import { getMobileTerminalTheme } from "./terminalTheme";
+import { getMobileTerminalTheme, type TerminalTheme } from "./terminalTheme";
 import { terminalDebugLog } from "./terminalDebugLog";
 import {
   getTerminalBufferReplayKey,
@@ -165,7 +160,7 @@ function TerminalHeader(props: {
 
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
-const TERMINAL_ACCESSORY_HEIGHT = 52;
+const TERMINAL_ACCESSORY_HEIGHT = 70;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 class TerminalClipboardReadError extends Schema.TaggedError<TerminalClipboardReadError>()(
@@ -187,6 +182,192 @@ type TerminalToolbarAction =
       readonly label: string;
       readonly modifier: PendingModifier;
     };
+
+type TerminalToolbarMode = "main" | "function" | "navigation";
+
+type TerminalToolbarActionRow = readonly [
+  TerminalToolbarAction,
+  TerminalToolbarAction,
+  TerminalToolbarAction,
+  TerminalToolbarAction,
+  TerminalToolbarAction,
+  TerminalToolbarAction,
+  TerminalToolbarAction,
+];
+
+interface TerminalToolbarLayout {
+  readonly top: TerminalToolbarActionRow;
+  readonly bottom: TerminalToolbarActionRow;
+}
+
+function nextTerminalToolbarMode(mode: TerminalToolbarMode): TerminalToolbarMode {
+  switch (mode) {
+    case "main":
+      return "function";
+    case "function":
+      return "navigation";
+    case "navigation":
+      return "main";
+  }
+}
+
+function buildTerminalToolbarLayout(
+  mode: TerminalToolbarMode,
+  modifierActions: readonly [TerminalToolbarAction, TerminalToolbarAction],
+): TerminalToolbarLayout {
+  const escape = {
+    kind: "send",
+    key: "esc",
+    label: "esc",
+    data: "\u001b",
+  } satisfies TerminalToolbarAction;
+  const tab = {
+    kind: "send",
+    key: "tab",
+    label: "tab",
+    data: "\t",
+  } satisfies TerminalToolbarAction;
+  const up = {
+    kind: "send",
+    key: "up",
+    label: "↑",
+    data: "\u001b[A",
+  } satisfies TerminalToolbarAction;
+  const down = {
+    kind: "send",
+    key: "down",
+    label: "↓",
+    data: "\u001b[B",
+  } satisfies TerminalToolbarAction;
+  const left = {
+    kind: "send",
+    key: "left",
+    label: "←",
+    data: "\u001b[D",
+  } satisfies TerminalToolbarAction;
+  const right = {
+    kind: "send",
+    key: "right",
+    label: "→",
+    data: "\u001b[C",
+  } satisfies TerminalToolbarAction;
+
+  switch (mode) {
+    case "main":
+      return {
+        top: [
+          escape,
+          { kind: "send", key: "slash", label: "/", data: "/" },
+          { kind: "send", key: "pipe", label: "|", data: "|" },
+          { kind: "send", key: "dash", label: "-", data: "-" },
+          { kind: "send", key: "tilde", label: "~", data: "~" },
+          up,
+          { kind: "clear", key: "clear", label: "clear" },
+        ],
+        bottom: [
+          tab,
+          ...modifierActions,
+          { kind: "paste", key: "paste", label: "paste" },
+          left,
+          down,
+          right,
+        ],
+      };
+    case "function":
+      return {
+        top: [
+          { kind: "send", key: "f1", label: "f1", data: "\u001bOP" },
+          { kind: "send", key: "f2", label: "f2", data: "\u001bOQ" },
+          { kind: "send", key: "f3", label: "f3", data: "\u001bOR" },
+          { kind: "send", key: "f4", label: "f4", data: "\u001bOS" },
+          { kind: "send", key: "f5", label: "f5", data: "\u001b[15~" },
+          { kind: "send", key: "f6", label: "f6", data: "\u001b[17~" },
+          { kind: "send", key: "f7", label: "f7", data: "\u001b[18~" },
+        ],
+        bottom: [
+          { kind: "send", key: "f8", label: "f8", data: "\u001b[19~" },
+          { kind: "send", key: "f9", label: "f9", data: "\u001b[20~" },
+          { kind: "send", key: "f10", label: "f10", data: "\u001b[21~" },
+          { kind: "send", key: "f11", label: "f11", data: "\u001b[23~" },
+          { kind: "send", key: "f12", label: "f12", data: "\u001b[24~" },
+          escape,
+          tab,
+        ],
+      };
+    case "navigation":
+      return {
+        top: [
+          { kind: "send", key: "home", label: "home", data: "\u001b[H" },
+          { kind: "send", key: "end", label: "end", data: "\u001b[F" },
+          { kind: "send", key: "page-up", label: "pgup", data: "\u001b[5~" },
+          { kind: "send", key: "page-down", label: "pgdn", data: "\u001b[6~" },
+          { kind: "send", key: "insert", label: "ins", data: "\u001b[2~" },
+          up,
+          { kind: "send", key: "delete", label: "del", data: "\u001b[3~" },
+        ],
+        bottom: [escape, tab, ...modifierActions, left, down, right],
+      };
+  }
+}
+
+function TerminalAccessoryButton(props: {
+  readonly accessibilityLabel?: string;
+  readonly active?: boolean;
+  readonly icon?: ComponentProps<typeof SymbolView>["name"];
+  readonly label?: string;
+  readonly onPress: () => void;
+  readonly showRightDivider: boolean;
+  readonly theme: TerminalTheme;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={props.accessibilityLabel ?? props.label}
+      accessibilityRole="button"
+      accessibilityState={{ selected: props.active }}
+      onPress={props.onPress}
+      style={({ pressed }) => ({
+        alignItems: "center",
+        backgroundColor: props.active ? props.theme.border : "transparent",
+        borderRightColor: props.theme.border,
+        borderRightWidth: props.showRightDivider ? StyleSheet.hairlineWidth : 0,
+        flex: 1,
+        height: "100%",
+        justifyContent: "center",
+        opacity: pressed ? 0.55 : 1,
+      })}
+    >
+      {props.icon ? (
+        <SymbolView
+          name={props.icon}
+          size={18}
+          tintColor={props.theme.foreground}
+          type="monochrome"
+        />
+      ) : null}
+      {props.label ? (
+        <Text
+          className="text-xs font-t3-bold"
+          style={{ color: props.theme.foreground, textTransform: "uppercase" }}
+        >
+          {props.label}
+        </Text>
+      ) : null}
+      {props.active ? (
+        <View
+          pointerEvents="none"
+          style={{
+            backgroundColor: props.theme.cursorForeground,
+            bottom: 0,
+            height: 2,
+            left: 8,
+            position: "absolute",
+            right: 8,
+          }}
+        />
+      ) : null}
+    </Pressable>
+  );
+}
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
@@ -335,6 +516,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
   const [keyboardFocusRequest, setKeyboardFocusRequest] = useState(0);
   const [isAccessoryDismissed, setIsAccessoryDismissed] = useState(false);
+  const [terminalToolbarMode, setTerminalToolbarMode] = useState<TerminalToolbarMode>("main");
   const bufferReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstNonEmptyBufferLoggedRef = useRef(false);
   const lastBufferReplayKeyRef = useRef<string | null>(null);
@@ -563,8 +745,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const pendingModifier =
     pendingModifierState.terminalId === terminalId ? pendingModifierState.value : null;
   const headerSubtitle = selectedThreadProject?.title ?? "";
-  const terminalToolbarActions = useMemo<ReadonlyArray<TerminalToolbarAction>>(() => {
-    const modifierActions: ReadonlyArray<TerminalToolbarAction> =
+  const terminalToolbarLayout = useMemo<TerminalToolbarLayout>(() => {
+    const modifierActions: readonly [TerminalToolbarAction, TerminalToolbarAction] =
       hostPlatform === "mac"
         ? [
             { kind: "modifier", key: "cmd", label: "cmd", modifier: "meta" },
@@ -575,22 +757,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             { kind: "modifier", key: "alt", label: "alt", modifier: "meta" },
           ];
 
-    return [
-      { kind: "send", key: "esc", label: "esc", data: "\u001b" },
-      ...modifierActions,
-      { kind: "send", key: "tab", label: "tab", data: "\t" },
-      { kind: "paste", key: "paste", label: "paste" },
-      { kind: "clear", key: "clear", label: "clear" },
-      { kind: "send", key: "up", label: "↑", data: "\u001b[A" },
-      { kind: "send", key: "down", label: "↓", data: "\u001b[B" },
-      { kind: "send", key: "left", label: "←", data: "\u001b[D" },
-      { kind: "send", key: "right", label: "→", data: "\u001b[C" },
-      { kind: "send", key: "tilde", label: "~", data: "~" },
-      { kind: "send", key: "pipe", label: "|", data: "|" },
-      { kind: "send", key: "slash", label: "/", data: "/" },
-      { kind: "send", key: "dash", label: "-", data: "-" },
-    ];
-  }, [hostPlatform]);
+    return buildTerminalToolbarLayout(terminalToolbarMode, modifierActions);
+  }, [hostPlatform, terminalToolbarMode]);
   const keyboardState = useKeyboardState((state) => ({
     height: state.height,
     isVisible: state.isVisible,
@@ -1300,48 +1468,60 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   offset={{ closed: 0, opened: 0 }}
                 >
                   <View
-                    className="border-t"
                     style={{
                       backgroundColor: terminalTheme.background,
                       borderTopColor: terminalTheme.border,
-                      minHeight: TERMINAL_ACCESSORY_HEIGHT,
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      height: TERMINAL_ACCESSORY_HEIGHT,
                     }}
                   >
-                    <ComposerToolbarRow paddingBottom={4} paddingHorizontal={8} paddingTop={4}>
-                      <ComposerToolbarScroller
-                        contentPaddingRight={2}
-                        fadeOpaque={terminalTheme.background}
-                        fadeTransparent={`${terminalTheme.background}00`}
-                      >
-                        {terminalToolbarActions.map((action) => {
-                          const active =
-                            action.kind === "modifier" && pendingModifier === action.modifier;
-
-                          return (
-                            <ComposerToolbarButton
-                              key={action.key}
-                              active={active}
-                              label={action.label}
-                              maxWidth={120}
-                              minWidth={action.label.length > 1 ? 56 : 44}
-                              onPress={() => handleToolbarActionPress(action)}
-                              showChevron={false}
-                              textTransform={
-                                action.kind === "modifier" || action.kind === "clear"
-                                  ? "uppercase"
-                                  : "none"
-                              }
-                            />
-                          );
-                        })}
-                      </ComposerToolbarScroller>
-                      <ComposerToolbarButton
+                    <View className="flex-1 flex-row">
+                      {terminalToolbarLayout.top.map((action) => (
+                        <TerminalAccessoryButton
+                          key={action.key}
+                          active={action.kind === "modifier" && pendingModifier === action.modifier}
+                          label={action.label}
+                          onPress={() => handleToolbarActionPress(action)}
+                          showRightDivider
+                          theme={terminalTheme}
+                        />
+                      ))}
+                      <TerminalAccessoryButton
+                        accessibilityLabel={`Switch terminal key layout, current layout: ${terminalToolbarMode}`}
+                        label="fn"
+                        onPress={() => {
+                          setPendingModifierState({ terminalId, value: null });
+                          setTerminalToolbarMode(nextTerminalToolbarMode);
+                        }}
+                        showRightDivider={false}
+                        theme={terminalTheme}
+                      />
+                    </View>
+                    <View
+                      className="flex-1 flex-row"
+                      style={{
+                        borderTopColor: terminalTheme.border,
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                      }}
+                    >
+                      {terminalToolbarLayout.bottom.map((action) => (
+                        <TerminalAccessoryButton
+                          key={action.key}
+                          active={action.kind === "modifier" && pendingModifier === action.modifier}
+                          label={action.label}
+                          onPress={() => handleToolbarActionPress(action)}
+                          showRightDivider
+                          theme={terminalTheme}
+                        />
+                      ))}
+                      <TerminalAccessoryButton
                         accessibilityLabel="Dismiss keyboard"
                         icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
                         onPress={handleDismissKeyboard}
-                        showChevron={false}
+                        showRightDivider={false}
+                        theme={terminalTheme}
                       />
-                    </ComposerToolbarRow>
+                    </View>
                   </View>
                 </KeyboardStickyView>
               ) : !keyboardState.isVisible && Platform.OS !== "android" ? (
