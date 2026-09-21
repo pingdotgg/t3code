@@ -1,5 +1,5 @@
 import type { SdkCredentialStore } from "@cursor/sdk";
-import type { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -17,6 +17,9 @@ const Credentials = Schema.fromJsonString(
   }),
 );
 
+const decodeCredentials = Schema.decodeUnknownEffect(Credentials);
+const encodeCredentials = Schema.encodeEffect(Credentials);
+
 /** The SDK owns the credential format; persistence uses the environment's secret store. */
 export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(function* (
   instanceId: ProviderInstanceId,
@@ -30,14 +33,24 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
             Option.match({
               onNone: () => Effect.succeed(undefined),
               onSome: (bytes) =>
-                Schema.decodeUnknownEffect(Credentials)(new TextDecoder().decode(bytes)),
+                decodeCredentials(new TextDecoder().decode(bytes)).pipe(
+                  Effect.orElseSucceed(() => undefined),
+                ),
             }),
           ),
         ),
       ),
     save: (value) =>
       Effect.runPromise(
-        Schema.encodeEffect(Credentials)(value).pipe(
+        encodeCredentials(value).pipe(
+          Effect.mapError(
+            () =>
+              new ProviderSetupError({
+                instanceId,
+                operation: "credentials",
+                detail: "Cursor returned an unsupported credential format.",
+              }),
+          ),
           Effect.flatMap((encoded) => credentials.set(new TextEncoder().encode(encoded))),
         ),
       ),
