@@ -30,6 +30,19 @@ describe("resolveProjectSettings", () => {
     );
   });
 
+  it("ignores an override left undefined by a forward-compatible decode", () => {
+    const resolved = resolveProjectSettings(
+      {
+        ...DEFAULT_SERVER_SETTINGS,
+        defaultRuntimeMode: "full-access",
+        projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: undefined } as never },
+      },
+      projectId,
+    );
+    expect(resolved.settings.defaultRuntimeMode).toBe("full-access");
+    expect(resolved.sources.defaultRuntimeMode).toBe("environment");
+  });
+
   it("treats a null project like an absent one before the shell snapshot arrives", () => {
     // The mobile new-task flow resolves settings while its selected project is
     // still null; reading the aggregate's legacy fields off null crashed launch.
