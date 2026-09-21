@@ -1,13 +1,25 @@
-import { act } from "react";
+import { act, useSyncExternalStore } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { EnvironmentId } from "@t3tools/contracts";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+// Like the real atom, a refresh yields a new access object and re-renders subscribers.
+const accessStore = {
+  value: { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true },
+  listeners: new Set<() => void>(),
+  refresh() {
+    accessStore.value = { ...accessStore.value };
+    for (const listener of accessStore.listeners) listener();
+  },
+  subscribe(listener: () => void) {
+    accessStore.listeners.add(listener);
+    return () => accessStore.listeners.delete(listener);
+  },
+};
 vi.mock("~/state/device", () => ({
-  useDeviceHubAccess: () => access,
-  refreshDeviceHubAccess: vi.fn(),
+  useDeviceHubAccess: () => useSyncExternalStore(accessStore.subscribe, () => accessStore.value),
+  refreshDeviceHubAccess: () => accessStore.refresh(),
 }));
-const access = { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true };
 import { DeviceStreamView } from "./DeviceStreamView";
 
 class Image extends EventTarget {
@@ -19,6 +31,10 @@ class Image extends EventTarget {
   }
 }
 let renderer: ReactTestRenderer | undefined;
+let primes = 0;
+beforeEach(() => {
+  primes = 0;
+});
 afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = undefined;
@@ -29,7 +45,10 @@ afterEach(async () => {
 async function setup() {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("fetch", () => Promise.resolve(new Response("prime")));
+  vi.stubGlobal("fetch", () => {
+    primes++;
+    return Promise.resolve(new Response("prime"));
+  });
   vi.stubGlobal(
     "WebSocket",
     class {
@@ -105,4 +124,14 @@ it("offers Reconnect after the shared timeout and receives a frame after retry w
   expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
   expect(renderer!.root.findAllByType("button")).toHaveLength(0);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("starts exactly one new stream per Reconnect press", async () => {
+  await setup();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+  expect(primes).toBe(1);
+  await act(async () => renderer!.root.findByType("button").props.onClick());
+  expect(primes).toBe(2);
 });

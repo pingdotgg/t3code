@@ -336,7 +336,8 @@ export function DeviceStreamView(props: {
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  refreshDeviceHubAccess(props.environmentId);
+                  // An expired ticket surfaces as unauthorized on restart and
+                  // refreshes access through the effect; no need to mint one here.
                   clientRef.current?.stop();
                   clientRef.current?.start();
                 }}
