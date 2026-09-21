@@ -701,6 +701,29 @@ it.effect("keeps native maintenance commands out of steering and restart message
         const targetRun = before.runs[0];
         if (targetRun === undefined) return yield* Effect.die("Launch must create a run");
         const commandId = CommandId.make(`${scenario.name}:message`);
+        // Steering into a run whose user message is a native maintenance
+        // command queues the follow-up behind it instead of failing delivery;
+        // the maintenance run cannot take the steer either way.
+        const queuesBehindMaintenanceRun =
+          scenario.name === "steer-logout" || scenario.name === "steer-compaction";
+        if (queuesBehindMaintenanceRun) {
+          yield* threads.dispatch({
+            type: "message.dispatch",
+            commandId,
+            threadId: launched.threadId,
+            messageId: MessageId.make(`${scenario.name}:message`),
+            createdBy: "user",
+            creationSource: "web",
+            text: scenario.next,
+            attachments: [],
+            dispatchMode: { type: scenario.mode, targetRunId: targetRun.id },
+          });
+          const after = yield* threads.getThreadProjection(launched.threadId);
+          const queuedRun = after.runs.find((run) => run.ordinal === 2);
+          assert.isDefined(queuedRun);
+          assert.equal(queuedRun?.status, "queued");
+          continue;
+        }
         const failure = yield* threads
           .dispatch({
             type: "message.dispatch",
