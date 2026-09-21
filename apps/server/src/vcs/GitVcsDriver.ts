@@ -130,7 +130,9 @@ export interface CreateWorktreeProgress {
   }) => Effect.Effect<void, never>;
   readonly onSubmodulesStarted?: () => Effect.Effect<void, never>;
   /** Fires when `.gitmodules` exists but the resolved submodule mode is `"none"`. */
-  readonly onSubmodulesDisabled?: () => Effect.Effect<void, never>;
+  readonly onSubmodulesDisabled?: (input: {
+    source: "settings" | "t3.json";
+  }) => Effect.Effect<void, never>;
   readonly onSubmoduleLine?: (line: string) => Effect.Effect<void, never>;
   readonly onSubmodulesFinished?: (input: {
     ok: boolean;

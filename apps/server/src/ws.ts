@@ -1535,12 +1535,12 @@ const makeWsRpcLayer = (
                             worktreeSetupTracker.stageStatus(threadId, "submodules", "running"),
                           ),
                         ),
-                    onSubmodulesDisabled: () =>
+                    onSubmodulesDisabled: ({ source }) =>
                       worktreeSetupTracker.stageStatus(
                         threadId,
                         "submodules",
                         "skipped",
-                        "disabled in settings",
+                        `disabled in ${source}`,
                       ),
                     onSubmoduleLine: (line) => {
                       const submodulePath = /Submodule path '([^']+)'/.exec(line)?.[1];

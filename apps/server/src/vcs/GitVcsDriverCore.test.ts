@@ -2402,10 +2402,13 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           // Consecutive cases may reuse a file mode to test the option alone.
           yield* git(cwd, ["commit", "--allow-empty", "-m", `submodules: ${fileMode}`]);
           const worktreePath = pathService.join(worktreesDir, branch);
-          const disabled = yield* Ref.make(false);
+          const disabled = yield* Ref.make<"settings" | "t3.json" | false>(false);
           yield* driver.createWorktree(
             { cwd, path: worktreePath, refName: initialBranch, newRefName: branch },
-            { submodules, progress: { onSubmodulesDisabled: () => Ref.set(disabled, true) } },
+            {
+              submodules,
+              progress: { onSubmodulesDisabled: ({ source }) => Ref.set(disabled, source) },
+            },
           );
           return {
             disabled: yield* Ref.get(disabled),
@@ -2428,7 +2431,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         });
         // A resolved setting outranks the file in both directions.
         assert.deepEqual(yield* createWithMode("recursive", "setting-none", "none"), {
-          disabled: true,
+          disabled: "settings",
           inner: false,
           nested: false,
         });
@@ -2438,7 +2441,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           nested: false,
         });
         assert.deepEqual(yield* createWithMode("none", "none"), {
-          disabled: true,
+          disabled: "t3.json",
           inner: false,
           nested: false,
         });

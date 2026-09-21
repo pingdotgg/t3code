@@ -3125,7 +3125,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                   ),
         });
     if (hasSubmodules && submoduleMode === "none" && progress?.onSubmodulesDisabled) {
-      yield* progress.onSubmodulesDisabled();
+      yield* progress.onSubmodulesDisabled({
+        source: options?.submodules != null ? "settings" : "t3.json",
+      });
     }
     if (submoduleMode !== "none") {
       if (progress?.onSubmodulesStarted) {
