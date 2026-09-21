@@ -57,7 +57,7 @@ export function DeviceToolVersions({
               .filter(([name]) => !kind || name === label)
               .map(([name, tool]) => (
                 <div key={name} className="space-y-2 py-3 first:pt-0 last:pb-0">
-                  <p className="text-xs font-medium">{name}</p>
+                  {!kind ? <p className="text-xs font-medium">{name}</p> : null}
                   <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-xs">
                     <dt className="text-muted-foreground">Running</dt>
                     <dd className="text-right font-mono">{tool.runningVersion ?? "Not running"}</dd>

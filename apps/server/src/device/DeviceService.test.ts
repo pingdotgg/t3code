@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   DeviceId,
+  DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
   type DeviceServiceState,
@@ -68,6 +69,7 @@ const fixture = Effect.fn("fixture")(function* (
   failListAfterShutdown = false,
   runtimeFailure?: NodeRuntimeUnavailableError | DeviceHost.DeviceHostError,
   inspectError = false,
+  installTool?: Parameters<typeof makeWithHosts>[3],
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -129,7 +131,12 @@ const fixture = Effect.fn("fixture")(function* (
       starts.push("stop");
     }),
   };
-  const service = yield* makeWithHosts(new Map([[host.id, host]])).pipe(
+  const service = yield* makeWithHosts(
+    new Map([[host.id, host]]),
+    undefined,
+    undefined,
+    installTool,
+  ).pipe(
     Effect.provideService(DeviceHost.DeviceHost, host),
     Effect.provideService(
       ServerSettingsService,
@@ -658,5 +665,69 @@ it.effect("failed read-only discovery preserves lifecycle status and installed i
     expect(state.hosts[0]?.hubInstalled).toBe(true);
     expect(state.hosts[0]?.toolInspectionError).toContain("Reconnect the host");
     expect(starts).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "manual updates install only the selected tool without enabling access or starting helpers",
+  () =>
+    Effect.gen(function* () {
+      const installed: string[] = [];
+      const { service, starts, agentStarts, requests } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        (tool) =>
+          Effect.sync(() => {
+            installed.push(tool);
+          }),
+      );
+      const before = yield* service.state;
+      const state = yield* service.updateTool("agent");
+      expect(installed).toEqual(["agent"]);
+      expect(state.supportsToolUpdate).toBe(true);
+      expect(state.hostStatus).toBe(before.hostStatus);
+      expect(state.agentAccessEnabled).toBe(before.agentAccessEnabled);
+      expect(state.revision).toBeGreaterThan(before.revision);
+      expect(starts).toEqual([]);
+      expect(agentStarts).toEqual([]);
+      expect(requests).toEqual([]);
+      yield* service.updateTool("hub");
+      expect(installed).toEqual(["agent", "hub"]);
+    }).pipe(Effect.scoped),
+);
+
+it.effect("failed manual installation leaves lifecycle state unchanged and can be retried", () =>
+  Effect.gen(function* () {
+    let attempts = 0;
+    const { service, starts, agentStarts } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      () =>
+        Effect.suspend(() =>
+          ++attempts === 1
+            ? Effect.fail(
+                new DeviceOperationError({
+                  operation: "update device tool",
+                  reason: "command_failed",
+                  cause: new Error("offline"),
+                }),
+              )
+            : Effect.void,
+        ),
+    );
+    const before = yield* service.state;
+    const result = yield* service.updateTool("agent").pipe(Effect.result);
+    expect(result._tag).toBe("Failure");
+    expect(yield* service.state).toEqual(before);
+    yield* service.updateTool("agent");
+    expect(attempts).toBe(2);
+    expect(starts).toEqual([]);
+    expect(agentStarts).toEqual([]);
   }).pipe(Effect.scoped),
 );

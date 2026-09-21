@@ -129,6 +129,7 @@ export type DeviceSession = typeof DeviceSession.Type;
 
 export const DeviceServiceState = Schema.Struct({
   supportsHostRetry: Schema.optional(Schema.Boolean),
+  supportsToolUpdate: Schema.optional(Schema.Boolean),
   supportsToolInspection: Schema.optional(Schema.Boolean),
   hosts: Schema.Array(DeviceHostSummary),
   hostStatus: DeviceHostStatus,
@@ -154,6 +155,8 @@ export const DeviceServiceState = Schema.Struct({
 export type DeviceServiceState = typeof DeviceServiceState.Type;
 
 export const DeviceListInput = Schema.Struct({
+  /** Install this server's pinned tool without enabling access or starting helpers. */
+  updateTool: Schema.optional(Schema.Literals(["hub", "agent"])),
   /** Read inventory without installing tools or starting helpers. */
   inspectOnly: Schema.optional(Schema.Boolean),
   /** Retry this host only, including agent tools if access was already granted. */

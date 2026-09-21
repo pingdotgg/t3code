@@ -38,7 +38,7 @@ import {
 import * as FileSystem from "effect/FileSystem";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
-import { ensureAgentDevice } from "./DeviceToolchain.ts";
+import { ensureAgentDevice, ensureDeviceHub } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
 import {
   agentDeviceConfigPath,
@@ -126,6 +126,7 @@ export class DeviceService extends Context.Service<
     ) => Effect.Effect<DeviceServiceState, DeviceError>;
     /** Refreshes devices only after device support has been enabled. */
     readonly list: Effect.Effect<DeviceServiceState, DeviceError>;
+    readonly updateTool: (tool: "hub" | "agent") => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly inspect: Effect.Effect<DeviceServiceState>;
     readonly retryHost: (hostId: DeviceHostId) => Effect.Effect<DeviceServiceState, DeviceError>;
     readonly open: (input: DeviceOpenInput) => Effect.Effect<DeviceSession, DeviceError>;
@@ -182,6 +183,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         reason: "Agent configuration is unavailable in this device service.",
       }),
     ),
+  installTool?: (tool: "hub" | "agent") => Effect.Effect<unknown, DeviceError>,
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const lifecycleLock = yield* Semaphore.make(1);
@@ -205,6 +207,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const stateRef = yield* SynchronizedRef.make<ServiceState>({
     state: {
       supportsHostRetry: true,
+      supportsToolUpdate: installTool !== undefined,
       supportsToolInspection: true,
       hosts: initialHosts,
       hostStatus: initialSettings.enabled ? "idle" : "disabled",
@@ -899,6 +902,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   return {
     ...DeviceService.of({
       testHost,
+      updateTool: (tool) =>
+        lifecycleLock.withPermit(
+          Effect.gen(function* () {
+            if (!installTool)
+              return yield* Effect.fail(
+                new DeviceOperationError({
+                  operation: "update device tool",
+                  reason: "request_failed",
+                  cause: new Error("Tool installation is unavailable in this device service."),
+                }),
+              );
+            yield* installTool(tool);
+            return yield* inspect;
+          }),
+        ),
       retryHost,
       inspect,
       agentCli: Effect.fail(
@@ -1021,6 +1039,20 @@ export const make = Effect.gen(function* () {
         ),
       ),
     configureAgent,
+    (tool) =>
+      (tool === "hub" ? ensureDeviceHub(config.baseDir) : ensureAgentDevice(config.baseDir)).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(ProcessRunner.ProcessRunner, runner),
+        Effect.mapError(
+          (cause) =>
+            new DeviceOperationError({
+              operation: "update device tool",
+              reason: "command_failed",
+              cause,
+            }),
+        ),
+      ),
   );
   const hostContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
