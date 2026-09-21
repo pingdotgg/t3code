@@ -69,6 +69,7 @@ import {
   THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_LINK_SPLIT_PRIMARY_CLASS,
   THREAD_DETAILS_PANEL_ROW_CLASS,
+  THREAD_DETAILS_PANEL_SPLIT_BUTTON_SURFACE_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
 
@@ -369,7 +370,10 @@ export function ThreadDetailsPrRow({
                 checksState={checksRollup}
                 checks={detail.checks}
                 variant="count"
-                className="text-[13px] sm:text-[13px]"
+                className={cn(
+                  THREAD_DETAILS_PANEL_SPLIT_BUTTON_SURFACE_CLASS,
+                  "text-[13px] sm:text-[13px]",
+                )}
               />
             </>
           ) : null}

@@ -18,6 +18,8 @@ import {
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
 } from "./ProviderFailure.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
+import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
+import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
 
 it("redacts credentials and URL secrets from provider failures", () => {
   const failure = makeProviderFailure({
@@ -67,15 +69,86 @@ it("does not split a surrogate pair at the truncation boundary", () => {
   assert.notMatch(failure.message.slice(0, -1), /[\uD800-\uDBFF]$/u);
 });
 
-it("does not expose error or Effect cause messages", () => {
-  const cause = new Error("private command output", { cause: new Error("private nested output") });
-  for (const value of [cause, Cause.fail(cause), "private string", { message: "private object" }]) {
+it("does not expose arbitrary cause messages and preserves explicit messages", () => {
+  const cause = new Error("Adapter failed", {
+    cause: new Error("Session expired. Sign in again."),
+  });
+  for (const value of [
+    cause,
+    Cause.fail(cause),
+    "Session expired. Sign in again.",
+    { message: "Session expired. Sign in again." },
+  ]) {
     assert.equal(makeProviderFailure({ cause: value }).message, "Provider turn failed.");
     assert.equal(
       makeProviderFailure({ cause: value, message: "Provider connection closed." }).message,
       "Provider connection closed.",
     );
   }
+});
+
+it("preserves actionable handoff errors wrapped by turn startup", () => {
+  const cause = new ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("codex"),
+    threadId: ThreadId.make("thread:handoff-error"),
+    providerThreadId: ProviderThreadId.make("provider-thread:handoff-error"),
+    runId: RunId.make("run:handoff-error"),
+    cause: new ContextHandoffBudgetError(),
+  });
+  assert.equal(
+    makeProviderFailure({ cause: Cause.fail(cause) }).message,
+    new ContextHandoffBudgetError().message,
+  );
+});
+
+it("does not expose defect text nested inside a known error category", () => {
+  const failure = makeProviderFailure({
+    cause: {
+      _tag: "ProviderAdapterEventStreamError",
+      cause: new Error(
+        `Session rejected: Bearer nested-secret https://user:pass@example.test/path?token=secret ${"x".repeat(5000)}`,
+      ),
+    },
+  });
+  assert.include(failure.message, "provider event stream closed unexpectedly");
+  assert.notInclude(failure.message, "Session rejected:");
+  assert.notInclude(failure.message, "nested-secret");
+  assert.notInclude(failure.message, "user:pass");
+  assert.notInclude(failure.message, "token=secret");
+  assert.isBelow(failure.message.length, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
+});
+
+it("handles cyclic causes and throwing accessors", () => {
+  const cyclic: { message: string; cause?: unknown } = {
+    message: "Provider disconnected. Retry the turn.",
+  };
+  cyclic.cause = cyclic;
+  assert.equal(makeProviderFailure({ cause: cyclic }).message, "Provider turn failed.");
+  assert.equal(
+    makeProviderFailure({
+      cause: {
+        get message() {
+          throw new Error("unreadable");
+        },
+        get cause() {
+          throw new Error("unreadable");
+        },
+      },
+    }).message,
+    "Provider turn failed.",
+  );
+});
+
+it("falls back when inspecting a provider cause throws", () => {
+  const cause = new Proxy(
+    {},
+    {
+      has() {
+        throw new Error("unreadable provider cause");
+      },
+    },
+  );
+  assert.equal(makeProviderFailure({ cause }).message, "Provider turn failed.");
 });
 
 it("does not serialize arbitrary provider causes", () => {

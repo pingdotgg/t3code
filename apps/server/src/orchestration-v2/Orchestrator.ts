@@ -995,6 +995,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const startNextQueuedRun = (threadId: ThreadId) =>
     Effect.gen(function* () {
+      // Every terminal run checks the queue. Only a deliverable queued run
+      // needs the transcript for provider handoff and legacy import context.
+      if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       const projection = yield* projectionStore.getThreadProjection(threadId);
       if (
         projection.thread.archivedAt !== null ||
@@ -7496,11 +7499,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    */
   const appOwnedSubagentParentThreadId = (childThreadId: ThreadId) =>
     Effect.gen(function* () {
-      const childProjection = yield* projectionStore.getThreadProjection(childThreadId);
-      const lineage = childProjection.thread.lineage;
+      const childThread = yield* projectionStore.getThread(childThreadId);
+      const lineage = childThread.lineage;
       return lineage.relationshipToParent === "subagent" &&
         lineage.parentThreadId !== null &&
-        childProjection.thread.forkedFrom?.type === "node"
+        childThread.forkedFrom?.type === "node"
         ? lineage.parentThreadId
         : undefined;
     });
@@ -7969,6 +7972,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const finalizeDelegatedCompletionDelivery = (threadId: ThreadId, runId: RunId) =>
     Effect.gen(function* () {
+      // Ordinary turns do not own a delegated delivery. Read just their input
+      // before loading the cohort state needed to settle an actual delivery.
+      const message = yield* projectionStore.getRunMessage(threadId, runId);
+      if (message?.delegatedCompletion === undefined) return;
       const projection = yield* projectionStore.getThreadProjection(threadId);
       const deliveryRun = projection.runs.find((candidate) => candidate.id === runId);
       const deliveryMessage =
@@ -8338,7 +8345,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "queue.resume": {
         const projection = yield* mapDispatchError(command)(
-          projectionStore.getThreadProjection(command.threadId),
+          projectionStore.getRuntimeRecoveryProjection(command.threadId),
         );
         if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
           return yield* new OrchestratorDispatchError({

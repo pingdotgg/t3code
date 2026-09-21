@@ -44,7 +44,7 @@ const testLayer = Layer.mergeAll(
 );
 
 it.effect(
-  "dispatches metadata, selection, responses and dismissals without hydrating unrelated history",
+  "dispatches metadata, queue resume and request controls without hydrating unrelated history",
   () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
@@ -70,6 +70,11 @@ it.effect(
       (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json)
       VALUES ('obsolete', ${threadId}, NULL, NULL, 'assistant', 0, ${DateTime.formatIso(now)}, ${DateTime.formatIso(now)}, '{"obsolete":true}')`;
       assert.equal((yield* Effect.exit(projections.getThreadProjection(threadId)))._tag, "Failure");
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("resume-empty-queue"),
+        threadId,
+      });
       yield* orchestrator.dispatch({
         type: "thread.metadata.update",
         commandId: CommandId.make("rename-control"),

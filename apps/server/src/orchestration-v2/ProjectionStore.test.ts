@@ -1,4 +1,4 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   EventId,
   CheckpointId,
@@ -444,6 +444,7 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       });
 
       const allIds: string[] = [];
+      let lastToolPayload = "";
       for (let turn = 1; turn <= 45; turn += 1) {
         const rows = Array.from({ length: 102 }, (_, offset) => {
           const ordinal = (turn - 1) * 102 + offset + 1;
@@ -484,6 +485,8 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
                   output: "x".repeat(2048),
                   exitCode: 0,
                 };
+          const payloadJson = encodeUnknownJsonString(item);
+          if (offset >= 2) lastToolPayload = payloadJson;
           return {
             turn_item_id: id,
             thread_id: threadId,
@@ -496,15 +499,29 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
             type: item.type,
             status: "completed",
             updated_at: nowIso,
-            payload_json: encodeUnknownJsonString(item),
+            payload_json: payloadJson,
           };
         });
         yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows)}`;
       }
-      const initial = yield* projectionStore.getThreadSnapshotWindow(threadId, {
-        rowLimit: 77,
-        userTurnLimit: 10,
-      });
+      const initial = yield* Effect.acquireUseRelease(
+        Effect.sync(() => vi.spyOn(JSON, "parse")),
+        (parse) =>
+          projectionStore
+            .getThreadSnapshotWindow(threadId, { rowLimit: 77, userTurnLimit: 10 })
+            .pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  // Tool outputs must not be allocated again just to collect cohort IDs.
+                  assert.lengthOf(
+                    parse.mock.calls.filter(([input]) => input === lastToolPayload),
+                    1,
+                  );
+                }),
+              ),
+            ),
+        (parse) => Effect.sync(() => parse.mockRestore()),
+      );
       // Only the selected turn cohort and two lookahead anchors are decoded.
       assert.lengthOf(initial.projection.turnItems, 12 * 102);
       const bounded = buildBoundedThreadProjection({

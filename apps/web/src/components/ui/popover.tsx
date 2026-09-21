@@ -48,7 +48,7 @@ function PopoverPopup({
         anchor={anchor}
         collisionAvoidance={collisionAvoidance}
         className={cn(
-          "z-[130] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none",
+          "z-[130] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none",
           positionerClassName,
         )}
         data-slot="popover-positioner"

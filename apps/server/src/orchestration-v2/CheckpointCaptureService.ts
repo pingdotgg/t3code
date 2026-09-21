@@ -62,8 +62,8 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const projection = yield* projections.getThreadProjection(input.threadId);
-      const run = projection.runs.find((candidate) => candidate.id === input.runId);
+      const { run, rootNode, scope, providerThread, readyCheckpointOrdinals } =
+        yield* projections.getCheckpointCaptureContext(input.threadId, input);
 
       // The effect is at-least-once. A completed run with a checkpoint proves
       // that an earlier execution committed its result.
@@ -71,11 +71,6 @@ export const layer: Layer.Layer<
         return;
       }
 
-      const rootNode = projection.nodes.find((candidate) => candidate.id === run?.rootNodeId);
-      const scope = projection.checkpointScopes.find((candidate) => candidate.id === input.scopeId);
-      const providerThread = projection.providerThreads.find(
-        (candidate) => candidate.id === run?.providerThreadId,
-      );
       if (
         run === undefined ||
         run.status !== "waiting" ||
@@ -95,12 +90,7 @@ export const layer: Layer.Layer<
       const capturedAt = yield* DateTime.now;
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
-        projection.checkpoints.some(
-          (candidate) =>
-            candidate.scopeId === scope.id &&
-            candidate.ordinalWithinScope === ordinalWithinScope &&
-            candidate.status === "ready",
-        );
+        readyCheckpointOrdinals.includes(ordinalWithinScope);
       const threadStartCheckpoint =
         baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
           ? null

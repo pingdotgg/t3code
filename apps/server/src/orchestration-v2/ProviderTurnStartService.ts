@@ -211,7 +211,7 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
     }) {
       const { runId } = input;
-      const projection = yield* projectionStore.getThreadProjection(input.threadId);
+      const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
       const run = projection.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
         return yield* new ProviderTurnStartError({ runId, cause: `Run ${runId} was not found.` });
@@ -272,13 +272,7 @@ export const layer: Layer.Layer<
       }
       if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
         const isEmptyCompaction =
-          message.text.trim().toLowerCase() === "/compact" &&
-          !projection.messages.some(
-            (candidate) =>
-              candidate.role === "user" &&
-              (candidate.text.trim().toLowerCase() !== "/compact" ||
-                candidate.attachments.length > 0),
-          );
+          message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
         // Preparing a run may already point the thread at a newly selected
         // provider. Account commands still belong to its last native session.
         const nativeThreads = new Map(
@@ -603,7 +597,7 @@ export const layer: Layer.Layer<
           coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
           strategy: "full_thread_summary",
           runs: projection.runs,
-          items: projection.turnItems.filter(
+          items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
             (item) =>
               item.runId === null ||
               projection.runs.some(
@@ -881,9 +875,9 @@ export const layer: Layer.Layer<
       // Use saved text and actual native attachments when telemetry is absent.
       // Legacy attempts lack native identity; exclude their explicitly recovered
       // history, whose attachments were not replayed into the replacement thread.
-      const nativeContextEstimate = () =>
-        sameNativeThread
-          ? projection.turnItems.reduce((sum, item) => {
+      const nativeContextEstimate = Effect.gen(function* () {
+        return sameNativeThread
+          ? (yield* projectionStore.getTurnStartHistory(input.threadId)).reduce((sum, item) => {
               if (
                 item.runId === run.id ||
                 (item.runId !== null &&
@@ -910,6 +904,7 @@ export const layer: Layer.Layer<
               );
             }, 0)
           : 0;
+      });
       const reportedUsage = sameSelection ? previousUsage : compatibleUsage;
       const modelContextWindow =
         session.getModelContextWindow?.(run.modelSelection) ?? reportedUsage?.maxTokens;
@@ -930,7 +925,7 @@ export const layer: Layer.Layer<
       const missedItems =
         missedRunIds.size === 0
           ? []
-          : projection.turnItems.filter(
+          : (yield* projectionStore.getTurnStartHistory(input.threadId, [...missedRunIds])).filter(
               (item) =>
                 item.runId !== null &&
                 missedRunIds.has(item.runId) &&
@@ -978,7 +973,7 @@ export const layer: Layer.Layer<
               providerThread: budgetProviderThread,
               nativeContextEstimate:
                 budgetProviderThread.contextUsage?.usedTokens === undefined
-                  ? nativeContextEstimate()
+                  ? yield* nativeContextEstimate
                   : 0,
             }),
             alreadyDeliveredItemIds: deliveredItemIds,

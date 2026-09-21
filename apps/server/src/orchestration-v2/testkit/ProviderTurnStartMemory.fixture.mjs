@@ -55,6 +55,12 @@ const dependencies = Layer.mergeAll(
         fullReads++;
         return current;
       }),
+    getTurnStartContext: () =>
+      Effect.sync(() => {
+        fullReads++;
+        return { ...current, hasConversation: true };
+      }),
+    getTurnStartHistory: () => Effect.sync(() => current.turnItems),
     getRuntimeRecoveryProjection: () => Effect.sync(() => current),
   }),
   Layer.mock(Sessions.ProviderSessionManagerV2)({ open: () => Effect.succeed(session) }),
