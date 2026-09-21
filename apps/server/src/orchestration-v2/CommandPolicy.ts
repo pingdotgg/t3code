@@ -1,4 +1,5 @@
 import {
+  ChatAttachment,
   CommandId,
   ModelSelection,
   type OrchestrationV2Command,
@@ -115,13 +116,44 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
+/** Native commands the provider executes as its own whole-turn task, so they
+ *  own the run they start and cannot take steering or a restart. */
+export function isNativeMaintenanceCommand(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return (
+    message.attachments.length === 0 &&
+    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
+  );
+}
+
+/** Compaction and sign-out runs cannot take a steer or a restart, so a message
+ *  sent while one runs still belongs after it rather than as a rejected send. */
+function queueBehindMaintenanceRun(
+  projection: OrchestrationV2ThreadProjection,
+  decision: MessageDispatchMode,
+): MessageDispatchMode {
+  if (decision.type !== "steer_active" && decision.type !== "restart_active") return decision;
+  const targetRun = projection.runs.find((run) => run.id === decision.targetRunId);
+  const targetMessage =
+    targetRun === undefined
+      ? undefined
+      : projection.messages?.find((message) => message.id === targetRun.userMessageId);
+  return targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)
+    ? { type: "queue_after_active" }
+    : decision;
+}
+
 /** Resolve client intent from the state serialized by the thread dispatch lock. */
 export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",
 ): MessageDispatchMode {
-  if (deliveryIntent === undefined) return requestedMode;
+  if (deliveryIntent === undefined) {
+    return queueBehindMaintenanceRun(projection, requestedMode);
+  }
 
   const activeRun = projection.runs.findLast(
     (run) =>
@@ -132,10 +164,16 @@ export function resolveMessageDispatchIntent(
   );
   if (activeRun === undefined) return { type: "start_immediately" };
   if (deliveryIntent === "steer") {
-    return { type: "steer_active", targetRunId: activeRun.id };
+    return queueBehindMaintenanceRun(projection, {
+      type: "steer_active",
+      targetRunId: activeRun.id,
+    });
   }
   if (deliveryIntent === "restart") {
-    return { type: "restart_active", targetRunId: activeRun.id };
+    return queueBehindMaintenanceRun(projection, {
+      type: "restart_active",
+      targetRunId: activeRun.id,
+    });
   }
   if (activeRun.status === "preparing" || activeRun.status === "starting") {
     return { type: "queue_after_active" };
@@ -152,13 +190,19 @@ export function resolveMessageDispatchIntent(
         );
   const capabilities = providerSession?.capabilities.turns;
   if (capabilities?.supportsActiveSteering === true) {
-    return { type: "steer_active", targetRunId: activeRun.id };
+    return queueBehindMaintenanceRun(projection, {
+      type: "steer_active",
+      targetRunId: activeRun.id,
+    });
   }
   if (capabilities?.supportsQueuedMessages === true) {
     return { type: "queue_after_active" };
   }
   if (capabilities?.supportsSteeringByInterruptRestart === true) {
-    return { type: "restart_active", targetRunId: activeRun.id };
+    return queueBehindMaintenanceRun(projection, {
+      type: "restart_active",
+      targetRunId: activeRun.id,
+    });
   }
   return { type: "queue_after_active" };
 }
