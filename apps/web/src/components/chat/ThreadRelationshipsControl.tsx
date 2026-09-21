@@ -43,7 +43,7 @@ import {
 } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { AgentElapsed } from "../AgentsPanel";
+import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
