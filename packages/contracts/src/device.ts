@@ -568,7 +568,7 @@ export function deviceToolInstallMessage(name: string, tool: DeviceToolVersion |
   if (!tool) return `Installing ${name}…`;
   const previous =
     tool.runningVersion ??
-    tool.installedVersions.toSorted((a, b) => a.localeCompare(b, "en", { numeric: true })).at(-1);
+    [...tool.installedVersions].sort((a, b) => a.localeCompare(b, "en", { numeric: true })).at(-1);
   return previous && !tool.installedVersions.includes(tool.requiredVersion)
     ? `Updating ${name} from ${previous} to ${tool.requiredVersion}…`
     : `Installing ${name} ${tool.requiredVersion}…`;
