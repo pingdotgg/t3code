@@ -4,6 +4,8 @@ import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 
+import { MiddleTruncate } from "./ui/middle-truncate";
+
 /**
  * Flip this while reviewing command-palette thread subtitles.
  * - favicon-workspace-harness: favicon + Folder/FolderGit2 + branch + harness (default)
@@ -84,7 +86,7 @@ export function ThreadCommandSubtitle(props: {
           {projectLabel ? <CommandPaletteMetaDot /> : null}
           <span className="inline-flex min-w-0 items-center gap-1">
             <WorkspaceIcon variant={variant} isWorktree={isWorktree} />
-            <span className="min-w-0 truncate">{branchLabel}</span>
+            <MiddleTruncate value={branchLabel} />
           </span>
         </>
       ) : null}

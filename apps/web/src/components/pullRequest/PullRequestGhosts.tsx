@@ -27,6 +27,7 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button, InlineButton } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { MiddleTruncate } from "../ui/middle-truncate";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import {
   PullRequestActorLabel,
@@ -252,7 +253,9 @@ export function PullRequestDetailGhost({
                 <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
                   {seed ? (
                     <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
-                      <code className="min-w-0 truncate">{seed.baseBranch}</code>
+                      <code className="flex min-w-0">
+                        <MiddleTruncate value={seed.baseBranch} />
+                      </code>
                     </span>
                   ) : (
                     <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
