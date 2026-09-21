@@ -1054,6 +1054,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
               data: {
                 s0: {
                   pullRequest: {
+                    isInMergeQueue: true,
                     stack: { number: 3, size: 2, baseRefName: "main" },
                     stackEntry: { position: 1 },
                   },
@@ -1077,6 +1078,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
       expect(batch.items.map((item) => item.number)).toEqual([4, 5]);
       expect(batch.items[0]?.stack).toEqual({ number: 3, size: 2, base: "main", position: 1 });
+      expect(batch.items[0]?.inMergeQueue).toBe(true);
       expect(batch.items[1]?.stack).toBeUndefined();
       expect(batch.truncated).toBe(true);
       expect(batch.continues).toBe(false);

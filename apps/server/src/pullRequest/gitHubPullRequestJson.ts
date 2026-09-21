@@ -681,6 +681,7 @@ const RawSummarySchema = Schema.Struct({
                   Schema.Struct({
                     contexts: Schema.Struct({
                       nodes: Schema.Array(RawCheckSchema),
+                      pageInfo: Schema.Struct({ hasNextPage: Schema.Boolean }),
                     }),
                   }),
                 ),
@@ -796,6 +797,7 @@ export function pullRequestSummaryGraphQlQuery(includeMergeQueue: boolean): stri
             ... on StatusContext { context state targetUrl createdAt description }
             ... on CheckRun { name status conclusion startedAt completedAt detailsUrl }
           }
+          pageInfo { hasNextPage }
         } } } }
       }
     }
@@ -1986,11 +1988,11 @@ export function decodePullRequestSummaryJson(
   const decoded = decodeSummary(raw);
   if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
   const pullRequest = decoded.success.data.repository.pullRequest;
+  const contexts = pullRequest.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
   return Result.succeed(
     toDetail({
       ...pullRequest,
-      statusCheckRollup:
-        pullRequest.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [],
+      statusCheckRollup: contexts?.pageInfo.hasNextPage === true ? [] : (contexts?.nodes ?? []),
     }),
   );
 }

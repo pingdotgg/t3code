@@ -2904,7 +2904,7 @@ export const make = Effect.gen(function* () {
     url: detail.url,
     state: detail.state,
     isDraft: detail.isDraft,
-    ...(detail.inMergeQueue === undefined ? {} : { inMergeQueue: detail.inMergeQueue }),
+    inMergeQueue: detail.inMergeQueue,
     author: detail.author,
     additions: detail.additions,
     deletions: detail.deletions,

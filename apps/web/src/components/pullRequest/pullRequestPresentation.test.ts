@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolvePullRequestConflict, resolvePullRequestState } from "./pullRequestPresentation";
+import {
+  resolvePullRequestConflict,
+  resolvePullRequestState,
+  shouldShowPullRequestStatusDetails,
+} from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 describe("resolvePullRequestState", () => {
@@ -91,6 +95,15 @@ describe("resolvePullRequestState", () => {
       label: "Conflicts with main",
       toneClassName: "text-destructive",
     });
+  });
+});
+
+describe("shouldShowPullRequestStatusDetails", () => {
+  it("hides review and check details only while an open pull request is queued", () => {
+    expect(shouldShowPullRequestStatusDetails({ state: "open", inMergeQueue: true })).toBe(false);
+    expect(shouldShowPullRequestStatusDetails({ state: "open", inMergeQueue: false })).toBe(true);
+    expect(shouldShowPullRequestStatusDetails({ state: "closed", inMergeQueue: true })).toBe(true);
+    expect(shouldShowPullRequestStatusDetails({ state: "merged", inMergeQueue: true })).toBe(true);
   });
 });
 

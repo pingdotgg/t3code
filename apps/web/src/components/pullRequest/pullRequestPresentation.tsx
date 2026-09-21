@@ -139,6 +139,13 @@ export function resolvePullRequestState(input: {
   return PULL_REQUEST_STATE_PRESENTATION[key];
 }
 
+export function shouldShowPullRequestStatusDetails(input: {
+  readonly state: PullRequestState;
+  readonly inMergeQueue?: boolean | undefined;
+}): boolean {
+  return input.state !== "open" || input.inMergeQueue !== true;
+}
+
 export interface PullRequestConflictPresentation {
   readonly label: string;
   readonly toneClassName: string;

@@ -494,6 +494,7 @@ describe("pull request summary decoding", () => {
                         statusCheckRollup: {
                           contexts: {
                             nodes: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+                            pageInfo: { hasNextPage: false },
                           },
                         },
                       },
@@ -513,6 +514,45 @@ describe("pull request summary decoding", () => {
     });
     expect(pullRequestSummaryGraphQlQuery(true)).toContain("isInMergeQueue");
     expect(pullRequestSummaryGraphQlQuery(false)).not.toContain("isInMergeQueue");
+  });
+
+  it("does not report passing from a truncated check rollup", () => {
+    const summary = expectSuccess(
+      decodePullRequestSummaryJson(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                number: 7,
+                title: "Summary",
+                url: "https://github.com/acme/web/pull/7",
+                headRefName: "feature",
+                baseRefName: "main",
+                state: "OPEN",
+                isDraft: false,
+                createdAt: "2026-07-01T00:00:00Z",
+                updatedAt: "2026-07-02T00:00:00Z",
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        statusCheckRollup: {
+                          contexts: {
+                            nodes: [{ name: "ci", status: "COMPLETED", conclusion: "SUCCESS" }],
+                            pageInfo: { hasNextPage: true },
+                          },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+    expect(summary.checksState).toBeNull();
   });
 });
 
