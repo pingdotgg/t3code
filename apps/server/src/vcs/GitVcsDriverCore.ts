@@ -3102,7 +3102,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .pipe(Effect.orElseSucceed(() => false));
     const submoduleMode = hasSubmodules
       ? yield* fileSystem.readFileString(path.join(worktreePath, T3_PROJECT_FILE_NAME)).pipe(
-          Effect.map((contents) => parseT3ProjectFile(contents)?.worktreeSubmodules ?? "recursive"),
+          Effect.flatMap((contents) => {
+            const file = parseT3ProjectFile(contents);
+            return file === null
+              ? Effect.logWarning("t3.json is invalid; initializing submodules recursively", {
+                  worktreePath,
+                }).pipe(Effect.as("recursive" as const))
+              : Effect.succeed(file.worktreeSubmodules ?? "recursive");
+          }),
           Effect.orElseSucceed(() => "recursive" as const),
         )
       : "none";
