@@ -502,18 +502,32 @@ describe("superseded tool.updated snapshot dedup", () => {
       turnId: TurnId.make("synthetic-turn"),
       createdAt: "2026-07-27T00:00:00.000Z",
     };
-    const meaningfulUpdate: OrchestrationThreadActivity = {
-      ...emptyInteraction,
-      id: EventId.make("meaningful-command-update"),
-      summary: "Running command",
-      payload: {
-        ...emptyInteraction.payload,
-        title: "Running command",
-        status: "inProgress",
+    const meaningfulUpdates: OrchestrationThreadActivity[] = [
+      {
+        ...emptyInteraction,
+        id: EventId.make("with-title"),
+        payload: { ...emptyInteraction.payload, title: "Command" },
       },
-    };
+      {
+        ...emptyInteraction,
+        id: EventId.make("with-detail"),
+        payload: { ...emptyInteraction.payload, detail: "Running" },
+      },
+      {
+        ...emptyInteraction,
+        id: EventId.make("with-status"),
+        payload: { ...emptyInteraction.payload, status: "inProgress" },
+      },
+      {
+        ...emptyInteraction,
+        id: EventId.make("with-data"),
+        payload: { itemType: "command_execution", data: { command: "pwd" } },
+      },
+    ];
 
-    expect(projectedIds([emptyInteraction, meaningfulUpdate])).toEqual([meaningfulUpdate.id]);
+    expect(projectedIds([emptyInteraction, ...meaningfulUpdates])).toEqual(
+      meaningfulUpdates.map((activity) => activity.id),
+    );
   });
 
   it("leaves the collapsed work log identical to the full history", () => {

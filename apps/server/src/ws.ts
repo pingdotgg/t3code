@@ -90,6 +90,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import {
+  isEmptyCommandInteractionUpdate,
   projectActivityEvent,
   projectThreadDetailSnapshot,
 } from "./orchestration/ActivityPayloadProjection.ts";
@@ -2216,15 +2217,12 @@ const makeWsRpcLayer = (
                   replayStats.eventCount <= THREAD_RESUME_MAX_EVENTS &&
                   replayStats.payloadBytes <= ORCHESTRATION_REPLAY_PAYLOAD_BUDGET_BYTES
                 ) {
-                  const catchUpStream = orchestrationEngine
+                  const catchUpEvents = yield* orchestrationEngine
                     .readThreadEvents({ ...range, limit: THREAD_RESUME_MAX_EVENTS })
                     .pipe(
                       Stream.filter(isThisThreadDetailEvent),
-                      Stream.map((event) => ({
-                        kind: "event" as const,
-                        event: projectActivityEvent(event, input.reasoningMessages === true),
-                      })),
-                      Stream.mapError(
+                      Stream.runCollect,
+                      Effect.mapError(
                         (cause) =>
                           new OrchestrationGetSnapshotError({
                             message: `Failed to replay thread ${input.threadId} events`,
@@ -2232,19 +2230,32 @@ const makeWsRpcLayer = (
                           }),
                       ),
                     );
-                  const afterCatchUp =
-                    input.requestCompletionMarker === true
-                      ? Stream.unwrap(
-                          liveBuffer
-                            .offer({ kind: "synchronized" as const })
-                            .pipe(Effect.as(bufferedLiveStream)),
-                        )
-                      : bufferedLiveStream;
-                  const replay = Stream.concat(catchUpStream, afterCatchUp);
-                  if (!replayStats.hasCreateEvent) {
-                    return replay;
+                  const hasEmptyCommandInteractionUpdate = catchUpEvents.some(
+                    (event: OrchestrationEvent) =>
+                      event.type === "thread.activity-appended" &&
+                      isEmptyCommandInteractionUpdate(event.payload.activity),
+                  );
+                  if (!hasEmptyCommandInteractionUpdate) {
+                    const catchUpStream = Stream.fromIterable(catchUpEvents).pipe(
+                      Stream.map((event) => ({
+                        kind: "event" as const,
+                        event: projectActivityEvent(event, input.reasoningMessages === true),
+                      })),
+                    );
+                    const afterCatchUp =
+                      input.requestCompletionMarker === true
+                        ? Stream.unwrap(
+                            liveBuffer
+                              .offer({ kind: "synchronized" as const })
+                              .pipe(Effect.as(bufferedLiveStream)),
+                          )
+                        : bufferedLiveStream;
+                    const replay = Stream.concat(catchUpStream, afterCatchUp);
+                    if (!replayStats.hasCreateEvent) {
+                      return replay;
+                    }
+                    replayOnMissingSnapshot = replay;
                   }
-                  replayOnMissingSnapshot = replay;
                 }
                 // A recreated thread needs a fresh snapshot if it still exists.
                 // Oversized replays and invalid cursors also use the snapshot path.

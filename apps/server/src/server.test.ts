@@ -9503,6 +9503,65 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("subscribeThread replaces historical empty terminal interactions with a snapshot", () =>
+    Effect.gen(function* () {
+      const baseEvent = makeLiveToolActivityEvent(99_999);
+      const activity: OrchestrationThreadActivity = {
+        ...baseEvent.payload.activity,
+        summary: "Tool updated",
+        payload: {
+          itemType: "command_execution",
+          toolCallId: "command-1",
+          data: {
+            itemId: "command-1",
+            processId: "process-1",
+            stdin: "",
+          },
+        },
+      };
+      const event: OrchestrationEvent = {
+        ...baseEvent,
+        payload: { ...baseEvent.payload, activity },
+      };
+      const thread = {
+        ...makeDefaultOrchestrationReadModel().threads[0]!,
+        activities: [activity],
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(100_000),
+            getThreadReplayStats: () =>
+              Effect.succeed({
+                eventCount: 1,
+                payloadBytes: Buffer.byteLength(jsonRequestBody(event.payload)),
+                hasCreateEvent: false,
+              }),
+            readThreadEvents: () => Stream.make(event),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(Option.some({ snapshotSequence: 100_000, thread })),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const first = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            afterSequence: 5,
+          }).pipe(Stream.runHead),
+        ),
+      );
+      const item = Option.getOrThrow(first);
+      assertTrue(item.kind === "snapshot");
+      assert.equal(item.snapshot.snapshotSequence, 100_000);
+      assert.deepEqual(item.snapshot.thread.activities, []);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("subscribeThread resets cached history when its ID is created again", () =>
     Effect.gen(function* () {
       const thread = {
