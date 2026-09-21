@@ -17,6 +17,17 @@ const EMPTY_CAPABILITIES = {
 };
 
 describe("resolveFileContextMenuAbsolutePath", () => {
+  it("resolves the workspace-root directory row of a repo-relative diff tree", () => {
+    expect(
+      resolveFileContextMenuAbsolutePath({
+        ...BASE_TARGET,
+        workspaceRoot: "/workspace/project/packages/app",
+        repositoryRoot: "/workspace/project",
+        filePath: "packages/app",
+      }),
+    ).toBe("/workspace/project/packages/app");
+  });
+
   it("joins workspace-relative diff paths onto the workspace root", () => {
     expect(resolveFileContextMenuAbsolutePath(BASE_TARGET)).toBe("/workspace/project/src/index.ts");
   });
@@ -55,6 +66,15 @@ describe("resolveFileContextMenuAbsolutePath", () => {
 });
 
 describe("buildFileContextMenuItems", () => {
+  it("allows copying without any host editor or reveal capabilities", () => {
+    expect(
+      buildFileContextMenuItems({
+        hasAbsolutePath: true,
+        capabilities: EMPTY_CAPABILITIES,
+      }),
+    ).toEqual([{ id: "copy-full-path", label: "Copy full path" }]);
+  });
+
   it("offers open, reveal, and an open-with submenu when all are available", () => {
     const items = buildFileContextMenuItems({
       hasAbsolutePath: true,
@@ -65,7 +85,12 @@ describe("buildFileContextMenuItems", () => {
       },
     });
 
-    expect(items.map((item) => item.id)).toEqual(["open", "reveal-in-folder", "open-with"]);
+    expect(items.map((item) => item.id)).toEqual([
+      "open",
+      "reveal-in-folder",
+      "open-with",
+      "copy-full-path",
+    ]);
     expect(items[0]).toMatchObject({ label: "Open" });
     expect(items[1]).toMatchObject({ label: "Reveal in Finder" });
     const openWith = items[2];
@@ -73,7 +98,7 @@ describe("buildFileContextMenuItems", () => {
     expect(openWith.children?.map((child) => child.id)).toEqual(["editor:vscode", "editor:cursor"]);
   });
 
-  it("offers only the reveal item when just reveal is enabled", () => {
+  it("offers reveal and copying when just reveal is enabled", () => {
     const items = buildFileContextMenuItems({
       hasAbsolutePath: true,
       capabilities: {
@@ -83,7 +108,7 @@ describe("buildFileContextMenuItems", () => {
       },
     });
 
-    expect(items.map((item) => item.id)).toEqual(["reveal-in-folder"]);
+    expect(items.map((item) => item.id)).toEqual(["reveal-in-folder", "copy-full-path"]);
     expect(items[0]).toMatchObject({ label: "Reveal in File Explorer" });
   });
 

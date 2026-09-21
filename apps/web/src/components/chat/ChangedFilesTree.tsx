@@ -23,7 +23,7 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
-/** Opens the OS-level context menu for a changed file (reveal in file manager, open in editor). */
+/** Opens the context menu for a changed file or directory. */
 export type ChangedFileContextMenuHandler = (filePath: string, event: MouseEvent) => void;
 
 export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
@@ -193,6 +193,14 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             className="group flex w-full items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
             style={{ paddingLeft: `${leftPadding}px` }}
             onClick={() => toggleDirectory(node.path)}
+            onContextMenu={
+              onFileContextMenu
+                ? (event) => {
+                    event.preventDefault();
+                    onFileContextMenu(node.path, event);
+                  }
+                : undefined
+            }
           >
             <ChevronRightIcon
               aria-hidden="true"

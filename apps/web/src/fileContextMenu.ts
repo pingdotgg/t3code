@@ -1,9 +1,10 @@
 /**
- * Right-click actions for a workspace file: reveal it in the environment's
- * file manager and open it in an editor. Reuse the chat file-chip menu's
- * machinery: reveal rides `shell.openInEditor` with `reveal: true`, which the
- * server only honors when its `shellRevealInFileManager` config flag is set,
- * so both actions work for every client and connection mode.
+ * Right-click actions for a workspace file or directory: copy its absolute
+ * host path, reveal it in the environment's file manager, and open it in an
+ * editor. Reuse the chat file-chip menu's machinery: reveal rides
+ * `shell.openInEditor` with `reveal: true`, which the server only honors when
+ * its `shellRevealInFileManager` config flag is set, so the shell actions work
+ * for every client and connection mode. Copying needs no environment at all.
  */
 import {
   EDITORS,
@@ -13,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
+import { writeTextToClipboard } from "./hooks/useCopyToClipboard";
 import { resolveDiffPathForWorkspace } from "./diffFileActions";
 import {
   revealInFileExplorerLabelForKind,
@@ -27,6 +29,7 @@ import { toastManager } from "./components/ui/toast";
 import { useAtomValue } from "@effect/atom-react";
 
 export type FileContextMenuAction =
+  | "copy-full-path"
   | "reveal-in-folder"
   | "open"
   /** Submenu parent; never the activated id. */
@@ -55,6 +58,7 @@ export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget
     repositoryRoot: target.repositoryRoot,
   });
   if (workspaceFilePath === null) return null;
+  if (workspaceFilePath === "") return target.workspaceRoot ?? null;
   if (target.workspaceRoot === undefined) {
     return workspaceFilePath.startsWith("/") || /^[a-zA-Z]:/.test(workspaceFilePath)
       ? workspaceFilePath
@@ -74,7 +78,7 @@ export interface FileContextMenuCapabilities {
 /**
  * Menu items for a resolved file, offering only what the environment's config
  * advertises: default-app open, reveal (with server-provided wording), and an
- * "Open with" submenu of detected editors. Empty when nothing can act.
+ * "Open with" submenu of detected editors. Copying needs only a resolved path.
  */
 export function buildFileContextMenuItems(input: {
   readonly hasAbsolutePath: boolean;
@@ -104,6 +108,7 @@ export function buildFileContextMenuItems(input: {
       })),
     });
   }
+  items.push({ id: "copy-full-path", label: "Copy full path" });
   return items;
 }
 
@@ -139,7 +144,21 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       target: FileContextMenuTarget,
     ): Promise<void> => {
       const absolutePath = resolveFileContextMenuAbsolutePath(target);
-      if (absolutePath === null || environmentId === null) return;
+      if (absolutePath === null) return;
+      if (action === "copy-full-path") {
+        try {
+          await writeTextToClipboard(absolutePath, "full path");
+          toastManager.add({ type: "success", title: "Path copied", description: absolutePath });
+        } catch {
+          toastManager.add({
+            type: "error",
+            title: "Failed to copy path",
+            description: absolutePath,
+          });
+        }
+        return;
+      }
+      if (environmentId === null) return;
 
       const reveal = action === "reveal-in-folder";
       const editor =
