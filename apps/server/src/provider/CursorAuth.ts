@@ -76,11 +76,12 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
     if (configuredKey) return configuredKey;
     const credentials = yield* Effect.tryPromise({
       try: () => options.store.load(),
-      catch: () =>
+      catch: (cause) =>
         new ProviderSetupError({
           instanceId: options.instanceId,
           operation: "credentials",
           detail: "Could not read the Cursor sign-in. Try signing in again.",
+          cause,
         }),
     });
     const now = yield* Clock.currentTimeMillis;
@@ -188,11 +189,12 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
               if (active === flow) Queue.offerUnsafe(urls, authorizationUrl);
             },
           }),
-        catch: () =>
+        catch: (cause) =>
           new ProviderSetupError({
             instanceId: options.instanceId,
             operation: "start",
             detail: "Cursor sign-in failed. Start sign-in again.",
+            cause,
           }),
       });
       // Commit and publish together; interrupting a store Promise cannot stop a late write.
@@ -210,22 +212,24 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
               if (!credentials) throw new Error("Cursor login did not return credentials");
               await options.store.save(credentials);
             },
-            catch: () =>
+            catch: (cause) =>
               new ProviderSetupError({
                 instanceId: options.instanceId,
                 operation: "start",
                 detail: "Could not save the Cursor sign-in. Try again.",
+                cause,
               }),
           });
           const verified = yield* options.onChanged(true).pipe(Effect.exit);
           if (Exit.isFailure(verified)) {
             yield* Effect.tryPromise({
               try: () => options.store.clear(),
-              catch: () =>
+              catch: (cause) =>
                 new ProviderSetupError({
                   instanceId: options.instanceId,
                   operation: "start",
                   detail: "Could not clear the rejected Cursor sign-in. Try signing out.",
+                  cause,
                 }),
             });
             return yield* Effect.failCause(verified.cause);
@@ -312,11 +316,12 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
               });
             const id = yield* crypto.randomUUIDv4.pipe(
               Effect.mapError(
-                () =>
+                (cause) =>
                   new ProviderSetupError({
                     instanceId: options.instanceId,
                     operation: "start",
                     detail: "Could not start Cursor sign-in. Try again.",
+                    cause,
                   }),
               ),
             );
@@ -401,11 +406,12 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
             yield* stopSessions.pipe(Effect.ensuring(stopSessionsWithCredentials));
             yield* Effect.tryPromise({
               try: () => options.store.clear(),
-              catch: () =>
+              catch: (cause) =>
                 new ProviderSetupError({
                   instanceId: options.instanceId,
                   operation: "logout",
                   detail: "Could not clear the Cursor sign-in. Try again.",
+                  cause,
                 }),
             });
             yield* options.onChanged(false);
