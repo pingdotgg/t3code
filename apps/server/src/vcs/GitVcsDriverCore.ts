@@ -38,6 +38,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+import { makeWorktreeClone } from "./WorktreeClone.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
@@ -3047,16 +3048,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const worktreeClone = yield* makeWorktreeClone(execute);
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+    const worktreePath = path.resolve(
+      input.cwd,
+      input.path ?? path.join(worktreesDir, repoName, sanitizedBranch),
+    );
+    const clonePlan = yield* worktreeClone.prepare(input.cwd, input.refName);
+    const checkoutArgs = clonePlan ? ["--no-checkout"] : [];
     const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
-      : ["worktree", "add", worktreePath, input.refName];
+      ? ["worktree", "add", ...checkoutArgs, "-b", input.newRefName, worktreePath, input.refName]
+      : ["worktree", "add", ...checkoutArgs, worktreePath, input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
@@ -3086,6 +3094,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);
+    }
+
+    if (clonePlan) {
+      yield* worktreeClone.checkout(clonePlan, worktreePath, onCheckoutProgress);
+      if (onCheckoutProgress) {
+        yield* onCheckoutProgress({
+          percent: 100,
+          completed: clonePlan.totalFiles,
+          total: clonePlan.totalFiles,
+        });
+      }
     }
 
     // `git worktree add` leaves submodules empty, so a repo that keeps agent
