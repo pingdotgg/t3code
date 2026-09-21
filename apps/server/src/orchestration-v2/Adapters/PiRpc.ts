@@ -33,6 +33,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
   detail: Schema.optional(Schema.String),
+  reason: Schema.optional(Schema.Literal("timeout")),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
@@ -446,6 +447,7 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
               new PiRpcError({
                 operation: String(record["type"] ?? "request"),
                 detail: `timed out after ${timeoutMs}ms`,
+                reason: "timeout",
               }),
             ),
         }),
@@ -459,6 +461,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     request,
     events,
     exited: Deferred.await(exitDeferred),
-    terminate: terminateProcess.pipe(Effect.ignore, Effect.uninterruptible),
+    terminate: failTransport(
+      new PiRpcError({ operation: "terminate", detail: "pi process was stopped" }),
+    ).pipe(Effect.andThen(terminateProcess), Effect.ignore, Effect.uninterruptible),
   } satisfies PiRpcConnection;
 });

@@ -130,6 +130,8 @@ const PI_INHERIT_MODEL_SLUG = "default";
 
 const STREAM_FLUSH_MS = 50;
 const PI_REQUEST_TIMEOUT_MS = 15_000;
+// Session lifecycle hooks reload extensions, MCP servers and language servers.
+const PI_SESSION_TIMEOUT_MS = 60_000;
 const PI_SKILL_DISCOVERY_TIMEOUT_MS = 4_000;
 const PI_UNSOLICITED_ACTIVITY_ERROR =
   "Pi started agent work outside an active T3 turn. The session was stopped to prevent invisible tool execution.";
@@ -481,6 +483,8 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       // dialog's own resolution updates.
       const sessionEventPermit = yield* Semaphore.make(1);
       let threadState: PiThreadState | null = null;
+      let registrationAttempted = false;
+      let lastNativeThreadId: string | null = null;
       // User Stop intentionally tears down this RPC process after aborting.
       // Keep that intent beyond turn finalization so the later stdout close is
       // not mistaken for an unexpected transport failure.
@@ -515,6 +519,8 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
       let baselineThinking: string | null = null;
       /** Context window of the model Pi currently runs, from get_state and set_model. */
       let contextWindow: number | null = null;
+      const modelContextWindows = new Map<string, number>();
+      let modelsDiscovered = false;
       // Prompt responses carry no id. Keep their session-wide send order and
       // owner so a late ack from a settled turn cannot affect the next turn.
       const pendingPromptResponses: Array<{
@@ -577,6 +583,33 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         const value = recordNumber(input, key);
         return value === undefined ? undefined : Math.max(0, Math.trunc(value));
       };
+
+      const rememberModelContextWindow = (model: unknown): number | null => {
+        const provider = recordString(model, "provider");
+        const id = recordString(model, "id");
+        const capacity = nonNegativeInteger(model, "contextWindow");
+        if (provider !== undefined && id !== undefined && capacity !== undefined && capacity > 0) {
+          modelContextWindows.set(`${provider}/${id}`, capacity);
+          return capacity;
+        }
+        return null;
+      };
+
+      const lifecycleRequest = (record: PiRpcRecord) =>
+        request(record, PI_SESSION_TIMEOUT_MS).pipe(
+          // A local timeout does not cancel Pi's lifecycle hook. Retire the
+          // process before fallback can race its eventual switch/new-session.
+          Effect.tapError((error) =>
+            Effect.logWarning("Pi session lifecycle request failed", {
+              providerSessionId: input.providerSessionId,
+              operation: error.operation,
+              reason: error.reason ?? "rpc_error",
+            }).pipe(
+              Effect.andThen(error.reason === "timeout" ? connection.terminate : Effect.void),
+            ),
+          ),
+          Effect.onInterrupt(() => connection.terminate),
+        );
 
       const tokenUsageFromStats = (
         stats: unknown,
@@ -1966,37 +1999,41 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           return yield* protocolError("Cannot register a Pi thread while a turn is active");
         }
         const existing = threadInput.existingProviderThread;
-        if (existing?.nativeThreadRef?.nativeId != null) {
-          const switchData = yield* request({
-            type: "switch_session",
-            sessionPath: existing.nativeThreadRef.nativeId,
-          });
-          // A session_before_switch extension handler can veto the switch.
-          // Proceeding would silently adopt whatever session is active and
-          // write the wrong thread's turns into it.
-          if (recordField(switchData, "cancelled") === true) {
-            return yield* protocolError("A Pi extension cancelled the session switch");
-          }
-          // Pi is now attached to the target session. Drop the previous
-          // binding before reading its state so a failed refresh cannot let a
-          // later turn run against the old T3 thread and the new Pi session.
+        const resumeId = existing?.nativeThreadRef?.nativeId;
+        const needsNewSession = resumeId == null && registrationAttempted;
+        registrationAttempted = true;
+        if (resumeId != null || needsNewSession) {
+          lastNativeThreadId = resumeId ?? lastNativeThreadId;
+          // Even a failed lifecycle operation can change Pi's native session.
+          // Never leave the old app binding or model defaults usable afterward.
           threadState = null;
-          // These caches describe the session we just left. Clearing them
-          // stops the next turn from treating this session as already
-          // configured and skipping set_model or set_session_name.
           appliedModel = null;
           appliedThinking = null;
           appliedSessionName = null;
-          // The baselines describe the session we just left too. Dropping
-          // them lets the `get_state` below re-capture this session's own
-          // defaults, so the "Pi default" choice cannot replay the previous
-          // session's model or thinking level.
           baselineModel = null;
           baselineThinking = null;
+          contextWindow = null;
+          const result = yield* lifecycleRequest(
+            resumeId != null
+              ? { type: "switch_session", sessionPath: resumeId }
+              : { type: "new_session" },
+          );
+          if (recordField(result, "cancelled") === true) {
+            return yield* protocolError("A Pi extension cancelled the session switch");
+          }
         }
         const stateData = yield* request({ type: "get_state" });
-        contextWindow =
-          nonNegativeInteger(recordField(stateData, "model"), "contextWindow") ?? contextWindow;
+        if (!modelsDiscovered) {
+          const modelsData = yield* request({ type: "get_available_models" }).pipe(
+            Effect.orElseSucceed(() => undefined),
+          );
+          const models = recordField(modelsData, "models");
+          if (Array.isArray(models)) {
+            for (const model of models) rememberModelContextWindow(model);
+            modelsDiscovered = true;
+          }
+        }
+        contextWindow = rememberModelContextWindow(recordField(stateData, "model"));
         // Each baseline is captured independently, and only while nothing has
         // been applied yet, so a `get_state` that arrives after our own
         // selection cannot record that selection as Pi's default.
@@ -2016,6 +2053,10 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
         if (nativeId === undefined) {
           return yield* protocolError("get_state returned no persisted sessionFile", stateData);
         }
+        if (needsNewSession && nativeId === lastNativeThreadId) {
+          return yield* protocolError("Pi did not create a distinct session file");
+        }
+        lastNativeThreadId = nativeId;
         const createdAt = yield* DateTime.now;
         const providerThread: OrchestrationV2ProviderThread =
           existing !== undefined
@@ -2023,6 +2064,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
                 ...existing,
                 providerSessionId: input.providerSessionId,
                 nativeThreadRef: providerRef(nativeId),
+                ...(needsNewSession ? { nativeConversationHeadRef: null, contextUsage: null } : {}),
                 status: "idle",
                 updatedAt: createdAt,
               }
@@ -2074,7 +2116,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           // captured baseline, otherwise Pi stays on the last model applied.
           if (appliedModel !== null && baselineModel !== null) {
             const restoredModel = yield* request({ type: "set_model", ...baselineModel });
-            contextWindow = nonNegativeInteger(restoredModel, "contextWindow") ?? contextWindow;
+            contextWindow = rememberModelContextWindow(restoredModel);
             appliedModel = null;
             const updatedAt = yield* DateTime.now;
             sessionEntity = { ...sessionEntity, model: PI_INHERIT_MODEL_SLUG, updatedAt };
@@ -2108,7 +2150,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             provider: parsed.provider,
             modelId: parsed.modelId,
           });
-          contextWindow = nonNegativeInteger(selectedModel, "contextWindow") ?? contextWindow;
+          contextWindow = rememberModelContextWindow(selectedModel);
           appliedModel = modelSelection.model;
           const updatedAt = yield* DateTime.now;
           sessionEntity = { ...sessionEntity, model: modelSelection.model, updatedAt };
@@ -2173,6 +2215,16 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
           return sessionEntity;
         },
         events: Stream.fromQueue(events),
+        getModelContextWindow: (selection) => {
+          if (selection.instanceId !== options.instanceId) return undefined;
+          const slug =
+            selection.model === PI_INHERIT_MODEL_SLUG
+              ? baselineModel === null
+                ? undefined
+                : `${baselineModel.provider}/${baselineModel.modelId}`
+              : selection.model;
+          return slug === undefined ? undefined : modelContextWindows.get(slug);
+        },
         ensureThread: (threadInput) =>
           registerThread(threadInput).pipe(
             Effect.mapError(
@@ -2603,7 +2655,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
             if (forkEntryId === undefined) {
               return yield* protocolError("Pi rollback target has no captured session-tree entry");
             }
-            const forkData = yield* request({ type: "fork", entryId: forkEntryId });
+            const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
             if (recordField(forkData, "cancelled") === true) {
               return yield* protocolError("A Pi extension cancelled the session fork");
             }
@@ -2621,6 +2673,7 @@ export function makePiAdapterV2(options: PiAdapterV2Options): ProviderAdapterV2S
               threadState = null;
               return yield* protocolError("Pi fork did not return a persisted session file");
             }
+            lastNativeThreadId = forkSessionFile;
             appliedModel = null;
             appliedThinking = null;
             appliedSessionName = null;

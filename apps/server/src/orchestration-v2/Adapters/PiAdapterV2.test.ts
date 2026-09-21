@@ -40,6 +40,7 @@ import {
   type ProviderAdapterV2Event,
   type ProviderAdapterV2SessionRuntime,
 } from "../ProviderAdapter.ts";
+import { handoffBudget } from "../ContextHandoffBudget.ts";
 import { makePiAdapterV2, PI_PROVIDER } from "./PiAdapterV2.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./PiRpc.ts";
 
@@ -88,6 +89,9 @@ interface FakePi {
   readonly resolveDeferredState: (data: unknown) => Effect.Effect<void>;
   /** Reject the next `get_state` request. */
   readonly failNextState: () => void;
+  readonly deferNextLifecycle: (type: "switch_session" | "new_session") => void;
+  readonly queueModels: (models: ReadonlyArray<unknown>) => void;
+  readonly vetoNextNewSession: () => void;
   /** Every request received by the fake process. */
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   /** Data returned by the next `get_session_stats` acks, consumed in order. */
@@ -121,6 +125,11 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let deferredStateRequest: PiRpcRecord | undefined;
   let failState = false;
   let vetoSwitch = false;
+  let vetoNewSession = false;
+  let deferredLifecycle: string | undefined;
+  let sessionFile = FAKE_SESSION_FILE;
+  let sessionGeneration = 0;
+  let models: ReadonlyArray<unknown> = [];
   let stdinBuffer = "";
 
   const emit = (record: PiRpcRecord) =>
@@ -150,10 +159,18 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
             isStreaming: false,
             isCompacting: false,
             autoCompactionEnabled: true,
-            sessionFile: FAKE_SESSION_FILE,
+            sessionFile,
             sessionId: "abc",
           },
         };
+      case "get_available_models":
+        return { ...base, data: { models } };
+      case "new_session": {
+        const cancelled = vetoNewSession;
+        vetoNewSession = false;
+        if (!cancelled) sessionFile = `/fake/new-${++sessionGeneration}.jsonl`;
+        return { ...base, data: { cancelled } };
+      }
       case "switch_session": {
         const cancelled = vetoSwitch;
         vetoSwitch = false;
@@ -189,6 +206,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         if (record["type"] === "get_state" && deferState) {
           deferState = false;
           deferredStateRequest = record;
+          continue;
+        }
+        if (record["type"] === deferredLifecycle) {
+          deferredLifecycle = undefined;
           continue;
         }
         const response = respondTo(record);
@@ -256,6 +277,15 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       }),
     failNextState: () => {
       failState = true;
+    },
+    deferNextLifecycle: (type) => {
+      deferredLifecycle = type;
+    },
+    queueModels: (value) => {
+      models = value;
+    },
+    vetoNextNewSession: () => {
+      vetoNewSession = true;
     },
     allRequests: () => allRequests,
     vetoNextSwitch: () => {
@@ -502,6 +532,292 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("waits for a slow Pi resume without starting a replacement", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      const request = yield* fake.takeRequest("switch_session");
+      yield* TestClock.adjust(Duration.millis(16_820));
+      yield* fake.emit({
+        type: "response",
+        id: request.id,
+        command: "switch_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      assert.equal((yield* Fiber.join(resumed)).nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+      assert.isFalse(fake.allRequests().some((request) => request.type === "new_session"));
+      yield* startTurn(runtime, providerThread, "default");
+      yield* fake.takeRequest("prompt");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("creates a distinct native session after a failed resume", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.vetoNextSwitch();
+      yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
+      const replacement = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+        existingProviderThread: { ...providerThread, nativeThreadRef: null },
+      });
+      assert.equal(replacement.id, providerThread.id);
+      assert.notEqual(
+        replacement.nativeThreadRef?.nativeId,
+        providerThread.nativeThreadRef?.nativeId,
+      );
+      assert.equal(
+        fake.allRequests().filter((request) => request.type === "new_session").length,
+        1,
+      );
+      yield* startTurn(runtime, replacement, "default");
+      yield* fake.takeRequest("prompt");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  for (const invalidReplacement of ["veto", "same identity"] as const) {
+    it.effect(`rejects a replacement with ${invalidReplacement}`, () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        if (invalidReplacement === "veto") fake.vetoNextNewSession();
+        else fake.queueState({ sessionFile: FAKE_SESSION_FILE });
+        const error = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+            existingProviderThread: { ...providerThread, nativeThreadRef: null },
+          })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "ProviderAdapterEnsureThreadError");
+        assert.match(
+          String(error.cause),
+          invalidReplacement === "veto" ? /cancelled/ : /distinct session/,
+        );
+        yield* startTurn(runtime, providerThread, "default").pipe(Effect.flip);
+        assert.isFalse(fake.allRequests().some((request) => request.type === "prompt"));
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+  }
+
+  it.effect("retires a timed-out lifecycle process before a late switch can race replacement", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime
+        .resumeThread({ providerThread })
+        .pipe(Effect.flip, Effect.forkChild);
+      const request = yield* fake.takeRequest("switch_session");
+      yield* TestClock.adjust(Duration.seconds(60));
+      const error = yield* Fiber.join(resumed);
+      assert.match(String(error.cause), /timed out after 60000ms/);
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "error",
+      );
+      yield* fake.emit({
+        type: "response",
+        id: request.id,
+        command: "switch_session",
+        success: true,
+        data: { cancelled: false },
+      });
+      yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+          existingProviderThread: { ...providerThread, nativeThreadRef: null },
+        })
+        .pipe(Effect.flip);
+      assert.isFalse(
+        fake
+          .allRequests()
+          .some((request) => request.type === "new_session" || request.type === "prompt"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "uses the lifecycle deadline for fresh sessions and drops replaced native metadata",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        fake.deferNextLifecycle("new_session");
+        fake.queueState({ sessionFile: "/fake/fresh-after-delay.jsonl" });
+        const replacing = yield* runtime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+            existingProviderThread: {
+              ...providerThread,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: {
+                driver: PI_PROVIDER,
+                nativeId: "old-leaf",
+                strength: "strong",
+              },
+              contextUsage: { usedTokens: 314_551, maxTokens: 1_000_000 },
+            },
+          })
+          .pipe(Effect.forkChild);
+        const request = yield* fake.takeRequest("new_session");
+        yield* TestClock.adjust(Duration.millis(16_820));
+        yield* fake.emit({
+          type: "response",
+          id: request.id,
+          command: "new_session",
+          success: true,
+          data: { cancelled: false },
+        });
+        const replacement = yield* Fiber.join(replacing);
+        assert.equal(replacement.nativeThreadRef?.nativeId, "/fake/fresh-after-delay.jsonl");
+        assert.isNull(replacement.contextUsage);
+        assert.isNull(replacement.nativeConversationHeadRef);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("replaces a native session when the first resume's state refresh fails", () =>
+    Effect.gen(function* () {
+      const original = yield* makeFakePi;
+      const originalRuntime = yield* openRuntime(original);
+      const providerThread = yield* originalRuntime.runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      fake.failNextState();
+      yield* runtime.resumeThread({ providerThread }).pipe(Effect.flip);
+      const replacement = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+        existingProviderThread: { ...providerThread, nativeThreadRef: null },
+      });
+      assert.notEqual(
+        replacement.nativeThreadRef?.nativeId,
+        providerThread.nativeThreadRef?.nativeId,
+      );
+      yield* startTurn(runtime, replacement, "default");
+      yield* fake.takeRequest("prompt");
+      assert.isTrue(fake.allRequests().some((request) => request.type === "new_session"));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("retires an interrupted switch before accepting further requests", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("switch_session");
+      const resumed = yield* runtime.resumeThread({ providerThread }).pipe(Effect.forkChild);
+      yield* fake.takeRequest("switch_session");
+      yield* Fiber.interrupt(resumed);
+      yield* takeEvent(
+        (event) =>
+          event.type === "provider_session.updated" && event.providerSession.status === "error",
+      );
+      yield* runtime
+        .ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+          existingProviderThread: { ...providerThread, nativeThreadRef: null },
+        })
+        .pipe(Effect.flip);
+      assert.isFalse(fake.allRequests().some((request) => request.type === "new_session"));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("budgets legacy native history with Pi's selected model capacity", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.queueState({
+        sessionFile: FAKE_SESSION_FILE,
+        model: { provider: "anthropic", id: "large", contextWindow: 1_000_000 },
+      });
+      fake.queueModels([{ provider: "anthropic", id: "small", contextWindow: 32_000 }]);
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const budget = (model: string) =>
+        handoffBudget({
+          tokenCap: 16_000,
+          userText: "$handoff",
+          attachments: [],
+          providerThread,
+          nativeContextEstimate: 307_543,
+          modelContextWindow: runtime.getModelContextWindow?.(modelSelection(model)),
+        });
+      assert.equal(budget("default"), 16_000);
+      assert.equal(budget("anthropic/large"), 16_000);
+      assert.equal(runtime.getModelContextWindow?.(modelSelection("anthropic/small")), 32_000);
+      assert.equal(budget("anthropic/small"), 0);
+      assert.isUndefined(runtime.getModelContextWindow?.(modelSelection("anthropic/unknown")));
+      assert.isUndefined(
+        runtime.getModelContextWindow?.({
+          instanceId: ProviderInstanceId.make("other-pi"),
+          model: "anthropic/large",
+        }),
+      );
+      // New native sessions have their own default, even within one process.
+      fake.queueState({
+        sessionFile: "/fake/replacement.jsonl",
+        model: { provider: "anthropic", id: "small", contextWindow: 32_000 },
+      });
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+        existingProviderThread: { ...providerThread, nativeThreadRef: null },
+      });
+      assert.equal(runtime.getModelContextWindow?.(modelSelection("default")), 32_000);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("adopts the run's provider thread identity instead of minting a second row", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -536,6 +852,7 @@ describe("PiAdapterV2", () => {
       });
       assert.equal(providerThread.id, placeholder.id);
       assert.equal(providerThread.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+      assert.isFalse(fake.allRequests().some((request) => request.type === "new_session"));
       const updated = yield* takeEvent((event) => event.type === "provider_thread.updated");
       assert.isTrue(
         updated.type === "provider_thread.updated" && updated.providerThread.id === placeholder.id,
