@@ -20,7 +20,27 @@ import {
   resolveProjectAutoPull,
 } from "./serverSettings.ts";
 
+/** Settings after the server has folded legacy per-project fields into `projectSettingsOverrides`. */
+const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
+
 describe("serverSettings helpers", () => {
+  it("changes a cleanup rule without replacing the machine's other rules", () => {
+    const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },
+    });
+    expect(
+      applyServerSettingsPatch(enabled, {
+        storageCleanup: { worktreeAfterDays: null },
+      }).storageCleanup,
+    ).toEqual({
+      worktreeAfterDays: null,
+      worktreeOnMerge: true,
+      worktreeOnDelete: false,
+      worktreeUnchanged: false,
+      browserArtifactsAfterDays: null,
+      logsAfterDays: 30,
+    });
+  });
   it("replaces SSH host lists when saving, editing, and removing hosts", () => {
     const host = { id: "mini", label: "Mac mini", target: "mini" };
     const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { deviceHosts: [host] });
@@ -40,14 +60,19 @@ describe("serverSettings helpers", () => {
       icon: "play" as const,
       runOnWorktreeCreate: false,
     };
-    const defaults = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    const existing = { ...project, scripts: [{ ...action, command: "npm run lint" }] };
+    // Before the one-time fold, scripts stored on the project aggregate still apply.
+    const unfolded = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      defaultProjectScripts: [action],
+    });
+    expect(resolveProjectScripts(unfolded, existing)).toEqual(existing.scripts);
+    expect(projectScriptsInheritDefaults(unfolded, existing)).toBe(false);
+    const defaults = applyServerSettingsPatch(FOLDED_SERVER_SETTINGS, {
       defaultProjectScripts: [action],
     });
     expect(resolveProjectScripts(defaults, project)).toEqual([action]);
     expect(projectScriptsInheritDefaults(defaults, project)).toBe(true);
-    const existing = { ...project, scripts: [{ ...action, command: "npm run lint" }] };
-    expect(resolveProjectScripts(defaults, existing)).toEqual(existing.scripts);
-    expect(projectScriptsInheritDefaults(defaults, existing)).toBe(false);
+    expect(resolveProjectScripts(defaults, existing)).toEqual([action]);
     const disabled = applyServerSettingsPatch(defaults, {
       projectScriptOverrides: { [project.id]: [] },
     });
@@ -82,7 +107,7 @@ describe("serverSettings helpers", () => {
     };
     const firstAction = { ...defaultAction, command: "npm run lint" };
     const secondAction = { ...defaultAction, command: "npm run build" };
-    const firstUpdate = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    const firstUpdate = applyServerSettingsPatch(FOLDED_SERVER_SETTINGS, {
       defaultProjectScripts: [defaultAction],
       projectScriptOverrides: { [firstProject.id]: [firstAction] },
     });
@@ -199,14 +224,18 @@ describe("serverSettings helpers", () => {
     expect(parsePersistedServerObservabilitySettings("{}")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
     expect(
       parsePersistedServerObservabilitySettings(
-        JSON.stringify({ observability: { otlpTracesUrl: "   ", otlpMetricsUrl: "" } }),
+        JSON.stringify({
+          observability: { otlpTracesUrl: "   ", otlpMetricsUrl: "", otlpLogsUrl: "   " },
+        }),
       ),
     ).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
   });
 
@@ -217,12 +246,14 @@ describe("serverSettings helpers", () => {
           observability: {
             otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
             otlpMetricsUrl: "  http://localhost:4318/v1/metrics  ",
+            otlpLogsUrl: "  http://localhost:4318/v1/logs  ",
           },
         }),
       ),
     ).toEqual({
       otlpTracesUrl: "http://localhost:4318/v1/traces",
       otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+      otlpLogsUrl: "http://localhost:4318/v1/logs",
     });
   });
 
@@ -230,6 +261,7 @@ describe("serverSettings helpers", () => {
     expect(parsePersistedServerObservabilitySettings("{")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
   });
 

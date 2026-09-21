@@ -25,10 +25,11 @@ vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: [], isReady: true }),
   usePrimaryEnvironment: () => null,
 }));
-vi.mock("../../hooks/useSettings", () => ({
+vi.mock("../../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE: "Connect to an environment",
-  useClientSettings: (selector: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
-    selector(DEFAULT_CLIENT_SETTINGS),
+  useClientSettings: (selector?: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
+    selector ? selector(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS,
   useClientSettingsHydrated: () => true,
   usePrimarySettingsAvailable: () => true,
   usePrimarySettings: () => DEFAULT_UNIFIED_SETTINGS,
@@ -37,6 +38,21 @@ vi.mock("../../hooks/useSettings", () => ({
 vi.mock("./settingsLayout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./settingsLayout")>()),
   SettingsPageContainer: ({ children }: { children: ReactNode }) => children,
+}));
+// The scoped agent-access rows need the settings layout's scope provider;
+// this test covers the device-local browser sections only.
+vi.mock("./ProjectDefaultsSettings", () => ({ ProjectDefaultsSettings: () => null }));
+vi.mock("./SettingsScopeContext", () => ({
+  useSettingsScope: () => ({
+    scope: { kind: "all", environmentIds: [] },
+    search: {},
+    environment: null,
+    environments: [],
+    target: null,
+    connectedEnvironments: [],
+    targets: [],
+  }),
+  useOptionalSettingsScope: () => null,
 }));
 
 import { IntegrationsSettingsPanel } from "./IntegrationsSettings";

@@ -125,13 +125,13 @@ secrets:
 export const Website = Cloudflare.Website.Nextjs("Website", {
 +  env: {
 +    UPLOADS: Uploads,
-+    API_KEY: Config.redacted("API_KEY"),
++    API_KEY: Config.Redacted("API_KEY"),
 +  },
 });
 ```
 
 `Uploads` is a description, not a deploy — Alchemy provisions the
-real bucket because the Website binds it. `Config.redacted` reads
+real bucket because the Website binds it. `Config.Redacted` reads
 `API_KEY` from your environment at deploy time and binds it as a
 Worker secret — see [Secrets & env](/cloudflare/security/secrets-env).
 

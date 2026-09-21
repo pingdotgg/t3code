@@ -338,11 +338,6 @@ export function SnapShotSettings() {
     }
   };
 
-  const refreshSetup = useCallback(() => {
-    setSetupError(null);
-    return refreshState();
-  }, [refreshState]);
-
   const closeSetup = async (completed: boolean) => {
     if (!wizard || setupBusy) return;
     setSetupBusy(true);
@@ -612,7 +607,7 @@ export function SnapShotSettings() {
           onSaveShortcut={saveShortcut}
           onEnable={enableForSetup}
           onAction={setup}
-          onRefresh={refreshSetup}
+          onRefresh={refreshState}
           onClose={closeSetup}
           onLeaveStep={stopRecording}
         />

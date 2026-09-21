@@ -233,10 +233,13 @@ describe("Docker.Container", { concurrent: false }, () => {
   // Rewrite the container's persisted row into the wedged shape an
   // interrupted deploy leaves behind: `creating`, no attributes, and the
   // Output-valued `image` prop lost in the round-trip (#736).
-  const wedgeContainerRow = (stack: { readonly name: string }) =>
+  const wedgeContainerRow = (stack: {
+    readonly name: string;
+    readonly stage: string;
+  }) =>
     Effect.gen(function* () {
       const state = yield* yield* State;
-      const stage = "test"; // scratch stacks default to the "test" stage
+      const stage = stack.stage;
       const fqns = yield* state.list({ stack: stack.name, stage });
       const rows = yield* Effect.forEach(fqns, (fqn) =>
         state

@@ -2,21 +2,27 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
   DeviceId,
+  DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
   type DeviceServiceState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import { type DeviceService, makeWithHosts, stateStream } from "./DeviceService.ts";
+
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const baseState: DeviceServiceState = {
   hosts: [],
@@ -61,6 +67,9 @@ const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string,
   failListAfterShutdown = false,
+  runtimeFailure?: NodeRuntimeUnavailableError | DeviceHost.DeviceHostError,
+  inspectError = false,
+  installTool?: Parameters<typeof makeWithHosts>[3],
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -76,6 +85,17 @@ const fixture = Effect.fn("fixture")(function* (
     run: () => Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" }),
   };
   const host: DeviceHost.DeviceHost["Service"] = {
+    ...(inspectError
+      ? {
+          inspect: Effect.fail(
+            new DeviceHost.DeviceHostError({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              step: "probe",
+              cause: new Error("offline"),
+            }),
+          ),
+        }
+      : {}),
     id: LOCAL_DEVICE_HOST_ID,
     summary: Effect.succeed({
       id: LOCAL_DEVICE_HOST_ID,
@@ -88,12 +108,14 @@ const fixture = Effect.fn("fixture")(function* (
     platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
     ensureReady: (onPhase) =>
       Effect.gen(function* () {
+        if (runtimeFailure) return yield* runtimeFailure;
         starts.push("start");
-        yield* onPhase("starting");
+        yield* onPhase("installing", "Updating device hub from 0.9.0 to 0.10.1…");
         return ready;
       }),
     ensureAgentReady: (onPhase) =>
       Effect.gen(function* () {
+        if (runtimeFailure) return yield* runtimeFailure;
         agentStarts.push("start");
         yield* onPhase("starting");
         return {
@@ -109,7 +131,12 @@ const fixture = Effect.fn("fixture")(function* (
       starts.push("stop");
     }),
   };
-  const service = yield* makeWithHosts(new Map([[host.id, host]])).pipe(
+  const service = yield* makeWithHosts(
+    new Map([[host.id, host]]),
+    undefined,
+    undefined,
+    installTool,
+  ).pipe(
     Effect.provideService(DeviceHost.DeviceHost, host),
     Effect.provideService(
       ServerSettingsService,
@@ -188,6 +215,43 @@ const fixture = Effect.fn("fixture")(function* (
 });
 
 describe("device setup consent", () => {
+  it.effect(
+    "preserves missing-runtime guidance and causes through manual and agent readiness",
+    () =>
+      Effect.gen(function* () {
+        const underlying = new Error("private lookup diagnostics");
+        const runtimeFailure = new NodeRuntimeUnavailableError({
+          feature: "Local device support",
+          cause: underlying,
+        });
+        const { service, settings, requests } = yield* fixture(
+          Effect.void,
+          undefined,
+          false,
+          runtimeFailure,
+        );
+        yield* Ref.update(settings, (current) => ({
+          ...current,
+          enableDeviceSupport: true,
+          enableAgentDeviceAccess: true,
+        }));
+        for (const readiness of [service.readiness(), service.agentReadinessIfSupported()]) {
+          const error = yield* readiness.pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "DeviceHostUnavailableError",
+            reason: expect.stringContaining("Install Node.js"),
+            cause: runtimeFailure,
+          });
+          expect(error.message).not.toContain(underlying.message);
+        }
+        expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toMatchObject({
+          status: "failed",
+          detail: expect.stringContaining("Install Node.js"),
+        });
+        expect(requests).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("listing and provider startup do not start helpers before consent", () =>
     Effect.gen(function* () {
       const { service, starts, requests } = yield* fixture();
@@ -335,5 +399,335 @@ it.effect("keeps shutdown successful when subsequent discovery fails", () =>
     const state = yield* service.state;
     expect(state.sessions).toEqual([]);
     expect(state.devices.find((device) => device.id === session.deviceId)?.booted).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each(["shutdown", "close"] as const)(
+  "%s releases iOS capture so reopening uses a fresh session",
+  (operation) =>
+    Effect.gen(function* () {
+      const deviceId = DeviceId.make("11111111-1111-1111-1111-111111111111");
+      const threadId = ThreadId.make("capture-recovery");
+      let booted = true;
+      let capture: number | null = null;
+      let generation = 0;
+      const ready: DeviceHost.DeviceHostReady = {
+        nodePath: process.execPath,
+        hub: { origin: "http://device.test" },
+        helpers: { serveSimAxSettings: null, serveSimCli: null },
+        run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+      };
+      const host: DeviceHost.DeviceHost["Service"] = {
+        id: LOCAL_DEVICE_HOST_ID,
+        summary: Effect.succeed({
+          id: LOCAL_DEVICE_HOST_ID,
+          kind: "local",
+          label: "Simulator host",
+          platforms: [{ platform: "ios", available: true }],
+          hubInstalled: true,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+        ensureReady: () => Effect.succeed(ready),
+        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+        current: Effect.succeed(ready),
+        stopAgent: Effect.void,
+        stop: Effect.void,
+      };
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const path = new URL(request.url).pathname;
+          if (path === "/api/devices") {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                emulators: [],
+                simulators: [
+                  {
+                    id: deviceId,
+                    name: "iPhone",
+                    platform: "ios",
+                    version: "26",
+                    physical: false,
+                    booted,
+                  },
+                ],
+              }),
+            );
+          }
+          if (path === "/vendor/serve-sim/grid/api/start") capture ??= ++generation;
+          else if (path === "/vendor/serve-sim/grid/api/shutdown") {
+            if (request.body._tag !== "Uint8Array") throw new Error("Missing shutdown body");
+            expect(decodeJson(new TextDecoder().decode(request.body.body))).toEqual({
+              udid: deviceId,
+            });
+            capture = null;
+            booted = false;
+          } else if (path === "/api/devices/shutdown") {
+            // This route powers off without releasing serve-sim's cached capture.
+            booted = false;
+          } else if (path === "/api/devices/boot") booted = true;
+          else throw new Error(`Unexpected hub path: ${path}`);
+          return HttpClientResponse.fromWeb(request, Response.json({ ok: true, id: deviceId }));
+        }),
+      );
+      const service = yield* makeWithHosts(new Map([[host.id, host]])).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+      );
+      const input = { threadId, deviceId, platform: "ios" as const };
+      yield* service.open(input);
+      expect(capture).toBe(1);
+      if (operation === "shutdown") yield* service.shutdown(input);
+      else yield* service.close({ threadId, deviceId, shutdown: true });
+      expect(capture).toBeNull();
+      expect((yield* service.state).sessions).toEqual([]);
+      yield* service.open(input);
+      expect(capture).toBe(2);
+      expect((yield* service.state).sessions).toHaveLength(1);
+    }).pipe(
+      Effect.provide(ServerSettingsService.layerTest({ enableDeviceSupport: true })),
+      Effect.scoped,
+    ),
+);
+
+it.effect.each([
+  { hubReports: "off", outcome: "succeeds" },
+  { hubReports: "booted", outcome: "fails" },
+  { hubReports: "missing", outcome: "fails" },
+] as const)(
+  "iOS shutdown $outcome when serve-sim rejects it and the hub reports the simulator $hubReports",
+  ({ hubReports, outcome }) =>
+    Effect.gen(function* () {
+      const deviceId = DeviceId.make("22222222-2222-2222-2222-222222222222");
+      const paths: string[] = [];
+      // The device list is stale until shutdown re-reads it from the hub.
+      let listed: "booted" | "off" | "missing" = "booted";
+      const ready: DeviceHost.DeviceHostReady = {
+        nodePath: process.execPath,
+        hub: { origin: "http://device.test" },
+        helpers: { serveSimAxSettings: null, serveSimCli: null },
+        run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+      };
+      const host: DeviceHost.DeviceHost["Service"] = {
+        id: LOCAL_DEVICE_HOST_ID,
+        summary: Effect.succeed({
+          id: LOCAL_DEVICE_HOST_ID,
+          kind: "local",
+          label: "Simulator host",
+          platforms: [{ platform: "ios", available: true }],
+          hubInstalled: true,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+        ensureReady: () => Effect.succeed(ready),
+        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+        current: Effect.succeed(ready),
+        stopAgent: Effect.void,
+        stop: Effect.void,
+      };
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const path = new URL(request.url).pathname;
+          paths.push(path);
+          if (path === "/api/devices") {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                emulators: [],
+                simulators:
+                  listed === "missing"
+                    ? []
+                    : [
+                        {
+                          id: deviceId,
+                          name: "iPhone",
+                          platform: "ios",
+                          version: "26",
+                          physical: false,
+                          booted: listed === "booted",
+                        },
+                      ],
+                // A partial listing still decodes; it must not read as "off".
+                errors: listed === "missing" ? [{ message: "simctl list failed" }] : [],
+              }),
+            );
+          }
+          if (path === "/vendor/serve-sim/grid/api/shutdown") {
+            // serve-sim runs `simctl shutdown` bare and returns its failure as-is.
+            listed = hubReports;
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                { ok: false, error: "Unable to shutdown device in current state: Shutdown" },
+                { status: 500 },
+              ),
+            );
+          }
+          throw new Error(`Unexpected hub path: ${path}`);
+        }),
+      );
+      const service = yield* makeWithHosts(new Map([[host.id, host]])).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+      );
+      yield* service.list;
+      const exit = yield* Effect.exit(service.shutdown({ deviceId, platform: "ios" }));
+      expect(paths.filter((path) => path.endsWith("shutdown"))).toEqual([
+        "/vendor/serve-sim/grid/api/shutdown",
+      ]);
+      if (outcome === "succeeds") {
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(
+          (yield* service.state).devices.find((device) => device.id === deviceId)?.booted,
+        ).toBe(false);
+      } else {
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(
+          (yield* service.state).devices.find((device) => device.id === deviceId)?.booted,
+        ).toBe(true);
+      }
+    }).pipe(
+      Effect.provide(ServerSettingsService.layerTest({ enableDeviceSupport: true })),
+      Effect.scoped,
+    ),
+);
+
+it.effect("retry keeps device and agent consent unchanged", () =>
+  Effect.gen(function* () {
+    const { service, starts, agentStarts } = yield* fixture();
+    yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(starts).toEqual([]);
+    expect(agentStarts).toEqual([]);
+    yield* service.configure({ enabled: true });
+    yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(agentStarts).toEqual([]);
+    yield* service.configure({ agentAccessEnabled: true });
+    const before = agentStarts.length;
+    yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(agentStarts.length).toBe(before + 1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("publishes update detail for the correct host", () =>
+  Effect.gen(function* () {
+    const { service } = yield* fixture();
+    const changes = yield* service.subscribe;
+    yield* service.configure({ enabled: true });
+    const states = yield* PubSub.takeAll(changes);
+    expect(
+      states.some(
+        (state) => state.hostStatuses.local?.detail === "Updating device hub from 0.9.0 to 0.10.1…",
+      ),
+    ).toBe(true);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("host retry exposes actionable failure without internal IDs or diagnostics", () =>
+  Effect.gen(function* () {
+    const { service, settings } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      new DeviceHost.DeviceHostError({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        step: "probe",
+        cause: "private diagnostics",
+      }),
+    );
+    yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+    const state = yield* service.retryHost(LOCAL_DEVICE_HOST_ID);
+    expect(state.supportsHostRetry).toBe(true);
+    expect(state.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+      status: "failed",
+      detail: "Could not connect to this host over SSH.",
+    });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("version discovery does not grant consent or start device tools", () =>
+  Effect.gen(function* () {
+    const { service, starts, agentStarts, requests } = yield* fixture();
+    const state = yield* service.inspect;
+    expect(state.supportsToolInspection).toBe(true);
+    expect(state.hostStatus).toBe("disabled");
+    expect(state.hosts).toHaveLength(1);
+    expect(starts).toEqual([]);
+    expect(agentStarts).toEqual([]);
+    expect(requests).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("failed read-only discovery preserves lifecycle status and installed inventory", () =>
+  Effect.gen(function* () {
+    const { service, starts } = yield* fixture(Effect.void, undefined, false, undefined, true);
+    const state = yield* service.inspect;
+    expect(state.supportsToolInspection).toBe(true);
+    expect(state.hostStatus).toBe("disabled");
+    expect(state.hosts[0]?.hubInstalled).toBe(true);
+    expect(state.hosts[0]?.toolInspectionError).toContain("Reconnect the host");
+    expect(starts).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "manual updates install only the selected tool without enabling access or starting helpers",
+  () =>
+    Effect.gen(function* () {
+      const installed: string[] = [];
+      const { service, starts, agentStarts, requests } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        (tool) =>
+          Effect.sync(() => {
+            installed.push(tool);
+          }),
+      );
+      const before = yield* service.state;
+      const state = yield* service.updateTool("agent");
+      expect(installed).toEqual(["agent"]);
+      expect(state.supportsToolUpdate).toBe(true);
+      expect(state.hostStatus).toBe(before.hostStatus);
+      expect(state.agentAccessEnabled).toBe(before.agentAccessEnabled);
+      expect(state.revision).toBeGreaterThan(before.revision);
+      expect(starts).toEqual([]);
+      expect(agentStarts).toEqual([]);
+      expect(requests).toEqual([]);
+      yield* service.updateTool("hub");
+      expect(installed).toEqual(["agent", "hub"]);
+    }).pipe(Effect.scoped),
+);
+
+it.effect("failed manual installation leaves lifecycle state unchanged and can be retried", () =>
+  Effect.gen(function* () {
+    let attempts = 0;
+    const { service, starts, agentStarts } = yield* fixture(
+      Effect.void,
+      undefined,
+      false,
+      undefined,
+      false,
+      () =>
+        Effect.suspend(() =>
+          ++attempts === 1
+            ? Effect.fail(
+                new DeviceOperationError({
+                  operation: "update device tool",
+                  reason: "command_failed",
+                  cause: new Error("offline"),
+                }),
+              )
+            : Effect.void,
+        ),
+    );
+    const before = yield* service.state;
+    const result = yield* service.updateTool("agent").pipe(Effect.result);
+    expect(result._tag).toBe("Failure");
+    expect(yield* service.state).toEqual(before);
+    yield* service.updateTool("agent");
+    expect(attempts).toBe(2);
+    expect(starts).toEqual([]);
+    expect(agentStarts).toEqual([]);
   }).pipe(Effect.scoped),
 );

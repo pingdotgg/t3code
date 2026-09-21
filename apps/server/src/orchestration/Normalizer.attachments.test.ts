@@ -9,9 +9,11 @@ import {
   CommandId,
   ApprovalRequestId,
   MessageId,
+  type OrchestrationMessageContext,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
@@ -31,8 +33,9 @@ function turnStartCommand(input: {
   readonly threadId?: string;
   readonly attachments: ReadonlyArray<
     | { readonly id: string; readonly sizeBytes: number }
-    | { readonly dataUrl: string; readonly sizeBytes: number }
+    | { readonly dataUrl: string; readonly sizeBytes: number; readonly id?: string }
   >;
+  readonly context?: OrchestrationMessageContext;
 }): ClientOrchestrationCommand {
   return {
     type: "thread.turn.start",
@@ -48,6 +51,7 @@ function turnStartCommand(input: {
         mimeType: "image/png",
         ...attachment,
       })),
+      ...(input.context !== undefined ? { context: input.context } : {}),
     },
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -56,6 +60,115 @@ function turnStartCommand(input: {
 }
 
 describe("normalizeDispatchCommand attachments", () => {
+  it.effect("accepts 100 inline images and rejects 101 before writing files", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const attachments = Array.from({ length: 100 }, () => ({
+        dataUrl: "data:image/png;base64,cGl4ZWxz",
+        sizeBytes: 6,
+      }));
+      const rejected = yield* normalizeDispatchCommand(
+        turnStartCommand({ attachments: [...attachments, attachments[0]!] }),
+      ).pipe(Effect.flip);
+      expect(rejected.message).toContain("up to 100");
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+      const accepted = yield* normalizeDispatchCommand(turnStartCommand({ attachments }));
+      if (accepted.type !== "thread.turn.start") throw new Error("Wrong command");
+      expect(accepted.message.attachments).toHaveLength(100);
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toHaveLength(100);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects decoded image overflow before writing it and removes earlier files", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      let writtenBytes = 0;
+      const dataUrl = `data:image/png;base64,${Buffer.alloc(10 * 1024 * 1024).toString("base64")}`;
+      const command = turnStartCommand({
+        attachments: [
+          ...Array.from({ length: 8 }, () => ({ dataUrl, sizeBytes: 1 })),
+          { dataUrl: "data:image/png;base64,YQ==", sizeBytes: 0 },
+        ],
+      });
+      const error = yield* normalizeDispatchCommand(command).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          writeFile: (path, data, options) => {
+            writtenBytes += data.byteLength;
+            return fileSystem.writeFile(path, data, options);
+          },
+        }),
+        Effect.flip,
+      );
+      expect(error.message).toContain("80 MiB");
+      expect(writtenBytes).toBe(80 * 1024 * 1024);
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rejects duplicate client ids before persisting attachments", () =>
+    Effect.gen(function* () {
+      const error = yield* normalizeDispatchCommand(
+        turnStartCommand({
+          attachments: [
+            { id: "same", dataUrl: "data:image/png;base64,cGl4ZWxz", sizeBytes: 6 },
+            { id: "same", dataUrl: "data:image/png;base64,b3RoZXI=", sizeBytes: 5 },
+          ],
+        }),
+      ).pipe(Effect.flip);
+      expect(error.message).toContain("duplicate attachment id");
+      const config = yield* ServerConfig.ServerConfig;
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("rebinds image context records from the client id to the persisted id", () =>
+    Effect.gen(function* () {
+      const normalized = yield* normalizeDispatchCommand(
+        turnStartCommand({
+          attachments: [
+            { id: "local-image-1", dataUrl: "data:image/png;base64,cGl4ZWxz", sizeBytes: 6 },
+          ],
+          context: {
+            version: 1,
+            records: [
+              {
+                version: 1,
+                contextId: "local-image-1" as never,
+                kind: "image",
+                label: "screenshot.png",
+                attachmentId: "local-image-1",
+                name: "screenshot.png",
+                mimeType: "image/png",
+                sizeBytes: 6,
+              },
+              {
+                version: 1,
+                contextId: "ctx-skill" as never,
+                kind: "skill",
+                label: "$review",
+                name: "review",
+              },
+            ],
+          },
+        }),
+      );
+      if (normalized.type !== "thread.turn.start") {
+        throw new Error("Expected a thread.turn.start command.");
+      }
+      const persistedId = normalized.message.attachments[0]!.id;
+      expect(persistedId.startsWith("thread-1-")).toBe(true);
+      const records = normalized.message.context?.records ?? [];
+      expect(records[0]).toMatchObject({
+        kind: "image",
+        contextId: "local-image-1",
+        attachmentId: persistedId,
+      });
+      expect(records[1]).toMatchObject({ kind: "skill", name: "review" });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("preserves inline image attachments from existing mobile clients", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
@@ -86,6 +199,21 @@ describe("normalizeDispatchCommand attachments", () => {
       const normalized = yield* normalizeDispatchCommand(
         turnStartCommand({
           attachments: [{ id: `pending-${attachmentUuid}`, sizeBytes: bytes.byteLength }],
+          context: {
+            version: 1,
+            records: [
+              {
+                version: 1,
+                contextId: "ctx_pending" as never,
+                kind: "image",
+                label: "upload.png",
+                attachmentId: `pending-${attachmentUuid}`,
+                name: "upload.png",
+                mimeType: "image/png",
+                sizeBytes: bytes.byteLength,
+              },
+            ],
+          },
         }),
       );
       if (normalized.type !== "thread.turn.start") {
@@ -95,6 +223,7 @@ describe("normalizeDispatchCommand attachments", () => {
       const attachmentId = normalized.message.attachments[0]!.id;
       expect(attachmentId.startsWith("thread-1-")).toBe(true);
       expect(attachmentId).not.toBe(`thread-1-${attachmentUuid}`);
+      expect(normalized.message.context?.records[0]).toMatchObject({ attachmentId });
       expect(NodeFS.existsSync(pendingPath)).toBe(true);
       const claimedPngPath = NodePath.join(config.attachmentsDir, `${attachmentId}.png`);
       expect(NodeFS.existsSync(claimedPngPath)).toBe(true);
@@ -383,25 +512,25 @@ describe("question attachments", () => {
         answers: { first: "", second: "" },
         createdAt: "2026-08-01T00:00:00.000Z",
         attachmentsByQuestionId: {
-          first: Array.from({ length: 4 }, () => attachment),
-          second: Array.from({ length: 5 }, () => attachment),
+          first: Array.from({ length: 50 }, () => attachment),
+          second: Array.from({ length: 51 }, () => attachment),
         },
       };
       const failure = yield* normalizeDispatchCommand(command).pipe(Effect.flip);
-      expect(failure.message).toContain("up to 8");
+      expect(failure.message).toContain("up to 100");
       expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([`${id}.txt`]);
       const accepted = {
         ...command,
         attachmentsByQuestionId: {
           ...command.attachmentsByQuestionId,
-          second: Array.from({ length: 4 }, () => attachment),
+          second: Array.from({ length: 50 }, () => attachment),
         },
       };
       const normalized = yield* normalizeDispatchCommand(accepted);
       if (normalized.type !== "thread.user-input.respond") throw new Error("Wrong command");
       const attachments = Object.values(normalized.attachmentsByQuestionId!).flat();
-      expect(attachments).toHaveLength(8);
-      expect(new Set(attachments.map((item) => item.id)).size).toBe(8);
+      expect(attachments).toHaveLength(100);
+      expect(new Set(attachments.map((item) => item.id)).size).toBe(100);
       for (const item of attachments) {
         expect(item.name).toBe(attachment.name);
         expect(

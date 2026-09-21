@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vite-plus/test";
-import { BUILT_IN_THEME_IDS, BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
+import {
+  BUILT_IN_THEME_IDS,
+  BUILT_IN_THEMES,
+  T3_CHAT_THEME,
+  T3_CODE_LIGHT_THEME_COLORS,
+  T3_CODE_DARK_THEME_COLORS,
+  MOBILE_THEME_IDS,
+  getThemeColorsForAppearance,
+} from "@t3tools/shared/themePalettes";
 import { readDefaultMobileThemeVariables } from "./mobileTheme.test-support";
+import { getMobileThemeRuntimeVariables } from "./mobileThemeVariables";
 
 import {
   createMobileThemePairPatch,
   createMobileThemeSelectionPatch,
   createMobileThemeVariables,
   DEFAULT_MOBILE_THEME_ID,
+  flattenThemeColor,
   getMobileThemePreviewColors,
   getMobileThemeVariables,
   normalizeMobileThemeId,
@@ -49,7 +59,7 @@ function compositeOver(overlay: string, background: string): string {
 
 describe("mobile themes", () => {
   it("declares every runtime theme variable in the static stylesheet", () => {
-    const generatedVariables = createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light");
+    const generatedVariables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
     expect(Object.keys(readDefaultMobileThemeVariables("light")).sort()).toEqual(
       Object.keys(generatedVariables).sort(),
     );
@@ -66,12 +76,86 @@ describe("mobile themes", () => {
     }
   });
 
-  it("preserves the existing mobile palette as the default", () => {
-    expect(readDefaultMobileThemeVariables("light")["--color-screen"]).toBe("#f2f2f7");
-    expect(readDefaultMobileThemeVariables("dark")["--color-screen"]).toBe("#0a0a0a");
-    expect(readDefaultMobileThemeVariables("light")["--color-user-bubble-skill-foreground"]).toBe(
-      "#f0abfc",
-    );
+  it.each(MOBILE_THEME_IDS)("uses the web color roles for %s in both appearances", (themeId) => {
+    for (const appearance of ["light", "dark"] as const) {
+      const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
+      const colors = theme
+        ? getThemeColorsForAppearance(theme, appearance)!
+        : appearance === "dark"
+          ? T3_CODE_DARK_THEME_COLORS
+          : T3_CODE_LIGHT_THEME_COLORS;
+      const variables =
+        themeId === DEFAULT_MOBILE_THEME_ID
+          ? readDefaultMobileThemeVariables(appearance)
+          : getMobileThemeVariables(themeId, appearance);
+      expect(variables["--color-screen"]).toBe(themeColorToNativeColor(colors.canvas));
+      expect(variables["--color-thread-canvas"]).toBe(variables["--color-screen"]);
+      expect(variables["--color-drawer"]).toBe(themeColorToNativeColor(colors.sidebar));
+      expect(variables["--color-thread-hover"]).toBe(
+        themeColorToNativeColor(colors.sidebarRowHover),
+      );
+      expect(variables["--color-card"]).toBe(themeColorToNativeColor(colors.surface));
+      expect(variables["--color-composer-surface"]).toBe(
+        themeColorWithAlpha(
+          themeId === DEFAULT_MOBILE_THEME_ID
+            ? variables["--color-grouped-card"]
+            : themeColorToNativeColor(colors.surface),
+          appearance === "dark" ? 0.9 : 0.94,
+        ),
+      );
+      expect(variables["--color-thread-selected"]).toBe(
+        themeColorToNativeColor(colors.sidebarRowActive),
+      );
+      expect(variables["--color-thread-selected-foreground"]).toBe(
+        themeColorToNativeColor(colors.sidebarForeground),
+      );
+      expect(variables["--color-primary"]).toBe(themeColorToNativeColor(colors.messageAction));
+      if (themeId !== DEFAULT_MOBILE_THEME_ID) {
+        expect(variables["--color-user-bubble"]).toBe(
+          themeColorToNativeColor(colors.messageSurface),
+        );
+      }
+      expect(
+        contrastRatio(variables["--color-foreground"], variables["--color-screen"]),
+      ).toBeGreaterThanOrEqual(4.5);
+      for (const [foreground, surface] of [
+        ["--color-drawer-foreground", "--color-drawer"],
+        ["--color-drawer-foreground-muted", "--color-drawer"],
+        ["--color-drawer-foreground", "--color-thread-hover"],
+        ["--color-drawer-foreground-muted", "--color-thread-hover"],
+        ["--color-thread-selected-foreground-muted", "--color-thread-selected"],
+        ["--color-primary-foreground", "--color-primary"],
+        ["--color-primary-text", "--color-screen"],
+        ["--color-primary-text", "--color-card"],
+        ["--color-primary-text", "--color-card-alt"],
+        ["--color-primary-text", "--color-sheet-solid"],
+        ["--color-foreground", "--color-sheet-solid"],
+        ["--color-foreground-muted", "--color-sheet-solid"],
+        ["--color-primary-text", "--color-grouped-card"],
+        ["--color-foreground", "--color-grouped-card"],
+        ["--color-foreground-muted", "--color-grouped-card"],
+        ["--color-placeholder", "--color-grouped-card"],
+        ["--color-secondary-foreground", "--color-secondary"],
+        ["--color-user-bubble-foreground", "--color-user-bubble"],
+        ["--color-warning-foreground", "--color-warning"],
+        ["--color-danger-foreground", "--color-danger"],
+        ["--color-md-body", "--color-screen"],
+        ["--color-md-strong", "--color-screen"],
+        ["--color-md-link", "--color-screen"],
+        ["--color-md-code-text", "--color-md-code-bg"],
+      ] as const) {
+        expect(
+          contrastRatio(variables[foreground], variables[surface]),
+          `${appearance}: ${foreground} on ${surface}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(
+        contrastRatio(
+          variables["--color-thread-selected-foreground"],
+          variables["--color-thread-selected"],
+        ),
+      ).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it("applies palette overrides on top of the selected built-in theme", () => {
@@ -82,6 +166,62 @@ describe("mobile themes", () => {
     expect(variables["--color-primary"]).toBe("#123456");
     expect(variables["--color-screen"]).toMatch(/^#/);
   });
+
+  it.each(["light", "dark"] as const)(
+    "separates default settings groups from their %s background",
+    (appearance) => {
+      const variables = getMobileThemeVariables("t3-code", appearance);
+      expect(
+        contrastRatio(variables["--color-grouped-card"], variables["--color-sheet-solid"]),
+      ).toBeGreaterThanOrEqual(1.06);
+      expect(variables["--color-grouped-card"]).not.toBe(variables["--color-card"]);
+      for (const platform of ["ios", "android"]) {
+        const runtime = getMobileThemeRuntimeVariables("t3-code", appearance, platform);
+        const sidebar = flattenThemeColor(runtime["--color-drawer"], runtime["--color-screen"]);
+        const chrome = flattenThemeColor(
+          runtime[platform === "android" ? "--color-header" : "--color-drawer"],
+          runtime["--color-screen"],
+        );
+        expect(relativeLuminance(sidebar)).toBeLessThan(
+          relativeLuminance(runtime["--color-thread-canvas"]),
+        );
+        expect(contrastRatio(chrome, runtime["--color-screen"])).toBeGreaterThanOrEqual(1.06);
+        const foregroundRoles =
+          platform === "android"
+            ? (["--color-header-foreground", "--color-foreground-muted"] as const)
+            : (["--color-drawer-foreground", "--color-drawer-foreground-muted"] as const);
+        for (const role of foregroundRoles) {
+          expect(contrastRatio(runtime[role], chrome)).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    },
+  );
+
+  it.each(["light", "dark"] as const)(
+    "slightly strengthens default %s messages and separates fallback materials",
+    (appearance) => {
+      const variables = getMobileThemeVariables("t3-code", appearance);
+      const desktop =
+        appearance === "dark" ? T3_CODE_DARK_THEME_COLORS : T3_CODE_LIGHT_THEME_COLORS;
+      const bubbleContrast = contrastRatio(
+        variables["--color-user-bubble"],
+        variables["--color-screen"],
+      );
+      expect(bubbleContrast).toBeGreaterThan(contrastRatio(desktop.messageSurface, desktop.canvas));
+      expect(bubbleContrast).toBeLessThan(1.2);
+      for (const role of ["--color-composer-surface", "--color-glass-fallback"] as const) {
+        const surface = flattenThemeColor(variables[role], variables["--color-screen"]);
+        expect(contrastRatio(surface, variables["--color-screen"])).toBeGreaterThanOrEqual(1.06);
+        for (const foreground of [
+          "--color-foreground",
+          "--color-placeholder",
+          "--color-primary-text",
+        ] as const) {
+          expect(contrastRatio(variables[foreground], surface)).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    },
+  );
 
   it("uses the same preview roles and standard artwork as desktop", () => {
     expect(getMobileThemePreviewColors(DEFAULT_MOBILE_THEME_ID, "light")).toEqual({
@@ -152,16 +292,15 @@ describe("mobile themes", () => {
   });
 
   it("maps semantic palette roles onto every mobile color variable", () => {
-    const variables = createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light");
-    expect(Object.keys(variables)).toHaveLength(75);
+    const variables = createMobileThemeVariables(T3_CHAT_THEME.colors, "light");
     expect(variables["--color-sheet-solid"]).toBe(
-      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.chrome),
+      themeColorToNativeColor(T3_CHAT_THEME.colors.chrome),
     );
     expect(variables["--color-warning"]).toBe(
-      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.warningSurface),
+      themeColorToNativeColor(T3_CHAT_THEME.colors.warningSurface),
     );
     expect(variables["--color-warning-foreground"]).toBe(
-      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.warningForeground),
+      themeColorToNativeColor(T3_CHAT_THEME.colors.warningForeground),
     );
     expect(variables["--color-primary"]).not.toBe(variables["--color-screen"]);
     expect(variables["--color-primary-shadow"]).toBe("#000000");
@@ -217,5 +356,50 @@ describe("mobile themes", () => {
         ).toBeGreaterThanOrEqual(4.5);
       }
     }
+  });
+
+  it("keeps the default user bubble readable in both appearances", () => {
+    for (const appearance of ["light", "dark"] as const) {
+      const variables = readDefaultMobileThemeVariables(appearance);
+      const bubble = variables["--color-user-bubble"];
+      expect(
+        contrastRatio(variables["--color-user-bubble-foreground"], bubble),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(variables["--color-user-bubble-skill-foreground"], bubble),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(variables["--color-user-bubble-skill-foreground"]).not.toBe(
+        variables["--color-user-bubble-foreground"],
+      );
+      const fenceSurface = compositeOver(variables["--color-md-user-fence-bg"], bubble);
+      expect(fenceSurface).not.toBe(bubble);
+      expect(
+        contrastRatio(variables["--color-md-user-fence-text"], fenceSurface),
+      ).toBeGreaterThanOrEqual(4.5);
+      const codeSurface = compositeOver(variables["--color-md-user-code-bg"], bubble);
+      expect(
+        contrastRatio(variables["--color-md-user-code-text"], codeSurface),
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
+describe("flattenThemeColor", () => {
+  it("composites a translucent border over its surface", async () => {
+    const { flattenThemeColor } = await import("./mobileTheme");
+    // `--color-border` in the dark theme, over the surface a chip sits on. Native chip drawing
+    // parses opaque hex only, so this has to resolve before it crosses the bridge.
+    expect(flattenThemeColor("rgba(255, 255, 255, 0.06)", "#171717")).toBe("#252525");
+    expect(flattenThemeColor("rgba(0, 0, 0, 0.08)", "#ffffff")).toBe("#ebebeb");
+  });
+
+  it("leaves an already opaque colour alone", async () => {
+    const { flattenThemeColor } = await import("./mobileTheme");
+    expect(flattenThemeColor("#171717", "#ffffff")).toBe("#171717");
+  });
+
+  it("treats a colour with no alpha as fully opaque", async () => {
+    const { flattenThemeColor } = await import("./mobileTheme");
+    expect(flattenThemeColor("rgb(255, 0, 0)", "#000000")).toBe("#ff0000");
   });
 });
