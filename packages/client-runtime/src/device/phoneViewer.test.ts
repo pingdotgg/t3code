@@ -82,6 +82,7 @@ import { createPhoneViewer } from "./phoneViewer.ts";
 import { IOS_TABLET_SHAPE } from "./shapeProfile.ts";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   gpu.instances.length = 0;
   models.pending.length = 0;
@@ -90,6 +91,8 @@ afterEach(() => {
 function fixture() {
   const pending = new Map<number, FrameRequestCallback>();
   let id = 0;
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     pending.set(++id, callback);
     return id;
@@ -100,7 +103,8 @@ function fixture() {
   const onUnavailable = vi.fn();
   const onFramingAspect = vi.fn();
   const viewer = createPhoneViewer({ canvas, source, onUnavailable, onFramingAspect });
-  const draw = () => {
+  const draw = (time = now) => {
+    now = time;
     const callbacks = [...pending.values()];
     pending.clear();
     callbacks.forEach((callback) => callback(0));
@@ -121,7 +125,6 @@ function fixture() {
 it("retains the drawn phone until resize and redraw commit together, without replacing scene or pose", () => {
   const { viewer, draw, pending, source, state, onUnavailable } = fixture();
   viewer.orbit(0.08, 0.04);
-  viewer.zoomBy(0.2);
   draw();
   const previous = state.frames.at(-1)!;
   const allocations = state.allocations;
@@ -192,7 +195,6 @@ it("changes device shape without replacing the renderer, decoded source or pose"
 it("retains the loaded model and pose through rotation and framebuffer resolution changes, then releases it once", async () => {
   const { viewer, draw, source, state } = fixture();
   viewer.orbit(0.08, 0.04);
-  viewer.zoomBy(0.2);
   draw();
   const yaw = state.frames.at(-1)!.yaw;
   viewer.setModel({ id: "iphone-18-pro", url: "/pro.glb" });
@@ -301,5 +303,32 @@ it("rejects incompatible accessories and releases an accessory that finishes aft
   await Promise.resolve();
   expect(asset.parent).toBeNull();
   expect(dispose).toHaveBeenCalledOnce();
+  viewer.dispose();
+});
+
+it("springs an ordinary device back toward its screen, freezes captured input, and stops rendering at rest", () => {
+  const { viewer, draw, pending, state } = fixture();
+  const initialYaw = state.frames.at(-1)!.yaw!;
+  viewer.setInteractionActive(true, "orbit");
+  viewer.orbit(0.8, 0.4);
+  draw(80);
+  const dragged = state.frames.at(-1)!;
+  expect(Math.abs(dragged.yaw! - initialYaw)).toBeGreaterThan(0.05);
+  viewer.setInteractionActive(false, "orbit");
+  draw(160);
+  viewer.setInteractionActive(true, "touch");
+  draw(180);
+  const captured = state.frames.at(-1)!;
+  viewer.orbit(1, 1);
+  viewer.frameUpdated();
+  draw(1000);
+  expect(state.frames.at(-1)!.yaw).toBe(captured.yaw);
+  expect(state.frames.at(-1)!.cameraZ).toBe(captured.cameraZ);
+  expect(pending.size).toBe(0);
+  viewer.setInteractionActive(false, "touch");
+  for (let time = 1016; time <= 4000 && pending.size; time += 16) draw(time);
+  expect(pending.size).toBe(0);
+  expect(Math.abs(state.frames.at(-1)!.yaw!)).toBeLessThanOrEqual(Math.PI / 3 + 1e-6);
+  expect(state.frames.at(-1)!.phone).toBe(dragged.phone);
   viewer.dispose();
 });

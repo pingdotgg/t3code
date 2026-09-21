@@ -84,7 +84,8 @@ export function DevicePhoneViewport(props: {
           screenPoint: (point, captured) => viewer.screenPoint(point.x, point.y, captured),
           touch: (phase, point) => client.current?.sendTouch(phase, point.x, point.y),
           orbit: viewer.orbit,
-          zoomBy: viewer.zoomBy,
+          zoomBy: () => {},
+          onInteractionActive: viewer.setInteractionActive,
         });
         trackpad = bindPhoneTrackpad(canvas, interactionRef.current);
         resize();

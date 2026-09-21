@@ -1,5 +1,7 @@
-import { expect, it, vi } from "vite-plus/test";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 import { bindPhoneTrackpad } from "./phoneTrackpad";
+
+afterEach(() => vi.useRealTimers());
 
 class Canvas extends EventTarget {
   getBoundingClientRect() {
@@ -52,4 +54,29 @@ it("consumes Safari pinch without zooming the model and resumes orbit after canc
   canvas.dispatchEvent(wheel());
   expect(navigate).toHaveBeenCalledOnce();
   binding.dispose();
+});
+
+it("normalizes Chrome and Safari pinch, expires wheel sequences and cancels on detach", () => {
+  vi.useFakeTimers();
+  const canvas = new Canvas();
+  const pinch = { begin: vi.fn(() => true), move: vi.fn(), end: vi.fn() };
+  const navigate = vi.fn();
+  const binding = bindPhoneTrackpad(canvas, { navigate }, pinch);
+  canvas.dispatchEvent(wheel(true));
+  canvas.dispatchEvent(wheel(true));
+  expect(pinch.begin).toHaveBeenCalledOnce();
+  expect(pinch.move.mock.calls).toEqual([[0.2], [0.2]]);
+  vi.advanceTimersByTime(180);
+  expect(pinch.end).toHaveBeenCalledOnce();
+  canvas.dispatchEvent(gesture("gesturestart", 1));
+  canvas.dispatchEvent(gesture("gesturechange", 1.2));
+  expect(pinch.move).toHaveBeenLastCalledWith(Math.log(1.2));
+  canvas.dispatchEvent(wheel(true));
+  expect(pinch.move).toHaveBeenCalledTimes(3);
+  binding.dispose();
+  const count = pinch.move.mock.calls.length;
+  vi.advanceTimersByTime(500);
+  canvas.dispatchEvent(wheel(true));
+  expect(pinch.move).toHaveBeenCalledTimes(count);
+  expect(navigate).not.toHaveBeenCalled();
 });

@@ -36,6 +36,7 @@ export function createPhoneInteraction(options: {
   readonly touch: (phase: "begin" | "move" | "end", point: Point) => void;
   readonly orbit: (deltaX: number, deltaY: number) => void;
   readonly zoomBy: (logDelta: number) => void;
+  readonly onInteractionActive?: (active: boolean, mode: "touch" | "orbit") => void;
 }) {
   let active: { id: number; mode: "touch" | "orbit"; last: Point; screen: Point | null } | null =
     null;
@@ -51,6 +52,7 @@ export function createPhoneInteraction(options: {
       if (active) return false;
       const screen = forceOrbit ? null : options.screenPoint(point, false);
       active = { id, mode: screen ? "touch" : "orbit", last: point, screen };
+      options.onInteractionActive?.(true, active.mode);
       if (screen) options.touch("begin", screen);
       return true;
     },
@@ -72,6 +74,7 @@ export function createPhoneInteraction(options: {
       const previous = active;
       active = null;
       if (previous.mode === "touch" && previous.screen) options.touch("end", previous.screen);
+      options.onInteractionActive?.(false, previous.mode);
     },
   };
 }

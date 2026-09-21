@@ -6,6 +6,8 @@ import {
   LinearFilter,
   Matrix4,
   PerspectiveCamera,
+  Euler,
+  Quaternion,
   Scene,
   SRGBColorSpace,
   Vector3,
@@ -19,7 +21,9 @@ import {
 import { createImportedPhoneScene, loadDeviceModel } from "./modelScene.ts";
 import { createPhoneScene, phoneDisplayLayout } from "./phoneScene.ts";
 import { createRenderScheduler } from "./renderScheduler.ts";
-import { createPhonePose } from "./phonePose.ts";
+import { createDeviceMotion } from "./deviceMotion.ts";
+import { createDeviceFraming } from "./deviceFraming.ts";
+import { nearestDeviceView } from "./deviceViewSnap.ts";
 import type { DeviceScreenSize } from "./stream.ts";
 import { IOS_PHONE_SHAPE, type DeviceShapeProfile } from "./shapeProfile.ts";
 
@@ -35,7 +39,7 @@ export interface PhoneViewer {
     captured?: boolean,
   ) => { x: number; y: number } | null;
   readonly orbit: (deltaX: number, deltaY: number) => void;
-  readonly zoomBy: (logDelta: number) => void;
+  readonly setInteractionActive: (active: boolean, mode: "touch" | "orbit") => void;
   readonly resetPose: () => void;
   readonly dispose: () => void;
 }
@@ -91,12 +95,21 @@ export function createPhoneViewer(options: {
   let phone = createPhoneScene(texture, layout, profile);
   scene.add(phone.root);
   let disposed = false;
-  const pose = createPhonePose();
+  const rest = new Quaternion().setFromEuler(new Euler(0.035, -0.12, 0, "YXZ"));
+  const motion = createDeviceMotion({
+    choose: (rotation) =>
+      nearestDeviceView(rotation, [{ rotation: new Quaternion(), yawLimit: Math.PI / 3 }])!
+        .rotation,
+  });
+  motion.setPose(rest, performance.now(), true);
+  const framing = createDeviceFraming();
+  const reducedMotion = () =>
+    globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   let viewport = { width: 0, height: 0, pixelRatio: 1 };
   let drawingBuffer = { width: 0, height: 0, pixelRatio: 0 };
 
   let framingAspect: number | null = null;
-  const fit = () => {
+  const fit = (immediate = false) => {
     if (!viewport.width || !viewport.height) return;
     camera.aspect = viewport.width / viewport.height;
     const bounds = new Box3(
@@ -111,21 +124,23 @@ export function createPhoneViewer(options: {
       framingAspect = aspect;
       options.onFramingAspect?.(aspect);
     }
-    const center = bounds.getCenter(new Vector3());
-    // Center the whole assembly without moving the device's canonical screen or its input plane.
-    center.applyMatrix4(new Matrix4().makeRotationFromEuler(phone.root.rotation));
-    const tangent = Math.tan((camera.fov * Math.PI) / 360);
-    const distance =
-      (Math.max(size.y / (2 * tangent), size.x / (2 * tangent * camera.aspect)) * 1.22 +
-        size.z / 2 +
-        0.18) /
-      pose.zoom;
-    camera.position.set(center.x, center.y, center.z + distance);
-    camera.lookAt(center);
+    phone.root.updateMatrixWorld(true);
+    framing.setBounds(
+      new Box3().setFromObject(phone.root),
+      (camera.fov * Math.PI) / 360,
+      camera.aspect,
+      performance.now(),
+      immediate,
+    );
+    applyCamera();
+  };
+  const applyCamera = () => {
+    camera.position.set(framing.center.x, framing.center.y, framing.distance());
+    camera.lookAt(framing.center.x, framing.center.y, 0);
     camera.updateProjectionMatrix();
   };
   const applyPose = () => {
-    phone.root.rotation.set(pose.pitch, pose.yaw, 0, "YXZ");
+    phone.root.quaternion.copy(motion.rotation);
     phone.orientation.rotation.z = layout.rotation;
   };
   const scheduler = createRenderScheduler(() => {
@@ -141,8 +156,15 @@ export function createPhoneViewer(options: {
         renderer.setDrawingBufferSize(viewport.width, viewport.height, viewport.pixelRatio);
         drawingBuffer = viewport;
       }
-      applyPose();
+      const now = performance.now();
+      if (motion.advance(now, reducedMotion())) {
+        applyPose();
+        fit(reducedMotion());
+      }
+      framing.advance(now, reducedMotion());
+      applyCamera();
       renderer.render(scene, camera);
+      if (motion.needsFrame() || framing.needsFrame()) scheduler.invalidate();
     } catch {
       options.onUnavailable();
     }
@@ -177,7 +199,8 @@ export function createPhoneViewer(options: {
       }
       layout = next;
       profile = nextProfile;
-      fit();
+      applyPose();
+      fit(true);
     }
     applyPose();
   };
@@ -202,7 +225,7 @@ export function createPhoneViewer(options: {
         else accessory.asset.removeFromParent();
       }
       applyPose();
-      fit();
+      fit(true);
       scheduler.invalidate();
     },
   });
@@ -222,7 +245,7 @@ export function createPhoneViewer(options: {
       accessoryBounds = bounds;
       if (disposed) return;
       if (imported && accessory) phone.orientation.add(accessory.asset);
-      fit();
+      fit(true);
       scheduler.invalidate();
     },
   });
@@ -264,7 +287,7 @@ export function createPhoneViewer(options: {
       if (viewport.width === width && viewport.height === height && viewport.pixelRatio === ratio)
         return;
       viewport = { width, height, pixelRatio: ratio };
-      fit();
+      fit(true);
       scheduler.invalidate();
     },
     screenPoint(x, y, captured = false) {
@@ -274,24 +297,22 @@ export function createPhoneViewer(options: {
     },
     orbit(deltaX, deltaY) {
       if (disposed) return;
-      pose.orbit(deltaX, deltaY);
-      if (accessory) {
-        applyPose();
-        fit();
-      }
+      motion.orbit(deltaX * viewport.width, deltaY * viewport.height, performance.now());
       scheduler.invalidate();
     },
-    zoomBy(logDelta) {
+    setInteractionActive(active, mode) {
       if (disposed) return;
-      pose.zoomBy(logDelta);
-      fit();
+      const now = performance.now();
+      if (mode === "orbit") motion.dragActive(active, now);
+      else {
+        motion.hold(active, now);
+        framing.hold(active, now);
+      }
       scheduler.invalidate();
     },
     resetPose() {
       if (disposed) return;
-      pose.reset();
-      applyPose();
-      fit();
+      motion.reset(rest, performance.now());
       scheduler.invalidate();
     },
     dispose() {
