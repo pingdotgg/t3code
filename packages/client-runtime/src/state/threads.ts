@@ -644,7 +644,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         return value;
       }
       const loaded = value.data.value;
-      const older = snapshot.thread;
+      const older = withoutEmptyCommandInteractionUpdates(snapshot.thread);
       const mergeById = <T extends { readonly id: string }>(
         olderRows: ReadonlyArray<T>,
         loadedRows: ReadonlyArray<T>,

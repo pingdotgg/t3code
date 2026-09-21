@@ -2257,7 +2257,6 @@ const makeWsRpcLayer = (
                     const catchUpEvents = yield* orchestrationEngine
                       .readThreadEvents({ ...range, limit: THREAD_RESUME_MAX_EVENTS })
                       .pipe(
-                        Stream.filter(isThisThreadDetailEvent),
                         Stream.runCollect,
                         Effect.mapError(
                           (cause) =>
@@ -2267,18 +2266,21 @@ const makeWsRpcLayer = (
                             }),
                         ),
                       );
+                    const detailCatchUpEvents = catchUpEvents.filter(isThisThreadDetailEvent);
                     const isEmptyCommandInteractionEvent = (event: OrchestrationEvent) =>
                       event.type === "thread.activity-appended" &&
                       isEmptyCommandInteractionUpdate(event.payload.activity);
-                    const hasEmptyCommandInteractionUpdate = catchUpEvents.some(
+                    const hasEmptyCommandInteractionUpdate = detailCatchUpEvents.some(
                       isEmptyCommandInteractionEvent,
                     );
                     if (!hasEmptyCommandInteractionUpdate) {
-                      return replayEvents(catchUpEvents);
+                      return replayEvents(detailCatchUpEvents);
                     }
                     if (catchUpEvents.some((event) => event.type === "thread.deleted")) {
                       replayOnMissingSnapshot = replayEvents(
-                        catchUpEvents.filter((event) => !isEmptyCommandInteractionEvent(event)),
+                        detailCatchUpEvents.filter(
+                          (event) => !isEmptyCommandInteractionEvent(event),
+                        ),
                       );
                     }
                   }
