@@ -693,6 +693,10 @@ function DeviceIntegrationControls({
         description={deviceHubDescription}
         control={
           <>
+            <DeviceToolVersions
+              kind="hub"
+              tools={state.hosts.find((host) => host.kind === "local")?.tools}
+            />
             {pending === "hub" ? <DeviceHubSetupStatus state={state} pending compact /> : null}
             <ScopedSwitch
               settingKeys={["enableDeviceSupport"]}
@@ -752,6 +756,10 @@ function DeviceIntegrationControls({
         description={agentDeviceDescription}
         control={
           <>
+            <DeviceToolVersions
+              kind="agent"
+              tools={state.hosts.find((host) => host.kind === "local")?.tools}
+            />
             {pending === "agent" ? <AgentDeviceSetupStatus state={state} pending compact /> : null}
             <ScopedSwitch
               settingKeys={["enableAgentDeviceAccess"]}
@@ -776,13 +784,6 @@ function DeviceIntegrationControls({
           {state.hostStatusDetail}
         </p>
       ) : null}
-      <SettingsRow
-        title="Device tool versions"
-        description="Versions required by this environment's server."
-        control={
-          <DeviceToolVersions tools={state.hosts.find((host) => host.kind === "local")?.tools} />
-        }
-      />
       <DeviceHostsSettings environmentId={environmentId} />
     </>
   );
