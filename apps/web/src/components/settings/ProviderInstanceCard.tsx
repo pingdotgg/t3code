@@ -1051,26 +1051,23 @@ export function ProviderInstanceCard({
                 onRemove={removeEnvironmentField}
               />
             ))}
-            {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
-              <AcpSessionManagementSection
-                environmentId={environmentId}
-                instanceId={instanceId}
-                provider={liveProvider}
-                projects={acpProjects}
-                readOnly={readOnly}
-              />
-            ) : null}
           </div>
         ) : null}
-        <SettingsRow
-          title="Variables"
-          description="API keys, base URLs, and other per-instance CLI settings."
-        >
-          <ProviderEnvironmentSection
-            environment={genericEnvironment}
-            onChange={updateGenericEnvironment}
-          />
-        </SettingsRow>
+        <ProviderEnvironmentSection
+          environment={genericEnvironment}
+          onChange={updateGenericEnvironment}
+        />
+        {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
+          <div className="px-3 py-3 sm:px-4">
+            <AcpSessionManagementSection
+              environmentId={environmentId}
+              instanceId={instanceId}
+              provider={liveProvider}
+              projects={acpProjects}
+              readOnly={readOnly}
+            />
+          </div>
+        ) : null}
       </SettingsSection>
 
       {driverOption !== undefined ? (

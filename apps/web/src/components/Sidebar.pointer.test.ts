@@ -139,6 +139,24 @@ describe("sidebar pointer lifecycle", () => {
     expect(inside.onCancel).not.toHaveBeenCalled();
   });
 
+  it("resumes reordering when a context drag returns to the sidebar", () => {
+    const drag = gesture({
+      onMove: (point) => point.x > 50,
+      onDrop: (point) => point.x > 50,
+    });
+    document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
+    document.dispatchEvent(pointer("pointermove", { clientX: 30, clientY: 30 }));
+    document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 100 }));
+    document.dispatchEvent(pointer("pointermove", { clientX: 90, clientY: 200 }));
+    expect(drag.onMove).toHaveBeenCalledExactlyOnceWith({ x: 30, y: 30 });
+
+    document.dispatchEvent(pointer("pointermove", { clientX: 30, clientY: 60 }));
+    expect(drag.onMove).toHaveBeenLastCalledWith({ x: 30, y: 60 });
+    document.dispatchEvent(pointer("pointerup", { buttons: 0, clientX: 30, clientY: 60 }));
+    expect(drag.onEnd).toHaveBeenCalledOnce();
+    expect(drag.onCancel).not.toHaveBeenCalled();
+  });
+
   it("suppresses a delayed release click after cancellation, then accepts the next click", () => {
     const drag = gesture();
     document.dispatchEvent(pointer("pointermove", { clientY: 20 }));

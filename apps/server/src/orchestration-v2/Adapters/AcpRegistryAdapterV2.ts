@@ -9,9 +9,11 @@ import {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -55,6 +57,7 @@ export interface AcpRegistryAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly crypto: Crypto.Crypto;
+  readonly selfInvocation: SelfInvocation;
   readonly fileSystem: FileSystem.FileSystem;
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly resolver: Pick<AcpRegistryCatalog["Service"], "resolve">;
@@ -169,6 +172,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
     fileSystem: options.fileSystem,
     idAllocator: options.idAllocator,
     serverConfig: options.serverConfig,
+    selfInvocation: options.selfInvocation,
     clientTerminals: {
       childProcessSpawner: options.childProcessSpawner,
       environment: options.environment,
@@ -184,6 +188,7 @@ export type AcpRegistryAdapterV2DriverEnv =
   | FileSystem.FileSystem
   | AcpRegistryCatalog
   | IdAllocatorV2
+  | Path.Path
   | ProviderEventLoggers
   | ServerConfig;
 
@@ -197,6 +202,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
   create: Effect.fn("AcpRegistryAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>) {
       const hostEnvironment = yield* HostProcessEnvironment;
+      const selfInvocation = yield* resolveSelfInvocation();
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const crypto = yield* Crypto.Crypto;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -219,6 +225,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
           ? { runtimeCoordinator: runtimeCoordinator.value }
           : {}),
         serverConfig,
+        selfInvocation,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,

@@ -80,6 +80,17 @@ export function planMobileScopedSettingsPatch(
   }));
 }
 
+/** A mixed selection has no single value to display. */
+export function uniformMobileSetting<K extends keyof ServerSettings>(
+  targets: readonly Pick<ScopedMobileSettingsTarget, "settings">[],
+  key: K,
+): ServerSettings[K] | null {
+  const reference = targets[0];
+  if (!reference) return null;
+  const value = reference.settings[key];
+  return targets.every((target) => target.settings[key] === value) ? value : null;
+}
+
 export function planMobileScopedSettingsClear(
   targets: readonly ScopedMobileSettingsTarget[],
   keys: readonly ProjectScopedServerSettingKey[],

@@ -1299,6 +1299,25 @@ describe("composer and pull request shortcuts", () => {
   }
 
   for (const platform of ["MacIntel", "Win32", "Linux"]) {
+    it(`edits the last queued message with Alt+ArrowUp from the composer on ${platform}`, () => {
+      const input = event({ key: "ArrowUp", altKey: true });
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { composerFocus: true },
+        }),
+        "thread.editQueuedMessage",
+      );
+      assert.isNull(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { composerFocus: false },
+        }),
+      );
+    });
+  }
+
+  for (const platform of ["MacIntel", "Win32", "Linux"]) {
     it.each([
       ["s", "thread.settle"],
       ["p", "thread.pin"],

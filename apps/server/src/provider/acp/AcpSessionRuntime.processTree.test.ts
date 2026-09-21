@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -241,6 +241,80 @@ describe("terminatePosixOwnedProcessTree", () => {
       }
     }),
   );
+
+  it("contains a packaged-runtime command without requiring cgroup delegation", () => {
+    if (HostProcessPlatform.defaultValue() !== "linux") return;
+    const scratchRoot = NodePath.join(process.cwd(), "tmp");
+    NodeFS.mkdirSync(scratchRoot, { recursive: true });
+    const scratch = NodeFS.mkdtempSync(NodePath.join(scratchRoot, "acp-cgroup-wrapper-fake-"));
+    const leasePath = NodePath.join(scratch, "lease with spaces");
+    const outputPath = NodePath.join(scratch, "argv output");
+    NodeFS.mkdirSync(leasePath);
+    NodeFS.writeFileSync(NodePath.join(leasePath, "cgroup.procs"), "");
+    const relativePath = parseUnifiedCgroupPath(NodeFS.readFileSync("/proc/self/cgroup", "utf8"));
+    expect(relativePath).toBeDefined();
+    const lease: AcpLinuxCgroupLease = {
+      contains: () => false,
+      exists: () => true,
+      path: leasePath,
+      relativePath: relativePath!,
+      kill: () => undefined,
+      populated: () => false,
+      remove: () => undefined,
+    };
+    const packagedExecPath = vi.spyOn(process, "execPath", "get").mockReturnValue("/bin/sh");
+    try {
+      const wrapped = wrapCommandForLinuxCgroup(lease, "/bin/sh", [
+        "-c",
+        'printf "%s\\n" "$0" "$1" "$2" "$3" "${ELECTRON_RUN_AS_NODE-}" "${T3_ACP_CGROUP_WRAPPER-}" > "$4"',
+        "packaged-target",
+        "space value",
+        "single'quote",
+        'double"quote',
+        outputPath,
+      ]);
+      const result = NodeChildProcess.spawnSync(wrapped.command, wrapped.args, {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "1",
+          T3_ACP_CGROUP_WRAPPER: "1",
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(NodeFS.readFileSync(outputPath, "utf8")).toBe(
+        "packaged-target\nspace value\nsingle'quote\ndouble\"quote\n\n\n",
+      );
+      expect(NodeFS.readFileSync(NodePath.join(leasePath, "cgroup.procs"), "utf8")).toMatch(
+        /^\d+\n$/,
+      );
+
+      const mismatch = wrapCommandForLinuxCgroup(
+        { ...lease, relativePath: "/not-the-current-cgroup" },
+        "/bin/sh",
+        ["-c", 'printf executed > "$0"', outputPath],
+      );
+      NodeFS.rmSync(outputPath);
+      const mismatchResult = NodeChildProcess.spawnSync(mismatch.command, mismatch.args, {
+        encoding: "utf8",
+      });
+      expect(mismatchResult.status, mismatchResult.stderr).toBe(126);
+      expect(NodeFS.existsSync(outputPath)).toBe(false);
+
+      const missingTarget = wrapCommandForLinuxCgroup(lease, "/nonexistent-t3-probe", []);
+      const missingTargetResult = NodeChildProcess.spawnSync(
+        missingTarget.command,
+        missingTarget.args,
+        {
+          encoding: "utf8",
+        },
+      );
+      expect(missingTargetResult.status, missingTargetResult.stderr).toBe(125);
+    } finally {
+      packagedExecPath.mockRestore();
+      NodeFS.rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 
   it.live("kills a post-TERM detached double fork without touching an unrelated sentinel", () =>
     Effect.gen(function* () {

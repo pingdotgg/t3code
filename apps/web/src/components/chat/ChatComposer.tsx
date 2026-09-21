@@ -1429,6 +1429,8 @@ export interface ChatComposerHandle {
   toggleModelPicker: () => void;
   openControl: (command: KeybindingCommand) => void;
   isModelPickerOpen: () => boolean;
+  /** True when a collapsed caret sits before everything in the draft, including when it is empty. */
+  isCaretAtStart: () => boolean;
   compactContext: () => void;
   readSnapshot: () => {
     value: string;
@@ -6281,6 +6283,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       compactContext: compactThreadContext,
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      isCaretAtStart: () => {
+        const range = composerEditorRef.current?.readSelectionRange();
+        return range !== undefined && range.start === 0 && range.end === 0;
+      },
       readSnapshot: () => {
         return readComposerSnapshot();
       },

@@ -185,8 +185,20 @@ export const layer: Layer.Layer<
       const runsToRollback = projection.runs.filter(
         (run) => run.ordinal > targetOrdinal && run.status === "completed",
       );
+      // Rolled-back turns stay in the audit history, but no longer exist in
+      // the provider conversation and must not be counted by a later rewind.
+      const rolledBackRunIds = new Set(
+        projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+      );
+      const rolledBackAttemptIds = new Set(
+        projection.attempts
+          .filter((attempt) => rolledBackRunIds.has(attempt.runId))
+          .map((attempt) => attempt.id),
+      );
       const providerThreadTurns = projection.providerTurns.filter(
-        (turn) => turn.providerThreadId === providerThread.id,
+        (turn) =>
+          turn.providerThreadId === providerThread.id &&
+          (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
       );
       const rollbackTarget: ProviderAdapterV2RollbackTarget =
         targetOrdinal === 0

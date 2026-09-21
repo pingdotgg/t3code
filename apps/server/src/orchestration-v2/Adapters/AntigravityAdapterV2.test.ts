@@ -13,6 +13,7 @@ const flavor = makeAntigravityAcpAdapterFlavor({
   path: undefined as never,
   idAllocator: undefined as never,
   serverConfig: undefined as never,
+  selfInvocation: undefined as never,
   makeRuntime: () => Effect.die("not spawned in this test"),
   withProcess: (_stop, task) => task,
   defaultModel: Effect.succeed(undefined),

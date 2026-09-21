@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
 } from "@t3tools/contracts";
+import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
@@ -64,6 +65,7 @@ const AntigravityProviderCapabilitiesV2 = {
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly crypto: Crypto.Crypto;
+  readonly selfInvocation: SelfInvocation;
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly idAllocator: IdAllocatorV2["Service"];
@@ -227,6 +229,7 @@ export function makeAntigravityAdapterV2(options: AntigravityAdapterV2Options) {
     fileSystem: options.fileSystem,
     idAllocator: options.idAllocator,
     serverConfig: options.serverConfig,
+    selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
     ...(options.continuationRequests === undefined
       ? {}
