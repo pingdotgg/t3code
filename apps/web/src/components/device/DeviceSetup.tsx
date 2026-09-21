@@ -1,3 +1,4 @@
+import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
 import { Check, CircleAlert } from "lucide-react";
 import { useState } from "react";
@@ -89,6 +90,7 @@ export function DeviceSetup(props: {
       </WizardHeader>
 
       <WizardPanel>
+        <DeviceHostUpdates state={props.state} environmentId={props.environmentId} />
         {step === 0 ? (
           <section className="space-y-3 text-sm">
             <h3 className="font-medium">Enable the device hub</h3>

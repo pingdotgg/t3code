@@ -1,3 +1,8 @@
+import {
+  deviceToolVersionLabels,
+  deviceToolUpdateOwnership,
+  deviceToolUpdatePolicy,
+} from "@t3tools/client-runtime/state/device";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -68,11 +73,12 @@ function DevicePreviewScreen({
   const insets = useSafeAreaInsets();
   const { themeVariables } = useAppearancePreferences();
   const focused = useIsFocused();
-  const [foreground, setForeground] = useState(AppState.currentState === "active");
+  const [foreground, setForeground] = useState(AppState.currentState !== "background");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [inputConnected, setInputConnected] = useState(false);
   const [streamAttempt, setStreamAttempt] = useState(0);
   const [shuttingDown, setShuttingDown] = useState(false);
+  const retryHost = useAtomCommand(deviceEnvironment.list);
   const shutdown = useAtomCommand(deviceEnvironment.shutdown, { reportFailure: false });
   const streamRef = useRef<DeviceStreamRef>(null);
   const state = useEnvironmentQuery(deviceEnvironment.state({ environmentId, input: {} }));
@@ -87,7 +93,7 @@ function DevicePreviewScreen({
   );
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) =>
-      setForeground(state === "active"),
+      setForeground(state !== "background"),
     );
     return () => subscription.remove();
   }, []);
@@ -116,10 +122,58 @@ function DevicePreviewScreen({
   };
 
   const controls: ScreenHeaderMenuItem[] = [
+    ...(state.data?.hosts
+      .filter(
+        (host) =>
+          state.data?.supportsHostRetry && state.data.hostStatuses[host.id]?.status === "failed",
+      )
+      .map((host) => ({
+        id: `retry-${host.id}`,
+        title: `Retry ${host.label}`,
+        icon: "arrow.clockwise" as const,
+        onPress: () => {
+          void retryHost({ environmentId, input: { retryHostId: host.id } });
+        },
+      })) ?? []),
+    ...(state.data?.supportsToolInspection
+      ? [
+          {
+            id: "check-device-tools",
+            title: "Check device tool versions",
+            icon: "arrow.clockwise" as const,
+            onPress: () => {
+              void retryHost({ environmentId, input: { inspectOnly: true } });
+            },
+          },
+        ]
+      : []),
+    {
+      id: "device-tools",
+      title: "Device tool versions",
+      icon: "info.circle",
+      onPress: () =>
+        Alert.alert(
+          "Device tool versions",
+          deviceToolUpdateOwnership +
+            "\n\n" +
+            deviceToolUpdatePolicy(
+              state.data?.hosts.find((host) => host.id === preview?.session.hostId)?.tools,
+            ) +
+            "\n\n" +
+            deviceToolVersionLabels(
+              state.data?.hosts.find((host) => host.id === preview?.session.hostId)?.tools,
+            ).join("\n") +
+            "\n" +
+            (state.data?.hosts.find((host) => host.id === preview?.session.hostId)
+              ?.toolInspectionError ??
+              state.data?.hostStatuses[preview?.session.hostId ?? ""]?.detail ??
+              ""),
+        ),
+    },
     {
       id: "reload",
       title: "Reload stream",
-      icon: "arrow.clockwise",
+      icon: "arrow.clockwise" as const,
       disabled: !preview || shuttingDown,
       onPress: () => {
         setInputConnected(false);
@@ -149,7 +203,7 @@ function DevicePreviewScreen({
           {
             id: "rotate",
             title: "Rotate device",
-            icon: "arrow.clockwise",
+            icon: "arrow.clockwise" as const,
             disabled: !inputConnected,
             onPress: () => streamRef.current?.rotate(),
           },

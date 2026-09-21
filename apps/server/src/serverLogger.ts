@@ -12,13 +12,14 @@ export const ServerLoggerLive = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const minimumLogLevelLayer = Layer.succeed(References.MinimumLogLevel, config.logLevel);
 
+  const logs = config.otlpLogsExport;
   const otlpLogger =
     config.otlpLogsUrl === undefined
       ? undefined
       : OtlpLogger.make({
           url: config.otlpLogsUrl,
-          exportInterval: `${config.otlpExportIntervalMs} millis`,
-          headers: config.otlpHeaders,
+          exportInterval: `${logs.exportIntervalMs} millis`,
+          headers: logs.headers,
           resource: otlpResource(config),
         });
 
@@ -41,7 +42,7 @@ export const ServerLoggerLive = Effect.gen(function* () {
     { mergeWithExisting: false },
   ).pipe(
     Layer.provide(OtlpExporter.layerFlusher),
-    Layer.provide(otlpSerializationLayer(config.otlpProtocol)),
+    Layer.provide(otlpSerializationLayer(logs.protocol)),
   );
 
   return Layer.mergeAll(loggerLayer, minimumLogLevelLayer);
