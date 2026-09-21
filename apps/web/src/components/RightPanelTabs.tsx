@@ -142,9 +142,13 @@ export interface PullRequestTabStatus {
   number: number;
   state: PullRequestState;
   isDraft: boolean;
+  inMergeQueue?: boolean | undefined;
 }
 
-export type PullRequestTabStatusSeed = Pick<PullRequestTabStatus, "state" | "isDraft">;
+export type PullRequestTabStatusSeed = Pick<
+  PullRequestTabStatus,
+  "state" | "isDraft" | "inMergeQueue"
+>;
 
 export function shouldOpenDefaultBrowserProfileFromMenuClick(
   pointerType: string | undefined,
