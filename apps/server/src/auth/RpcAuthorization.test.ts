@@ -8,7 +8,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import { RPC_REQUIRED_SCOPES, requiredScopeForRpcMethod } from "./RpcAuthorization.ts";
+import {
+  RPC_REQUIRED_SCOPES,
+  requiredScopeForRpcMethod,
+  requiredScopeForDeviceList,
+} from "./RpcAuthorization.ts";
 
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
@@ -70,4 +74,11 @@ describe("RPC authorization scopes", () => {
       );
     }
   });
+});
+
+it("requires operate permission for host retry while preserving read-only listing", () => {
+  expect(requiredScopeForDeviceList({})).toBe(AuthOrchestrationReadScope);
+  expect(requiredScopeForDeviceList({ retryHostId: "remote-host" })).toBe(
+    AuthOrchestrationOperateScope,
+  );
 });

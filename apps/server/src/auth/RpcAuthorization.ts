@@ -1,4 +1,5 @@
 import {
+  type DeviceListInput,
   AuthAccessReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -180,3 +181,7 @@ export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope 
   }
   return requiredScope;
 }
+
+/** Retrying can install or restart tools even though ordinary listing is readable. */
+export const requiredScopeForDeviceList = (input: DeviceListInput): AuthEnvironmentScope =>
+  input.retryHostId ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope;

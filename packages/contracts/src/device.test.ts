@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { deviceToolInstallMessage } from "./device.ts";
 
 describe("device tool install progress", () => {
