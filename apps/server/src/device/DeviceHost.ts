@@ -80,6 +80,7 @@ export class DeviceHost extends Context.Service<
   {
     readonly id: DeviceHostId;
     readonly summary: Effect.Effect<DeviceHostSummary>;
+    readonly inspect?: Effect.Effect<DeviceHostSummary, DeviceHostError>;
     readonly platformAvailability: (
       platform: DevicePlatform,
     ) => Effect.Effect<DevicePlatformAvailability>;

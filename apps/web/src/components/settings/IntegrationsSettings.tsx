@@ -1,3 +1,4 @@
+import { deviceToolUpdateOwnership } from "@t3tools/client-runtime/state/device";
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -785,6 +786,33 @@ function DeviceIntegrationControls({
           {state.hostStatusDetail}
         </p>
       ) : null}
+      <SettingsRow
+        title="Device tool versions"
+        description={deviceToolUpdateOwnership}
+        control={
+          <DeviceToolVersions tools={state.hosts.find((host) => host.kind === "local")?.tools} />
+        }
+      />
+      <SettingsRow
+        title="Check device tool versions"
+        description="Read installed versions on this server and its SSH hosts without starting devices or downloading tools."
+        control={
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!environmentId || pending !== null || busy}
+            onClick={() => {
+              if (!environmentId) return;
+              setPending("check");
+              void list({ environmentId, input: { inspectOnly: true } }).finally(() =>
+                setPending(null),
+              );
+            }}
+          >
+            {pending === "check" ? "Checking…" : "Check versions"}
+          </Button>
+        }
+      />
       {environmentId ? <DeviceHostUpdates state={state} environmentId={environmentId} /> : null}
       <DeviceHostsSettings environmentId={environmentId} />
     </>

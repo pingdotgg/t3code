@@ -67,6 +67,7 @@ const fixture = Effect.fn("fixture")(function* (
   bootError?: string,
   failListAfterShutdown = false,
   runtimeFailure?: NodeRuntimeUnavailableError | DeviceHost.DeviceHostError,
+  inspectError = false,
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -82,6 +83,17 @@ const fixture = Effect.fn("fixture")(function* (
     run: () => Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" }),
   };
   const host: DeviceHost.DeviceHost["Service"] = {
+    ...(inspectError
+      ? {
+          inspect: Effect.fail(
+            new DeviceHost.DeviceHostError({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              step: "probe",
+              cause: new Error("offline"),
+            }),
+          ),
+        }
+      : {}),
     id: LOCAL_DEVICE_HOST_ID,
     summary: Effect.succeed({
       id: LOCAL_DEVICE_HOST_ID,
@@ -399,6 +411,17 @@ it.effect.each(["shutdown", "close"] as const)(
         run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
       };
       const host: DeviceHost.DeviceHost["Service"] = {
+        ...(inspectError
+          ? {
+              inspect: Effect.fail(
+                new DeviceHost.DeviceHostError({
+                  hostId: LOCAL_DEVICE_HOST_ID,
+                  step: "probe",
+                  cause: new Error("offline"),
+                }),
+              ),
+            }
+          : {}),
         id: LOCAL_DEVICE_HOST_ID,
         summary: Effect.succeed({
           id: LOCAL_DEVICE_HOST_ID,
@@ -621,5 +644,28 @@ it.effect("host retry exposes actionable failure without internal IDs or diagnos
       status: "failed",
       detail: "Could not connect to this host over SSH.",
     });
+  }).pipe(Effect.scoped),
+);
+
+it.effect("version discovery does not grant consent or start device tools", () =>
+  Effect.gen(function* () {
+    const { service, starts, agentStarts, requests } = yield* fixture();
+    const state = yield* service.inspect;
+    expect(state.hostStatus).toBe("disabled");
+    expect(state.hosts).toHaveLength(1);
+    expect(starts).toEqual([]);
+    expect(agentStarts).toEqual([]);
+    expect(requests).toEqual([]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("failed read-only discovery preserves lifecycle status and installed inventory", () =>
+  Effect.gen(function* () {
+    const { service, starts } = yield* fixture(Effect.void, undefined, false, undefined, true);
+    const state = yield* service.inspect;
+    expect(state.hostStatus).toBe("disabled");
+    expect(state.hosts[0]?.hubInstalled).toBe(true);
+    expect(state.hosts[0]?.toolInspectionError).toContain("Reconnect the host");
+    expect(starts).toEqual([]);
   }).pipe(Effect.scoped),
 );

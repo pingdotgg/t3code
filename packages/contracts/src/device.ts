@@ -93,6 +93,7 @@ export const DeviceHostSummary = Schema.Struct({
   label: TrimmedNonEmptyString,
   platforms: Schema.Array(DevicePlatformAvailability),
   tools: Schema.optional(DeviceToolVersions),
+  toolInspectionError: Schema.optional(Schema.String),
   hubInstalled: Schema.Boolean,
   agentDeviceInstalled: Schema.Boolean,
 });
@@ -152,6 +153,8 @@ export const DeviceServiceState = Schema.Struct({
 export type DeviceServiceState = typeof DeviceServiceState.Type;
 
 export const DeviceListInput = Schema.Struct({
+  /** Read inventory without installing tools or starting helpers. */
+  inspectOnly: Schema.optional(Schema.Boolean),
   /** Retry this host only, including agent tools if access was already granted. */
   retryHostId: Schema.optional(DeviceHostId),
 });

@@ -371,7 +371,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       Effect.gen(function* () {
         stopped = false;
         if (ready) return ready;
-        summary = yield* provide(probe(config));
+        summary = yield* provide(probe(config, owner));
         yield* onPhase(
           summary.hubInstalled ? "starting" : "installing",
           summary.hubInstalled
@@ -424,6 +424,13 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
   return {
     id: config.id,
     summary: Effect.sync(() => summary),
+    inspect: provide(probe(config, owner)).pipe(
+      Effect.tap((value) =>
+        Effect.sync(() => {
+          summary = value;
+        }),
+      ),
+    ),
     current: Effect.sync(() => ready),
     ensureReady,
     ensureAgentReady: (onPhase) =>
@@ -452,7 +459,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     stopAgent: changeAgent(false).pipe(Effect.asVoid, Effect.ignore),
     stop,
     platformAvailability: (platform) =>
-      provide(probe(config)).pipe(
+      provide(probe(config, owner)).pipe(
         Effect.map((value) => {
           summary = { ...summary, platforms: value.platforms };
           return value.platforms.find((p) => p.platform === platform)!;

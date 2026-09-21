@@ -110,6 +110,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
                   </p>
                 ) : null}
                 <DeviceHostList
+                  environmentLabel={environment.label}
                   environmentId={environment.environmentId}
                   hosts={environment.serverConfig?.settings.deviceHosts ?? []}
                   busy={projectScope || busy}
@@ -158,6 +159,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
 }
 
 function DeviceHostList({
+  environmentLabel,
   environmentId,
   hosts,
   busy,
@@ -166,6 +168,7 @@ function DeviceHostList({
   checks,
   testConnection,
 }: {
+  environmentLabel: string;
   environmentId: EnvironmentId;
   hosts: ReadonlyArray<SshDeviceHostConfig>;
   busy: boolean;
@@ -236,8 +239,11 @@ function DeviceHostList({
                     </Tooltip>
                   ))}
               </div>
-              <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {host.target} · Tools managed by {environmentLabel}
+              </p>
               <DeviceToolVersions
+                error={state.hosts.find((value) => value.id === host.id)?.toolInspectionError}
                 tools={
                   (check?.status === "connected" ? check.tools : undefined) ??
                   state.hosts.find((value) => value.id === host.id)?.tools
