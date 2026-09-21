@@ -373,4 +373,18 @@ describe("splitOnboardingProjectPath", () => {
     expect(splitOnboardingProjectPath("t3code")).toEqual({ name: "t3code", parent: "" });
     expect(splitOnboardingProjectPath("t3code/")).toEqual({ name: "t3code", parent: "" });
   });
+
+  it.each(["C:\\", "C:/", "\\\\server\\share", "\\\\server\\share\\", "//server/share/"])(
+    "keeps the filesystem root %s whole",
+    (path) => {
+      expect(splitOnboardingProjectPath(path)).toEqual({ name: path, parent: "" });
+    },
+  );
+
+  it("splits a folder below a network share", () => {
+    expect(splitOnboardingProjectPath("\\\\server\\share\\project\\")).toEqual({
+      name: "project",
+      parent: "\\\\server\\share\\",
+    });
+  });
 });

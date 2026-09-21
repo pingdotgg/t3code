@@ -145,6 +145,9 @@ export function splitOnboardingProjectPath(path: string): {
   readonly name: string;
   readonly parent: string;
 } {
+  if (/^[A-Za-z]:[\\/]+$/.test(path) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/]*$/.test(path)) {
+    return { name: path, parent: "" };
+  }
   const trimmed = path.replace(/[\\/]+$/, "");
   const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
   if (trimmed.length === 0) return { name: path, parent: "" };
