@@ -783,7 +783,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
   }),
 );
 
-for (const scenario of ["failure", "interruption", "stale-attempt"] as const) {
+for (const scenario of ["failure", "interruption", "stale-attempt", "start-guard"] as const) {
   it.effect(`handles ${scenario} before the provider turn starts`, () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("thread:run-execution-settings-failure");
@@ -805,7 +805,10 @@ for (const scenario of ["failure", "interruption", "stale-attempt"] as const) {
       const testLayer = runExecutionServiceLayer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            Layer.mock(CheckpointServiceV2)({ captureBaseline: () => Effect.die("not reached") }),
+            Layer.mock(CheckpointServiceV2)({
+              captureBaseline: () =>
+                scenario === "start-guard" ? Effect.void : Effect.die("not reached"),
+            }),
             Layer.mock(EventSinkV2)({
               writeIfRunCurrent: (input) =>
                 Effect.gen(function* () {
@@ -823,18 +826,20 @@ for (const scenario of ["failure", "interruption", "stale-attempt"] as const) {
             }),
             idAllocatorLayer,
             Layer.mock(ProviderEventIngestorV2)({ ingestNormalized: () => Effect.succeed([]) }),
-            Layer.mock(ServerSettingsService)({
-              getSettings:
-                scenario === "interruption"
-                  ? Effect.interrupt
-                  : Effect.fail(
-                      new ServerSettingsError({
-                        settingsPath: "<test>",
-                        operation: "read-file",
-                        cause: new Error("settings read failed"),
-                      }),
-                    ),
-            }),
+            scenario === "start-guard"
+              ? ServerSettingsService.layerTest()
+              : Layer.mock(ServerSettingsService)({
+                  getSettings:
+                    scenario === "interruption"
+                      ? Effect.interrupt
+                      : Effect.fail(
+                          new ServerSettingsError({
+                            settingsPath: "<test>",
+                            operation: "read-file",
+                            cause: new Error("settings read failed"),
+                          }),
+                        ),
+                }),
             Layer.succeed(RunFinalizationObserver, {
               refresh: () => Effect.void,
               refreshAfterTurn: () => Ref.update(refreshes, (count) => count + 1),
@@ -873,6 +878,10 @@ for (const scenario of ["failure", "interruption", "stale-attempt"] as const) {
           } as OrchestrationV2RunAttempt,
           attemptId,
           providerTurnOrdinal: 1,
+          // A declined start is a normal exit, not a preparation failure.
+          ...(scenario === "start-guard"
+            ? { shouldStartProviderTurn: () => Effect.succeed(false) }
+            : {}),
           message: {
             messageId: MessageId.make("message:run-execution-settings-failure"),
             text: "Start after settings fail.",
@@ -906,6 +915,12 @@ for (const scenario of ["failure", "interruption", "stale-attempt"] as const) {
         return;
       }
       assert.isTrue(Exit.isSuccess(result));
+      if (scenario === "start-guard") {
+        assert.equal(yield* Ref.get(guardedWrites), 0);
+        assert.equal(yield* Ref.get(refreshes), 0);
+        assert.isEmpty(events);
+        return;
+      }
       assert.equal(yield* Ref.get(guardedWrites), 1);
       if (scenario === "stale-attempt") {
         assert.equal(yield* Ref.get(refreshes), 0);
