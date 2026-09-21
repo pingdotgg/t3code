@@ -94,6 +94,13 @@ describe("markdownSearchText", () => {
     expect(text.replace(/\s+/g, " ").trim()).toBe("Title quoted task one step const a = 1;");
   });
 
+  it("keeps HTML-shaped text inside code while dropping real tags", () => {
+    const text = markdownSearchText(
+      "Use `<div>` here\n\n```html\n<p>hi **there**</p>\n```\n\n<span>real</span>",
+    );
+    expect(text.replace(/\s+/g, " ").trim()).toBe("Use <div> here <p>hi **there**</p> real");
+  });
+
   it("does not count a delimiter-only query", () => {
     const entries = [message("m1", "Use **bold** here")];
     expect(collectChatFindMatches(entries, buildChatFindPattern("**"))).toEqual([]);

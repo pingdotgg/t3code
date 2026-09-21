@@ -47,7 +47,14 @@ export function findPatternSpans(text: string, pattern: RegExp): TextSpan[] {
  * fences, headings and list markers are dropped while their text is kept.
  */
 export function markdownSearchText(markdown: string): string {
+  // Code renders literally, so its contents skip the HTML and emphasis rules.
+  const literals: string[] = [];
+  const keep = (text: string) => `\u0000${literals.push(text) - 1}\u0000`;
   return markdown
+    .replace(/^[ \t]*(```|~~~)[^\n]*\n([\s\S]*?)\n[ \t]*\1[ \t]*$/gm, (_, _fence, body: string) =>
+      keep(body),
+    )
+    .replace(/(`+)([^`]+?)\1/g, (_, _ticks, body: string) => keep(body))
     .replace(/^[ \t]*(```|~~~)[^\n]*$/gm, "")
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
@@ -59,7 +66,8 @@ export function markdownSearchText(markdown: string): string {
     .replace(/^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/gm, "")
     .replace(/`+/g, "")
     .replace(/(\*\*|__|~~)(?=\S)([\s\S]*?\S)\1/g, "$2")
-    .replace(/(^|[^\w*])[*_](?=\S)([^*_\n]*?\S)[*_](?![\w*])/g, "$1$2");
+    .replace(/(^|[^\w*])[*_](?=\S)([^*_\n]*?\S)[*_](?![\w*])/g, "$1$2")
+    .replace(/\u0000(\d+)\u0000/g, (_, index: string) => literals[Number(index)] ?? "");
 }
 
 /**
