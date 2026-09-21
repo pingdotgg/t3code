@@ -45,7 +45,8 @@ import {
 } from "../providerUpdateSettings.ts";
 import { probeCursorSkills } from "./CursorSkills.ts";
 import { makeCursorAuth } from "../CursorAuth.ts";
-import { FileCredentialStore } from "../cursorSdk.ts";
+import { makeCursorCredentialStore } from "../CursorCredentialStore.ts";
+import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
@@ -64,7 +65,8 @@ export type CursorDriverEnv =
   | HttpClient.HttpClient
   | BackgroundPolicy.BackgroundPolicy
   | ServerConfig
-  | ServerSettingsService;
+  | ServerSettingsService
+  | ServerSecretStore;
 
 export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -80,7 +82,6 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
-      const serverConfig = yield* ServerConfig;
       const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -95,19 +96,14 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
+      const credentials = yield* makeCursorCredentialStore(instanceId);
       const auth = yield* makeCursorAuth({
         instanceId,
         displayName: displayName ?? "Cursor",
         enabled,
         ...(processEnv.CURSOR_API_KEY ? { apiKey: processEnv.CURSOR_API_KEY } : {}),
-        store: new FileCredentialStore(
-          path.join(
-            serverConfig.stateDir,
-            "provider-auth",
-            encodeURIComponent(instanceId),
-            "cursor.json",
-          ),
-        ),
+        store: credentials.store,
+        credentialBinding: credentials.binding,
         onChanged: (signedIn): Effect.Effect<void, ProviderSetupError> =>
           snapshot.refresh.pipe(
             Effect.flatMap((provider) =>

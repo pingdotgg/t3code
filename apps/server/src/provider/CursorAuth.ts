@@ -43,6 +43,7 @@ export interface CursorAuthOptions {
   readonly enabled: boolean;
   readonly apiKey?: string;
   readonly store: SdkCredentialStore;
+  readonly credentialBinding?: NonNullable<ProviderAuthController["credentialBinding"]>;
   readonly onChanged: (signedIn: boolean) => Effect.Effect<void, ProviderSetupError>;
   readonly login?: (options: SdkLoginOptions) => Promise<SdkLoginResult>;
 }
@@ -290,6 +291,11 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
     });
 
   const controller: ProviderAuthController = {
+    credentialBinding: options.credentialBinding ?? {
+      owner: "t3",
+      key: `cursor:${options.instanceId}`,
+    },
+    isChangingCredentials: Effect.sync(() => operation !== "idle"),
     start: (owner, stopSessions = Effect.void) =>
       lock.withPermits(1)(
         Effect.uninterruptible(
@@ -432,9 +438,33 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
     subscribe: (owner) =>
       SubscriptionRef.changes(snapshot).pipe(
         Stream.map((current) => {
-          if (current.owner === null || current.owner === owner) return current.state;
-          return {
+          const state = {
             ...current.state,
+            credentialOwner: "t3" as const,
+            methods: [
+              {
+                id: "browser",
+                name: "Sign in with Cursor",
+                description: null,
+                type: "agent" as const,
+              },
+            ],
+            interaction:
+              current.state.phase === "waiting" &&
+              current.state.authorizationUrl &&
+              current.state.flowId
+                ? {
+                    type: "browser" as const,
+                    id: current.state.flowId,
+                    url: current.state.authorizationUrl,
+                    requiresConsent: false,
+                  }
+                : null,
+          };
+          if (current.owner === null || current.owner === owner) return state;
+          return {
+            ...state,
+            interaction: null,
             flowId: null,
             authorizationUrl: null,
             expiresAt: null,

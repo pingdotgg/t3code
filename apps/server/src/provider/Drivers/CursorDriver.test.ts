@@ -11,6 +11,7 @@ import { HttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -20,7 +21,7 @@ import { layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts
 import { ProviderAdapterV2RuntimePolicy } from "../../orchestration-v2/ProviderAdapter.ts";
 import { Cursor } from "../cursorSdk.ts";
 
-const testLayer = ServerConfig.layerTest(process.cwd(), {
+const dependencies = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-cursor-driver-copy-command-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -44,6 +45,8 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
 );
+
+const testLayer = ServerSecretStore.layer.pipe(Layer.provideMerge(dependencies));
 
 it.layer(testLayer)("CursorDriver", (it) => {
   it.effect(

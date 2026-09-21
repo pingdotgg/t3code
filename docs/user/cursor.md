@@ -23,7 +23,7 @@ Each provider instance keeps its own login on the environment that runs it. Your
 CLI login are separate. A configured `CURSOR_API_KEY` overrides browser sign-in; remove that override
 to use the browser flow.
 
-Use **Switch account** or **Sign out** in the same settings section. Both stop that
+Use **Change account** or **Sign out** in the same settings section. Both stop that
 instance's running threads and keep their history. Sign-out forgets the saved credential; to revoke
 the generated key before it expires, remove it from your Cursor dashboard's API keys.
 
