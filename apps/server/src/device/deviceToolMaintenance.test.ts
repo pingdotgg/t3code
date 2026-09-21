@@ -1,3 +1,7 @@
+import * as Effect from "effect/Effect";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 // @effect-diagnostics nodeBuiltinImport:off - tests the same standalone script used by local and SSH hosts.
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeFSP from "node:fs/promises";
@@ -5,7 +9,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
-import { deviceToolMaintenanceScript } from "./deviceToolMaintenance.ts";
+import {
+  claimLocalDeviceTool,
+  pruneLocalDeviceTools,
+  deviceToolMaintenanceScript,
+} from "./deviceToolMaintenance.ts";
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 
@@ -70,3 +78,36 @@ describe.each([false, true])("device tool cleanup, flat=%s", (flat) => {
     }
   });
 });
+
+it.effect("maintenance failures retain safe context and the original process result", () =>
+  Effect.gen(function* () {
+    const output = {
+      code: ChildProcessSpawner.ExitCode(1),
+      stdout: "",
+      stderr: "private child diagnostics",
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    };
+    for (const [operation, run] of [
+      ["claim", claimLocalDeviceTool],
+      ["prune", pruneLocalDeviceTools],
+    ] as const) {
+      const error = yield* run("/tools", process.execPath, "hub").pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, { run: () => Effect.succeed(output) }),
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "DeviceToolMaintenanceError",
+        operation,
+        tool: "hub",
+        exitCode: 1,
+        cause: output,
+      });
+      expect(error.message).toBe(`Device tool ${operation} failed for hub (exit code 1).`);
+      expect(error.message).not.toContain(output.stderr);
+    }
+  }).pipe(Effect.provide(NodePathLayer.layer)),
+);

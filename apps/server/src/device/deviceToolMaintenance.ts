@@ -110,16 +110,23 @@ function pruneTools(root, specs, flat) {
 
 class DeviceToolMaintenanceError extends Schema.TaggedError<DeviceToolMaintenanceError>()(
   "DeviceToolMaintenanceError",
-  {},
+  {
+    operation: Schema.Literals(["claim", "prune"]),
+    tool: Schema.Literals(["hub", "agent"]),
+    exitCode: Schema.Int,
+    cause: Schema.Defect(),
+  },
 ) {
   override get message() {
-    return "Device tool maintenance failed.";
+    return `Device tool ${this.operation} failed for ${this.tool} (exit code ${this.exitCode}).`;
   }
 }
 
 const runMaintenance = Effect.fn("DeviceToolchain.maintenance")(function* (
   nodePath: string,
-  operation: string,
+  script: string,
+  operation: "claim" | "prune",
+  tool: "hub" | "agent",
 ) {
   const runner = yield* ProcessRunner.ProcessRunner;
   const result = yield* runner.run({
@@ -128,11 +135,14 @@ const runMaintenance = Effect.fn("DeviceToolchain.maintenance")(function* (
       "-e",
       deviceToolMaintenanceScript +
         "\n" +
-        operation +
+        script +
         ".catch(error => { console.error(error.message); process.exitCode = 1; });",
     ],
   });
-  if (result.code !== 0) return yield* Effect.fail(new DeviceToolMaintenanceError({}));
+  if (result.code !== 0)
+    return yield* Effect.fail(
+      new DeviceToolMaintenanceError({ operation, tool, exitCode: result.code, cause: result }),
+    );
 });
 
 export const claimLocalDeviceTool = Effect.fn("DeviceToolchain.claim")(function* (
@@ -148,6 +158,8 @@ export const claimLocalDeviceTool = Effect.fn("DeviceToolchain.claim")(function*
   yield* runMaintenance(
     nodePath,
     `claimTool(${JSON.stringify(path.join(baseDir, "tools"))}, ${JSON.stringify(name)}, ${JSON.stringify(version)}, ${process.pid})`,
+    "claim",
+    tool,
   );
 });
 
@@ -160,5 +172,7 @@ export const pruneLocalDeviceTools = Effect.fn("DeviceToolchain.prune")(function
   yield* runMaintenance(
     nodePath,
     `pruneTools(${JSON.stringify(path.join(baseDir, "tools"))}, ${JSON.stringify(tool === "hub" ? [["expo-device-hub", DEVICE_HUB_VERSION]] : [["agent-device", AGENT_DEVICE_VERSION]])}, false)`,
+    "prune",
+    tool,
   );
 });
