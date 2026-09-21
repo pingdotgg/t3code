@@ -400,8 +400,8 @@ it("keeps default-zoom orbits framed across folds and fits the current assembly"
   viewer.dispose();
 });
 
-it("previews slider articulation immediately without changing laptop presentation or accepting unconfirmed input", async () => {
-  const { viewer, draw, state, pending } = fixture();
+it("previews hinge articulation while preserving the laptop lid orientation and blocking unconfirmed input", async () => {
+  const { viewer, draw, pending } = fixture();
   const loaded = asset();
   models.resolve({ asset: loaded, dispose: vi.fn() });
   await Promise.resolve();
@@ -415,14 +415,15 @@ it("previews slider articulation immediately without changing laptop presentatio
     hingePose: "laptop",
   });
   draw();
-  const presentation = state.views.at(-1)!.quaternion;
+  const lid = loaded.getObjectByName("right-half")!;
+  const presentation = lid.getWorldQuaternion(new Rotation());
   for (const value of [127, 50, 170]) {
     viewer.setHingePreview(value);
     draw();
     expect(loaded.getObjectByName("left-half")!.rotation.y).toBeCloseTo(
       ((180 - value) * Math.PI) / 360,
     );
-    expect(state.views.at(-1)!.quaternion.angleTo(presentation)).toBeLessThan(0.00001);
+    expect(lid.getWorldQuaternion(new Rotation()).angleTo(presentation)).toBeLessThan(0.00001);
     expect(viewer.screenPoint(0.5, 0.5)).toBeNull();
     viewer.setScreen({
       width: 2007,
@@ -433,12 +434,12 @@ it("previews slider articulation immediately without changing laptop presentatio
       hingePose: null,
     });
     draw();
-    expect(state.views.at(-1)!.quaternion.angleTo(presentation)).toBeLessThan(0.00001);
+    expect(lid.getWorldQuaternion(new Rotation()).angleTo(presentation)).toBeLessThan(0.00001);
   }
   viewer.setHingePreview(null);
   draw();
   expect(pending.size).toBe(0);
-  expect(state.views.at(-1)!.quaternion.angleTo(presentation)).toBeLessThan(0.00001);
+  expect(lid.getWorldQuaternion(new Rotation()).angleTo(presentation)).toBeLessThan(0.00001);
   viewer.dispose();
 });
 
@@ -504,6 +505,7 @@ it("lets standalone rotation leave Laptop and Tent and stand a closed device upr
     });
     viewer.setHingePreview(null);
     draw();
+    viewer.cancelInput(); // Explicit toolbar rotation ends folding ownership.
     viewer.setScreen({
       width: 1398,
       height: 2034,
@@ -639,3 +641,61 @@ it("uses the elected primary frame during handoff and never lets a stale fixed-p
   expect(drawImage.mock.calls.length).toBeGreaterThan(uploads + 1);
   viewer.dispose();
 });
+
+it.each(["left", "right"] as const)(
+  "keeps the primary surface oriented when pinching over the %s half through closure and reopening",
+  async (face) => {
+    const { viewer, draw, state, pending, onOrientationRequested } = fixture();
+    const loaded = asset();
+    models.resolve({ asset: loaded, dispose: vi.fn() });
+    await Promise.resolve();
+    viewer.resize(500, 700, 2);
+    const inner = {
+      width: 2007,
+      height: 2853,
+      orientation: "portrait" as const,
+      screenId: 3,
+      hingeAngle: 180,
+      hingePose: "open" as const,
+    };
+    viewer.setScreen(inner);
+    draw();
+    expect(viewer.beginHinge(-1, -1)).toBe(false);
+    const leaf = loaded.getObjectByName("right-half")!;
+    const mesh = loaded.getObjectByName(`inner-display-${face}`) as Mesh;
+    const center = mesh.geometry.boundingBox!.getCenter(new Vector3());
+    const point = mesh.localToWorld(center).project(state.views.at(-1)!.camera);
+    expect(viewer.beginHinge((point.x + 1) / 2, (1 - point.y) / 2)).toBe(true);
+    const orientation = leaf.getWorldQuaternion(new Rotation());
+    const partner = loaded.getObjectByName("left-half")!;
+    const partnerStart = partner.getWorldQuaternion(new Rotation());
+    for (const value of [150, 90, 30, 0, 30, 90, 180]) {
+      viewer.setHingePreview(value);
+      draw();
+      expect(leaf.getWorldQuaternion(new Rotation()).angleTo(orientation)).toBeLessThan(1e-6);
+      if (value === 90)
+        expect(partner.getWorldQuaternion(new Rotation()).angleTo(partnerStart)).toBeGreaterThan(1);
+      const next =
+        value === 0
+          ? { ...inner, width: 1398, height: 2034, screenId: 1, hingeAngle: value, hingePose: null }
+          : { ...inner, hingeAngle: value, hingePose: null };
+      viewer.setScreen(next);
+      viewer.setHingePreview(null);
+      draw();
+      viewer.setScreen({ ...next }); // Late native readback cannot change the view.
+      draw();
+      expect(leaf.getWorldQuaternion(new Rotation()).angleTo(orientation)).toBeLessThan(1e-6);
+      expect(viewer.screenPoint(0.5, 0.5)).toBeNull(); // No fresh native frame yet.
+      if (value === 0) {
+        const cover = loaded.getObjectByName("cover-display") as Mesh;
+        const center = cover.geometry.boundingBox!.getCenter(new Vector3());
+        const hit = cover.localToWorld(center).project(state.views.at(-1)!.camera);
+        expect(viewer.beginHinge((hit.x + 1) / 2, (1 - hit.y) / 2)).toBe(true);
+      }
+    }
+    expect(onOrientationRequested).not.toHaveBeenCalled();
+    draw();
+    expect(pending.size).toBe(0);
+    viewer.dispose();
+  },
+);

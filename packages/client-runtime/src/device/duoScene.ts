@@ -5,6 +5,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   Matrix4,
+  Quaternion,
   Plane,
   Raycaster,
   Triangle,
@@ -17,6 +18,7 @@ import type { DuoRestFrame } from "./duoSnap.ts";
 import type { DeviceScreenSize } from "./stream.ts";
 
 export type DuoPanelId = 1 | 3;
+export type DuoHingeLeaf = "left" | "right";
 export type DuoFrameLayout = { width: number; height: number };
 
 /** Hardware mounting is independent of app orientation and the model's orbit. The inverse is shared by taps and drags. */
@@ -153,12 +155,26 @@ export function createDuoScene(asset: Group, textures: Record<DuoPanelId, Textur
         ? [inside, frame([innerLeft], "left"), frame([innerRight], "right")]
         : [inside];
     },
-    containsDevice(x: number, y: number, camera: PerspectiveCamera) {
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    leafRotation(leaf: DuoHingeLeaf) {
+      root.updateWorldMatrix(true, true);
+      relative.multiplyMatrices(
+        root.matrixWorld.clone().invert(),
+        (leaf === "left" ? left : right).matrixWorld,
+      );
+      return new Quaternion().setFromRotationMatrix(relative.extractRotation(relative));
+    },
+    hingeLeafAt(x: number, y: number, camera: PerspectiveCamera): DuoHingeLeaf | null {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
       root.updateMatrixWorld(true);
       camera.updateMatrixWorld(true);
       ray.setFromCamera(new Vector2(x * 2 - 1, 1 - y * 2), camera);
-      return ray.intersectObject(root, true).length > 0;
+      let object = ray.intersectObject(root, true)[0]?.object;
+      while (object) {
+        if (object === left) return "left";
+        if (object === right) return "right";
+        object = object.parent ?? undefined;
+      }
+      return null;
     },
     cancelInput() {
       captured = null;

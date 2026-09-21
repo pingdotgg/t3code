@@ -68,6 +68,7 @@ export function DeviceDuoViewport(props: {
     const blur = () => {
       interactionRef.current?.end();
       trackpad?.cancel();
+      viewerRef.current?.cancelInput();
     };
     onInputCancel(blur);
     window.addEventListener("blur", blur);
@@ -123,7 +124,7 @@ export function DeviceDuoViewport(props: {
             previewRef.current ??
             screenRef.current?.hingeAngle ??
             (screenRef.current?.screenId === 1 ? 0 : 180),
-          contains: (x, y) => !!screenRef.current && viewer.containsDevice(x, y),
+          contains: (x, y) => !!screenRef.current && viewer.beginHinge(x, y),
           change: (angle) => {
             viewer.setHingePreview(angle ?? previewRef.current);
             if (angle !== null) client.current?.controlDuo({ control: "angle", value: angle });

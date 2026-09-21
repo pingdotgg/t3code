@@ -241,11 +241,24 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
   expect(present).toHaveBeenCalledTimes(painted + 1);
   expect(present.mock.lastCall?.[0]).toBe(primary);
   expect(cover).toHaveBeenCalledOnce(); // The main sink owns primary texture delivery.
+  config(3, "portrait", true);
+  expect(feeds[4]!.signal.aborted).toBe(true);
+  expect(feeds).toHaveLength(6);
+  ready = waitDecoders(6);
+  feeds[5]!.controller.enqueue(description);
+  await ready;
+  outputs[4]!(primary); // The old elected display cannot paint after handoff.
+  expect(present).toHaveBeenCalledTimes(painted + 1);
+  outputs[5]!(frame);
+  expect(present).toHaveBeenCalledTimes(painted + 2);
+  expect(present.mock.lastCall?.[0]).toBe(frame);
+  config(3, "portrait", true);
+  expect(feeds).toHaveLength(6); // Duplicate native readback does not reconnect.
   supported = false;
   client.setDuoPanels(null);
   client.setDuoPanels({ cover: { present: cover }, inner: { present: inner } });
-  expect(feeds[6]!.url).not.toContain("/panel/");
-  feeds[6]!.controller.enqueue(description);
+  expect(feeds[7]!.url).not.toContain("/panel/");
+  feeds[7]!.controller.enqueue(description);
   await panelFailure;
   expect(onDuoUnavailable.mock.lastCall?.[0]).toContain("cannot decode");
   config(3);
@@ -253,7 +266,7 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
     panelFailed = resolve;
   });
   client.setDuoPanels({ cover: { present: cover }, inner: { present: inner } });
-  feeds[7]!.controller.enqueue(description);
+  feeds[8]!.controller.enqueue(description);
   await fixedPanelFailure;
   expect(onDuoUnavailable).toHaveBeenCalled();
   expect(onStatus.mock.calls.some(([status]) => status === "error")).toBe(false);
@@ -268,5 +281,5 @@ it("switches to fixed authenticated feeds while retaining one HID socket, routes
   client.stop();
   expect(feeds[3]!.signal.aborted).toBe(true);
   expect(ws.close).toHaveBeenCalledOnce();
-  expect(frame.close).toHaveBeenCalledTimes(7);
+  expect(frame.close).toHaveBeenCalledTimes(9);
 });

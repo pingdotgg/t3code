@@ -15,7 +15,13 @@ import {
   WebGLRenderer,
 } from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { createDuoScene, duoDisplayKey, duoFrameMatches, type DuoPanelId } from "./duoScene.ts";
+import {
+  createDuoScene,
+  duoDisplayKey,
+  duoFrameMatches,
+  type DuoPanelId,
+  type DuoHingeLeaf,
+} from "./duoScene.ts";
 import { loadDeviceModel } from "./modelScene.ts";
 import { createDeviceModelSlot, type DeviceModelSource } from "./model.ts";
 import { createDuoFraming } from "./duoFraming.ts";
@@ -38,7 +44,7 @@ export interface DuoViewer {
     captured?: boolean,
   ) => { x: number; y: number } | null;
   readonly orbit: (x: number, y: number) => void;
-  readonly containsDevice: (x: number, y: number) => boolean;
+  readonly beginHinge: (x: number, y: number) => boolean;
   readonly resetPose: () => void;
   readonly cancelInput: () => void;
   readonly dispose: () => void;
@@ -174,6 +180,8 @@ export function createDuoViewer(options: {
   let angle = 180;
   let targetAngle = 180;
   let previewAngle: number | null = null;
+  let hingeLeaf: DuoHingeLeaf | null = null;
+  let appliedAngle = Number.NaN;
   let interactionActive = false;
   const framing = createDuoFraming();
   const framingBounds = new Box3();
@@ -186,7 +194,17 @@ export function createDuoViewer(options: {
     typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const applyPose = () => {
     if (!model) return;
+    const before = hingeLeaf && appliedAngle !== angle ? model.leafRotation(hingeLeaf) : null;
     model.setAngle(angle);
+    appliedAngle = angle;
+    if (before && hingeLeaf) {
+      // The primary surface stays in camera space; its partner supplies the fold.
+      // Rebase both the displayed rotation and its rest target so releasing a
+      // pinch cannot resume the pre-fold body rotation.
+      const correction = before.multiply(model.leafRotation(hingeLeaf).invert());
+      if (correction.angleTo(new Quaternion()) > 1e-8)
+        orbit.setPose(orbit.rotation.clone().multiply(correction), performance.now(), true);
+    }
     model.root.quaternion.copy(orbit.rotation);
     model.root.position.set(0, 0, 0);
     const frames = model.restFrames(restFace === "cover" ? 1 : 3);
@@ -269,6 +287,7 @@ export function createDuoViewer(options: {
         model.dispose();
       }
       model = next;
+      appliedAngle = Number.NaN;
       if (!model || disposed) return;
       scene.add(model.root);
       applyPose();
@@ -309,12 +328,18 @@ export function createDuoViewer(options: {
       requestedOrientation = null;
       screen = next;
       const changedPose = next?.hingePose && next.hingePose !== previous?.hingePose;
+      const folding = hingeLeaf !== null && !changedPose;
       const rotated =
         next?.screenId === previous?.screenId &&
         next?.hingeAngle === previous?.hingeAngle &&
         next?.orientation !== previous?.orientation;
       const leftPhysicalPose =
-        rotated && !ownedRotation && !ownedHandoff && !next?.hingePose && previewAngle === null;
+        rotated &&
+        !ownedRotation &&
+        !ownedHandoff &&
+        !folding &&
+        !next?.hingePose &&
+        previewAngle === null;
       if (firstPose || changedPose || leftPhysicalPose) {
         physicalPose = next?.hingePose ?? (next?.screenId === 1 ? "closed" : "open");
         presentationAngle = next?.hingeAngle ?? (next?.screenId === 1 ? 0 : 180);
@@ -324,7 +349,8 @@ export function createDuoViewer(options: {
       // Native angle commands clear hingePose. They change articulation only;
       // preserve the viewing pose, including laptop/tent and user orbit. A
       // separate rotation clears the physical preset and follows panel orientation.
-      if (firstPose || changedPose || (rotated && !ownedRotation && !ownedHandoff)) {
+      if (firstPose || changedPose || (rotated && !ownedRotation && !ownedHandoff && !folding)) {
+        hingeLeaf = null;
         viewOrientation = next?.orientation ?? null;
         const poseAngle = presentationAngle;
         const fold = ((180 - poseAngle) * Math.PI) / 360;
@@ -355,7 +381,7 @@ export function createDuoViewer(options: {
         restFace = next?.screenId === 1 ? "cover" : physicalPose === "laptop" ? "right" : "inside";
         orbit.setPose(targetPresentation, performance.now(), firstPose);
         firstPose = false;
-      } else if (next && changedDisplay && !ownedHandoff) {
+      } else if (next && changedDisplay && !ownedHandoff && !folding) {
         // A sensor rotation can hand ownership to the other native display.
         // Face that display without sending another rotation and creating a feedback loop.
         const snap = nearestDuoView(orbit.rotation, activeSnaps());
@@ -373,19 +399,28 @@ export function createDuoViewer(options: {
       if (disposed || (next !== null && (!Number.isFinite(next) || next < 0 || next > 180))) return;
       if (!moving()) lastTime = performance.now();
       previewAngle = next;
+      if (next !== null && !hingeLeaf && model) {
+        clearHandoff();
+        requestedOrientation = null;
+        hingeLeaf = screen?.screenId === 1 && angle > 20 ? "left" : "right";
+        orbit.setPose(orbit.rotation.clone(), performance.now(), true);
+      }
       orbit.hold(interactionActive || next !== null, performance.now());
       targetAngle = next ?? screen?.hingeAngle ?? (screen?.screenId === 1 ? 0 : 180);
       if (next !== null) {
         angle = next;
         applyPose();
+        fit();
       }
       model?.cancelInput();
       scheduler.invalidate();
     },
     setInteractionActive(active, mode = "touch") {
       if (disposed) return;
-      if (mode === "orbit") orbit.dragActive(active, performance.now());
-      else {
+      if (mode === "orbit") {
+        if (active) hingeLeaf = null;
+        orbit.dragActive(active, performance.now());
+      } else {
         interactionActive = active;
         orbit.hold(active || previewAngle !== null, performance.now());
         framing.hold(active, performance.now());
@@ -472,18 +507,33 @@ export function createDuoViewer(options: {
       return model?.screenPoint(x, y, camera, screen, readyKey, captured) ?? null;
     },
     cancelInput() {
+      hingeLeaf = null;
       model?.cancelInput();
     },
     orbit(x, y) {
       if (disposed) return;
+      hingeLeaf = null;
       orbit.orbit(x * viewport.width, y * viewport.height, performance.now());
       scheduler.invalidate();
     },
-    containsDevice(x, y) {
-      return !disposed && !!model?.containsDevice(x, y, camera);
+    beginHinge(x, y) {
+      if (disposed || !model || !screen) return false;
+      applyPose();
+      const leaf = model.hingeLeafAt(x, y, camera);
+      if (!leaf) return false;
+      clearHandoff();
+      requestedOrientation = null;
+      // The right inner leaf and the shut cover share the front-facing plane.
+      // Holding that leaf lets the cover replace the inner image without a
+      // half turn, even when the pinch starts over the moving partner.
+      hingeLeaf = screen.screenId === 1 && angle > 20 ? "left" : "right";
+      orbit.setPose(orbit.rotation.clone(), performance.now(), true);
+      model.cancelInput();
+      return true;
     },
     resetPose() {
       if (disposed) return;
+      hingeLeaf = null;
       requestedOrientation = null;
       clearHandoff();
       const snap = activeSnaps().find((snap) => snap.orientation === screen?.orientation);
