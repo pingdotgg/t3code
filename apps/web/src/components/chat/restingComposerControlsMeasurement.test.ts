@@ -20,7 +20,13 @@ function measurePicker(input: { clientWidth: number; flexGrow: string; maxWidth?
       }
       return null;
     },
-    querySelectorAll: () => [{ getBoundingClientRect: () => ({ width: 140 }) }],
+    querySelectorAll: () => [
+      {
+        dataset: {},
+        querySelectorAll: () => [],
+        getBoundingClientRect: () => ({ width: 140 }),
+      },
+    ],
   };
   vi.stubGlobal("getComputedStyle", (element: unknown) => {
     if (element === label) return { flexGrow: input.flexGrow };
@@ -40,6 +46,7 @@ describe("measureRestingComposerControls", () => {
     expect(resolveRestingComposerControlsNaturalWidth(measurement)).toBe(196);
     expect(resolveRestingComposerControlsLayout({ ...measurement, hostWidth: 200 })).toEqual({
       hiddenCount: 0,
+      iconOnlyCount: 0,
       visible: true,
     });
   });
@@ -50,6 +57,7 @@ describe("measureRestingComposerControls", () => {
     expect(measurement.naturalFixedWidth).toBe(192);
     expect(resolveRestingComposerControlsLayout({ ...measurement, hostWidth: 200 })).toEqual({
       hiddenCount: 1,
+      iconOnlyCount: 1,
       visible: true,
     });
   });
@@ -60,6 +68,7 @@ describe("measureRestingComposerControls", () => {
     expect(measurement.naturalFixedWidth).toBe(212);
     expect(resolveRestingComposerControlsLayout({ ...measurement, hostWidth: 200 })).toEqual({
       hiddenCount: 1,
+      iconOnlyCount: 1,
       visible: true,
     });
   });
