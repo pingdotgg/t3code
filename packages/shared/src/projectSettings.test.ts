@@ -41,6 +41,11 @@ describe("resolveProjectSettings", () => {
     );
     expect(resolved.settings.defaultRuntimeMode).toBe("full-access");
     expect(resolved.sources.defaultRuntimeMode).toBe("environment");
+    expect(
+      hasProjectSettingsOverrides({
+        projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: undefined } as never },
+      }),
+    ).toBe(false);
   });
 
   it("treats a null project like an absent one before the shell snapshot arrives", () => {

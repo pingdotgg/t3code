@@ -46,7 +46,9 @@ export function hasProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
 ): boolean {
   for (const entry of Object.values(settings.projectSettingsOverrides)) {
-    if (Object.keys(entry).length > 0) return true;
+    // A forward-compatible decode can leave an unknown value as a present
+    // undefined; that is not an override.
+    if (Object.values(entry).some((value) => value !== undefined)) return true;
   }
   return false;
 }
