@@ -57,15 +57,6 @@ export const makeProviderAuthService = Effect.gen(function* () {
             )
             .map((instance) => instance.instanceId),
     );
-    if (binding) {
-      yield* Effect.forEach(
-        (yield* registry.listInstances).filter(
-          (instance) => instance.instanceId !== instanceId && affectedIds.has(instance.instanceId),
-        ),
-        (instance) => instance.auth?.invalidate ?? Effect.void,
-        { discard: true },
-      );
-    }
     const threadIds = yield* projections
       .getRecoveryThreadIds("runtime")
       .pipe(
@@ -102,6 +93,15 @@ export const makeProviderAuthService = Effect.gen(function* () {
         ),
       { discard: true },
     );
+    if (binding) {
+      yield* Effect.forEach(
+        (yield* registry.listInstances).filter(
+          (instance) => instance.instanceId !== instanceId && affectedIds.has(instance.instanceId),
+        ),
+        (instance) => instance.auth?.invalidate ?? Effect.void,
+        { discard: true },
+      );
+    }
   });
 
   const checkSharedBinding = Effect.fnUntraced(function* (instanceId: ProviderInstanceId) {

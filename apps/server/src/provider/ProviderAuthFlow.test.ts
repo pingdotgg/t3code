@@ -140,3 +140,20 @@ it.effect("closes admitted provider processes and blocks new ones while login is
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("shared credential invalidation closes admitted processes before permitting reuse", () =>
+  Effect.gen(function* () {
+    const { controller } = yield* makeHarness;
+    let closed = false;
+    yield* controller.withAccess!(
+      Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          closed = true;
+        }),
+      ),
+    );
+    yield* controller.invalidate!;
+    assert.isTrue(closed);
+    assert.strictEqual(yield* controller.withAccess!(Effect.succeed("new process")), "new process");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

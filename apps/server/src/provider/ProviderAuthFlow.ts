@@ -115,17 +115,19 @@ export const makeProviderAuthFlow = Effect.fn("makeProviderAuthFlow")(function* 
   const controller: ProviderAuthController = {
     credentialBinding: options.credentialBinding,
     refreshMethods,
-    invalidate: Effect.suspend(() =>
-      active
-        ? Effect.void
-        : SubscriptionRef.set(snapshot, {
-            owner: null,
-            state: {
-              ...empty,
-              methods: snapshot.value.state.methods ?? [],
-              message: "This provider's shared sign-in changed.",
-            },
-          }),
+    invalidate: lock.withPermit(
+      Effect.gen(function* () {
+        if (operation !== "idle") return;
+        yield* stopOwnedSessions;
+        yield* SubscriptionRef.set(snapshot, {
+          owner: null,
+          state: {
+            ...empty,
+            methods: snapshot.value.state.methods ?? [],
+            message: "This provider's shared sign-in changed.",
+          },
+        });
+      }),
     ),
     isChangingCredentials: Effect.sync(() => operation !== "idle"),
     withAccess: (task) =>

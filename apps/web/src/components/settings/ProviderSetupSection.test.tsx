@@ -284,8 +284,16 @@ describe("Antigravity setup", () => {
   });
 
   it("does not send a callback left over from a replaced sign-in flow", async () => {
+    const interaction = {
+      type: "browser" as const,
+      id: "same-interaction",
+      url: "https://example.com/login",
+      requiresConsent: false,
+      acceptsCallback: true,
+    };
+    setup.auth = authState({ interaction });
     setCallback(renderSetup(), "http://127.0.0.1:5555/?state=old-flow&code=test-only");
-    setup.auth = authState({ flowId: "flow-2" });
+    setup.auth = authState({ flowId: "flow-2", interaction });
     submitCallback(renderSetup());
     await flushPromises();
 

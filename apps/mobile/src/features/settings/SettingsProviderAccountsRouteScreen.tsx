@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ProviderAuthResponse, ServerProvider } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { Alert, Linking, TextInput, View } from "react-native";
+import { Alert, Linking, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -83,12 +83,13 @@ function ProviderAccount({
   const cancel = useAtomCommand(serverEnvironment.cancelProviderAuth, options);
   const logout = useAtomCommand(serverEnvironment.logoutProviderAuth, options);
   const [pending, setPending] = useState(false);
+  const [choosingMethod, setChoosingMethod] = useState(false);
   const pendingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState({ id: "", values: {} as Record<string, string> });
   const state = auth.data;
   const interaction = state?.interaction;
-  const draftId = interaction?.id ?? state?.flowId ?? "";
+  const draftId = `${state?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
   const active =
     state?.phase === "starting" || state?.phase === "waiting" || state?.phase === "verifying";
@@ -102,20 +103,20 @@ function ProviderAccount({
     pendingRef.current = true;
     setPending(true);
     setError(null);
+    let succeeded = false;
     try {
       const result = await command();
-      if (result._tag === "Success") return true;
-      if (!isAtomCommandInterrupted(result)) {
+      if (result._tag === "Success") succeeded = true;
+      else if (!isAtomCommandInterrupted(result)) {
         const failure = squashAtomCommandFailure(result);
         setError(failure instanceof Error ? failure.message : "Could not update provider sign-in.");
       }
     } catch {
       setError("Could not update provider sign-in.");
-    } finally {
-      pendingRef.current = false;
-      setPending(false);
     }
-    return false;
+    pendingRef.current = false;
+    setPending(false);
+    return succeeded;
   }
   function send(response: ProviderAuthResponse) {
     if (!state?.flowId || !interaction) return Promise.resolve(false);
@@ -149,15 +150,7 @@ function ProviderAccount({
       void run(() => start(target));
       return;
     }
-    Alert.alert("Sign-in method", provider.displayName ?? provider.driver, [
-      ...methods.map((method) => ({
-        text: method.name,
-        onPress: () => {
-          void run(() => start({ environmentId, input: { instanceId, methodId: method.id } }));
-        },
-      })),
-      { text: "Cancel", style: "cancel" },
-    ]);
+    setChoosingMethod(true);
   }
   return (
     <View className="border-b border-border-subtle">
@@ -180,9 +173,11 @@ function ProviderAccount({
         ) : null}
         {interaction?.type === "terminal" ? (
           <>
-            <Text selectable className="max-h-64 font-mono text-sm text-foreground">
-              {interaction.output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")}
-            </Text>
+            <ScrollView className="max-h-64" nestedScrollEnabled>
+              <Text selectable className="font-mono text-sm text-foreground">
+                {interaction.output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")}
+              </Text>
+            </ScrollView>
             {field("input", "Terminal response", true)}
             <SettingsActionRow
               icon="arrow.up"
@@ -240,6 +235,25 @@ function ProviderAccount({
           </Text>
         ) : null}
       </View>
+      {choosingMethod && !active ? (
+        <View>
+          {state?.methods?.map((method) => (
+            <SettingsActionRow
+              key={method.id}
+              icon="person.crop.circle"
+              label={method.name}
+              disabled={disabled}
+              onPress={() => {
+                setChoosingMethod(false);
+                void run(() =>
+                  start({ environmentId, input: { instanceId, methodId: method.id } }),
+                );
+              }}
+            />
+          ))}
+          <SettingsActionRow icon="xmark" label="Cancel" onPress={() => setChoosingMethod(false)} />
+        </View>
+      ) : null}
       {url ? (
         <SettingsActionRow
           icon="globe"

@@ -57,7 +57,7 @@ export function ProviderAuthenticationSection({
   const active =
     auth?.phase === "starting" || auth?.phase === "waiting" || auth?.phase === "verifying";
   const disabled = readOnly || pending || query.error !== null;
-  const draftId = interaction?.id ?? auth?.flowId ?? "";
+  const draftId = `${auth?.flowId ?? ""}:${interaction?.id ?? ""}`;
   const values = draft.id === draftId ? draft.values : {};
   const url =
     interaction?.type === "browser" || interaction?.type === "deviceCode"
@@ -69,10 +69,11 @@ export function ProviderAuthenticationSection({
     pendingRef.current = true;
     setPending(true);
     setError(null);
+    let succeeded = false;
     try {
       const result = await command();
-      if (result._tag === "Success") return true;
-      if (!isAtomCommandInterrupted(result)) {
+      if (result._tag === "Success") succeeded = true;
+      else if (!isAtomCommandInterrupted(result)) {
         const failure = squashAtomCommandFailure(result);
         setError(
           failure instanceof Error ? failure.message : "Provider sign-in failed. Try again.",
@@ -80,11 +81,10 @@ export function ProviderAuthenticationSection({
       }
     } catch {
       setError("Provider sign-in failed. Try again.");
-    } finally {
-      pendingRef.current = false;
-      setPending(false);
     }
-    return false;
+    pendingRef.current = false;
+    setPending(false);
+    return succeeded;
   }
 
   async function send(response: ProviderAuthResponse) {

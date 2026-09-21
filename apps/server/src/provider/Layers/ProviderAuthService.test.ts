@@ -132,6 +132,7 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
     stopError?: boolean;
     logoutError?: ProviderSetupError;
     sharedCredentials?: boolean;
+    sharedBusy?: boolean;
   } = {},
 ) {
   const actions: string[] = [];
@@ -208,7 +209,19 @@ const makeHarness = Effect.fn("ProviderAuthService.test.makeHarness")(function* 
     makeInstance({ instanceId, enabled: input.enabled ?? true, auth }),
     makeInstance({ instanceId: unsupportedInstanceId, enabled: true }),
     ...(input.sharedCredentials
-      ? [makeInstance({ instanceId: otherInstanceId, enabled: true, auth })]
+      ? [
+          makeInstance({
+            instanceId: otherInstanceId,
+            enabled: true,
+            auth: {
+              ...auth,
+              isChangingCredentials: Effect.succeed(input.sharedBusy ?? false),
+              invalidate: Effect.sync(() => {
+                actions.push("invalidate-shared");
+              }),
+            },
+          }),
+        ]
       : []),
   ];
   const service = yield* makeProviderAuthService.pipe(
@@ -349,7 +362,7 @@ const observeAuth = Effect.fn("ProviderAuthService.test.observeAuth")(function* 
 describe("ProviderAuthService", () => {
   it.effect("stops sessions of every instance sharing the credential binding", () =>
     Effect.gen(function* () {
-      const { service, released } = yield* makeHarness({
+      const { service, released, actions } = yield* makeHarness({
         sharedCredentials: true,
         threads: [makeThread("active")],
         sessions: new Map([
@@ -365,8 +378,24 @@ describe("ProviderAuthService", () => {
       });
       yield* service.logout({ instanceId });
       assert.deepStrictEqual(released, ["one", "two"]);
+      assert.isAbove(actions.indexOf("invalidate-shared"), actions.indexOf("stop:two"));
+      assert.isBelow(actions.indexOf("invalidate-shared"), actions.indexOf("native-logout"));
     }),
   );
+  it.effect("rejects overlapping credential changes from another shared instance", () =>
+    Effect.gen(function* () {
+      const { service, actions } = yield* makeHarness({
+        sharedCredentials: true,
+        sharedBusy: true,
+      });
+      const startError = yield* service.start({ instanceId }, owner).pipe(Effect.flip);
+      const logoutError = yield* service.logout({ instanceId }).pipe(Effect.flip);
+      assert.include(startError.detail, "shared sign-in");
+      assert.include(logoutError.detail, "shared sign-in");
+      assert.deepStrictEqual(actions, []);
+    }),
+  );
+
   it.effect("stops routed sessions before sign-in, including for a disabled instance", () =>
     Effect.gen(function* () {
       const { service, actions, released } = yield* makeHarness({

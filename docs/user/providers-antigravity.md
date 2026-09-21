@@ -8,9 +8,9 @@ which models and account access are available through this agent.
 
 On web or desktop, open **Settings > Providers**, choose the environment that runs
 your project, and enable Antigravity. Install its runtime there, then choose
-**Sign in with Google** and complete the browser sign-in. Wait for T3 Code to confirm
-account access and load models before starting a thread. Provider setup is not
-available in the mobile app.
+**Sign in** and complete the browser sign-in. Wait for T3 Code to confirm
+account access and load models before starting a thread. Once the runtime is installed,
+you can also sign in from **Settings > Provider accounts** in the mobile app.
 
 Installation continues if you leave settings or reconnect. Setup requires
 permission to operate the environment; update an older server if it does not offer
@@ -23,7 +23,7 @@ on the environment's machine. From another device, the final page will usually
 fail to load because the sign-in listener is on the environment.
 
 Copy the full return address, including everything after `?`, into the return URL
-field in the web or desktop client where you started setup, then choose
+field in the client where you started sign-in, then choose
 **Continue**. Keep the original address; do not replace it with the server's
 hostname. Only that T3 Code sign-in session can finish the attempt. If it expires,
 retry sign-in and use the new link.
@@ -114,7 +114,7 @@ runtimes are shared on the environment.
 | Action                    | Effect                                                            |
 | ------------------------- | ----------------------------------------------------------------- |
 | Disable                   | Stops the instance's sessions and keeps its Google sign-in.       |
-| Sign out of Google        | Stops the instance's sessions and removes its saved Google login. |
+| Sign out                  | Stops the instance's sessions and removes its saved Google login. |
 | Remove downloaded runtime | Removes the shared installation and keeps Google credentials.     |
 
 All three keep thread history and workspace files. Sending `/logout` by itself in
@@ -132,7 +132,7 @@ until a session, a refresh, or a sign-out reports something new.
 
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to
-sign in again, use setup on web or desktop.
+sign in again, use provider settings on web or desktop, or **Provider accounts** on mobile.
 
 If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage limit,
 follow the provider's message and any retry time. See [Google's account plans][plans]
