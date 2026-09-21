@@ -670,31 +670,44 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     platform: DevicePlatform,
   ) {
     const ready = yield* readiness(hostId);
-    // serve-sim's shutdown closes its in-process capture session before powering off.
-    // The hub's generic shutdown can leave that session cached across a reboot.
-    const path =
-      platform === "ios" ? `${vendorPrefix("ios")}/grid/api/shutdown` : "/api/devices/shutdown";
-    yield* HttpClientRequest.post(`${ready.hub.origin}${path}`).pipe(
-      HttpClientRequest.bodyJson(
-        platform === "ios" ? { udid: deviceId } : { platform, id: deviceId },
-      ),
-      Effect.mapError(
-        (cause) =>
-          new DeviceOperationError({ operation: "shutdown", reason: "invalid_payload", cause }),
-      ),
-      Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown")),
-      Effect.flatMap((result) =>
-        result.ok
-          ? Effect.void
-          : Effect.fail(
-              new DeviceOperationError({
-                operation: "shutdown",
-                reason: "hub_rejected",
-                cause: result,
-              }),
+    const postShutdown = (path: string, body: Record<string, string>) =>
+      HttpClientRequest.post(`${ready.hub.origin}${path}`).pipe(
+        HttpClientRequest.bodyJson(body),
+        Effect.mapError(
+          (cause) =>
+            new DeviceOperationError({ operation: "shutdown", reason: "invalid_payload", cause }),
+        ),
+        Effect.flatMap((request) => hubJson(request, HubActionResult, "shutdown")),
+        Effect.flatMap((result) =>
+          result.ok
+            ? Effect.void
+            : Effect.fail(
+                new DeviceOperationError({
+                  operation: "shutdown",
+                  reason: "hub_rejected",
+                  cause: result,
+                }),
+              ),
+        ),
+      );
+    // serve-sim's shutdown closes its in-process capture session before it runs
+    // `simctl shutdown`; the hub's generic shutdown can leave that session cached
+    // across a reboot. serve-sim runs simctl bare, though, so a simulator that is
+    // already off fails there. Accept that failure only when the hub confirms
+    // the simulator is off; a failure on a running one still surfaces.
+    yield* platform === "ios"
+      ? postShutdown(`${vendorPrefix("ios")}/grid/api/shutdown`, { udid: deviceId }).pipe(
+          Effect.catch((cause) =>
+            fetchDevices(ready).pipe(
+              Effect.flatMap(({ devices }) =>
+                devices.find((device) => device.id === deviceId)?.booted === false
+                  ? Effect.logInfo("iOS simulator was already shut down", { deviceId })
+                  : Effect.fail(cause),
+              ),
             ),
-      ),
-    );
+          ),
+        )
+      : postShutdown("/api/devices/shutdown", { platform, id: deviceId });
     yield* publish((state) => ({
       ...state,
       devices: state.devices.map((device) =>

@@ -7,6 +7,7 @@ import {
   type DeviceServiceState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
@@ -464,6 +465,107 @@ it.effect.each(["shutdown", "close"] as const)(
       yield* service.open(input);
       expect(capture).toBe(2);
       expect((yield* service.state).sessions).toHaveLength(1);
+    }).pipe(
+      Effect.provide(ServerSettingsService.layerTest({ enableDeviceSupport: true })),
+      Effect.scoped,
+    ),
+);
+
+it.effect.each([
+  { hubReports: "off", outcome: "succeeds" },
+  { hubReports: "booted", outcome: "fails" },
+  { hubReports: "missing", outcome: "fails" },
+] as const)(
+  "iOS shutdown $outcome when serve-sim rejects it and the hub reports the simulator $hubReports",
+  ({ hubReports, outcome }) =>
+    Effect.gen(function* () {
+      const deviceId = DeviceId.make("22222222-2222-2222-2222-222222222222");
+      const paths: string[] = [];
+      // The device list is stale until shutdown re-reads it from the hub.
+      let listed: "booted" | "off" | "missing" = "booted";
+      const ready: DeviceHost.DeviceHostReady = {
+        nodePath: process.execPath,
+        hub: { origin: "http://device.test" },
+        helpers: { serveSimAxSettings: null, serveSimCli: null },
+        run: () => Effect.succeed({ code: 0, stdout: "", stderr: "" }),
+      };
+      const host: DeviceHost.DeviceHost["Service"] = {
+        id: LOCAL_DEVICE_HOST_ID,
+        summary: Effect.succeed({
+          id: LOCAL_DEVICE_HOST_ID,
+          kind: "local",
+          label: "Simulator host",
+          platforms: [{ platform: "ios", available: true }],
+          hubInstalled: true,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+        ensureReady: () => Effect.succeed(ready),
+        ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
+        current: Effect.succeed(ready),
+        stopAgent: Effect.void,
+        stop: Effect.void,
+      };
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          const path = new URL(request.url).pathname;
+          paths.push(path);
+          if (path === "/api/devices") {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                emulators: [],
+                simulators:
+                  listed === "missing"
+                    ? []
+                    : [
+                        {
+                          id: deviceId,
+                          name: "iPhone",
+                          platform: "ios",
+                          version: "26",
+                          physical: false,
+                          booted: listed === "booted",
+                        },
+                      ],
+                // A partial listing still decodes; it must not read as "off".
+                errors: listed === "missing" ? [{ message: "simctl list failed" }] : [],
+              }),
+            );
+          }
+          if (path === "/vendor/serve-sim/grid/api/shutdown") {
+            // serve-sim runs `simctl shutdown` bare and returns its failure as-is.
+            listed = hubReports;
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                { ok: false, error: "Unable to shutdown device in current state: Shutdown" },
+                { status: 500 },
+              ),
+            );
+          }
+          throw new Error(`Unexpected hub path: ${path}`);
+        }),
+      );
+      const service = yield* makeWithHosts(new Map([[host.id, host]])).pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+      );
+      yield* service.list;
+      const exit = yield* Effect.exit(service.shutdown({ deviceId, platform: "ios" }));
+      expect(paths.filter((path) => path.endsWith("shutdown"))).toEqual([
+        "/vendor/serve-sim/grid/api/shutdown",
+      ]);
+      if (outcome === "succeeds") {
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(
+          (yield* service.state).devices.find((device) => device.id === deviceId)?.booted,
+        ).toBe(false);
+      } else {
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(
+          (yield* service.state).devices.find((device) => device.id === deviceId)?.booted,
+        ).toBe(true);
+      }
     }).pipe(
       Effect.provide(ServerSettingsService.layerTest({ enableDeviceSupport: true })),
       Effect.scoped,
