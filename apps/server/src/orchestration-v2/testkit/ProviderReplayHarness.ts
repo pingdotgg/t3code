@@ -406,6 +406,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
             const orchestrator = yield* OrchestratorV2;
             return Layer.mock(ThreadManagementService)({
               dispatch: orchestrator.dispatch,
+              getThreadRecords: orchestrator.getThreadRecords,
               getThreadProjection: orchestrator.getThreadProjection,
             });
           }),

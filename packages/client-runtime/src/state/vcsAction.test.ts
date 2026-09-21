@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   ThreadId,
+  ProjectId,
   WS_METHODS,
   type GitActionProgressEvent,
   type GitRunStackedActionInput,
@@ -663,11 +664,13 @@ describe("vcsActionState", () => {
 
         expect(registry.get(state).revision).toBe(0);
         const threadId = ThreadId.make("thread-stacked-action");
+        const projectId = ProjectId.make("project-stacked-action");
         const successfulResult = yield* Effect.promise(() =>
           manager.runStackedAction(targetKey).run(registry, {
             actionId: successfulActionId,
             action,
             threadId,
+            projectId,
           }),
         );
 
@@ -677,7 +680,7 @@ describe("vcsActionState", () => {
         expect(removed).toEqual([`${environmentId}:*`]);
         // The server links a created pull request to this thread, so the id must ride along.
         expect(rpcInputs).toEqual([
-          { actionId: successfulTransportActionId, cwd, action, threadId },
+          { actionId: successfulTransportActionId, cwd, action, threadId, projectId },
         ]);
 
         const failedResult = yield* Effect.promise(() =>

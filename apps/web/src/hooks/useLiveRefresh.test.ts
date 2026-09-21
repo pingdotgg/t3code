@@ -68,6 +68,44 @@ describe("live refresh cadence", () => {
   it("waits five minutes between automatic host reads", () => {
     expect(LIVE_REFRESH_INTERVAL_MS).toBe(5 * 60_000);
   });
+
+  it.each(["focus", "visibilitychange"])(
+    "keeps an idle view paused after %s until input",
+    (event) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1_000_000);
+      const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
+      const window = new EventTarget();
+      vi.stubGlobal("document", document);
+      vi.stubGlobal("window", window);
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const refresh = vi.fn();
+      let renderer: ReactTestRenderer | undefined;
+      function Probe() {
+        useLiveRefresh(refresh, { intervalMs: 45_000 });
+        return null;
+      }
+      try {
+        act(() => {
+          renderer = create(createElement(Probe));
+        });
+        act(() => vi.advanceTimersByTime(LIVE_REFRESH_IDLE_AFTER_MS));
+        refresh.mockClear();
+        act(() => (event === "focus" ? window : document).dispatchEvent(new Event(event)));
+        expect(refresh).not.toHaveBeenCalled();
+        act(() => vi.advanceTimersByTime(90_000));
+        expect(refresh).not.toHaveBeenCalled();
+        act(() => document.dispatchEvent(new Event("pointerdown")));
+        expect(refresh).toHaveBeenCalledTimes(1);
+        act(() => vi.advanceTimersByTime(45_000));
+        expect(refresh).toHaveBeenCalledTimes(2);
+      } finally {
+        act(() => renderer?.unmount());
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+      }
+    },
+  );
 });
 
 describe("shouldLiveRefresh", () => {

@@ -637,3 +637,58 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 });
+
+it.effect("accepts conditional 304 responses and preserves HTTP errors and retry delays", () =>
+  Effect.gen(function* () {
+    const gh = yield* GitHubCli.GitHubCli;
+    const request = {
+      cwd: "/repo",
+      args: [
+        "api",
+        "repos/acme/web/pulls/1",
+        "--hostname",
+        "github.com",
+        "--include",
+        "-H",
+        'If-None-Match: "one"',
+      ],
+      acceptNotModified: true,
+    };
+    const respond = (status: number, headers = "") =>
+      mockRun.mockImplementation(() =>
+        Effect.succeed({
+          ...processOutput(`HTTP/2.0 ${status}\r\n${headers}\r\n`),
+          exitCode: ChildProcessSpawner.ExitCode(1),
+        }),
+      );
+    respond(304);
+    expect((yield* gh.execute(request)).stdout).toContain("304");
+    expect(mockRun.mock.calls[0]?.[0].allowNonZeroExit).toBe(true);
+    respond(401);
+    expect((yield* gh.execute(request).pipe(Effect.flip))._tag).toBe(
+      "GitHubCliAuthenticationError",
+    );
+    respond(403);
+    expect((yield* gh.execute(request).pipe(Effect.flip))._tag).toBe("GitHubCliCommandError");
+    for (const status of [403, 429]) {
+      respond(status, "Retry-After: 120\r\n");
+      expect(yield* gh.execute(request).pipe(Effect.flip)).toMatchObject({
+        _tag: "GitHubCliRateLimitError",
+        retryAt: (yield* Clock.currentTimeMillis) + 120_000,
+      });
+    }
+    respond(
+      403,
+      `X-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: ${Math.floor((yield* Clock.currentTimeMillis) / 1_000) + 60}\r\n`,
+    );
+    expect(yield* gh.execute(request).pipe(Effect.flip)).toMatchObject({
+      _tag: "GitHubCliRateLimitError",
+      retryAt: (yield* Clock.currentTimeMillis) + 60_000,
+    });
+    respond(500);
+    expect(yield* gh.execute(request).pipe(Effect.flip)).toMatchObject({
+      _tag: "GitHubCliCommandError",
+      httpStatus: 500,
+    });
+  }).pipe(Effect.provide(layer)),
+);

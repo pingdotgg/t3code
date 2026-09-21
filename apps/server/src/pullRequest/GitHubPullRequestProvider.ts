@@ -363,7 +363,7 @@ export const make = Effect.gen(function* () {
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
     getChangeRequestChecks: (input) =>
-      readChecks(input).pipe(
+      cli.revalidateChecks(input, readChecks(input)).pipe(
         Effect.map(({ state, checks }) => ({ state, checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
