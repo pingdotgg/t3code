@@ -117,6 +117,17 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
   );
 }
 
+// Kept as its own component so the hook stays out of ProviderSetupActions, which
+// tests invoke as a plain function to inspect the actions tree.
+function AuthLinkExpiry({ expiresAt }: { expiresAt: string }) {
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  return (
+    <time dateTime={expiresAt}>
+      {formatShortTimestamp(expiresAt, timestampFormat) || "Invalid Date"}
+    </time>
+  );
+}
+
 function ProviderSetupActions({
   environmentId,
   environmentLabel,
@@ -132,7 +143,6 @@ function ProviderSetupActions({
   readonly provider: ServerProvider;
   readonly authMethod: AntigravityAuthMethod;
 }) {
-  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const target = { environmentId, input: { instanceId } };
   const usesBrowser = authMethod === "oauth-personal" || authMethod === "oauth-business";
   const phaseLabels = usesBrowser ? AUTH_PHASE_LABELS : CREDENTIAL_PHASE_LABELS;
@@ -466,11 +476,7 @@ function ProviderSetupActions({
               <>
                 {auth?.expiresAt ? (
                   <p className="text-muted-foreground">
-                    Link expires at{" "}
-                    <time dateTime={auth.expiresAt}>
-                      {formatShortTimestamp(auth.expiresAt, timestampFormat) || "Invalid Date"}
-                    </time>
-                    .
+                    Link expires at <AuthLinkExpiry expiresAt={auth.expiresAt} />.
                   </p>
                 ) : null}
                 <form
