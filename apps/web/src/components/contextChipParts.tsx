@@ -1,5 +1,9 @@
-import type { EnvironmentId, PullRequestContextMetadata } from "@t3tools/contracts";
-import { CircleDashedIcon, FilmIcon, ImageIcon } from "lucide-react";
+import type {
+  DeviceContextRecord,
+  EnvironmentId,
+  PullRequestContextMetadata,
+} from "@t3tools/contracts";
+import { CircleDashedIcon, FilmIcon, ImageIcon, MonitorIcon } from "lucide-react";
 import {
   useState,
   type ComponentProps,
@@ -13,6 +17,8 @@ import { PULL_REQUEST_STATE_PRESENTATION } from "~/components/pullRequest/pullRe
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
+  COMPOSER_INLINE_CHIP_CLASS_NAME,
+  COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME,
   CONTEXT_INLINE_CHIP_FOCUS_CLASS_NAME,
   CONTEXT_INLINE_CHIP_ICON_TONE_CLASS_NAMES,
   CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
@@ -362,6 +368,36 @@ export function UnresolvedChip(props: {
       tooltip={props.tooltip}
       tooltipClassName={props.tooltipClassName}
       unresolved
+    />
+  );
+}
+
+export function DeviceChip({
+  record,
+  copyMarkdown,
+}: {
+  record: DeviceContextRecord;
+  copyMarkdown?: string;
+}) {
+  return (
+    <ContextChipShell
+      data-markdown-copy={copyMarkdown}
+      icon={<MonitorIcon className="size-3.5 shrink-0" />}
+      label={record.label}
+      labelClassName={COMPOSER_INLINE_CHIP_LABEL_CLASS_NAME}
+      className={COMPOSER_INLINE_CHIP_CLASS_NAME}
+      tooltip={[
+        "Machine",
+        record.os,
+        record.connectionStatus,
+        ...record.ssh.map(
+          (target) =>
+            `${target.username ? `${target.username}@` : ""}${target.host}${target.port ? `:${target.port}` : ""}`,
+        ),
+        record.ssh.length === 0 ? "SSH hostname not available" : null,
+      ]
+        .filter(Boolean)
+        .join(" / ")}
     />
   );
 }

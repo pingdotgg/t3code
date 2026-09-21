@@ -1,3 +1,4 @@
+import type { DeviceContextRecord } from "@t3tools/contracts";
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { create } from "zustand";
 
@@ -20,6 +21,7 @@ export interface QueuedComposerMessage {
   terminalContexts: TerminalContextDraft[];
   previewAnnotations: PreviewAnnotationPayload[];
   reviewComments: ReviewCommentContext[];
+  deviceMentions?: ReadonlyArray<DeviceContextRecord> | undefined;
   submissionIntent: ComposerSubmissionIntent;
   /**
    * The newest completed tool activity at queue time. A different id later

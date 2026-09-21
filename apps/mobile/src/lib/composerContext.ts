@@ -217,8 +217,10 @@ export function serializeComposerMessageForServer(
   text: string,
   context: OrchestrationMessageContext | undefined,
   supportsInlineMessageContext: boolean,
+  supportsDeviceMessageContext = false,
 ): { text: string; context?: OrchestrationMessageContext } {
-  return supportsInlineMessageContext
+  return supportsInlineMessageContext &&
+    (supportsDeviceMessageContext || !context?.records.some((record) => record.kind === "device"))
     ? { text, ...(context ? { context } : {}) }
     : { text: serializeLegacyContextMessage({ text, records: context?.records ?? [] }) };
 }

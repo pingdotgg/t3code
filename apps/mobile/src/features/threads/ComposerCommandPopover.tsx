@@ -1,3 +1,4 @@
+import type { DeviceMention } from "@t3tools/client-runtime/connection/deviceMentions";
 import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
@@ -16,6 +17,13 @@ import { AppText as Text } from "../../components/AppText";
 import { GlassSurface } from "../../components/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 export type ComposerCommandItem =
+  | {
+      readonly id: string;
+      readonly type: "device";
+      readonly device: DeviceMention;
+      readonly label: string;
+      readonly description: string;
+    }
   | {
       readonly id: string;
       readonly type: "pull-request";
@@ -90,6 +98,8 @@ const SKILL_SOURCE_SYMBOL_BY_KIND: Record<ProviderSkillSourceKind, AppSymbolName
 
 function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   switch (item.type) {
+    case "device":
+      return "desktopcomputer";
     case "pull-request":
       return { ios: "arrow.triangle.pull", android: "merge" };
     case "slash-command":
@@ -125,7 +135,7 @@ function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean):
     case "pull-request":
       return "No matching pull requests.";
     case "path":
-      return "No matching files or folders.";
+      return "No matching files, folders, or devices.";
     case "skill":
       return "No skills found.";
     case "slash-command":

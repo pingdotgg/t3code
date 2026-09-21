@@ -1,3 +1,5 @@
+import type { DeviceContextRecord } from "@t3tools/contracts";
+import { DeviceChip } from "./contextChipParts";
 import ChatMarkdown from "./ChatMarkdown";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
@@ -59,6 +61,7 @@ import {
  * shape; the editor only needs a way to look one up by id.
  */
 export type ComposerDraftContextRecord =
+  | { kind: "device"; record: DeviceContextRecord }
   | { kind: "terminal"; record: TerminalContextDraft }
   | { kind: "review-comment"; record: ReviewCommentContext }
   | { kind: "preview-annotation"; record: PreviewAnnotationPayload }
@@ -98,6 +101,7 @@ export const ComposerContextRecordsContext = createContext<ComposerDraftContextR
 );
 
 export function composerContextRecordsFromDraft(input: {
+  deviceMentions?: ReadonlyArray<DeviceContextRecord> | undefined;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations?: ReadonlyArray<PreviewAnnotationPayload>;
@@ -106,6 +110,8 @@ export function composerContextRecordsFromDraft(input: {
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
 }): ComposerDraftContextRecords {
   const records = new Map<string, ComposerDraftContextRecord>();
+  for (const record of input.deviceMentions ?? [])
+    records.set(record.contextId, { kind: "device", record });
   for (const record of input.images ?? []) {
     records.set(imageContextReference(record).contextId, {
       kind: "image",
@@ -343,6 +349,16 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
 >({
   requiredKinds: ["image", "file", "terminal", "review-comment", "preview-annotation"],
   handlers: [
+    {
+      kind: "device",
+      canRender: (entry) => entry.kind === "device",
+      render: (entry, context) =>
+        entry.kind === "device" ? (
+          <DeviceChip record={entry.record} />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
     {
       kind: "terminal",
       canRender: (entry) => entry.kind === "terminal",

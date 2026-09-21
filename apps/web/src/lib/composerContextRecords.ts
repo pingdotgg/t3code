@@ -1,3 +1,4 @@
+import type { DeviceContextRecord } from "@t3tools/contracts";
 import {
   COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
@@ -292,6 +293,7 @@ export function attachmentContextRecord(
 }
 
 export function buildMessageContext(input: {
+  deviceMentions?: ReadonlyArray<DeviceContextRecord> | undefined;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   reviewComments: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
@@ -304,6 +306,7 @@ export function buildMessageContext(input: {
     ),
   );
   const records: ComposerContextRecord[] = [
+    ...(input.deviceMentions ?? []),
     ...input.terminalContexts.map(terminalContextRecord),
     ...input.reviewComments.map(reviewCommentContextRecord),
     ...input.previewAnnotations.map((annotation) =>

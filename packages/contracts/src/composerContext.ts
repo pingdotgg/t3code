@@ -24,6 +24,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "preview-annotation",
   "review-comment",
   "mention",
+  "device",
   "skill",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
@@ -208,6 +209,23 @@ export const MentionContextRecord = Schema.Struct({
 });
 export type MentionContextRecord = typeof MentionContextRecord.Type;
 
+/** A machine selected from the client's existing T3 connections, captured when mentioned. */
+export const DeviceContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("device"),
+  environmentId: ShortString,
+  os: NullableShortString,
+  connectionStatus: ShortString,
+  ssh: Schema.Array(
+    Schema.Struct({
+      host: ShortString,
+      username: Schema.optional(ShortString),
+      port: Schema.optional(PositiveInt),
+    }),
+  ).check(Schema.isMaxLength(20)),
+});
+export type DeviceContextRecord = typeof DeviceContextRecord.Type;
+
 export const SkillContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("skill"),
@@ -244,6 +262,7 @@ export const KnownComposerContextRecord = Schema.Union([
   PreviewAnnotationContextRecord,
   ReviewCommentContextRecord,
   MentionContextRecord,
+  DeviceContextRecord,
   SkillContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;

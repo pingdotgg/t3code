@@ -231,6 +231,21 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
     }
     case "mention":
       return `path: ${record.path}`;
+    case "device":
+      return [
+        "This is a machine connected to T3 Code. Use it as the target for the user's requested work.",
+        "A mention does not move this agent to that machine or grant remote access. Verify the target with available remote tools before running commands; ask for access details if needed.",
+        `name: ${record.label}`,
+        `environmentId: ${record.environmentId}`,
+        `os: ${record.os ?? "unknown"}`,
+        `connection status when mentioned: ${record.connectionStatus}`,
+        "T3 connection status describes the client's connection, not this agent's reachability.",
+        ...(record.ssh.length > 0
+          ? record.ssh.map((target) => `SSH target: ${JSON.stringify(target)}`)
+          : [
+              "SSH hostname: unknown. Do not infer a hostname or SSH access from the machine's display name.",
+            ]),
+      ].join("\n");
     case "skill":
       return `name: ${record.name}`;
   }

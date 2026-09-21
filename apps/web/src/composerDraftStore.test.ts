@@ -1,3 +1,5 @@
+import { ComposerContextId, type DeviceContextRecord } from "@t3tools/contracts";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import {
   scopedProjectKey,
   scopedThreadKey,
@@ -3401,5 +3403,42 @@ describe("composerDraftStore attachment references", () => {
     expect(merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.prompt).toBe(
       prompt,
     );
+  });
+});
+
+describe("device mention drafts", () => {
+  beforeEach(resetComposerDraftStore);
+  afterEach(resetComposerDraftStore);
+  it("preserves machine details through reload and clears them after sending", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    try {
+      const threadId = ThreadId.make("device-draft");
+      const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+      const device: DeviceContextRecord = {
+        version: 1,
+        kind: "device",
+        contextId: ComposerContextId.make("device_test"),
+        label: "Build Box",
+        environmentId: "remote",
+        os: "linux",
+        connectionStatus: "connected",
+        ssh: [{ host: "buildbox.tailnet.test", username: "dev", port: 2222 }],
+      };
+      useComposerDraftStore.getState().setPrompt(threadRef, formatComposerContextReference(device));
+      useComposerDraftStore.getState().setDeviceMentions(threadRef, [device]);
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.deviceMentions).toEqual([device]);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+        formatComposerContextReference(device),
+      );
+      useComposerDraftStore.getState().clearComposerContent(threadRef);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.deviceMentions ?? []).toEqual([]);
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+    }
   });
 });

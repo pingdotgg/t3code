@@ -271,3 +271,20 @@ describe("host context compatibility", () => {
     expect(context.records).toEqual([terminal, review, pr]);
   });
 });
+
+it("sends machine context as text to servers that only understand older inline kinds", () => {
+  const device = {
+    version: 1 as const,
+    kind: "device" as const,
+    contextId: ComposerContextId.make("device_test"),
+    label: "Build Box",
+    environmentId: "remote",
+    os: "linux",
+    connectionStatus: "connected",
+    ssh: [{ host: "buildbox.local" }],
+  };
+  const context = { version: 1 as const, records: [device] };
+  const text = formatComposerContextReference(device);
+  expect(serializeComposerMessageForServer(text, context, true).text).toContain("SSH target:");
+  expect(serializeComposerMessageForServer(text, context, true, true)).toEqual({ text, context });
+});

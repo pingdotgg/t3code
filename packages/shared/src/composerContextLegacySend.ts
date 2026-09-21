@@ -1,6 +1,9 @@
 import type { ComposerContextRecord, ElementContextDetails } from "@t3tools/contracts";
 
-import { collectComposerContextReferences } from "./composerContextReferences.ts";
+import {
+  collectComposerContextReferences,
+  projectComposerContextForProvider,
+} from "./composerContextReferences.ts";
 
 /**
  * Serializes a canonical message (inline reference links plus records) into the pre-inline-context
@@ -26,7 +29,11 @@ export function serializeLegacyContextMessage(input: {
     if (!record) continue;
     used.add(occurrence.contextId);
     const replacement =
-      record.kind === "review-comment" ? renderReviewComment(record) : inlineLabel(record);
+      record.kind === "device"
+        ? projectComposerContextForProvider({ text: occurrence.source, records: [record] })
+        : record.kind === "review-comment"
+          ? renderReviewComment(record)
+          : inlineLabel(record);
     text = `${text.slice(0, occurrence.start)}${replacement}${text.slice(occurrence.end)}`;
   }
 
