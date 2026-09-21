@@ -20,7 +20,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as ServerConfig from "../config.ts";
 import * as DeviceHost from "./DeviceHost.ts";
-import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
+import { quoteRemoteArg, remoteDeviceCommand, remoteDeviceScript } from "./sshDeviceScript.ts";
 
 const Probe = Schema.Struct({
   nodePath: Schema.String,
@@ -47,11 +47,6 @@ const targetFor = (config: SshDeviceHostConfig) => ({
 });
 const identityArgs = (config: SshDeviceHostConfig) =>
   config.identityFile ? ["-i", config.identityFile] : [];
-const commandArgs = (script: string) => [
-  "sh",
-  "-c",
-  quoteRemoteArg(remoteDeviceEnvironment + script),
-];
 const bootstrap = (
   config: SshDeviceHostConfig,
   owner: string,
@@ -59,10 +54,11 @@ const bootstrap = (
 ) =>
   runSshCommand(targetFor(config), {
     preHostArgs: identityArgs(config),
-    remoteCommandArgs: commandArgs(
+    ...remoteDeviceCommand(
       'command -v node >/dev/null 2>&1 || { echo "Node is missing from the non-interactive SSH PATH" >&2; exit 1; }; exec node',
+      remoteDeviceScript(owner, mode),
+      true,
     ),
-    stdin: remoteDeviceScript(owner, mode),
     timeoutMs: mode === "start" || mode === "agent-start" ? 1_300_000 : 45_000,
   }).pipe(
     Effect.mapError(
@@ -148,8 +144,10 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     provide(
       runSshCommand(targetFor(config), {
         preHostArgs: identityArgs(config),
-        remoteCommandArgs: commandArgs(`exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`),
-        ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
+        ...remoteDeviceCommand(
+          `exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`,
+          options?.stdin,
+        ),
         ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       }),
     ).pipe(

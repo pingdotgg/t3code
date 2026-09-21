@@ -1,9 +1,23 @@
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { deviceHubWindowsImport } from "./deviceHubWindows.ts";
 
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
+/** Send shell syntax over stdin so the SSH login shell never reinterprets it. */
+export const remoteDeviceCommand = (script: string, stdin?: string, nodeBootstrap = false) => ({
+  remoteCommandArgs: ["sh", "-s"],
+  stdin:
+    remoteDeviceEnvironment(nodeBootstrap) +
+    (stdin === undefined
+      ? `${script} </dev/null\n`
+      : `printf %s ${quoteRemoteArg(stdin)} | { ${script}; }\n`),
+});
+
 /** Resolve common non-interactive SDK and Node locations without sourcing user shell scripts. */
-export const remoteDeviceEnvironment = `export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export const remoteDeviceEnvironment = (
+  nodeBootstrap = false,
+) => `export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin"
+${nodeBootstrap ? `node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)' 2>/dev/null || export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"` : ""}
 if [ -z "$ANDROID_HOME" ]; then
   if [ -d "$HOME/Library/Android/sdk" ]; then export ANDROID_HOME="$HOME/Library/Android/sdk";
   elif [ -d "$HOME/Android/Sdk" ]; then export ANDROID_HOME="$HOME/Android/Sdk"; fi
@@ -27,6 +41,7 @@ const owner = ${JSON.stringify(owner)};
 const mode = ${JSON.stringify(mode)};
 const hubVersion = ${JSON.stringify(DEVICE_HUB_VERSION)};
 const agentVersion = ${JSON.stringify(AGENT_DEVICE_VERSION)};
+const hubWindowsImport = ${JSON.stringify(deviceHubWindowsImport)};
 ` +
   String.raw`
 const fs = require('node:fs');
@@ -37,11 +52,28 @@ const { spawn, spawnSync } = require('node:child_process');
 const root = path.join(os.homedir(), '.t3', 'device');
 const state = path.join(root, 'hosts', owner);
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });
+// Windows cannot spawn npm.cmd directly. Run its JS entry with the selected Node,
+// keeping paths and arguments out of a command shell for both probe and install.
+const runNpm = (args, options) => {
+  if (process.platform !== 'win32') return run('npm', args, options);
+  const directories = [path.dirname(process.execPath), ...(process.env.PATH || '').split(path.delimiter)];
+  const entry = directories.filter(Boolean).map(dir => path.join(dir.replace(/^"|"$/g, ''), 'node_modules', 'npm', 'bin', 'npm-cli.js')).find(file => fs.existsSync(file));
+  if (!entry) throw Error('npm is missing: could not find node_modules/npm/bin/npm-cli.js beside Node or on the non-interactive SSH PATH.');
+  return run(process.execPath, [entry, ...args], options);
+};
+const commandFailure = result => [
+  result.error?.message,
+  result.signal ? 'signal ' + result.signal : result.status !== null ? 'exit code ' + result.status : null,
+  (result.stderr?.trim() || result.stdout?.trim())?.slice(-2000),
+].filter(Boolean).join(': ');
 const read = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 const write = (file, value) => { const tmp = file + '.' + process.pid; fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 }); fs.renameSync(tmp, file); };
 const stopHub = hub => {
   if (!hub || hub.owner !== owner) return;
-  const command = run('ps', ['-p', String(hub.pid), '-o', 'command=']).stdout || '';
+  const inspection = process.platform === 'win32'
+    ? run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); (Get-CimInstance Win32_Process -Filter "ProcessId = ' + Number(hub.pid) + '").CommandLine'])
+    : run('ps', ['-p', String(hub.pid), '-o', 'command=']);
+  const command = !inspection.error && inspection.status === 0 ? inspection.stdout || '' : '';
   if (command.includes(hub.entryPath) && command.includes(String(hub.port))) {
     try { process.kill(hub.pid, 'SIGTERM'); } catch {}
   }
@@ -89,8 +121,8 @@ async function install(name, version, entry) {
   try {
     if (complete()) return file;
     staging = fs.mkdtempSync(path.join(path.dirname(dir), '.install-'));
-    const result = run('npm', ['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
-    if (result.status !== 0) throw Error('Installing ' + name + ': ' + (result.error?.message || result.stderr?.slice(-2000)));
+    const result = runNpm(['install', '--prefix', staging, '--no-fund', '--no-audit', name + '@' + version], { timeout: 600000, maxBuffer: 8 * 1024 * 1024 });
+    if (result.error || result.status !== 0) throw Error('Installing ' + name + ': ' + commandFailure(result));
     if (!fs.existsSync(path.join(staging, 'node_modules', name, entry))) throw Error('Missing installed entry for ' + name);
     fs.writeFileSync(path.join(staging, '.install-complete'), version);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -103,14 +135,25 @@ async function install(name, version, entry) {
 }
 (async () => {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
-  const android = run('adb', ['version']).status === 0;
+  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || (process.platform === 'win32'
+    ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Android', 'Sdk')
+    : path.join(os.homedir(), process.platform === 'darwin' ? 'Library/Android/sdk' : 'Android/Sdk'));
+  const tool = (relative) => fs.existsSync(path.join(sdk, relative));
+  const suffix = process.platform === 'win32' ? '.exe' : '';
+  const androidReason = !tool('platform-tools/adb' + suffix) ? 'Android SDK Platform-Tools are missing. Install the Android SDK and set ANDROID_HOME.'
+    : !tool('emulator/emulator' + suffix) ? 'Android Emulator is missing. Install it in Android Studio SDK Manager.'
+    : !tool('cmdline-tools/latest/bin/avdmanager' + (process.platform === 'win32' ? '.bat' : '')) ? 'Android SDK Command-line Tools (latest) are missing. Install them in Android Studio SDK Manager.'
+    : null;
+  const android = androidReason === null;
+  if (android) process.env.ANDROID_HOME = sdk;
   const platforms = [
     { platform: 'ios', available: ios, ...(!ios ? { reason: 'iOS needs macOS with Xcode and working xcrun simctl.' } : {}) },
-    { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
+    { platform: 'android', available: android, ...(!android ? { reason: androidReason } : {}) },
   ];
   if (mode === 'probe') {
-    if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');
-    if (run('npm', ['--version']).status !== 0) throw Error('npm is missing from the non-interactive SSH PATH.');
+    if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host. Found ' + process.versions.node + ' at ' + process.execPath + '.');
+    const npm = runNpm(['--version']);
+    if (npm.error || npm.status !== 0) throw Error(npm.error?.code === 'ENOENT' ? 'npm is missing from the non-interactive SSH PATH: ' + npm.error.message : 'npm probe failed: ' + commandFailure(npm));
     console.log(JSON.stringify({ nodePath: process.execPath, platforms })); return;
   }
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
@@ -135,18 +178,19 @@ async function install(name, version, entry) {
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
   const hubEntry = await install('expo-device-hub', hubVersion, 'dist/server/cli.mjs');
   let hub = read(hubFile);
-  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || !await healthy(hub.port, '/readyz')) {
+  const windowsImport = process.platform === 'win32' ? hubWindowsImport : null;
+  if (!hub || hub.owner !== owner || hub.entryPath !== hubEntry || (windowsImport !== null && hub.windowsImport !== windowsImport) || !await healthy(hub.port, '/readyz')) {
     stopHub(hub);
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
       const log = fs.openSync(path.join(state, 'hub.log'), 'a');
-      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {
+      const child = spawn(process.execPath, [...(process.platform === 'win32' ? ['--import', hubWindowsImport] : []), hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {
         cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
       try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
       finally { fs.closeSync(log); }
       child.unref();
-      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry };
+      hub = { owner, pid: child.pid, port: hubPort, entryPath: hubEntry, windowsImport };
       write(hubFile, hub);
       const deadline = Date.now() + 30000;
       let listening = false;

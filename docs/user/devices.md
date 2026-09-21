@@ -86,13 +86,18 @@ an optional identity file and port. These resolve on the environment server,
 so use the SSH configuration and keys available there. Password prompts are
 not supported.
 
+An SSH alias must resolve on every selected environment, including the host's own environment. If one environment reports that it cannot resolve the hostname, add the alias to that machine's SSH configuration or use a hostname or address that all selected environments can resolve.
+
 **Test connection** checks SSH, Node, npm, and platform tools without installing
 anything, with a result for each selected environment. Targets that resolve to
 the environment’s own machine are skipped, since its devices are already local.
 The first device listing installs pinned device tools on the host.
 Node 22 or newer and npm must be available to non-interactive SSH commands.
+SSH device hosts also need a POSIX-compatible `sh` available to non-interactive SSH commands, including Windows hosts where tools such as Git for Windows can provide it.
 T3 checks common Homebrew and Android SDK locations; custom installations need
 the appropriate PATH and ANDROID_HOME on the host.
+
+Android capability requires SDK Platform-Tools, Android Emulator, and the latest SDK Command-line Tools. Having only adb does not enable Android support. Missing Android tools do not disable iOS support. If the required tools are installed but listing stopped virtual devices fails, already discovered devices remain visible and the host reports the enumeration error. Repair Android Emulator on that host and refresh to include stopped Android virtual devices.
 
 The picker identifies devices by host when several hosts are configured.
 Connections recover after interruptions. Removing a host closes its device

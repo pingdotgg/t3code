@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { LOCAL_DEVICE_HOST_ID, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
@@ -7,6 +7,141 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { DeviceHostError, DeviceHost } from "./DeviceHost.ts";
 import { makeWithHosts } from "./DeviceService.ts";
+
+for (const hostId of [LOCAL_DEVICE_HOST_ID, "mac-ssh"]) {
+  for (const failure of [
+    { code: 127, stderr: "sh: exec: emulator: not found" },
+    { code: 1, stderr: "emulator: SDK directory is unreadable" },
+    { code: 255, stderr: "ssh: connection reset by peer" },
+  ]) {
+    it.effect(
+      `retains partial discovery and diagnostics on ${hostId} after emulator exit ${failure.code}`,
+      () =>
+        Effect.gen(function* () {
+          let enumeration = { ...failure, stdout: "incomplete-output-must-not-be-an-avd" };
+          let hubErrors = [{ message: "One simulator could not be inspected" }];
+          const ready = {
+            nodePath: process.execPath,
+            hub: { origin: "http://device.test" },
+            agentDevice: {
+              baseUrl: "http://device.test",
+              token: "test",
+              entryPath: "/agent-device",
+            },
+            run: () => Effect.succeed(enumeration),
+            helpers: { serveSimAxSettings: null, serveSimCli: null },
+          };
+          const host: DeviceHost["Service"] = {
+            id: hostId,
+            summary: Effect.succeed({
+              id: hostId,
+              label: hostId,
+              kind: hostId === LOCAL_DEVICE_HOST_ID ? "local" : "ssh",
+              hubInstalled: true,
+              agentDeviceInstalled: true,
+              platforms: [
+                { platform: "android", available: true },
+                { platform: "ios", available: true },
+              ],
+            }),
+            platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+            ensureReady: () => Effect.succeed(ready),
+            ensureAgentReady: () => Effect.succeed(ready),
+            current: Effect.succeed(ready),
+            stopAgent: Effect.void,
+            stop: Effect.void,
+          };
+          const http = HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  simulators: [
+                    {
+                      id: "ios-1",
+                      name: "iPhone",
+                      version: "26",
+                      platform: "ios",
+                      booted: true,
+                      physical: false,
+                    },
+                  ],
+                  emulators: [
+                    {
+                      id: "phone-1",
+                      name: "Physical Pixel",
+                      version: "36",
+                      platform: "android",
+                      booted: true,
+                      physical: true,
+                    },
+                    {
+                      id: "emulator-5554",
+                      name: "Running_AVD",
+                      version: "36",
+                      platform: "android",
+                      booted: true,
+                      physical: false,
+                    },
+                  ],
+                  errors: hubErrors,
+                }),
+              ),
+            ),
+          );
+          const service = yield* makeWithHosts(new Map([[hostId, host]])).pipe(
+            Effect.provideService(HttpClient.HttpClient, http),
+          );
+          const partial = yield* service.list;
+          expect(partial.devices.map((device) => device.id)).toEqual([
+            "ios-1",
+            "phone-1",
+            "emulator-5554",
+          ]);
+          expect(partial.hostStatuses[hostId]).toEqual({
+            status: "ready",
+            detail: expect.stringContaining(failure.stderr),
+          });
+          expect(partial.hostStatuses[hostId]?.detail).toContain(`exit code ${failure.code}`);
+          expect(partial.hostStatuses[hostId]?.detail).toContain(hubErrors[0]!.message);
+          if (hostId === LOCAL_DEVICE_HOST_ID)
+            expect(partial.hostStatusDetail).toBe(partial.hostStatuses[hostId]?.detail);
+
+          enumeration = {
+            code: failure.code,
+            stdout: "",
+            stderr: "verbose-prefix" + "x".repeat(3000) + failure.stderr,
+          };
+          const bounded = yield* service.list;
+          expect(bounded.devices).toEqual(partial.devices);
+          expect(bounded.hostStatuses[hostId]?.detail).not.toContain("verbose-prefix");
+          expect(bounded.hostStatuses[hostId]?.detail?.endsWith(failure.stderr)).toBe(true);
+          expect(bounded.hostStatuses[hostId]?.detail?.length).toBeLessThan(2300);
+
+          enumeration = {
+            code: 0,
+            stderr: "",
+            stdout: "Running_AVD\r\nStopped_AVD\r\nStopped_AVD\r\n",
+          };
+          hubErrors = [];
+          const recovered = yield* service.list;
+          expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
+          expect(recovered.devices.map((device) => device.id)).toEqual([
+            "ios-1",
+            "phone-1",
+            "emulator-5554",
+            "Stopped_AVD",
+          ]);
+          expect(recovered.devices.at(-1)).toMatchObject({
+            hostId,
+            booted: false,
+            physical: false,
+          });
+          if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
+        }).pipe(Effect.provide(ServerSettingsService.layerTest({ enableDeviceSupport: true }))),
+    );
+  }
+}
 
 it.effect("keeps hosts independent when serials collide and another host fails", () =>
   Effect.gen(function* () {

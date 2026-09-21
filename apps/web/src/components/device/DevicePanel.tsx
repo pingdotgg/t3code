@@ -245,14 +245,18 @@ export function DevicePanel(props: {
           </>
         ) : null}
       </div>
-      {hostReady && state.hostStatusDetail ? (
-        <div
-          role="status"
-          className="whitespace-pre-line border-b px-3 py-2 text-xs text-muted-foreground"
-        >
-          {state.hostStatusDetail}
-        </div>
-      ) : null}
+      {state.hosts.map((host) => {
+        const status = state.hostStatuses[host.id];
+        return status?.status === "ready" && status.detail ? (
+          <div
+            key={host.id}
+            role="status"
+            className="whitespace-pre-line break-words border-b px-3 py-2 text-xs text-muted-foreground"
+          >
+            {host.label}: {status.detail}
+          </div>
+        ) : null;
+      })}
       {bootingDevices.length > 0 ? (
         <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
           Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a minute.
