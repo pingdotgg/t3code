@@ -74,6 +74,7 @@ const permissionRequestCount = Math.max(
 const sessionId = "mock-session-1";
 
 let currentModeId = antigravityProfile ? "default" : kimiProfile ? "default" : "ask";
+let currentThinking = "normal";
 let currentModelId = antigravityProfile
   ? "gemini-test-low"
   : kimiProfile
@@ -139,7 +140,7 @@ function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
         name: "Thinking",
         category: "thought_level",
         type: "select",
-        currentValue: "normal",
+        currentValue: currentThinking,
         options: [
           { value: "off", name: "Off" },
           { value: "normal", name: "Normal" },
@@ -530,7 +531,7 @@ const program = Effect.gen(function* () {
               ),
             ),
   );
-  if (antigravityProfile) {
+  if (antigravityProfile || kimiProfile) {
     yield* agent.handleLogout(() => Effect.succeed({}));
   }
 
@@ -570,6 +571,9 @@ const program = Effect.gen(function* () {
       }
       if (antigravityProfile) {
         yield* publishAntigravityCommands(request.sessionId);
+      }
+      if (kimiProfile) {
+        yield* publishKimiCommands(request.sessionId);
       }
       return {
         modes: modeState(),
@@ -683,6 +687,9 @@ const program = Effect.gen(function* () {
       }
       if (request.configId === "model" && typeof request.value === "string") {
         currentModelId = request.value;
+      }
+      if (request.configId === "thinking" && typeof request.value === "string") {
+        currentThinking = request.value;
       }
       if (request.configId === "reasoning" && typeof request.value === "string") {
         currentReasoning = request.value;
