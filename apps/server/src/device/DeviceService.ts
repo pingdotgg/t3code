@@ -690,20 +690,24 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               ),
         ),
       );
-    const hubShutdown = postShutdown("/api/devices/shutdown", { platform, id: deviceId });
     // serve-sim's shutdown closes its in-process capture session before it runs
     // `simctl shutdown`; the hub's generic shutdown can leave that session cached
     // across a reboot. serve-sim runs simctl bare, though, so a simulator that is
-    // already off fails there and the hub route, which tolerates that, takes over.
+    // already off fails there. Accept that failure only when the hub confirms
+    // the simulator is off; a failure on a running one still surfaces.
     yield* platform === "ios"
       ? postShutdown(`${vendorPrefix("ios")}/grid/api/shutdown`, { udid: deviceId }).pipe(
           Effect.catch((cause) =>
-            Effect.logWarning("serve-sim shutdown failed; retrying through the device hub", {
-              cause,
-            }).pipe(Effect.andThen(hubShutdown)),
+            fetchDevices(ready).pipe(
+              Effect.flatMap(({ devices }) =>
+                devices.some((device) => device.id === deviceId && device.booted)
+                  ? Effect.fail(cause)
+                  : Effect.logInfo("iOS simulator was already shut down", { deviceId }),
+              ),
+            ),
           ),
         )
-      : hubShutdown;
+      : postShutdown("/api/devices/shutdown", { platform, id: deviceId });
     yield* publish((state) => ({
       ...state,
       devices: state.devices.map((device) =>
