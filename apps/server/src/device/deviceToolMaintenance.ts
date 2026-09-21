@@ -12,7 +12,7 @@ const maintenancePath = require('node:path');
 const maintenanceIdentity = pid => {
   const result = process.platform === 'win32'
     ? require('node:child_process').spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '(Get-Process -Id ' + pid + ').StartTime.ToUniversalTime().Ticks'], { encoding: 'utf8', timeout: 10000 })
-    : require('node:child_process').spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 10000 });
+    : require('node:child_process').spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8', timeout: 10000, env: { ...process.env, TZ: 'UTC', LC_ALL: 'C' } });
   return result.status === 0 ? result.stdout.trim() || null : null;
 };
 const maintenanceAlive = (pid, identity) => {
