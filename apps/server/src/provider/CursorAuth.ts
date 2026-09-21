@@ -66,8 +66,6 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
   let operation: "idle" | "login" | "stopping" | "closed" = "idle";
   const sessions = new Set<Scope.Closeable>();
 
-  const failure = (operation: string, detail: string) =>
-    new ProviderSetupError({ instanceId: options.instanceId, operation, detail });
   const publish = (flow: AuthFlow, patch: Partial<ProviderAuthState>) =>
     SubscriptionRef.update(snapshot, (current) => ({
       owner: flow.owner,
@@ -79,7 +77,11 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
     const credentials = yield* Effect.tryPromise({
       try: () => options.store.load(),
       catch: () =>
-        failure("credentials", "Could not read the Cursor sign-in. Try signing in again."),
+        new ProviderSetupError({
+          instanceId: options.instanceId,
+          operation: "credentials",
+          detail: "Could not read the Cursor sign-in. Try signing in again.",
+        }),
     });
     const now = yield* Clock.currentTimeMillis;
     return credentials &&
@@ -90,17 +92,19 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
 
   const requireApiKey = Effect.gen(function* () {
     if (operation !== "idle") {
-      return yield* failure(
-        "credentials",
-        "Cursor sign-in or sign-out is in progress. Try again after it finishes.",
-      );
+      return yield* new ProviderSetupError({
+        instanceId: options.instanceId,
+        operation: "credentials",
+        detail: "Cursor sign-in or sign-out is in progress. Try again after it finishes.",
+      });
     }
     const apiKey = yield* readApiKey;
     if (!apiKey) {
-      return yield* failure(
-        "credentials",
-        "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
-      );
+      return yield* new ProviderSetupError({
+        instanceId: options.instanceId,
+        operation: "credentials",
+        detail: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
+      });
     }
     return apiKey;
   });
@@ -114,10 +118,11 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
         const child = yield* lock.withPermits(1)(
           Effect.gen(function* () {
             if (operation !== "idle")
-              return yield* failure(
-                "session",
-                "Cursor sign-in or sign-out is in progress. Try again after it finishes.",
-              );
+              return yield* new ProviderSetupError({
+                instanceId: options.instanceId,
+                operation: "session",
+                detail: "Cursor sign-in or sign-out is in progress. Try again after it finishes.",
+              });
             const child = yield* Scope.make();
             sessions.add(child);
             yield* Scope.addFinalizer(
@@ -183,7 +188,12 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
               if (active === flow) Queue.offerUnsafe(urls, authorizationUrl);
             },
           }),
-        catch: () => failure("start", "Cursor sign-in failed. Start sign-in again."),
+        catch: () =>
+          new ProviderSetupError({
+            instanceId: options.instanceId,
+            operation: "start",
+            detail: "Cursor sign-in failed. Start sign-in again.",
+          }),
       });
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
@@ -199,7 +209,12 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
               if (!credentials) throw new Error("Cursor login did not return credentials");
               await options.store.save(credentials);
             },
-            catch: () => failure("start", "Could not save the Cursor sign-in. Try again."),
+            catch: () =>
+              new ProviderSetupError({
+                instanceId: options.instanceId,
+                operation: "start",
+                detail: "Could not save the Cursor sign-in. Try again.",
+              }),
           });
           yield* options.onChanged(true);
           active = undefined;
@@ -216,7 +231,14 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
       Effect.scoped,
       Effect.timeoutOrElse({
         duration: AUTH_TIMEOUT_MS,
-        orElse: () => Effect.fail(failure("start", "Cursor sign-in expired. Start sign-in again.")),
+        orElse: () =>
+          Effect.fail(
+            new ProviderSetupError({
+              instanceId: options.instanceId,
+              operation: "start",
+              detail: "Cursor sign-in expired. Start sign-in again.",
+            }),
+          ),
       }),
       Effect.exit,
       Effect.flatMap((result) =>
@@ -241,7 +263,11 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
   const requireFlow = (owner: string, id: string, name: string) =>
     Effect.gen(function* () {
       if (!active || active.owner !== owner || active.id !== id) {
-        return yield* failure(name, "This sign-in is no longer active in this client.");
+        return yield* new ProviderSetupError({
+          instanceId: options.instanceId,
+          operation: name,
+          detail: "This sign-in is no longer active in this client.",
+        });
       }
       return active;
     });
@@ -252,17 +278,34 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
         Effect.uninterruptible(
           Effect.gen(function* () {
             if (!options.enabled)
-              return yield* failure("start", "Enable Cursor before signing in.");
+              return yield* new ProviderSetupError({
+                instanceId: options.instanceId,
+                operation: "start",
+                detail: "Enable Cursor before signing in.",
+              });
             if (configuredKey)
-              return yield* failure(
-                "start",
-                "Remove CURSOR_API_KEY from this provider's environment before using browser sign-in.",
-              );
+              return yield* new ProviderSetupError({
+                instanceId: options.instanceId,
+                operation: "start",
+                detail:
+                  "Remove CURSOR_API_KEY from this provider's environment before using browser sign-in.",
+              });
             if (active?.owner === owner && operation === "login") return snapshot.value.state;
             if (operation !== "idle")
-              return yield* failure("start", "Cursor setup is already in progress.");
+              return yield* new ProviderSetupError({
+                instanceId: options.instanceId,
+                operation: "start",
+                detail: "Cursor setup is already in progress.",
+              });
             const id = yield* crypto.randomUUIDv4.pipe(
-              Effect.mapError(() => failure("start", "Could not start Cursor sign-in. Try again.")),
+              Effect.mapError(
+                () =>
+                  new ProviderSetupError({
+                    instanceId: options.instanceId,
+                    operation: "start",
+                    detail: "Could not start Cursor sign-in. Try again.",
+                  }),
+              ),
             );
             const expiresAt = DateTime.formatIso(
               DateTime.makeUnsafe((yield* Clock.currentTimeMillis) + AUTH_TIMEOUT_MS),
@@ -288,7 +331,11 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
       ),
     complete: () =>
       Effect.fail(
-        failure("complete", "Finish signing in on the Cursor website. No redirect URL is needed."),
+        new ProviderSetupError({
+          instanceId: options.instanceId,
+          operation: "complete",
+          detail: "Finish signing in on the Cursor website. No redirect URL is needed.",
+        }),
       ),
     cancel: (owner, id) =>
       Effect.uninterruptible(
@@ -318,12 +365,18 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
           const flow = yield* lock.withPermits(1)(
             Effect.gen(function* () {
               if (configuredKey)
-                return yield* failure(
-                  "logout",
-                  "Remove CURSOR_API_KEY from this provider's environment to disconnect it.",
-                );
+                return yield* new ProviderSetupError({
+                  instanceId: options.instanceId,
+                  operation: "logout",
+                  detail:
+                    "Remove CURSOR_API_KEY from this provider's environment to disconnect it.",
+                });
               if (operation !== "idle" && operation !== "login")
-                return yield* failure("logout", "Cursor setup is already stopping.");
+                return yield* new ProviderSetupError({
+                  instanceId: options.instanceId,
+                  operation: "logout",
+                  detail: "Cursor setup is already stopping.",
+                });
               operation = "stopping";
               const flow = active;
               active = undefined;
@@ -335,7 +388,12 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
             yield* stopSessions.pipe(Effect.ensuring(stopSessionsWithCredentials));
             yield* Effect.tryPromise({
               try: () => options.store.clear(),
-              catch: () => failure("logout", "Could not clear the Cursor sign-in. Try again."),
+              catch: () =>
+                new ProviderSetupError({
+                  instanceId: options.instanceId,
+                  operation: "logout",
+                  detail: "Could not clear the Cursor sign-in. Try again.",
+                }),
             });
             yield* options.onChanged(false);
           }).pipe(Effect.exit);

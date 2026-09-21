@@ -46,12 +46,9 @@ import {
 import { probeCursorSkills } from "./CursorSkills.ts";
 import { makeCursorAuth } from "../CursorAuth.ts";
 import { FileCredentialStore } from "../cursorSdk.ts";
-import {
-  CursorAgentSdkRunner,
-  CursorAgentSdkRunnerError,
-} from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
+import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
-const isSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
+const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
 const MAINTENANCE_CAPABILITIES = makeManualOnlyProviderMaintenanceCapabilities({
@@ -84,7 +81,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const path = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverConfig = yield* ServerConfig;
-      const sdkRunner = yield* CursorAgentSdkRunner;
+      const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -144,7 +141,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         enabled,
         config,
       }).pipe(
-        Effect.provideService(CursorAgentSdkRunner, {
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           ...sdkRunner,
           open: (input) =>
             auth.requireApiKey.pipe(
@@ -166,7 +163,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
               Effect.mapError((cause) =>
                 isSdkRunnerError(cause)
                   ? cause
-                  : new CursorAgentSdkRunnerError({ method: "open", cause }),
+                  : new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "open", cause }),
               ),
             ),
         }),
