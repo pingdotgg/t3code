@@ -20,6 +20,7 @@ import {
 } from "./model.ts";
 import {
   DEFAULT_RUNTIME_MODE,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ModelSelection,
   ProjectScript,
   RuntimeMode,
@@ -1053,6 +1054,10 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const UsageLimitContinuationPrompt = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+);
+
 export const ServerSettings = Schema.Struct({
   worktreeCleanup: WorktreeCleanup.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   storageCleanup: StorageCleanupSettings.pipe(
@@ -1071,6 +1076,12 @@ export const ServerSettings = Schema.Struct({
   // Retain the update-era key; recovery now needs an environment-owned opt-in.
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  continueThreadsAfterUsageLimit: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  usageLimitContinuationPrompt: UsageLimitContinuationPrompt.pipe(
+    Schema.withDecodingDefault(Effect.succeed("continue")),
   ),
   /**
    * Whether agents may drive the in-app preview browser. Turning this off
@@ -1429,6 +1440,8 @@ export const ServerSettingsPatch = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  continueThreadsAfterUsageLimit: Schema.optionalKey(Schema.Boolean),
+  usageLimitContinuationPrompt: Schema.optionalKey(UsageLimitContinuationPrompt),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),

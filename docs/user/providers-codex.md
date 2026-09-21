@@ -67,10 +67,26 @@ for command and file approvals.
 
 ## Codex says I hit a usage limit
 
-When Codex stops on a usage limit, the thread names the window that ran out and
-when it resets, when Codex reports them. Send the message again after the reset. On a workspace plan the
-message also says whether your workspace owner needs to add credits or raise the
-spend limit to continue sooner.
+When a thread stops on a usage limit, it shows the reset time when available.
+You can send another message after the reset, or enable **Continue after usage
+limits** in **Settings > General**. On mobile, this setting is under **Maintenance**.
+It applies to the selected environments and is off by default.
+
+When enabled, T3 Code waits for the main subscription allowance to become available,
+then sends `continue` in the same conversation. You can change this message in
+the continuation prompt setting, including while a thread is waiting. Turning
+the setting off keeps your saved prompt.
+
+The server must be running to continue, but clients can be closed. Waiting
+survives a server restart. Turn the setting off, send a message, stop or archive
+the thread, or change its provider or model to cancel a pending continuation.
+Dismissing the error banner does not cancel it. Enabling the setting again only
+applies to later usage-limit failures.
+
+Automatic continuation covers the main subscription allowance only. Separate
+limits for individual models and workspace credit or spending limits still need
+manual action. On workspace plans, the error explains whether the owner needs
+to add credits or raise the spending limit.
 
 ## Send feedback to OpenAI
 

@@ -386,6 +386,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "continue-threads-after-usage-limit",
+    title: "Continue after usage limits",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["codex quota subscription reset automatically resume continuation prompt"],
+  },
+  {
     id: "background-activity",
     title: "Background activity",
     to: "/settings/general",

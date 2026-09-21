@@ -4906,6 +4906,7 @@ const boundedListing = makeProviderServiceLayer({
   directory: {
     upsert: () => Effect.void,
     recordImportedTranscript: () => Effect.die("unused"),
+    setUsageLimitContinuation: () => Effect.die("unused"),
     getProvider: () => Effect.die("ProviderService.listSessions does not use getProvider"),
     getBinding,
     listThreadIds,

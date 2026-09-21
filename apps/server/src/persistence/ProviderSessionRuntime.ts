@@ -18,6 +18,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 
+import { SetUsageLimitContinuationInput } from "../provider/usageLimitContinuation.ts";
+
 import {
   PersistenceDecodeError,
   type PersistenceErrorCorrelation,
@@ -79,7 +81,7 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
      * Insert or replace a provider runtime row.
      *
      * Upserts by canonical `threadId`, retaining imported transcript records
-     * from the current database row.
+     * and pending usage continuation from the current database row.
      */
     readonly upsert: (
       runtime: ProviderSessionRuntime,
@@ -89,6 +91,10 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
     /** Record one source file without replacing the current session state. */
     readonly recordImportedTranscript: (
       input: RecordImportedTranscriptInput,
+    ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+    readonly setUsageLimitContinuation: (
+      input: SetUsageLimitContinuationInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
     /**
@@ -147,6 +153,10 @@ const GetRuntimeRequestSchema = Schema.Struct({
 
 const DeleteRuntimeRequestSchema = GetRuntimeRequestSchema;
 
+const SetUsageLimitContinuationRequestSchema = SetUsageLimitContinuationInput.mapFields(
+  Struct.assign({ pending: Schema.fromJsonString(SetUsageLimitContinuationInput.fields.pending) }),
+);
+
 const RecordImportedTranscriptRequestSchema = RecordImportedTranscriptInput.mapFields(
   Struct.assign({ source: Schema.fromJsonString(AgentSessionImportSource) }),
 );
@@ -171,7 +181,8 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   // Runtime writes can carry stale payloads. Only recordImportedTranscript may
-  // change source records, so restore that field from the row being updated.
+  // change source records. The continuation worker likewise owns its marker;
+  // preserve both fields from the row being updated.
   const upsertRuntimeRow = SqlSchema.void({
     Request: ProviderSessionRuntimeDbRowSchema,
     execute: (runtime) =>
@@ -198,7 +209,7 @@ export const make = Effect.gen(function* () {
           ${runtime.resumeCursor},
           CASE
             WHEN json_type(${runtime.runtimePayload}) = 'object'
-            THEN json_remove(${runtime.runtimePayload}, '$.importedTranscripts')
+            THEN json_remove(${runtime.runtimePayload}, '$.importedTranscripts', '$.usageLimitContinuation')
             ELSE ${runtime.runtimePayload}
           END
         )
@@ -212,22 +223,18 @@ export const make = Effect.gen(function* () {
           last_seen_at = excluded.last_seen_at,
           resume_cursor_json = excluded.resume_cursor_json,
           runtime_payload_json = CASE
-            WHEN json_type(
-              CASE
-                WHEN json_valid(provider_session_runtime.runtime_payload_json)
-                THEN provider_session_runtime.runtime_payload_json
-                ELSE '{}'
-              END,
-              '$.importedTranscripts'
-            ) IS NOT NULL
-            THEN json_set(
-              CASE
-                WHEN json_type(excluded.runtime_payload_json) = 'object'
-                THEN excluded.runtime_payload_json
-                ELSE '{}'
-              END,
-              '$.importedTranscripts',
-              json_extract(provider_session_runtime.runtime_payload_json, '$.importedTranscripts')
+            WHEN json_valid(provider_session_runtime.runtime_payload_json)
+              AND (
+                json_type(provider_session_runtime.runtime_payload_json, '$.importedTranscripts') IS NOT NULL
+                OR json_type(provider_session_runtime.runtime_payload_json, '$.usageLimitContinuation') IS NOT NULL
+              )
+            THEN json_patch(
+              CASE WHEN json_type(excluded.runtime_payload_json) = 'object'
+                THEN excluded.runtime_payload_json ELSE '{}' END,
+              json_object(
+                'importedTranscripts', json_extract(provider_session_runtime.runtime_payload_json, '$.importedTranscripts'),
+                'usageLimitContinuation', json_extract(provider_session_runtime.runtime_payload_json, '$.usageLimitContinuation')
+              )
             )
             ELSE excluded.runtime_payload_json
           END
@@ -260,11 +267,31 @@ export const make = Effect.gen(function* () {
           ${runtime.resumeCursor},
           CASE
             WHEN json_type(${runtime.runtimePayload}) = 'object'
-            THEN json_remove(${runtime.runtimePayload}, '$.importedTranscripts')
+            THEN json_remove(${runtime.runtimePayload}, '$.importedTranscripts', '$.usageLimitContinuation')
             ELSE ${runtime.runtimePayload}
           END
         )
         ON CONFLICT (thread_id) DO NOTHING
+      `,
+  });
+
+  const setUsageLimitContinuationRow = SqlSchema.void({
+    Request: SetUsageLimitContinuationRequestSchema,
+    execute: ({ threadId, pending, expectedFailedTurnId }) =>
+      sql`
+        UPDATE provider_session_runtime
+        SET runtime_payload_json = CASE
+          WHEN ${pending} = 'null' THEN json_remove(runtime_payload_json, '$.usageLimitContinuation')
+          ELSE json_set(
+            CASE WHEN json_type(runtime_payload_json) = 'object'
+              THEN runtime_payload_json ELSE '{}' END,
+            '$.usageLimitContinuation', json(${pending})
+          )
+        END
+        WHERE thread_id = ${threadId}
+          AND (${pending} = 'null' OR provider_instance_id = json_extract(${pending}, '$.providerInstanceId'))
+          AND (${expectedFailedTurnId ?? null} IS NULL
+            OR json_extract(runtime_payload_json, '$.usageLimitContinuation.failedTurnId') = ${expectedFailedTurnId ?? null})
       `,
   });
 
@@ -387,6 +414,18 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const setUsageLimitContinuation: ProviderSessionRuntimeRepository["Service"]["setUsageLimitContinuation"] =
+    (input) =>
+      setUsageLimitContinuationRow(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.setUsageLimitContinuation:query",
+            "ProviderSessionRuntimeRepository.setUsageLimitContinuation:encodeRequest",
+            { threadId: input.threadId },
+          ),
+        ),
+      );
+
   const getByThreadId: ProviderSessionRuntimeRepository["Service"]["getByThreadId"] = (input) =>
     getRuntimeRowByThreadId(input).pipe(
       Effect.mapError(
@@ -466,6 +505,7 @@ export const make = Effect.gen(function* () {
   return {
     upsert,
     recordImportedTranscript,
+    setUsageLimitContinuation,
     getByThreadId,
     list,
     deleteByThreadId,

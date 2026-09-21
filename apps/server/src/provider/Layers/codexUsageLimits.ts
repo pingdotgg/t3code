@@ -221,14 +221,55 @@ export function codexUsageLimitMessage(
 ): string {
   const atMs = Date.parse(atIso);
   const windows = snapshot && Number.isFinite(atMs) ? codexRateLimitsToWindows(snapshot) : [];
-  let reset = "";
-  let latestResetMs = Number.NEGATIVE_INFINITY;
+  const latest = latestExhaustedWindow(windows, atIso);
+  const reset = latest?.resetsAt
+    ? ` The ${latest.kind} limit resets in ${formatCodexUsageLimitWait(Date.parse(latest.resetsAt) - atMs)}.`
+    : "";
+  return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
+}
+
+function latestExhaustedWindow(
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  atIso: string,
+): ServerProviderUsageWindow | undefined {
+  const atMs = Date.parse(atIso);
+  let latest: ServerProviderUsageWindow | undefined;
+  let latestResetMs = atMs;
   for (const window of windows) {
     if (window.usedPercent < 100 || !window.resetsAt) continue;
     const resetMs = Date.parse(window.resetsAt);
-    if (!Number.isFinite(resetMs) || resetMs <= atMs || resetMs <= latestResetMs) continue;
+    if (!Number.isFinite(resetMs) || resetMs <= latestResetMs) continue;
+    latest = window;
     latestResetMs = resetMs;
-    reset = ` The ${window.kind} limit resets in ${formatCodexUsageLimitWait(resetMs - atMs)}.`;
   }
-  return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
+  return latest;
+}
+
+/** A timer is useful only when every exhausted window has a future reset. */
+export function usageLimitRetryAt(
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  atIso: string,
+): string | undefined {
+  const atMs = Date.parse(atIso);
+  if (
+    !Number.isFinite(atMs) ||
+    windows.some(
+      (window) =>
+        window.usedPercent >= 100 && (!window.resetsAt || !(Date.parse(window.resetsAt) > atMs)),
+    )
+  )
+    return undefined;
+  return latestExhaustedWindow(windows, atIso)?.resetsAt;
+}
+
+export function codexUsageLimitRecovery(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atIso: string,
+): { readonly retryAt?: string } | undefined {
+  if (snapshot?.limitId && snapshot.limitId !== "codex") return undefined;
+  if (snapshot?.rateLimitReachedType && snapshot.rateLimitReachedType !== "rate_limit_reached") {
+    return undefined;
+  }
+  const retryAt = usageLimitRetryAt(snapshot ? codexRateLimitsToWindows(snapshot) : [], atIso);
+  return retryAt ? { retryAt } : {};
 }

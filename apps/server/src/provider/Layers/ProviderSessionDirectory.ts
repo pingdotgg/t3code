@@ -178,6 +178,15 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         Effect.mapError(toPersistenceError("ProviderSessionDirectory.recordImportedTranscript")),
       );
 
+  const setUsageLimitContinuation: ProviderSessionDirectoryShape["setUsageLimitContinuation"] = (
+    input,
+  ) =>
+    repository
+      .setUsageLimitContinuation(input)
+      .pipe(
+        Effect.mapError(toPersistenceError("ProviderSessionDirectory.setUsageLimitContinuation")),
+      );
+
   const listThreadIds: ProviderSessionDirectoryShape["listThreadIds"] = () =>
     repository.list().pipe(
       Effect.mapError(toPersistenceError("ProviderSessionDirectory.listThreadIds:list")),
@@ -199,6 +208,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
   return {
     upsert,
     recordImportedTranscript,
+    setUsageLimitContinuation,
     getProvider,
     getBinding,
     listThreadIds,

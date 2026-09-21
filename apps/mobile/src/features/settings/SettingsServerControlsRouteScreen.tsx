@@ -1,7 +1,9 @@
 import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
 import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text, AppTextInput } from "../../components/AppText";
 import {
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  UsageLimitContinuationPrompt,
   type ResponseStreamingMode,
   type ServerSettings,
   type ServerSettingsPatch,
@@ -10,6 +12,7 @@ import {
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
 import { useRef, useState, type ComponentProps } from "react";
+import * as Schema from "effect/Schema";
 import { Alert, Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -32,6 +35,8 @@ import {
   resolveMobileSettingsTargets,
   type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
+
+const isUsageLimitContinuationPrompt = Schema.is(UsageLimitContinuationPrompt);
 
 type SettingsPage = "new-threads" | "source-control" | "agent-behavior" | "maintenance";
 
@@ -365,6 +370,30 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ continueThreadsAfterServerUpdate: value })}
                     />
                   </View>
+                  <View className="border-t border-border-subtle">
+                    <FanoutSwitchRow
+                      icon="arrow.uturn.forward"
+                      label="Continue after usage limits"
+                      subtitle={
+                        projectSelected
+                          ? "Environment-wide setting. Select All projects to change it."
+                          : "Continue Codex threads when subscription usage is available again."
+                      }
+                      value={uniform("continueThreadsAfterUsageLimit")}
+                      disabled={disabledFor("continueThreadsAfterUsageLimit")}
+                      onValueChange={(value) => write({ continueThreadsAfterUsageLimit: value })}
+                    />
+                  </View>
+                  {uniform("continueThreadsAfterUsageLimit") === true ? (
+                    <UsageLimitPromptEditor
+                      key={`${displayTargets.map((target) => target.environment.environmentId).join(",")}:${projectSelected}:${uniform("usageLimitContinuationPrompt")}`}
+                      value={uniform("usageLimitContinuationPrompt")}
+                      disabled={disabledFor("usageLimitContinuationPrompt")}
+                      onSave={(usageLimitContinuationPrompt) =>
+                        write({ usageLimitContinuationPrompt })
+                      }
+                    />
+                  ) : null}
                 </SettingsSection>
               ) : null}
             </>
@@ -372,6 +401,52 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
         </ScrollView>
       </SettingsScreen>
     </>
+  );
+}
+
+function UsageLimitPromptEditor(props: {
+  readonly value: string | null;
+  readonly disabled: boolean;
+  readonly onSave: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <View className="gap-2 border-t border-border-subtle p-4">
+      <Text className="text-base text-foreground">Continuation prompt</Text>
+      <AppTextInput
+        accessibilityLabel="Continuation prompt"
+        className="min-h-24 rounded-xl bg-card px-3 py-2 text-base text-foreground"
+        multiline
+        textAlignVertical="top"
+        value={draft ?? props.value ?? ""}
+        placeholder={props.value === null ? "Mixed" : undefined}
+        maxLength={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
+        editable={!props.disabled}
+        onChangeText={(text) => {
+          setDraft(text);
+          setError(null);
+        }}
+        onBlur={() => {
+          if (draft === null || props.disabled) return;
+          const prompt = draft.trim();
+          if (!isUsageLimitContinuationPrompt(prompt)) {
+            setError("Enter a continuation prompt.");
+            return;
+          }
+          setDraft(prompt);
+          if (prompt !== props.value) props.onSave(prompt);
+        }}
+      />
+      {error ? (
+        <Text accessibilityRole="alert" className="text-sm text-destructive">
+          {error}
+        </Text>
+      ) : null}
+      <Text className="text-sm text-foreground-muted">
+        The server must remain running to continue.
+      </Text>
+    </View>
   );
 }
 

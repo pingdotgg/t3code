@@ -576,6 +576,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
   upsert: () => Effect.void,
   recordImportedTranscript: () => Effect.die("unused"),
+  setUsageLimitContinuation: () => Effect.die("unused"),
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
   getBinding: () => Effect.succeed(Option.none()),

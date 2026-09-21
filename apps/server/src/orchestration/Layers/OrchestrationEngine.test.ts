@@ -54,6 +54,7 @@ import {
 } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -72,6 +73,7 @@ function makeOrchestrationLayer(
   });
   return Layer.mergeAll(
     OrchestrationEngineLive.pipe(
+      Layer.provideMerge(ServerSettingsService.layerTest({ continueThreadsAfterUsageLimit: true })),
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
     ),
@@ -417,6 +419,7 @@ describe("OrchestrationEngine", () => {
     let fullSnapshotReadCount = 0;
 
     const layer = OrchestrationEngineLive.pipe(
+      Layer.provideMerge(ServerSettingsService.layerTest({ continueThreadsAfterUsageLimit: true })),
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
           getUserInputActivity: () => Effect.die("unused"),
@@ -1511,6 +1514,9 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provideMerge(
+          ServerSettingsService.layerTest({ continueThreadsAfterUsageLimit: true }),
+        ),
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
@@ -1619,6 +1625,9 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provideMerge(
+          ServerSettingsService.layerTest({ continueThreadsAfterUsageLimit: true }),
+        ),
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),
@@ -1768,6 +1777,9 @@ describe("OrchestrationEngine", () => {
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
+        Layer.provideMerge(
+          ServerSettingsService.layerTest({ continueThreadsAfterUsageLimit: true }),
+        ),
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(ThreadBackgroundLiveness.layer),
         Layer.provide(ThreadPlanProgress.layer),

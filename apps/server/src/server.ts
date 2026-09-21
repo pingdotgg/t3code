@@ -55,6 +55,7 @@ import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRe
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
 import { ProviderUsageLimitsIngestionLive } from "./provider/Layers/ProviderUsageLimitsIngestion.ts";
+import * as UsageLimitContinuation from "./orchestration/UsageLimitContinuation.ts";
 import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
@@ -246,6 +247,7 @@ const PlatformServicesLive = NodeServices.layer;
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
+  Layer.provideMerge(UsageLimitContinuation.layer),
   Layer.provideMerge(ProviderCommandReactorLive),
   Layer.provideMerge(CheckpointReactorLive),
   Layer.provideMerge(StorageCleanup.layer),
@@ -454,7 +456,7 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
   // telemetry instead of waiting for the next status probe.
   Layer.provideMerge(ProviderUsageLimitsIngestionLive),
   Layer.provideMerge(ProviderLayerLive),
-  Layer.provideMerge(OrchestrationLayerLive),
+  Layer.provideMerge(OrchestrationLayerLive.pipe(Layer.provide(ServerSettingsLayerLive))),
 );
 
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(

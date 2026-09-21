@@ -390,6 +390,7 @@ const make = Effect.gen(function* () {
   const setThreadSession = (input: {
     readonly threadId: ThreadId;
     readonly session: OrchestrationSession;
+    readonly expectedSession?: OrchestrationSession;
     readonly createdAt: string;
   }) =>
     serverCommandId("provider-session-set").pipe(
@@ -399,6 +400,7 @@ const make = Effect.gen(function* () {
           commandId,
           threadId: input.threadId,
           session: input.session,
+          ...(input.expectedSession ? { expectedSession: input.expectedSession } : {}),
           createdAt: input.createdAt,
         }),
       ),
@@ -1743,23 +1745,34 @@ const make = Effect.gen(function* () {
             ),
           );
         },
-        onSuccess: () =>
-          setThreadSession({
-            threadId: thread.id,
-            session: {
+        onSuccess: Effect.fnUntraced(
+          function* () {
+            const currentThread = yield* resolveThreadShell(thread.id);
+            if (!currentThread) return;
+            const session = currentThread.session;
+            yield* setThreadSession({
               threadId: thread.id,
-              status: "stopped",
-              providerName: thread.session?.providerName ?? null,
-              ...(thread.session?.providerInstanceId !== undefined
-                ? { providerInstanceId: thread.session.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
-              activeTurnId: null,
-              lastError: thread.session?.lastError ?? null,
-              updatedAt: now,
-            },
-            createdAt: now,
+              ...(session ? { expectedSession: session } : {}),
+              session: {
+                threadId: thread.id,
+                status: "stopped",
+                providerName: session?.providerName ?? null,
+                ...(session?.providerInstanceId !== undefined
+                  ? { providerInstanceId: session.providerInstanceId }
+                  : {}),
+                runtimeMode: session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+                activeTurnId: null,
+                lastError: session?.lastError ?? null,
+                updatedAt: now,
+              },
+              createdAt: now,
+            });
+          },
+          Effect.retry({
+            times: 1,
+            while: (error) => error._tag === "OrchestrationCommandInvariantError",
           }),
+        ),
       }),
       Effect.ensuring(clearStopping),
     );

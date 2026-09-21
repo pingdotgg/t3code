@@ -178,6 +178,7 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
+    readonly beforeStoppedSessionDispatch?: () => Effect.Effect<void>;
     readonly beforeTurnStartDispatch?: () => Effect.Effect<void>;
     readonly afterTurnStartDispatch?: () => Effect.Effect<void>;
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -442,9 +443,11 @@ describe("ProviderCommandReactor", () => {
             const before =
               command.type === "thread.session.set" && command.session.status === "ready"
                 ? input?.beforeReadySessionDispatch
-                : isReplay
-                  ? input?.beforeTurnStartDispatch
-                  : undefined;
+                : command.type === "thread.session.set" && command.session.status === "stopped"
+                  ? input?.beforeStoppedSessionDispatch
+                  : isReplay
+                    ? input?.beforeTurnStartDispatch
+                    : undefined;
             return (before?.() ?? Effect.void).pipe(
               Effect.andThen(engine.dispatch(command)),
               Effect.tap(() =>
@@ -4291,6 +4294,72 @@ describe("ProviderCommandReactor", () => {
       expect(thread.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
       expect(thread.session?.activeTurnId).toBeNull();
     }),
+  );
+
+  effectIt.effect.each(["provider-stop", "session-update"] as const)(
+    "does not restore a waiting error cleared during %s",
+    (stage) =>
+      Effect.gen(function* () {
+        const stopStarted = yield* Deferred.make<void>();
+        const releaseStop = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness(
+            stage === "provider-stop"
+              ? {
+                  stopSessionEffect: () =>
+                    Deferred.succeed(stopStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseStop)),
+                    ),
+                }
+              : {
+                  beforeStoppedSessionDispatch: () =>
+                    Deferred.succeed(stopStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseStop)),
+                    ),
+                },
+          ),
+        );
+        const threadId = ThreadId.make("thread-1");
+        const now = "2026-01-01T00:00:00.000Z";
+        const session = {
+          threadId,
+          status: "ready" as const,
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex_work"),
+          runtimeMode: "approval-required" as const,
+          activeTurnId: null,
+          lastError: "Usage limit reached. Automatic continuation scheduled.",
+          updatedAt: now,
+        };
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-session-waiting-before-stop"),
+          threadId,
+          session,
+          createdAt: now,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd-stop-waiting-session"),
+          threadId,
+          createdAt: now,
+        });
+        yield* Deferred.await(stopStarted);
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("cmd-clear-canceled-wait-during-stop"),
+          threadId,
+          session: { ...session, lastError: null },
+          createdAt: now,
+        });
+        yield* Deferred.succeed(releaseStop, undefined);
+        yield* Effect.promise(() => harness.drain());
+        const thread = yield* harness.snapshotQuery
+          .getThreadShellById(threadId)
+          .pipe(Effect.map(Option.getOrThrow));
+        expect(thread.session?.status).toBe("stopped");
+        expect(thread.session?.lastError).toBeNull();
+      }),
   );
 
   effectIt.effect("stops a ready provider session after automatic settlement", () =>

@@ -59,6 +59,7 @@ const stoppedBindingResumeCursor = {
 const makePersistedRuntimeLayer = (dbPath: string) => {
   const persistence = makeSqlitePersistenceLive(dbPath);
   const orchestration = OrchestrationLayerLive.pipe(
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(persistence),
   );

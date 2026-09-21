@@ -23,6 +23,8 @@ import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/ht
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
@@ -200,6 +202,7 @@ const projectCommandUuid = Crypto.Crypto.pipe(
 const ProjectCliRuntimeLive = Layer.mergeAll(
   WorkspacePaths.layer,
   OrchestrationLayerLive.pipe(
+    Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
     Layer.provideMerge(RepositoryIdentityResolver.layer),
     Layer.provideMerge(SqlitePersistenceLayerLive),
   ),

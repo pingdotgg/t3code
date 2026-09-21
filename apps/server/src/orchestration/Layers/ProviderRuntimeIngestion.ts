@@ -54,6 +54,7 @@ import {
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { UsageLimitContinuation } from "../UsageLimitContinuation.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
 
@@ -133,6 +134,7 @@ type RuntimeIngestionInput =
   | {
       source: "runtime";
       event: ProviderRuntimeEvent;
+      snapshotSequence: number;
     }
   | {
       source: "domain";
@@ -1028,6 +1030,7 @@ const make = Effect.gen(function* () {
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const usageLimitContinuation = yield* UsageLimitContinuation;
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
@@ -1755,7 +1758,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
+  const processRuntimeEvent = (event: ProviderRuntimeEvent, snapshotSequence: number) =>
     Effect.gen(function* () {
       if (
         event.type === "content.delta" &&
@@ -2592,6 +2595,13 @@ const make = Effect.gen(function* () {
           ),
         ),
       ).pipe(Effect.asVoid);
+      if (
+        event.type === "turn.completed" &&
+        event.payload.usageLimit &&
+        shouldApplyThreadLifecycle
+      ) {
+        yield* usageLimitContinuation.recordFailure(event, snapshotSequence);
+      }
     });
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
@@ -2636,7 +2646,7 @@ const make = Effect.gen(function* () {
   const processInput = (input: RuntimeIngestionInput) => {
     switch (input.source) {
       case "runtime":
-        return processRuntimeEvent(input.event);
+        return processRuntimeEvent(input.event, input.snapshotSequence);
       case "domain":
         return processDomainEvent(input.event);
       case "diff":
@@ -2689,7 +2699,12 @@ const make = Effect.gen(function* () {
         Stream.runForEach(providerService.streamEvents, (event) =>
           event.type === "turn.diff.updated"
             ? diffWorker.enqueue(event)
-            : worker.enqueue({ source: "runtime", event }),
+            : // Include cancellations during queueing and failure projection in the recovery guard.
+              orchestrationEngine.latestSequence.pipe(
+                Effect.flatMap((snapshotSequence) =>
+                  worker.enqueue({ source: "runtime", event, snapshotSequence }),
+                ),
+              ),
         ),
       );
       yield* forkParked(

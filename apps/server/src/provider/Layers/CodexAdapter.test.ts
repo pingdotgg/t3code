@@ -223,6 +223,7 @@ function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolea
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
   upsert: () => Effect.void,
   recordImportedTranscript: () => Effect.die("unused"),
+  setUsageLimitContinuation: () => Effect.die("unused"),
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
   getBinding: () => Effect.succeed(Option.none()),
@@ -2850,6 +2851,7 @@ function codexErrorNotification(input: {
 function codexRateLimitsNotification(input: {
   readonly id: string;
   readonly rateLimitReachedType?: string;
+  readonly limitId?: string;
   readonly primary?: { readonly usedPercent: number; readonly resetsInSeconds: number };
   readonly secondary?: { readonly usedPercent: number; readonly resetsInSeconds: number };
 }): ProviderEvent {
@@ -2863,7 +2865,7 @@ function codexRateLimitsNotification(input: {
     method: "account/rateLimits/updated",
     payload: {
       rateLimits: {
-        limitId: "codex",
+        limitId: input.limitId ?? "codex",
         ...(input.rateLimitReachedType ? { rateLimitReachedType: input.rateLimitReachedType } : {}),
         ...(input.primary
           ? {
@@ -2958,6 +2960,7 @@ usageLimitLayer("CodexAdapterLive usage limits", (it) => {
         }
         if (event.type === "turn.completed") {
           NodeAssert.equal(event.payload.errorMessage, expected);
+          NodeAssert.equal(event.payload.usageLimit, undefined);
         }
       }
     }),
@@ -2990,6 +2993,9 @@ usageLimitLayer("CodexAdapterLive usage limits", (it) => {
 
       const events = Array.from(yield* Fiber.join(eventsFiber));
       const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.deepStrictEqual(completed?.payload.usageLimit, {
+        retryAt: "2026-01-01T03:20:00.000Z",
+      });
       NodeAssert.equal(
         completed?.payload.errorMessage,
         "Codex usage limit reached. The session limit resets in 3h 20m. Send the message again once the limit resets.",
@@ -3059,6 +3065,36 @@ usageLimitLayer("CodexAdapterLive usage limits", (it) => {
       NodeAssert.equal(runtimeError?.payload.message, expected);
       const completed = events.find((event) => event.type === "turn.completed");
       NodeAssert.equal(completed?.payload.errorMessage, expected);
+      NodeAssert.deepStrictEqual(completed?.payload.usageLimit, {});
+    }),
+  );
+
+  it.effect("does not arm a model-specific stop using an earlier main allowance", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startUsageLimitRuntime();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-main",
+          primary: { usedPercent: 100, resetsInSeconds: 600 },
+        }),
+      );
+      yield* runtime.emit(
+        codexRateLimitsNotification({
+          id: "evt-spark",
+          limitId: "codex_spark",
+          primary: { usedPercent: 100, resetsInSeconds: 1200 },
+        }),
+      );
+      yield* runtime.emit(codexUsageLimitTurnFailed("evt-spark-stop"));
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.ok(completed);
+      NodeAssert.equal(completed.payload.usageLimit, undefined);
     }),
   );
 

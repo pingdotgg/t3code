@@ -75,6 +75,7 @@ import {
   type CodexRateLimitSnapshot,
   codexRateLimitsToUpdate,
   codexUsageLimitMessage,
+  codexUsageLimitRecovery,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
@@ -2314,6 +2315,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // after the stop and often sparse, so keep the session's merged view of
         // it and read it when a turn fails on the limit.
         let rateLimits: CodexRateLimitSnapshot | undefined;
+        let latestRateLimits: CodexRateLimitSnapshot | undefined;
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
         yield* Effect.addFinalizer(() =>
@@ -2377,6 +2379,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                 event.payload,
               );
               if (limitsPayload) {
+                latestRateLimits = limitsPayload.rateLimits;
                 rateLimits = mergeCodexRateLimits(rateLimits, limitsPayload.rateLimits);
               }
             } else if (event.method === "error") {
@@ -2391,6 +2394,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
             let usageLimitError: ProviderRuntimeEvent | undefined;
             let usageLimitMessage: string | undefined;
+            let usageLimit: { readonly retryAt?: string } | undefined;
             if (event.method === "turn/completed") {
               const completedPayload = readPayload(
                 EffectCodexSchema.V2TurnCompletedNotification,
@@ -2402,6 +2406,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   : undefined;
               if (turnError?.codexErrorInfo === "usageLimitExceeded") {
                 usageLimitMessage = codexUsageLimitMessage(rateLimits, event.createdAt);
+                usageLimit = codexUsageLimitRecovery(
+                  latestRateLimits?.limitId && latestRateLimits.limitId !== "codex"
+                    ? latestRateLimits
+                    : rateLimits,
+                  event.createdAt,
+                );
                 usageLimitError = {
                   ...runtimeEventBase(event, event.threadId),
                   type: "runtime.error",
@@ -2421,6 +2431,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
                   payload: {
                     ...runtimeEvent.payload,
                     ...(usageLimitMessage ? { errorMessage: usageLimitMessage } : {}),
+                    ...(usageLimit ? { usageLimit } : {}),
                     tokenUsage: completeCodexTurnTokenUsage(
                       turnTokenUsage,
                       String(runtimeEvent.turnId),

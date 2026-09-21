@@ -15,6 +15,8 @@ import type {
   ProviderValidationError,
 } from "../Errors.ts";
 
+import type { SetUsageLimitContinuationInput } from "../usageLimitContinuation.ts";
+
 export interface ProviderRuntimeBinding {
   readonly threadId: ThreadId;
   readonly provider: ProviderDriverKind;
@@ -56,6 +58,10 @@ export interface ProviderSessionDirectoryShape {
     readonly threadId: ThreadId;
     readonly source: AgentSessionImportSource;
   }) => Effect.Effect<void, ProviderSessionDirectoryPersistenceError>;
+
+  readonly setUsageLimitContinuation: (
+    input: SetUsageLimitContinuationInput,
+  ) => Effect.Effect<void, ProviderSessionDirectoryPersistenceError>;
 
   readonly getProvider: (
     threadId: ThreadId,

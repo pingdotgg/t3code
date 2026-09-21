@@ -58,6 +58,7 @@ import { RuntimeReceiptBusTest } from "../src/orchestration/Layers/RuntimeReceip
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
+import { UsageLimitContinuation } from "../src/orchestration/UsageLimitContinuation.ts";
 import { CheckpointReactor } from "../src/orchestration/Services/CheckpointReactor.ts";
 import { ProviderRuntimeIngestionService } from "../src/orchestration/Services/ProviderRuntimeIngestion.ts";
 import {
@@ -268,6 +269,7 @@ export const makeOrchestrationIntegrationHarness = (
 
     const persistenceLayer = makeSqlitePersistenceLive(dbPath);
     const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(ServerSettingsService.layerTest()),
       Layer.provide(OrchestrationProjectionPipelineLive),
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -388,6 +390,12 @@ export const makeOrchestrationIntegrationHarness = (
         }),
       ),
       Layer.provideMerge(runtimeIngestionLayer),
+      Layer.provideMerge(
+        Layer.mock(UsageLimitContinuation)({
+          start: () => Effect.void,
+          recordFailure: () => Effect.void,
+        }),
+      ),
       Layer.provideMerge(providerCommandReactorLayer),
       Layer.provideMerge(checkpointReactorLayer),
       Layer.provideMerge(

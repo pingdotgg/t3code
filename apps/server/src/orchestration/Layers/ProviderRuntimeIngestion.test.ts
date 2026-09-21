@@ -68,6 +68,7 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { UsageLimitContinuation } from "../UsageLimitContinuation.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { makeSqlStatementCounter } from "../../../integration/SqlStatementCounter.integration.ts";
 
@@ -270,6 +271,7 @@ describe("ProviderRuntimeIngestion", () => {
     serverSettings?: Partial<ServerSettings>;
     threadTitle?: string;
     workspaceSubdirectory?: string;
+    onUsageLimitFailure?: UsageLimitContinuation["Service"]["recordFailure"];
     isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
   }) {
     const repositoryRoot = makeTempDir("t3-provider-project-");
@@ -321,6 +323,11 @@ describe("ProviderRuntimeIngestion", () => {
       sleep: (duration) => realClock.sleep(duration),
     };
     const layer = ProviderRuntimeIngestionLive.pipe(
+      Layer.provide(
+        Layer.mock(UsageLimitContinuation)({
+          recordFailure: options?.onUsageLimitFailure ?? (() => Effect.void),
+        }),
+      ),
       Layer.provide(Layer.succeed(Clock.Clock, shiftedClock)),
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(ingestionProjectionSnapshotLayer),
@@ -439,6 +446,42 @@ describe("ProviderRuntimeIngestion", () => {
       drain,
     };
   }
+
+  it("preserves the failure boundary from before lifecycle projection", async () => {
+    const failureSequences: number[] = [];
+    const harness = await createHarness({
+      onUsageLimitFailure: (_event, sequence) =>
+        Effect.sync(() => {
+          failureSequences.push(sequence);
+        }),
+    });
+    const base = {
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    await harness.emitAndDrain([
+      { ...base, type: "turn.started", eventId: asEventId("quota-started") },
+    ]);
+    const beforeFailure = (await harness.readModel()).snapshotSequence;
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "turn.completed",
+        eventId: asEventId("quota-failed"),
+        payload: {
+          state: "failed",
+          errorMessage: "Codex usage limit reached.",
+          usageLimit: {},
+        },
+      },
+    ]);
+
+    expect(failureSequences).toEqual([beforeFailure]);
+    expect((await harness.readModel()).snapshotSequence).toBeGreaterThan(beforeFailure);
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();

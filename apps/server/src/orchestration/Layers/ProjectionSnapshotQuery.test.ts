@@ -1052,6 +1052,15 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.equal(archivedShellSnapshot.threads[0]?.archivedAt, "2026-04-06T00:00:06.000Z");
       assert.deepEqual(archivedShellSnapshot.threads[0]?.branchPullRequest, branchPullRequest);
+      assert.equal(
+        (yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-archived")))._tag,
+        "None",
+      );
+      const archivedThread = yield* snapshotQuery.getThreadShellById(
+        ThreadId.make("thread-archived"),
+        { includeArchived: true },
+      );
+      assert.equal(Option.getOrThrow(archivedThread).archivedAt, "2026-04-06T00:00:06.000Z");
       const activeContext = yield* snapshotQuery.getThreadRuntimeContext(
         ThreadId.make("thread-active"),
       );
@@ -1086,6 +1095,12 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         },
       ]);
       assert.deepEqual((yield* snapshotQuery.getArchivedShellSnapshot()).threads, []);
+      assert.equal(
+        (yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-archived"), {
+          includeArchived: true,
+        }))._tag,
+        "None",
+      );
       yield* sql`
         UPDATE projection_projects
         SET deleted_at = '2026-04-06T00:00:10.000Z', updated_at = '2026-04-06T00:00:10.000Z'

@@ -39,6 +39,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import { ServerSettingsService } from "./serverSettings.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
@@ -128,6 +129,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
 const makeProjectPersistenceLayer = (config: ServerConfig.ServerConfig["Service"]) =>
   Layer.mergeAll(
     OrchestrationLayerLive.pipe(
+      Layer.provide(ServerSettingsService.layerTest()),
       Layer.provideMerge(RepositoryIdentityResolver.layer),
       Layer.provideMerge(SqlitePersistenceLayerLive),
     ),

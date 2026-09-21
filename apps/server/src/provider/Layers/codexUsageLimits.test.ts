@@ -7,6 +7,7 @@ import {
   codexRateLimitsToUpdate,
   codexResetCreditsToContract,
   codexUsageLimitMessage,
+  codexUsageLimitRecovery,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 
@@ -295,5 +296,47 @@ describe("mergeCodexRateLimits", () => {
         primary: { usedPercent: 3, resetsAt: 1_800_000_000, windowDurationMins: 300 },
       }),
     ).toBe(main);
+  });
+});
+
+describe("usage-limit continuation hints", () => {
+  const now = "2026-09-18T10:00:00.000Z";
+  const seconds = Date.parse(now) / 1000;
+
+  it("carries the exact latest exhausted reset and ignores windows with remaining allowance", () => {
+    expect(
+      codexUsageLimitRecovery(
+        {
+          limitId: "codex",
+          primary: { usedPercent: 100, resetsAt: seconds + 123 },
+          secondary: { usedPercent: 90, resetsAt: seconds + 789 },
+        },
+        now,
+      ),
+    ).toEqual({ retryAt: "2026-09-18T10:02:03.000Z" });
+    expect(
+      codexUsageLimitRecovery(
+        {
+          limitId: "codex",
+          primary: { usedPercent: 100, resetsAt: seconds + 123 },
+          secondary: { usedPercent: 100, resetsAt: seconds + 789 },
+        },
+        now,
+      ),
+    ).toEqual({ retryAt: "2026-09-18T10:13:09.000Z" });
+  });
+
+  it("requires a future reset for every exhausted window", () => {
+    for (const resetsAt of [undefined, seconds]) {
+      expect(
+        codexUsageLimitRecovery(
+          {
+            primary: { usedPercent: 100, resetsAt: seconds + 123 },
+            secondary: { usedPercent: 100, ...(resetsAt === undefined ? {} : { resetsAt }) },
+          },
+          now,
+        ),
+      ).toEqual({});
+    }
   });
 });

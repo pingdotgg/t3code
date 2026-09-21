@@ -1303,6 +1303,13 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+const ExpectedUsageLimit = Schema.Struct({
+  turnId: TurnId,
+  providerInstanceId: ProviderInstanceId,
+  sessionUpdatedAt: IsoDateTime,
+  snapshotSequence: NonNegativeInt,
+});
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -1322,6 +1329,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  expectedUsageLimit: Schema.optional(ExpectedUsageLimit),
   createdAt: IsoDateTime,
 });
 
@@ -1481,6 +1489,8 @@ const ThreadSessionSetCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   session: OrchestrationSession,
+  expectedSession: Schema.optional(OrchestrationSession),
+  expectedUsageLimit: Schema.optional(ExpectedUsageLimit),
   createdAt: IsoDateTime,
 });
 

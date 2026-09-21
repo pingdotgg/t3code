@@ -3,6 +3,7 @@ import {
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
   MessageId,
+  OrchestrationSession,
   ThreadLinkedPullRequest,
   UserInputRequestedPayload,
   isImportedAgentSessionMessageId,
@@ -53,6 +54,7 @@ const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
+const sessionsEqual = Schema.toEquivalence(OrchestrationSession);
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
 /**
@@ -129,6 +131,60 @@ function hasQueuedTurnStartForThread(
     },
     now,
   );
+}
+
+export function cancelsUsageLimitContinuation(event: OrchestrationEvent): boolean {
+  switch (event.type) {
+    case "thread.turn-start-requested":
+    case "thread.turn-interrupt-requested":
+    case "thread.session-stop-requested":
+    case "thread.archived":
+    case "thread.deleted":
+    case "thread.runtime-mode-set":
+    case "thread.interaction-mode-set":
+      return true;
+    case "thread.meta-updated":
+      return event.payload.modelSelection !== undefined || event.payload.worktreePath !== undefined;
+    default:
+      return false;
+  }
+}
+
+function requireExpectedUsageLimit(
+  thread: OrchestrationThread,
+  command: Extract<OrchestrationCommand, { type: "thread.turn.start" | "thread.session.set" }>,
+): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const expected = command.expectedUsageLimit;
+  if (expected === undefined) return Effect.void;
+  const turn = thread.latestTurn;
+  const session = thread.session;
+  if (
+    thread.deletedAt !== null ||
+    thread.archivedAt !== null ||
+    turn?.turnId !== expected.turnId ||
+    turn.state !== "error" ||
+    session === null ||
+    session.providerInstanceId !== expected.providerInstanceId ||
+    thread.modelSelection.instanceId !== expected.providerInstanceId ||
+    (command.type === "thread.session.set" && session.updatedAt !== expected.sessionUpdatedAt) ||
+    session.activeTurnId !== null ||
+    session.status === "starting" ||
+    session.status === "running" ||
+    thread.messages.some(
+      (message) =>
+        message.role === "user" &&
+        !isImportedAgentSessionMessageId(message.id) &&
+        Date.parse(message.createdAt) > Date.parse(turn.completedAt ?? turn.requestedAt),
+    )
+  ) {
+    return Effect.fail(
+      new OrchestrationCommandInvariantError({
+        commandType: command.type,
+        detail: `Thread '${thread.id}' no longer matches the usage-limit failure.`,
+      }),
+    );
+  }
+  return Effect.void;
 }
 
 function findPullRequestLink(
@@ -1377,6 +1433,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* requireExpectedUsageLimit(targetThread, command);
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1867,6 +1924,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* requireExpectedUsageLimit(thread, command);
+      if (
+        command.expectedSession !== undefined &&
+        (thread.session === null || !sessionsEqual(thread.session, command.expectedSession))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${thread.id}' session changed before the conditional update.`,
+        });
+      }
       const sessionSetEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...(yield* withEventBase({
           aggregateKind: "thread",

@@ -9,6 +9,7 @@ import {
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
   ProviderDriverKind,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProviderInstanceId,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
@@ -22,6 +23,7 @@ import {
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
+  UsageLimitContinuationPrompt,
   type DiffLayout,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
@@ -106,6 +108,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
   Dialog,
@@ -601,6 +604,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
         ? ["Continue threads after restarts"]
         : []),
+      ...(settings.continueThreadsAfterUsageLimit !==
+        DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterUsageLimit ||
+      settings.usageLimitContinuationPrompt !==
+        DEFAULT_UNIFIED_SETTINGS.usageLimitContinuationPrompt
+        ? ["Continue after usage limits"]
+        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -672,6 +681,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.responseStreamingMode,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
+      settings.continueThreadsAfterUsageLimit,
+      settings.usageLimitContinuationPrompt,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.sidebarProjectGroupingMode,
@@ -776,6 +787,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      continueThreadsAfterUsageLimit: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterUsageLimit,
+      usageLimitContinuationPrompt: DEFAULT_UNIFIED_SETTINGS.usageLimitContinuationPrompt,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -2099,6 +2112,50 @@ function LegacyFeaturesSection() {
   );
 }
 
+const isUsageLimitContinuationPrompt = Schema.is(UsageLimitContinuationPrompt);
+
+function UsageLimitPromptEditor({
+  value,
+  onSave,
+}: {
+  value: string | null;
+  onSave: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="w-full space-y-1 @min-[32rem]/settings-row:w-80">
+      <Textarea
+        aria-label="Continuation prompt"
+        aria-invalid={error !== null}
+        aria-describedby={error ? "usage-limit-prompt-error" : undefined}
+        value={draft ?? value ?? ""}
+        placeholder={value === null ? "Mixed" : undefined}
+        maxLength={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
+        onChange={(event) => {
+          setDraft(event.currentTarget.value);
+          setError(null);
+        }}
+        onBlur={() => {
+          if (draft === null) return;
+          const prompt = draft.trim();
+          if (!isUsageLimitContinuationPrompt(prompt)) {
+            setError("Enter a continuation prompt.");
+            return;
+          }
+          setDraft(prompt);
+          if (prompt !== value) onSave(prompt);
+        }}
+      />
+      {error ? (
+        <p id="usage-limit-prompt-error" role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function GeneralSettingsPanel() {
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
   const sendShortcutOptions = [
@@ -2120,6 +2177,8 @@ export function GeneralSettingsPanel() {
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const [tokenStreamingWarningOpen, setTokenStreamingWarningOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
+  const mixedUsageLimitContinuation = useScopedSettingsMixed(["continueThreadsAfterUsageLimit"]);
+  const mixedUsageLimitPrompt = useScopedSettingsMixed(["usageLimitContinuationPrompt"]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -2797,6 +2856,60 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <SettingsRow
+          {...searchableSetting("continue-threads-after-usage-limit")}
+          serverScoped
+          settingKeys={["continueThreadsAfterUsageLimit"]}
+          description="Continue Codex threads when their subscription usage limits reset. The server must remain running."
+          resetAction={
+            settings.continueThreadsAfterUsageLimit !==
+              DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterUsageLimit ||
+            settings.usageLimitContinuationPrompt !==
+              DEFAULT_UNIFIED_SETTINGS.usageLimitContinuationPrompt ||
+            mixedUsageLimitPrompt ||
+            mixedUsageLimitContinuation ? (
+              <SettingResetButton
+                label="usage-limit continuation"
+                onClick={() =>
+                  updateSettings({
+                    continueThreadsAfterUsageLimit:
+                      DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterUsageLimit,
+                    usageLimitContinuationPrompt:
+                      DEFAULT_UNIFIED_SETTINGS.usageLimitContinuationPrompt,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["continueThreadsAfterUsageLimit"]}
+              checked={settings.continueThreadsAfterUsageLimit}
+              onCheckedChange={(checked) =>
+                updateSettings({ continueThreadsAfterUsageLimit: Boolean(checked) })
+              }
+              aria-label="Continue after usage limits"
+            />
+          }
+        />
+        {settings.continueThreadsAfterUsageLimit && !mixedUsageLimitContinuation ? (
+          <SettingsRow
+            title="Continuation prompt"
+            serverScoped
+            settingKeys={["usageLimitContinuationPrompt"]}
+            description="Send this message in the same thread once usage is available."
+            control={
+              <UsageLimitPromptEditor
+                key={`${scope.environmentIds.join(",")}:${scope.kind}:${mixedUsageLimitPrompt}:${settings.usageLimitContinuationPrompt}`}
+                value={mixedUsageLimitPrompt ? null : settings.usageLimitContinuationPrompt}
+                onSave={(usageLimitContinuationPrompt) =>
+                  updateSettings({ usageLimitContinuationPrompt })
+                }
+              />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           serverScoped

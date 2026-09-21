@@ -1,3 +1,4 @@
+import { ServerSettingsService } from "../../serverSettings.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -323,6 +324,7 @@ describe("CheckpointReactor", () => {
       options?.providerName ?? ProviderDriverKind.make("codex"),
     );
     const orchestrationLayer = OrchestrationEngineLive.pipe(
+      Layer.provide(ServerSettingsService.layerTest()),
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(ThreadPlanProgress.layer),

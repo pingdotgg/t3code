@@ -8,6 +8,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type AgentSessionImportSource,
 } from "@t3tools/contracts";
 import { assert, expect, it } from "@effect/vitest";
@@ -22,6 +23,10 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import {
+  readPendingUsageLimitContinuation,
+  type PendingUsageLimitContinuation,
+} from "../usageLimitContinuation.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 
 const importedSource = {
@@ -142,6 +147,110 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
           activeTurnId: "turn-1",
         });
       }
+    }),
+  );
+
+  it.effect(
+    "preserves pending usage waits across ordinary writes and never restores a cleared wait",
+    () =>
+      Effect.gen(function* () {
+        const directory = yield* ProviderSessionDirectory;
+        const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        const threadId = ThreadId.make("thread-usage-wait");
+        const providerInstanceId = ProviderInstanceId.make("codex");
+        const pending: PendingUsageLimitContinuation = {
+          failedTurnId: TurnId.make("turn-quota"),
+          providerInstanceId,
+          modelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+          errorMessage: "Usage limit reached.",
+          failedAt: "2026-09-18T10:00:00.000Z",
+          nextCheckAt: "2026-09-18T11:00:00.000Z",
+          snapshotSequence: 12,
+        };
+        yield* directory.upsert({
+          threadId,
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          resumeCursor: { threadId: "provider-thread" },
+          runtimePayload: { cwd: "/tmp/project" },
+        });
+        yield* directory.recordImportedTranscript({ threadId, source: importedSource });
+        const beforeWait = Option.getOrThrow(yield* repository.getByThreadId({ threadId }));
+        yield* directory.setUsageLimitContinuation({ threadId, pending });
+        // A session write that read before the wait must preserve it.
+        yield* repository.upsert(beforeWait);
+        const withWait = Option.getOrThrow(yield* repository.getByThreadId({ threadId }));
+        expect(readPendingUsageLimitContinuation(withWait.runtimePayload)).toEqual(pending);
+        expect(withWait.resumeCursor).toEqual({ threadId: "provider-thread" });
+        expect(withWait.runtimePayload).toMatchObject({
+          cwd: "/tmp/project",
+          importedTranscripts: [importedSource],
+        });
+        expect(
+          readPendingUsageLimitContinuation(
+            Option.getOrThrow(yield* directory.getBinding(threadId)).runtimePayload,
+          ),
+        ).toEqual(pending);
+
+        const replacement = { ...pending, failedTurnId: TurnId.make("turn-quota-new") };
+        yield* directory.setUsageLimitContinuation({ threadId, pending: replacement });
+        yield* directory.setUsageLimitContinuation({
+          threadId,
+          pending: null,
+          expectedFailedTurnId: pending.failedTurnId,
+        });
+        expect(
+          readPendingUsageLimitContinuation(
+            Option.getOrThrow(yield* directory.getBinding(threadId)).runtimePayload,
+          ),
+        ).toEqual(replacement);
+        yield* directory.setUsageLimitContinuation({
+          threadId,
+          pending: null,
+          expectedFailedTurnId: replacement.failedTurnId,
+        });
+        // Neither a stale ordinary write nor a stale timer update may resurrect it.
+        yield* repository.upsert(withWait);
+        yield* directory.setUsageLimitContinuation({
+          threadId,
+          pending,
+          expectedFailedTurnId: pending.failedTurnId,
+        });
+        const cleared = Option.getOrThrow(yield* directory.getBinding(threadId));
+        expect(readPendingUsageLimitContinuation(cleared.runtimePayload)).toBeUndefined();
+        expect(cleared.runtimePayload).toEqual({
+          cwd: "/tmp/project",
+          importedTranscripts: [importedSource],
+        });
+      }),
+  );
+
+  it.effect("rejects a pending wait owned by another provider instance", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = ThreadId.make("thread-usage-instance");
+      yield* directory.upsert({
+        threadId,
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex-work"),
+      });
+      yield* directory.setUsageLimitContinuation({
+        threadId,
+        pending: {
+          failedTurnId: TurnId.make("turn-quota"),
+          providerInstanceId: ProviderInstanceId.make("codex-personal"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex-personal"), model: "gpt-5" },
+          errorMessage: "Usage limit reached.",
+          failedAt: "2026-09-18T10:00:00.000Z",
+          nextCheckAt: "2026-09-18T11:00:00.000Z",
+          snapshotSequence: 1,
+        },
+      });
+      expect(
+        readPendingUsageLimitContinuation(
+          Option.getOrThrow(yield* directory.getBinding(threadId)).runtimePayload,
+        ),
+      ).toBeUndefined();
     }),
   );
 

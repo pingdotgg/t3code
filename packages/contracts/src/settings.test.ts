@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "./orchestration.ts";
 import {
   ClientSettingsSchema,
   ClientSettingsPatch,
@@ -19,6 +20,41 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+
+describe("usage-limit continuation settings", () => {
+  it("keeps existing installations opted out with a default continuation prompt", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      continueThreadsAfterUsageLimit: false,
+      usageLimitContinuationPrompt: "continue",
+    });
+  });
+
+  it("persists a custom multiline prompt independently of the toggle", () => {
+    const settings = decodeServerSettings({
+      continueThreadsAfterUsageLimit: true,
+      usageLimitContinuationPrompt: "  Continue the work.\nCheck the result.  ",
+    });
+    const disabled = decodeServerSettings({
+      ...encodeServerSettings(settings),
+      ...decodeServerSettingsPatch({ continueThreadsAfterUsageLimit: false }),
+    });
+    expect(encodeServerSettings(disabled)).toMatchObject({
+      continueThreadsAfterUsageLimit: false,
+      usageLimitContinuationPrompt: "Continue the work.\nCheck the result.",
+    });
+    expect(decodeServerSettingsPatch({ usageLimitContinuationPrompt: "continue" })).toEqual({
+      usageLimitContinuationPrompt: "continue",
+    });
+  });
+
+  it.each(["", " \n\t ", "a".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1)])(
+    "rejects empty or oversized prompts in stored settings and patches",
+    (usageLimitContinuationPrompt) => {
+      expect(() => decodeServerSettings({ usageLimitContinuationPrompt })).toThrow();
+      expect(() => decodeServerSettingsPatch({ usageLimitContinuationPrompt })).toThrow();
+    },
+  );
+});
 
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {

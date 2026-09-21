@@ -40,7 +40,8 @@ import {
   type OrchestrationDispatchError,
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
-import { decideOrchestrationCommand } from "../decider.ts";
+import { cancelsUsageLimitContinuation, decideOrchestrationCommand } from "../decider.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -83,6 +84,7 @@ function commandToAggregateRef(command: OrchestrationCommand): {
 
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const settingsService = yield* ServerSettingsService;
   const eventStore = yield* OrchestrationEventStore;
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -183,6 +185,45 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             commandType: envelope.command.type,
             detail: `thread ${envelope.command.threadId} changed before automatic settlement`,
           });
+        }
+
+        if (
+          (envelope.command.type === "thread.turn.start" ||
+            envelope.command.type === "thread.session.set") &&
+          envelope.command.expectedUsageLimit !== undefined
+        ) {
+          const command = envelope.command;
+          const canceled = yield* eventStore
+            .readAggregateRange({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              fromSequenceExclusive: envelope.command.expectedUsageLimit.snapshotSequence,
+              toSequenceInclusive: commandReadModel.snapshotSequence,
+            })
+            .pipe(Stream.filter(cancelsUsageLimitContinuation), Stream.runHead);
+          if (Option.isSome(canceled)) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: `thread ${command.threadId} changed before usage-limit continuation`,
+            });
+          }
+          if (command.type === "thread.turn.start") {
+            const settings = yield* settingsService.getSettings.pipe(
+              Effect.mapError(
+                () =>
+                  new OrchestrationCommandInvariantError({
+                    commandType: command.type,
+                    detail: "Could not read usage-limit continuation settings.",
+                  }),
+              ),
+            );
+            if (!settings.continueThreadsAfterUsageLimit) {
+              return yield* new OrchestrationCommandInvariantError({
+                commandType: command.type,
+                detail: "Usage-limit continuation is disabled.",
+              });
+            }
+          }
         }
 
         // The decider compares the lookup inputs. Only recreation needs an
