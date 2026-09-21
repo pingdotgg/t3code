@@ -46,7 +46,7 @@ import {
 import { probeCursorSkills } from "./CursorSkills.ts";
 import { makeCursorAuth } from "../CursorAuth.ts";
 import { makeCursorCredentialStore } from "../CursorCredentialStore.ts";
-import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as CursorAgentSdk from "../../orchestration-v2/Adapters/CursorAgentSdk.ts";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const isSdkRunnerError = Schema.is(CursorAgentSdk.CursorAgentSdkRunnerError);
@@ -65,8 +65,7 @@ export type CursorDriverEnv =
   | HttpClient.HttpClient
   | BackgroundPolicy.BackgroundPolicy
   | ServerConfig
-  | ServerSettingsService
-  | ServerSecretStore;
+  | ServerSettingsService;
 
 export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -96,7 +95,18 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
-      const credentials = yield* makeCursorCredentialStore(instanceId);
+      const credentials = yield* makeCursorCredentialStore(instanceId).pipe(
+        Effect.provide(ServerSecretStore.layer),
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: "Could not open the Cursor credential store.",
+              cause,
+            }),
+        ),
+      );
       const auth = yield* makeCursorAuth({
         instanceId,
         displayName: displayName ?? "Cursor",
