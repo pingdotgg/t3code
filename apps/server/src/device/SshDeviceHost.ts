@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   type DeviceHostSummary,
   DevicePlatformAvailability,
+  DeviceToolVersions,
   type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import { runSshCommand, baseSshArgs, resolveSshCommand } from "@t3tools/ssh/command";
@@ -24,6 +25,7 @@ import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./s
 
 const Probe = Schema.Struct({
   nodePath: Schema.String,
+  tools: Schema.optional(DeviceToolVersions),
   platforms: Schema.Array(DevicePlatformAvailability),
 });
 const Started = Schema.Struct({
@@ -82,8 +84,11 @@ export const probe = Effect.fn("SshDeviceHost.probe")(function* (config: SshDevi
     id: config.id,
     label: config.label,
     kind: "ssh",
-    hubInstalled: false,
-    agentDeviceInstalled: false,
+    tools: value.tools,
+    hubInstalled:
+      value.tools?.hub.installedVersions.includes(value.tools.hub.requiredVersion) ?? false,
+    agentDeviceInstalled:
+      value.tools?.agent.installedVersions.includes(value.tools.agent.requiredVersion) ?? false,
     platforms: value.platforms,
   } satisfies DeviceHostSummary;
 });
@@ -183,6 +188,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     summary = {
       ...summary,
       platforms: remote.platforms,
+      tools: remote.tools,
       hubInstalled: true,
       agentDeviceInstalled: wantsAgent || summary.agentDeviceInstalled,
     };

@@ -50,6 +50,8 @@ import {
   ensureDeviceHub,
   isAgentDeviceInstalled,
   isDeviceHubInstalled,
+  deviceToolVersions,
+  DEVICE_HUB_VERSION,
 } from "./DeviceToolchain.ts";
 
 const HUB_READY_TIMEOUT_MS = 30_000;
@@ -76,6 +78,7 @@ const AgentDeviceDaemonFile = Schema.Struct({
   httpPort: Schema.Int,
   token: Schema.String,
   pid: Schema.optional(Schema.Int),
+  version: Schema.optional(Schema.String),
 });
 const decodeDaemonFile = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentDeviceDaemonFile));
 
@@ -232,7 +235,19 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         Effect.provideService(Path.Path, path),
       ),
     ]);
+    const running = yield* Ref.get(runningRef);
+    const daemon = running?.agentDevice
+      ? yield* readDaemonFile().pipe(Effect.option)
+      : Option.none();
+    const tools = yield* deviceToolVersions(config.baseDir, {
+      ...(running ? { hub: DEVICE_HUB_VERSION } : {}),
+      ...(Option.isSome(daemon) && daemon.value.version ? { agent: daemon.value.version } : {}),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
     return {
+      tools,
       id: hostId,
       kind: "local",
       label: "This machine",

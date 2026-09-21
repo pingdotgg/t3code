@@ -74,11 +74,25 @@ export const DevicePlatformAvailability = Schema.Struct({
 });
 export type DevicePlatformAvailability = typeof DevicePlatformAvailability.Type;
 
+export const DeviceToolVersion = Schema.Struct({
+  requiredVersion: Schema.String,
+  installedVersions: Schema.Array(Schema.String),
+  runningVersion: Schema.NullOr(Schema.String),
+});
+export type DeviceToolVersion = typeof DeviceToolVersion.Type;
+
+export const DeviceToolVersions = Schema.Struct({
+  hub: DeviceToolVersion,
+  agent: DeviceToolVersion,
+});
+export type DeviceToolVersions = typeof DeviceToolVersions.Type;
+
 export const DeviceHostSummary = Schema.Struct({
   id: DeviceHostId,
   kind: Schema.Literals(["local", "ssh"]),
   label: TrimmedNonEmptyString,
   platforms: Schema.Array(DevicePlatformAvailability),
+  tools: Schema.optional(DeviceToolVersions),
   hubInstalled: Schema.Boolean,
   agentDeviceInstalled: Schema.Boolean,
 });

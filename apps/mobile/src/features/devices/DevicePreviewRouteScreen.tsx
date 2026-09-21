@@ -1,3 +1,4 @@
+import { deviceToolVersionLabels } from "@t3tools/client-runtime/state/device";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -116,6 +117,18 @@ function DevicePreviewScreen({
   };
 
   const controls: ScreenHeaderMenuItem[] = [
+    {
+      id: "device-tools",
+      title: "Device tool versions",
+      icon: "info.circle",
+      onPress: () =>
+        Alert.alert(
+          "Device tool versions",
+          deviceToolVersionLabels(
+            state.data?.hosts.find((host) => host.id === preview?.session.hostId)?.tools,
+          ).join("\n"),
+        ),
+    },
     {
       id: "reload",
       title: "Reload stream",

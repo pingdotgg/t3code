@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { type DeviceToolVersions, WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -69,4 +69,18 @@ export function createDeviceEnvironmentAtoms<R, E>(
       concurrency,
     }),
   };
+}
+
+/** Unknown inventory is distinct from a completed check that found no install. */
+export function deviceToolVersionLabels(tools: DeviceToolVersions | undefined) {
+  if (!tools) return ["Device tool versions have not been checked."];
+  return (
+    [
+      ["Device hub", tools.hub],
+      ["Agent tools", tools.agent],
+    ] as const
+  ).map(([name, tool]) => {
+    const installed = tool.installedVersions.length ? tool.installedVersions.join(", ") : "none";
+    return `${name}: installed ${installed}; required ${tool.requiredVersion}${tool.runningVersion ? `; running ${tool.runningVersion}` : ""}.`;
+  });
 }

@@ -91,7 +91,7 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
         let invocation = 0;
         const invoke = async (
           owner: string,
-          mode: "start" | "agent-start" | "stop-agent" | "stop",
+          mode: "probe" | "start" | "agent-start" | "stop-agent" | "stop",
           upgraded = false,
         ) => {
           const file = NodePath.join(home, `${owner}-${mode}-${invocation++}.cjs`);
@@ -107,6 +107,11 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           });
           return result.stdout ? JSON.parse(result.stdout) : null;
         };
+        const inventory = await invoke("one", "probe");
+        expect(inventory.tools.hub.installedVersions).toEqual([DEVICE_HUB_VERSION]);
+        expect(inventory.tools.hub.runningVersion).toBeNull();
+        expect(inventory.tools.agent.installedVersions).toEqual([AGENT_DEVICE_VERSION]);
+        await expect(NodeFSP.stat(NodePath.join(root, "hosts/one/hub.json"))).rejects.toThrow();
         const template = NodePath.join(home, "hub-template");
         await NodeFSP.cp(hubDir, template, { recursive: true });
         await NodeFSP.rm(NodePath.join(hubDir, ".install-complete"));

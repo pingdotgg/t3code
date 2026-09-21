@@ -39,6 +39,27 @@ const state = path.join(root, 'hosts', owner);
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });
 const read = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 const write = (file, value) => { const tmp = file + '.' + process.pid; fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 }); fs.renameSync(tmp, file); };
+const toolVersions = (name, requiredVersion, entry, record) => {
+  const directory = path.join(root, 'tools');
+  const prefix = name + '@';
+  let names = [];
+  try { names = fs.readdirSync(directory); } catch {}
+  const installedVersions = names.filter(name => name.startsWith(prefix)).map(name => name.slice(prefix.length)).filter(version => {
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$/.test(version)) return false;
+    const dir = path.join(directory, prefix + version);
+    try { return fs.readFileSync(path.join(dir, '.install-complete'), 'utf8').trim() === version && fs.existsSync(path.join(dir, 'node_modules', name, entry)); } catch { return false; }
+  }).sort();
+  let runningVersion = null;
+  if (record?.entryPath && record?.pid) {
+    const command = run('ps', ['-p', String(record.pid), '-o', 'command=']).stdout || '';
+    if (command.includes(record.entryPath)) runningVersion = installedVersions.find(version => record.entryPath === path.join(directory, prefix + version, 'node_modules', name, entry)) ?? null;
+  }
+  return { requiredVersion, installedVersions, runningVersion };
+};
+const versions = () => ({
+  hub: toolVersions('expo-device-hub', hubVersion, 'dist/server/cli.mjs', read(path.join(state, 'hub.json'))),
+  agent: toolVersions('agent-device', agentVersion, 'bin/agent-device.mjs', { ...read(path.join(state, 'agent.json')), ...read(path.join(state, 'daemon.json')) }),
+});
 const stopHub = hub => {
   if (!hub || hub.owner !== owner) return;
   const command = run('ps', ['-p', String(hub.pid), '-o', 'command=']).stdout || '';
@@ -111,7 +132,7 @@ async function install(name, version, entry) {
   if (mode === 'probe') {
     if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');
     if (run('npm', ['--version']).status !== 0) throw Error('npm is missing from the non-interactive SSH PATH.');
-    console.log(JSON.stringify({ nodePath: process.execPath, platforms })); return;
+    console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions() })); return;
   }
   fs.mkdirSync(state, { recursive: true, mode: 0o700 });
   // Serialize starts and stops for this environment/host owner, including agent startup.
@@ -185,7 +206,7 @@ async function install(name, version, entry) {
   }
   const vendor = path.resolve(path.dirname(hubEntry), '../../vendor/serve-sim/dist');
   const optional = file => fs.existsSync(file) ? file : null;
-  console.log(JSON.stringify({ nodePath: process.execPath, platforms, hubPort: hub.port, ...agentResult,
+  console.log(JSON.stringify({ nodePath: process.execPath, platforms, tools: versions(), hubPort: hub.port, ...agentResult,
     helpers: { serveSimAxSettings: optional(path.join(vendor, 'simax/serve-sim-ax-settings')), serveSimCli: optional(path.join(vendor, 'serve-sim.js')) } }));
   } finally { releaseHost(); }
 })().catch(error => { console.error(error.message); process.exitCode = 1; });

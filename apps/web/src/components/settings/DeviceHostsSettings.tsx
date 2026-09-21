@@ -1,3 +1,4 @@
+import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
 import { Spinner } from "../ui/spinner";
@@ -236,6 +237,12 @@ function DeviceHostList({
                   ))}
               </div>
               <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+              <DeviceToolVersions
+                tools={
+                  (check?.status === "connected" ? check.tools : undefined) ??
+                  state.hosts.find((value) => value.id === host.id)?.tools
+                }
+              />
               {check?.status === "local" ? (
                 <p className="mt-1 text-xs text-muted-foreground">Already available locally</p>
               ) : null}
