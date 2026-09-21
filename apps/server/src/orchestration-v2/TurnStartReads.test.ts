@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointScopeId,
+  NodeId,
   EventId,
   MessageId,
   ProjectId,
@@ -68,7 +70,7 @@ it.effect.each(["sqlite", "memory"] as const)(
         modelSelection: thread.modelSelection,
         providerThreadId: null,
         userMessageId: messageId,
-        rootNodeId: null,
+        rootNodeId: NodeId.make("startup:root"),
         activeAttemptId: null,
         status: "queued",
         requestedAt: now,
@@ -96,6 +98,49 @@ it.effect.each(["sqlite", "memory"] as const)(
         });
       yield* putThread(thread);
       yield* putRun(run);
+      const scopeId = CheckpointScopeId.make("startup:shared-scope");
+      yield* store.apply({
+        id: EventId.make("startup:root-event"),
+        type: "node.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: run.rootNodeId!,
+          threadId,
+          runId,
+          parentNodeId: null,
+          rootNodeId: run.rootNodeId!,
+          kind: "root_turn",
+          status: "pending",
+          countsForRun: true,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: scopeId,
+          startedAt: null,
+          completedAt: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("startup:scope-event"),
+        type: "checkpoint-scope.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: scopeId,
+          threadId,
+          runId: RunId.make("run:old"),
+          nodeId: NodeId.make("startup:earlier-root"),
+          parentScopeId: null,
+          providerThreadId: null,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/repo/worktree",
+          createdAt: now,
+        },
+      });
       const message = {
         id: messageId,
         threadId,
@@ -163,6 +208,10 @@ it.effect.each(["sqlite", "memory"] as const)(
       }
       const context = yield* store.getTurnStartContext(threadId, runId);
       assert.equal(context.thread.id, threadId);
+      assert.deepEqual(
+        context.checkpointScopes.map((scope) => scope.id),
+        [scopeId],
+      );
       assert.equal(context.messages.find((m) => m.id === messageId)?.text, "Continue");
       assert.isTrue(context.hasConversation);
       assert.deepEqual(context.turnItems, []);

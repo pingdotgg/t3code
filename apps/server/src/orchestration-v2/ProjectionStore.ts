@@ -3351,7 +3351,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `.pipe(Effect.flatMap(decodeRows(decodeProviderTurnPayload, threadId)));
             const checkpointScopes = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_checkpoint_scopes
-              WHERE thread_id = ${threadId} AND node_id IN (SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs WHERE thread_id = ${threadId} AND run_id = ${runId}) ORDER BY ordinal_within_parent ASC, scope_id ASC
+              WHERE thread_id = ${threadId} AND scope_id IN ${sql.in(nodes.flatMap((node) => (node.checkpointScopeId === null ? [] : [node.checkpointScopeId])))} ORDER BY ordinal_within_parent ASC, scope_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeCheckpointScopePayload, threadId)));
             const contextHandoffs = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_context_handoffs
