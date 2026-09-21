@@ -7,6 +7,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
 } from "@t3tools/contracts";
 import { onTestFinished, vi } from "vite-plus/test";
@@ -285,7 +286,7 @@ describe("mobile composer drafts", () => {
     const key = "review-environment:full-attachments";
     const before = {
       text: "Existing draft",
-      attachments: Array.from({ length: 8 }, (_, index) => ({
+      attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS }, (_, index) => ({
         ...reviewImage,
         id: `held-${index}`,
       })),
