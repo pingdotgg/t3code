@@ -198,6 +198,69 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("finishes saving a completed login atomically across the timeout", () =>
+    Effect.gen(function* () {
+      const store = new InMemoryCredentialStore();
+      const saving = Promise.withResolvers<void>();
+      const finishSave = Promise.withResolvers<void>();
+      const scope = yield* Scope.make();
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+      const harness = yield* makeHarness({
+        store: {
+          load: () => store.load(),
+          clear: () => store.clear(),
+          save: async (credentials) => {
+            saving.resolve();
+            await finishSave.promise;
+            await store.save(credentials);
+          },
+        },
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* Effect.addFinalizer(() => Effect.sync(() => finishSave.resolve()));
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Effect.sync(() => harness.complete.resolve());
+      yield* Effect.promise(() => saving.promise);
+      yield* TestClock.adjust(300_000);
+      yield* Effect.sync(() => finishSave.resolve());
+      yield* phase(harness.auth, "succeeded");
+      expect(yield* harness.auth.requireApiKey).toBe("browser-key");
+      yield* Scope.close(scope, Exit.void);
+      const state = yield* harness.auth.controller.subscribe(owner).pipe(Stream.runHead);
+      expect(Option.getOrThrow(state).phase).toBe("succeeded");
+      expect(harness.changes).toEqual([true]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("discards a credential rejected by verification and permits a fresh login", () =>
+    Effect.gen(function* () {
+      let rejected = true;
+      const harness = yield* makeHarness({
+        onChanged: (signedIn) =>
+          signedIn && rejected
+            ? Effect.fail(
+                new ProviderSetupError({
+                  instanceId,
+                  operation: "start",
+                  detail: "Could not verify the Cursor sign-in.",
+                }),
+              )
+            : Effect.void,
+      });
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Effect.sync(() => harness.complete.resolve());
+      yield* phase(harness.auth, "failed");
+      expect(yield* Effect.promise(() => harness.store.load())).toBeUndefined();
+      expect(yield* harness.auth.readApiKey).toBeUndefined();
+      expect(Exit.isFailure(yield* Effect.exit(harness.auth.requireApiKey))).toBe(true);
+      rejected = false;
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "succeeded");
+      expect(yield* harness.auth.requireApiKey).toBe("browser-key");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("clears only this instance's credential after its sessions stop", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

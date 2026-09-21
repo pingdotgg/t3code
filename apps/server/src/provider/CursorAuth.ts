@@ -195,6 +195,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
             detail: "Cursor sign-in failed. Start sign-in again.",
           }),
       });
+      // Commit and publish together; interrupting a store Promise cannot stop a late write.
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
           if (active !== flow) return;
@@ -216,7 +217,19 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
                 detail: "Could not save the Cursor sign-in. Try again.",
               }),
           });
-          yield* options.onChanged(true);
+          const verified = yield* options.onChanged(true).pipe(Effect.exit);
+          if (Exit.isFailure(verified)) {
+            yield* Effect.tryPromise({
+              try: () => options.store.clear(),
+              catch: () =>
+                new ProviderSetupError({
+                  instanceId: options.instanceId,
+                  operation: "start",
+                  detail: "Could not clear the rejected Cursor sign-in. Try signing out.",
+                }),
+            });
+            return yield* Effect.failCause(verified.cause);
+          }
           active = undefined;
           operation = "idle";
           yield* publish(flow, {
