@@ -9,7 +9,6 @@ import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile
 import { deviceKeyboard, deviceModel } from "./deviceModels";
 import { DevicePhoneViewport } from "./DevicePhoneViewport";
 import { DeviceLoadingView } from "./DeviceLoadingView";
-import { DEVICE_CONTROLS_RAIL_WIDTH, deviceControlsLayout } from "./deviceControlsLayout";
 import { type DeviceAxElement, fetchDeviceAxTree } from "./deviceHubApi";
 import {
   createDeviceStreamClient,
@@ -22,7 +21,6 @@ import {
 const AX_POLL_INTERVAL_MS = 2_000;
 
 export interface DeviceViewControls {
-  readonly layout: "rail" | "header";
   readonly phone: boolean;
   readonly streaming: boolean;
   readonly phoneUnavailableReason: string | null;
@@ -63,7 +61,6 @@ export function DeviceStreamView(props: {
 }) {
   const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
   const [keyboardAttached, setKeyboardAttached] = useState(false);
-  const [framingAspect, setFramingAspect] = useState<number | null>(null);
   const [phoneUnavailable, setPhoneUnavailable] = useState(false);
   const onPhoneUnavailable = useCallback(() => setPhoneUnavailable(true), []);
   const cancelPhoneInputRef = useRef<(() => void) | null>(null);
@@ -176,21 +173,12 @@ export function DeviceStreamView(props: {
   // `aspect-ratio` alone cannot do this: with the height pinned to 100% the
   // width clamp wins and distorts the drawn frame.
   const hostRef = useRef<HTMLDivElement | null>(null);
-  const workspaceRef = useRef<HTMLDivElement | null>(null);
-  const [workspace, setWorkspace] = useState({ width: 0, height: 0 });
   const [host, setHost] = useState({ width: 0, height: 0 });
   useEffect(() => {
     const element = hostRef.current;
-    const workspaceElement = workspaceRef.current;
-    if (!element || !workspaceElement) return;
+    if (!element) return;
     const update = () => {
       const rect = element.getBoundingClientRect();
-      const workspaceRect = workspaceElement.getBoundingClientRect();
-      setWorkspace((current) =>
-        current.width === workspaceRect.width && current.height === workspaceRect.height
-          ? current
-          : { width: workspaceRect.width, height: workspaceRect.height },
-      );
       setHost((current) =>
         current.width === rect.width && current.height === rect.height
           ? current
@@ -200,7 +188,6 @@ export function DeviceStreamView(props: {
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
-    observer.observe(workspaceElement);
     return () => observer.disconnect();
   }, []);
   const frame = useMemo(() => {
@@ -298,14 +285,6 @@ export function DeviceStreamView(props: {
         : null;
 
   const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
-  const controlsLayout = deviceControlsLayout({
-    ...workspace,
-    aspect: showPhone && keyboardAttached && keyboardSource ? (framingAspect ?? aspect) : aspect,
-    phone: !!showPhone,
-    android: props.platform === "android",
-  });
-  const contentOffset =
-    props.renderControls && controlsLayout === "rail" ? -DEVICE_CONTROLS_RAIL_WIDTH / 2 : 0;
   const profile = resolveDeviceShape({
     platform: props.platform,
     name: props.deviceName ?? "",
@@ -314,10 +293,8 @@ export function DeviceStreamView(props: {
 
   return (
     <div
-      ref={workspaceRef}
       className={cn(
         "relative flex size-full min-h-0 min-w-0",
-        props.renderControls && controlsLayout === "header" && "flex-col",
         props.allowPhoneView ? "bg-background" : "bg-black/90",
       )}
     >
@@ -325,7 +302,6 @@ export function DeviceStreamView(props: {
         <DeviceControlsSlot
           renderControls={props.renderControls}
           view={{
-            layout: controlsLayout,
             phone: !!showPhone,
             streaming: status === "streaming",
             phoneUnavailableReason,
@@ -366,7 +342,7 @@ export function DeviceStreamView(props: {
       >
         <div
           className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
-          style={{ width: frame.width, height: frame.height, translate: `${contentOffset}px 0` }}
+          style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
             (event.currentTarget.parentElement as HTMLElement | null)?.focus();
@@ -435,7 +411,6 @@ export function DeviceStreamView(props: {
             profile={profile}
             model={deviceModel(props.platform, props.deviceName ?? "")}
             accessory={keyboardAttached ? keyboardSource : null}
-            contentOffset={contentOffset}
             source={canvasRef}
             onFrameListener={onFrameListener}
             client={clientRef}
@@ -443,7 +418,6 @@ export function DeviceStreamView(props: {
             onResetReady={onResetReady}
             screen={screen}
             onUnavailable={onPhoneUnavailable}
-            onFramingAspect={setFramingAspect}
           />
         ) : null}
         {props.allowPhoneView && !props.renderControls && status === "streaming" ? (

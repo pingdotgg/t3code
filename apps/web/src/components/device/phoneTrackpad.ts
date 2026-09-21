@@ -18,7 +18,7 @@ export function bindPhoneTrackpad(
   };
   const wheel = (event: WheelEvent) => {
     consume(event);
-    if (scale !== null) return;
+    if (scale !== null || event.ctrlKey) return;
     const rect = canvas.getBoundingClientRect();
     const navigation = phoneWheelNavigation({
       width: rect.width,
@@ -48,7 +48,6 @@ export function bindPhoneTrackpad(
     consume(event);
     const next = gestureScale(event);
     if (scale === null || next === null) return;
-    interaction.navigate({ type: "zoom", delta: Math.log(next) - Math.log(scale) });
     scale = next;
   };
   const end = (event: Event) => {

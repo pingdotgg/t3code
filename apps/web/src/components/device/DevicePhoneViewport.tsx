@@ -13,7 +13,6 @@ const loadPhoneViewer = () => import("@t3tools/client-runtime/device/phone-viewe
 
 /** Web shell for the framework-independent viewer. The decoded screen and input connection remain owned by DeviceStreamView. */
 export function DevicePhoneViewport(props: {
-  readonly contentOffset: number;
   readonly profile: DeviceShapeProfile;
   readonly model: DeviceModelSource | null;
   readonly accessory: DeviceAccessorySource | null;
@@ -24,7 +23,6 @@ export function DevicePhoneViewport(props: {
   readonly client: RefObject<DeviceStreamClient | null>;
   readonly screen: DeviceScreenSize | null;
   readonly onUnavailable: () => void;
-  readonly onFramingAspect: (aspect: number) => void;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -34,15 +32,7 @@ export function DevicePhoneViewport(props: {
   const profileRef = useRef(props.profile);
   const modelRef = useRef(props.model);
   const accessoryRef = useRef(props.accessory);
-  const {
-    source,
-    onFrameListener,
-    client,
-    onInputCancel,
-    onResetReady,
-    onUnavailable,
-    onFramingAspect,
-  } = props;
+  const { source, onFrameListener, client, onInputCancel, onResetReady, onUnavailable } = props;
 
   useEffect(() => {
     screenRef.current = props.screen;
@@ -81,7 +71,6 @@ export function DevicePhoneViewport(props: {
           canvas,
           source: decoded,
           onUnavailable,
-          onFramingAspect,
           onModelError: (cause) => console.warn("Device 3D asset could not load", cause),
           profile: profileRef.current,
           model: modelRef.current,
@@ -117,15 +106,7 @@ export function DevicePhoneViewport(props: {
       viewerRef.current?.dispose();
       viewerRef.current = null;
     };
-  }, [
-    onInputCancel,
-    onResetReady,
-    client,
-    onFrameListener,
-    onUnavailable,
-    source,
-    onFramingAspect,
-  ]);
+  }, [onInputCancel, onResetReady, client, onFrameListener, onUnavailable, source]);
 
   const point = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -136,18 +117,14 @@ export function DevicePhoneViewport(props: {
   };
   return (
     <div className="absolute inset-0">
-      <div
-        ref={hostRef}
-        className="absolute inset-0"
-        style={{ translate: `${props.contentOffset}px 0` }}
-      >
+      <div ref={hostRef} className="absolute inset-0">
         <div
           aria-hidden
           className="pointer-events-none absolute bottom-[6%] left-1/2 h-5 w-2/5 -translate-x-1/2 rounded-full bg-foreground/10 blur-xl"
         />
         <canvas
           ref={canvasRef}
-          aria-label="Interactive 3D device. Drag the screen to interact. Drag outside it or swipe with two fingers to turn. Pinch to zoom."
+          aria-label="Interactive 3D device. Drag the screen to interact. Drag outside it or swipe with two fingers to turn."
           className="size-full touch-none"
           onPointerDown={(event) => {
             if (event.button !== 0) return;

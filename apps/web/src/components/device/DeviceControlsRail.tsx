@@ -19,7 +19,6 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import {
   Menu,
@@ -35,7 +34,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { DeviceStreamHandle, DeviceViewControls } from "./DeviceStreamView";
 import type { DeviceControls } from "./useDeviceControls";
 
-/** Both presentations float controls beside the device when there is room. */
+/** Stable floating controls for both presentations, regardless of panel width. */
 export function DeviceControlsRail(props: {
   platform: DevicePlatform;
   handle: DeviceStreamHandle | null;
@@ -50,30 +49,17 @@ export function DeviceControlsRail(props: {
   onPowerOff: () => void;
 }) {
   const { view, handle, controls } = props;
-  const horizontal = view.layout === "header";
-  const popupSide = horizontal ? "bottom" : "left";
+  const popupSide = "left";
   const settings = controls.detail?.settings;
   const inputDisabled = !handle?.inputConnected;
   const nextAppearance = settings?.appearance === "dark" ? "light" : "dark";
   return (
     <aside
       aria-label="Device controls"
-      data-layout={horizontal ? "header" : "rail"}
-      className={cn(
-        "shrink-0",
-        horizontal
-          ? "order-first w-full overflow-x-auto border-b px-2 py-1"
-          : "pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center justify-center overflow-y-auto py-4 pr-2",
-      )}
+      data-layout="rail"
+      className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center justify-center py-3 pr-2"
     >
-      <div
-        className={cn(
-          "flex items-center gap-1",
-          horizontal
-            ? "w-max min-w-full justify-end"
-            : "pointer-events-auto flex-col rounded-full border border-border/50 bg-background/80 p-1 shadow-sm",
-        )}
-      >
+      <div className="pointer-events-auto flex max-h-full shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-1 shadow-sm [scrollbar-width:none]">
         <RailButton
           tooltipSide={popupSide}
           label="Home"
@@ -139,7 +125,7 @@ export function DeviceControlsRail(props: {
             <RotateCcw />
           </RailButton>
         )}
-        <RailDivider horizontal={horizontal} />
+        <RailDivider />
         <RailButton
           tooltipSide={popupSide}
           label={`Switch device to ${nextAppearance} mode`}
@@ -238,7 +224,7 @@ export function DeviceControlsRail(props: {
             </MenuItem>
           </MenuPopup>
         </Menu>
-        <RailDivider horizontal={horizontal} />
+        <RailDivider />
         <RailButton
           tooltipSide={popupSide}
           label="3D view"
@@ -278,13 +264,8 @@ export function DeviceControlsRail(props: {
   );
 }
 
-function RailDivider(props: { horizontal: boolean }) {
-  return (
-    <div
-      aria-hidden
-      className={cn("shrink-0 bg-border/70", props.horizontal ? "mx-1 h-4 w-px" : "my-1 h-px w-5")}
-    />
-  );
+function RailDivider() {
+  return <div aria-hidden className="my-1 h-px w-5 shrink-0 bg-border/70" />;
 }
 
 function RailButton(props: {

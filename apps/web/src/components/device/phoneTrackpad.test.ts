@@ -27,10 +27,7 @@ it("consumes scrolling and page zoom only on the bound canvas and releases liste
   canvas.dispatchEvent(pinch);
   expect(swipe.defaultPrevented).toBe(true);
   expect(pinch.defaultPrevented).toBe(true);
-  expect(navigate.mock.calls).toEqual([
-    [{ type: "orbit", x: -0.04, y: 0.025 }],
-    [{ type: "zoom", delta: 0.2 }],
-  ]);
+  expect(navigate.mock.calls).toEqual([[{ type: "orbit", x: -0.04, y: 0.025 }]]);
   expect(
     listeners.mock.calls.every(
       ([, , options]) => typeof options === "object" && options.passive === false,
@@ -40,29 +37,19 @@ it("consumes scrolling and page zoom only on the bound canvas and releases liste
   const detached = wheel(true);
   canvas.dispatchEvent(detached);
   expect(detached.defaultPrevented).toBe(false);
-  expect(navigate).toHaveBeenCalledTimes(2);
+  expect(navigate).toHaveBeenCalledOnce();
 });
 
-it("uses incremental Safari scales, suppresses duplicate wheel events, and cancels unfinished gestures", () => {
+it("consumes Safari pinch without zooming the model and resumes orbit after cancellation", () => {
   const canvas = new Canvas();
   const navigate = vi.fn();
   const binding = bindPhoneTrackpad(canvas, { navigate });
   canvas.dispatchEvent(gesture("gesturestart", 1));
   canvas.dispatchEvent(gesture("gesturechange", 1.2));
   canvas.dispatchEvent(wheel(true));
-  canvas.dispatchEvent(gesture("gesturechange", 1.5));
-  canvas.dispatchEvent(gesture("gesturechange", 0));
-  expect(navigate).toHaveBeenCalledTimes(2);
-  expect(navigate.mock.calls[0]?.[0].delta).toBeCloseTo(Math.log(1.2));
-  expect(navigate.mock.calls[1]?.[0].delta).toBeCloseTo(Math.log(1.5 / 1.2));
+  expect(navigate).not.toHaveBeenCalled();
   binding.cancel();
-  canvas.dispatchEvent(wheel(true));
-  expect(navigate).toHaveBeenCalledTimes(3);
-  canvas.dispatchEvent(gesture("gesturechange", 2));
-  expect(navigate).toHaveBeenCalledTimes(3);
-  canvas.dispatchEvent(gesture("gesturestart", 1));
-  canvas.dispatchEvent(gesture("gestureend", 1));
   canvas.dispatchEvent(wheel());
-  expect(navigate).toHaveBeenCalledTimes(4);
+  expect(navigate).toHaveBeenCalledOnce();
   binding.dispose();
 });
