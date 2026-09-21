@@ -82,3 +82,10 @@ it("requires operate permission for host retry while preserving read-only listin
     AuthOrchestrationOperateScope,
   );
 });
+
+it("requires operate permission for tool updates even alongside a read-only check", () => {
+  expect(requiredScopeForDeviceList({ updateTool: "agent", inspectOnly: true })).toBe(
+    AuthOrchestrationOperateScope,
+  );
+  expect(requiredScopeForDeviceList({ updateTool: "hub" })).toBe(AuthOrchestrationOperateScope);
+});
