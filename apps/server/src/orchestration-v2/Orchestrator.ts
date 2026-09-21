@@ -2231,10 +2231,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(command);
       const run = projection.runs.at(-1) ?? null;
       const failure = latestRootProviderFailure(run, projection.turnItems);
-      if (
-        command.limitRecovery.snooze === true &&
-        Date.parse(command.limitRecovery.resetAt) <= DateTime.toEpochMillis(now)
-      ) {
+      const resetMs = Date.parse(command.limitRecovery.resetAt);
+      if (command.limitRecovery.snooze === true && resetMs <= DateTime.toEpochMillis(now)) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -2242,13 +2240,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (
+        !Number.isFinite(resetMs) ||
         thread.archivedAt !== null ||
         thread.settledOverride === "settled" ||
         run?.id !== command.limitRecovery.runId ||
         failure?.class !== "usage_limit" ||
         failure.resetAt !== command.limitRecovery.resetAt ||
-        Date.parse(command.limitRecovery.resetAt) <=
-          DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
+        resetMs <= DateTime.toEpochMillis(run.completedAt ?? run.requestedAt) ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         projection.runs.some((candidate) => candidate.status === "queued")
       ) {
@@ -2344,6 +2342,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             snoozedUntil,
+            limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: existingSnoozedAt ?? now,
             updatedAt: existingSnoozedAt === null ? now : thread.updatedAt,
           };

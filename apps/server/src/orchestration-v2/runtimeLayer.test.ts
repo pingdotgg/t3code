@@ -3027,6 +3027,8 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
     "settle",
     "replacement",
     "manual-snooze",
+    "manual-snooze-after-recovery",
+    "invalid-snooze",
     "snooze-only",
     "snooze-resume",
     "cancel-resume-keep-snooze",
@@ -3082,10 +3084,13 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const run = projection.runs[0]!;
       const now = yield* DateTime.now;
-      const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 })).replace(
-        "Z",
-        scenario === "wake" ? "+00:00" : "Z",
-      );
+      const resetAt =
+        scenario === "invalid-snooze"
+          ? "not-a-date"
+          : DateTime.formatIso(DateTime.add(now, { minutes: 1 })).replace(
+              "Z",
+              scenario === "wake" ? "+00:00" : "Z",
+            );
       yield* events.write({
         commandId: CommandId.make(`recovery:failure:${scenario}`),
         events: [
@@ -3132,8 +3137,24 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         (thread) => thread.id === threadId,
       )!;
       assert.isNull(limitRecoveryCommand(shell, false, DateTime.toEpochMillis(now)));
+      if (scenario === "invalid-snooze") {
+        const result = yield* orchestrator
+          .dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("recovery:invalid-snooze"),
+            threadId,
+            limitRecovery: { runId: run.id, resetAt, snooze: true },
+          })
+          .pipe(Effect.exit);
+        assert.equal(result._tag, "Failure");
+        const current = yield* orchestrator.getThreadProjection(threadId);
+        assert.isNull(current.thread.limitRecovery ?? null);
+        assert.isNull(current.thread.snoozedUntil);
+        return;
+      }
       const snooze = [
         "snooze-only",
+        "manual-snooze-after-recovery",
         "snooze-resume",
         "wake",
         "cancel-resume-keep-snooze",
@@ -3225,7 +3246,7 @@ it.layer(TestLayer)("usage-limit recovery", (it) => {
         assert.isTrue(armedShell.limitRecovery!.autoResume);
         assert.isTrue(armedShell.limitRecovery!.snooze);
       }
-      if (scenario === "manual-snooze") {
+      if (scenario === "manual-snooze" || scenario === "manual-snooze-after-recovery") {
         yield* orchestrator.dispatch({
           type: "thread.snooze",
           commandId: CommandId.make(`recovery:manual-snooze:${scenario}`),
