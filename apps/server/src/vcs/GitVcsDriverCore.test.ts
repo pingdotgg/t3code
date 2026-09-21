@@ -2353,6 +2353,84 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("honors the t3.json worktreeSubmodules setting", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+
+        const previousAllowedProtocol = process.env.GIT_ALLOW_PROTOCOL;
+        process.env.GIT_ALLOW_PROTOCOL = "file";
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previousAllowedProtocol === undefined) {
+              delete process.env.GIT_ALLOW_PROTOCOL;
+            } else {
+              process.env.GIT_ALLOW_PROTOCOL = previousAllowedProtocol;
+            }
+          }),
+        );
+
+        // inner -> nested, so a recursive init populates nested/NESTED.md and
+        // a top-level init leaves it empty.
+        const nestedRepo = yield* makeTmpDir("git-nested-");
+        yield* initRepoWithCommit(nestedRepo);
+        yield* writeTextFile(nestedRepo, "NESTED.md", "# nested\n");
+        yield* git(nestedRepo, ["add", "."]);
+        yield* git(nestedRepo, ["commit", "-m", "nested"]);
+        const innerRepo = yield* makeTmpDir("git-inner-");
+        yield* initRepoWithCommit(innerRepo);
+        yield* writeTextFile(innerRepo, "INNER.md", "# inner\n");
+        yield* git(innerRepo, ["submodule", "add", nestedRepo, "nested"]);
+        yield* git(innerRepo, ["add", "."]);
+        yield* git(innerRepo, ["commit", "-m", "inner"]);
+
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["submodule", "add", innerRepo, "inner"]);
+        yield* git(cwd, ["commit", "-m", "add submodule"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const worktreesDir = yield* makeTmpDir("git-worktrees-");
+
+        const createWithMode = Effect.fn(function* (
+          fileMode: "recursive" | "top-level" | "none",
+          branch: string,
+        ) {
+          yield* writeTextFile(cwd, "t3.json", `{ "worktreeSubmodules": "${fileMode}" }`);
+          yield* git(cwd, ["add", "t3.json"]);
+          yield* git(cwd, ["commit", "--allow-empty", "-m", `submodules: ${fileMode}`]);
+          const worktreePath = pathService.join(worktreesDir, branch);
+          const disabled = yield* Ref.make(false);
+          yield* driver.createWorktree(
+            { cwd, path: worktreePath, refName: initialBranch, newRefName: branch },
+            { progress: { onSubmodulesDisabled: () => Ref.set(disabled, true) } },
+          );
+          return {
+            disabled: yield* Ref.get(disabled),
+            inner: yield* fileSystem.exists(pathService.join(worktreePath, "inner", "INNER.md")),
+            nested: yield* fileSystem.exists(
+              pathService.join(worktreePath, "inner", "nested", "NESTED.md"),
+            ),
+          };
+        });
+
+        assert.deepEqual(yield* createWithMode("recursive", "recursive"), {
+          disabled: false,
+          inner: true,
+          nested: true,
+        });
+        assert.deepEqual(yield* createWithMode("top-level", "top-level"), {
+          disabled: false,
+          inner: true,
+          nested: false,
+        });
+        assert.deepEqual(yield* createWithMode("none", "none"), {
+          disabled: true,
+          inner: false,
+          nested: false,
+        });
+      }),
+    );
+
     it.effect("reports checkout progress during parallel worktree creation", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
