@@ -37,6 +37,7 @@ import { cancelsUsageLimitContinuation } from "./decider.ts";
 
 type FailedTurn = Extract<ProviderRuntimeEvent, { type: "turn.completed" }>;
 const RECHECK_MS = 5 * 60_000;
+const WAITING_MESSAGE_PREFIX = "Usage limit reached. Automatic continuation will check usage at ";
 const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 const sameModel = Schema.toEquivalence(ModelSelection);
 
@@ -50,7 +51,7 @@ export class UsageLimitContinuation extends Context.Service<
 >()("t3/orchestration/UsageLimitContinuation") {}
 
 function waitingMessage(pending: PendingUsageLimitContinuation): string {
-  return `Usage limit reached. Automatic continuation will check usage at ${pending.nextCheckAt}.`;
+  return `${WAITING_MESSAGE_PREFIX}${pending.nextCheckAt}.`;
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
@@ -130,7 +131,7 @@ export const make = Effect.gen(function* () {
         .getThreadShellById(threadId, { includeArchived: true })
         .pipe(Effect.map(Option.getOrUndefined));
       if (
-        thread?.session?.lastError !== waitingMessage(wait) ||
+        thread?.session?.lastError?.startsWith(WAITING_MESSAGE_PREFIX) !== true ||
         thread.latestTurn?.turnId !== wait.failedTurnId ||
         thread.session.activeTurnId !== null ||
         thread.session.status === "starting" ||

@@ -349,6 +349,32 @@ it.effect("retries a failure after its pending continuation could not be persist
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect("clears an older waiting banner when a rescheduled banner write fails", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness();
+    const sql = yield* SqlClient.SqlClient;
+    const service = yield* h.start;
+    yield* record(h, service);
+    const waitingError = (yield* h.read()).session?.lastError;
+    yield* TestClock.adjust(0);
+    yield* Queue.take(h.probes);
+    yield* sql`CREATE TEMP TRIGGER reject_waiting_banner
+      BEFORE UPDATE OF last_error ON projection_thread_sessions
+      BEGIN SELECT RAISE(FAIL, 'temporary banner write failure'); END`;
+    yield* respond(h, service, [
+      provider({ checkedAt: NOW, windows: [], unavailable: { reason: "probeFailed" } }),
+    ]);
+    expect((yield* h.pending())?.nextCheckAt).toBe("2026-09-18T00:05:00.000Z");
+    expect((yield* h.read()).session?.lastError).toBe(waitingError);
+    yield* sql`DROP TRIGGER reject_waiting_banner`;
+    yield* h.settings.updateSettings({ continueThreadsAfterUsageLimit: false });
+    yield* TestClock.adjust(0);
+    yield* service.drain;
+    expect(yield* h.pending()).toBeUndefined();
+    expect((yield* h.read()).session?.lastError).toBe(errorMessage);
+  }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect("honors a stop after more than 1,000 events before the worker records the failure", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness();
