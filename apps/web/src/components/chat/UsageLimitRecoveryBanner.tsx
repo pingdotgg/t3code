@@ -70,9 +70,8 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not change limit recovery.");
-    } finally {
-      setPending(false);
     }
+    setPending(false);
   }
   return (
     <div className="flex flex-wrap items-center gap-2">
