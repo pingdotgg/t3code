@@ -49,13 +49,11 @@ export function DeviceHostUpdates({
                 size="compact"
                 variant="outline"
                 disabled={pending !== null}
-                onClick={async () => {
+                onClick={() => {
                   setPending(host.id);
-                  try {
-                    await retry({ environmentId, input: { retryHostId: host.id } });
-                  } finally {
-                    setPending(null);
-                  }
+                  void retry({ environmentId, input: { retryHostId: host.id } }).finally(() =>
+                    setPending(null),
+                  );
                 }}
               >
                 {pending === host.id ? "Retrying…" : "Retry"}
