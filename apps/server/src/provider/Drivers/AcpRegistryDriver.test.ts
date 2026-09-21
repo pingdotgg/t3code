@@ -114,6 +114,13 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
     expect(snapshot.auth.status).toBe("unknown");
     expect(snapshot.setup?.canAuthenticate).toBe(true);
+    expect(
+      applyAcpRegistryLiveConfiguration(
+        snapshot,
+        { models: [], currentModelId: null, configOptions: [] },
+        [],
+      ).auth.status,
+    ).toBe("unknown");
   });
 
   it("overlays live configuration without dropping probe-owned session capabilities", () => {

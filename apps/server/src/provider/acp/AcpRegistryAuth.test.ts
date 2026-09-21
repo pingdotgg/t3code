@@ -65,6 +65,7 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
     const authenticated: string[] = [];
     const started: number[] = [];
     let runtimes = 0;
+    let version = "1.0.0";
     let terminalSpawn: PtySpawnInput | undefined;
     let data: ((data: string) => void) | undefined;
     let exit: ((event: PtyExitEvent) => void) | undefined;
@@ -92,7 +93,7 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
           const initialized: AcpSchema.InitializeResponse = {
             protocolVersion: 2,
             agentCapabilities: {},
-            authMethods: [method],
+            authMethods: [{ ...method, name: `${method.name} ${version}` }],
           };
           let elicitation:
             | Parameters<AcpSessionRuntime["Service"]["handleElicitation"]>[0]
@@ -139,6 +140,16 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
           };
         }),
     }).pipe(
+      Effect.provideService(AcpRegistryCatalog, {
+        ...catalog,
+        inspect: () =>
+          Effect.sync(() => ({
+            status: "ready" as const,
+            agentId: "test-agent",
+            version,
+            distribution: "binary" as const,
+          })),
+      }),
       Effect.provideService(PtyAdapter, {
         spawn: (input) =>
           Effect.sync(() => {
@@ -194,6 +205,9 @@ const makeHarness = (method: AcpSchema.AuthMethod, failVerification = false) =>
       written,
       sizes,
       runtimes: () => runtimes,
+      setVersion: (value: string) => {
+        version = value;
+      },
     };
   }).pipe(Effect.provideService(AcpRegistryCatalog, catalog));
 
@@ -307,5 +321,22 @@ it.effect("does not report authentication when post-login verification fails", (
     yield* h.phase("failed");
     assert.deepEqual(h.changed, []);
     assert.isTrue(h.killed());
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("refreshes advertised methods after a registry version change without logging in", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(browserMethod);
+    const count = h.runtimes();
+    yield* h.controller.refreshMethods!;
+    assert.strictEqual(h.runtimes(), count);
+    h.setVersion("2.0.0");
+    yield* h.controller.refreshMethods!;
+    const state = yield* h.state((value) => value.methods?.[0]?.name === "Browser 2.0.0");
+    assert.strictEqual(state.phase, "idle");
+    assert.strictEqual(h.runtimes(), count + 1);
+    assert.deepEqual(h.authenticated, []);
+    assert.deepEqual(h.started, []);
+    assert.deepEqual(h.closed, [1, 2]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

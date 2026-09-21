@@ -81,7 +81,8 @@ export function AcpSessionManagementSection(props: {
   const canImport =
     props.provider.nativeSessions?.canLoad === true ||
     props.provider.nativeSessions?.canResume === true;
-  const canLogout = props.provider.auth.canLogout === true;
+  const canLogout =
+    props.provider.auth.canLogout === true && !props.provider.setup?.canAuthenticate;
   const canDelete = props.provider.nativeSessions?.canDelete === true;
   const canConfigureProviders = props.provider.configurableProviders === true;
   const projectOperationPending =

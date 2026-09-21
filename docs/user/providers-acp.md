@@ -37,21 +37,28 @@ instance removes T3-managed binary files but leaves globally installed package c
 
 ## Signing in
 
-T3 Code never collects or stores credentials for registry agents. You sign in with the agent's own
-method, on the server machine, under the account that runs T3 Code.
+Open the agent's account section in **Settings → Providers** on web or desktop. Choose
+**Sign in** and, if the agent offers several methods, select one. For an installed, configured
+provider, mobile also offers **Settings → Provider accounts**.
 
-The provider card shows what the agent needs. For a browser flow, it displays the exact URL and
-waits for you to select **Continue authentication** before telling the agent to proceed. T3 Code
-does not open agent-provided URLs automatically. Other agents show a terminal command to run or
-take API keys through the instance's environment settings. After you sign in, T3 Code picks it up
-on the next automatic provider check. If the agent supports ACP logout, the expanded provider card
-also offers **Log out** and stops that instance's active sessions before clearing its credentials.
+Browser sign-in shows the agent's URL and waits for you to open or copy it before telling the
+agent to proceed. The page opens on your device, while the agent runs on the environment.
+Terminal methods run in an in-app terminal on that environment. On mobile, send responses
+through the terminal response field. T3 Code reconnects after terminal login and waits for the
+agent to confirm sign-in before reporting success. You can cancel or retry an expired attempt.
 
-For Codex, credentials belong to the Codex CLI on the server. Run `codex login status` to check
-them, or `codex login --device-auth` to sign in with a ChatGPT subscription.
+Browser and terminal sign-in leave credentials in the agent's own store. Agents that use API keys
+through environment variables still take those keys in the instance's environment settings.
+A configured environment or agent home applies to both sign-in and chat.
 
-For Grok Build on a remote or headless server, run `grok login --device-auth`. See the
-[Grok Build authentication guide](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
+If the agent advertises logout, choose **Sign out**. Changing a shared agent login stops running
+threads for instances of that same agent on the environment. Thread history and workspace files
+are kept. ACP does not describe account isolation, so adding another instance does not guarantee
+a separate account; use the agent's own configuration to isolate accounts when supported.
+
+If an agent cannot complete its advertised flow remotely, its CLI remains available on the
+server. For example, Codex supports `codex login --device-auth`, and Grok Build supports
+`grok login --device-auth`.
 
 ## Models and options
 

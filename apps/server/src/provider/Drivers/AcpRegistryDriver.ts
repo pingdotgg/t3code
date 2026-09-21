@@ -259,7 +259,6 @@ export function applyAcpRegistryLiveConfiguration(
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    auth: { ...provider.auth, status: "authenticated" },
     models: modelsFromDiscovery(configuration, customModels),
   };
 }

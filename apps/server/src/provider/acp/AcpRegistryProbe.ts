@@ -23,6 +23,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { PtyAdapter } from "../../terminal/PtyAdapter.ts";
 import { AcpRegistryCatalog, toAcpRegistryOperationError } from "./AcpRegistrySupport.ts";
 import { parseSessionModeState } from "./AcpRuntimeModel.ts";
 import { acpProviderOptionDescriptors } from "./AcpSessionConfig.ts";
@@ -317,6 +318,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     const catalog = yield* AcpRegistryCatalog;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const crypto = yield* Crypto.Crypto;
+    const pty = yield* Effect.serviceOption(PtyAdapter);
 
     const result = yield* Effect.gen(function* () {
       // Resolution may install a missing registry package. Keep it inside the
@@ -333,7 +335,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           spawn: resolved.spawn,
           cwd: input.cwd,
           clientCapabilities: {
-            auth: { terminal: false },
+            auth: { terminal: Option.isSome(pty) },
             elicitation: { url: {} },
             fs: { readTextFile: false, writeTextFile: false },
             terminal: false,
@@ -470,6 +472,7 @@ const makeAcpRegistryManagementRuntime = Effect.fn("AcpRegistryProbe.makeManagem
           terminal: false,
         },
         clientInfo: { name: "t3-code-session-manager", version: "0.0.0" },
+        authenticateOnAuthRequired: false,
         ...(input.settings.authMethodId ? { authMethodId: input.settings.authMethodId } : {}),
       }).pipe(
         Layer.provide(

@@ -78,10 +78,11 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         );
       }).pipe(Effect.mapError(() => failure("start", "Could not start the selected ACP agent."))));
 
-  let knownMethods: ReadonlyArray<ProviderAuthMethod> | undefined;
+  let knownMethods:
+    | { readonly version: string; readonly methods: ReadonlyArray<ProviderAuthMethod> }
+    | undefined;
   const discoverMethods = Effect.scoped(
     Effect.gen(function* () {
-      if (knownMethods) return knownMethods;
       const inspected = yield* catalog
         .inspect(options.settings, options.environment)
         .pipe(
@@ -89,6 +90,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         );
       if (inspected.status !== "ready")
         return yield* failure("methods", "Prepare this ACP agent before signing in.");
+      if (knownMethods?.version === inspected.version) return knownMethods.methods;
       const resolved = yield* resolve;
       const runtime = yield* makeRuntime(resolved.spawn);
       const initialized = yield* runtime
@@ -98,7 +100,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             failure("methods", "Could not discover this agent's sign-in methods."),
           ),
         );
-      knownMethods = normalizeAcpRegistryAuthMethods(initialized.authMethods)
+      const advertised = normalizeAcpRegistryAuthMethods(initialized.authMethods)
         .filter(
           (method) => method.id.length <= 128 && (method.type !== "terminal" || Option.isSome(pty)),
         )
@@ -109,7 +111,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           description: method.description,
           type: method.type === "env_var" ? ("credentials" as const) : method.type,
         }));
-      return knownMethods;
+      knownMethods = { version: inspected.version, methods: advertised };
+      return advertised;
     }),
   ).pipe(
     Effect.timeoutOrElse({
